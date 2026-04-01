@@ -24,6 +24,8 @@
   <a href="https://github.com/HKUDS/.github/blob/main/profile/README.md"><img src="https://img.shields.io/badge/WeChat-Group-C5EAB4?style=flat&logo=wechat&logoColor=white" alt="WeChat"></a>
 </p>
 
+One Command to Launch All Agent Harnesses.
+
 <p align="center">
   <img src="assets/cli-typing.gif" alt="OpenHarness Terminal Demo" width="800">
 </p>
