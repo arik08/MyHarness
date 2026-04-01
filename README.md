@@ -1,8 +1,8 @@
 <h1 align="center"><img src="assets/logo.png" alt="OpenHarness" width="64" style="vertical-align: middle;">&nbsp; <code>oh</code> — OpenHarness: Open Agent Harness</h1>
 
 <p align="center">
-  <strong>One command. Full Agent Harness.<br>
-  <code>oh</code> is an open-source Python framework for building, studying, and extending AI agents.</strong>
+  <strong>Ultra-Lightweight of Claude Code<br>
+  <code>oh</code> delivers ~80% key agent functionality with XXX% fewer lines of code than Claude Code.</strong>
 </p>
 
 <p align="center">
