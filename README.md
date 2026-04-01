@@ -38,7 +38,7 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
 
 ---
 
-### 🪶 Lightweight, Not a Toy
+## 🚀 44x Lighter Than Claude Code
 
 <table>
 <tr><th></th><th>Claude Code</th><th>OpenHarness</th></tr>
