@@ -1,6 +1,6 @@
 <h1 align="center"><img src="assets/logo.png" alt="OpenHarness" width="64" style="vertical-align: middle;">&nbsp; <code>oh</code> — OpenHarness: Open Agent Harness</h1>
 
-• **O**pen**H**arness (**oh**) is an ultra-lightweight alternative to Claude Code
+• **O**pen**H**arness (**oh**) is an ultra-lightweight alternative to Claude Code with pure Python implementation
 
 • **OpenHarness** delivers approximately 80% of essential agent functionality
 
