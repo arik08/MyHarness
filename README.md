@@ -64,7 +64,7 @@ An **Agent Harness** is the complete infrastructure that wraps around an LLM to 
   <img src="assets/harness-equation.png" alt="Harness = Tools + Knowledge + Observation + Action + Permissions" width="700">
 </p>
 
-OpenHarness is an open-source Python implementation of this architecture, inspired by [Claude Code](https://claude.ai/code) (Anthropic's 512K+ line TypeScript agent). It's designed for **researchers, builders, and the community** who want to:
+OpenHarness is an open-source Python implementation designed for **researchers, builders, and the community** who want to:
 
 - **Understand** how production AI agents work under the hood
 - **Experiment** with new tools, skills, and agent coordination patterns
