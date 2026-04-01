@@ -393,3 +393,8 @@ MIT — see [LICENSE](LICENSE).
   <br>
   <em>The model is the agent. The code is the harness.</em>
 </p>
+
+<p align="center">
+  <em> Thanks for visiting ✨ OpenHarness!</em><br><br>
+  <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.OpenHarness&style=for-the-badge&color=00d4ff" alt="Views">
+</p>
