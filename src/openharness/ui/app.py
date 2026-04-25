@@ -221,6 +221,7 @@ async def run_repl(
     restore_messages: list[dict] | None = None,
     restore_tool_metadata: dict[str, object] | None = None,
     permission_mode: str | None = None,
+    effort: str | None = None,
 ) -> None:
     """Run the default OpenHarness interactive application (React TUI)."""
     if backend_only:
@@ -233,6 +234,7 @@ async def run_repl(
             api_key=api_key,
             api_format=api_format,
             api_client=api_client,
+            effort=effort,
             restore_messages=restore_messages,
             restore_tool_metadata=restore_tool_metadata,
             enforce_max_turns=max_turns is not None,
@@ -249,6 +251,7 @@ async def run_repl(
         system_prompt=system_prompt,
         api_key=api_key,
         api_format=api_format,
+        effort=effort,
         permission_mode=permission_mode,
     )
     if exit_code != 0:
@@ -266,6 +269,7 @@ async def run_task_worker(
     api_format: str | None = None,
     api_client: SupportsStreamingMessages | None = None,
     permission_mode: str | None = None,
+    effort: str | None = None,
 ) -> None:
     """Run a stdin-driven headless worker for background agent tasks.
 
@@ -308,6 +312,7 @@ async def run_task_worker(
         system_prompt=system_prompt,
         api_key=api_key,
         api_format=api_format,
+        effort=effort,
         api_client=api_client,
         permission_prompt=_noop_permission,
         ask_user_prompt=_noop_ask,
@@ -352,6 +357,7 @@ async def run_print_mode(
     api_client: SupportsStreamingMessages | None = None,
     permission_mode: str | None = None,
     max_turns: int | None = None,
+    effort: str | None = None,
 ) -> None:
     """Non-interactive mode: submit prompt, stream output, exit."""
     from openharness.engine.stream_events import (
@@ -379,6 +385,7 @@ async def run_print_mode(
         system_prompt=system_prompt,
         api_key=api_key,
         api_format=api_format,
+        effort=effort,
         enforce_max_turns=True,
         api_client=api_client,
         permission_prompt=_noop_permission,

@@ -1,0 +1,15 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - text: Local agent runtime
+      - heading "OpenHarness Chat" [level=1] [ref=e6]
+    - generic [ref=e7]: Connecting
+  - generic [ref=e9]:
+    - generic [ref=e10]: OH
+    - heading "How can I help with this workspace?" [level=2] [ref=e11]
+    - paragraph [ref=e12]: This web UI is connected to the local OpenHarness backend. Ask a question, run a slash command, or let the agent inspect the repository.
+  - generic [ref=e13]:
+    - generic [ref=e14]:
+      - textbox "Message OpenHarness..." [ref=e15]
+      - button "Send message" [disabled] [ref=e16]: Send
+    - generic [ref=e17]: Enter to send, Shift+Enter for a new line

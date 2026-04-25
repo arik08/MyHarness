@@ -1,0 +1,53 @@
+- generic [ref=e2]:
+  - complementary "Chat navigation" [ref=e3]:
+    - link "OpenHarness chat home" [ref=e4] [cursor=pointer]:
+      - /url: "#"
+      - generic [ref=e5]: OH
+      - generic [ref=e6]: OpenHarness
+    - button "New chat" [ref=e7] [cursor=pointer]
+    - navigation "Quick prompts" [ref=e8]:
+      - button "Repository summary" [ref=e9] [cursor=pointer]
+      - button "Session status" [ref=e10] [cursor=pointer]
+      - button "Permissions" [ref=e11] [cursor=pointer]
+      - button "Commands" [ref=e12] [cursor=pointer]
+    - generic [ref=e13]:
+      - text: Session
+      - strong [ref=e14]: Ready
+      - generic [ref=e15]: d8a54bcd-d93e-4ba6-9bbd-67fc41091664
+  - main [ref=e16]:
+    - generic [ref=e17]:
+      - generic [ref=e18]:
+        - text: Local agent runtime
+        - heading "OpenHarness Chat" [level=1] [ref=e19]
+      - generic [ref=e20]: Ready
+    - generic [ref=e22]:
+      - generic [ref=e23]: OH
+      - heading "How can I help with this workspace?" [level=2] [ref=e24]
+      - paragraph [ref=e25]: This web UI is connected to the local OpenHarness backend. Ask a question, run a slash command, or let the agent inspect the repository.
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - textbox "Message OpenHarness..." [active] [ref=e28]: /status
+        - button "Send message" [ref=e29] [cursor=pointer]: Send
+      - generic [ref=e30]: Enter to send, Shift+Enter for a new line
+  - complementary "Runtime details" [ref=e31]:
+    - generic [ref=e32]:
+      - generic [ref=e33]: Runtime
+      - generic [ref=e34]:
+        - generic [ref=e35]:
+          - term [ref=e36]: Model
+          - definition [ref=e37]: gpt-5.5
+        - generic [ref=e38]:
+          - term [ref=e39]: Provider
+          - definition [ref=e40]: openai-codex
+        - generic [ref=e41]:
+          - term [ref=e42]: Permission
+          - definition [ref=e43]: Default
+        - generic [ref=e44]:
+          - term [ref=e45]: Workspace
+          - definition [ref=e46]: C:\Users\Myeongcheol\Desktop\Documents\Programing\OpenHarness
+    - generic [ref=e47]:
+      - generic [ref=e48]: Tool activity
+      - paragraph [ref=e50]: Tool calls will appear here.
+    - generic [ref=e51]:
+      - generic [ref=e52]: Tasks
+      - paragraph [ref=e55]: No active tasks.

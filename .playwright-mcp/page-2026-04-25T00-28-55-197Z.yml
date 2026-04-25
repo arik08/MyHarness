@@ -1,0 +1,54 @@
+- generic [ref=e2]:
+  - complementary "Chat navigation" [ref=e3]:
+    - link "OpenHarness chat home" [ref=e4] [cursor=pointer]:
+      - /url: "#"
+      - generic [ref=e5]: OH
+      - generic [ref=e6]: OpenHarness
+    - button "New chat" [ref=e7] [cursor=pointer]
+    - navigation "Quick prompts" [ref=e8]:
+      - button "Repository summary" [ref=e9] [cursor=pointer]
+      - button "Session status" [ref=e10] [cursor=pointer]
+      - button "Permissions" [ref=e11] [cursor=pointer]
+      - button "Commands" [ref=e12] [cursor=pointer]
+    - region "Recent chat history" [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: History
+        - button "Refresh" [ref=e16] [cursor=pointer]
+      - paragraph [ref=e18]: No saved sessions yet.
+  - main [ref=e19]:
+    - generic [ref=e20]:
+      - generic [ref=e21]:
+        - text: Local agent runtime
+        - heading "OpenHarness Chat" [level=1] [ref=e22]
+      - generic [ref=e23]: Connecting
+    - generic [ref=e25]:
+      - generic [ref=e26]: OH
+      - heading "How can I help with this workspace?" [level=2] [ref=e27]
+      - paragraph [ref=e28]: This web UI is connected to the local OpenHarness backend. Ask a question, run a slash command, or let the agent inspect the repository.
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - textbox "Message OpenHarness..." [ref=e31]
+        - button "Send message" [disabled] [ref=e32]: Send
+      - generic [ref=e33]: Enter to send, Shift+Enter for a new line
+  - complementary "Runtime details" [ref=e34]:
+    - generic [ref=e35]:
+      - generic [ref=e36]: Runtime
+      - generic [ref=e37]:
+        - generic [ref=e38]:
+          - term [ref=e39]: Model
+          - definition [ref=e40]: "-"
+        - generic [ref=e41]:
+          - term [ref=e42]: Provider
+          - definition [ref=e43]: "-"
+        - generic [ref=e44]:
+          - term [ref=e45]: Permission
+          - definition [ref=e46]: "-"
+        - generic [ref=e47]:
+          - term [ref=e48]: Workspace
+          - definition [ref=e49]: "-"
+    - generic [ref=e50]:
+      - generic [ref=e51]: Tool activity
+      - paragraph [ref=e53]: Tool calls will appear here.
+    - generic [ref=e54]:
+      - generic [ref=e55]: Tasks
+      - paragraph [ref=e57]: No active tasks.

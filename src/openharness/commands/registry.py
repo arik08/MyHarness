@@ -849,10 +849,11 @@ def create_default_command_registry(
         value = args.strip() or "show"
         if value == "show":
             return CommandResult(message=f"Reasoning effort: {current}")
-        if value not in {"low", "medium", "high"}:
-            return CommandResult(message="Usage: /effort [show|low|medium|high]")
+        if value not in {"none", "low", "medium", "high", "xhigh", "max"}:
+            return CommandResult(message="Usage: /effort [show|none|low|medium|high|xhigh|max]")
         settings.effort = value
         save_settings(settings)
+        context.engine.set_reasoning_effort(value)
         context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
         if context.app_state is not None:
             context.app_state.set(effort=value)
@@ -1066,7 +1067,12 @@ def create_default_command_registry(
         tokens = args.split()
         if not tokens or tokens[0] == "show":
             permission = settings.permission
-            label = _MODE_LABELS.get(permission.mode.value, permission.mode.value)
+            active_mode = (
+                context.app_state.get().permission_mode
+                if context.app_state is not None
+                else permission.mode.value
+            )
+            label = _MODE_LABELS.get(active_mode, active_mode)
             return CommandResult(
                 message=(
                     f"Mode: {label}\n"

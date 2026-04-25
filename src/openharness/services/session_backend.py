@@ -33,11 +33,14 @@ class SessionBackend(Protocol):
     def load_latest(self, cwd: str | Path) -> dict | None:
         """Load the latest session snapshot."""
 
-    def list_snapshots(self, cwd: str | Path, limit: int = 20) -> list[dict]:
+    def list_snapshots(self, cwd: str | Path, limit: int | None = 20) -> list[dict]:
         """List recent snapshots."""
 
     def load_by_id(self, cwd: str | Path, session_id: str) -> dict | None:
         """Load a snapshot by ID."""
+
+    def delete_by_id(self, cwd: str | Path, session_id: str) -> bool:
+        """Delete a snapshot by ID."""
 
     def export_markdown(
         self,
@@ -79,11 +82,14 @@ class OpenHarnessSessionBackend:
     def load_latest(self, cwd: str | Path) -> dict | None:
         return session_storage.load_session_snapshot(cwd)
 
-    def list_snapshots(self, cwd: str | Path, limit: int = 20) -> list[dict]:
+    def list_snapshots(self, cwd: str | Path, limit: int | None = 20) -> list[dict]:
         return session_storage.list_session_snapshots(cwd, limit=limit)
 
     def load_by_id(self, cwd: str | Path, session_id: str) -> dict | None:
         return session_storage.load_session_by_id(cwd, session_id)
+
+    def delete_by_id(self, cwd: str | Path, session_id: str) -> bool:
+        return session_storage.delete_session_by_id(cwd, session_id)
 
     def export_markdown(
         self,

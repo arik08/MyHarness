@@ -88,6 +88,7 @@ class QueryContext:
     model: str
     system_prompt: str
     max_tokens: int
+    reasoning_effort: str | None = None
     context_window_tokens: int | None = None
     auto_compact_threshold_tokens: int | None = None
     permission_prompt: PermissionPrompt | None = None
@@ -533,6 +534,7 @@ async def run_query(
                     system_prompt=context.system_prompt,
                     max_tokens=context.max_tokens,
                     tools=context.tool_registry.to_api_schema(),
+                    reasoning_effort=context.reasoning_effort,
                 )
             ):
                 if isinstance(event, ApiTextDeltaEvent):

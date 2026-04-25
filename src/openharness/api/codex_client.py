@@ -25,6 +25,16 @@ JWT_CLAIM_PATH = "https://api.openai.com/auth"
 MAX_RETRIES = 3
 BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0
+CODEX_REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
+
+
+def _normalize_reasoning_effort(effort: str | None) -> str | None:
+    normalized = (effort or "").strip().lower()
+    if normalized == "max":
+        normalized = "xhigh"
+    if normalized in CODEX_REASONING_EFFORTS:
+        return normalized
+    return None
 
 
 def _extract_account_id(token: str) -> str:
@@ -249,6 +259,9 @@ class CodexApiClient:
             "tool_choice": "auto",
             "parallel_tool_calls": True,
         }
+        reasoning_effort = _normalize_reasoning_effort(request.reasoning_effort)
+        if reasoning_effort:
+            body["reasoning"] = {"effort": reasoning_effort}
         if request.tools:
             body["tools"] = _convert_tools_to_codex(request.tools)
 

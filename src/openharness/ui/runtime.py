@@ -178,6 +178,7 @@ async def build_runtime(
     api_key: str | None = None,
     api_format: str | None = None,
     active_profile: str | None = None,
+    effort: str | None = None,
     api_client: SupportsStreamingMessages | None = None,
     permission_prompt: PermissionPrompt | None = None,
     ask_user_prompt: AskUserPrompt | None = None,
@@ -198,6 +199,7 @@ async def build_runtime(
         "api_key": api_key,
         "api_format": api_format,
         "active_profile": active_profile,
+        "effort": effort,
         "permission_mode": permission_mode,
     }
     settings = load_settings().merge_cli_overrides(**settings_overrides)
@@ -294,6 +296,7 @@ async def build_runtime(
         model=settings.model,
         system_prompt=system_prompt_text,
         max_tokens=settings.max_tokens,
+        reasoning_effort=settings.effort,
         context_window_tokens=settings.context_window_tokens or settings.memory.context_window_tokens,
         auto_compact_threshold_tokens=(
             settings.auto_compact_threshold_tokens

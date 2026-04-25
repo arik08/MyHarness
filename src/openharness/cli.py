@@ -404,6 +404,7 @@ def _build_dry_run_preview(
     append_system_prompt: str | None,
     api_key: str | None,
     api_format: str | None,
+    effort: str | None = None,
     permission_mode: str | None,
 ) -> dict[str, object]:
     from openharness.api.provider import auth_status, detect_provider
@@ -424,6 +425,7 @@ def _build_dry_run_preview(
         system_prompt=system_prompt,
         api_key=api_key,
         api_format=api_format,
+        effort=effort,
         permission_mode=permission_mode,
     )
     provider = detect_provider(settings)
@@ -1623,7 +1625,7 @@ def _maybe_update_default_model_for_provider(provider: str) -> None:
     model = profile.resolved_model.lower()
     target_model = None
     if provider == "openai_codex" and not model.startswith(("gpt-", "o1", "o3", "o4")):
-        target_model = "gpt-5.4"
+        target_model = "gpt-5.5"
     elif provider == "anthropic_claude" and not model.startswith("claude-"):
         target_model = "sonnet"
     if not target_model:
@@ -2093,7 +2095,7 @@ def main(
     effort: str | None = typer.Option(
         None,
         "--effort",
-        help="Effort level for the session (low, medium, high, max)",
+        help="Effort level for the session (none, low, medium, high, xhigh, max)",
         rich_help_panel="Model & Effort",
     ),
     verbose: bool = typer.Option(
@@ -2287,6 +2289,7 @@ def main(
             append_system_prompt=append_system_prompt,
             api_key=api_key,
             api_format=api_format,
+            effort=effort,
             permission_mode=permission_mode,
         )
         effective_output_format = output_format or "text"
@@ -2361,6 +2364,7 @@ def main(
                 restore_tool_metadata=session_data.get("tool_metadata"),
                 permission_mode=permission_mode,
                 api_format=api_format,
+                effort=effort,
             )
         )
         return
@@ -2383,6 +2387,7 @@ def main(
                 api_format=api_format,
                 permission_mode=permission_mode,
                 max_turns=max_turns,
+                effort=effort,
             )
         )
         return
@@ -2398,6 +2403,7 @@ def main(
                 api_key=api_key,
                 api_format=api_format,
                 permission_mode=permission_mode,
+                effort=effort,
             )
         )
         return
@@ -2414,5 +2420,6 @@ def main(
             api_key=api_key,
             api_format=api_format,
             permission_mode=permission_mode,
+            effort=effort,
         )
     )

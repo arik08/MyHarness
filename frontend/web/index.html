@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenHarness</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23181715'/%3E%3Cpath d='M9 17.5 14.2 22 23 10' fill='none' stroke='%23f7f3ea' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
+    <link rel="stylesheet" href="/vendor/highlight/github-dark.min.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="채팅 탐색">
+        <div class="brand-row">
+          <a class="brand" href="#" aria-label="OpenHarness 채팅 홈">
+            <span class="brand-name">OpenHarness</span>
+          </a>
+          <button class="brand-command" type="button" data-prompt="/help" aria-label="명령어">
+            <span class="command-key" aria-hidden="true">/</span>
+          </button>
+        </div>
+
+        <button class="new-chat" type="button" data-action="new-chat">
+          <span aria-hidden="true"></span>
+          새 채팅
+        </button>
+
+        <section class="history-panel" aria-label="최근 채팅 기록">
+          <div class="history-heading">
+            <span class="section-label">최근 기록</span>
+            <button type="button" data-action="refresh-history" aria-label="기록 새로고침">새로고침</button>
+          </div>
+          <div class="history-list" id="historyList">
+            <p class="empty">저장된 세션이 아직 없습니다.</p>
+          </div>
+        </section>
+
+        <div class="sidebar-footer" aria-label="Runtime status">
+          <span class="profile-mark" aria-hidden="true">OH</span>
+          <div class="runtime-copy">
+            <strong id="modelValue">-</strong>
+            <small>
+              <span id="providerValue">-</span>
+              <span aria-hidden="true"> · </span>
+              <span id="permissionValue">-</span>
+            </small>
+          </div>
+        </div>
+      </aside>
+
+      <main class="chat-panel">
+        <header class="chat-header">
+          <div>
+            <button class="chat-title" type="button" id="chatTitle">
+              <span>OpenHarness</span>
+              <svg aria-hidden="true" viewBox="0 0 16 16">
+                <path d="M4.5 6 8 9.5 11.5 6" />
+              </svg>
+            </button>
+          </div>
+          <div class="status-pill" id="readyPill">연결 중</div>
+        </header>
+
+        <section class="messages" id="messages" aria-live="polite">
+          <div class="welcome">
+            <span class="welcome-mark">OH</span>
+            <h2>이 작업공간에서 무엇을 도와드릴까요?</h2>
+            <p>
+              로컬 OpenHarness 백엔드와 연결되어 있습니다. 질문을 입력하거나,
+              슬래시 명령어를 실행하거나, 에이전트에게 저장소를 살펴보게 할 수 있습니다.
+            </p>
+          </div>
+        </section>
+
+        <form class="composer" id="composer">
+          <div class="composer-box">
+            <textarea
+              id="promptInput"
+              rows="1"
+              placeholder="메시지를 입력하세요..."
+              autocomplete="off"
+            ></textarea>
+            <button id="sendButton" type="submit" disabled aria-label="메시지 보내기">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="m22 2-7 20-4-9-9-4Z" />
+                <path d="M22 2 11 13" />
+              </svg>
+            </button>
+          </div>
+          <div class="slash-menu hidden" id="slashMenu" role="listbox" aria-label="슬래시 명령어"></div>
+        </form>
+      </main>
+
+      <div class="sr-only" id="cwdValue">-</div>
+      <div class="sr-only tool-list" id="toolList"></div>
+      <div class="sr-only task-list" id="taskList"></div>
+    </div>
+
+    <div class="modal-backdrop hidden" id="modalHost" role="presentation"></div>
+
+    <script src="/vendor/highlight/highlight.min.js"></script>
+    <script type="module" src="./script.js"></script>
+  </body>
+</html>

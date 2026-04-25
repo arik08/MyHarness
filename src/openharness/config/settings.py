@@ -200,21 +200,21 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             provider="openai",
             api_format="openai",
             auth_source="openai_api_key",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
         ),
         "codex": ProviderProfile(
             label="Codex Subscription",
             provider="openai_codex",
             api_format="openai",
             auth_source="codex_subscription",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
         ),
         "copilot": ProviderProfile(
             label="GitHub Copilot",
             provider="copilot",
             api_format="copilot",
             auth_source="copilot_oauth",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
         ),
         "moonshot": ProviderProfile(
             label="Moonshot (Kimi)",
@@ -295,7 +295,7 @@ def resolve_model_setting(
             )
         if is_claude_family_provider(provider):
             return _CLAUDE_ALIAS_TARGETS["sonnet"]
-        return "gpt-5.4"
+        return "gpt-5.5"
 
     if is_claude_family_provider(provider):
         if normalized == "best":
@@ -309,7 +309,7 @@ def resolve_model_setting(
         return normalize_anthropic_model_name(configured)
 
     if provider in {"openai", "openai_codex", "copilot"} and normalized in {"default", "best"}:
-        return "gpt-5.4"
+        return "gpt-5.5"
 
     return configured
 
@@ -727,6 +727,11 @@ class Settings(BaseModel):
     def merge_cli_overrides(self, **overrides: Any) -> Settings:
         """Return a new Settings with CLI overrides applied (non-None values only)."""
         updates = {k: v for k, v in overrides.items() if v is not None}
+        permission_mode = updates.pop("permission_mode", None)
+        if permission_mode is not None:
+            updates["permission"] = self.permission.model_copy(
+                update={"mode": PermissionMode(str(permission_mode))}
+            )
         # Strip ANSI escape sequences from model name if present
         if "model" in updates and isinstance(updates["model"], str):
             updates["model"] = strip_ansi_escape_sequences(updates["model"])

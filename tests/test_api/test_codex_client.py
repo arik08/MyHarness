@@ -168,9 +168,10 @@ async def test_codex_client_streams_text(monkeypatch):
 
     client = CodexApiClient(_fake_codex_token())
     request = ApiMessageRequest(
-        model="gpt-5.4",
+        model="gpt-5.5",
         messages=[ConversationMessage.from_user_text("hi")],
         system_prompt="Be helpful.",
+        reasoning_effort="high",
     )
     events = [event async for event in client.stream_message(request)]
 
@@ -181,6 +182,7 @@ async def test_codex_client_streams_text(monkeypatch):
     assert complete.usage.output_tokens == 3
     assert sink["url"].endswith("/codex/responses")
     assert sink["json"]["instructions"] == "Be helpful."
+    assert sink["json"]["reasoning"] == {"effort": "high"}
     assert sink["headers"]["OpenAI-Beta"] == "responses=experimental"
 
 
@@ -204,9 +206,10 @@ async def test_codex_client_emits_tool_use(monkeypatch):
 
     client = CodexApiClient(_fake_codex_token())
     request = ApiMessageRequest(
-        model="gpt-5.4",
+        model="gpt-5.5",
         messages=[ConversationMessage.from_user_text("glob")],
         system_prompt="Use tools.",
+        reasoning_effort="max",
         tools=[{"name": "glob", "description": "find files", "input_schema": {"type": "object"}}],
     )
     events = [event async for event in client.stream_message(request)]
@@ -218,4 +221,5 @@ async def test_codex_client_emits_tool_use(monkeypatch):
     assert tool_use.id == "call_abc"
     assert tool_use.name == "glob"
     assert tool_use.input == {"pattern": "src/**/*.py"}
+    assert sink["json"]["reasoning"] == {"effort": "xhigh"}
     assert sink["json"]["tools"][0]["name"] == "glob"

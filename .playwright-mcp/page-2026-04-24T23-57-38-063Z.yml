@@ -1,0 +1,49 @@
+- generic [ref=e2]:
+  - complementary "Session controls" [ref=e3]:
+    - link "OpenHarness chat home" [ref=e4] [cursor=pointer]:
+      - /url: "#"
+      - generic [ref=e5]: OpenHarness
+    - generic [ref=e6]:
+      - text: Session
+      - strong [ref=e7]: Ready
+      - generic [ref=e8]: 4d43776e-5194-4717-bf9d-8b212eecffba
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - text: Model
+        - strong [ref=e11]: gpt-5.5
+      - generic [ref=e12]:
+        - text: Provider
+        - strong [ref=e13]: openai-codex
+      - generic [ref=e14]:
+        - text: Permission
+        - strong [ref=e15]: Default
+      - generic [ref=e16]:
+        - text: CWD
+        - strong [ref=e17]: C:\Users\Myeongcheol\Desktop\Documents\Programing\OpenHarness
+    - generic "Quick prompts" [ref=e18]:
+      - button "Repo summary" [ref=e19] [cursor=pointer]
+      - button "Permissions" [ref=e20] [cursor=pointer]
+      - button "Help" [ref=e21] [cursor=pointer]
+  - main [ref=e22]:
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - text: Live OpenHarness session
+        - heading "Chat with the local agent runtime." [level=1] [ref=e25]
+      - generic [ref=e26]: Ready
+    - generic [ref=e27]:
+      - article [ref=e28]:
+        - generic [ref=e29]: OH
+        - paragraph [ref=e31]: 로컬 OpenHarness 백엔드에 연결 중입니다. 준비가 끝나면 바로 질문을 보낼 수 있습니다.
+      - article [ref=e44]:
+        - generic [ref=e45]: SYS
+        - paragraph [ref=e47]: OpenHarness backend is ready. 메시지를 보내면 실제 로컬 런타임으로 전달됩니다.
+    - generic [ref=e32]:
+      - 'textbox "메시지를 입력하세요. 예: 이 프로젝트에서 테스트 실행 방법 알려줘" [active] [ref=e33]': 이 저장소 구조를 요약해줘
+      - button "Send" [ref=e34] [cursor=pointer]
+  - complementary "Agent activity" [ref=e35]:
+    - generic [ref=e36]:
+      - generic [ref=e37]: Tool activity
+      - paragraph [ref=e39]: 도구 실행이 시작되면 여기에 표시됩니다.
+    - generic [ref=e40]:
+      - generic [ref=e41]: Tasks
+      - paragraph [ref=e48]: 활성 작업이 없습니다.

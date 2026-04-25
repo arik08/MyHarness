@@ -128,7 +128,7 @@ def load_session_snapshot(cwd: str | Path) -> dict[str, Any] | None:
     return _sanitize_snapshot_payload(json.loads(path.read_text(encoding="utf-8")))
 
 
-def list_session_snapshots(cwd: str | Path, limit: int = 20) -> list[dict[str, Any]]:
+def list_session_snapshots(cwd: str | Path, limit: int | None = 20) -> list[dict[str, Any]]:
     """List saved sessions for the project, newest first."""
     session_dir = get_project_session_dir(cwd)
     sessions: list[dict[str, Any]] = []
@@ -158,12 +158,12 @@ def list_session_snapshots(cwd: str | Path, limit: int = 20) -> list[dict[str, A
             })
         except (json.JSONDecodeError, OSError):
             continue
-        if len(sessions) >= limit:
+        if limit is not None and len(sessions) >= limit:
             break
 
     # Also include latest.json if it has no corresponding session file
     latest_path = session_dir / "latest.json"
-    if latest_path.exists() and len(sessions) < limit:
+    if latest_path.exists() and (limit is None or len(sessions) < limit):
         try:
             data = json.loads(latest_path.read_text(encoding="utf-8"))
             sid = data.get("session_id", "latest")
@@ -188,7 +188,7 @@ def list_session_snapshots(cwd: str | Path, limit: int = 20) -> list[dict[str, A
 
     # Sort by created_at descending
     sessions.sort(key=lambda s: s.get("created_at", 0), reverse=True)
-    return sessions[:limit]
+    return sessions if limit is None else sessions[:limit]
 
 
 def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | None:
@@ -205,6 +205,29 @@ def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | Non
         if data.get("session_id") == session_id or session_id == "latest":
             return data
     return None
+
+
+def delete_session_by_id(cwd: str | Path, session_id: str) -> bool:
+    """Delete a saved session snapshot by ID."""
+    session_dir = get_project_session_dir(cwd)
+    deleted = False
+
+    session_path = session_dir / f"session-{session_id}.json"
+    if session_path.exists():
+        session_path.unlink()
+        deleted = True
+
+    latest_path = session_dir / "latest.json"
+    if latest_path.exists():
+        try:
+            data = json.loads(latest_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        if data.get("session_id") == session_id:
+            latest_path.unlink()
+            deleted = True
+
+    return deleted
 
 
 def export_session_markdown(

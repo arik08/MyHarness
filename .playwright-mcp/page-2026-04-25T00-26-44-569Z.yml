@@ -1,0 +1,82 @@
+- generic [ref=e2]:
+  - complementary "Chat navigation" [ref=e3]:
+    - link "OpenHarness chat home" [ref=e4] [cursor=pointer]:
+      - /url: "#"
+      - generic [ref=e5]: OH
+      - generic [ref=e6]: OpenHarness
+    - button "New chat" [ref=e7] [cursor=pointer]
+    - navigation "Quick prompts" [ref=e8]:
+      - button "Repository summary" [ref=e9] [cursor=pointer]
+      - button "Session status" [ref=e10] [cursor=pointer]
+      - button "Permissions" [ref=e11] [cursor=pointer]
+      - button "Commands" [ref=e12] [cursor=pointer]
+    - region "Recent chat history" [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: History
+        - button "Refresh" [active] [ref=e16] [cursor=pointer]
+      - generic [ref=e17]:
+        - button "04/25 09:20 10msg 안녕 Resume this conversation" [ref=e61] [cursor=pointer]:
+          - generic [ref=e62]: 04/25 09:20 10msg 안녕
+          - generic [ref=e63]: Resume this conversation
+        - button "04/25 09:06 10msg 안녕 Resume this conversation" [ref=e64] [cursor=pointer]:
+          - generic [ref=e65]: 04/25 09:06 10msg 안녕
+          - generic [ref=e66]: Resume this conversation
+        - button "04/25 08:43 12msg 하이 Resume this conversation" [ref=e67] [cursor=pointer]:
+          - generic [ref=e68]: 04/25 08:43 12msg 하이
+          - generic [ref=e69]: Resume this conversation
+        - 'button "04/25 08:38 2msg Reply with exactly: GPT-5.4 HIGH OK Resume this conversation" [ref=e70] [cursor=pointer]':
+          - generic [ref=e71]: "04/25 08:38 2msg Reply with exactly: GPT-5.4 HIGH OK"
+          - generic [ref=e72]: Resume this conversation
+        - button "04/25 08:34 2msg 안녕 Resume this conversation" [ref=e73] [cursor=pointer]:
+          - generic [ref=e74]: 04/25 08:34 2msg 안녕
+          - generic [ref=e75]: Resume this conversation
+        - 'button "04/25 08:27 2msg Reply with exactly: GPT-5.5 OK Resume this conversation" [ref=e76] [cursor=pointer]':
+          - generic [ref=e77]: "04/25 08:27 2msg Reply with exactly: GPT-5.5 OK"
+          - generic [ref=e78]: Resume this conversation
+        - button "04/25 08:24 2msg 안녕 Resume this conversation" [ref=e79] [cursor=pointer]:
+          - generic [ref=e80]: 04/25 08:24 2msg 안녕
+          - generic [ref=e81]: Resume this conversation
+        - 'button "04/25 08:22 2msg Reply with exactly: OpenHarness OAuth OK Resume this conversation" [ref=e82] [cursor=pointer]':
+          - generic [ref=e83]: "04/25 08:22 2msg Reply with exactly: OpenHarness OAuth OK"
+          - generic [ref=e84]: Resume this conversation
+    - generic [ref=e19]:
+      - text: Session
+      - strong [ref=e20]: Ready
+      - generic [ref=e21]: f359a6dc-85ba-4226-a466-8d1563226cac
+  - main [ref=e22]:
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - text: Local agent runtime
+        - heading "OpenHarness Chat" [level=1] [ref=e25]
+      - generic [ref=e26]: Ready
+    - generic [ref=e28]:
+      - generic [ref=e29]: OH
+      - heading "How can I help with this workspace?" [level=2] [ref=e30]
+      - paragraph [ref=e31]: This web UI is connected to the local OpenHarness backend. Ask a question, run a slash command, or let the agent inspect the repository.
+    - generic [ref=e32]:
+      - generic [ref=e33]:
+        - textbox "Message OpenHarness..." [ref=e34]
+        - button "Send message" [disabled] [ref=e35]: Send
+      - generic [ref=e36]: Enter to send, Shift+Enter for a new line
+  - complementary "Runtime details" [ref=e37]:
+    - generic [ref=e38]:
+      - generic [ref=e39]: Runtime
+      - generic [ref=e40]:
+        - generic [ref=e41]:
+          - term [ref=e42]: Model
+          - definition [ref=e43]: gpt-5.5
+        - generic [ref=e44]:
+          - term [ref=e45]: Provider
+          - definition [ref=e46]: openai-codex
+        - generic [ref=e47]:
+          - term [ref=e48]: Permission
+          - definition [ref=e49]: Default
+        - generic [ref=e50]:
+          - term [ref=e51]: Workspace
+          - definition [ref=e52]: C:\Users\Myeongcheol\Desktop\Documents\Programing\OpenHarness
+    - generic [ref=e53]:
+      - generic [ref=e54]: Tool activity
+      - paragraph [ref=e56]: Tool calls will appear here.
+    - generic [ref=e57]:
+      - generic [ref=e58]: Tasks
+      - paragraph [ref=e85]: No active tasks.

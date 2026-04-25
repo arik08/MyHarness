@@ -1,0 +1,99 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "OpenHarness home" [ref=e3] [cursor=pointer]:
+      - /url: "#top"
+      - text: OpenHarness
+    - navigation "Primary navigation" [ref=e4]:
+      - link "Capabilities" [ref=e5] [cursor=pointer]:
+        - /url: "#capabilities"
+      - link "Workflow" [ref=e6] [cursor=pointer]:
+        - /url: "#workflow"
+      - link "Terminal" [ref=e7] [cursor=pointer]:
+        - /url: "#terminal"
+    - link "Run locally" [ref=e8] [cursor=pointer]:
+      - /url: "#terminal"
+  - main [ref=e9]:
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - paragraph [ref=e12]: Agent harness infrastructure
+        - heading "Build tool-using agents without rebuilding the harness." [level=1] [ref=e13]
+        - paragraph [ref=e14]: OpenHarness brings agent loops, skill loading, memory, permissions, and multi-agent coordination into one lightweight developer surface.
+        - generic [ref=e15]:
+          - link "Start the web preview" [ref=e16] [cursor=pointer]:
+            - /url: "#terminal"
+          - link "Explore features" [ref=e17] [cursor=pointer]:
+            - /url: "#capabilities"
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - term [ref=e20]: 43+
+            - definition [ref=e21]: tools
+          - generic [ref=e22]:
+            - term [ref=e23]: "114"
+            - definition [ref=e24]: passing tests
+          - generic [ref=e25]:
+            - term [ref=e26]: 5 min
+            - definition [ref=e27]: quick start
+      - region "OpenHarness run dashboard" [ref=e28]:
+        - generic [ref=e29]:
+          - generic [ref=e30]: local session
+          - text: streaming
+        - generic [ref=e31]:
+          - article [ref=e32]:
+            - text: Agent loop
+            - strong [ref=e33]: Tool-call cycle
+            - text: 4 steps completed
+          - article [ref=e34]:
+            - text: Harness toolkit
+            - strong [ref=e35]: File, shell, web
+            - text: 43 tools available
+          - article [ref=e36]:
+            - text: Context memory
+            - strong [ref=e37]: Session resume
+            - text: Auto-compact ready
+          - article [ref=e38]:
+            - text: Coordination
+            - strong [ref=e39]: Parallel agents
+            - text: 2 workers idle
+        - generic [ref=e40]:
+          - generic [ref=e41]: Current trace
+          - list [ref=e42]:
+            - listitem [ref=e43]: Receive user objective
+            - listitem [ref=e44]: Load project instructions
+            - listitem [ref=e45]: Plan tool calls with permissions
+            - listitem [ref=e46]: Stream result back to the client
+    - generic [ref=e47]:
+      - generic [ref=e48]:
+        - paragraph [ref=e49]: Core capabilities
+        - heading "A compact harness for serious agent work." [level=2] [ref=e50]
+      - generic [ref=e51]:
+        - article [ref=e52]:
+          - heading "Agent loop" [level=3] [ref=e53]
+          - paragraph [ref=e54]: Streaming responses, retries, parallel tool execution, and cost-aware runs.
+        - article [ref=e55]:
+          - heading "Tooling" [level=3] [ref=e56]
+          - paragraph [ref=e57]: File, shell, search, web, MCP, and skill-backed workflows in one runtime.
+        - article [ref=e58]:
+          - heading "Governance" [level=3] [ref=e59]
+          - paragraph [ref=e60]: Permission modes, command rules, hooks, and approval boundaries.
+    - generic [ref=e61]:
+      - generic [ref=e62]:
+        - paragraph [ref=e63]: Workflow
+        - heading "From CLI session to durable workstream." [level=2] [ref=e64]
+      - generic [ref=e65]:
+        - button "Plan" [ref=e66]
+        - button "Execute" [ref=e67]
+        - button "Handoff" [ref=e68]
+      - paragraph [ref=e69]: OpenHarness reads local context, assembles the right instructions, and keeps the agent loop grounded before tools are called.
+    - generic [ref=e70]:
+      - generic [ref=e71]:
+        - paragraph [ref=e72]: Local preview
+        - heading "Run the terminal UI or this web page side by side." [level=2] [ref=e73]
+        - paragraph [ref=e74]:
+          - text: The current terminal package remains unchanged. This web surface is a separate preview app under
+          - code [ref=e75]: frontend/web
+          - text: .
+      - generic [ref=e76]:
+        - text: Terminal UI
+        - code [ref=e77]: cd frontend/terminal && npm start
+        - text: Web page
+        - code [ref=e78]: cd frontend/web && npm start

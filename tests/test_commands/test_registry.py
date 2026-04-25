@@ -177,13 +177,13 @@ async def test_model_command_persists(tmp_path: Path, monkeypatch):
 async def test_model_command_accepts_direct_value(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
-    command, args = registry.lookup("/model gpt-5.4")
+    command, args = registry.lookup("/model gpt-5.5")
     assert command is not None
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "gpt-5.4" in result.message
-    assert load_settings().model == "gpt-5.4"
+    assert "gpt-5.5" in result.message
+    assert load_settings().model == "gpt-5.5"
 
 
 @pytest.mark.asyncio

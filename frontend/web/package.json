@@ -1,0 +1,14 @@
+{
+  "name": "@openharness/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@highlightjs/cdn-assets": "^11.11.1",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.45",
+    "marked": "^18.0.2"
+  }
+}

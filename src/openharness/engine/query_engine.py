@@ -29,6 +29,7 @@ class QueryEngine:
         model: str,
         system_prompt: str,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
         context_window_tokens: int | None = None,
         auto_compact_threshold_tokens: int | None = None,
         max_turns: int | None = 8,
@@ -44,6 +45,7 @@ class QueryEngine:
         self._model = model
         self._system_prompt = system_prompt
         self._max_tokens = max_tokens
+        self._reasoning_effort = reasoning_effort
         self._context_window_tokens = context_window_tokens
         self._auto_compact_threshold_tokens = auto_compact_threshold_tokens
         self._max_turns = max_turns
@@ -110,6 +112,10 @@ class QueryEngine:
         """Update the maximum number of agentic turns per user input."""
         self._max_turns = None if max_turns is None else max(1, int(max_turns))
 
+    def set_reasoning_effort(self, effort: str | None) -> None:
+        """Update the reasoning effort for future model requests."""
+        self._reasoning_effort = effort
+
     def set_permission_checker(self, checker: PermissionChecker) -> None:
         """Update the active permission checker for future turns."""
         self._permission_checker = checker
@@ -170,6 +176,7 @@ class QueryEngine:
             model=self._model,
             system_prompt=self._system_prompt,
             max_tokens=self._max_tokens,
+            reasoning_effort=self._reasoning_effort,
             context_window_tokens=self._context_window_tokens,
             auto_compact_threshold_tokens=self._auto_compact_threshold_tokens,
             max_turns=self._max_turns,
@@ -199,6 +206,7 @@ class QueryEngine:
             model=self._model,
             system_prompt=self._system_prompt,
             max_tokens=self._max_tokens,
+            reasoning_effort=self._reasoning_effort,
             context_window_tokens=self._context_window_tokens,
             auto_compact_threshold_tokens=self._auto_compact_threshold_tokens,
             max_turns=max_turns if max_turns is not None else self._max_turns,

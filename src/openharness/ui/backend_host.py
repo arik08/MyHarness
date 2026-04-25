@@ -51,6 +51,7 @@ class BackendHostConfig:
     api_key: str | None = None
     api_format: str | None = None
     active_profile: str | None = None
+    effort: str | None = None
     api_client: SupportsStreamingMessages | None = None
     cwd: str | None = None
     restore_messages: list[dict] | None = None
@@ -87,6 +88,7 @@ class ReactBackendHost:
             api_key=self._config.api_key,
             api_format=self._config.api_format,
             active_profile=self._config.active_profile,
+            effort=self._config.effort,
             api_client=self._config.api_client,
             cwd=self._config.cwd,
             restore_messages=self._config.restore_messages,
@@ -104,7 +106,10 @@ class ReactBackendHost:
             BackendEvent.ready(
                 self._bundle.app_state.get(),
                 get_task_manager().list_tasks(),
-                [f"/{command.name}" for command in self._bundle.commands.list_commands()],
+                [
+                    {"name": f"/{command.name}", "description": command.description}
+                    for command in self._bundle.commands.list_commands()
+                ],
             )
         )
         await self._emit(self._status_snapshot())
@@ -120,6 +125,9 @@ class ReactBackendHost:
                     continue
                 if request.type == "list_sessions":
                     await self._handle_list_sessions()
+                    continue
+                if request.type == "delete_session":
+                    await self._handle_delete_session(request.value or "")
                     continue
                 if request.type == "select_command":
                     await self._handle_select_command(request.command or "")
@@ -378,7 +386,7 @@ class ReactBackendHost:
         import time as _time
 
         assert self._bundle is not None
-        sessions = self._bundle.session_backend.list_snapshots(self._bundle.cwd, limit=10)
+        sessions = self._bundle.session_backend.list_snapshots(self._bundle.cwd, limit=None)
         options = []
         for s in sessions:
             ts = _time.strftime("%m/%d %H:%M", _time.localtime(s["created_at"]))
@@ -394,6 +402,18 @@ class ReactBackendHost:
                 select_options=options,
             )
         )
+
+    async def _handle_delete_session(self, session_id: str) -> None:
+        assert self._bundle is not None
+        session_id = session_id.strip()
+        if not session_id:
+            await self._emit(BackendEvent(type="error", message="Missing session id"))
+            return
+        deleted = self._bundle.session_backend.delete_by_id(self._bundle.cwd, session_id)
+        if not deleted:
+            await self._emit(BackendEvent(type="error", message=f"Session not found: {session_id}"))
+            return
+        await self._handle_list_sessions()
 
     async def _handle_select_command(self, command_name: str) -> None:
         assert self._bundle is not None
@@ -496,9 +516,11 @@ class ReactBackendHost:
 
         if command == "effort":
             options = [
+                {"value": "none", "label": "None", "description": "Lowest latency", "active": settings.effort == "none"},
                 {"value": "low", "label": "Low", "description": "Fastest responses", "active": settings.effort == "low"},
                 {"value": "medium", "label": "Medium", "description": "Balanced reasoning", "active": settings.effort == "medium"},
                 {"value": "high", "label": "High", "description": "Deepest reasoning", "active": settings.effort == "high"},
+                {"value": "xhigh", "label": "XHigh", "description": "Maximum reasoning", "active": settings.effort in {"xhigh", "max"}},
             ]
             await self._emit(
                 BackendEvent(
@@ -629,7 +651,8 @@ class ReactBackendHost:
         if provider_name in {"openai-codex", "openai", "openai-compatible", "openrouter", "github_copilot"}:
             families.extend(
                 [
-                    ("gpt-5.4", "OpenAI flagship"),
+                    ("gpt-5.5", "OpenAI flagship"),
+                    ("gpt-5.4", "Previous GPT-5.4"),
                     ("gpt-5", "General GPT-5"),
                     ("gpt-4.1", "Stable GPT-4.1"),
                     ("o4-mini", "Fast reasoning"),
@@ -746,6 +769,7 @@ async def run_backend_host(
     api_key: str | None = None,
     api_format: str | None = None,
     active_profile: str | None = None,
+    effort: str | None = None,
     cwd: str | None = None,
     api_client: SupportsStreamingMessages | None = None,
     restore_messages: list[dict] | None = None,
@@ -768,6 +792,7 @@ async def run_backend_host(
             api_key=api_key,
             api_format=api_format,
             active_profile=active_profile,
+            effort=effort,
             api_client=api_client,
             cwd=cwd,
             restore_messages=restore_messages,

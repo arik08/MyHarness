@@ -198,7 +198,7 @@ class TestLoadSaveSettings:
                     provider="openai_codex",
                     api_format="openai",
                     auth_source="codex_subscription",
-                    default_model="gpt-5.4",
+                    default_model="gpt-5.5",
                     last_model="gpt-5",
                 )
             },
@@ -219,7 +219,7 @@ class TestLoadSaveSettings:
                     provider="openai",
                     api_format="openai",
                     auth_source="openai_api_key",
-                    default_model="gpt-5.4",
+                    default_model="gpt-5.5",
                     context_window_tokens=100000,
                     auto_compact_threshold_tokens=90000,
                 )
@@ -253,8 +253,8 @@ class TestLoadSaveSettings:
                     provider="openai_codex",
                     api_format="openai",
                     auth_source="codex_subscription",
-                    default_model="gpt-5.4",
-                    last_model="gpt-5.4",
+                    default_model="gpt-5.5",
+                    last_model="gpt-5.5",
                 ),
             },
         )
@@ -265,7 +265,7 @@ class TestLoadSaveSettings:
         assert profile_name == "codex"
         assert updated.provider == "openai_codex"
         assert updated.base_url is None
-        assert updated.model == "gpt-5.4"
+        assert updated.model == "gpt-5.5"
         assert profile.provider == "openai_codex"
         assert profile.auth_source == "codex_subscription"
 
@@ -291,8 +291,8 @@ class TestLoadSaveSettings:
                     provider="openai",
                     api_format="openai",
                     auth_source="openai_api_key",
-                    default_model="gpt-5.4",
-                    last_model="gpt-5.4",
+                    default_model="gpt-5.5",
+                    last_model="gpt-5.5",
                     base_url="https://relay.example.com/v1",
                     context_window_tokens=200000,
                     auto_compact_threshold_tokens=180000,

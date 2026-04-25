@@ -47,7 +47,7 @@ def test_setup_flow_selects_profile_and_model(tmp_path: Path, monkeypatch):
         logged_in.append(provider)
 
     monkeypatch.setattr("openharness.cli._select_setup_workflow", fake_select)
-    monkeypatch.setattr("openharness.cli._prompt_model_for_profile", lambda profile: "gpt-5.4")
+    monkeypatch.setattr("openharness.cli._prompt_model_for_profile", lambda profile: "gpt-5.5")
     monkeypatch.setattr("openharness.cli._login_provider", fake_login)
 
     result = runner.invoke(app, ["setup"])
@@ -57,7 +57,7 @@ def test_setup_flow_selects_profile_and_model(tmp_path: Path, monkeypatch):
 
     settings = load_settings()
     assert settings.active_profile == "codex"
-    assert settings.resolve_profile()[1].last_model == "gpt-5.4"
+    assert settings.resolve_profile()[1].last_model == "gpt-5.5"
 
 
 def test_select_from_menu_uses_questionary_when_tty(monkeypatch):
@@ -198,11 +198,11 @@ def test_dry_run_uses_preview_builder_and_skips_repl(monkeypatch):
     monkeypatch.setattr("openharness.cli._build_dry_run_preview", fake_build_dry_run_preview)
     monkeypatch.setattr("openharness.ui.app.run_repl", fake_run_repl)
 
-    result = runner.invoke(app, ["--dry-run", "--print", "ship it", "--model", "gpt-5.4"])
+    result = runner.invoke(app, ["--dry-run", "--print", "ship it", "--model", "gpt-5.5"])
 
     assert result.exit_code == 0
     assert captured["prompt"] == "ship it"
-    assert captured["model"] == "gpt-5.4"
+    assert captured["model"] == "gpt-5.5"
     assert "OpenHarness Dry Run" in result.output
     assert "ship it" in result.output
 

@@ -1,0 +1,39 @@
+- generic [ref=e2]:
+  - complementary "Chat navigation" [ref=e3]:
+    - link "OpenHarness chat home" [ref=e4] [cursor=pointer]:
+      - /url: "#"
+      - generic [ref=e5]: OH
+      - generic [ref=e6]: OpenHarness
+    - button "New chat" [ref=e7] [cursor=pointer]:
+      - generic [ref=e8]: +
+      - text: New chat
+    - navigation "Workspace shortcuts" [ref=e9]:
+      - button "Repository" [ref=e10] [cursor=pointer]
+      - button "Status" [ref=e11] [cursor=pointer]
+      - button "Permissions" [ref=e12] [cursor=pointer]
+      - button "Commands" [ref=e13] [cursor=pointer]
+    - region "Recent chat history" [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]: Recent
+        - button "Refresh history" [ref=e17] [cursor=pointer]: Refresh
+      - paragraph [ref=e19]: No saved sessions yet.
+    - generic "Runtime status" [ref=e20]:
+      - generic [ref=e21]:
+        - generic [ref=e22]: "-"
+        - strong [ref=e23]: "-"
+      - generic [ref=e24]: "-"
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - button "OpenHarness" [ref=e28] [cursor=pointer]:
+        - generic [ref=e29]: OpenHarness
+        - img [ref=e30]
+      - generic [ref=e32]: Starting backend
+    - generic [ref=e34]:
+      - heading "How can I help with this workspace?" [level=2] [ref=e35]
+      - paragraph [ref=e36]: This web UI is connected to the local OpenHarness backend. Ask a question, run a slash command, or let the agent inspect the repository.
+    - generic [ref=e37]:
+      - generic [ref=e38]:
+        - textbox "Reply..." [ref=e39]
+        - button "Send message" [disabled] [ref=e40]: ↑
+      - generic [ref=e41]: OpenHarness can make mistakes. Check important results.
+  - generic [ref=e42]: "-"

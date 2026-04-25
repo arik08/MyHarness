@@ -20,6 +20,7 @@ class FrontendRequest(BaseModel):
         "permission_response",
         "question_response",
         "list_sessions",
+        "delete_session",
         "select_command",
         "apply_select_command",
         "shutdown",
@@ -92,7 +93,7 @@ class BackendEvent(BaseModel):
     tasks: list[TaskSnapshot] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
     bridge_sessions: list[dict[str, Any]] | None = None
-    commands: list[str] | None = None
+    commands: list[str | dict[str, Any]] | None = None
     modal: dict[str, Any] | None = None
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None
@@ -114,7 +115,7 @@ class BackendEvent(BaseModel):
         cls,
         state: AppState,
         tasks: list[TaskRecord],
-        commands: list[str],
+        commands: list[str | dict[str, Any]],
     ) -> "BackendEvent":
         return cls(
             type="ready",

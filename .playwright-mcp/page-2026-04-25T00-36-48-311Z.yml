@@ -1,0 +1,68 @@
+- generic [ref=e2]:
+  - complementary "Chat navigation" [ref=e3]:
+    - link "OpenHarness chat home" [ref=e4] [cursor=pointer]:
+      - /url: "#"
+      - generic [ref=e5]: OH
+      - generic [ref=e6]: OpenHarness
+    - button "+ New chat" [ref=e7] [cursor=pointer]:
+      - generic [ref=e8]: +
+      - text: New chat
+    - navigation "Quick prompts" [ref=e9]:
+      - button "Repository summary" [ref=e10] [cursor=pointer]
+      - button "Session status" [ref=e11] [cursor=pointer]
+      - button "Permissions" [ref=e12] [cursor=pointer]
+      - button "Commands" [ref=e13] [cursor=pointer]
+    - region "Recent chat history" [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]: History
+        - button "Refresh" [ref=e17] [cursor=pointer]
+      - generic [ref=e18]:
+        - button "04/25 09:35 4msg 안녕? Resume this conversation" [ref=e44] [cursor=pointer]:
+          - generic [ref=e45]: 04/25 09:35 4msg 안녕?
+          - generic [ref=e46]: Resume this conversation
+        - button "04/25 09:20 10msg 안녕 Resume this conversation" [ref=e47] [cursor=pointer]:
+          - generic [ref=e48]: 04/25 09:20 10msg 안녕
+          - generic [ref=e49]: Resume this conversation
+        - button "04/25 09:06 10msg 안녕 Resume this conversation" [ref=e50] [cursor=pointer]:
+          - generic [ref=e51]: 04/25 09:06 10msg 안녕
+          - generic [ref=e52]: Resume this conversation
+        - button "04/25 08:43 12msg 하이 Resume this conversation" [ref=e53] [cursor=pointer]:
+          - generic [ref=e54]: 04/25 08:43 12msg 하이
+          - generic [ref=e55]: Resume this conversation
+        - 'button "04/25 08:38 2msg Reply with exactly: GPT-5.4 HIGH OK Resume this conversation" [ref=e56] [cursor=pointer]':
+          - generic [ref=e57]: "04/25 08:38 2msg Reply with exactly: GPT-5.4 HIGH OK"
+          - generic [ref=e58]: Resume this conversation
+        - button "04/25 08:34 2msg 안녕 Resume this conversation" [ref=e59] [cursor=pointer]:
+          - generic [ref=e60]: 04/25 08:34 2msg 안녕
+          - generic [ref=e61]: Resume this conversation
+        - 'button "04/25 08:27 2msg Reply with exactly: GPT-5.5 OK Resume this conversation" [ref=e62] [cursor=pointer]':
+          - generic [ref=e63]: "04/25 08:27 2msg Reply with exactly: GPT-5.5 OK"
+          - generic [ref=e64]: Resume this conversation
+        - button "04/25 08:24 2msg 안녕 Resume this conversation" [ref=e65] [cursor=pointer]:
+          - generic [ref=e66]: 04/25 08:24 2msg 안녕
+          - generic [ref=e67]: Resume this conversation
+        - 'button "04/25 08:22 2msg Reply with exactly: OpenHarness OAuth OK Resume this conversation" [ref=e68] [cursor=pointer]':
+          - generic [ref=e69]: "04/25 08:22 2msg Reply with exactly: OpenHarness OAuth OK"
+          - generic [ref=e70]: Resume this conversation
+    - generic "Runtime status" [ref=e20]:
+      - generic [ref=e21]:
+        - generic [ref=e22]: openai-codex
+        - strong [ref=e23]: gpt-5.5
+      - generic [ref=e24]: Default
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - button "OpenHarness local" [ref=e28] [cursor=pointer]:
+        - text: OpenHarness
+        - generic [ref=e29]: local
+      - generic [ref=e30]: Ready
+    - generic [ref=e32]:
+      - generic [ref=e33]: OH
+      - heading "How can I help with this workspace?" [level=2] [ref=e34]
+      - paragraph [ref=e35]: This web UI is connected to the local OpenHarness backend. Ask a question, run a slash command, or let the agent inspect the repository.
+    - generic [ref=e36]:
+      - generic [ref=e37]:
+        - textbox "Message OpenHarness..." [active] [ref=e38]: /status
+        - button "Send message" [ref=e39] [cursor=pointer]: Send
+      - generic [ref=e40]: Enter to send, Shift+Enter for a new line
+  - generic [ref=e41]: C:\Users\Myeongcheol\Desktop\Documents\Programing\OpenHarness
+  - paragraph [ref=e71]: No active tasks.
