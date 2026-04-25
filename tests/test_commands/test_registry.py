@@ -95,6 +95,41 @@ async def test_permissions_command_supports_explicit_remote_admin_opt_in(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_learned_skills_command_toggles_setting(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/learned-skills off")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "disabled" in result.message
+    assert load_settings().learning.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_learned_skills_command_shows_recent_metadata(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    engine = _make_engine(tmp_path)
+    engine.tool_metadata["recent_learned_skills"] = [
+        {
+            "skill": "learned-python-pytest",
+            "action": "created",
+            "summary": "Use py -3 on Windows",
+            "path": str(tmp_path / ".skills" / "learned-python-pytest" / "SKILL.md"),
+        }
+    ]
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/learned-skills")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=engine, cwd=str(tmp_path)))
+
+    assert "Automatic learned skills: enabled" in result.message
+    assert "learned-python-pytest" in result.message
+
+
+@pytest.mark.asyncio
 async def test_plugin_command_is_marked_local_only(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()

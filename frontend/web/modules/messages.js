@@ -148,6 +148,9 @@ function appendMessage(role, text, attachments = []) {
   } else {
     content = document.createElement("div");
     content.className = "markdown-body";
+    if (role !== "user") {
+      content.dataset.restoreEscapedInlineMarkdown = "true";
+    }
     const promptContent = role === "user" ? createPromptTokenContent(text) : null;
     if (promptContent) {
       content.append(promptContent);
@@ -175,6 +178,18 @@ function resetWorkflowPanel() {
   state.workflowList = null;
   state.workflowSummary = null;
   state.workflowSteps = [];
+  state.workflowStartedAt = 0;
+}
+
+function collapseWorkflowPanel() {
+  if (!state.workflowNode) {
+    return;
+  }
+  state.workflowNode.open = false;
+}
+
+function finalizeWorkflowSummary() {
+  updateWorkflowSummary();
 }
 
 function ensureWorkflowPanel() {
@@ -192,10 +207,10 @@ function ensureWorkflowPanel() {
   const summary = document.createElement("summary");
   const title = document.createElement("span");
   title.className = "workflow-title";
-  title.textContent = "작업 단계";
+  title.textContent = "에이전트 동작";
   const count = document.createElement("span");
   count.className = "workflow-count";
-  count.textContent = "진행 중";
+  count.textContent = "(0초) 0 단계";
   summary.append(title, count);
 
   const list = document.createElement("div");
@@ -209,6 +224,7 @@ function ensureWorkflowPanel() {
   state.workflowList = list;
   state.workflowSummary = count;
   state.workflowSteps = [];
+  state.workflowStartedAt = performance.now();
   appendWorkflowStep("요청 이해", "사용자 요청을 확인했습니다.", "done");
   appendWorkflowStep("작업 계획", "필요한 정보와 도구를 판단합니다.", "running");
   scrollMessagesToBottom();
@@ -310,8 +326,13 @@ function updateWorkflowSummary() {
     return;
   }
   const total = state.workflowSteps.length;
-  const running = state.workflowSteps.filter((row) => row.classList.contains("running")).length;
-  state.workflowSummary.textContent = running ? `${total}개 단계 진행 중` : `${total}개 단계`;
+  const elapsed = state.workflowStartedAt ? `(${formatDuration(performance.now() - state.workflowStartedAt)})` : "";
+  state.workflowSummary.textContent = elapsed ? `${elapsed} ${total} 단계` : `${total} 단계`;
+}
+
+function formatDuration(milliseconds) {
+  const seconds = Math.max(1, Math.round(Number(milliseconds || 0) / 1000));
+  return `${seconds}초`;
 }
 
 function truncateText(text, maxLength) {
@@ -369,6 +390,8 @@ function updateTasks(tasks) {
     createAttachmentPreview,
     appendMessage,
     resetWorkflowPanel,
+    collapseWorkflowPanel,
+    finalizeWorkflowSummary,
     ensureWorkflowPanel,
     appendWorkflowEvent,
     markPlanningStepDone,

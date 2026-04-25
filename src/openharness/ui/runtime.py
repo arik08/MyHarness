@@ -283,6 +283,8 @@ async def build_runtime(
         "async_agent_tasks": [],
         "recent_work_log": [],
         "recent_verified_work": [],
+        "recent_tool_failures": [],
+        "recent_learned_skills": [],
         "task_focus_state": {
             "goal": "",
             "recent_goals": [],
@@ -314,6 +316,7 @@ async def build_runtime(
         permission_prompt=permission_prompt,
         ask_user_prompt=ask_user_prompt,
         hook_executor=hook_executor,
+        auto_skill_learning_enabled=settings.learning.enabled,
         tool_metadata={
             "mcp_manager": mcp_manager,
             "bridge_manager": bridge_manager,

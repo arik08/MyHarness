@@ -29,6 +29,7 @@ from openharness.engine.stream_events import (
 )
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
 from openharness.output_styles import load_output_styles
+from openharness.prompts import build_runtime_system_prompt
 from openharness.skills import load_skill_registry
 from openharness.skills.types import SkillDefinition
 from openharness.tasks import get_task_manager
@@ -136,6 +137,9 @@ class ReactBackendHost:
                     continue
                 if request.type == "refresh_skills":
                     await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
+                    continue
+                if request.type == "set_system_prompt":
+                    await self._handle_set_system_prompt(request.value or "")
                     continue
                 if request.type == "select_command":
                     await self._handle_select_command(request.command or "")
@@ -542,6 +546,28 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="error", message=f"Session not found: {session_id}"))
             return
         await self._handle_list_sessions()
+
+    async def _handle_set_system_prompt(self, value: str) -> None:
+        assert self._bundle is not None
+        system_prompt = value.strip()
+        if system_prompt:
+            self._bundle.settings_overrides["system_prompt"] = system_prompt
+        else:
+            self._bundle.settings_overrides.pop("system_prompt", None)
+        prompt_text = build_runtime_system_prompt(
+            self._bundle.current_settings(),
+            cwd=self._bundle.cwd,
+            latest_user_prompt=None,
+            extra_skill_dirs=self._bundle.extra_skill_dirs,
+            extra_plugin_roots=self._bundle.extra_plugin_roots,
+        )
+        self._bundle.engine.set_system_prompt(prompt_text)
+        await self._emit(
+            BackendEvent(
+                type="transcript_item",
+                item=TranscriptItem(role="system", text="시스템 프롬프트 설정을 적용했습니다."),
+            )
+        )
 
     async def _handle_select_command(self, command_name: str) -> None:
         assert self._bundle is not None

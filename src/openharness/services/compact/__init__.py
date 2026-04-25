@@ -637,6 +637,32 @@ def create_work_log_attachment_if_needed(
     )
 
 
+def create_recent_learned_skills_attachment_if_needed(
+    learned_skills: Any,
+) -> CompactAttachment | None:
+    if not isinstance(learned_skills, list) or not learned_skills:
+        return None
+    entries: list[str] = []
+    for item in learned_skills[-6:]:
+        if isinstance(item, dict):
+            skill = str(item.get("skill") or "").strip()
+            summary = str(item.get("summary") or "").strip()
+            action = str(item.get("action") or "").strip()
+            if skill:
+                entries.append(f"{skill} [{action or 'learned'}]: {summary[:220]}")
+        elif str(item).strip():
+            entries.append(str(item).strip()[:260])
+    if not entries:
+        return None
+    return _create_attachment(
+        "recent_learned_skills",
+        "Recently learned skills",
+        ["Automatically learned skill updates from verified repeated failures:"]
+        + [f"- {entry}" for entry in entries],
+        metadata={"entries": entries},
+    )
+
+
 def _create_hook_attachments(hook_note: str | None) -> list[CompactAttachment]:
     if not hook_note or not hook_note.strip():
         return []
@@ -664,6 +690,7 @@ def _build_compact_attachments(
         create_recent_files_attachment_if_needed(metadata.get("read_file_state")),
         create_plan_attachment_if_needed(metadata),
         create_invoked_skills_attachment_if_needed(metadata.get("invoked_skills")),
+        create_recent_learned_skills_attachment_if_needed(metadata.get("recent_learned_skills")),
         create_async_agent_attachment_if_needed(metadata.get("async_agent_state")),
         create_work_log_attachment_if_needed(metadata.get("recent_work_log")),
     ]

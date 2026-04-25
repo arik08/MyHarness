@@ -2,8 +2,8 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import crypto from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { extname, isAbsolute, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 
@@ -12,10 +12,36 @@ const repoRoot = normalize(join(root, "../.."));
 const webRoot = normalize(root);
 const assetsRoot = normalize(join(repoRoot, "assets"));
 const vendorRoot = normalize(join(root, "node_modules"));
+const playgroundRoot = normalize(join(repoRoot, "Playground"));
+const defaultWorkspaceName = "Default";
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
+const reservedWorkspaceNames = new Set([
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  "COM1",
+  "COM2",
+  "COM3",
+  "COM4",
+  "COM5",
+  "COM6",
+  "COM7",
+  "COM8",
+  "COM9",
+  "LPT1",
+  "LPT2",
+  "LPT3",
+  "LPT4",
+  "LPT5",
+  "LPT6",
+  "LPT7",
+  "LPT8",
+  "LPT9",
+]);
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -84,6 +110,120 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+function validateWorkspaceName(value) {
+  const name = normalizeWorkspaceName(value);
+  if (!name) {
+    return { ok: false, error: "Project name is required" };
+  }
+  if (name === "." || name === ".." || name.length > 80) {
+    return { ok: false, error: "Invalid project name" };
+  }
+  if (/[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name)) {
+    return { ok: false, error: "Project name contains invalid Windows path characters" };
+  }
+  if (reservedWorkspaceNames.has(name.toUpperCase())) {
+    return { ok: false, error: "Project name is reserved on Windows" };
+  }
+  return { ok: true, name };
+}
+
+function normalizeWorkspaceName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_");
+}
+
+function workspacePathFromName(name) {
+  const validation = validateWorkspaceName(name);
+  if (!validation.ok) {
+    throw new Error(validation.error);
+  }
+  const workspacePath = normalize(join(playgroundRoot, validation.name));
+  const rel = relative(playgroundRoot, workspacePath);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error("Workspace path must stay inside Playground");
+  }
+  return { name: validation.name, path: workspacePath };
+}
+
+function workspaceFromDirectoryName(name) {
+  const displayName = String(name || "").trim();
+  if (!displayName) {
+    throw new Error("Project name is required");
+  }
+  if (/[<>:"/\\|?*\x00-\x1f]/.test(displayName) || /[. ]$/.test(displayName)) {
+    throw new Error("Project name contains invalid Windows path characters");
+  }
+  if (reservedWorkspaceNames.has(displayName.toUpperCase())) {
+    throw new Error("Project name is reserved on Windows");
+  }
+  const workspacePath = normalize(join(playgroundRoot, displayName));
+  const rel = relative(playgroundRoot, workspacePath);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel) || rel.includes("\\") || rel.includes("/")) {
+    throw new Error("Workspace path must stay inside Playground");
+  }
+  return { name: displayName, path: workspacePath };
+}
+
+function workspaceFromPath(candidate) {
+  const workspacePath = normalize(String(candidate || ""));
+  const rel = relative(playgroundRoot, workspacePath);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel) || rel.includes("\\") || rel.includes("/")) {
+    throw new Error("Workspace cwd must be a direct Playground child");
+  }
+  return workspaceFromDirectoryName(rel);
+}
+
+async function ensureWorkspace(name = defaultWorkspaceName) {
+  const workspace = workspacePathFromName(name);
+  await mkdir(playgroundRoot, { recursive: true });
+  await mkdir(workspace.path, { recursive: true });
+  return workspace;
+}
+
+async function deleteWorkspace(name) {
+  const workspace = workspacePathFromName(name);
+  await rm(workspace.path, { recursive: true, force: true });
+  return workspace;
+}
+
+async function listWorkspaces() {
+  await mkdir(playgroundRoot, { recursive: true });
+  const entries = await readdir(playgroundRoot, { withFileTypes: true });
+  const directories = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      try {
+        return workspaceFromDirectoryName(entry.name);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.name.localeCompare(right.name));
+  if (!directories.length) {
+    return [await ensureWorkspace(defaultWorkspaceName)];
+  }
+  return directories;
+}
+
+async function resolveSessionWorkspace(options = {}) {
+  if (options.cwd) {
+    const workspace = workspaceFromPath(options.cwd);
+    try {
+      const info = await stat(workspace.path);
+      if (info.isDirectory()) {
+        return workspace;
+      }
+    } catch {
+      return ensureWorkspace(defaultWorkspaceName);
+    }
+    return workspace;
+  }
+  return ensureWorkspace(defaultWorkspaceName);
+}
+
 function sendBackend(session, payload) {
   if (!session.process || session.process.killed || session.process.stdin.destroyed) {
     return false;
@@ -129,9 +269,10 @@ function getLanUrl() {
   return "";
 }
 
-function createBackendSession(options = {}) {
+async function createBackendSession(options = {}) {
   const id = crypto.randomUUID();
-  const args = ["-3", "-m", "openharness", "--backend-only", "--cwd", repoRoot];
+  const workspace = await resolveSessionWorkspace(options);
+  const args = ["-3", "-m", "openharness", "--backend-only", "--cwd", workspace.path];
   const env = {
     ...process.env,
     PYTHONPATH: [join(repoRoot, "src"), process.env.PYTHONPATH].filter(Boolean).join(";"),
@@ -142,6 +283,9 @@ function createBackendSession(options = {}) {
   }
   if (options.model) {
     args.push("--model", options.model);
+  }
+  if (options.systemPrompt) {
+    args.push("--system-prompt", String(options.systemPrompt));
   }
 
   const child = spawn("py", args, {
@@ -156,10 +300,16 @@ function createBackendSession(options = {}) {
     clients: new Set(),
     events: [],
     createdAt: Date.now(),
+    workspace,
   };
   sessions.set(id, session);
 
-  emit(session, { type: "web_session", session_id: id, message: "Starting OpenHarness backend..." });
+  emit(session, {
+    type: "web_session",
+    session_id: id,
+    message: "Starting MyHarness backend...",
+    workspace,
+  });
 
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
     if (!line.startsWith(protocolPrefix)) {
@@ -190,10 +340,44 @@ function createBackendSession(options = {}) {
 }
 
 async function handleApi(request, response, pathname) {
+  if (request.method === "GET" && pathname === "/api/workspaces") {
+    const workspaces = await listWorkspaces();
+    json(response, 200, { root: playgroundRoot, workspaces });
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/workspaces") {
+    try {
+      const body = await readJson(request);
+      const workspace = await ensureWorkspace(body.name);
+      const workspaces = await listWorkspaces();
+      json(response, 200, { workspace, workspaces });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Invalid workspace" });
+    }
+    return true;
+  }
+
+  if (request.method === "DELETE" && pathname === "/api/workspaces") {
+    try {
+      const body = await readJson(request);
+      const workspace = await deleteWorkspace(body.name);
+      const workspaces = await listWorkspaces();
+      json(response, 200, { deleted: workspace, workspaces });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not delete workspace" });
+    }
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/session") {
-    const options = await readJson(request);
-    const session = createBackendSession(options);
-    json(response, 200, { sessionId: session.id });
+    try {
+      const options = await readJson(request);
+      const session = await createBackendSession(options);
+      json(response, 200, { sessionId: session.id, workspace: session.workspace });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not start session" });
+    }
     return true;
   }
 
@@ -297,7 +481,7 @@ createServer(async (request, response) => {
     console.log(`Listening on all network interfaces.`);
   }
   console.log("");
-  console.log("OpenHarness web is ready:");
+  console.log("MyHarness web is ready:");
   console.log(`  ${localUrl}`);
   if (lanUrl) {
     console.log(`  ${lanUrl}`);

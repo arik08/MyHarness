@@ -30,6 +30,8 @@ from openharness.engine.stream_events import (
     ToolExecutionStarted,
 )
 from openharness.hooks import HookEvent, HookExecutor
+from openharness.learning import run_auto_skill_learning
+from openharness.learning.service import remember_tool_failure
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
@@ -96,6 +98,7 @@ class QueryContext:
     max_turns: int | None = 200
     hook_executor: HookExecutor | None = None
     tool_metadata: dict[str, object] | None = None
+    auto_skill_learning_enabled: bool = True
 
 
 def _append_capped_unique(bucket: list[Any], value: Any, *, limit: int) -> None:
@@ -346,6 +349,12 @@ def _record_tool_carryover(
     resolved_file_path: str | None,
 ) -> None:
     if is_error:
+        remember_tool_failure(
+            context.tool_metadata,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_output=tool_output,
+        )
         return
     if resolved_file_path is not None:
         _remember_active_artifact(context.tool_metadata, resolved_file_path)
@@ -601,6 +610,10 @@ async def run_query(
                         "stop_reason": "tool_uses_empty",
                     },
                 )
+            run_auto_skill_learning(
+                context.tool_metadata,
+                enabled=context.auto_skill_learning_enabled,
+            )
             return
 
         tool_calls = final_message.tool_uses

@@ -30,6 +30,7 @@ class FrontendRequest(BaseModel):
         "list_sessions",
         "delete_session",
         "refresh_skills",
+        "set_system_prompt",
         "select_command",
         "apply_select_command",
         "shutdown",

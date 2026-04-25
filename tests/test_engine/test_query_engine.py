@@ -493,6 +493,49 @@ async def test_query_engine_tracks_recent_read_files_and_skills(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_query_engine_records_repeated_tool_failures_for_learning(tmp_path: Path):
+    missing = tmp_path / "missing.txt"
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\n", encoding="utf-8")
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(name="read_file", input={"path": str(missing)}),
+                            ToolUseBlock(name="read_file", input={"path": str(missing)}),
+                            ToolUseBlock(name="read_file", input={"path": str(sample)}),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={},
+        auto_skill_learning_enabled=False,
+    )
+
+    events = [event async for event in engine.submit_message("learn from repeated failure")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    failures = engine.tool_metadata.get("recent_tool_failures")
+    assert isinstance(failures, list)
+    assert len(failures) == 2
+    assert all("missing" in failure["summary"] for failure in failures)
+
+
+@pytest.mark.asyncio
 async def test_query_engine_tracks_async_agent_activity(tmp_path: Path, monkeypatch):
     registry = create_default_tool_registry()
     agent_tool = registry.get("agent")

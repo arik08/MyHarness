@@ -4,7 +4,7 @@ export const state = {
   busy: false,
   assistantNode: null,
   source: null,
-  chatTitle: "OpenHarness",
+  chatTitle: "MyHarness",
   activeHistoryId: null,
   commands: [],
   skills: [],
@@ -15,11 +15,17 @@ export const state = {
   pendingScrollRestoreId: null,
   ignoreScrollSave: false,
   autoFollowMessages: true,
+  autoScrollUntil: 0,
   editingTitle: false,
   model: "-",
   effort: "-",
   provider: "-",
   permissionMode: "-",
+  systemPrompt: localStorage.getItem("openharness:systemPrompt") || "",
+  workspaceName: localStorage.getItem("openharness:workspaceName") || "",
+  workspacePath: "",
+  workspaces: [],
+  switchingWorkspace: false,
   returnToSettingsOnDismiss: false,
   workflowNode: null,
   workflowList: null,
@@ -33,6 +39,7 @@ export const els = {
   appShell: document.querySelector(".app-shell"),
   messages: document.querySelector("#messages"),
   composer: document.querySelector("#composer"),
+  composerBox: document.querySelector(".composer-box"),
   input: document.querySelector("#promptInput"),
   send: document.querySelector("#sendButton"),
   sessionStatus: document.querySelector("#sessionStatus"),
@@ -47,10 +54,19 @@ export const els = {
   historyList: document.querySelector("#historyList"),
   chatTitleButton: document.querySelector("#chatTitle"),
   chatTitle: document.querySelector("#chatTitle span"),
+  themeToggle: document.querySelector("[data-action='toggle-theme']"),
   slashMenu: document.querySelector("#slashMenu"),
   attachmentTray: document.querySelector("#attachmentTray"),
   composerToken: document.querySelector("#composerToken"),
+  workspaceNames: document.querySelectorAll("[data-workspace-name]"),
 };
+
+if (els.input) {
+  els.input.spellcheck = false;
+  els.input.setAttribute("spellcheck", "false");
+  els.input.setAttribute("autocorrect", "off");
+  els.input.setAttribute("autocapitalize", "off");
+}
 
 export const STATUS_LABELS = {
   connecting: "연결 중",
@@ -82,14 +98,14 @@ export const COMMAND_DESCRIPTIONS = {
   "/diff": "Git diff 출력을 보여줍니다",
   "/doctor": "환경 진단 정보를 보여줍니다",
   "/effort": "추론 강도를 보거나 변경합니다",
-  "/exit": "OpenHarness를 종료합니다",
+  "/exit": "MyHarness를 종료합니다",
   "/export": "현재 대화 기록을 내보냅니다",
   "/fast": "빠른 모드를 보거나 변경합니다",
   "/feedback": "CLI 피드백을 로컬 로그에 저장합니다",
   "/files": "현재 작업공간의 파일을 나열합니다",
   "/help": "사용 가능한 명령어를 보여줍니다",
   "/hooks": "설정된 훅을 보여줍니다",
-  "/init": "프로젝트 OpenHarness 파일을 초기화합니다",
+  "/init": "프로젝트 MyHarness 파일을 초기화합니다",
   "/issue": "프로젝트 이슈 컨텍스트를 보거나 변경합니다",
   "/keybindings": "적용된 키 바인딩을 보여줍니다",
   "/login": "인증 상태를 보거나 API 키를 저장합니다",
@@ -125,7 +141,7 @@ export const COMMAND_DESCRIPTIONS = {
   "/turns": "최대 에이전트 턴 수를 보거나 변경합니다",
   "/upgrade": "업그레이드 안내를 보여줍니다",
   "/usage": "사용량과 토큰 추정치를 보여줍니다",
-  "/version": "설치된 OpenHarness 버전을 보여줍니다",
+  "/version": "설치된 MyHarness 버전을 보여줍니다",
   "/vim": "Vim 모드를 보거나 변경합니다",
   "/voice": "음성 모드를 보거나 변경합니다",
 };

@@ -4,8 +4,61 @@ export function createModals(ctx) {
   function appendMessage(...args) { return ctx.appendMessage(...args); }
   function respond(...args) { return ctx.respond(...args); }
   function postJson(...args) { return ctx.postJson(...args); }
+  function setSystemPrompt(...args) { return ctx.setSystemPrompt(...args); }
+  function loadWorkspaces(...args) { return ctx.loadWorkspaces(...args); }
+  function createWorkspace(...args) { return ctx.createWorkspace(...args); }
+  function deleteWorkspace(...args) { return ctx.deleteWorkspace(...args); }
+  function restartSessionForWorkspace(...args) { return ctx.restartSessionForWorkspace(...args); }
 
 function showSettingsModal() {
+  els.modalHost.classList.remove("hidden");
+  els.modalHost.textContent = "";
+  els.modalHost.dataset.dismissible = "true";
+  delete els.modalHost.dataset.dismissAction;
+
+  const card = document.createElement("div");
+  card.className = "modal-card system-settings-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  card.append(modalCloseButton(closeModal));
+
+  const title = document.createElement("h2");
+  title.textContent = "설정";
+  const body = document.createElement("p");
+  body.textContent = "시스템 프롬프트를 입력하면 에이전트의 기본 응답 방향에 반영됩니다.";
+  const input = document.createElement("textarea");
+  input.className = "system-prompt-input";
+  input.rows = 7;
+  input.placeholder = "예: 항상 한국어로 답변하고, 회사 업무에 맞게 간결하게 정리해줘.";
+  input.value = state.systemPrompt || "";
+  const helper = document.createElement("p");
+  helper.className = "settings-helper";
+  helper.textContent = "비워두면 기본 시스템 프롬프트를 사용합니다. 저장 후 다음 메시지부터 적용됩니다.";
+  const actions = document.createElement("div");
+  actions.className = "modal-actions";
+  actions.append(
+    modalButton("초기화", false, () => {
+      input.value = "";
+      input.focus();
+    }),
+    modalButton("저장", true, async () => {
+      try {
+        await setSystemPrompt(input.value);
+        closeModal();
+        if (!state.sessionId) {
+          appendMessage("system", "시스템 프롬프트 설정을 저장했습니다.");
+        }
+      } catch (error) {
+        appendMessage("system", `시스템 프롬프트 저장 실패: ${error.message}`);
+      }
+    }),
+  );
+  card.append(title, body, input, helper, actions);
+  els.modalHost.append(card);
+  input.focus();
+}
+
+function showModelSettingsModal() {
   els.modalHost.classList.remove("hidden");
   els.modalHost.textContent = "";
   els.modalHost.dataset.dismissible = "true";
@@ -18,7 +71,7 @@ function showSettingsModal() {
   card.append(modalCloseButton(closeModal));
 
   const title = document.createElement("h2");
-  title.textContent = "설정";
+  title.textContent = "모델 설정";
   const body = document.createElement("p");
   body.textContent = "Provider, 모델, 추론 노력을 변경할 수 있습니다.";
   card.append(title, body);
@@ -45,6 +98,193 @@ function showSettingsModal() {
   card.append(list);
 
   els.modalHost.append(card);
+}
+
+async function showWorkspaceModal() {
+  els.modalHost.classList.remove("hidden");
+  els.modalHost.textContent = "";
+  els.modalHost.dataset.dismissible = "true";
+  delete els.modalHost.dataset.dismissAction;
+
+  const card = document.createElement("div");
+  card.className = "modal-card workspace-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  card.append(modalCloseButton(closeModal));
+
+  const title = document.createElement("h2");
+  title.textContent = "프로젝트";
+  const body = document.createElement("p");
+  body.textContent = "Playground 안에서 작업할 프로젝트를 선택하거나 새로 만듭니다.";
+
+  const list = document.createElement("div");
+  list.className = "workspace-list";
+
+  const form = document.createElement("form");
+  form.className = "workspace-create";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "새 프로젝트 이름";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  const createButton = modalButton("만들기", true, () => {});
+  createButton.type = "submit";
+  form.append(input, createButton);
+
+  const error = document.createElement("p");
+  error.className = "settings-helper workspace-error";
+  error.textContent = "";
+
+  card.append(title, body, list, form, error);
+  els.modalHost.append(card);
+
+  function setError(message) {
+    error.textContent = message || "";
+  }
+
+  let pendingDeleteWorkspace = "";
+
+  function setDeleteIcon(button, armed = false) {
+    button.innerHTML = armed
+      ? `
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M12 3l9 16H3L12 3z"></path>
+          <path d="M12 9v4"></path>
+          <path d="M12 17h.01"></path>
+        </svg>
+      `
+      : `
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M3 6h18"></path>
+          <path d="M8 6V4h8v2"></path>
+          <path d="M19 6l-1 14H6L5 6"></path>
+          <path d="M10 11v5"></path>
+          <path d="M14 11v5"></path>
+        </svg>
+      `;
+  }
+
+  function clearPendingDelete() {
+    pendingDeleteWorkspace = "";
+    list.querySelectorAll(".workspace-row.delete-ready").forEach((row) => {
+      row.classList.remove("delete-ready");
+      const deleteButton = row.querySelector(".workspace-delete");
+      if (deleteButton) {
+        deleteButton.title = "프로젝트 삭제";
+        deleteButton.setAttribute("aria-label", `${deleteButton.dataset.workspaceName || ""} 삭제`);
+        setDeleteIcon(deleteButton, false);
+      }
+    });
+  }
+
+  function renderList(workspaces) {
+    pendingDeleteWorkspace = "";
+    list.textContent = "";
+    for (const workspace of workspaces) {
+      const isActive = workspace.name === state.workspaceName;
+      const row = document.createElement("div");
+      row.className = `workspace-row${isActive ? " active" : ""}`;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `workspace-option${isActive ? " active" : ""}`;
+      button.disabled = state.switchingWorkspace;
+      const copy = document.createElement("span");
+      const label = document.createElement("strong");
+      label.textContent = workspace.name;
+      copy.append(label);
+      button.append(copy);
+      button.addEventListener("click", async () => {
+        if (workspace.name === state.workspaceName) {
+          closeModal();
+          return;
+        }
+        try {
+          closeModal();
+          await restartSessionForWorkspace(workspace);
+        } catch (err) {
+          appendMessage("system", `프로젝트 전환 실패: ${err.message}`);
+        }
+      });
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "workspace-delete";
+      deleteButton.disabled = state.switchingWorkspace;
+      deleteButton.setAttribute("aria-label", `${workspace.name} 삭제`);
+      deleteButton.title = "프로젝트 삭제";
+      deleteButton.dataset.workspaceName = workspace.name;
+      deleteButton.setAttribute("aria-label", `${workspace.name} 삭제`);
+      deleteButton.title = "프로젝트 삭제";
+      setDeleteIcon(deleteButton, false);
+      deleteButton.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        setError("");
+        if (pendingDeleteWorkspace !== workspace.name) {
+          clearPendingDelete();
+          pendingDeleteWorkspace = workspace.name;
+          row.classList.add("delete-ready");
+          deleteButton.title = "한 번 더 누르면 삭제됩니다";
+          deleteButton.setAttribute("aria-label", `${workspace.name} 삭제 확인`);
+          setDeleteIcon(deleteButton, true);
+          return;
+        }
+        deleteButton.disabled = true;
+        row.classList.add("deleting");
+        try {
+          const wasActive = workspace.name === state.workspaceName;
+          const result = await deleteWorkspace(workspace.name);
+          const workspaces = Array.isArray(result.workspaces) ? result.workspaces : await loadWorkspaces();
+          if (wasActive) {
+            const nextWorkspace =
+              workspaces.find((item) => item.name === "Default")
+              || workspaces.find((item) => item.name !== workspace.name)
+              || workspaces[0];
+            closeModal();
+            if (nextWorkspace) {
+              await restartSessionForWorkspace(nextWorkspace);
+            }
+            return;
+          }
+          renderList(workspaces);
+        } catch (err) {
+          row.classList.remove("deleting");
+          row.classList.remove("delete-ready");
+          pendingDeleteWorkspace = "";
+          setDeleteIcon(deleteButton, false);
+          deleteButton.disabled = false;
+          setError(`프로젝트 삭제 실패: ${err.message}`);
+        }
+      });
+      row.append(button, deleteButton);
+      list.append(row);
+    }
+  }
+
+  try {
+    renderList(await loadWorkspaces());
+  } catch (err) {
+    setError(`프로젝트 목록을 불러오지 못했습니다: ${err.message}`);
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!name) {
+      setError("프로젝트 이름을 입력하세요.");
+      input.focus();
+      return;
+    }
+    createButton.disabled = true;
+    setError("");
+    try {
+      const workspace = await createWorkspace(name);
+      closeModal();
+      await restartSessionForWorkspace(workspace);
+    } catch (err) {
+      createButton.disabled = false;
+      setError(err.message || "프로젝트를 만들지 못했습니다.");
+      input.focus();
+    }
+  });
 }
 
 function settingsButton(label, value, onClick) {
@@ -146,7 +386,7 @@ function showSelect(event) {
       const returnToSettings = els.modalHost.dataset.dismissAction === "settings";
       respond({ type: "apply_select_command", command: modal.command, value: option.value });
       if (returnToSettings) {
-        window.setTimeout(showSettingsModal, 0);
+        window.setTimeout(showModelSettingsModal, 0);
       }
     });
     button.title = option.description || "";
@@ -209,6 +449,8 @@ function closeModal() {
 
   return {
     showSettingsModal,
+    showModelSettingsModal,
+    showWorkspaceModal,
     settingsButton,
     showModal,
     showSelect,

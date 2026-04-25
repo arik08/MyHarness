@@ -1,6 +1,7 @@
 const scrollStorageKey = "openharness:scrollPositions";
 let scrollRestoreTimer = 0;
 let scrollSaveTimer = 0;
+let scrollAnimationFrame = 0;
 
 export function createUI(ctx) {
   const { state, els, STATUS_LABELS } = ctx;
@@ -54,7 +55,30 @@ function isNearMessageBottom() {
   return remaining <= 36;
 }
 
-function scrollMessagesToBottom() {
+function scrollMessagesToBottom(options = {}) {
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  if (options.smooth && !reduceMotion) {
+    window.cancelAnimationFrame(scrollAnimationFrame);
+    const start = els.messages.scrollTop;
+    const target = els.messages.scrollHeight - els.messages.clientHeight;
+    const distance = target - start;
+    const duration = Number(options.duration || 760);
+    const startedAt = performance.now();
+    state.autoScrollUntil = Date.now() + duration + 260;
+
+    const step = (now) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      els.messages.scrollTop = start + distance * eased;
+      if (progress < 1 && state.autoFollowMessages) {
+        scrollAnimationFrame = window.requestAnimationFrame(step);
+      }
+    };
+    scrollAnimationFrame = window.requestAnimationFrame(step);
+    return;
+  }
+  window.cancelAnimationFrame(scrollAnimationFrame);
+  state.autoScrollUntil = Date.now() + 120;
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
@@ -80,7 +104,7 @@ function scheduleScrollRestore() {
 }
 
 function setChatTitle(value) {
-  const title = String(value || "").trim() || "OpenHarness";
+  const title = String(value || "").trim() || "MyHarness";
   state.chatTitle = title;
   if (els.chatTitle) {
     els.chatTitle.textContent = title.length > 58 ? `${title.slice(0, 55)}...` : title;
@@ -157,22 +181,35 @@ function setStatus(label, mode = "") {
   }
 }
 
+function updateWorkspaceDisplay() {
+  if (!els.workspaceNames?.length) {
+    return;
+  }
+  const name = state.workspaceName || "Default";
+  els.workspaceNames.forEach((node) => {
+    node.textContent = name;
+  });
+  document.querySelectorAll("[data-action='open-workspace']").forEach((button) => {
+    button.title = name;
+  });
+}
+
 function renderWelcome() {
   els.messages.textContent = "";
-  setChatTitle("OpenHarness");
+  setChatTitle("MyHarness");
   const welcome = document.createElement("div");
   welcome.className = "welcome";
 
   const mark = document.createElement("span");
   mark.className = "welcome-mark";
-  mark.textContent = "OH";
+  mark.textContent = "MH";
 
   const title = document.createElement("h2");
-  title.textContent = "이 작업공간에서 무엇을 도와드릴까요?";
+  title.textContent = "무엇을 도와드릴까요?";
 
   const copy = document.createElement("p");
   copy.textContent =
-    "로컬 OpenHarness 백엔드와 연결되어 있습니다. 질문을 입력하거나, 슬래시 명령어를 실행하거나, 에이전트에게 저장소를 살펴보게 할 수 있습니다.";
+    "업무에 필요한 조사, 정리, 코드 작업을 도와드릴 준비가 되어 있습니다.";
 
   welcome.append(mark, title, copy);
   els.messages.append(welcome);
@@ -187,7 +224,8 @@ function removeWelcome() {
 
 function updateSendState() {
   const hasText = buildComposerLine().trim().length > 0;
-  els.send.disabled = !state.ready || state.busy || (!hasText && state.attachments.length === 0);
+  els.input.disabled = Boolean(state.switchingWorkspace);
+  els.send.disabled = state.switchingWorkspace || !state.ready || state.busy || (!hasText && state.attachments.length === 0);
 }
 
 function setBusy(value, label = value ? STATUS_LABELS.thinking : STATUS_LABELS.ready) {
@@ -197,10 +235,14 @@ function setBusy(value, label = value ? STATUS_LABELS.thinking : STATUS_LABELS.r
 }
 
 function autoSizeInput() {
+  const style = window.getComputedStyle(els.input);
+  const maxHeight = Number.parseFloat(style.getPropertyValue("--composer-input-max-height")) || 96;
+  const minHeight = Number.parseFloat(style.minHeight) || 20;
   els.input.style.height = "auto";
-  const nextHeight = Math.min(190, els.input.scrollHeight);
+  const nextHeight = Math.min(maxHeight, Math.max(minHeight, els.input.scrollHeight));
   els.input.style.height = `${nextHeight}px`;
-  els.input.style.overflowY = els.input.scrollHeight > 190 ? "auto" : "hidden";
+  els.input.style.overflowY = els.input.scrollHeight > maxHeight + 1 ? "auto" : "hidden";
+  els.composerBox?.classList.toggle("multiline", nextHeight > minHeight + 12);
 }
 
 function prettifyComposerToken(rawToken) {
@@ -397,6 +439,7 @@ els.composerToken?.addEventListener("click", () => {
     startTitleEdit,
     setSidebarCollapsed,
     setStatus,
+    updateWorkspaceDisplay,
     renderWelcome,
     removeWelcome,
     updateSendState,

@@ -1,8 +1,5 @@
 # OpenHarness and ohmo
 
-![OpenHarness logo](assets/logo.png)
-![ohmo logo](assets/ohmo.png)
-
 `oh` - OpenHarness / `ohmo`
 
 [English](README.md) / [Simplified Chinese](README.zh-CN.md)
@@ -29,10 +26,6 @@
 One Command (**oh**) to Launch **OpenHarness** and Unlock All Agent Harnesses. 
 
 Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
-
-<p align="center">
-  <img src="assets/cli-typing.gif" alt="OpenHarness Terminal Demo" width="800">
-</p>
 
 ---
 ## ✨ OpenHarness's Key Harness Features

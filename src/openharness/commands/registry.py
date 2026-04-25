@@ -31,6 +31,7 @@ from openharness.api.provider import auth_status, detect_provider
 from openharness.config.settings import Settings, display_model_setting, load_settings, save_settings
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
 from openharness.engine.query_engine import QueryEngine
+from openharness.learning import get_default_learning_skills_dir
 from openharness.memory import (
     add_memory_entry,
     get_memory_entrypoint,
@@ -793,6 +794,57 @@ def create_default_command_registry(
         for skill in skills:
             source = f" [{skill.source}]"
             lines.append(f"- {skill.name}{source}: {skill.description}")
+        return CommandResult(message="\n".join(lines))
+
+    async def _learned_skills_handler(args: str, context: CommandContext) -> CommandResult:
+        settings = load_settings()
+        tokens = args.split()
+        action = tokens[0].lower() if tokens else "show"
+        if action in {"on", "off"}:
+            enabled = action == "on"
+            settings.learning.enabled = enabled
+            save_settings(settings)
+            return CommandResult(
+                message=f"Automatic learned skills {'enabled' if enabled else 'disabled'}.",
+                refresh_runtime=True,
+            )
+        if action not in {"show", "list"}:
+            return CommandResult(message="Usage: /learned-skills [show|on|off]")
+
+        root = get_default_learning_skills_dir()
+        learned = context.engine.tool_metadata.get("recent_learned_skills")
+        lines = [
+            f"Automatic learned skills: {'enabled' if settings.learning.enabled else 'disabled'}",
+            f"Program skills directory: {root}",
+        ]
+        if isinstance(learned, list) and learned:
+            lines.append("")
+            lines.append("Recent automatic updates:")
+            for item in learned[-8:]:
+                if not isinstance(item, dict):
+                    continue
+                skill = str(item.get("skill") or "").strip()
+                action_text = str(item.get("action") or "learned").strip()
+                summary = str(item.get("summary") or "").strip()
+                path = str(item.get("path") or "").strip()
+                lines.append(f"- {skill} [{action_text}]: {summary}")
+                if path:
+                    lines.append(f"  {path}")
+        else:
+            lines.append("")
+            lines.append("No automatic skill updates in this session yet.")
+
+        if root.exists():
+            learned_dirs = sorted(
+                path
+                for path in root.iterdir()
+                if path.is_dir() and path.name.startswith("learned-") and (path / "SKILL.md").exists()
+            )
+            if learned_dirs:
+                lines.append("")
+                lines.append("Program-local learned skills:")
+                for path in learned_dirs[-12:]:
+                    lines.append(f"- {path.name}: {path / 'SKILL.md'}")
         return CommandResult(message="\n".join(lines))
 
     async def _config_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1912,6 +1964,13 @@ def create_default_command_registry(
     registry.register(SlashCommand("feedback", "Save CLI feedback to the local feedback log", _feedback_handler))
     registry.register(SlashCommand("onboarding", "Show the quickstart guide", _onboarding_handler))
     registry.register(SlashCommand("skills", "List or show available skills", _skills_handler))
+    registry.register(
+        SlashCommand(
+            "learned-skills",
+            "Show or toggle automatic learned skills",
+            _learned_skills_handler,
+        )
+    )
     registry.register(SlashCommand("config", "Show or update configuration", _config_handler))
     registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler))
     registry.register(

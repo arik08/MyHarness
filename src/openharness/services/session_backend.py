@@ -53,7 +53,7 @@ class SessionBackend(Protocol):
 
 @dataclass(frozen=True)
 class OpenHarnessSessionBackend:
-    """Default session backend backed by ``~/.openharness/data/sessions``."""
+    """Default session backend backed by ``<project>/.openharness/sessions``."""
 
     def get_session_dir(self, cwd: str | Path) -> Path:
         return session_storage.get_project_session_dir(cwd)

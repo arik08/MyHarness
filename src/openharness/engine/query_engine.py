@@ -37,6 +37,7 @@ class QueryEngine:
         ask_user_prompt: AskUserPrompt | None = None,
         hook_executor: HookExecutor | None = None,
         tool_metadata: dict[str, object] | None = None,
+        auto_skill_learning_enabled: bool = True,
     ) -> None:
         self._api_client = api_client
         self._tool_registry = tool_registry
@@ -53,6 +54,7 @@ class QueryEngine:
         self._ask_user_prompt = ask_user_prompt
         self._hook_executor = hook_executor
         self._tool_metadata = tool_metadata or {}
+        self._auto_skill_learning_enabled = auto_skill_learning_enabled
         self._messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
 
@@ -184,6 +186,7 @@ class QueryEngine:
             ask_user_prompt=self._ask_user_prompt,
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
+            auto_skill_learning_enabled=self._auto_skill_learning_enabled,
         )
         query_messages = list(self._messages)
         coordinator_context = self._build_coordinator_context_message()
@@ -214,6 +217,7 @@ class QueryEngine:
             ask_user_prompt=self._ask_user_prompt,
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
+            auto_skill_learning_enabled=self._auto_skill_learning_enabled,
         )
         async for event, usage in run_query(context, self._messages):
             if usage is not None:

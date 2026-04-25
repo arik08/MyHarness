@@ -50,6 +50,7 @@ const {
   closeSlashMenu,
   filteredSlashCommands,
   isNearMessageBottom,
+  initializeWorkspace,
   renderSlashMenu,
   requestHistory,
   requestSelectCommand,
@@ -60,7 +61,9 @@ const {
   setBusy,
   setSidebarCollapsed,
   setStatus,
+  showModelSettingsModal,
   showSettingsModal,
+  showWorkspaceModal,
   startSession,
   startTitleEdit,
   updateComposerTokenFromInput,
@@ -69,6 +72,29 @@ const {
 } = ctx;
 
 const maxImageBytes = 10 * 1024 * 1024;
+const themeOptions = [
+  { id: "light", label: "Light" },
+  { id: "posco", label: "POSCO" },
+  { id: "dark", label: "Dark" },
+  { id: "mono", label: "MonoChrome" },
+];
+
+function applyTheme(themeId) {
+  const theme = themeOptions.find((item) => item.id === themeId) || themeOptions[0];
+  document.documentElement.dataset.theme = theme.id === "light" ? "" : theme.id;
+  localStorage.setItem("openharness:theme", theme.id);
+  if (els.themeToggle) {
+    els.themeToggle.dataset.tooltip = `테마: ${theme.label}`;
+    els.themeToggle.setAttribute("aria-label", `테마 전환: ${theme.label}`);
+  }
+}
+
+function cycleTheme() {
+  const current = localStorage.getItem("openharness:theme") || "light";
+  const currentIndex = Math.max(0, themeOptions.findIndex((item) => item.id === current));
+  const next = themeOptions[(currentIndex + 1) % themeOptions.length];
+  applyTheme(next.id);
+}
 
 function imageId() {
   return globalThis.crypto?.randomUUID
@@ -210,7 +236,11 @@ els.composer.addEventListener("paste", (event) => {
 
 els.messages.addEventListener("scroll", () => {
   if (!state.restoringHistory && !state.ignoreScrollSave) {
-    state.autoFollowMessages = isNearMessageBottom();
+    if (Date.now() < state.autoScrollUntil) {
+      state.autoFollowMessages = true;
+    } else {
+      state.autoFollowMessages = isNearMessageBottom();
+    }
   }
   scheduleScrollPositionSave();
 });
@@ -245,6 +275,19 @@ document.querySelectorAll("[data-action='open-settings']").forEach((button) => {
   button.addEventListener("click", showSettingsModal);
 });
 
+document.querySelectorAll("[data-action='open-model-settings']").forEach((button) => {
+  button.addEventListener("click", showModelSettingsModal);
+});
+
+document.querySelectorAll("[data-action='open-workspace']").forEach((button) => {
+  button.addEventListener("click", () => {
+    showWorkspaceModal().catch((error) => appendMessage("system", `프로젝트 목록을 열지 못했습니다: ${error.message}`));
+  });
+});
+
+document.querySelectorAll("[data-action='toggle-theme']").forEach((button) => {
+  button.addEventListener("click", cycleTheme);
+});
 document.querySelectorAll("[data-select-command]").forEach((button) => {
   button.addEventListener("click", () => {
     const command = button.dataset.selectCommand || "";
@@ -267,9 +310,15 @@ document.querySelectorAll("[data-action='toggle-sidebar']").forEach((button) => 
   });
 });
 
+applyTheme(localStorage.getItem("openharness:theme") || "light");
 setSidebarCollapsed(localStorage.getItem("openharness:sidebarCollapsed") === "1");
 
-startSession().catch((error) => {
+async function boot() {
+  await initializeWorkspace();
+  await startSession();
+}
+
+boot().catch((error) => {
   appendMessage("system", `백엔드 시작 실패: ${error.message}`);
   setStatus(STATUS_LABELS.startFailed);
 });

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import time
-from hashlib import sha1
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from openharness.api.usage import UsageSnapshot
-from openharness.config.paths import get_sessions_dir
+from openharness.config.paths import get_project_config_dir
 from openharness.engine.messages import ConversationMessage, ImageBlock, sanitize_conversation_messages, strip_internal_message_text
 from openharness.utils.fs import atomic_write_text
 
@@ -23,6 +22,8 @@ _PERSISTED_TOOL_METADATA_KEYS = (
     "async_agent_tasks",
     "recent_work_log",
     "recent_verified_work",
+    "recent_tool_failures",
+    "recent_learned_skills",
     "task_focus_state",
     "compact_checkpoints",
     "compact_last",
@@ -81,9 +82,7 @@ def _raw_message_summary(message: dict[str, Any]) -> str:
 
 def get_project_session_dir(cwd: str | Path) -> Path:
     """Return the session directory for a project."""
-    path = Path(cwd).resolve()
-    digest = sha1(str(path).encode("utf-8")).hexdigest()[:12]
-    session_dir = get_sessions_dir() / f"{path.name}-{digest}"
+    session_dir = get_project_config_dir(cwd) / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir
 

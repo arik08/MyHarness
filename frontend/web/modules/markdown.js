@@ -33,8 +33,19 @@ function expandCompactTable(line) {
   return rows.map((row) => `| ${row.join(" | ")} |`).join("\n");
 }
 
-function normalizeMarkdown(markdown) {
+function restoreEscapedInlineMarkdown(markdown) {
   return String(markdown || "")
+    .replace(/\\\*\\\*/g, "**")
+    .replace(/\\_\\_/g, "__")
+    .replace(/\\~\\~/g, "~~")
+    .replace(/\\`/g, "`");
+}
+
+function normalizeMarkdown(markdown, options = {}) {
+  const source = options.restoreEscapedInlineMarkdown
+    ? restoreEscapedInlineMarkdown(markdown)
+    : String(markdown || "");
+  return source
     .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => (line.includes("|") ? expandCompactTable(line) : line))
@@ -82,8 +93,8 @@ marked.use({
   ],
 });
 
-function renderMarkdown(markdown) {
-  return marked.parse(normalizeMarkdown(markdown));
+function renderMarkdown(markdown, options = {}) {
+  return marked.parse(normalizeMarkdown(markdown, options));
 }
 
 async function copyTextToClipboard(text) {
@@ -156,17 +167,34 @@ function enhanceCodeBlocks(element) {
   });
 }
 
+function enhanceTables(element) {
+  element.querySelectorAll("table").forEach((table) => {
+    if (table.parentElement?.classList.contains("table-wrap")) {
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    table.replaceWith(wrap);
+    wrap.append(table);
+  });
+}
+
 function setMarkdown(element, text) {
   element.dataset.rawText = text;
-  element.innerHTML = renderMarkdown(text);
+  element.innerHTML = renderMarkdown(text, {
+    restoreEscapedInlineMarkdown: element.dataset.restoreEscapedInlineMarkdown === "true",
+  });
+  enhanceTables(element);
   enhanceCodeBlocks(element);
 }
 
   return {
     normalizeMarkdown,
+    restoreEscapedInlineMarkdown,
     renderMarkdown,
     copyTextToClipboard,
     enhanceCodeBlocks,
+    enhanceTables,
     setMarkdown,
   };
 }

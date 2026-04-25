@@ -67,6 +67,12 @@ class MemorySettings(BaseModel):
     auto_compact_threshold_tokens: int | None = None
 
 
+class LearningSettings(BaseModel):
+    """Automatic skill learning configuration."""
+
+    enabled: bool = True
+
+
 class SandboxNetworkSettings(BaseModel):
     """OS-level network restrictions passed to sandbox-runtime."""
 
@@ -470,6 +476,7 @@ class Settings(BaseModel):
     permission: PermissionSettings = Field(default_factory=PermissionSettings)
     hooks: dict[str, list[HookDefinition]] = Field(default_factory=dict)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    learning: LearningSettings = Field(default_factory=LearningSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     enabled_plugins: dict[str, bool] = Field(default_factory=dict)
     allow_project_plugins: bool = False
