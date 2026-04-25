@@ -60,6 +60,7 @@ if (!state.clientId) {
 
 export const els = {
   appShell: document.querySelector(".app-shell"),
+  sidebar: document.querySelector(".sidebar"),
   messages: document.querySelector("#messages"),
   composer: document.querySelector("#composer"),
   composerBox: document.querySelector(".composer-box"),
@@ -241,7 +242,8 @@ export function formatProviderName(value) {
 export function formatEffort(value) {
   const normalized = String(value || "").trim();
   const labels = {
-    none: "none",
+    none: "Auto",
+    auto: "Auto",
     low: "low",
     medium: "medium",
     high: "high",

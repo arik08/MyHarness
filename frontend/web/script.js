@@ -419,6 +419,16 @@ document.querySelectorAll("[data-action='toggle-sidebar']").forEach((button) => 
   });
 });
 
+els.sidebar?.addEventListener("click", (event) => {
+  if (!els.appShell?.classList.contains("sidebar-collapsed")) {
+    return;
+  }
+  if (event.target.closest("button, a, input, textarea, select")) {
+    return;
+  }
+  setSidebarCollapsed(false);
+});
+
 applyTheme(localStorage.getItem("openharness:theme") || "light");
 setSidebarCollapsed(localStorage.getItem("openharness:sidebarCollapsed") === "1");
 

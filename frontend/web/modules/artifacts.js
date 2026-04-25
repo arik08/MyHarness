@@ -182,11 +182,14 @@ function setArtifactPanel(open) {
   state.artifactPanelOpen = open;
   if (open) {
     applyStoredArtifactPanelWidth();
+    els.appShell?.classList.add("artifact-open");
+    els.artifactPanel?.classList.remove("hidden", "closing");
   } else {
     setArtifactFullscreen(false);
+    els.artifactPanel?.classList.add("hidden");
+    els.artifactPanel?.classList.remove("closing");
+    els.appShell?.classList.remove("artifact-open");
   }
-  els.appShell?.classList.toggle("artifact-open", open);
-  els.artifactPanel?.classList.toggle("hidden", !open);
 }
 
 function setArtifactFullscreen(enabled) {
@@ -353,20 +356,42 @@ function renderProjectFiles(files) {
       label: artifactLabel(file.kind),
       size: file.size,
     };
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "project-file-item";
-    button.innerHTML = `
+    const item = document.createElement("div");
+    item.className = "project-file-item";
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "project-file-open";
+    openButton.innerHTML = `
       <span class="artifact-card-icon" aria-hidden="true">${artifactIcon(artifact.kind)}</span>
       <span class="artifact-card-copy">
         <strong></strong>
         <small></small>
       </span>
     `;
-    button.querySelector("strong").textContent = artifact.path;
-    button.querySelector("small").textContent = `${artifact.label} · ${formatBytes(artifact.size)}`;
-    button.addEventListener("click", () => openArtifact(artifact));
-    list.append(button);
+    openButton.querySelector("strong").textContent = artifact.path;
+    openButton.querySelector("small").textContent = `${artifact.label} · ${formatBytes(artifact.size)}`;
+    openButton.addEventListener("click", () => openArtifact(artifact));
+
+    const download = document.createElement("a");
+    const query = new URLSearchParams({
+      session: state.sessionId || "",
+      path: artifact.path,
+    });
+    download.className = "project-file-download";
+    download.href = `/api/artifact/download?${query.toString()}`;
+    download.download = artifact.name;
+    download.setAttribute("aria-label", `${artifact.name} 다운로드`);
+    download.dataset.tooltip = "다운로드";
+    download.innerHTML = `
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M12 3v11"></path>
+        <path d="m7 10 5 5 5-5"></path>
+        <path d="M5 20h14"></path>
+      </svg>
+    `;
+
+    item.append(openButton, download);
+    list.append(item);
   }
   els.artifactViewer.append(list);
 }

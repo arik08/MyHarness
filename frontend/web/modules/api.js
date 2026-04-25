@@ -170,7 +170,7 @@ function snapshotActiveSlot() {
   Object.assign(slot, {
     backendSessionId: state.sessionId,
     savedSessionId: state.activeHistoryId || slot.savedSessionId || "",
-    title: state.chatTitle,
+    title: slot.showInHistory && !slot.hasConversation ? "New Chat" : state.chatTitle,
     ready: state.ready,
     busy: state.busy,
     assistantNode: state.assistantNode,
@@ -236,9 +236,13 @@ function createChatSlot({ sessionId, workspace, container = null, makeActive = t
     backendSessionId: sessionId,
     savedSessionId: "",
     workspace,
+    container: node,
     title: "MyHarness",
     ready: false,
     busy: false,
+    hasConversation: false,
+    showInHistory: false,
+    suppressNewChatHistory: false,
     assistantNode: null,
     workflowNode: null,
     workflowList: null,
@@ -299,12 +303,56 @@ function slotForBackendSession(sessionId) {
   return null;
 }
 
+function isEmptyNewChatSlot(slot) {
+  return Boolean(
+    slot
+      && slot.showInHistory
+      && !slot.busy
+      && !slot.container?.querySelector(".message")
+      && (slot.title === "New Chat" || !slot.savedSessionId)
+  );
+}
+
+function isNonConversationTranscriptItem(item) {
+  const role = item?.role || "";
+  const text = String(item?.text || "").trim();
+  if (!text) {
+    return true;
+  }
+  if (role === "system" && text === "Conversation cleared.") {
+    return true;
+  }
+  if (role === "system" && ["Plan mode enabled.", "Plan mode disabled."].includes(text)) {
+    return true;
+  }
+  if (role === "system" && text.startsWith("Session restored")) {
+    return true;
+  }
+  return false;
+}
+
 function updateSlotFromEvent(slot, event) {
   if (!slot || !event) {
     return;
   }
   if (event.type === "ready") {
     slot.ready = true;
+  }
+  if (event.type === "clear_transcript") {
+    slot.hasConversation = false;
+    slot.showInHistory = !slot.suppressNewChatHistory;
+    slot.title = slot.suppressNewChatHistory ? "MyHarness" : "New Chat";
+    slot.assistantNode = null;
+    slot.workflowNode = null;
+    slot.workflowList = null;
+    slot.workflowSummary = null;
+    slot.workflowSteps = [];
+  }
+  if (event.type === "transcript_item" && !isNonConversationTranscriptItem(event.item)) {
+    slot.hasConversation = true;
+  }
+  if (event.type === "assistant_delta" || event.type === "assistant_complete") {
+    slot.hasConversation = true;
   }
   if (event.type === "active_session") {
     slot.savedSessionId = String(event.value || "").trim() || slot.savedSessionId;
@@ -573,6 +621,13 @@ async function sendLine(line) {
   if (shellCommand) {
     const command = text.slice(1).trim();
     appendMessage("user", text);
+    const activeSlot = state.chatSlots.get(state.activeFrontendId);
+    if (activeSlot) {
+      activeSlot.hasConversation = true;
+      activeSlot.showInHistory = false;
+      activeSlot.suppressNewChatHistory = false;
+      activeSlot.title = state.chatTitle;
+    }
     els.input.value = "";
     clearComposerToken();
     clearPastedTexts();
@@ -598,6 +653,9 @@ async function sendLine(line) {
   const activeSlot = state.chatSlots.get(state.activeFrontendId);
   if (activeSlot) {
     activeSlot.busy = true;
+    activeSlot.hasConversation = true;
+    activeSlot.showInHistory = false;
+    activeSlot.suppressNewChatHistory = false;
     activeSlot.title = state.chatTitle;
   }
   state.autoFollowMessages = true;
@@ -712,7 +770,68 @@ async function refreshSkills() {
   await sendBackendRequest({ type: "refresh_skills" });
 }
 
+async function openHistorySession(sessionId, title) {
+  if (!sessionId) {
+    return;
+  }
+  let activeSlot = state.chatSlots.get(state.activeFrontendId);
+  const activeSlotHasMessages = Boolean(activeSlot?.container?.querySelector(".message"));
+  if (isEmptyNewChatSlot(activeSlot) || (activeSlot?.showInHistory && !activeSlot.busy && !activeSlotHasMessages)) {
+    activeSlot.hasConversation = false;
+    activeSlot.showInHistory = true;
+    activeSlot.suppressNewChatHistory = false;
+    activeSlot.title = "New Chat";
+    activeSlot = await startBackendSlot({ makeActive: true });
+  }
+  if (activeSlot) {
+    activeSlot.showInHistory = false;
+    activeSlot.suppressNewChatHistory = true;
+    activeSlot.title = title || "저장된 대화";
+  }
+  saveScrollPosition();
+  els.messages.textContent = "";
+  state.activeHistoryId = sessionId;
+  state.pendingScrollRestoreId = state.activeHistoryId;
+  state.restoringHistory = true;
+  state.batchingHistoryRestore = true;
+  state.ignoreScrollSave = true;
+  setChatTitle(title || "저장된 대화");
+  markActiveHistory();
+  setBusy(true, STATUS_LABELS.restoring);
+  await sendBackendRequest({ type: "apply_select_command", command: "resume", value: sessionId });
+}
+
 async function clearChat() {
+  const activeSlot = state.chatSlots.get(state.activeFrontendId);
+  const activeSlotHasMessages = Boolean(activeSlot?.container?.querySelector(".message"));
+  if (activeSlot && (isEmptyNewChatSlot(activeSlot) || (!activeSlot.hasConversation && !activeSlotHasMessages))) {
+    els.input.value = "";
+    clearComposerToken();
+    clearPastedTexts();
+    clearAttachments();
+    autoSizeInput();
+    renderWelcome();
+    resetArtifacts();
+    activeSlot.showInHistory = true;
+    activeSlot.suppressNewChatHistory = false;
+    activeSlot.title = "New Chat";
+    markActiveHistory();
+    updateSendState();
+    ctx.requestHistory?.().catch(() => {});
+    return;
+  }
+  const existingDraft = [...state.chatSlots.values()].find((slot) =>
+    slot.frontendId !== state.activeFrontendId && isEmptyNewChatSlot(slot)
+  );
+  if (existingDraft) {
+    els.input.value = "";
+    clearComposerToken();
+    clearPastedTexts();
+    clearAttachments();
+    autoSizeInput();
+    switchChatSlot(existingDraft.frontendId);
+    return;
+  }
   saveScrollPosition();
   els.input.value = "";
   clearComposerToken();
@@ -727,8 +846,21 @@ async function clearChat() {
   state.ignoreScrollSave = false;
   renderWelcome();
   resetArtifacts();
+  const clearedSlot = state.chatSlots.get(state.activeFrontendId);
+  if (clearedSlot) {
+    clearedSlot.hasConversation = false;
+    clearedSlot.showInHistory = true;
+    clearedSlot.suppressNewChatHistory = false;
+    clearedSlot.title = "New Chat";
+    clearedSlot.assistantNode = null;
+    clearedSlot.workflowNode = null;
+    clearedSlot.workflowList = null;
+    clearedSlot.workflowSummary = null;
+    clearedSlot.workflowSteps = [];
+  }
   markActiveHistory();
   updateSendState();
+  ctx.requestHistory?.().catch(() => {});
   if (state.sessionId) {
     await postJson("/api/message", { sessionId: state.sessionId, line: "/clear" });
     refreshSkills().catch(() => {});
@@ -747,6 +879,7 @@ async function deleteHistorySession(sessionId, item) {
     return;
   }
   item?.classList.add("deleting");
+  item?.remove();
   forgetScrollPosition(sessionId);
   if (state.activeHistoryId === sessionId) {
     state.activeHistoryId = null;
@@ -754,6 +887,15 @@ async function deleteHistorySession(sessionId, item) {
     state.restoringHistory = false;
     state.batchingHistoryRestore = false;
     renderWelcome();
+  }
+  for (const slot of state.chatSlots.values()) {
+    if (slot.savedSessionId === sessionId) {
+      slot.savedSessionId = "";
+      slot.showInHistory = false;
+    }
+  }
+  if (!els.historyList.querySelector(".history-item")) {
+    ctx.renderHistory?.([]);
   }
   await sendBackendRequest({ type: "delete_session", value: sessionId });
 }
@@ -777,6 +919,7 @@ async function deleteHistorySession(sessionId, item) {
     setSystemPrompt,
     requestSelectCommand,
     refreshSkills,
+    openHistorySession,
     clearChat,
     requestHistory,
     deleteHistorySession,

@@ -9,6 +9,7 @@ export function createModals(ctx) {
   function createWorkspace(...args) { return ctx.createWorkspace(...args); }
   function deleteWorkspace(...args) { return ctx.deleteWorkspace(...args); }
   function restartSessionForWorkspace(...args) { return ctx.restartSessionForWorkspace(...args); }
+  function formatEffort(...args) { return ctx.formatEffort(...args); }
 
 function showSettingsModal() {
   els.modalHost.classList.remove("hidden");
@@ -89,7 +90,7 @@ function showModelSettingsModal() {
       state.returnToSettingsOnDismiss = true;
       requestSelectCommand("model").catch((error) => appendMessage("system", `Selection failed: ${error.message}`));
     }),
-    settingsButton("추론 노력", state.effort, () => {
+    settingsButton("추론 노력", formatEffort(state.effort), () => {
       closeModal();
       state.returnToSettingsOnDismiss = true;
       requestSelectCommand("effort").catch((error) => appendMessage("system", `Selection failed: ${error.message}`));
@@ -379,33 +380,47 @@ function showSelect(event) {
   const list = document.createElement("div");
   list.className = "select-list";
   for (const option of event.select_options || []) {
+    const normalizedOption = normalizeSelectOption(modal, option);
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `select-option${option.active ? " active" : ""}`;
+    button.className = `select-option${normalizedOption.active ? " active" : ""}`;
     button.addEventListener("click", () => {
       const returnToSettings = els.modalHost.dataset.dismissAction === "settings";
-      respond({ type: "apply_select_command", command: modal.command, value: option.value });
+      respond({ type: "apply_select_command", command: modal.command, value: normalizedOption.value });
       if (returnToSettings) {
         window.setTimeout(showModelSettingsModal, 0);
       }
     });
-    button.title = option.description || "";
+    button.title = normalizedOption.description || "";
     const copy = document.createElement("span");
     const label = document.createElement("strong");
-    label.textContent = option.label || option.value;
+    label.textContent = normalizedOption.label || normalizedOption.value;
     const description = document.createElement("small");
-    description.textContent = option.description || option.value || "";
+    description.textContent = normalizedOption.description || normalizedOption.value || "";
     copy.append(label, description);
     const check = document.createElement("span");
     check.className = "select-check";
     check.setAttribute("aria-hidden", "true");
-    check.textContent = option.active ? "✓" : "";
+    check.textContent = normalizedOption.active ? "✓" : "";
     button.append(copy, check);
     list.append(button);
   }
   card.append(list);
 
   els.modalHost.append(card);
+}
+
+function normalizeSelectOption(modal, option) {
+  const normalized = { ...option };
+  if (modal?.command !== "effort") {
+    return normalized;
+  }
+  const value = String(normalized.value || "").trim().toLowerCase();
+  if (value === "none" || value === "auto") {
+    normalized.label = "Auto";
+    normalized.description = "Provider default";
+  }
+  return normalized;
 }
 
 function modalCloseButton(onClick) {

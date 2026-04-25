@@ -2095,7 +2095,7 @@ def main(
     effort: str | None = typer.Option(
         None,
         "--effort",
-        help="Effort level for the session (none, low, medium, high, xhigh, max)",
+        help="Effort level for the session (auto, low, medium, high, xhigh, max)",
         rich_help_panel="Model & Effort",
     ),
     verbose: bool = typer.Option(

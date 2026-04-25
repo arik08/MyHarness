@@ -661,12 +661,21 @@ function appendWorkflowEventNow(event) {
   }
   if (!isStart) {
     clearMutationWaitingStep(toolName);
-    [...state.workflowList.querySelectorAll(".workflow-step.running")]
+    const matchingRunningSteps = [...state.workflowList.querySelectorAll(".workflow-step.running")]
       .filter((item) => item.dataset.toolName === toolName)
-      .forEach((item) => {
-        item.classList.remove("running");
-        item.classList.add(event.is_error ? "error" : "done");
-      });
+    for (const item of matchingRunningSteps) {
+      item.classList.remove("running");
+      item.classList.add(event.is_error ? "error" : "done");
+      item.querySelector("strong").textContent = workflowTitle(event);
+      item.querySelector("small").textContent = workflowDetail(event);
+    }
+    if (matchingRunningSteps.length) {
+      updateWorkflowSummary();
+      if (!state.restoringHistory && state.autoFollowMessages) {
+        scrollMessagesToBottom();
+      }
+      return;
+    }
   }
   const status = isStart ? "running" : event.is_error ? "error" : "done";
   const row = appendWorkflowStep(workflowTitle(event), workflowDetail(event), status, toolName);

@@ -170,11 +170,16 @@ class CommandRegistry:
         """Return a formatted summary of all registered commands."""
         lines = [
             "입력 단축키:",
-            "- @: 현재 프로젝트의 파일을 선택해 프롬프트에 첨부하거나 참조합니다.",
-            "- $: 사용할 스킬을 선택해 프롬프트에 넣습니다.",
-            "- /: 슬래시 명령어를 선택하거나 실행합니다.",
             "- !: 로컬 CLI 명령어를 바로 실행합니다.",
+            "- @: 현재 프로젝트의 파일을 선택해 프롬프트에 첨부하거나 참조합니다.",
+            "- $: 사용할 스킬, MCP, 플러그인을 선택해 프롬프트에 넣습니다.",
+            "- /: 슬래시 명령어를 선택하거나 실행합니다.",
+            "- Ctrl+Shift+O: New Chat을 엽니다.",
             "- Shift+Tab: 계획모드를 켜거나 끕니다.",
+            "",
+            "자주 쓰는 기능:",
+            "- 채팅 입력란에 이미지를 복사한 뒤 붙여넣으면 이미지가 첨부됩니다.",
+            "- 5줄 이상 긴 글을 붙여넣거나 입력하면 하나의 그룹으로 묶어 표시하고, 원문은 그대로 전송됩니다.",
             "",
             "Available commands:",
         ]
@@ -290,6 +295,10 @@ def create_default_command_registry(
     """Create the built-in command registry."""
     registry = CommandRegistry()
 
+    def _effort_label(value: object) -> str:
+        normalized = str(value or "").strip()
+        return "Auto" if normalized.lower() in {"", "none", "auto"} else normalized
+
     async def _help_handler(_: str, context: CommandContext) -> CommandResult:
         del context
         return CommandResult(message=registry.help_text())
@@ -311,7 +320,7 @@ def create_default_command_registry(
                 f"Messages: {len(context.engine.messages)}\n"
                 f"Usage: input={usage.input_tokens} output={usage.output_tokens}\n"
                 f"Profile: {manager.get_active_profile()}\n"
-                f"Effort: {state.effort if state is not None else load_settings().effort}\n"
+                f"Effort: {_effort_label(state.effort if state is not None else load_settings().effort)}\n"
                 f"Passes: {state.passes if state is not None else load_settings().passes}"
             )
         )
@@ -966,16 +975,17 @@ def create_default_command_registry(
         current = context.app_state.get().effort if context.app_state is not None else settings.effort
         value = args.strip() or "show"
         if value == "show":
-            return CommandResult(message=f"Reasoning effort: {current}")
-        if value not in {"none", "low", "medium", "high", "xhigh", "max"}:
-            return CommandResult(message="Usage: /effort [show|none|low|medium|high|xhigh|max]")
-        settings.effort = value
+            return CommandResult(message=f"Reasoning effort: {_effort_label(current)}")
+        if value not in {"auto", "none", "low", "medium", "high", "xhigh", "max"}:
+            return CommandResult(message="Usage: /effort [show|auto|low|medium|high|xhigh|max]")
+        stored_value = "none" if value == "auto" else value
+        settings.effort = stored_value
         save_settings(settings)
-        context.engine.set_reasoning_effort(value)
+        context.engine.set_reasoning_effort(stored_value)
         context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
         if context.app_state is not None:
-            context.app_state.set(effort=value)
-        return CommandResult(message=f"Reasoning effort set to {value}.")
+            context.app_state.set(effort=stored_value)
+        return CommandResult(message=f"Reasoning effort set to {_effort_label(stored_value)}.")
 
     async def _passes_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1516,7 +1526,7 @@ def create_default_command_registry(
             f"- output_style: {state.output_style if state is not None else settings.output_style}",
             f"- vim_mode: {'on' if (state.vim_enabled if state is not None else settings.vim_mode) else 'off'}",
             f"- voice_mode: {'on' if (state.voice_enabled if state is not None else settings.voice_mode) else 'off'}",
-            f"- effort: {state.effort if state is not None else settings.effort}",
+            f"- effort: {_effort_label(state.effort if state is not None else settings.effort)}",
             f"- passes: {state.passes if state is not None else settings.passes}",
             f"- memory_dir: {memory_dir}",
             f"- plugin_count: {max(len(context.plugin_summary.splitlines()) - 1, 0) if context.plugin_summary else 0}",

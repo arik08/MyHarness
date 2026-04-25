@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import crypto from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { extname, isAbsolute, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -203,6 +204,23 @@ async function readArtifactMetadata(session, artifactPath) {
     name: rel.split(/[\\/]/).pop() || rel,
     kind: type.kind,
     mime: type.mime,
+    size: info.size,
+  };
+}
+
+async function artifactDownloadTarget(session, artifactPath) {
+  const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
+  const info = await stat(target);
+  if (!info.isFile()) {
+    throw new Error("Artifact is not a file");
+  }
+  const ext = extname(target).toLowerCase();
+  const type = artifactTypes[ext] || { mime: "application/octet-stream" };
+  return {
+    target,
+    rel,
+    name: rel.split(/[\\/]/).pop() || "download",
+    mime: type.mime || "application/octet-stream",
     size: info.size,
   };
 }
@@ -632,6 +650,11 @@ function emit(session, event) {
   }
 }
 
+function shouldReplayEvent(event) {
+  const type = String(event?.type || "");
+  return !["modal_request", "select_request"].includes(type);
+}
+
 function killProcessTree(child) {
   if (!child || child.killed || !child.pid) {
     return;
@@ -919,7 +942,7 @@ async function handleApi(request, response, pathname) {
       clearTimeout(session.clientCloseTimer);
       session.clientCloseTimer = null;
     }
-    for (const event of session.events) {
+    for (const event of session.events.filter(shouldReplayEvent)) {
       response.write(`data: ${JSON.stringify(event)}\n\n`);
     }
     request.on("close", () => {
@@ -957,6 +980,29 @@ async function handleApi(request, response, pathname) {
       json(response, 200, payload);
     } catch (error) {
       json(response, 404, { error: error.message || "Artifact not found" });
+    }
+    return true;
+  }
+
+  if (request.method === "GET" && pathname === "/api/artifact/download") {
+    const params = new URL(request.url, `http://localhost:${port}`).searchParams;
+    const session = sessions.get(params.get("session"));
+    if (!session) {
+      json(response, 404, { error: "Unknown session" });
+      return true;
+    }
+    try {
+      const payload = await artifactDownloadTarget(session, params.get("path"));
+      const encodedName = encodeURIComponent(payload.name).replace(/['()]/g, escape).replace(/\*/g, "%2A");
+      response.writeHead(200, {
+        "Content-Type": payload.mime,
+        "Content-Length": String(payload.size),
+        "Content-Disposition": `attachment; filename="${payload.name.replace(/["\\]/g, "_")}"; filename*=UTF-8''${encodedName}`,
+        "Cache-Control": "no-store",
+      });
+      createReadStream(payload.target).pipe(response);
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not download artifact" });
     }
     return true;
   }

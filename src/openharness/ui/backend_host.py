@@ -956,7 +956,7 @@ class ReactBackendHost:
 
         if command == "effort":
             options = [
-                {"value": "none", "label": "None", "description": "Lowest latency", "active": settings.effort == "none"},
+                {"value": "none", "label": "Auto", "description": "Use the provider default", "active": settings.effort in {"none", "auto", ""}},
                 {"value": "low", "label": "Low", "description": "Fastest responses", "active": settings.effort == "low"},
                 {"value": "medium", "label": "Medium", "description": "Balanced reasoning", "active": settings.effort == "medium"},
                 {"value": "high", "label": "High", "description": "Deepest reasoning", "active": settings.effort == "high"},

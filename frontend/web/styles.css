@@ -434,7 +434,7 @@ a:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 286px minmax(0, 1fr);
+  grid-template-columns: 268px minmax(0, 1fr);
   --artifact-panel-width: clamp(360px, 38vw, 680px);
   width: 100vw;
   height: 100dvh;
@@ -444,15 +444,15 @@ a:focus-visible {
 }
 
 .app-shell.sidebar-collapsed {
-  grid-template-columns: 32px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr);
 }
 
 .app-shell.artifact-open {
-  grid-template-columns: 286px minmax(0, 1fr) var(--artifact-panel-width);
+  grid-template-columns: 268px minmax(0, 1fr) var(--artifact-panel-width);
 }
 
 .app-shell.sidebar-collapsed.artifact-open {
-  grid-template-columns: 32px minmax(0, 1fr) var(--artifact-panel-width);
+  grid-template-columns: 16px minmax(0, 1fr) var(--artifact-panel-width);
 }
 
 .app-shell.resizing-artifact,
@@ -606,15 +606,29 @@ a:focus-visible {
   transform: translateY(0);
 }
 
+.sidebar-toggle::after {
+  top: 50%;
+  right: auto;
+  left: calc(100% + 8px);
+  transform: translate(-3px, -50%);
+}
+
+.sidebar-toggle:hover::after,
+.sidebar-toggle:focus-visible::after {
+  transform: translate(0, -50%);
+}
+
 .app-shell.sidebar-collapsed .sidebar {
-  padding-right: 2px;
-  padding-left: 2px;
+  padding-right: 0;
+  padding-left: 0;
+  cursor: pointer;
 }
 
 .app-shell.sidebar-collapsed .brand-row {
   justify-content: center;
   gap: 0;
   min-height: 34px;
+  width: 16px;
 }
 
 .app-shell.sidebar-collapsed .brand,
@@ -632,8 +646,21 @@ a:focus-visible {
 }
 
 .app-shell.sidebar-collapsed .sidebar-toggle {
-  width: 28px;
-  height: 28px;
+  width: 16px;
+  height: 34px;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.app-shell.sidebar-collapsed .sidebar-toggle:hover {
+  background: transparent;
+}
+
+.app-shell.sidebar-collapsed .sidebar-toggle svg {
+  width: 12px;
+  height: 12px;
 }
 
 .command-key {
@@ -756,6 +783,7 @@ a:focus-visible {
 }
 
 .new-chat {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 11px;
@@ -769,6 +797,36 @@ a:focus-visible {
   box-shadow: 0 1px 0 rgba(30, 28, 24, 0.04);
   font-weight: 720;
   text-align: left;
+}
+
+.new-chat::after {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 10px);
+  z-index: 20;
+  width: max-content;
+  max-width: 210px;
+  padding: 7px 9px;
+  background: var(--tooltip-bg);
+  border-radius: 7px;
+  color: var(--tooltip-ink);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(4px, -50%);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.new-chat:hover::after,
+.new-chat:focus-visible::after {
+  opacity: 1;
+  transform: translate(0, -50%);
 }
 
 .new-chat span {
@@ -1067,6 +1125,10 @@ a:focus-visible {
   min-height: 0;
   background: var(--panel);
   border-left: 1px solid var(--line);
+}
+
+.artifact-panel:not(.hidden):not(.fullscreen) {
+  animation: artifactPanelSlideIn 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .artifact-resize-handle {
@@ -1831,7 +1893,7 @@ a:focus-visible {
   min-width: 0;
   min-height: 56px;
   width: 100%;
-  padding: 9px 10px;
+  padding: 7px;
   background: var(--panel-raised);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1842,6 +1904,80 @@ a:focus-visible {
 .project-file-item:hover {
   background: var(--sidebar-hover);
   border-color: var(--line-strong);
+}
+
+.project-file-open {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 40px;
+  flex: 1 1 auto;
+  gap: 10px;
+  padding: 2px 4px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.project-file-download {
+  display: inline-grid;
+  position: relative;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.project-file-download:hover,
+.project-file-download:focus-visible {
+  background: var(--panel-raised);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.project-file-download svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.project-file-download::after {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 8px);
+  bottom: auto;
+  z-index: 30;
+  width: max-content;
+  padding: 7px 9px;
+  background: var(--tooltip-bg);
+  border-radius: 7px;
+  color: var(--tooltip-ink);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(3px, -50%);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.project-file-download:hover::after,
+.project-file-download:focus-visible::after {
+  opacity: 1;
+  transform: translate(0, -50%);
 }
 
 .workflow-message {
@@ -3213,6 +3349,17 @@ a:focus-visible {
 @keyframes historyBusySpin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes artifactPanelSlideIn {
+  from {
+    opacity: 0.35;
+    transform: translateX(72px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
   }
 }
 

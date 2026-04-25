@@ -8,15 +8,33 @@ export function createHistory(ctx) {
   function deleteHistorySession(...args) { return ctx.deleteHistorySession(...args); }
   function appendMessage(...args) { return ctx.appendMessage(...args); }
   function switchChatSlot(...args) { return ctx.switchChatSlot?.(...args); }
+  function openHistorySession(...args) { return ctx.openHistorySession?.(...args); }
 
 function liveHistoryOptions() {
-  return [...state.chatSlots.values()]
-    .filter((slot) => slot.busy || slot.frontendId === state.activeFrontendId)
+  const slots = [...state.chatSlots.values()];
+  const isEmptyDraft = (slot) => Boolean(
+    slot
+      && slot.showInHistory
+      && !slot.busy
+      && !slot.container?.querySelector(".message")
+      && (slot.title === "New Chat" || !slot.savedSessionId)
+  );
+  const activeDraft = isEmptyDraft(state.chatSlots.get(state.activeFrontendId))
+    ? state.activeFrontendId
+    : "";
+  const firstDraft = slots.find((slot) => isEmptyDraft(slot))?.frontendId || "";
+  const visibleDraftId = activeDraft || firstDraft;
+  return slots
+    .filter((slot) =>
+      slot.busy
+      || (slot.showInHistory && (!isEmptyDraft(slot) || slot.frontendId === visibleDraftId))
+    )
     .map((slot) => ({
       value: `live:${slot.frontendId}`,
-      label: slot.title || "진행 중인 채팅",
-      description: slot.busy ? "진행 중" : "열려 있음",
+      label: slot.showInHistory && !slot.hasConversation ? "New Chat" : slot.title || (slot.busy ? "진행 중인 채팅" : "New Chat"),
+      description: slot.busy ? "진행 중" : "새 채팅",
       liveSlotId: slot.frontendId,
+      savedSessionId: slot.savedSessionId || "",
       busy: Boolean(slot.busy),
     }));
 }
@@ -25,7 +43,11 @@ function renderHistory(options) {
   els.historyList.textContent = "";
   const liveOptions = liveHistoryOptions();
   const savedOptions = Array.isArray(options) ? options : [];
-  const mergedOptions = [...liveOptions, ...savedOptions];
+  const liveSavedIds = new Set(liveOptions.map((option) => option.savedSessionId).filter(Boolean));
+  const mergedOptions = [
+    ...liveOptions,
+    ...savedOptions.filter((option) => !liveSavedIds.has(String(option.value || ""))),
+  ];
   if (!mergedOptions.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -64,17 +86,7 @@ function renderHistory(options) {
         switchChatSlot(option.liveSlotId);
         return;
       }
-      saveScrollPosition();
-      els.messages.textContent = "";
-      state.activeHistoryId = option.value || null;
-      state.pendingScrollRestoreId = state.activeHistoryId;
-      state.restoringHistory = true;
-      state.batchingHistoryRestore = true;
-      state.ignoreScrollSave = true;
-      setChatTitle(formattedTitle);
-      markActiveHistory();
-      setBusy(true, STATUS_LABELS.restoring);
-      await sendBackendRequest({ type: "apply_select_command", command: "resume", value: option.value });
+      await openHistorySession(option.value || "", formattedTitle);
     });
 
     const busySpinner = document.createElement("span");
@@ -95,12 +107,16 @@ function renderHistory(options) {
         <path d="M9 7V4h6v3"></path>
       </svg>
     `;
-    if (isLive) {
+    if (isLive && option.busy) {
       deleteButton.disabled = true;
       deleteButton.classList.add("hidden");
     } else {
       deleteButton.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (isLive) {
+          deleteLiveHistorySlot(option.liveSlotId, item);
+          return;
+        }
         deleteHistorySession(option.value || "", item).catch((error) => {
           item.classList.remove("deleting");
           appendMessage("system", `기록 삭제 실패: ${error.message}`);
@@ -131,6 +147,23 @@ function markActiveHistory() {
     item.classList.toggle("active", isActive);
     item.classList.toggle("busy", Boolean(liveSlot?.busy) || (isActive && state.busy));
   });
+}
+
+function deleteLiveHistorySlot(frontendId, item) {
+  const slot = state.chatSlots.get(frontendId);
+  if (!slot || slot.busy) {
+    return;
+  }
+  slot.showInHistory = false;
+  slot.suppressNewChatHistory = false;
+  item?.remove();
+  if (slot.frontendId === state.activeFrontendId && !slot.hasConversation) {
+    setChatTitle("MyHarness");
+  }
+  markActiveHistory();
+  if (!els.historyList.querySelector(".history-item")) {
+    renderHistory([]);
+  }
 }
 
   return {

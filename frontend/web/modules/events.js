@@ -19,6 +19,7 @@ export function createEvents(ctx) {
   function finishScrollRestore(...args) { return ctx.finishScrollRestore(...args); }
   function appendWorkflowEvent(...args) { return ctx.appendWorkflowEvent(...args); }
   function appendWorkflowInputDelta(...args) { return ctx.appendWorkflowInputDelta?.(...args); }
+  function markActiveHistory(...args) { return ctx.markActiveHistory?.(...args); }
   function showModal(...args) { return ctx.showModal(...args); }
   function showSelect(...args) { return ctx.showSelect(...args); }
   function updateSlashMenu(...args) { return ctx.updateSlashMenu(...args); }
@@ -428,6 +429,17 @@ function handleEvent(event) {
     restoringWorkflowInputDeltas = [];
     renderWelcome();
     state.assistantNode = null;
+    const activeSlot = state.chatSlots.get(state.activeFrontendId);
+    if (activeSlot) {
+      activeSlot.hasConversation = false;
+      activeSlot.showInHistory = !activeSlot.suppressNewChatHistory;
+      activeSlot.title = activeSlot.suppressNewChatHistory ? "MyHarness" : "New Chat";
+      activeSlot.assistantNode = null;
+      activeSlot.workflowNode = null;
+      activeSlot.workflowList = null;
+      activeSlot.workflowSummary = null;
+      activeSlot.workflowSteps = [];
+    }
     resetWorkflowPanel();
     resetArtifacts();
     return;
@@ -451,6 +463,12 @@ function handleEvent(event) {
   }
 
   if (event.type === "history_snapshot") {
+    const activeSlot = state.chatSlots.get(state.activeFrontendId);
+    if (activeSlot?.showInHistory && !activeSlot.busy && !activeSlot.container?.querySelector(".message")) {
+      activeSlot.showInHistory = false;
+      activeSlot.hasConversation = false;
+      activeSlot.suppressNewChatHistory = true;
+    }
     resetStreamingState();
     restoringWorkflowEvents = [];
     restoringWorkflowInputDeltas = [];

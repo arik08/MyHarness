@@ -26,11 +26,13 @@ JWT_CLAIM_PATH = "https://api.openai.com/auth"
 MAX_RETRIES = 3
 BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0
-CODEX_REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
+CODEX_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 
 
 def _normalize_reasoning_effort(effort: str | None) -> str | None:
     normalized = (effort or "").strip().lower()
+    if normalized in {"", "none", "auto"}:
+        return None
     if normalized == "max":
         normalized = "xhigh"
     if normalized in CODEX_REASONING_EFFORTS:
