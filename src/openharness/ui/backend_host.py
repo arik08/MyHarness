@@ -16,6 +16,8 @@ from openharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, S
 from openharness.auth.manager import AuthManager
 from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, resolve_model_setting
 from openharness.bridge import get_bridge_manager
+from openharness.mcp.config import load_mcp_server_configs
+from openharness.mcp.types import McpConnectionStatus
 from openharness.themes import list_themes
 from openharness.engine.stream_events import (
     AssistantTextDelta,
@@ -33,7 +35,7 @@ from openharness.prompts import build_runtime_system_prompt
 from openharness.skills import load_skill_registry
 from openharness.skills.types import SkillDefinition
 from openharness.tasks import get_task_manager
-from openharness.ui.protocol import BackendEvent, FrontendRequest, SkillSnapshot, TranscriptItem
+from openharness.ui.protocol import BackendEvent, FrontendRequest, PluginSnapshot, SkillSnapshot, TranscriptItem
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 from openharness.services.session_backend import SessionBackend
 
@@ -137,6 +139,7 @@ class ReactBackendHost:
                     continue
                 if request.type == "refresh_skills":
                     await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
+                    await self._emit(self._status_snapshot())
                     continue
                 if request.type == "set_system_prompt":
                     await self._handle_set_system_prompt(request.value or "")
@@ -571,9 +574,44 @@ class ReactBackendHost:
         assert self._bundle is not None
         return BackendEvent.status_snapshot(
             state=self._bundle.app_state.get(),
-            mcp_servers=self._bundle.mcp_manager.list_statuses(),
+            mcp_servers=self._mcp_statuses_for_snapshot(),
+            plugins=self._plugin_snapshots(),
             bridge_sessions=get_bridge_manager().list_sessions(),
         )
+
+    def _mcp_statuses_for_snapshot(self) -> list[McpConnectionStatus]:
+        assert self._bundle is not None
+        statuses = {status.name: status for status in self._bundle.mcp_manager.list_statuses()}
+        configs = load_mcp_server_configs(
+            self._bundle.current_settings(),
+            self._bundle.current_plugins(),
+            cwd=self._bundle.cwd,
+        )
+        for name, config in configs.items():
+            if name in statuses:
+                continue
+            transport = getattr(config, "type", "unknown")
+            statuses[name] = McpConnectionStatus(
+                name=name,
+                state="pending",
+                detail="Configured; restart or reload backend to connect.",
+                transport=str(transport),
+            )
+        return sorted(statuses.values(), key=lambda status: status.name)
+
+    def _plugin_snapshots(self) -> list[PluginSnapshot]:
+        assert self._bundle is not None
+        return [
+            PluginSnapshot(
+                name=plugin.manifest.name,
+                description=plugin.manifest.description,
+                enabled=plugin.enabled,
+                skill_count=len(plugin.skills),
+                command_count=len(plugin.commands),
+                mcp_server_count=len(plugin.mcp_servers),
+            )
+            for plugin in self._bundle.current_plugins()
+        ]
 
     async def _emit_todo_update_from_output(self, output: str) -> None:
         """Emit a todo_update event by extracting markdown checklist from tool output."""

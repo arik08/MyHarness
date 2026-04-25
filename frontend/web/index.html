@@ -48,7 +48,7 @@
           </button>
         </div>
 
-        <button class="sidebar-project" type="button" data-action="open-workspace" aria-label="프로젝트 선택">
+        <button class="sidebar-project" type="button" data-action="open-workspace" aria-label="프로젝트 선택" data-tooltip="현재 프로젝트 선택">
           <span class="sidebar-project-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24">
               <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2.5h6.5A2.5 2.5 0 0 1 21 9v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5Z"></path>
@@ -74,7 +74,7 @@
           </div>
         </section>
 
-        <button class="sidebar-footer" type="button" data-action="open-model-settings" aria-label="모델 설정 열기">
+        <button class="sidebar-footer" type="button" data-action="open-model-settings" aria-label="모델 설정 열기" data-tooltip="모델 설정">
           <span class="profile-mark" aria-hidden="true">MH</span>
           <div class="runtime-copy">
             <strong id="providerValue">Provider: 불러오는 중...</strong>
@@ -114,9 +114,9 @@
         </section>
 
         <form class="composer" id="composer">
+          <div class="pasted-text-tray hidden" id="pastedTextTray" aria-label="Pasted text"></div>
           <div class="composer-box">
             <div class="attachment-tray hidden" id="attachmentTray" aria-label="첨부한 이미지"></div>
-            <div class="pasted-text-tray hidden" id="pastedTextTray" aria-label="Pasted text"></div>
             <span class="composer-token-slot hidden" id="composerToken" aria-hidden="true"></span>
             <textarea
               id="promptInput"
@@ -127,6 +127,17 @@
               autocorrect="off"
               autocapitalize="off"
             ></textarea>
+            <button class="plan-mode-indicator hidden" id="planModeIndicator" type="button" aria-label="계획모드 전환">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M9 6h11" />
+                <path d="M9 12h11" />
+                <path d="M9 18h11" />
+                <path d="M4 6h.01" />
+                <path d="M4 12h.01" />
+                <path d="M4 18h.01" />
+              </svg>
+              <span>계획모드</span>
+            </button>
             <button id="sendButton" type="submit" disabled aria-label="메시지 보내기">
               <svg aria-hidden="true" viewBox="0 0 24 24">
                 <path d="m22 2-7 20-4-9-9-4Z" />
@@ -141,16 +152,24 @@
       <aside class="artifact-panel hidden" id="artifactPanel" aria-label="산출물 미리보기">
         <div class="artifact-resize-handle" id="artifactResizeHandle" role="separator" aria-orientation="vertical" aria-label="산출물 패널 폭 조절"></div>
         <div class="artifact-panel-header">
-          <div>
+          <div class="artifact-panel-title">
             <strong id="artifactPanelTitle">산출물</strong>
             <small id="artifactPanelMeta">파일을 선택하세요</small>
           </div>
-          <button class="artifact-close" type="button" id="artifactPanelClose" aria-label="산출물 패널 닫기">
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <path d="M18 6 6 18"></path>
-              <path d="m6 6 12 12"></path>
-            </svg>
-          </button>
+          <div class="artifact-panel-actions">
+            <button class="artifact-action" type="button" id="artifactPanelCopy" aria-label="원문 복사" data-tooltip="원문 복사" disabled>
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+            <button class="artifact-action artifact-close" type="button" id="artifactPanelClose" aria-label="산출물 패널 닫기" data-tooltip="닫기">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M18 6 6 18"></path>
+                <path d="m6 6 12 12"></path>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="artifact-viewer" id="artifactViewer">
           <p class="artifact-empty">최종 답변의 산출물 카드를 선택하면 여기에 표시됩니다.</p>

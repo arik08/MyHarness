@@ -11,11 +11,25 @@ export function createMessages(ctx) {
   function setBusy(...args) { return ctx.setBusy(...args); }
 
 function isCommandCatalog(text) {
-  return String(text || "").trim().startsWith("Available commands:");
+  return String(text || "").includes("Available commands:");
+}
+
+function splitCommandCatalog(text) {
+  const source = String(text || "");
+  const marker = "Available commands:";
+  const index = source.indexOf(marker);
+  if (index < 0) {
+    return { intro: "", catalog: source };
+  }
+  return {
+    intro: source.slice(0, index).trim(),
+    catalog: source.slice(index).trim(),
+  };
 }
 
 function parseCommandCatalog(text) {
-  const source = String(text || "").replace(/^Available commands:\s*/i, "").trim();
+  const { catalog } = splitCommandCatalog(text);
+  const source = String(catalog || "").replace(/^Available commands:\s*/i, "").trim();
   const matches = [...source.matchAll(/\/[a-z][a-z0-9-]*/g)];
   if (!matches.length) {
     return [];
@@ -74,6 +88,20 @@ function createCommandCatalog(text) {
   }
   details.append(grid);
   return details;
+}
+
+function createCommandCatalogContent(text) {
+  const { intro } = splitCommandCatalog(text);
+  const wrap = document.createElement("div");
+  wrap.className = "command-help-stack";
+  if (intro) {
+    const introNode = document.createElement("div");
+    introNode.className = "markdown-body command-help-intro";
+    setMarkdown(introNode, intro);
+    wrap.append(introNode);
+  }
+  wrap.append(createCommandCatalog(text));
+  return wrap;
 }
 
 function createAttachmentPreview(attachments = []) {
@@ -181,7 +209,7 @@ function appendMessage(role, text, attachments = []) {
   bubble.className = "bubble";
   let content;
   if (commandCatalog) {
-    content = createCommandCatalog(text);
+    content = createCommandCatalogContent(text);
     bubble.append(content);
   } else {
     content = document.createElement("div");

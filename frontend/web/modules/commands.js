@@ -53,32 +53,65 @@ async function refreshProjectFiles(force = false) {
   return state.projectFiles;
 }
 
+function extensionItems() {
+  const skillItems = state.skills.map((skill) => ({
+    name: `$${skill.name}`,
+    description: skill.description || "Skill",
+    source: skill.source || "skill",
+    kind: "skill",
+  }));
+  const mcpItems = state.mcpServers.map((server) => {
+    const counts = [
+      server.toolCount ? `${server.toolCount} tools` : "",
+      server.resourceCount ? `${server.resourceCount} resources` : "",
+    ].filter(Boolean).join(", ");
+    const status = [server.state || "configured", server.transport || "", counts].filter(Boolean).join(" / ");
+    return {
+      name: `$mcp:${server.name}`,
+      description: server.description || status || "MCP server",
+      source: "mcp",
+      kind: "mcp",
+    };
+  });
+  const pluginItems = state.plugins.map((plugin) => {
+    const counts = [
+      plugin.skillCount ? `${plugin.skillCount} skills` : "",
+      plugin.commandCount ? `${plugin.commandCount} commands` : "",
+      plugin.mcpServerCount ? `${plugin.mcpServerCount} MCP` : "",
+    ].filter(Boolean).join(", ");
+    return {
+      name: `$plugin:${plugin.name}`,
+      description: plugin.description || counts || (plugin.enabled ? "Plugin" : "Plugin disabled"),
+      source: "plugin",
+      kind: "plugin",
+    };
+  });
+  return [...skillItems, ...mcpItems, ...pluginItems];
+}
+
 function filteredSlashCommands() {
   const query = getSlashQuery();
   if (query === null) {
     return [];
   }
   if (query.trigger === "$") {
-    return state.skills
-      .filter((skill) => {
-        const haystack = `${skill.name} ${skill.description} ${skill.source || ""}`.toLowerCase();
+    return extensionItems()
+      .filter((item) => {
+        const haystack = `${item.name} ${item.description} ${item.source || ""} ${item.kind || ""}`.toLowerCase();
         return haystack.includes(query.value);
       })
       .sort((left, right) => {
-        const sourceRank = (skill) => {
-          const source = String(skill.source || "").toLowerCase();
+        const sourceRank = (item) => {
+          if (item.kind === "skill") return 0;
+          if (item.kind === "mcp") return 1;
+          if (item.kind === "plugin") return 2;
+          const source = String(item.source || "").toLowerCase();
           if (source === "project" || source === "program") return 0;
           if (source === "user") return 1;
-          if (source === "bundled") return 3;
           return 2;
         };
         return sourceRank(left) - sourceRank(right) || left.name.localeCompare(right.name);
       })
-      .map((skill) => ({
-        ...skill,
-        name: `$${skill.name}`,
-        kind: "skill",
-      }))
       .slice(0, 12);
   }
   if (query.trigger === "@") {
@@ -130,7 +163,7 @@ function selectSlashCommand(item) {
     els.input.focus();
     return;
   }
-  const selected = item.kind === "skill"
+  const selected = ["skill", "mcp", "plugin"].includes(item.kind)
     ? { ...item, name: `$${formatForcedSkillName(item.name.slice(1))}` }
     : item;
   if (setComposerTokenFromSelection(selected)) {
@@ -162,14 +195,21 @@ function renderSlashMenu() {
     item.setAttribute("aria-selected", index === state.slashMenuIndex ? "true" : "false");
     const name = document.createElement("strong");
     name.textContent = command.name;
+    const badge = document.createElement("small");
+    badge.textContent = command.kind === "mcp" ? "MCP" : command.kind === "plugin" ? "Plugin" : command.kind === "skill" ? "Skill" : "";
     const description = document.createElement("span");
     description.textContent =
-      command.kind === "skill"
+      ["skill", "mcp", "plugin"].includes(command.kind)
         ? command.description
         : command.kind === "file"
           ? command.description
         : commandDescription(command.name, command.description);
-    item.append(name, description);
+    if (badge.textContent) {
+      item.append(name, badge, description);
+    } else {
+      item.classList.add("no-badge");
+      item.append(name, description);
+    }
     item.addEventListener("mousedown", (event) => {
       event.preventDefault();
       selectSlashCommand(command);
@@ -201,7 +241,7 @@ function updateSlashMenu() {
   }
   const hasItems =
     query.trigger === "$"
-      ? state.skills.length > 0
+      ? extensionItems().length > 0
       : query.trigger === "@"
         ? state.projectFiles.length > 0
         : state.commands.length > 0;

@@ -21,6 +21,7 @@ export function createEvents(ctx) {
   function updateSlashMenu(...args) { return ctx.updateSlashMenu(...args); }
   function extractAndRenderArtifacts(...args) { return ctx.extractAndRenderArtifacts?.(...args); }
   function resetArtifacts(...args) { return ctx.resetArtifacts?.(...args); }
+  function setPlanModeIndicatorActive(...args) { return ctx.setPlanModeIndicatorActive?.(...args); }
 
 let streamingRenderTimer = 0;
 let streamingFlushTimer = 0;
@@ -43,6 +44,38 @@ function normalizeSkills(skills) {
           source: String(skill.source || "").trim(),
         }))
         .filter((skill) => skill.name)
+        .sort((left, right) => left.name.localeCompare(right.name))
+    : [];
+}
+
+function normalizeMcpServers(servers) {
+  return Array.isArray(servers)
+    ? servers
+        .map((server) => ({
+          name: String(server.name || "").trim(),
+          description: String(server.detail || "").trim(),
+          state: String(server.state || "").trim(),
+          transport: String(server.transport || "").trim(),
+          toolCount: Number(server.tool_count || 0),
+          resourceCount: Number(server.resource_count || 0),
+        }))
+        .filter((server) => server.name)
+        .sort((left, right) => left.name.localeCompare(right.name))
+    : [];
+}
+
+function normalizePlugins(plugins) {
+  return Array.isArray(plugins)
+    ? plugins
+        .map((plugin) => ({
+          name: String(plugin.name || "").trim(),
+          description: String(plugin.description || "").trim(),
+          enabled: plugin.enabled !== false,
+          skillCount: Number(plugin.skill_count || 0),
+          commandCount: Number(plugin.command_count || 0),
+          mcpServerCount: Number(plugin.mcp_server_count || 0),
+        }))
+        .filter((plugin) => plugin.name)
         .sort((left, right) => left.name.localeCompare(right.name))
     : [];
 }
@@ -305,6 +338,8 @@ function handleEvent(event) {
           .sort((left, right) => left.name.localeCompare(right.name))
       : [];
     state.skills = normalizeSkills(event.skills);
+    state.mcpServers = normalizeMcpServers(event.mcp_servers);
+    state.plugins = normalizePlugins(event.plugins);
     setBusy(false, STATUS_LABELS.ready);
     updateState(event.state);
     updateTasks(event.tasks || []);
@@ -316,7 +351,14 @@ function handleEvent(event) {
   }
 
   if (event.type === "state_snapshot") {
+    if (Array.isArray(event.mcp_servers)) {
+      state.mcpServers = normalizeMcpServers(event.mcp_servers);
+    }
+    if (Array.isArray(event.plugins)) {
+      state.plugins = normalizePlugins(event.plugins);
+    }
     updateState(event.state);
+    updateSlashMenu();
     return;
   }
 
@@ -339,6 +381,13 @@ function handleEvent(event) {
       return;
     }
     if (event.item.role === "system" && event.item.text === "Conversation cleared.") {
+      return;
+    }
+    if (
+      event.item.role === "system"
+      && ["Plan mode enabled.", "Plan mode disabled."].includes(String(event.item.text || "").trim())
+    ) {
+      setPlanModeIndicatorActive(String(event.item.text || "").trim() === "Plan mode enabled.");
       return;
     }
     if (event.item.role === "system" && String(event.item.text || "").startsWith("Session restored")) {

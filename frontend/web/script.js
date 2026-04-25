@@ -7,6 +7,7 @@ import {
   STATUS_LABELS,
   commandDescription,
   updateState,
+  setPlanModeIndicatorActive,
   formatProviderName,
   formatEffort,
 } from "./modules/state.js";
@@ -28,6 +29,7 @@ const ctx = {
   STATUS_LABELS,
   commandDescription,
   updateState,
+  setPlanModeIndicatorActive,
   formatProviderName,
   formatEffort,
 };
@@ -79,10 +81,11 @@ const {
 const maxImageBytes = 10 * 1024 * 1024;
 const longPastedTextLineThreshold = 5;
 const themeOptions = [
-  { id: "light", label: "Light" },
+  { id: "light", label: "Claude" },
   { id: "posco", label: "POSCO" },
-  { id: "dark", label: "Dark" },
-  { id: "mono", label: "MonoChrome" },
+  { id: "dark", label: "Dark-Blue" },
+  { id: "mono", label: "MonoChrome-Green" },
+  { id: "mono-orange", label: "MonoChrome-Orange" },
 ];
 
 function applyTheme(themeId) {
@@ -181,6 +184,22 @@ function captureLongInputIfNeeded() {
   return true;
 }
 
+function handlePlanModeShortcut(event) {
+  if (event.key !== "Tab" || !event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) {
+    return false;
+  }
+  event.preventDefault();
+  closeSlashMenu();
+  if (state.busy) {
+    return true;
+  }
+  sendLine("/plan").catch((error) => {
+    appendMessage("system", `Plan mode toggle failed: ${error.message}`);
+    setBusy(false, STATUS_LABELS.error);
+  });
+  return true;
+}
+
 els.composer.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -203,6 +222,10 @@ els.input.addEventListener("input", () => {
 });
 
 els.input.addEventListener("keydown", (event) => {
+  if (handlePlanModeShortcut(event)) {
+    event.stopPropagation();
+    return;
+  }
   if ((event.key === "Backspace" || event.key === "Delete") && state.composerToken && els.input.value.length === 0) {
     event.preventDefault();
     clearComposerToken();
@@ -243,6 +266,13 @@ els.input.addEventListener("click", updateSlashMenu);
 
 els.input.addEventListener("blur", () => {
   window.setTimeout(closeSlashMenu, 120);
+});
+
+els.planModeIndicator?.addEventListener("click", () => {
+  sendLine("/plan").catch((error) => {
+    appendMessage("system", `Plan mode toggle failed: ${error.message}`);
+    setBusy(false, STATUS_LABELS.error);
+  });
 });
 
 els.attachmentTray?.addEventListener("click", (event) => {
@@ -301,6 +331,9 @@ els.modalHost.addEventListener("click", (event) => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if (!event.defaultPrevented && handlePlanModeShortcut(event)) {
+    return;
+  }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "o") {
     event.preventDefault();
     closeSlashMenu();

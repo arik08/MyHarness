@@ -208,6 +208,8 @@ function applyStoredArtifactPanelWidth() {
 }
 
 function showArtifactLoading(artifact) {
+  state.activeArtifactRaw = "";
+  updateArtifactCopyButton(false);
   if (els.artifactPanelTitle) {
     els.artifactPanelTitle.textContent = artifact.name;
   }
@@ -223,6 +225,8 @@ function renderArtifactPreview(artifact, payload) {
   if (!els.artifactViewer) {
     return;
   }
+  state.activeArtifactRaw = String(payload.content || payload.dataUrl || "");
+  updateArtifactCopyButton(Boolean(state.activeArtifactRaw));
   els.artifactViewer.textContent = "";
   if (payload.name && els.artifactPanelTitle) {
     els.artifactPanelTitle.textContent = payload.name;
@@ -269,6 +273,8 @@ function renderArtifactPreview(artifact, payload) {
 }
 
 function renderArtifactError(error) {
+  state.activeArtifactRaw = "";
+  updateArtifactCopyButton(false);
   if (!els.artifactViewer) {
     return;
   }
@@ -284,6 +290,8 @@ function renderArtifactError(error) {
 }
 
 function renderProjectFiles(files) {
+  state.activeArtifactRaw = "";
+  updateArtifactCopyButton(false);
   if (!els.artifactViewer) {
     return;
   }
@@ -328,6 +336,8 @@ async function openProjectFiles() {
   if (!state.sessionId) {
     return;
   }
+  state.activeArtifactRaw = "";
+  updateArtifactCopyButton(false);
   setArtifactPanel(true);
   if (els.artifactPanelTitle) {
     els.artifactPanelTitle.textContent = "프로젝트 파일";
@@ -377,12 +387,16 @@ async function openArtifact(artifact) {
 
 function closeArtifactPanel() {
   state.activeArtifact = null;
+  state.activeArtifactRaw = "";
+  updateArtifactCopyButton(false);
   setArtifactPanel(false);
 }
 
 function resetArtifacts() {
   state.artifacts = [];
   state.activeArtifact = null;
+  state.activeArtifactRaw = "";
+  updateArtifactCopyButton(false);
   setArtifactPanel(false);
   if (els.artifactPanelTitle) {
     els.artifactPanelTitle.textContent = "산출물";
@@ -416,7 +430,48 @@ function formatBytes(value) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function updateArtifactCopyButton(enabled) {
+  if (!els.artifactPanelCopy) {
+    return;
+  }
+  els.artifactPanelCopy.disabled = !enabled;
+  els.artifactPanelCopy.classList.remove("copied");
+  els.artifactPanelCopy.dataset.tooltip = enabled ? "원문 복사" : "복사할 원문 없음";
+}
+
+async function copyActiveArtifactRaw() {
+  const raw = String(state.activeArtifactRaw || "");
+  if (!raw) {
+    updateArtifactCopyButton(false);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(raw);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = raw;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "-1000px";
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  if (els.artifactPanelCopy) {
+    els.artifactPanelCopy.classList.add("copied");
+    els.artifactPanelCopy.dataset.tooltip = "복사됨";
+    window.setTimeout(() => {
+      if (!els.artifactPanelCopy?.disabled) {
+        els.artifactPanelCopy.classList.remove("copied");
+        els.artifactPanelCopy.dataset.tooltip = "원문 복사";
+      }
+    }, 1200);
+  }
+}
+
 function initializeArtifactPanel() {
+  els.artifactPanelCopy?.addEventListener("click", copyActiveArtifactRaw);
   els.artifactPanelClose?.addEventListener("click", closeArtifactPanel);
   els.projectFilesButton?.addEventListener("click", openProjectFiles);
   applyStoredArtifactPanelWidth();

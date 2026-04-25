@@ -168,7 +168,15 @@ class CommandRegistry:
 
     def help_text(self) -> str:
         """Return a formatted summary of all registered commands."""
-        lines = ["Available commands:"]
+        lines = [
+            "입력 단축키:",
+            "- @: 현재 프로젝트의 파일을 선택해 프롬프트에 첨부하거나 참조합니다.",
+            "- $: 사용할 스킬을 선택해 프롬프트에 넣습니다.",
+            "- /: 슬래시 명령어를 선택하거나 실행합니다.",
+            "- Shift+Tab: 계획모드를 켜거나 끕니다.",
+            "",
+            "Available commands:",
+        ]
         commands = [self._commands[name] for name in self._canonical_names]
         for command in sorted(commands, key=lambda item: item.name):
             lines.append(f"/{command.name:<12} {command.description}")
@@ -1206,7 +1214,15 @@ def create_default_command_registry(
 
     async def _plan_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
-        mode = args.strip() or "on"
+        raw_app_mode = (
+            context.app_state.get().permission_mode
+            if context.app_state is not None
+            else None
+        )
+        current_mode = str(raw_app_mode or "").strip().lower().replace(" ", "_")
+        saved_mode = str(settings.permission.mode.value).strip().lower().replace(" ", "_")
+        plan_values = {PermissionMode.PLAN.value, "plan_mode", "permissionmode.plan"}
+        mode = args.strip() or ("off" if current_mode in plan_values or saved_mode in plan_values else "on")
         if mode in {"on", "enter"}:
             settings.permission.mode = PermissionMode.PLAN
             save_settings(settings)

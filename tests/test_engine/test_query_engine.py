@@ -536,6 +536,63 @@ async def test_query_engine_records_repeated_tool_failures_for_learning(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_query_engine_auto_learning_persists_repeated_verified_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import openharness.learning.service as learning_service
+
+    missing = tmp_path / "missing.txt"
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\n", encoding="utf-8")
+    learned_skills_dir = tmp_path / ".learned-skills"
+    monkeypatch.setattr(
+        learning_service,
+        "get_default_learning_skills_dir",
+        lambda: learned_skills_dir,
+    )
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(name="read_file", input={"path": str(missing)}),
+                            ToolUseBlock(name="read_file", input={"path": str(missing)}),
+                            ToolUseBlock(name="read_file", input={"path": str(sample)}),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={},
+        auto_skill_learning_enabled=True,
+    )
+
+    events = [event async for event in engine.submit_message("learn from repeated failure")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    learned = engine.tool_metadata.get("recent_learned_skills")
+    assert isinstance(learned, list)
+    assert learned
+    skill_path = Path(str(learned[-1]["path"]))
+    assert skill_path.exists()
+    assert skill_path.is_relative_to(learned_skills_dir)
+    assert (skill_path.parent / "references" / "learned-patterns.md").exists()
+
+
+@pytest.mark.asyncio
 async def test_query_engine_tracks_async_agent_activity(tmp_path: Path, monkeypatch):
     registry = create_default_tool_registry()
     agent_tool = registry.get("agent")

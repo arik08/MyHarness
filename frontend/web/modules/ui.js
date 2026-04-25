@@ -194,7 +194,8 @@ function updateWorkspaceDisplay() {
     node.textContent = name;
   });
   document.querySelectorAll("[data-action='open-workspace']").forEach((button) => {
-    button.title = name;
+    button.removeAttribute("title");
+    button.dataset.tooltip = `현재 프로젝트: ${name}`;
   });
 }
 
@@ -261,7 +262,14 @@ function prettifyComposerToken(rawToken) {
     .slice(1)
     .replace(/^["']|["']$/g, "")
     .trim();
-  const name = (normalized.includes(":") ? normalized.split(":")[0] : normalized)
+  const normalizedLower = normalized.toLowerCase();
+  const displayName =
+    (normalizedLower.startsWith("mcp:") || normalizedLower.startsWith("plugin:"))
+      ? normalized.slice(normalized.indexOf(":") + 1)
+      : normalized.includes(":")
+        ? normalized.split(":")[0]
+        : normalized;
+  const name = displayName
     .replace(/[-_]+/g, " ")
     .trim();
   return name ? name.replace(/\b\w/g, (char) => char.toUpperCase()) : token;
@@ -287,6 +295,8 @@ function knownCommand(rawToken) {
 function knownSkill(rawToken) {
   const name = normalizeSkillTokenName(rawToken);
   return state.skills.some((skill) => String(skill.name || "").toLowerCase() === name)
+    || state.mcpServers.some((server) => `mcp:${String(server.name || "").toLowerCase()}` === name)
+    || state.plugins.some((plugin) => `plugin:${String(plugin.name || "").toLowerCase()}` === name)
     || /^\$[^:\s]+:[^:\s]+$/i.test(String(rawToken || "").trim());
 }
 
@@ -347,10 +357,10 @@ function setComposerTokenFromSelection(item) {
   if (!item) {
     return false;
   }
-  if (item.kind === "skill") {
+  if (["skill", "mcp", "plugin"].includes(item.kind)) {
     const raw = `$${item.name.slice(1)}`;
     els.input.value = "";
-    setComposerToken({ raw, kind: "skill", label: prettifyComposerToken(raw) });
+    setComposerToken({ raw, kind: item.kind, label: prettifyComposerToken(raw) });
   } else {
     els.input.value = "";
     setComposerToken({ raw: item.name, kind: "command", label: prettifyComposerToken(item.name) });

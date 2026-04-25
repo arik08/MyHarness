@@ -219,7 +219,7 @@ async def build_runtime(
         resolved_api_client = api_client
     else:
         resolved_api_client = _resolve_api_client_from_settings(settings)
-    mcp_manager = McpClientManager(load_mcp_server_configs(settings, plugins))
+    mcp_manager = McpClientManager(load_mcp_server_configs(settings, plugins, cwd=cwd))
     await mcp_manager.connect_all()
     tool_registry = create_default_tool_registry(mcp_manager)
     # Register plugin-provided tools

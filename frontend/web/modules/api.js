@@ -18,6 +18,29 @@ export function createApi(ctx) {
   function clearComposerToken(...args) { return ctx.clearComposerToken(...args); }
   function updateWorkspaceDisplay(...args) { return ctx.updateWorkspaceDisplay(...args); }
   function resetArtifacts(...args) { return ctx.resetArtifacts?.(...args); }
+  function setPlanModeIndicatorActive(...args) { return ctx.setPlanModeIndicatorActive?.(...args); }
+
+function isPlanModeActive() {
+  const mode = String(state.permissionMode || "").trim().toLowerCase().replace(/\s+/g, "_");
+  return mode === "plan" || mode === "plan_mode" || mode === "permissionmode.plan";
+}
+
+function previewPlanModeCommand(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!/^\/plan(?:\s|$)/.test(normalized)) {
+    return;
+  }
+  const [, arg = ""] = normalized.split(/\s+/, 2);
+  if (arg === "off" || arg === "exit") {
+    setPlanModeIndicatorActive(false);
+    return;
+  }
+  if (arg === "on" || arg === "enter") {
+    setPlanModeIndicatorActive(true);
+    return;
+  }
+  setPlanModeIndicatorActive(!isPlanModeActive());
+}
 
 async function postJson(url, payload) {
   const response = await fetch(url, {
@@ -114,6 +137,7 @@ async function startSession() {
 
 async function sendLine(line) {
   const text = line.trim();
+  const planModeCommand = /^\/plan(?:\s|$)/i.test(text);
   const attachments = state.attachments.map((attachment) => ({
     media_type: attachment.media_type || attachment.mediaType,
     data: attachment.data,
@@ -124,11 +148,16 @@ async function sendLine(line) {
   }
   resetWorkflowPanel();
   resetArtifacts();
+  if (planModeCommand) {
+    previewPlanModeCommand(text);
+  }
   if (state.chatTitle === "MyHarness" && !text.startsWith("/")) {
     setChatTitle(text || "이미지 첨부");
   }
-  appendMessage("user", text, attachments);
-  if (!text.startsWith("/")) {
+  if (!planModeCommand) {
+    appendMessage("user", text, attachments);
+  }
+  if (!text.startsWith("/") && !planModeCommand) {
     ensureWorkflowPanel();
   }
   els.input.value = "";

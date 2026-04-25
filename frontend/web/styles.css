@@ -219,6 +219,61 @@
   --command-token-mark-ink: #02100b;
 }
 
+:root[data-theme="mono-orange"] {
+  color-scheme: dark;
+  --app: #090100;
+  --panel: #120300;
+  --sidebar: #100300;
+  --sidebar-hover: #260900;
+  --ink: #ff9f2f;
+  --muted: #ff7b1a;
+  --faint: #b94c0c;
+  --line: #4a1200;
+  --line-strong: #ff5f14;
+  --user: #2f0a00;
+  --accent: #ff7a18;
+  --accent-soft: #341000;
+  --success: #ffb13b;
+  --success-soft: #2e1100;
+  --warning: #ffc34f;
+  --warning-soft: #341800;
+  --shadow: 0 16px 44px rgba(0, 0, 0, 0.66), 0 0 18px rgba(255, 94, 20, 0.07);
+  --focus: rgba(255, 122, 24, 0.58);
+  --icon-muted: #e05c13;
+  --icon-hover: rgba(95, 28, 0, 0.84);
+  --tooltip-bg: #ff9f2f;
+  --tooltip-ink: #120300;
+  --inverse: #ff9f2f;
+  --inverse-ink: #120300;
+  --panel-glass: rgba(18, 3, 0, 0.92);
+  --panel-raised: #180500;
+  --new-chat: #2b0a00;
+  --new-chat-hover: #451200;
+  --composer-bg: rgba(20, 4, 0, 0.96);
+  --composer-border: rgba(255, 92, 18, 0.82);
+  --composer-shadow: 0 16px 42px rgba(0, 0, 0, 0.52), 0 0 14px rgba(255, 92, 18, 0.06), inset 0 1px 0 rgba(255, 159, 47, 0.1);
+  --composer-fade: rgba(18, 3, 0, 1);
+  --danger: #ff5b38;
+  --danger-soft: #340b05;
+  --link: #ffb04d;
+  --code-bg: #160400;
+  --code-ink: #ffb25a;
+  --code-border: rgba(255, 122, 24, 0.26);
+  --code-copy-bg: rgba(255, 122, 24, 0.1);
+  --code-copy-bg-hover: rgba(255, 122, 24, 0.2);
+  --code-copy-border: rgba(255, 122, 24, 0.28);
+  --code-copy-border-hover: rgba(255, 122, 24, 0.48);
+  --code-copy-ink: #ffc06a;
+  --skill-token-bg: rgba(255, 122, 24, 0.16);
+  --skill-token-ink: #ffb35b;
+  --skill-token-mark-bg: #ff7a18;
+  --skill-token-mark-ink: #140300;
+  --command-token-bg: rgba(255, 179, 59, 0.15);
+  --command-token-ink: #ffc66a;
+  --command-token-mark-bg: #ffb13b;
+  --command-token-mark-ink: #140300;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -270,6 +325,13 @@ body {
   text-shadow: 0 0 7px rgba(109, 255, 176, 0.2);
 }
 
+:root[data-theme="mono-orange"] body {
+  background:
+    radial-gradient(circle at 50% 18%, rgba(255, 86, 18, 0.055), transparent 38%),
+    var(--app);
+  text-shadow: 0 0 3px rgba(255, 122, 24, 0.22);
+}
+
 :root[data-theme="mono"] .app-shell::after {
   position: fixed;
   inset: 0;
@@ -287,15 +349,69 @@ body {
   pointer-events: none;
 }
 
+:root[data-theme="mono-orange"] .app-shell::after {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 159, 47, 0.045) 0,
+      rgba(255, 159, 47, 0.045) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  content: "";
+  opacity: 0.38;
+  pointer-events: none;
+}
+
 :root[data-theme="mono"] .chat-panel,
 :root[data-theme="mono"] .sidebar {
   box-shadow: inset 0 0 42px rgba(109, 255, 176, 0.035);
+}
+
+:root[data-theme="mono-orange"] .chat-panel,
+:root[data-theme="mono-orange"] .sidebar {
+  box-shadow: inset 0 0 28px rgba(255, 92, 18, 0.026);
 }
 
 :root[data-theme="mono"] .message.assistant .bubble,
 :root[data-theme="mono"] .welcome,
 :root[data-theme="mono"] .workflow-card {
   text-shadow: 0 0 9px rgba(109, 255, 176, 0.18);
+}
+
+:root[data-theme="mono-orange"] .message.assistant .bubble,
+:root[data-theme="mono-orange"] .welcome,
+:root[data-theme="mono-orange"] .workflow-card {
+  text-shadow: 0 0 4px rgba(255, 122, 24, 0.18);
+}
+
+:root[data-theme="mono-orange"] .artifact-panel,
+:root[data-theme="mono-orange"] .artifact-panel-header,
+:root[data-theme="mono-orange"] .artifact-viewer,
+:root[data-theme="mono-orange"] .artifact-text,
+:root[data-theme="mono-orange"] .artifact-markdown,
+:root[data-theme="mono-orange"] .artifact-frame,
+:root[data-theme="mono-orange"] .artifact-image {
+  text-shadow: none;
+}
+
+:root[data-theme="mono-orange"] .artifact-resize-handle:hover::after,
+:root[data-theme="mono-orange"] .app-shell.resizing-artifact .artifact-resize-handle::after {
+  background: rgba(255, 122, 24, 0.52);
+}
+
+:root[data-theme="mono-orange"] .artifact-action::after,
+:root[data-theme="mono-orange"] .header-icon-button::after {
+  background: #c76a22;
+  color: #120300;
+}
+
+:root[data-theme="mono-orange"] .artifact-card:hover {
+  border-color: rgba(255, 122, 24, 0.5);
+  box-shadow: 0 3px 10px rgba(255, 92, 18, 0.04);
 }
 
 button,
@@ -546,6 +662,7 @@ a:focus-visible {
 }
 
 .sidebar-project {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -557,6 +674,36 @@ a:focus-visible {
   border-color: var(--line);
   border-radius: 12px;
   text-align: left;
+}
+
+.sidebar-project::after {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 10px);
+  z-index: 20;
+  width: max-content;
+  max-width: 220px;
+  padding: 7px 9px;
+  background: var(--tooltip-bg);
+  border-radius: 7px;
+  color: var(--tooltip-ink);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(4px, -50%);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.sidebar-project:hover::after,
+.sidebar-project:focus-visible::after {
+  opacity: 1;
+  transform: translate(0, -50%);
 }
 
 .sidebar-project:hover {
@@ -795,6 +942,7 @@ a:focus-visible {
 
 .sidebar-footer {
   display: grid;
+  position: relative;
   grid-template-columns: 32px minmax(0, 1fr);
   gap: 9px;
   align-items: center;
@@ -809,6 +957,35 @@ a:focus-visible {
   color: inherit;
   cursor: pointer;
   text-align: left;
+}
+
+.sidebar-footer::after {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 8px;
+  z-index: 20;
+  width: max-content;
+  max-width: 160px;
+  padding: 7px 9px;
+  background: var(--tooltip-bg);
+  border-radius: 7px;
+  color: var(--tooltip-ink);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.sidebar-footer:hover::after,
+.sidebar-footer:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .sidebar-footer:hover {
@@ -919,8 +1096,9 @@ a:focus-visible {
   backdrop-filter: blur(14px);
 }
 
-.artifact-panel-header > div {
+.artifact-panel-title {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
   gap: 2px;
 }
@@ -943,12 +1121,24 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-.artifact-close {
-  display: grid;
+.artifact-panel-actions {
+  display: flex !important;
+  align-items: center;
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.artifact-action {
+  display: inline-grid;
+  position: relative;
   place-items: center;
+  flex: 0 0 34px;
   width: 34px;
   height: 34px;
-  flex: 0 0 auto;
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
@@ -956,13 +1146,49 @@ a:focus-visible {
   color: var(--muted);
 }
 
-.artifact-close:hover {
+.artifact-action:hover:not(:disabled),
+.artifact-action.copied {
   background: var(--sidebar-hover);
   border-color: var(--line);
   color: var(--ink);
 }
 
-.artifact-close svg {
+.artifact-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.artifact-action::after {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: max-content;
+  max-width: 150px;
+  padding: 7px 9px;
+  background: var(--tooltip-bg);
+  border-radius: 7px;
+  color: var(--tooltip-ink);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.artifact-action:hover::after,
+.artifact-action:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.artifact-action svg {
   width: 18px;
   height: 18px;
   fill: none;
@@ -1058,6 +1284,7 @@ a:focus-visible {
 }
 
 .header-icon-button {
+  position: relative;
   display: grid;
   place-items: center;
   width: 34px;
@@ -1083,6 +1310,36 @@ a:focus-visible {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.9;
+}
+
+.header-icon-button::after {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 180px;
+  padding: 7px 9px;
+  background: var(--tooltip-bg);
+  border-radius: 7px;
+  color: var(--tooltip-ink);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.header-icon-button:hover::after,
+.header-icon-button:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .chat-title {
@@ -1386,6 +1643,24 @@ a:focus-visible {
   color: var(--skill-token-mark-ink);
 }
 
+.prompt-token.mcp,
+.prompt-token.plugin {
+  background: var(--skill-token-bg);
+  color: var(--skill-token-ink);
+}
+
+.prompt-token.mcp::before {
+  content: "M";
+  background: var(--skill-token-mark-bg);
+  color: var(--skill-token-mark-ink);
+}
+
+.prompt-token.plugin::before {
+  content: "P";
+  background: var(--skill-token-mark-bg);
+  color: var(--skill-token-mark-ink);
+}
+
 .prompt-token.command {
   background: var(--command-token-bg);
   color: var(--command-token-ink);
@@ -1627,6 +1902,22 @@ a:focus-visible {
 
 .command-card {
   width: 100%;
+}
+
+.command-help-stack {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.command-help-intro {
+  padding: 2px 12px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.command-help-intro p {
+  margin: 0 0 6px;
 }
 
 .command-card summary {
@@ -1935,10 +2226,10 @@ a:focus-visible {
 
 .pasted-text-tray {
   display: flex;
-  grid-column: 1 / -1;
   gap: 6px;
-  width: 100%;
+  width: min(804px, 100%);
   min-width: 0;
+  margin: 0 auto 7px;
   overflow-x: auto;
   padding: 0 2px 1px;
   pointer-events: auto;
@@ -1951,6 +2242,46 @@ a:focus-visible {
 
 .pasted-text-tray.hidden {
   display: none;
+}
+
+.plan-mode-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: end;
+  grid-column: 3;
+  gap: 5px;
+  min-width: max-content;
+  height: 30px;
+  margin: 0 0 1px;
+  padding: 0 9px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line) 52%);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 740;
+  letter-spacing: 0;
+  pointer-events: auto;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--inverse) 12%, transparent);
+}
+
+.plan-mode-indicator.hidden {
+  display: none;
+}
+
+.plan-mode-indicator svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.plan-mode-indicator:hover {
+  border-color: var(--accent);
 }
 
 .pasted-text-chip {
@@ -2048,7 +2379,7 @@ a:focus-visible {
 
 .composer-box {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   column-gap: 8px;
   row-gap: 6px;
   align-items: center;
@@ -2140,7 +2471,7 @@ a:focus-visible {
   display: none;
 }
 
-.composer-box > button {
+.composer-box > #sendButton {
   display: grid;
   place-items: center;
   align-self: end;
@@ -2156,10 +2487,10 @@ a:focus-visible {
 }
 
 .composer-box > #sendButton {
-  grid-column: 3;
+  grid-column: 4;
 }
 
-.composer-box > button svg {
+.composer-box > #sendButton svg {
   width: 17px;
   height: 17px;
   fill: none;
@@ -2169,14 +2500,14 @@ a:focus-visible {
   stroke-width: 2;
 }
 
-.composer-box > button:disabled {
+.composer-box > #sendButton:disabled {
   cursor: not-allowed;
   opacity: 0.42;
 }
 
 .composer .slash-menu-item {
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
+  grid-template-columns: 132px auto minmax(0, 1fr);
   align-items: center;
   justify-items: start;
   place-items: center start;
@@ -2294,6 +2625,10 @@ a:focus-visible {
   line-height: 1.6;
 }
 
+.composer .slash-menu-item.no-badge {
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
 .settings-card h2 {
   display: inline;
   margin: 0 12px 0 0;
@@ -2302,6 +2637,20 @@ a:focus-visible {
 .settings-card > p {
   display: inline;
   white-space: nowrap;
+}
+
+.composer .slash-menu-item small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 7px;
+  background: var(--sidebar-hover);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1;
 }
 
 .system-settings-card {

@@ -8,6 +8,8 @@ export const state = {
   activeHistoryId: null,
   commands: [],
   skills: [],
+  mcpServers: [],
+  plugins: [],
   projectFiles: [],
   projectFilesLoadedForSession: "",
   slashMenuOpen: false,
@@ -23,6 +25,7 @@ export const state = {
   effort: "-",
   provider: "-",
   permissionMode: "-",
+  planModePinned: null,
   systemPrompt: localStorage.getItem("openharness:systemPrompt") || "",
   workspaceName: localStorage.getItem("openharness:workspaceName") || "",
   workspacePath: "",
@@ -36,6 +39,7 @@ export const state = {
   workflowTimer: 0,
   artifacts: [],
   activeArtifact: null,
+  activeArtifactRaw: "",
   artifactPanelOpen: false,
   attachments: [],
   pastedTexts: [],
@@ -63,6 +67,7 @@ export const els = {
   chatTitle: document.querySelector("#chatTitle span"),
   projectFilesButton: document.querySelector("#projectFilesButton"),
   themeToggle: document.querySelector("[data-action='toggle-theme']"),
+  planModeIndicator: document.querySelector("#planModeIndicator"),
   slashMenu: document.querySelector("#slashMenu"),
   attachmentTray: document.querySelector("#attachmentTray"),
   pastedTextTray: document.querySelector("#pastedTextTray"),
@@ -71,6 +76,7 @@ export const els = {
   artifactPanel: document.querySelector("#artifactPanel"),
   artifactPanelTitle: document.querySelector("#artifactPanelTitle"),
   artifactPanelMeta: document.querySelector("#artifactPanelMeta"),
+  artifactPanelCopy: document.querySelector("#artifactPanelCopy"),
   artifactPanelClose: document.querySelector("#artifactPanelClose"),
   artifactResizeHandle: document.querySelector("#artifactResizeHandle"),
   artifactViewer: document.querySelector("#artifactViewer"),
@@ -169,7 +175,12 @@ export function updateState(snapshot = {}) {
   state.model = snapshot.model || "-";
   state.effort = snapshot.effort || "-";
   state.provider = snapshot.provider || "-";
-  state.permissionMode = snapshot.permission_mode || "-";
+  const snapshotPermissionMode = snapshot.permission_mode || "-";
+  state.permissionMode = state.planModePinned === null
+    ? snapshotPermissionMode
+    : state.planModePinned
+      ? "Plan Mode"
+      : "Default";
   const providerLabel = formatProviderName(state.provider);
   const modelLabel = state.model || "-";
   const effortLabel = formatEffort(state.effort);
@@ -179,6 +190,23 @@ export function updateState(snapshot = {}) {
   els.provider.title = els.provider.textContent;
   els.model.title = els.model.textContent;
   els.cwd.textContent = snapshot.cwd || "-";
+  updatePlanModeIndicator();
+}
+
+export function setPlanModeIndicatorActive(active) {
+  state.planModePinned = Boolean(active);
+  state.permissionMode = active ? "Plan Mode" : "Default";
+  updatePlanModeIndicator();
+}
+
+function updatePlanModeIndicator() {
+  if (!els.planModeIndicator) {
+    return;
+  }
+  const mode = String(state.permissionMode || "").trim().toLowerCase().replace(/\s+/g, "_");
+  const active = mode === "plan" || mode === "plan_mode" || mode === "permissionmode.plan";
+  els.planModeIndicator.classList.toggle("hidden", !active);
+  els.planModeIndicator.setAttribute("aria-pressed", active ? "true" : "false");
 }
 
 export function formatProviderName(value) {

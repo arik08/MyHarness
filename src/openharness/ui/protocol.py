@@ -82,6 +82,17 @@ class SkillSnapshot(BaseModel):
     source: str
 
 
+class PluginSnapshot(BaseModel):
+    """UI-safe plugin representation."""
+
+    name: str
+    description: str = ""
+    enabled: bool = True
+    skill_count: int = 0
+    command_count: int = 0
+    mcp_server_count: int = 0
+
+
 class BackendEvent(BaseModel):
     """One event sent from the Python backend to the React frontend."""
 
@@ -113,6 +124,7 @@ class BackendEvent(BaseModel):
     state: dict[str, Any] | None = None
     tasks: list[TaskSnapshot] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
+    plugins: list[PluginSnapshot] | None = None
     bridge_sessions: list[dict[str, Any]] | None = None
     commands: list[str | dict[str, Any]] | None = None
     skills: list[SkillSnapshot] | None = None
@@ -171,11 +183,13 @@ class BackendEvent(BaseModel):
         *,
         state: AppState,
         mcp_servers: list[McpConnectionStatus],
+        plugins: list[PluginSnapshot] | None = None,
         bridge_sessions: list[BridgeSessionRecord],
     ) -> "BackendEvent":
         return cls(
             type="state_snapshot",
             state=_state_payload(state),
+            plugins=plugins or [],
             mcp_servers=[
                 {
                     "name": server.name,
@@ -245,6 +259,7 @@ def _format_permission_mode(raw: str) -> str:
 __all__ = [
     "BackendEvent",
     "FrontendRequest",
+    "PluginSnapshot",
     "SkillSnapshot",
     "TaskSnapshot",
     "TranscriptItem",

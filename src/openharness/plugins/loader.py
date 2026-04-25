@@ -47,6 +47,34 @@ def get_project_plugins_dir(cwd: str | Path) -> Path:
     return path
 
 
+def get_program_plugins_dirs() -> list[Path]:
+    """Return OpenHarness installation-local plugin directories."""
+    package_dir = Path(__file__).resolve().parents[1]
+    candidates = [
+        package_dir / ".plugins",
+        package_dir.parent / ".plugins",
+    ]
+
+    for ancestor in package_dir.parents:
+        if (ancestor / "pyproject.toml").exists() and (ancestor / "src" / "openharness").exists():
+            candidates.append(ancestor / ".plugins")
+            break
+
+    seen: set[Path] = set()
+    result: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            result.append(resolved)
+        elif (resolved.parent / "pyproject.toml").exists():
+            resolved.mkdir(parents=True, exist_ok=True)
+            result.append(resolved)
+    return result
+
+
 def _find_manifest(plugin_dir: Path) -> Path | None:
     """Find plugin.json in standard or .claude-plugin/ locations."""
     for candidate in [
@@ -60,7 +88,7 @@ def _find_manifest(plugin_dir: Path) -> Path | None:
 
 def discover_plugin_paths(cwd: str | Path, extra_roots: Iterable[str | Path] | None = None) -> list[Path]:
     """Find plugin directories from user and project locations."""
-    roots = [get_user_plugins_dir(), get_project_plugins_dir(cwd)]
+    roots = [*get_program_plugins_dirs(), get_user_plugins_dir(), get_project_plugins_dir(cwd)]
     if extra_roots:
         for root in extra_roots:
             path = Path(root).expanduser().resolve()
@@ -84,7 +112,7 @@ def discover_plugin_paths_for_settings(
     extra_roots: Iterable[str | Path] | None = None,
 ) -> list[Path]:
     """Find plugin directories that are permitted by the active settings."""
-    roots = [get_user_plugins_dir()]
+    roots = [*get_program_plugins_dirs(), get_user_plugins_dir()]
     if getattr(settings, "allow_project_plugins", False):
         roots.append(get_project_plugins_dir(cwd))
     if extra_roots:
