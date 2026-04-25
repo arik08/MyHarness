@@ -432,12 +432,3 @@ boot().catch((error) => {
   setStatus(STATUS_LABELS.startFailed);
 });
 
-window.addEventListener("beforeunload", () => {
-  if (!state.sessionId) {
-    return;
-  }
-  navigator.sendBeacon(
-    "/api/shutdown",
-    new Blob([JSON.stringify({ sessionId: state.sessionId })], { type: "application/json" }),
-  );
-});

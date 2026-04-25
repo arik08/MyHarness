@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -35,6 +36,10 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.learning import run_auto_skill_learning
 from openharness.learning.service import remember_tool_failure
 from openharness.permissions.checker import PermissionChecker
+from openharness.permissions.mutation_lock import (
+    MutationLockTimeout,
+    acquire_mutation_lock,
+)
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
 
@@ -727,11 +732,12 @@ async def _execute_tool_call(
     # directory-scoped roots such as `glob`/`grep`.
     _file_path = _resolve_permission_file_path(context.cwd, tool_input, parsed_input)
     _command = _extract_permission_command(tool_input, parsed_input)
+    is_read_only = tool.is_read_only(parsed_input)
     log.debug("permission check: %s read_only=%s path=%s cmd=%s",
-              tool_name, tool.is_read_only(parsed_input), _file_path, _command and _command[:80])
+              tool_name, is_read_only, _file_path, _command and _command[:80])
     decision = context.permission_checker.evaluate(
         tool_name,
-        is_read_only=tool.is_read_only(parsed_input),
+        is_read_only=is_read_only,
         file_path=_file_path,
         command=_command,
     )
@@ -763,6 +769,22 @@ async def _execute_tool_call(
                 content=decision.reason or f"Permission denied for {tool_name}",
                 is_error=True,
             )
+
+    if not is_read_only and context.tool_metadata is not None:
+        lock_token = context.tool_metadata.get("mutation_lock_token")
+        if lock_token is None:
+            owner = str(context.tool_metadata.get("session_id") or os.getpid())
+            try:
+                context.tool_metadata["mutation_lock_token"] = await acquire_mutation_lock(
+                    context.cwd,
+                    owner=owner,
+                )
+            except MutationLockTimeout as exc:
+                return ToolResultBlock(
+                    tool_use_id=tool_use_id,
+                    content=str(exc),
+                    is_error=True,
+                )
 
     log.debug("executing %s ...", tool_name)
     t0 = time.monotonic()

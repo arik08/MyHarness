@@ -727,6 +727,10 @@ function getLanUrl() {
 async function createBackendSession(options = {}) {
   const id = crypto.randomUUID();
   const workspace = await resolveSessionWorkspace(options);
+  const clientId = String(options.clientId || "").trim();
+  if (clientId && countBusySessionsForClient(clientId) >= 3) {
+    throw new Error("Concurrent response limit reached");
+  }
   const args = ["-3", "-m", "openharness", "--backend-only", "--cwd", workspace.path];
   const env = {
     ...process.env,
@@ -756,6 +760,9 @@ async function createBackendSession(options = {}) {
     events: [],
     createdAt: Date.now(),
     workspace,
+    clientId,
+    busy: false,
+    savedSessionId: "",
     shuttingDown: false,
     clientCloseTimer: null,
     forceKillTimer: null,
@@ -778,7 +785,9 @@ async function createBackendSession(options = {}) {
       return;
     }
     try {
-      emit(session, JSON.parse(line.slice(protocolPrefix.length)));
+      const event = JSON.parse(line.slice(protocolPrefix.length));
+      updateSessionStateFromBackendEvent(session, event);
+      emit(session, event);
     } catch (error) {
       emit(session, { type: "error", message: `Could not parse backend event: ${error.message}` });
     }
@@ -807,6 +816,38 @@ async function createBackendSession(options = {}) {
   });
 
   return session;
+}
+
+function countBusySessionsForClient(clientId) {
+  let count = 0;
+  for (const session of sessions.values()) {
+    if (session.clientId === clientId && session.busy && !session.shuttingDown) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function updateSessionStateFromBackendEvent(session, event) {
+  if (!event || typeof event !== "object") {
+    return;
+  }
+  if (event.type === "active_session") {
+    session.savedSessionId = String(event.value || "").trim();
+  }
+  if (event.type === "line_complete" || event.type === "error" || event.type === "shutdown") {
+    session.busy = false;
+  }
+}
+
+function liveSessionPayload(session) {
+  return {
+    sessionId: session.id,
+    savedSessionId: session.savedSessionId || "",
+    workspace: session.workspace,
+    busy: Boolean(session.busy),
+    createdAt: session.createdAt,
+  };
 }
 
 async function handleApi(request, response, pathname) {
@@ -848,6 +889,16 @@ async function handleApi(request, response, pathname) {
     } catch (error) {
       json(response, 400, { error: error.message || "Could not start session" });
     }
+    return true;
+  }
+
+  if (request.method === "GET" && pathname === "/api/live-sessions") {
+    const clientId = new URL(request.url, `http://localhost:${port}`).searchParams.get("clientId") || "";
+    const liveSessions = [...sessions.values()]
+      .filter((session) => session.clientId && session.clientId === clientId && !session.shuttingDown)
+      .map(liveSessionPayload)
+      .sort((left, right) => left.createdAt - right.createdAt);
+    json(response, 200, { sessions: liveSessions });
     return true;
   }
 
@@ -961,7 +1012,14 @@ async function handleApi(request, response, pathname) {
       json(response, 400, { error: "Message is empty" });
       return true;
     }
+    if (!session.busy && session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
+      json(response, 429, { error: "Concurrent response limit reached" });
+      return true;
+    }
     const ok = sendBackend(session, { type: "submit_line", line, attachments });
+    if (ok) {
+      session.busy = true;
+    }
     json(response, ok ? 200 : 409, { ok });
     return true;
   }

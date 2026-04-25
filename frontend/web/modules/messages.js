@@ -11,6 +11,7 @@ export function createMessages(ctx) {
   let workflowPreviewText = "";
   let workflowPreviewOffset = 0;
   const workflowToolArgBuffers = new Map();
+  const workflowMutationWaitingTimers = new Map();
   const WORKFLOW_EVENT_STAGGER_MS = 90;
   const WORKFLOW_WAITING_FIRST_MS = 4500;
   const WORKFLOW_WAITING_NEXT_MS = 12000;
@@ -269,6 +270,10 @@ function resetWorkflowPanel() {
   workflowPreviewText = "";
   workflowPreviewOffset = 0;
   workflowToolArgBuffers.clear();
+  for (const timer of workflowMutationWaitingTimers.values()) {
+    window.clearTimeout(timer);
+  }
+  workflowMutationWaitingTimers.clear();
   stopWorkflowTimer();
   state.workflowNode = null;
   state.workflowList = null;
@@ -652,8 +657,10 @@ function appendWorkflowEventNow(event) {
   const toolName = event.tool_name || "도구";
   if (isStart) {
     startWorkflowOutputPreview(toolName, event.tool_input || {});
+    scheduleMutationWaitingStep(toolName);
   }
   if (!isStart) {
+    clearMutationWaitingStep(toolName);
     [...state.workflowList.querySelectorAll(".workflow-step.running")]
       .filter((item) => item.dataset.toolName === toolName)
       .forEach((item) => {
@@ -667,6 +674,53 @@ function appendWorkflowEventNow(event) {
   if (!state.restoringHistory && state.autoFollowMessages) {
     scrollMessagesToBottom();
   }
+}
+
+function isMutationTool(toolName) {
+  const lower = String(toolName || "").toLowerCase();
+  return (
+    lower.includes("bash")
+    || lower.includes("shell")
+    || lower.includes("write")
+    || lower.includes("edit")
+    || lower.includes("delete")
+    || lower.includes("notebook")
+  );
+}
+
+function scheduleMutationWaitingStep(toolName) {
+  if (!isMutationTool(toolName) || workflowMutationWaitingTimers.has(toolName)) {
+    return;
+  }
+  const timer = window.setTimeout(() => {
+    workflowMutationWaitingTimers.delete(toolName);
+    if (!state.workflowNode || state.restoringHistory) {
+      return;
+    }
+    const stillRunning = [...state.workflowList.querySelectorAll(".workflow-step.running")]
+      .some((item) => item.dataset.toolName === toolName);
+    if (stillRunning) {
+      appendWorkflowStep("파일 변경 대기 중", "다른 작업의 파일 변경이 끝나면 자동으로 이어서 실행합니다.", "running", "mutation_lock");
+    }
+  }, 1400);
+  workflowMutationWaitingTimers.set(toolName, timer);
+}
+
+function clearMutationWaitingStep(toolName) {
+  const timer = workflowMutationWaitingTimers.get(toolName);
+  if (timer) {
+    window.clearTimeout(timer);
+    workflowMutationWaitingTimers.delete(toolName);
+  }
+  [...state.workflowList.querySelectorAll('.workflow-step.running[data-tool-name="mutation_lock"]')]
+    .forEach((item) => {
+      item.classList.remove("running");
+      item.classList.add("done");
+      const detail = item.querySelector("small");
+      if (detail) {
+        detail.textContent = "파일 변경을 계속 진행합니다.";
+      }
+    });
 }
 
 function markPlanningStepDone() {

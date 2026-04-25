@@ -139,6 +139,272 @@ function setActiveWorkspace(workspace) {
   updateWorkspaceDisplay();
 }
 
+function createFrontendId() {
+  return globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function attachMessageScroll(container) {
+  if (!container || container.dataset.slotScrollAttached === "true") {
+    return;
+  }
+  container.dataset.slotScrollAttached = "true";
+  container.addEventListener("scroll", () => {
+    if (!state.restoringHistory && !state.ignoreScrollSave) {
+      if (Date.now() < state.autoScrollUntil) {
+        state.autoFollowMessages = true;
+      } else {
+        state.autoFollowMessages = ctx.isNearMessageBottom();
+      }
+    }
+    ctx.scheduleScrollPositionSave();
+  });
+}
+
+function snapshotActiveSlot() {
+  const slot = state.chatSlots.get(state.activeFrontendId);
+  if (!slot) {
+    return;
+  }
+  Object.assign(slot, {
+    backendSessionId: state.sessionId,
+    savedSessionId: state.activeHistoryId || slot.savedSessionId || "",
+    title: state.chatTitle,
+    ready: state.ready,
+    busy: state.busy,
+    assistantNode: state.assistantNode,
+    workflowNode: state.workflowNode,
+    workflowList: state.workflowList,
+    workflowSummary: state.workflowSummary,
+    workflowSteps: state.workflowSteps,
+    workflowTimer: 0,
+    workflowRestoredElapsedMs: state.workflowRestoredElapsedMs,
+    restoringHistory: state.restoringHistory,
+    batchingHistoryRestore: state.batchingHistoryRestore,
+    pendingScrollRestoreId: state.pendingScrollRestoreId,
+    ignoreScrollSave: state.ignoreScrollSave,
+    projectFiles: state.projectFiles,
+    projectFilesLoadedForSession: state.projectFilesLoadedForSession,
+  });
+}
+
+function restoreSlot(slot) {
+  state.activeFrontendId = slot.frontendId;
+  state.sessionId = slot.backendSessionId;
+  state.ready = Boolean(slot.ready);
+  state.busy = Boolean(slot.busy);
+  state.assistantNode = slot.assistantNode || null;
+  state.activeHistoryId = slot.savedSessionId || null;
+  state.pendingScrollRestoreId = slot.pendingScrollRestoreId || null;
+  state.restoringHistory = Boolean(slot.restoringHistory);
+  state.batchingHistoryRestore = Boolean(slot.batchingHistoryRestore);
+  state.ignoreScrollSave = Boolean(slot.ignoreScrollSave);
+  state.workflowNode = slot.workflowNode || null;
+  state.workflowList = slot.workflowList || null;
+  state.workflowSummary = slot.workflowSummary || null;
+  state.workflowSteps = slot.workflowSteps || [];
+  state.workflowTimer = slot.workflowTimer || 0;
+  state.workflowRestoredElapsedMs = slot.workflowRestoredElapsedMs || 0;
+  state.projectFiles = slot.projectFiles || [];
+  state.projectFilesLoadedForSession = slot.projectFilesLoadedForSession || "";
+  if (els.sessionId) {
+    els.sessionId.textContent = state.sessionId || "";
+  }
+  els.messages = slot.container;
+  document.querySelectorAll(".chat-slot-messages").forEach((node) => {
+    node.classList.toggle("hidden", node !== slot.container);
+  });
+  setChatTitle(slot.title || "MyHarness");
+  setStatus(state.busy ? STATUS_LABELS.processing : state.ready ? STATUS_LABELS.ready : STATUS_LABELS.connecting, state.busy ? "busy" : state.ready ? "ready" : "");
+  updateSendState();
+  markActiveHistory();
+}
+
+function createChatSlot({ sessionId, workspace, container = null, makeActive = true }) {
+  const frontendId = createFrontendId();
+  const node = container || document.createElement("section");
+  node.classList.add("messages", "chat-slot-messages");
+  if (!container) {
+    node.setAttribute("aria-live", "polite");
+    const current = document.querySelector(".chat-panel .composer");
+    current?.before(node);
+  }
+  attachMessageScroll(node);
+  const slot = {
+    frontendId,
+    backendSessionId: sessionId,
+    savedSessionId: "",
+    workspace,
+    title: "MyHarness",
+    ready: false,
+    busy: false,
+    assistantNode: null,
+    workflowNode: null,
+    workflowList: null,
+    workflowSummary: null,
+    workflowSteps: [],
+    workflowTimer: 0,
+    workflowRestoredElapsedMs: 0,
+    restoringHistory: false,
+    batchingHistoryRestore: false,
+    pendingScrollRestoreId: null,
+    ignoreScrollSave: false,
+    projectFiles: [],
+    projectFilesLoadedForSession: "",
+    source: null,
+    pendingEvents: [],
+  };
+  state.chatSlots.set(frontendId, slot);
+  if (makeActive) {
+    snapshotActiveSlot();
+    resetWorkflowPanel();
+    restoreSlot(slot);
+  } else {
+    node.classList.add("hidden");
+  }
+  return slot;
+}
+
+function attachSlotSource(slot) {
+  if (!slot || slot.source) {
+    return;
+  }
+  const sessionId = slot.backendSessionId;
+  slot.source = new EventSource(`/api/events?session=${encodeURIComponent(sessionId)}`);
+  slot.source.onmessage = (event) => handleSessionEvent(sessionId, JSON.parse(event.data));
+  slot.source.onerror = () => {
+    if (slot.frontendId === state.activeFrontendId && !slot.ready) {
+      setStatus(STATUS_LABELS.connectionError);
+    }
+  };
+}
+
+function activeRunningSlotCount() {
+  let count = 0;
+  for (const slot of state.chatSlots.values()) {
+    if (slot.busy) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function slotForBackendSession(sessionId) {
+  for (const slot of state.chatSlots.values()) {
+    if (slot.backendSessionId === sessionId) {
+      return slot;
+    }
+  }
+  return null;
+}
+
+function updateSlotFromEvent(slot, event) {
+  if (!slot || !event) {
+    return;
+  }
+  if (event.type === "ready") {
+    slot.ready = true;
+  }
+  if (event.type === "active_session") {
+    slot.savedSessionId = String(event.value || "").trim() || slot.savedSessionId;
+  }
+  if (event.type === "session_title" && event.message) {
+    slot.title = String(event.message || "").trim() || slot.title;
+  }
+  if (event.type === "line_complete" || event.type === "error" || event.type === "shutdown") {
+    slot.busy = false;
+  }
+}
+
+function processPendingSlotEvents(slot) {
+  if (!slot || !slot.pendingEvents.length) {
+    return;
+  }
+  const pending = slot.pendingEvents.splice(0);
+  for (const event of pending) {
+    handleEvent(event);
+  }
+  snapshotActiveSlot();
+}
+
+function handleSessionEvent(sessionId, event) {
+  const slot = slotForBackendSession(sessionId);
+  if (!slot) {
+    return;
+  }
+  updateSlotFromEvent(slot, event);
+  if (slot.frontendId !== state.activeFrontendId) {
+    slot.pendingEvents.push(event);
+    if (event.type === "line_complete" || event.type === "error" || event.type === "shutdown" || event.type === "session_title") {
+      markActiveHistory();
+      ctx.requestHistory?.().catch(() => {});
+    }
+    return;
+  }
+  handleEvent(event);
+  if (slot.busy && !["line_complete", "error", "shutdown"].includes(event.type)) {
+    setBusy(true, STATUS_LABELS.processing);
+  }
+  snapshotActiveSlot();
+}
+
+function switchChatSlot(frontendId) {
+  const slot = state.chatSlots.get(frontendId);
+  if (!slot) {
+    return;
+  }
+  snapshotActiveSlot();
+  resetWorkflowPanel();
+  restoreSlot(slot);
+  processPendingSlotEvents(slot);
+}
+
+async function startBackendSlot({ makeActive = true } = {}) {
+  const payload = { permissionMode: "full_auto", clientId: state.clientId };
+  if (state.workspacePath) {
+    payload.cwd = state.workspacePath;
+  }
+  const systemPrompt = String(state.systemPrompt || "").trim();
+  if (systemPrompt) {
+    payload.systemPrompt = systemPrompt;
+  }
+  const session = await postJson("/api/session", payload);
+  const { sessionId } = session;
+  setActiveWorkspace(session.workspace);
+  const container = state.chatSlots.size === 0 ? els.messages : null;
+  const slot = createChatSlot({ sessionId, workspace: session.workspace, container, makeActive });
+  attachSlotSource(slot);
+  return slot;
+}
+
+async function restoreLiveSlots() {
+  const data = await getJson(`/api/live-sessions?clientId=${encodeURIComponent(state.clientId)}`);
+  const liveSessions = Array.isArray(data.sessions) ? data.sessions : [];
+  const sameWorkspace = liveSessions.filter((session) =>
+    !state.workspacePath || !session.workspace?.path || session.workspace.path === state.workspacePath
+  );
+  if (!sameWorkspace.length) {
+    return 0;
+  }
+  for (const session of sameWorkspace.slice(0, 3)) {
+    const container = state.chatSlots.size === 0 ? els.messages : null;
+    const slot = createChatSlot({
+      sessionId: session.sessionId,
+      workspace: session.workspace,
+      container,
+      makeActive: state.chatSlots.size === 0,
+    });
+    slot.busy = Boolean(session.busy);
+    slot.savedSessionId = session.savedSessionId || "";
+    if (slot.frontendId === state.activeFrontendId) {
+      restoreSlot(slot);
+    }
+    attachSlotSource(slot);
+  }
+  return sameWorkspace.length;
+}
+
 async function loadWorkspaces() {
   const data = await getJson("/api/workspaces");
   state.workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
@@ -158,31 +424,15 @@ async function initializeWorkspace() {
 
 async function startSession() {
   setStatus(STATUS_LABELS.connecting);
-  const payload = { permissionMode: "full_auto" };
-  if (state.workspacePath) {
-    payload.cwd = state.workspacePath;
+  const restored = await restoreLiveSlots().catch(() => 0);
+  if (restored > 0) {
+    return;
   }
-  const systemPrompt = String(state.systemPrompt || "").trim();
-  if (systemPrompt) {
-    payload.systemPrompt = systemPrompt;
-  }
-  const session = await postJson("/api/session", payload);
-  const { sessionId } = session;
-  setActiveWorkspace(session.workspace);
-  state.sessionId = sessionId;
-  state.projectFiles = [];
-  state.projectFilesLoadedForSession = "";
+  const slot = await startBackendSlot({ makeActive: true });
+  state.sessionId = slot.backendSessionId;
   if (els.sessionId) {
-    els.sessionId.textContent = sessionId;
+    els.sessionId.textContent = state.sessionId;
   }
-
-  state.source = new EventSource(`/api/events?session=${encodeURIComponent(sessionId)}`);
-  state.source.onmessage = (event) => handleEvent(JSON.parse(event.data));
-  state.source.onerror = () => {
-    if (!state.ready) {
-      setStatus(STATUS_LABELS.connectionError);
-    }
-  };
 }
 
 async function runStreamingShellCommand(command) {
@@ -299,6 +549,19 @@ async function sendLine(line) {
       return;
     }
   }
+  if (!shellCommand && state.busy) {
+    if (activeRunningSlotCount() >= 3) {
+      appendMessage("system", "동시 작업은 최대 3개입니다. 진행 중인 답변이 끝난 뒤 다시 보내주세요.");
+      return;
+    }
+    const slot = await startBackendSlot({ makeActive: true });
+    state.sessionId = slot.backendSessionId;
+    renderWelcome();
+  }
+  if (!shellCommand && !state.busy && activeRunningSlotCount() >= 3) {
+    appendMessage("system", "동시 작업은 최대 3개입니다. 진행 중인 답변이 끝난 뒤 다시 보내주세요.");
+    return;
+  }
   resetWorkflowPanel();
   resetArtifacts();
   if (planModeCommand) {
@@ -332,8 +595,14 @@ async function sendLine(line) {
   clearAttachments();
   autoSizeInput();
   setBusy(true, STATUS_LABELS.sending);
+  const activeSlot = state.chatSlots.get(state.activeFrontendId);
+  if (activeSlot) {
+    activeSlot.busy = true;
+    activeSlot.title = state.chatTitle;
+  }
   state.autoFollowMessages = true;
   await postJson("/api/message", { sessionId: state.sessionId, line: text, attachments });
+  snapshotActiveSlot();
 }
 
 async function cancelCurrent() {
@@ -368,15 +637,19 @@ async function restartSessionForWorkspace(workspace) {
   state.switchingWorkspace = true;
   state.ready = false;
   setBusy(true, "프로젝트 전환 중");
-  const previousSessionId = state.sessionId;
+  const previousSlots = [...state.chatSlots.values()];
   state.sessionId = null;
-  if (state.source) {
-    state.source.close();
-    state.source = null;
+  for (const slot of previousSlots) {
+    slot.source?.close();
+    if (slot.backendSessionId) {
+      await shutdownSession(slot.backendSessionId).catch(() => {});
+    }
+    if (slot.container !== els.messages) {
+      slot.container.remove();
+    }
   }
-  if (previousSessionId) {
-    await shutdownSession(previousSessionId).catch(() => {});
-  }
+  state.chatSlots.clear();
+  state.activeFrontendId = "";
   setActiveWorkspace(workspace);
   state.assistantNode = null;
   state.activeHistoryId = null;
@@ -495,6 +768,8 @@ async function deleteHistorySession(sessionId, item) {
     restartSessionForWorkspace,
     createWorkspace,
     deleteWorkspace,
+    switchChatSlot,
+    activeRunningSlotCount,
     setActiveWorkspace,
     sendLine,
     cancelCurrent,

@@ -7,10 +7,26 @@ export function createHistory(ctx) {
   function sendBackendRequest(...args) { return ctx.sendBackendRequest(...args); }
   function deleteHistorySession(...args) { return ctx.deleteHistorySession(...args); }
   function appendMessage(...args) { return ctx.appendMessage(...args); }
+  function switchChatSlot(...args) { return ctx.switchChatSlot?.(...args); }
+
+function liveHistoryOptions() {
+  return [...state.chatSlots.values()]
+    .filter((slot) => slot.busy || slot.frontendId === state.activeFrontendId)
+    .map((slot) => ({
+      value: `live:${slot.frontendId}`,
+      label: slot.title || "진행 중인 채팅",
+      description: slot.busy ? "진행 중" : "열려 있음",
+      liveSlotId: slot.frontendId,
+      busy: Boolean(slot.busy),
+    }));
+}
 
 function renderHistory(options) {
   els.historyList.textContent = "";
-  if (!options.length) {
+  const liveOptions = liveHistoryOptions();
+  const savedOptions = Array.isArray(options) ? options : [];
+  const mergedOptions = [...liveOptions, ...savedOptions];
+  if (!mergedOptions.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
     empty.textContent = "저장된 세션이 아직 없습니다.";
@@ -18,11 +34,17 @@ function renderHistory(options) {
     return;
   }
 
-  for (const option of options) {
+  for (const option of mergedOptions) {
     const item = document.createElement("div");
-    const isActive = state.activeHistoryId === option.value;
-    item.className = `history-item${isActive ? " active" : ""}${isActive && state.busy ? " busy" : ""}`;
+    const isLive = Boolean(option.liveSlotId);
+    const isActive = isLive
+      ? state.activeFrontendId === option.liveSlotId
+      : state.activeHistoryId === option.value;
+    item.className = `history-item${isActive ? " active" : ""}${option.busy || (isActive && state.busy) ? " busy" : ""}`;
     item.dataset.sessionId = option.value || "";
+    if (isLive) {
+      item.dataset.liveSlotId = option.liveSlotId;
+    }
 
     const formattedTitle = formatHistoryTitle(option.label || option.value || "저장된 세션");
     const title = document.createElement("span");
@@ -38,6 +60,10 @@ function renderHistory(options) {
     openButton.append(title, detail);
     openButton.addEventListener("click", async () => {
       closeModal();
+      if (isLive) {
+        switchChatSlot(option.liveSlotId);
+        return;
+      }
       saveScrollPosition();
       els.messages.textContent = "";
       state.activeHistoryId = option.value || null;
@@ -69,14 +95,19 @@ function renderHistory(options) {
         <path d="M9 7V4h6v3"></path>
       </svg>
     `;
-    deleteButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      deleteHistorySession(option.value || "", item).catch((error) => {
-        item.classList.remove("deleting");
-        appendMessage("system", `기록 삭제 실패: ${error.message}`);
-        setBusy(false, STATUS_LABELS.error);
+    if (isLive) {
+      deleteButton.disabled = true;
+      deleteButton.classList.add("hidden");
+    } else {
+      deleteButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        deleteHistorySession(option.value || "", item).catch((error) => {
+          item.classList.remove("deleting");
+          appendMessage("system", `기록 삭제 실패: ${error.message}`);
+          setBusy(false, STATUS_LABELS.error);
+        });
       });
-    });
+    }
 
     item.append(openButton, busySpinner, deleteButton);
     els.historyList.append(item);
@@ -93,9 +124,12 @@ function formatHistoryTitle(label) {
 
 function markActiveHistory() {
   els.historyList.querySelectorAll(".history-item").forEach((item) => {
-    const isActive = item.dataset.sessionId === state.activeHistoryId;
+    const liveSlot = item.dataset.liveSlotId ? state.chatSlots.get(item.dataset.liveSlotId) : null;
+    const isActive = liveSlot
+      ? item.dataset.liveSlotId === state.activeFrontendId
+      : item.dataset.sessionId === state.activeHistoryId;
     item.classList.toggle("active", isActive);
-    item.classList.toggle("busy", isActive && state.busy);
+    item.classList.toggle("busy", Boolean(liveSlot?.busy) || (isActive && state.busy));
   });
 }
 

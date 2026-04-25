@@ -1,5 +1,8 @@
 export const state = {
   sessionId: null,
+  clientId: localStorage.getItem("openharness:clientId") || "",
+  chatSlots: new Map(),
+  activeFrontendId: "",
   ready: false,
   busy: false,
   assistantNode: null,
@@ -47,6 +50,13 @@ export const state = {
   pastedTexts: [],
   composerToken: null,
 };
+
+if (!state.clientId) {
+  state.clientId = globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem("openharness:clientId", state.clientId);
+}
 
 export const els = {
   appShell: document.querySelector(".app-shell"),

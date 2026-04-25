@@ -33,6 +33,7 @@ from openharness.engine.stream_events import (
 )
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, sanitize_conversation_messages
 from openharness.output_styles import load_output_styles
+from openharness.permissions.mutation_lock import release_mutation_lock
 from openharness.prompts import build_runtime_system_prompt
 from openharness.skills import load_skill_registry
 from openharness.skills.types import SkillDefinition
@@ -398,33 +399,36 @@ class ReactBackendHost:
 
         first_token = (line.strip().split(maxsplit=1) or [""])[0].lower()
         started_at = time.monotonic()
-        should_continue = await handle_line(
-            self._bundle,
-            effective_prompt,
-            print_system=_print_system,
-            render_event=_render_event,
-            clear_output=_clear_output,
-        )
-        self._bundle.engine.tool_metadata["workflow_duration_seconds"] = max(1, round(time.monotonic() - started_at))
-        if first_token != "/clear":
-            self._save_current_session_snapshot()
-        await self._emit(self._status_snapshot())
-        await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
-        if first_token == "/clear":
-            session_id = self._start_new_saved_session()
-            self._save_empty_session_snapshot("새 채팅")
-            await self._emit(BackendEvent(type="active_session", value=session_id))
-            await self._handle_list_sessions()
-        elif first_token == "/resume":
-            parts = line.strip().split(maxsplit=1)
-            if len(parts) > 1 and parts[1].strip():
-                self._set_saved_session_id(parts[1].strip().split()[0])
-        if first_token == "/reload-plugins":
-            await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
-        if first_token != "/clear":
-            await self._maybe_update_session_title()
-        await self._emit(BackendEvent(type="line_complete"))
-        return should_continue
+        try:
+            should_continue = await handle_line(
+                self._bundle,
+                effective_prompt,
+                print_system=_print_system,
+                render_event=_render_event,
+                clear_output=_clear_output,
+            )
+            self._bundle.engine.tool_metadata["workflow_duration_seconds"] = max(1, round(time.monotonic() - started_at))
+            if first_token != "/clear":
+                self._save_current_session_snapshot()
+            await self._emit(self._status_snapshot())
+            await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
+            if first_token == "/clear":
+                session_id = self._start_new_saved_session()
+                self._save_empty_session_snapshot("새 채팅")
+                await self._emit(BackendEvent(type="active_session", value=session_id))
+                await self._handle_list_sessions()
+            elif first_token == "/resume":
+                parts = line.strip().split(maxsplit=1)
+                if len(parts) > 1 and parts[1].strip():
+                    self._set_saved_session_id(parts[1].strip().split()[0])
+            if first_token == "/reload-plugins":
+                await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
+            if first_token != "/clear":
+                await self._maybe_update_session_title()
+            await self._emit(BackendEvent(type="line_complete"))
+            return should_continue
+        finally:
+            release_mutation_lock(self._bundle.engine.tool_metadata.pop("mutation_lock_token", None))
 
     async def _maybe_update_session_title(self) -> None:
         assert self._bundle is not None
