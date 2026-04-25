@@ -5,6 +5,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import openharness.skills.loader as skill_loader
 from openharness.skills import get_user_skills_dir, load_skill_registry
 from openharness.skills.loader import _parse_skill_markdown as parse_skill_markdown
 
@@ -31,6 +32,50 @@ def test_load_skill_registry_includes_user_skills(tmp_path: Path, monkeypatch):
     assert deploy is not None
     assert deploy.source == "user"
     assert "Deployment workflow guidance" in deploy.content
+
+
+def test_load_skill_registry_includes_program_dot_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    program_root = tmp_path / "program"
+    package_skills_dir = program_root / "src" / "openharness" / "skills"
+    package_skills_dir.mkdir(parents=True)
+    (program_root / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
+    program_skill_dir = program_root / ".skills" / "program-guide"
+    program_skill_dir.mkdir(parents=True)
+    (program_skill_dir / "SKILL.md").write_text(
+        "---\nname: program-guide\n"
+        "description: Program-local guide\n---\n\n"
+        "# Program Guide\nLoaded from the OpenHarness program folder.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(skill_loader, "__file__", str(package_skills_dir / "loader.py"))
+
+    registry = load_skill_registry(tmp_path / "workspace")
+    program_guide = registry.get("program-guide")
+
+    assert program_guide is not None
+    assert program_guide.source == "program"
+    assert str(program_root / ".skills" / "program-guide" / "SKILL.md") == program_guide.path
+
+
+def test_load_skill_registry_includes_project_dot_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / ".skills" / "ship"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: ship\n"
+        "description: Project-local shipping checklist\n---\n\n"
+        "# Ship\nUse the project release checklist.\n",
+        encoding="utf-8",
+    )
+
+    registry = load_skill_registry(tmp_path)
+    ship = registry.get("ship")
+
+    assert ship is not None
+    assert ship.source == "project"
+    assert str(tmp_path / ".skills" / "ship" / "SKILL.md") == ship.path
+    assert "project release checklist" in ship.content
 
 
 # --- parse_skill_markdown unit tests ---

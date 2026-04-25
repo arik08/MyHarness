@@ -4,12 +4,20 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from openharness.state.app_state import AppState
 from openharness.bridge.manager import BridgeSessionRecord
 from openharness.mcp.types import McpConnectionStatus
 from openharness.tasks.types import TaskRecord
+
+
+class FrontendAttachment(BaseModel):
+    """Inline file attachment sent by the web frontend."""
+
+    media_type: str = Field(validation_alias=AliasChoices("media_type", "mediaType"))
+    data: str
+    name: str = ""
 
 
 class FrontendRequest(BaseModel):
@@ -21,6 +29,7 @@ class FrontendRequest(BaseModel):
         "question_response",
         "list_sessions",
         "delete_session",
+        "refresh_skills",
         "select_command",
         "apply_select_command",
         "shutdown",
@@ -31,6 +40,7 @@ class FrontendRequest(BaseModel):
     request_id: str | None = None
     allowed: bool | None = None
     answer: str | None = None
+    attachments: list[FrontendAttachment] = Field(default_factory=list)
 
 
 class TranscriptItem(BaseModel):
@@ -63,6 +73,14 @@ class TaskSnapshot(BaseModel):
         )
 
 
+class SkillSnapshot(BaseModel):
+    """UI-safe skill representation."""
+
+    name: str
+    description: str
+    source: str
+
+
 class BackendEvent(BaseModel):
     """One event sent from the Python backend to the React frontend."""
 
@@ -70,6 +88,7 @@ class BackendEvent(BaseModel):
         "ready",
         "state_snapshot",
         "tasks_snapshot",
+        "skills_snapshot",
         "transcript_item",
         "compact_progress",
         "assistant_delta",
@@ -94,6 +113,7 @@ class BackendEvent(BaseModel):
     mcp_servers: list[dict[str, Any]] | None = None
     bridge_sessions: list[dict[str, Any]] | None = None
     commands: list[str | dict[str, Any]] | None = None
+    skills: list[SkillSnapshot] | None = None
     modal: dict[str, Any] | None = None
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None
@@ -116,6 +136,7 @@ class BackendEvent(BaseModel):
         state: AppState,
         tasks: list[TaskRecord],
         commands: list[str | dict[str, Any]],
+        skills: list[SkillSnapshot] | None = None,
     ) -> "BackendEvent":
         return cls(
             type="ready",
@@ -124,6 +145,7 @@ class BackendEvent(BaseModel):
             mcp_servers=[],
             bridge_sessions=[],
             commands=commands,
+            skills=skills or [],
         )
 
     @classmethod
@@ -136,6 +158,10 @@ class BackendEvent(BaseModel):
             type="tasks_snapshot",
             tasks=[TaskSnapshot.from_record(task) for task in tasks],
         )
+
+    @classmethod
+    def skills_snapshot(cls, skills: list[SkillSnapshot]) -> "BackendEvent":
+        return cls(type="skills_snapshot", skills=skills)
 
     @classmethod
     def status_snapshot(
@@ -217,6 +243,7 @@ def _format_permission_mode(raw: str) -> str:
 __all__ = [
     "BackendEvent",
     "FrontendRequest",
+    "SkillSnapshot",
     "TaskSnapshot",
     "TranscriptItem",
 ]

@@ -1,0 +1,14 @@
+{
+  "name": "Morgan Lee",
+  "display_name": "Morgan Lee",
+  "character": "colleague",
+  "slug": "example_morgan",
+  "classification": {
+    "language": "en"
+  },
+  "profile": {
+    "role": "Product design lead"
+  },
+  "tags": ["sample", "english"],
+  "knowledge_sources": []
+}

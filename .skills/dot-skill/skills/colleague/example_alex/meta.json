@@ -1,0 +1,14 @@
+{
+  "name": "Alex Rivera",
+  "display_name": "Alex Rivera",
+  "character": "colleague",
+  "slug": "example_alex",
+  "classification": {
+    "language": "en"
+  },
+  "profile": {
+    "role": "Senior backend engineer"
+  },
+  "tags": ["sample", "english"],
+  "knowledge_sources": []
+}

@@ -1,40 +1,30 @@
-<h1 align="center">
-  <img src="assets/logo.png" alt="OpenHarness" width="64" style="vertical-align: middle;">
-  &nbsp;&nbsp;
-  <img src="assets/ohmo.png" alt="ohmo" width="64" style="vertical-align: middle;">
-  <br>
-  <code>oh</code> — OpenHarness &amp; <code>ohmo</code>
-</h1>
+# OpenHarness and ohmo
 
-<p align="center">
-  <a href="README.md"><strong>English</strong></a> ·
-  <a href="README.zh-CN.md"><strong>简体中文</strong></a>
-</p>
+![OpenHarness logo](assets/logo.png)
+![ohmo logo](assets/ohmo.png)
 
-**OpenHarness** delivers core lightweight agent infrastructure: tool-use, skills, memory, and multi-agent coordination.
+`oh` - OpenHarness / `ohmo`
 
-**ohmo** is a personal AI agent built on OpenHarness — not another chatbot, but an assistant that actually works for you over long sessions. Chat with ohmo in Feishu / Slack / Telegram / Discord, and it forks branches, writes code, runs tests, and opens PRs on its own. ohmo runs on your existing Claude Code or Codex subscription — no extra API key needed.
+[English](README.md) / [Simplified Chinese](README.zh-CN.md)
 
-**Join the community**: contribute **Harness** for open agent development.
+**OpenHarness**는 도구 사용, 스킬, 메모리, 멀티 에이전트 조율을 위한 가벼운 에이전트 실행 인프라입니다.
 
-<p align="center">
-  <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-5_min-blue?style=for-the-badge" alt="Quick Start"></a>
-  <a href="#-harness-architecture"><img src="https://img.shields.io/badge/Harness-Architecture-ff69b4?style=for-the-badge" alt="Architecture"></a>
-  <a href="#-features"><img src="https://img.shields.io/badge/Tools-43+-green?style=for-the-badge" alt="Tools"></a>
-  <a href="#-test-results"><img src="https://img.shields.io/badge/Tests-114_Passing-brightgreen?style=for-the-badge" alt="Tests"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License"></a>
-</p>
+**ohmo**는 OpenHarness 위에서 동작하는 개인 AI 에이전트입니다. 단순 챗봇이 아니라 긴 세션 동안 코드 작성, 테스트 실행, 브랜치 작업, PR 생성 같은 실제 작업을 수행하는 것을 목표로 합니다.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/python-≥3.10-blue?logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/React+Ink-TUI-61DAFB?logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/pytest-114_pass-brightgreen" alt="Pytest">
-  <img src="https://img.shields.io/badge/E2E-6_suites-orange" alt="E2E">
-  <img src="https://img.shields.io/badge/output-text_|_json_|_stream--json-blueviolet" alt="Output">
-  <a href="https://github.com/HKUDS/OpenHarness/actions/workflows/ci.yml"><img src="https://github.com/HKUDS/OpenHarness/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/HKUDS/.github/blob/main/profile/README.md"><img src="https://img.shields.io/badge/Feishu-Group-E9DBFC?style=flat&logo=feishu&logoColor=white" alt="Feishu"></a>
-  <a href="https://github.com/HKUDS/.github/blob/main/profile/README.md"><img src="https://img.shields.io/badge/WeChat-Group-C5EAB4?style=flat&logo=wechat&logoColor=white" alt="WeChat"></a>
-</p>
+바로가기:
+
+- [Quick Start](#-quick-start)
+- [Harness Architecture](#-harness-architecture)
+- [Features](#-features)
+- [Test Results](#-test-results)
+- [License](LICENSE)
+
+프로젝트 정보:
+
+- Python 3.10 이상
+- React + Ink 기반 터미널 UI
+- 텍스트 / JSON / stream-json 출력 지원
+- 로컬 웹 UI와 백엔드 런처 포함
 
 One Command (**oh**) to Launch **OpenHarness** and Unlock All Agent Harnesses. 
 
@@ -239,6 +229,56 @@ oh
 <p align="center">
   <img src="assets/landing.png" alt="OpenHarness Landing Screen" width="700">
 </p>
+
+### Windows 웹 실행기
+
+이 저장소에는 로컬 웹 UI를 실행하는 더블클릭용 배치 파일이 포함되어 있습니다.
+
+```text
+run_openharness_web.bat
+```
+
+이 파일을 더블클릭하면 보이는 Command Prompt 창이 열리고 웹 서버 / 백엔드 런처가 실행됩니다. 창에는 로컬 접속 주소가 출력됩니다.
+
+```text
+http://localhost:4173
+```
+
+준비되면 해당 주소를 직접 브라우저에 입력하거나, 아래 바로가기 파일을 더블클릭하세요.
+
+```text
+OpenHarness Web.url
+```
+
+`.bat` 파일은 브라우저를 자동으로 열지 않습니다. 여러 개의 `.bat` 서버 창을 동시에 띄워 두기 쉽게 하기 위한 동작입니다.
+
+첫 실행 시 실행기는 필요한 구성요소를 점검합니다.
+
+- `node`
+- `npm`
+- `py` / Python 3
+- OpenHarness 실행에 필요한 Python 패키지 import
+- `frontend\web\node_modules`
+
+Python 패키지가 부족하면 아래 명령을 자동으로 실행합니다.
+
+```powershell
+py -3 -m pip install -e .
+```
+
+웹 의존성이 없으면 아래 명령을 자동으로 실행합니다.
+
+```powershell
+cd frontend\web
+npm install
+```
+
+`4173` 포트가 이미 사용 중이면 두 번째 서버를 새로 띄우지 않고 기존 URL만 출력합니다. 다른 포트를 쓰려면 다음처럼 실행하세요.
+
+```cmd
+set PORT=4174
+run_openharness_web.bat
+```
 
 ### 4. Set up ohmo (Personal Agent)
 
@@ -717,14 +757,34 @@ class MyTool(BaseTool):
         return ToolResult(output=f"Result for: {arguments.query}")
 ```
 
-### Add a Custom Skill
+### 커스텀 스킬 추가
 
-Create `~/.openharness/skills/my-skill.md`:
+OpenHarness는 `SKILL.md` 파일이 들어 있는 폴더를 스킬로 로드합니다.
+
+공용 스킬은 아래 위치에 넣습니다.
+
+```text
+~/.openharness/skills/<skill-folder>/SKILL.md
+```
+
+Windows 기본 위치는 다음과 같습니다.
+
+```text
+C:\Users\<you>\.openharness\skills\<skill-folder>\SKILL.md
+```
+
+예시:
+
+```text
+C:\Users\Myeongcheol\.openharness\skills\react-review\SKILL.md
+```
+
+스킬 폴더 안에 `SKILL.md`를 만드세요.
 
 ```markdown
 ---
 name: my-skill
-description: Expert guidance for my specific domain
+description: Use when the user asks about my specific domain.
 ---
 
 # My Skill
@@ -738,9 +798,27 @@ Use when the user asks about [your domain].
 ...
 ```
 
-### Add a Plugin
+GitHub에서 가져온 스킬도 보통 스킬 폴더 전체를 `~/.openharness/skills/` 아래에 복사하면 됩니다. 단, 그 폴더 안에 `SKILL.md`가 있어야 합니다.
 
-Create `.openharness/plugins/my-plugin/.claude-plugin/plugin.json`:
+OpenHarness가 시작되면 사용 가능한 스킬 이름과 설명이 시스템 프롬프트에 들어가므로 에이전트가 관련 스킬을 자동으로 고를 수 있습니다. React 터미널 UI에서는 `$`를 입력하면 스킬 선택 목록이 열립니다. 스킬을 선택하면 아래와 같은 접두어가 입력됩니다.
+
+```text
+$my-skill 
+```
+
+그 뒤에 요청 내용을 이어서 입력하면 됩니다.
+
+```text
+$my-skill review this component
+```
+
+`$<skill-name>`으로 시작하는 요청은 해당 턴에서 그 스킬을 강제로 사용합니다. 백엔드는 선택된 `SKILL.md` 내용을 필수 지침으로 요청에 직접 주입하므로, 자동 선택에만 맡기는 것보다 강하게 동작합니다.
+
+`ohmo`는 ohmo 워크스페이스 안의 `skills` 폴더도 함께 로드합니다. 특정 ohmo 워크스페이스에서만 쓸 스킬은 그 위치에 넣으세요.
+
+### 플러그인 추가
+
+`.openharness/plugins/my-plugin/.claude-plugin/plugin.json` 파일을 만듭니다.
 
 ```json
 {
@@ -750,7 +828,7 @@ Create `.openharness/plugins/my-plugin/.claude-plugin/plugin.json`:
 }
 ```
 
-Add commands in `commands/*.md`, hooks in `hooks/hooks.json`, agents in `agents/*.md`.
+명령어는 `commands/*.md`, 훅은 `hooks/hooks.json`, 에이전트 정의는 `agents/*.md`에 추가합니다.
 
 ---
 

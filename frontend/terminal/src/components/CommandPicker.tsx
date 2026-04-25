@@ -4,30 +4,31 @@ import {Box, Text} from 'ink';
 function CommandPickerInner({
 	hints,
 	selectedIndex,
+	title = 'Commands',
 }: {
 	hints: string[];
 	selectedIndex: number;
+	title?: string;
 }): React.JSX.Element | null {
 	if (hints.length === 0) {
 		return null;
 	}
 
 	return (
-		<Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginBottom={0}>
-			<Text dimColor bold> Commands</Text>
+		<Box flexDirection="column" borderStyle="single" borderColor="cyan" paddingX={1} marginBottom={0}>
+			<Text dimColor>{title}</Text>
 			{hints.map((hint, i) => {
 				const isSelected = i === selectedIndex;
 				return (
 					<Box key={hint}>
 						<Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-							{isSelected ? '\u276F ' : '  '}
+							{isSelected ? '> ' : '  '}
 							{hint}
 						</Text>
-						{isSelected ? <Text dimColor> [enter]</Text> : null}
 					</Box>
 				);
 			})}
-			<Text dimColor> {'\u2191\u2193'} navigate{'  '}{'\u23CE'} select{'  '}esc dismiss</Text>
+			<Text dimColor>up/down navigate  enter select  esc dismiss</Text>
 		</Box>
 	);
 }

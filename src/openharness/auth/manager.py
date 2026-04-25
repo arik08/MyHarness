@@ -37,6 +37,7 @@ _KNOWN_PROVIDERS = [
     "moonshot",
     "gemini",
     "minimax",
+    "posco_gpt",
 ]
 
 _AUTH_SOURCES = [
@@ -51,6 +52,7 @@ _AUTH_SOURCES = [
     "moonshot_api_key",
     "gemini_api_key",
     "minimax_api_key",
+    "posco_gpt_api_key",
 ]
 
 _PROFILE_BY_PROVIDER = {
@@ -62,6 +64,7 @@ _PROFILE_BY_PROVIDER = {
     "moonshot": "moonshot",
     "gemini": "gemini",
     "minimax": "minimax",
+    "posco_gpt": "p-gpt",
 }
 
 
@@ -142,6 +145,20 @@ class AuthManager:
                     configured = True
                     origin = "file"
                     state = "configured"
+            elif source == "posco_gpt_api_key":
+                has_emp_no = bool(os.environ.get("POSCO_EMP_NO") or load_credential("posco_gpt", "emp_no"))
+                if os.environ.get("POSCO_API_KEY") and has_emp_no:
+                    configured = True
+                    origin = "env"
+                    state = "configured"
+                elif load_credential(storage_provider, "api_key") and has_emp_no:
+                    configured = True
+                    origin = "file"
+                    state = "configured"
+                elif os.environ.get("POSCO_API_KEY") or load_credential(storage_provider, "api_key"):
+                    origin = "partial"
+                    state = "missing_emp_no"
+                    detail = "P-GPT requires empNo."
             elif source in {"codex_subscription", "claude_subscription"}:
                 binding = load_external_binding(storage_provider)
                 if binding is not None:
@@ -252,6 +269,17 @@ class AuthManager:
                 elif load_credential("minimax", "api_key"):
                     configured = True
                     source = "file"
+
+            elif provider == "posco_gpt":
+                has_emp_no = bool(os.environ.get("POSCO_EMP_NO") or load_credential("posco_gpt", "emp_no"))
+                if os.environ.get("POSCO_API_KEY") and has_emp_no:
+                    configured = True
+                    source = "env"
+                elif load_credential("posco_gpt", "api_key") and has_emp_no:
+                    configured = True
+                    source = "file"
+                elif os.environ.get("POSCO_API_KEY") or load_credential("posco_gpt", "api_key"):
+                    source = "partial"
 
             elif provider in ("bedrock", "vertex"):
                 # These typically use environment-level credentials (AWS/GCP).

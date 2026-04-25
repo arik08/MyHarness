@@ -8,6 +8,7 @@ import type {
 	FrontendConfig,
 	McpServerSnapshot,
 	SelectOptionPayload,
+	SkillSnapshot,
 	SwarmNotificationSnapshot,
 	SwarmTeammateSnapshot,
 	TaskSnapshot,
@@ -27,6 +28,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [status, setStatus] = useState<Record<string, unknown>>({});
 	const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
 	const [commands, setCommands] = useState<string[]>([]);
+	const [skills, setSkills] = useState<SkillSnapshot[]>([]);
 	const [mcpServers, setMcpServers] = useState<McpServerSnapshot[]>([]);
 	const [bridgeSessions, setBridgeSessions] = useState<BridgeSessionSnapshot[]>([]);
 	const [modal, setModal] = useState<Record<string, unknown> | null>(null);
@@ -191,7 +193,14 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			startTransition(() => {
 				setTasks(event.tasks ?? []);
 			});
-			setCommands(event.commands ?? []);
+			setCommands((event.commands ?? []).map((command) => {
+				if (typeof command === 'string') {
+					return command;
+				}
+				const record = command as Record<string, unknown>;
+				return typeof record.name === 'string' ? record.name : '';
+			}).filter(Boolean));
+			setSkills(event.skills ?? []);
 			const mcpSnapshot = stableStringify(event.mcp_servers ?? []);
 			lastMcpSnapshotRef.current = mcpSnapshot;
 			startTransition(() => {
@@ -441,6 +450,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			status,
 			tasks,
 			commands,
+			skills,
 			mcpServers,
 			bridgeSessions,
 			modal,
@@ -456,6 +466,6 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setBusy,
 			sendRequest,
 		}),
-		[assistantBuffer, bridgeSessions, busy, busyLabel, commands, mcpServers, modal, ready, selectRequest, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
+		[assistantBuffer, bridgeSessions, busy, busyLabel, commands, mcpServers, modal, ready, selectRequest, skills, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
 	);
 }

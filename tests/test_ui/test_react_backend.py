@@ -173,6 +173,45 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    skill_dir = tmp_path / "config" / "skills" / "review-pr"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: review-pr\ndescription: Review pull requests.\n---\n\n# Review PR\n",
+        encoding="utf-8",
+    )
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    captured: dict[str, str] = {}
+
+    async def _emit(_event):
+        return None
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del bundle, print_system, render_event, clear_output
+        captured["line"] = line
+        return True
+
+    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("$review-pr inspect this branch")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert "explicitly selected the `review-pr` skill" in captured["line"]
+    assert "# Selected Skill Content" in captured["line"]
+    assert "# Review PR" in captured["line"]
+    assert "inspect this branch" in captured["line"]
+
+
+@pytest.mark.asyncio
 async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))

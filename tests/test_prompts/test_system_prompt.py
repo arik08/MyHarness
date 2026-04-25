@@ -66,3 +66,14 @@ def test_build_system_prompt_default_includes_base():
     env = _make_env()
     prompt = build_system_prompt(env=env)
     assert "OpenHarness" in prompt
+
+
+def test_build_system_prompt_encourages_parallel_research_tools():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+
+    assert "Parallelism is for speed, not for increasing the amount of work" in prompt
+    assert "start with a small, high-signal batch" in prompt
+    assert "2-3 `web_fetch` calls" in prompt
+    assert "Avoid 4 or more parallel web calls" in prompt
+    assert "call those `web_fetch` or `web_search` tools in parallel" in prompt

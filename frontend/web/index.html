@@ -19,8 +19,19 @@
           <a class="brand" href="#" aria-label="OpenHarness 채팅 홈">
             <span class="brand-name">OpenHarness</span>
           </a>
-          <button class="brand-command" type="button" data-prompt="/help" aria-label="명령어">
+          <button class="settings-command" type="button" data-action="open-settings" aria-label="설정" data-tooltip="설정">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
+              <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2.15 2.15 0 0 1-3.04 3.04l-.04-.04a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21.4a2.15 2.15 0 0 1-4.3 0v-.06a1.8 1.8 0 0 0-1.1-1.66 1.8 1.8 0 0 0-1.98.36l-.04.04a2.15 2.15 0 1 1-3.04-3.04l.04-.04A1.8 1.8 0 0 0 3.6 15a1.8 1.8 0 0 0-1.66-1.1H1.9a2.15 2.15 0 0 1 0-4.3h.06A1.8 1.8 0 0 0 3.6 8a1.8 1.8 0 0 0-.36-1.98l-.04-.04a2.15 2.15 0 1 1 3.04-3.04l.04.04A1.8 1.8 0 0 0 8.26 3.34 1.8 1.8 0 0 0 9.36 1.68V1.6a2.15 2.15 0 0 1 4.3 0v.06a1.8 1.8 0 0 0 1.1 1.66 1.8 1.8 0 0 0 1.98-.36l.04-.04a2.15 2.15 0 1 1 3.04 3.04l-.04.04A1.8 1.8 0 0 0 19.4 8a1.8 1.8 0 0 0 1.66 1.1h.06a2.15 2.15 0 0 1 0 4.3h-.06A1.8 1.8 0 0 0 19.4 15Z"></path>
+            </svg>
+          </button>
+          <button class="brand-command" type="button" data-prompt="/help" aria-label="명령어" data-tooltip="명령어">
             <span class="command-key" aria-hidden="true">/</span>
+          </button>
+          <button class="sidebar-toggle" type="button" data-action="toggle-sidebar" aria-label="사이드바 닫기" aria-expanded="true" data-tooltip="사이드바 닫기">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M15 6l-6 6 6 6"></path>
+            </svg>
           </button>
         </div>
 
@@ -32,24 +43,19 @@
         <section class="history-panel" aria-label="최근 채팅 기록">
           <div class="history-heading">
             <span class="section-label">최근 기록</span>
-            <button type="button" data-action="refresh-history" aria-label="기록 새로고침">새로고침</button>
           </div>
           <div class="history-list" id="historyList">
-            <p class="empty">저장된 세션이 아직 없습니다.</p>
+            <p class="empty">대화 내역을 불러오는 중...</p>
           </div>
         </section>
 
-        <div class="sidebar-footer" aria-label="Runtime status">
+        <button class="sidebar-footer" type="button" data-action="open-settings" aria-label="설정 열기">
           <span class="profile-mark" aria-hidden="true">OH</span>
           <div class="runtime-copy">
-            <strong id="modelValue">-</strong>
-            <small>
-              <span id="providerValue">-</span>
-              <span aria-hidden="true"> · </span>
-              <span id="permissionValue">-</span>
-            </small>
+            <strong id="providerValue">Provider: 불러오는 중...</strong>
+            <small id="modelValue">Model: 불러오는 중...</small>
           </div>
-        </div>
+        </button>
       </aside>
 
       <main class="chat-panel">
@@ -57,9 +63,6 @@
           <div>
             <button class="chat-title" type="button" id="chatTitle">
               <span>OpenHarness</span>
-              <svg aria-hidden="true" viewBox="0 0 16 16">
-                <path d="M4.5 6 8 9.5 11.5 6" />
-              </svg>
             </button>
           </div>
           <div class="status-pill" id="readyPill">연결 중</div>
@@ -78,6 +81,8 @@
 
         <form class="composer" id="composer">
           <div class="composer-box">
+            <div class="attachment-tray hidden" id="attachmentTray" aria-label="첨부한 이미지"></div>
+            <span class="composer-token-slot hidden" id="composerToken" aria-hidden="true"></span>
             <textarea
               id="promptInput"
               rows="1"
@@ -91,7 +96,7 @@
               </svg>
             </button>
           </div>
-          <div class="slash-menu hidden" id="slashMenu" role="listbox" aria-label="슬래시 명령어"></div>
+          <div class="slash-menu hidden" id="slashMenu" role="listbox" aria-label="명령어와 스킬"></div>
         </form>
       </main>
 

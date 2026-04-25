@@ -4,11 +4,40 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any, Annotated, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
+
+_INTERNAL_ATTACHMENT_NOTE_RE = re.compile(
+    r"\n*\[Attached image count:\s*\d+\..*?(?:\]|\Z)\s*",
+    re.IGNORECASE | re.DOTALL,
+)
+_FORCED_SKILL_PROMPT_RE = re.compile(
+    r"^The user explicitly selected the `(?P<skill>[^`]+)` skill with `\$`\..*"
+    r"\nUser request:\n(?P<request>[\s\S]*)\Z",
+    re.DOTALL,
+)
+
+
+def _compact_forced_skill_prompt(text: str) -> str:
+    match = _FORCED_SKILL_PROMPT_RE.match(text.strip())
+    if not match:
+        return text.strip()
+    skill = match.group("skill").strip()
+    request = match.group("request").strip()
+    if request == "(No additional request was provided.)":
+        request = ""
+    return " ".join(part for part in (f"${skill}", request) if part).strip()
+
+
+def strip_internal_message_text(text: str) -> str:
+    """Remove model-facing internal notes from user-visible transcript text."""
+    clean = _INTERNAL_ATTACHMENT_NOTE_RE.sub("", text).strip()
+    clean = _compact_forced_skill_prompt(clean)
+    return clean
 
 
 class TextBlock(BaseModel):
@@ -88,9 +117,9 @@ class ConversationMessage(BaseModel):
     @property
     def text(self) -> str:
         """Return concatenated text blocks."""
-        return "".join(
+        return strip_internal_message_text("".join(
             block.text for block in self.content if isinstance(block, TextBlock)
-        )
+        ))
 
     @property
     def tool_uses(self) -> list[ToolUseBlock]:

@@ -67,6 +67,20 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         is_local=False,
         is_oauth=True,
     ),
+    # === POSCO private GPT endpoint (JSON-schema tool adapter) =============
+    ProviderSpec(
+        name="posco_gpt",
+        keywords=("posco", "p-gpt", "pgpt"),
+        env_key="POSCO_API_KEY",
+        display_name="P-GPT",
+        backend_type="posco_gpt",
+        default_base_url="http://pgpt.posco.com/s0la01-gpt/gptApi/personalApi",
+        detect_by_key_prefix="",
+        detect_by_base_keyword="pgpt.posco.com",
+        is_gateway=False,
+        is_local=False,
+        is_oauth=False,
+    ),
     # === Gateways (detected by api_key prefix / base_url keyword) ============
     # OpenRouter: global gateway, keys start with "sk-or-"
     ProviderSpec(

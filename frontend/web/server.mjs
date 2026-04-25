@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
+import { networkInterfaces } from "node:os";
 import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
@@ -12,6 +13,7 @@ const webRoot = normalize(root);
 const assetsRoot = normalize(join(repoRoot, "assets"));
 const vendorRoot = normalize(join(root, "node_modules"));
 const port = Number(process.env.PORT || 4173);
+const host = process.env.HOST || "0.0.0.0";
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
 
@@ -90,6 +92,22 @@ function sendBackend(session, payload) {
   return true;
 }
 
+function normalizeAttachment(attachment) {
+  if (!attachment || typeof attachment !== "object") {
+    return null;
+  }
+  const mediaType = String(attachment.media_type || attachment.mediaType || "").trim();
+  const data = String(attachment.data || "").trim();
+  if (!mediaType || !data) {
+    return null;
+  }
+  return {
+    media_type: mediaType,
+    data,
+    name: String(attachment.name || ""),
+  };
+}
+
 function emit(session, event) {
   session.events.push(event);
   if (session.events.length > 400) {
@@ -98,6 +116,17 @@ function emit(session, event) {
   for (const client of session.clients) {
     client.write(`data: ${JSON.stringify(event)}\n\n`);
   }
+}
+
+function getLanUrl() {
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const address of addresses || []) {
+      if (address.family === "IPv4" && !address.internal && !address.address.startsWith("169.254.")) {
+        return `http://${address.address}:${port}`;
+      }
+    }
+  }
+  return "";
 }
 
 function createBackendSession(options = {}) {
@@ -198,11 +227,14 @@ async function handleApi(request, response, pathname) {
       return true;
     }
     const line = String(body.line || "").trim();
-    if (!line) {
+    const attachments = Array.isArray(body.attachments)
+      ? body.attachments.map(normalizeAttachment).filter(Boolean)
+      : [];
+    if (!line && attachments.length === 0) {
       json(response, 400, { error: "Message is empty" });
       return true;
     }
-    const ok = sendBackend(session, { type: "submit_line", line });
+    const ok = sendBackend(session, { type: "submit_line", line, attachments });
     json(response, ok ? 200 : 409, { ok });
     return true;
   }
@@ -258,6 +290,16 @@ createServer(async (request, response) => {
     response.writeHead(404);
     response.end("Not found");
   }
-}).listen(port, () => {
-  console.log(`OpenHarness web is running at http://localhost:${port}`);
+}).listen(port, host, () => {
+  const localUrl = `http://localhost:${port}`;
+  const lanUrl = getLanUrl();
+  if (host === "0.0.0.0" || host === "::") {
+    console.log(`Listening on all network interfaces.`);
+  }
+  console.log("");
+  console.log("OpenHarness web is ready:");
+  console.log(`  ${localUrl}`);
+  if (lanUrl) {
+    console.log(`  ${lanUrl}`);
+  }
 });

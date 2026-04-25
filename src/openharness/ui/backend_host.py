@@ -27,9 +27,12 @@ from openharness.engine.stream_events import (
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
 from openharness.output_styles import load_output_styles
+from openharness.skills import load_skill_registry
+from openharness.skills.types import SkillDefinition
 from openharness.tasks import get_task_manager
-from openharness.ui.protocol import BackendEvent, FrontendRequest, TranscriptItem
+from openharness.ui.protocol import BackendEvent, FrontendRequest, SkillSnapshot, TranscriptItem
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 from openharness.services.session_backend import SessionBackend
 
@@ -38,6 +41,7 @@ log = logging.getLogger(__name__)
 log = logging.getLogger(__name__)
 
 _PROTOCOL_PREFIX = "OHJSON:"
+_BUILT_IN_SKILL_SOURCES = {"bundled", "program"}
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,7 @@ class ReactBackendHost:
                     {"name": f"/{command.name}", "description": command.description}
                     for command in self._bundle.commands.list_commands()
                 ],
+                self._skill_snapshots(),
             )
         )
         await self._emit(self._status_snapshot())
@@ -128,6 +133,9 @@ class ReactBackendHost:
                     continue
                 if request.type == "delete_session":
                     await self._handle_delete_session(request.value or "")
+                    continue
+                if request.type == "refresh_skills":
+                    await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
                     continue
                 if request.type == "select_command":
                     await self._handle_select_command(request.command or "")
@@ -155,11 +163,11 @@ class ReactBackendHost:
                     await self._emit(BackendEvent(type="error", message="Session is busy"))
                     continue
                 line = (request.line or "").strip()
-                if not line:
+                if not line and not request.attachments:
                     continue
                 self._busy = True
                 try:
-                    should_continue = await self._process_line(line)
+                    should_continue = await self._process_line(line, attachments=request.attachments)
                 finally:
                     self._busy = False
                 if not should_continue:
@@ -199,10 +207,34 @@ class ReactBackendHost:
                 continue
             await self._request_queue.put(request)
 
-    async def _process_line(self, line: str, *, transcript_line: str | None = None) -> bool:
+    async def _process_line(self, line: str, *, transcript_line: str | None = None, attachments=None) -> bool:
         assert self._bundle is not None
+        attachments = attachments or []
+        image_blocks: list[ImageBlock] = []
+        for item in attachments:
+            media_type = str(getattr(item, "media_type", "") or getattr(item, "mediaType", "") or "").strip()
+            data = str(getattr(item, "data", "") or "").strip()
+            name = str(getattr(item, "name", "") or "")
+            if media_type.startswith("image/") and data:
+                image_blocks.append(ImageBlock(media_type=media_type, data=data, source_path=name))
+        effective_line = self._line_with_forced_skill(line) if not image_blocks else line
+        effective_prompt: str | ConversationMessage = effective_line
+        if image_blocks:
+            content = []
+            image_note = (
+                f"\n\n[Attached image count: {len(image_blocks)}. "
+                "Use the attached image content directly when answering.]"
+            )
+            text_with_note = f"{effective_line.strip()}{image_note}" if effective_line.strip() else image_note.strip()
+            content.append(TextBlock(text=text_with_note))
+            content.extend(image_blocks)
+            effective_prompt = ConversationMessage.from_user_content(content)
+        transcript_text = transcript_line or line
+        if image_blocks:
+            suffix = f" [image attachments: {len(image_blocks)}]"
+            transcript_text = f"{transcript_text}{suffix}" if transcript_text else suffix.strip()
         await self._emit(
-            BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=transcript_line or line))
+            BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=transcript_text))
         )
 
         async def _print_system(message: str) -> None:
@@ -309,15 +341,111 @@ class ReactBackendHost:
 
         should_continue = await handle_line(
             self._bundle,
-            line,
+            effective_prompt,
             print_system=_print_system,
             render_event=_render_event,
             clear_output=_clear_output,
         )
         await self._emit(self._status_snapshot())
         await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
+        first_token = (line.strip().split(maxsplit=1) or [""])[0].lower()
+        if first_token == "/clear":
+            self._start_new_saved_session()
+        elif first_token == "/resume":
+            parts = line.strip().split(maxsplit=1)
+            if len(parts) > 1 and parts[1].strip():
+                self._set_saved_session_id(parts[1].strip().split()[0])
+        if first_token == "/reload-plugins":
+            await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
         await self._emit(BackendEvent(type="line_complete"))
         return should_continue
+
+    def _set_saved_session_id(self, session_id: str) -> None:
+        assert self._bundle is not None
+        clean_id = session_id.strip()
+        if not clean_id:
+            return
+        self._bundle.session_id = clean_id
+        self._bundle.engine.tool_metadata["session_id"] = clean_id
+
+    def _start_new_saved_session(self) -> None:
+        self._set_saved_session_id(uuid4().hex[:12])
+
+    def _skill_snapshots(self) -> list[SkillSnapshot]:
+        assert self._bundle is not None
+        registry = load_skill_registry(
+            self._bundle.cwd,
+            extra_skill_dirs=self._bundle.extra_skill_dirs,
+            extra_plugin_roots=self._bundle.extra_plugin_roots,
+            settings=self._bundle.current_settings(),
+        )
+        return [
+            SkillSnapshot(
+                name=skill.name,
+                description=skill.description,
+                source=skill.source,
+            )
+            for skill in registry.list_skills()
+            if skill.source not in _BUILT_IN_SKILL_SOURCES
+        ]
+
+    def _line_with_forced_skill(self, line: str) -> str:
+        parsed = self._parse_forced_skill_line(line)
+        if parsed is None:
+            return line
+        skill_name, user_request = parsed
+        skill = self._loaded_skill_by_name(skill_name)
+        if skill is None:
+            return line
+        request_text = user_request.strip() or "(No additional request was provided.)"
+        return (
+            f"The user explicitly selected the `{skill.name}` skill with `$`. "
+            "Treat the selected skill content below as mandatory task guidance and follow it "
+            "before applying any general approach.\n\n"
+            "# Selected Skill Content\n"
+            "```md\n"
+            f"{skill.content.strip()}\n"
+            "```\n\n"
+            f"User request:\n{request_text}"
+        )
+
+    def _loaded_skill_by_name(self, name: str) -> SkillDefinition | None:
+        assert self._bundle is not None
+        registry = load_skill_registry(
+            self._bundle.cwd,
+            extra_skill_dirs=self._bundle.extra_skill_dirs,
+            extra_plugin_roots=self._bundle.extra_plugin_roots,
+            settings=self._bundle.current_settings(),
+        )
+        for skill in registry.list_skills():
+            if skill.name.lower() == name.lower():
+                return skill
+        return None
+
+    def _parse_forced_skill_line(self, line: str) -> tuple[str, str] | None:
+        stripped = line.strip()
+        if not stripped.startswith("$") or stripped == "$":
+            return None
+        remainder = stripped[1:].lstrip()
+        if not remainder:
+            return None
+        if remainder[0] in {"'", '"'}:
+            quote = remainder[0]
+            end = remainder.find(quote, 1)
+            if end <= 1:
+                return None
+            requested_name = remainder[1:end].strip()
+            user_request = remainder[end + 1 :].lstrip()
+        else:
+            requested_name, _, user_request = remainder.partition(" ")
+            requested_name = requested_name.strip()
+        if not requested_name:
+            return None
+        skills = {skill.name.lower(): skill.name for skill in self._skill_snapshots()}
+        canonical_name = skills.get(requested_name.lower())
+        if canonical_name is None:
+            return None
+        return canonical_name, user_request
 
     async def _apply_select_command(self, command_name: str, value: str) -> bool:
         command = command_name.strip().lstrip("/").lower()
@@ -429,6 +557,8 @@ class ReactBackendHost:
 
         if command == "provider":
             statuses = AuthManager(settings).get_profile_statuses()
+            hidden_profiles = {"copilot", "moonshot", "gemini", "minimax"}
+            hidden_providers = {"copilot", "moonshot", "gemini", "minimax"}
             options = [
                 {
                     "value": name,
@@ -437,6 +567,7 @@ class ReactBackendHost:
                     "active": info["active"],
                 }
                 for name, info in statuses.items()
+                if name not in hidden_profiles and info["provider"] not in hidden_providers
             ]
             await self._emit(
                 BackendEvent(
@@ -685,6 +816,13 @@ class ReactBackendHost:
                 [
                     ("MiniMax-M2.7", "MiniMax flagship"),
                     ("MiniMax-M2.7-highspeed", "MiniMax fast"),
+                ]
+            )
+        elif provider_name == "posco_gpt":
+            families.extend(
+                [
+                    ("gpt-5.4-mini", "P-GPT 기본 모델"),
+                    ("gpt-5.4", "P-GPT GPT-5.4"),
                 ]
             )
 

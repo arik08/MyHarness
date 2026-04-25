@@ -1,0 +1,14 @@
+{
+  "name": "Jordan Patel",
+  "display_name": "Jordan Patel",
+  "character": "colleague",
+  "slug": "example_jordan",
+  "classification": {
+    "language": "en"
+  },
+  "profile": {
+    "role": "Technical program manager"
+  },
+  "tags": ["sample", "english"],
+  "knowledge_sources": []
+}

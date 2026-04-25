@@ -35,7 +35,11 @@ def load_skill_registry(
     registry = SkillRegistry()
     for skill in get_bundled_skills():
         registry.register(skill)
+    for skill in load_program_skills():
+        registry.register(skill)
     for skill in load_user_skills():
+        registry.register(skill)
+    for skill in load_project_skills(cwd):
         registry.register(skill)
     for skill in load_skills_from_dirs(extra_skill_dirs):
         registry.register(skill)
@@ -54,6 +58,50 @@ def load_skill_registry(
 def load_user_skills() -> list[SkillDefinition]:
     """Load markdown skills from the user config directory."""
     return load_skills_from_dirs([get_user_skills_dir()], source="user")
+
+
+def get_program_skills_dirs() -> list[Path]:
+    """Return OpenHarness installation-local skill directories that exist."""
+    package_dir = Path(__file__).resolve().parents[1]
+    candidates = [
+        package_dir / ".skills",
+        package_dir.parent / ".skills",
+    ]
+
+    for ancestor in package_dir.parents:
+        if (ancestor / "pyproject.toml").exists() and (ancestor / "src" / "openharness").exists():
+            candidates.append(ancestor / ".skills")
+            break
+
+    seen: set[Path] = set()
+    result: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen or not resolved.exists():
+            continue
+        seen.add(resolved)
+        result.append(resolved)
+    return result
+
+
+def load_program_skills() -> list[SkillDefinition]:
+    """Load skills shipped next to the OpenHarness program."""
+    return load_skills_from_dirs(get_program_skills_dirs(), source="program")
+
+
+def get_project_skills_dir(cwd: str | Path) -> Path:
+    """Return the project-local skills directory."""
+    return Path(cwd).expanduser().resolve() / ".skills"
+
+
+def load_project_skills(cwd: str | Path | None) -> list[SkillDefinition]:
+    """Load markdown skills from ``<cwd>/.skills`` when present."""
+    if cwd is None:
+        return []
+    skills_dir = get_project_skills_dir(cwd)
+    if not skills_dir.exists():
+        return []
+    return load_skills_from_dirs([skills_dir], source="project")
 
 
 def load_skills_from_dirs(

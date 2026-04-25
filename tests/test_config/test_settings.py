@@ -593,3 +593,49 @@ class TestMiniMaxProvider:
         assert materialized.model == "MiniMax-M2.7"
         assert materialized.provider == "minimax"
         assert materialized.api_format == "openai"
+
+
+class TestPoscoGptProvider:
+    """Tests for P-GPT provider profile and auth integration."""
+
+    def test_posco_gpt_in_default_provider_profiles(self):
+        from openharness.config.settings import default_provider_profiles
+
+        profiles = default_provider_profiles()
+        assert "p-gpt" in profiles
+        profile = profiles["p-gpt"]
+        assert profile.label == "P-GPT"
+        assert profile.provider == "posco_gpt"
+        assert profile.api_format == "posco_gpt"
+        assert profile.auth_source == "posco_gpt_api_key"
+        assert profile.default_model == "gpt-5.4-mini"
+        assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/gptApi/personalApi"
+
+    def test_auth_source_provider_name_posco_gpt(self):
+        from openharness.config.settings import auth_source_provider_name
+
+        assert auth_source_provider_name("posco_gpt_api_key") == "posco_gpt"
+
+    def test_default_auth_source_for_posco_gpt_provider(self):
+        from openharness.config.settings import default_auth_source_for_provider
+
+        assert default_auth_source_for_provider("posco_gpt") == "posco_gpt_api_key"
+
+    def test_resolve_auth_reads_posco_api_key_env(self, monkeypatch):
+        monkeypatch.setenv("POSCO_API_KEY", "posco-test-key")
+        settings = Settings(active_profile="p-gpt")
+
+        resolved = settings.resolve_auth()
+
+        assert resolved.provider == "posco_gpt"
+        assert resolved.value == "posco-test-key"
+        assert "POSCO_API_KEY" in resolved.source
+
+    def test_posco_gpt_profile_materializes_default_model(self):
+        settings = Settings(active_profile="p-gpt")
+
+        materialized = settings.materialize_active_profile()
+
+        assert materialized.model == "gpt-5.4-mini"
+        assert materialized.provider == "posco_gpt"
+        assert materialized.api_format == "posco_gpt"

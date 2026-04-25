@@ -181,19 +181,20 @@ def normalize_anthropic_model_name(model: str) -> str:
 def default_provider_profiles() -> dict[str, ProviderProfile]:
     """Return the built-in provider workflow catalog."""
     return {
-        "claude-api": ProviderProfile(
-            label="Anthropic-Compatible API",
-            provider="anthropic",
-            api_format="anthropic",
-            auth_source="anthropic_api_key",
-            default_model="claude-sonnet-4-6",
+        "p-gpt": ProviderProfile(
+            label="P-GPT",
+            provider="posco_gpt",
+            api_format="posco_gpt",
+            auth_source="posco_gpt_api_key",
+            default_model="gpt-5.4-mini",
+            base_url="http://pgpt.posco.com/s0la01-gpt/gptApi/personalApi",
         ),
-        "claude-subscription": ProviderProfile(
-            label="Claude Subscription",
-            provider="anthropic_claude",
-            api_format="anthropic",
-            auth_source="claude_subscription",
-            default_model="claude-sonnet-4-6",
+        "codex": ProviderProfile(
+            label="Codex Subscription",
+            provider="openai_codex",
+            api_format="openai",
+            auth_source="codex_subscription",
+            default_model="gpt-5.5",
         ),
         "openai-compatible": ProviderProfile(
             label="OpenAI-Compatible API",
@@ -202,12 +203,19 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             auth_source="openai_api_key",
             default_model="gpt-5.5",
         ),
-        "codex": ProviderProfile(
-            label="Codex Subscription",
-            provider="openai_codex",
-            api_format="openai",
-            auth_source="codex_subscription",
-            default_model="gpt-5.5",
+        "claude-subscription": ProviderProfile(
+            label="Claude Subscription",
+            provider="anthropic_claude",
+            api_format="anthropic",
+            auth_source="claude_subscription",
+            default_model="claude-sonnet-4-6",
+        ),
+        "claude-api": ProviderProfile(
+            label="Anthropic-Compatible API",
+            provider="anthropic",
+            api_format="anthropic",
+            auth_source="anthropic_api_key",
+            default_model="claude-sonnet-4-6",
         ),
         "copilot": ProviderProfile(
             label="GitHub Copilot",
@@ -328,6 +336,7 @@ def auth_source_provider_name(auth_source: str) -> str:
         "moonshot_api_key": "moonshot",
         "gemini_api_key": "gemini",
         "minimax_api_key": "minimax",
+        "posco_gpt_api_key": "posco_gpt",
     }
     return mapping.get(auth_source, auth_source)
 
@@ -369,6 +378,8 @@ def default_auth_source_for_provider(provider: str, api_format: str | None = Non
         return "gemini_api_key"
     if provider == "minimax":
         return "minimax_api_key"
+    if provider == "posco_gpt":
+        return "posco_gpt_api_key"
     if provider == "openai" or api_format == "openai":
         return "openai_api_key"
     return "anthropic_api_key"
@@ -448,7 +459,7 @@ class Settings(BaseModel):
     timeout: float = 30.0
     context_window_tokens: int | None = None
     auto_compact_threshold_tokens: int | None = None
-    api_format: str = "anthropic"  # "anthropic", "openai", or "copilot"
+    api_format: str = "anthropic"  # "anthropic", "openai", "copilot", or provider-specific adapters
     provider: str = ""
     active_profile: str = "claude-api"
     profiles: dict[str, ProviderProfile] = Field(default_factory=default_provider_profiles)
@@ -687,6 +698,7 @@ class Settings(BaseModel):
             "dashscope_api_key": "DASHSCOPE_API_KEY",
             "moonshot_api_key": "MOONSHOT_API_KEY",
             "minimax_api_key": "MINIMAX_API_KEY",
+            "posco_gpt_api_key": "POSCO_API_KEY",
         }.get(auth_source)
         if env_var:
             env_value = os.environ.get(env_var, "")

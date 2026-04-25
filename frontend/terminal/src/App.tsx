@@ -48,6 +48,13 @@ type SelectModalState = {
 	onSelect: (value: string) => void;
 } | null;
 
+const skillToken = (name: string): string => {
+	if (/^\S+$/.test(name)) {
+		return `$${name} `;
+	}
+	return `$${JSON.stringify(name)} `;
+};
+
 export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 	const initialTheme = String((config as Record<string, unknown>).theme ?? 'default');
 	return (
@@ -108,12 +115,41 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		return session.commands.filter((cmd) => cmd.startsWith(value)).slice(0, 10);
 	}, [session.commands, input]);
 
-	const showPicker = commandHints.length > 0 && !session.busy && !session.modal && !selectModal;
+	const skillHints = useMemo(() => {
+		const value = input.trim();
+		if (!value.startsWith('$')) {
+			return [];
+		}
+		const rawQuery = value.slice(1).trim().replace(/^["']|["']$/g, '').toLowerCase();
+		return session.skills
+			.filter((skill) => {
+				if (!rawQuery) {
+					return true;
+				}
+				return (
+					skill.name.toLowerCase().includes(rawQuery) ||
+					skill.description.toLowerCase().includes(rawQuery)
+				);
+			})
+			.slice(0, 10);
+	}, [session.skills, input]);
+
+	const skillHintLabels = useMemo(
+		() => skillHints.map((skill) => {
+			const description = skill.description ? ` - ${skill.description}` : '';
+			return `$${skill.name}${description}`;
+		}),
+		[skillHints],
+	);
+
+	const showCommandPicker = commandHints.length > 0 && !session.busy && !session.modal && !selectModal;
+	const showSkillPicker = skillHints.length > 0 && input.trim().startsWith('$') && !session.busy && !session.modal && !selectModal;
+	const showPicker = showCommandPicker || showSkillPicker;
 	const outputStyle = String(session.status.output_style ?? 'default');
 
 	useEffect(() => {
 		setPickerIndex(0);
-	}, [commandHints.length, input]);
+	}, [commandHints.length, skillHints.length, input]);
 
 	// Handle backend-initiated select requests (e.g. /resume session list)
 	useEffect(() => {
@@ -274,17 +310,25 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return;
 		}
 
-		// --- Command picker ---
+		// --- Command / skill picker ---
 		if (showPicker) {
+			const pickerLength = showSkillPicker ? skillHints.length : commandHints.length;
 			if (key.upArrow) {
 				setPickerIndex((i) => Math.max(0, i - 1));
 				return;
 			}
 			if (key.downArrow) {
-				setPickerIndex((i) => Math.min(commandHints.length - 1, i + 1));
+				setPickerIndex((i) => Math.min(pickerLength - 1, i + 1));
 				return;
 			}
 			if (key.return) {
+				if (showSkillPicker) {
+					const selected = skillHints[pickerIndex];
+					if (selected) {
+						setInput(skillToken(selected.name));
+					}
+					return;
+				}
 				const selected = commandHints[pickerIndex];
 				if (selected) {
 					setInput('');
@@ -295,6 +339,13 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				return;
 			}
 			if (key.tab) {
+				if (showSkillPicker) {
+					const selected = skillHints[pickerIndex];
+					if (selected) {
+						setInput(skillToken(selected.name));
+					}
+					return;
+				}
 				const selected = commandHints[pickerIndex];
 				if (selected) {
 					// Complete to the selected command with no trailing space —
@@ -419,8 +470,13 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			) : null}
 
 			{/* Command picker */}
-			{showPicker ? (
+			{showCommandPicker ? (
 				<CommandPicker hints={commandHints} selectedIndex={pickerIndex} />
+			) : null}
+
+			{/* Skill picker */}
+			{showSkillPicker ? (
+				<CommandPicker hints={skillHintLabels} selectedIndex={pickerIndex} title="Skills" />
 			) : null}
 
 			{/* Todo panel */}
@@ -462,6 +518,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 						<Text color={theme.colors.primary}>shift+enter</Text> newline{'  '}
 						<Text color={theme.colors.primary}>enter</Text> send{'  '}
 						<Text color={theme.colors.primary}>/</Text> commands{'  '}
+						<Text color={theme.colors.primary}>$</Text> skills{'  '}
 						<Text color={theme.colors.primary}>{'\u2191\u2193'}</Text> history{'  '}
 						<Text color={theme.colors.primary}>ctrl+c</Text> exit
 					</Text>

@@ -1,2 +1,0 @@
-[  202137ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://localhost:4173/api/events?session=8148a5a3-c0c7-4553-b17d-2b285680ee90:0
-[  205153ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:4173/api/events?session=8148a5a3-c0c7-4553-b17d-2b285680ee90:0

@@ -46,6 +46,12 @@ export type SelectOptionPayload = {
 	active?: boolean;
 };
 
+export type SkillSnapshot = {
+	name: string;
+	description: string;
+	source: string;
+};
+
 export type TodoItemSnapshot = {
 	text: string;
 	checked: boolean;
@@ -72,7 +78,8 @@ export type BackendEvent = {
 	tasks?: TaskSnapshot[] | null;
 	mcp_servers?: McpServerSnapshot[] | null;
 	bridge_sessions?: BridgeSessionSnapshot[] | null;
-	commands?: string[] | null;
+	commands?: Array<string | {name?: string; description?: string}> | null;
+	skills?: SkillSnapshot[] | null;
 	modal?: Record<string, unknown> | null;
 	select_options?: SelectOptionPayload[] | null;
 	tool_name?: string | null;

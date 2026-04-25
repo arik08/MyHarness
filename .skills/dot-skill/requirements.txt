@@ -1,0 +1,5 @@
+# Core optional dependencies for dot-skill tools
+pydantic>=2.0.0
+slack-sdk>=3.0.0
+python-docx>=1.0.0
+openpyxl>=3.1.0

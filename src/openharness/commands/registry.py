@@ -60,6 +60,13 @@ if TYPE_CHECKING:
     from openharness.tools.base import ToolRegistry
 
 
+_BUILT_IN_SKILL_SOURCES = {"bundled", "program"}
+
+
+def _custom_skills(skills):
+    return [skill for skill in skills if skill.source not in _BUILT_IN_SKILL_SOURCES]
+
+
 @dataclass
 class CommandResult:
     """Result returned by a slash command."""
@@ -93,6 +100,29 @@ class CommandContext:
 
 
 CommandHandler = Callable[[str, CommandContext], Awaitable[CommandResult]]
+
+
+def _parse_posco_login_args(args: str) -> dict[str, str]:
+    """Parse P-GPT login args from either positional or key=value form."""
+    tokens = args.split()
+    keyed: dict[str, str] = {}
+    for token in tokens:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        normalized = key.strip().lower().replace("-", "_")
+        keyed[normalized] = value.strip()
+    if keyed:
+        return {
+            "api_key": keyed.get("apikey") or keyed.get("api_key") or "",
+            "emp_no": keyed.get("empno") or keyed.get("emp_no") or "",
+            "comp_no": keyed.get("compno") or keyed.get("comp_no") or "30",
+        }
+    return {
+        "api_key": tokens[0] if len(tokens) >= 1 else "",
+        "emp_no": tokens[1] if len(tokens) >= 2 else "",
+        "comp_no": tokens[2] if len(tokens) >= 3 else "30",
+    }
 
 
 @dataclass
@@ -718,12 +748,31 @@ def create_default_command_registry(
     async def _reload_plugins_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
-        if not plugins:
-            return CommandResult(message="No plugins discovered.")
-        lines = ["Reloaded plugins:"]
-        for plugin in plugins:
-            state = "enabled" if plugin.enabled else "disabled"
-            lines.append(f"- {plugin.manifest.name} [{state}]")
+        skill_registry = load_skill_registry(
+            context.cwd,
+            extra_skill_dirs=context.extra_skill_dirs,
+            extra_plugin_roots=context.extra_plugin_roots,
+            settings=settings,
+        )
+        skills = _custom_skills(skill_registry.list_skills())
+        lines = [
+            f"Reloaded plugin and skill registry: {len(plugins)} plugin(s), {len(skills)} custom skill(s)."
+        ]
+        if plugins:
+            lines.append("")
+            lines.append("Plugins:")
+            for plugin in plugins:
+                state = "enabled" if plugin.enabled else "disabled"
+                lines.append(f"- {plugin.manifest.name} [{state}]")
+        else:
+            lines.append("- Plugins: none discovered.")
+        if skills:
+            lines.append("")
+            lines.append("Skills:")
+            for skill in skills:
+                lines.append(f"- {skill.name}: {skill.description}")
+        else:
+            lines.append("- Skills: none available.")
         return CommandResult(message="\n".join(lines))
 
     async def _skills_handler(args: str, context: CommandContext) -> CommandResult:
@@ -737,10 +786,10 @@ def create_default_command_registry(
             if skill is None:
                 return CommandResult(message=f"Skill not found: {args}")
             return CommandResult(message=skill.content)
-        skills = skill_registry.list_skills()
+        skills = _custom_skills(skill_registry.list_skills())
         if not skills:
-            return CommandResult(message="No skills available.")
-        lines = ["Available skills:"]
+            return CommandResult(message="No custom skills available.")
+        lines = ["Available custom skills:"]
         for skill in skills:
             source = f" [{skill.source}]"
             lines.append(f"- {skill.name}{source}: {skill.description}")
@@ -788,9 +837,17 @@ def create_default_command_registry(
                     f"- base_url: {settings.base_url or '(default)'}\n"
                     f"- model: {settings.model}\n"
                     f"- api_key: {masked}\n"
-                    "Usage: /login API_KEY"
+                    f"Usage: {'/login API_KEY EMP_NO [COMP_NO]' if profile.provider == 'posco_gpt' else '/login API_KEY'}"
                 )
             )
+        if profile.provider == "posco_gpt":
+            values = _parse_posco_login_args(api_key)
+            if not values.get("api_key") or not values.get("emp_no"):
+                return CommandResult(message="Usage: /login API_KEY EMP_NO [COMP_NO]")
+            manager.store_profile_credential(profile_name, "api_key", values["api_key"])
+            manager.store_profile_credential(profile_name, "emp_no", values["emp_no"])
+            manager.store_profile_credential(profile_name, "comp_no", values.get("comp_no") or "30")
+            return CommandResult(message="Stored P-GPT credentials in ~/.openharness/credentials.json")
         manager.store_profile_credential(profile_name, "api_key", api_key)
         return CommandResult(message="Stored API key in ~/.openharness/settings.json")
 

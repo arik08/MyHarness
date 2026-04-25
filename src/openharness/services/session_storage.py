@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from openharness.api.usage import UsageSnapshot
 from openharness.config.paths import get_sessions_dir
-from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
+from openharness.engine.messages import ConversationMessage, ImageBlock, sanitize_conversation_messages, strip_internal_message_text
 from openharness.utils.fs import atomic_write_text
 
 
@@ -51,6 +51,34 @@ def _persistable_tool_metadata(tool_metadata: dict[str, object] | None) -> dict[
     return payload
 
 
+def _with_image_marker(text: str, has_image: bool) -> str:
+    clean = strip_internal_message_text(text)
+    if has_image and "[image]" not in clean:
+        return f"{clean} [image]".strip()
+    return clean
+
+
+def _message_summary(message: ConversationMessage) -> str:
+    has_image = any(isinstance(block, ImageBlock) for block in message.content)
+    return _with_image_marker(message.text, has_image)
+
+
+def _raw_message_summary(message: dict[str, Any]) -> str:
+    content = message.get("content", [])
+    if not isinstance(content, list):
+        return ""
+    text = " ".join(
+        str(block.get("text", ""))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+    has_image = any(
+        isinstance(block, dict) and block.get("type") == "image"
+        for block in content
+    )
+    return _with_image_marker(text, has_image)
+
+
 def get_project_session_dir(cwd: str | Path) -> Path:
     """Return the session directory for a project."""
     path = Path(cwd).resolve()
@@ -78,9 +106,10 @@ def save_session_snapshot(
     # Extract a summary from the first user message
     summary = ""
     for msg in messages:
-        if msg.role == "user" and msg.text.strip():
-            summary = msg.text.strip()[:80]
-            break
+        if msg.role == "user":
+            summary = _message_summary(msg)[:80]
+            if summary:
+                break
 
     payload = {
         "session_id": sid,
@@ -140,15 +169,19 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = 20) -> list[dict
             data = json.loads(path.read_text(encoding="utf-8"))
             sid = data.get("session_id", path.stem.replace("session-", ""))
             seen_ids.add(sid)
-            summary = data.get("summary", "")
+            summary = strip_internal_message_text(data.get("summary", ""))
+            first_user_summary = ""
+            for msg in data.get("messages", []):
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    first_user_summary = _raw_message_summary(msg)
+                    break
+            if first_user_summary.endswith("[image]"):
+                summary = _with_image_marker(summary or first_user_summary, True)
+            if summary.startswith("The user explicitly selected the `") and first_user_summary:
+                summary = first_user_summary
             if not summary:
                 # Extract from first user message
-                for msg in data.get("messages", []):
-                    if msg.get("role") == "user":
-                        texts = [b.get("text", "") for b in msg.get("content", []) if b.get("type") == "text"]
-                        summary = " ".join(texts).strip()[:80]
-                        if summary:
-                            break
+                summary = first_user_summary[:80]
             sessions.append({
                 "session_id": sid,
                 "summary": summary,
@@ -168,14 +201,18 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = 20) -> list[dict
             data = json.loads(latest_path.read_text(encoding="utf-8"))
             sid = data.get("session_id", "latest")
             if sid not in seen_ids:
-                summary = data.get("summary", "")
+                summary = strip_internal_message_text(data.get("summary", ""))
+                first_user_summary = ""
+                for msg in data.get("messages", []):
+                    if isinstance(msg, dict) and msg.get("role") == "user":
+                        first_user_summary = _raw_message_summary(msg)
+                        break
+                if first_user_summary.endswith("[image]"):
+                    summary = _with_image_marker(summary or first_user_summary, True)
+                if summary.startswith("The user explicitly selected the `") and first_user_summary:
+                    summary = first_user_summary
                 if not summary:
-                    for msg in data.get("messages", []):
-                        if msg.get("role") == "user":
-                            texts = [b.get("text", "") for b in msg.get("content", []) if b.get("type") == "text"]
-                            summary = " ".join(texts).strip()[:80]
-                            if summary:
-                                break
+                    summary = first_user_summary[:80]
                 sessions.append({
                     "session_id": sid,
                     "summary": summary or "(latest session)",

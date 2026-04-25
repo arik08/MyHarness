@@ -12,6 +12,7 @@ from openharness.api.client import AnthropicApiClient, SupportsStreamingMessages
 from openharness.api.codex_client import CodexApiClient
 from openharness.api.copilot_client import CopilotClient
 from openharness.api.openai_client import OpenAICompatibleClient
+from openharness.api.posco_client import PoscoGptClient
 from openharness.api.provider import auth_status, detect_provider
 from openharness.bridge import get_bridge_manager
 from openharness.commands import CommandContext, CommandResult, create_default_command_registry
@@ -152,6 +153,13 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             base_url=settings.base_url,
             claude_oauth=True,
             auth_token_resolver=lambda: settings.resolve_auth().value,
+        )
+    if settings.provider == "posco_gpt" or settings.api_format == "posco_gpt":
+        auth = _safe_resolve_auth()
+        return PoscoGptClient(
+            api_key=auth.value,
+            base_url=settings.base_url,
+            timeout=settings.timeout,
         )
     if settings.api_format in ("openai", "openai_compat"):
         auth = _safe_resolve_auth()
@@ -489,7 +497,7 @@ def refresh_runtime_client(bundle: RuntimeBundle) -> None:
 
 async def handle_line(
     bundle: RuntimeBundle,
-    line: str,
+    line: str | ConversationMessage,
     *,
     print_system: SystemPrinter,
     render_event: StreamRenderer,
@@ -501,7 +509,12 @@ async def handle_line(
             load_hook_registry(bundle.current_settings(), bundle.current_plugins())
         )
 
-    parsed = bundle.commands.lookup(line)
+    line_text = line.text if isinstance(line, ConversationMessage) else line
+    has_attachments = isinstance(line, ConversationMessage) and any(
+        getattr(block, "type", "") == "image" for block in line.content
+    )
+
+    parsed = None if has_attachments else bundle.commands.lookup(line_text)
     if parsed is not None:
         command, args = parsed
         result = await command.handler(
@@ -596,7 +609,7 @@ async def handle_line(
     system_prompt = build_runtime_system_prompt(
         settings,
         cwd=bundle.cwd,
-        latest_user_prompt=line,
+        latest_user_prompt=line_text,
         extra_skill_dirs=bundle.extra_skill_dirs,
         extra_plugin_roots=bundle.extra_plugin_roots,
     )
@@ -643,16 +656,58 @@ async def _render_command_result(
         await clear_output()
     if result.replay_messages and render_event is not None:
         # Replay restored conversation messages as transcript events
-        from openharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete
+        from openharness.engine.stream_events import (
+            AssistantTextDelta,
+            AssistantTurnComplete,
+            ToolExecutionCompleted,
+            ToolExecutionStarted,
+        )
         from openharness.api.usage import UsageSnapshot
 
         await clear_output()
         await print_system("Session restored:")
+        pending_tools: dict[str, tuple[str, dict[str, object]]] = {}
         for msg in result.replay_messages:
             if msg.role == "user":
-                await print_system(f"> {msg.text}")
+                has_image = any(getattr(block, "type", "") == "image" for block in msg.content)
+                user_text = msg.text.strip()
+                if has_image and "[image]" not in user_text:
+                    user_text = f"{user_text} [image]".strip()
+                if user_text:
+                    await print_system(f"> {user_text}")
+                for block in msg.content:
+                    if getattr(block, "type", "") != "tool_result":
+                        continue
+                    tool_name, tool_input = pending_tools.pop(
+                        block.tool_use_id,
+                        ("tool", {}),
+                    )
+                    await render_event(
+                        ToolExecutionCompleted(
+                            tool_name=tool_name,
+                            output=block.content,
+                            is_error=block.is_error,
+                        )
+                    )
             elif msg.role == "assistant" and msg.text.strip():
+                for tool_use in msg.tool_uses:
+                    pending_tools[tool_use.id] = (tool_use.name, dict(tool_use.input))
+                    await render_event(
+                        ToolExecutionStarted(
+                            tool_name=tool_use.name,
+                            tool_input=dict(tool_use.input),
+                        )
+                    )
                 await render_event(AssistantTextDelta(text=msg.text))
                 await render_event(AssistantTurnComplete(message=msg, usage=UsageSnapshot()))
+            elif msg.role == "assistant":
+                for tool_use in msg.tool_uses:
+                    pending_tools[tool_use.id] = (tool_use.name, dict(tool_use.input))
+                    await render_event(
+                        ToolExecutionStarted(
+                            tool_name=tool_use.name,
+                            tool_input=dict(tool_use.input),
+                        )
+                    )
     if result.message and not result.replay_messages:
         await print_system(result.message)
