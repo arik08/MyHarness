@@ -187,6 +187,7 @@ function snapshotActiveSlot() {
     ignoreScrollSave: state.ignoreScrollSave,
     projectFiles: state.projectFiles,
     projectFilesLoadedForSession: state.projectFilesLoadedForSession,
+    projectFileSortMode: state.projectFileSortMode,
   });
 }
 
@@ -210,6 +211,7 @@ function restoreSlot(slot) {
   state.workflowRestoredElapsedMs = slot.workflowRestoredElapsedMs || 0;
   state.projectFiles = slot.projectFiles || [];
   state.projectFilesLoadedForSession = slot.projectFilesLoadedForSession || "";
+  state.projectFileSortMode = slot.projectFileSortMode || "recent";
   if (els.sessionId) {
     els.sessionId.textContent = state.sessionId || "";
   }
@@ -262,6 +264,7 @@ function createChatSlot({ sessionId, workspace, container = null, makeActive = t
     ignoreScrollSave: false,
     projectFiles: [],
     projectFilesLoadedForSession: "",
+    projectFileSortMode: "recent",
     source: null,
     pendingEvents: [],
   };

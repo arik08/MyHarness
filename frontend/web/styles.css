@@ -2209,6 +2209,44 @@ a:focus-visible {
   font-size: 12px;
 }
 
+.project-file-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.project-file-sort-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-file-sort {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-file-sort select {
+  min-height: 30px;
+  padding: 4px 26px 4px 9px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+}
+
 .project-file-list {
   display: grid;
   gap: 8px;
@@ -3343,13 +3381,18 @@ a:focus-visible {
 }
 
 .settings-card h2 {
-  display: inline;
-  margin: 0 12px 0 0;
+  display: block;
+  margin: 0 44px 8px 0;
+  word-break: keep-all;
 }
 
 .settings-card > p {
-  display: inline;
-  white-space: nowrap;
+  display: block;
+  max-width: calc(100% - 44px);
+  font-size: 14px;
+  overflow-wrap: normal;
+  word-break: keep-all;
+  white-space: normal;
 }
 
 .composer .slash-menu-item small {
@@ -3685,6 +3728,22 @@ a:focus-visible {
 .setting-field select:focus {
   outline: 2px solid var(--accent-soft);
   outline-offset: 1px;
+}
+
+.folder-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  width: min(520px, 100%);
+}
+
+.setting-field .folder-picker input {
+  width: 100%;
+}
+
+.folder-picker button {
+  height: 36px;
+  white-space: nowrap;
 }
 
 .settings-row-arrow {

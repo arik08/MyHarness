@@ -5,6 +5,16 @@ export function createCommands(ctx) {
   function setComposerTokenFromSelection(...args) { return ctx.setComposerTokenFromSelection(...args); }
   function getJson(...args) { return ctx.getJson(...args); }
 
+const hiddenProjectFilePrefixes = [
+  "autopilot-dashboard/",
+  "docs/autopilot/",
+];
+
+function isVisibleProjectFile(file) {
+  const key = String(file?.path || file?.name || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  return !hiddenProjectFilePrefixes.some((prefix) => key === prefix.slice(0, -1) || key.startsWith(prefix));
+}
+
 function getSlashQuery() {
   const value = els.input.value;
   const beforeCursor = value.slice(0, els.input.selectionStart || 0);
@@ -56,7 +66,7 @@ async function refreshProjectFiles(force = false) {
   }
   const query = new URLSearchParams({ session: state.sessionId });
   const payload = await getJson(`/api/project-files?${query.toString()}`);
-  state.projectFiles = Array.isArray(payload.files) ? payload.files : [];
+  state.projectFiles = Array.isArray(payload.files) ? payload.files.filter(isVisibleProjectFile) : [];
   state.projectFilesLoadedForSession = state.sessionId;
   return state.projectFiles;
 }
@@ -124,6 +134,7 @@ function filteredSlashCommands() {
   }
   if (query.trigger === "@") {
     return state.projectFiles
+      .filter(isVisibleProjectFile)
       .filter((file) => {
         const haystack = `${file.path || ""} ${file.name || ""}`.toLowerCase();
         return haystack.includes(query.value);

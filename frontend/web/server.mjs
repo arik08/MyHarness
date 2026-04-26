@@ -80,6 +80,10 @@ const artifactTypes = {
 const artifactListSkipDirs = new Set([".git", ".openharness", "node_modules", "__pycache__", ".venv", "venv"]);
 const artifactListMaxItems = 300;
 const projectFileListMaxItems = 600;
+const projectFileListSkipPrefixes = [
+  "autopilot-dashboard/",
+  "docs/autopilot/",
+];
 const shellCommandTimeoutMs = 60_000;
 const shellOutputMaxChars = 24_000;
 
@@ -294,6 +298,64 @@ async function copyArtifactToFolder(session, artifactPath, folderPath) {
   };
 }
 
+async function openFolderDialog(initialPath = "") {
+  if (process.platform !== "win32") {
+    throw new Error("Folder picker is only available on Windows in this build");
+  }
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = "저장할 폴더를 선택하세요"
+$dialog.ShowNewFolderButton = $true
+$initial = [Environment]::GetFolderPath("MyDocuments")
+if ($env:OPENHARNESS_DIALOG_INITIAL -and (Test-Path -LiteralPath $env:OPENHARNESS_DIALOG_INITIAL -PathType Container)) {
+  $initial = $env:OPENHARNESS_DIALOG_INITIAL
+}
+$dialog.SelectedPath = $initial
+$result = $dialog.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::Out.Write($dialog.SelectedPath)
+  exit 0
+}
+exit 2
+`;
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          OPENHARNESS_DIALOG_INITIAL: String(initialPath || ""),
+        },
+        windowsHide: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve({ canceled: false, folderPath: stdout.trim() });
+      } else if (code === 2) {
+        resolve({ canceled: true, folderPath: "" });
+      } else {
+        reject(new Error(stderr.trim() || `Folder picker exited with code ${code ?? 0}`));
+      }
+    });
+  });
+}
+
 async function saveArtifactFile(session, artifactPath, content) {
   let requestedPath = String(artifactPath || "").trim();
   if (!requestedPath) {
@@ -376,6 +438,10 @@ async function listProjectArtifacts(session) {
 
 async function listProjectFiles(session) {
   const files = [];
+  const shouldSkipProjectFileRel = (rel) => {
+    const normalized = String(rel || "").replace(/\\/g, "/").replace(/^\/+/, "");
+    return projectFileListSkipPrefixes.some((prefix) => normalized === prefix.slice(0, -1) || normalized.startsWith(prefix));
+  };
   async function walk(directory) {
     if (files.length >= projectFileListMaxItems) {
       return;
@@ -386,8 +452,10 @@ async function listProjectFiles(session) {
         return;
       }
       if (entry.isDirectory()) {
-        if (!artifactListSkipDirs.has(entry.name)) {
-          await walk(join(directory, entry.name));
+        const target = join(directory, entry.name);
+        const rel = relative(session.workspace.path, target);
+        if (!artifactListSkipDirs.has(entry.name) && !shouldSkipProjectFileRel(rel)) {
+          await walk(target);
         }
         continue;
       }
@@ -397,6 +465,9 @@ async function listProjectFiles(session) {
       const target = join(directory, entry.name);
       const rel = relative(session.workspace.path, target);
       if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+        continue;
+      }
+      if (shouldSkipProjectFileRel(rel)) {
         continue;
       }
       const info = await stat(target);
@@ -1409,6 +1480,16 @@ async function handleApi(request, response, pathname) {
       json(response, 200, await savePoscoGptSettings(body));
     } catch (error) {
       json(response, 400, { error: error.message || "Could not save P-GPT settings" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/dialog/folder") {
+    try {
+      const body = await readJson(request);
+      json(response, 200, await openFolderDialog(body.initialPath));
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not open folder picker" });
     }
     return true;
   }

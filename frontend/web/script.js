@@ -55,8 +55,8 @@ const {
   cancelCurrent,
   clearChat,
   clearComposerToken,
-  closeModal,
   closeSlashMenu,
+  dismissModal,
   filteredSlashCommands,
   isNearMessageBottom,
   initializeWorkspace,
@@ -440,7 +440,7 @@ els.chatTitleButton?.addEventListener("click", startTitleEdit);
 
 els.modalHost.addEventListener("click", (event) => {
   if (event.target === els.modalHost && els.modalHost.dataset.dismissible === "true") {
-    closeModal();
+    dismissModal();
   }
 });
 

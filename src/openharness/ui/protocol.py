@@ -143,6 +143,7 @@ class BackendEvent(BaseModel):
     modal: dict[str, Any] | None = None
     tool_name: str | None = None
     tool_call_index: int | None = None
+    has_tool_uses: bool | None = None
     arguments_delta: str | None = None
     tool_input: dict[str, Any] | None = None
     output: str | None = None

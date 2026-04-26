@@ -27,13 +27,18 @@ export function createMessages(ctx) {
   function copyTextToClipboard(...args) { return ctx.copyTextToClipboard(...args); }
 
 function isCommandCatalog(text) {
-  return String(text || "").includes("Available commands:");
+  const source = String(text || "");
+  return source.includes("Available commands:") || source.includes("사용 가능한 명령어:");
 }
 
 function splitCommandCatalog(text) {
   const source = String(text || "");
-  const marker = "Available commands:";
-  const skillMarker = "Available skills:";
+  const marker = source.includes("사용 가능한 명령어:")
+    ? "사용 가능한 명령어:"
+    : "Available commands:";
+  const skillMarker = source.includes("사용 가능한 스킬:")
+    ? "사용 가능한 스킬:"
+    : "Available skills:";
   const index = source.indexOf(marker);
   if (index < 0) {
     return { intro: "", catalog: source };
@@ -48,7 +53,7 @@ function splitCommandCatalog(text) {
 
 function parseCommandCatalog(text) {
   const { catalog } = splitCommandCatalog(text);
-  const source = String(catalog || "").replace(/^Available commands:\s*/i, "").trim();
+  const source = String(catalog || "").replace(/^(Available commands:|사용 가능한 명령어:)\s*/i, "").trim();
   const matches = [...source.matchAll(/\/[a-z][a-z0-9-]*/g)];
   if (!matches.length) {
     return [];
@@ -70,7 +75,18 @@ function splitNamedCatalog(text, marker) {
   if (index < 0) {
     return "";
   }
-  const headings = ["Available skills:", "MCP servers:", "Plugins:", "Toggle usage:", "Available commands:"];
+  const headings = [
+    "Available skills:",
+    "사용 가능한 스킬:",
+    "MCP servers:",
+    "MCP 서버:",
+    "Plugins:",
+    "플러그인:",
+    "Toggle usage:",
+    "전환 사용법:",
+    "Available commands:",
+    "사용 가능한 명령어:",
+  ];
   const end = headings
     .filter((heading) => heading !== marker)
     .map((heading) => source.indexOf(heading, index + marker.length))
@@ -80,8 +96,13 @@ function splitNamedCatalog(text, marker) {
 }
 
 function parseSkillCatalog(text) {
-  const source = splitNamedCatalog(text, "Available skills:").replace(/^Available skills:\s*/i, "").trim();
-  if (!source || source === "(no custom skills available)") {
+  const marker = String(text || "").includes("사용 가능한 스킬:")
+    ? "사용 가능한 스킬:"
+    : "Available skills:";
+  const source = splitNamedCatalog(text, marker)
+    .replace(/^(Available skills:|사용 가능한 스킬:)\s*/i, "")
+    .trim();
+  if (!source || source === "(no custom skills available)" || source === "(사용자 스킬이 없습니다)") {
     return [];
   }
   return source
@@ -89,14 +110,14 @@ function parseSkillCatalog(text) {
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
     .map((line) => {
-      const match = line.match(/^-\s+(.+?)(?:\s+\[([^\]]+)\])?\s+\[(enabled|disabled)\]\s*:\s*(.*)$/i);
+      const match = line.match(/^-\s+(.+?)(?:\s+\[([^\]]+)\])?\s+\[(enabled|disabled|활성|비활성)\]\s*:\s*(.*)$/i);
       if (!match) {
         return null;
       }
       return {
         name: match[1].trim(),
         source: (match[2] || "skill").trim(),
-        enabled: match[3].toLowerCase() === "enabled",
+        enabled: ["enabled", "활성"].includes(match[3].toLowerCase()),
         description: (match[4] || "").trim(),
       };
     })
@@ -104,8 +125,13 @@ function parseSkillCatalog(text) {
 }
 
 function parseMcpCatalog(text) {
-  const source = splitNamedCatalog(text, "MCP servers:").replace(/^MCP servers:\s*/i, "").trim();
-  if (!source || source === "(no MCP servers configured)") {
+  const marker = String(text || "").includes("MCP 서버:")
+    ? "MCP 서버:"
+    : "MCP servers:";
+  const source = splitNamedCatalog(text, marker)
+    .replace(/^(MCP servers:|MCP 서버:)\s*/i, "")
+    .trim();
+  if (!source || source === "(no MCP servers configured)" || source === "(설정된 MCP 서버가 없습니다)") {
     return [];
   }
   return source
@@ -113,13 +139,13 @@ function parseMcpCatalog(text) {
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
     .map((line) => {
-      const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled)\]\s+\(([^)]*)\)/i);
+      const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled|활성|비활성)\]\s+\(([^)]*)\)/i);
       if (!match) {
         return null;
       }
       return {
         name: match[1].trim(),
-        enabled: match[2].toLowerCase() === "enabled",
+        enabled: ["enabled", "활성"].includes(match[2].toLowerCase()),
         description: match[3].trim() || "MCP server",
       };
     })
@@ -127,8 +153,13 @@ function parseMcpCatalog(text) {
 }
 
 function parsePluginCatalog(text) {
-  const source = splitNamedCatalog(text, "Plugins:").replace(/^Plugins:\s*/i, "").trim();
-  if (!source || source === "(no plugins discovered)") {
+  const marker = String(text || "").includes("플러그인:")
+    ? "플러그인:"
+    : "Plugins:";
+  const source = splitNamedCatalog(text, marker)
+    .replace(/^(Plugins:|플러그인:)\s*/i, "")
+    .trim();
+  if (!source || source === "(no plugins discovered)" || source === "(발견된 플러그인이 없습니다)") {
     return [];
   }
   return source
@@ -136,13 +167,13 @@ function parsePluginCatalog(text) {
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
     .map((line) => {
-      const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled)\](?::\s*(.*))?$/i);
+      const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled|활성|비활성)\](?::\s*(.*))?$/i);
       if (!match) {
         return null;
       }
       return {
         name: match[1].trim(),
-        enabled: match[2].toLowerCase() === "enabled",
+        enabled: ["enabled", "활성"].includes(match[2].toLowerCase()),
         description: (match[3] || "Plugin").trim(),
       };
     })
@@ -520,6 +551,10 @@ function attachAssistantActions(content, rawText) {
   }
   const bubble = content.closest(".bubble");
   if (!bubble) {
+    return;
+  }
+  if (bubble.querySelector(".assistant-actions")) {
+    content.dataset.answerActionsAttached = "true";
     return;
   }
   const actions = document.createElement("div");

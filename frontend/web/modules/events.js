@@ -41,6 +41,11 @@ const STREAMING_START_BUFFER_MS = 180;
 const STREAMING_MIN_CHARS_PER_FLUSH = 3;
 const STREAMING_MAX_CHARS_PER_FLUSH = 12;
 
+function streamingStartBufferMs() {
+  const configured = Number(state.appSettings?.streamStartBufferMs);
+  return Math.max(0, Math.min(2000, Number.isFinite(configured) ? configured : STREAMING_START_BUFFER_MS));
+}
+
 function normalizeSkills(skills) {
   return Array.isArray(skills)
     ? skills
@@ -227,7 +232,10 @@ function stabilizeStreamingTableRows(markdown) {
     tableEnd += 1;
   }
 
-  if (tableEnd < lines.length) {
+  const hasContentAfterTable = lines
+    .slice(tableEnd)
+    .some((line) => String(line || "").trim());
+  if (hasContentAfterTable) {
     return source;
   }
 
@@ -320,7 +328,7 @@ function scheduleStreamingFlush() {
   if (streamingFlushTimer) {
     return;
   }
-  const delay = streamingDisplayStarted ? STREAMING_FLUSH_INTERVAL_MS : STREAMING_START_BUFFER_MS;
+  const delay = streamingDisplayStarted ? STREAMING_FLUSH_INTERVAL_MS : streamingStartBufferMs();
   streamingFlushTimer = window.setTimeout(flushStreamingText, delay);
 }
 
@@ -572,6 +580,7 @@ function handleEvent(event) {
   }
 
   if (event.type === "assistant_complete") {
+    const isFinalAssistantAnswer = !event.has_tool_uses;
     if (state.assistantNode) {
       flushStreamingText({ flushAll: true });
       resetStreamingState();
@@ -579,12 +588,16 @@ function handleEvent(event) {
       const finalText = event.message || state.assistantNode.dataset.rawText || "";
       setMarkdown(state.assistantNode, finalText);
       extractAndRenderArtifacts(finalText, state.assistantNode);
-      attachAssistantActions(state.assistantNode, finalText);
+      if (isFinalAssistantAnswer) {
+        attachAssistantActions(state.assistantNode, finalText);
+      }
       state.assistantNode = null;
     } else if (event.message) {
       const node = appendMessage("assistant", event.message);
       extractAndRenderArtifacts(event.message, node);
-      attachAssistantActions(node, event.message);
+      if (isFinalAssistantAnswer) {
+        attachAssistantActions(node, event.message);
+      }
     }
     return;
   }

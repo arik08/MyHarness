@@ -824,18 +824,18 @@ async def test_agents_help_and_subagents_alias(tmp_path: Path, monkeypatch):
     agents_help_command, agents_help_args = registry.lookup("/agents help")
     assert agents_help_command is not None
     agents_help_result = await agents_help_command.handler(agents_help_args, context)
-    assert "Subagent guide:" in agents_help_result.message
+    assert "서브에이전트 안내:" in agents_help_result.message
     assert 'subagent_type="worker"' in agents_help_result.message
 
     subagents_command, subagents_args = registry.lookup("/subagents")
     assert subagents_command is not None
     subagents_result = await subagents_command.handler(subagents_args, context)
-    assert "Subagent guide:" in subagents_result.message
+    assert "서브에이전트 안내:" in subagents_result.message
 
     agents_command, agents_args = registry.lookup("/agents")
     assert agents_command is not None
     agents_result = await agents_command.handler(agents_args, context)
-    assert "Subagent guide:" in agents_result.message
+    assert "서브에이전트 안내:" in agents_result.message
 
 
 @pytest.mark.asyncio

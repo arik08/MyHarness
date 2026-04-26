@@ -69,6 +69,17 @@ function downloadModeLabel() {
   return "매번 저장 위치 선택";
 }
 
+function streamingSettingsLabel() {
+  const scrollDuration = state.appSettings?.streamScrollDurationMs ?? 1200;
+  const startBuffer = state.appSettings?.streamStartBufferMs ?? 180;
+  return `따라가기 ${scrollDuration} ms / 버퍼 ${startBuffer} ms`;
+}
+
+function setAppSettingsDismissAction() {
+  els.modalHost.dataset.dismissible = "true";
+  els.modalHost.dataset.dismissAction = "app-settings";
+}
+
 function settingField(label, helperText = "") {
   const wrap = document.createElement("label");
   wrap.className = "setting-field";
@@ -105,7 +116,7 @@ function showSettingsModal() {
   list.className = "settings-list";
   list.append(
     settingsButton("프롬프트", state.systemPrompt ? "사용자 프롬프트 적용 중" : "기본값", showSystemPromptModal),
-    settingsButton("스트리밍 스크롤", `${state.appSettings?.streamScrollDurationMs ?? 1200} ms`, showBehaviorSettingsModal),
+    settingsButton("스트리밍 스크롤", streamingSettingsLabel(), showBehaviorSettingsModal),
     settingsButton("파일 저장", downloadModeLabel(), showDownloadSettingsModal),
     settingsButton("P-GPT 키", "API Key / 사번 / 회사번호", showPoscoGptSettingsModal),
   );
@@ -117,8 +128,7 @@ function showSettingsModal() {
 function showSystemPromptModal() {
   els.modalHost.classList.remove("hidden");
   els.modalHost.textContent = "";
-  els.modalHost.dataset.dismissible = "true";
-  delete els.modalHost.dataset.dismissAction;
+  setAppSettingsDismissAction();
 
   const card = document.createElement("div");
   card.className = "modal-card system-settings-card";
@@ -166,8 +176,7 @@ function showSystemPromptModal() {
 function showBehaviorSettingsModal() {
   els.modalHost.classList.remove("hidden");
   els.modalHost.textContent = "";
-  els.modalHost.dataset.dismissible = "true";
-  delete els.modalHost.dataset.dismissAction;
+  setAppSettingsDismissAction();
 
   const card = document.createElement("div");
   card.className = "modal-card settings-card app-settings-card";
@@ -178,34 +187,47 @@ function showBehaviorSettingsModal() {
   const title = document.createElement("h2");
   title.textContent = "스트리밍 스크롤";
   const body = document.createElement("p");
-  body.textContent = "답변이 스트리밍될 때 아래로 따라가는 애니메이션 시간을 조절합니다.";
-  const field = settingField("따라가기 시간", "0~5000ms 사이 값을 입력하세요.");
-  const input = document.createElement("input");
-  input.type = "number";
-  input.min = "0";
-  input.max = "5000";
-  input.step = "50";
-  input.value = String(state.appSettings?.streamScrollDurationMs ?? 1200);
-  field.append(input);
+  body.textContent = "답변이 스트리밍될 때 표시와 스크롤 흐름을 조절합니다.";
+
+  const followField = settingField("따라가기 시간", "아래로 따라가는 애니메이션 시간입니다. 0~5000ms 사이 값을 입력하세요.");
+  const followInput = document.createElement("input");
+  followInput.type = "number";
+  followInput.min = "0";
+  followInput.max = "5000";
+  followInput.step = "100";
+  followInput.value = String(state.appSettings?.streamScrollDurationMs ?? 1200);
+  followField.append(followInput);
+
+  const bufferField = settingField("버퍼 시간", "첫 표시 전 텍스트를 잠깐 모으는 시간입니다. 0~2000ms 사이 값을 입력하세요.");
+  const bufferInput = document.createElement("input");
+  bufferInput.type = "number";
+  bufferInput.min = "0";
+  bufferInput.max = "2000";
+  bufferInput.step = "10";
+  bufferInput.value = String(state.appSettings?.streamStartBufferMs ?? 180);
+  bufferField.append(bufferInput);
+
   const actions = document.createElement("div");
   actions.className = "modal-actions";
   actions.append(
     modalButton("뒤로", false, showSettingsModal),
     modalButton("저장", true, () => {
-      saveAppSettings({ streamScrollDurationMs: Number(input.value) });
+      saveAppSettings({
+        streamScrollDurationMs: Number(followInput.value),
+        streamStartBufferMs: Number(bufferInput.value),
+      });
       showSettingsModal();
     }),
   );
-  card.append(title, body, field, actions);
+  card.append(title, body, followField, bufferField, actions);
   els.modalHost.append(card);
-  input.focus();
+  followInput.focus();
 }
 
 function showDownloadSettingsModal() {
   els.modalHost.classList.remove("hidden");
   els.modalHost.textContent = "";
-  els.modalHost.dataset.dismissible = "true";
-  delete els.modalHost.dataset.dismissAction;
+  setAppSettingsDismissAction();
 
   const card = document.createElement("div");
   card.className = "modal-card settings-card app-settings-card";
@@ -227,12 +249,32 @@ function showDownloadSettingsModal() {
   mode.value = state.appSettings?.downloadMode || "ask";
   modeField.append(mode);
 
-  const folderField = settingField("지정 폴더 경로", "예: C:\\Users\\me\\Downloads\\OpenHarness");
+  const folderField = settingField("지정 폴더", "찾아보기를 눌러 저장할 폴더를 선택하세요.");
+  const folderPicker = document.createElement("div");
+  folderPicker.className = "folder-picker";
   const folder = document.createElement("input");
   folder.type = "text";
-  folder.placeholder = "C:\\Users\\...\\Downloads";
+  folder.placeholder = "선택된 폴더가 없습니다";
+  folder.readOnly = true;
   folder.value = state.appSettings?.downloadFolderPath || "";
-  folderField.append(folder);
+  const browse = modalButton("찾아보기", false, async () => {
+    browse.disabled = true;
+    browse.textContent = "여는 중...";
+    try {
+      const selected = await postJson("/api/dialog/folder", { initialPath: folder.value });
+      if (!selected.canceled && selected.folderPath) {
+        folder.value = selected.folderPath;
+        mode.value = "folder";
+      }
+    } catch (error) {
+      appendMessage("system", `폴더 선택 실패: ${error.message}`);
+    } finally {
+      browse.disabled = false;
+      browse.textContent = "찾아보기";
+    }
+  });
+  folderPicker.append(folder, browse);
+  folderField.append(folderPicker);
 
   const actions = document.createElement("div");
   actions.className = "modal-actions";
@@ -254,8 +296,7 @@ function showDownloadSettingsModal() {
 async function showPoscoGptSettingsModal() {
   els.modalHost.classList.remove("hidden");
   els.modalHost.textContent = "";
-  els.modalHost.dataset.dismissible = "true";
-  delete els.modalHost.dataset.dismissAction;
+  setAppSettingsDismissAction();
 
   const card = document.createElement("div");
   card.className = "modal-card settings-card app-settings-card";
@@ -767,6 +808,18 @@ function closeModal() {
   delete els.modalHost.dataset.dismissAction;
 }
 
+function dismissModal() {
+  if (els.modalHost.dataset.dismissAction === "app-settings") {
+    showSettingsModal();
+    return;
+  }
+  if (els.modalHost.dataset.dismissAction === "settings") {
+    showModelSettingsModal();
+    return;
+  }
+  closeModal();
+}
+
   return {
     showSettingsModal,
     showModelSettingsModal,
@@ -778,5 +831,6 @@ function closeModal() {
     modalButton,
     respond,
     closeModal,
+    dismissModal,
   };
 }

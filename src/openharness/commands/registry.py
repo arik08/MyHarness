@@ -72,10 +72,10 @@ def _custom_skills(skills):
 
 def _format_skills_management_text(skills) -> str:
     if not skills:
-        return "Available skills:\n(no custom skills available)"
-    lines = ["Available skills:"]
+        return "사용 가능한 스킬:\n(사용자 스킬이 없습니다)"
+    lines = ["사용 가능한 스킬:"]
     for skill in skills:
-        status = "enabled" if skill.enabled else "disabled"
+        status = "활성" if skill.enabled else "비활성"
         source = f" [{skill.source}]"
         lines.append(f"- {skill.name}{source} [{status}]: {skill.description}")
     return "\n".join(lines)
@@ -84,22 +84,22 @@ def _format_skills_management_text(skills) -> str:
 def _format_mcp_management_text(settings, plugins, cwd: str | Path) -> str:
     servers = load_mcp_server_configs(settings, plugins, cwd=cwd, include_disabled=True)
     if not servers:
-        return "MCP servers:\n(no MCP servers configured)"
+        return "MCP 서버:\n(설정된 MCP 서버가 없습니다)"
     disabled = set(settings.disabled_mcp_servers or set())
-    lines = ["MCP servers:"]
+    lines = ["MCP 서버:"]
     for name, config in sorted(servers.items()):
-        status = "disabled" if name in disabled else "enabled"
-        transport = getattr(config, "type", "unknown")
+        status = "비활성" if name in disabled else "활성"
+        transport = getattr(config, "type", "알 수 없음")
         lines.append(f"- {name} [{status}] ({transport})")
     return "\n".join(lines)
 
 
 def _format_plugins_management_text(plugins) -> str:
     if not plugins:
-        return "Plugins:\n(no plugins discovered)"
-    lines = ["Plugins:"]
+        return "플러그인:\n(발견된 플러그인이 없습니다)"
+    lines = ["플러그인:"]
     for plugin in sorted(plugins, key=lambda item: item.manifest.name):
-        status = "enabled" if plugin.enabled else "disabled"
+        status = "활성" if plugin.enabled else "비활성"
         description = f": {plugin.manifest.description}" if plugin.manifest.description else ""
         lines.append(f"- {plugin.manifest.name} [{status}]{description}")
     return "\n".join(lines)
@@ -111,7 +111,7 @@ def _format_capability_management_text(settings, plugins, skills, cwd: str | Pat
             _format_skills_management_text(skills),
             _format_mcp_management_text(settings, plugins, cwd),
             _format_plugins_management_text(plugins),
-            "Toggle usage: /skills toggle NAME, /mcp toggle NAME, /plugin toggle NAME",
+            "전환 사용법: /skills toggle NAME, /mcp toggle NAME, /plugin toggle NAME",
         ]
     )
 
@@ -235,14 +235,14 @@ class CommandRegistry:
             "- @: 현재 프로젝트의 파일을 선택해 프롬프트에 첨부하거나 참조합니다.",
             "- $: 사용할 스킬, MCP, 플러그인을 선택해 프롬프트에 넣습니다.",
             "- /: 슬래시 명령어를 선택하거나 실행합니다.",
-            "- Ctrl+Shift+O: New Chat을 엽니다.",
+            "- Ctrl+Shift+O: 새 채팅을 엽니다.",
             "- Shift+Tab: 계획모드를 켜거나 끕니다.",
             "",
             "자주 쓰는 기능:",
             "- 채팅 입력란에 이미지를 복사한 뒤 붙여넣으면 이미지가 첨부됩니다.",
             "- 5줄 이상 긴 글을 붙여넣거나 입력하면 하나의 그룹으로 묶어 표시하고, 원문은 그대로 전송됩니다.",
             "",
-            "Available commands:",
+            "사용 가능한 명령어:",
         ]
         commands = [self._commands[name] for name in self._canonical_names]
         for command in sorted(commands, key=lambda item: item.name):
@@ -701,13 +701,13 @@ def create_default_command_registry(
     async def _agents_handler(args: str, context: CommandContext) -> CommandResult:
         tokens = args.split(maxsplit=1)
         guide = (
-            "Subagent guide:\n"
-            "- Ask the model to delegate with the `agent` tool when the task needs background work or parallel investigation.\n"
-            '- The usual worker shape is subagent_type="worker".\n'
-            "- /agents lists known worker tasks.\n"
-            "- /agents show TASK_ID shows one worker's output and metadata.\n"
-            "- send_message(task_id=..., message=...) can continue a spawned worker.\n"
-            "- task_output(task_id=...) reads the worker's latest output."
+            "서브에이전트 안내:\n"
+            "- 백그라운드 작업이나 병렬 조사가 필요할 때 모델에게 에이전트 도구로 위임하라고 요청하세요.\n"
+            '- 일반적인 작업자 형태는 subagent_type="worker"입니다.\n'
+            "- /agents 는 알려진 작업자 태스크를 나열합니다.\n"
+            "- /agents show TASK_ID 는 특정 작업자의 출력과 메타데이터를 보여줍니다.\n"
+            "- send_message(task_id=..., message=...) 로 생성된 작업자에게 후속 메시지를 보낼 수 있습니다.\n"
+            "- task_output(task_id=...) 로 작업자의 최신 출력을 읽을 수 있습니다."
         )
         if tokens and tokens[0] in {"help", "usage"}:
             return CommandResult(
@@ -716,13 +716,13 @@ def create_default_command_registry(
         if tokens and tokens[0] == "show" and len(tokens) == 2:
             task = get_task_manager().get_task(tokens[1])
             if task is None or task.type not in {"local_agent", "remote_agent", "in_process_teammate"}:
-                return CommandResult(message=f"No agent found with ID: {tokens[1]}")
+                return CommandResult(message=f"해당 ID의 에이전트를 찾을 수 없습니다: {tokens[1]}")
             output = get_task_manager().read_task_output(task.id)
             return CommandResult(
                 message=(
                     f"{task.id} {task.type} {task.status} {task.description}\n"
-                    f"metadata={task.metadata}\n"
-                    f"output:\n{output or '(no output)'}"
+                    f"메타데이터={task.metadata}\n"
+                    f"출력:\n{output or '(출력 없음)'}"
                 )
             )
         tasks = [
@@ -732,7 +732,7 @@ def create_default_command_registry(
         ]
         if not tasks:
             return CommandResult(
-                message=f"No active or recorded agents. Run /agents help for usage.\n\n{guide}"
+                message=f"활성 또는 기록된 에이전트가 없습니다. 사용법은 /agents help 로 확인하세요.\n\n{guide}"
             )
         lines = [
             f"{task.id} {task.type} {task.status} {task.description}"
@@ -2087,49 +2087,49 @@ def create_default_command_registry(
             )
         )
 
-    registry.register(SlashCommand("help", "Show available commands", _help_handler))
+    registry.register(SlashCommand("help", "사용 가능한 명령어를 보여줍니다", _help_handler))
     registry.register(
-        SlashCommand("exit", "Exit OpenHarness", _exit_handler, aliases=("quit",))
+        SlashCommand("exit", "OpenHarness를 종료합니다", _exit_handler, aliases=("quit",))
     )
-    registry.register(SlashCommand("clear", "Clear conversation history", _clear_handler))
-    registry.register(SlashCommand("version", "Show the installed OpenHarness version", _version_handler))
-    registry.register(SlashCommand("status", "Show session status", _status_handler))
-    registry.register(SlashCommand("context", "Show the active runtime system prompt", _context_handler))
-    registry.register(SlashCommand("summary", "Summarize conversation history", _summary_handler))
-    registry.register(SlashCommand("compact", "Compact older conversation history", _compact_handler))
-    registry.register(SlashCommand("cost", "Show token usage and estimated cost", _cost_handler))
-    registry.register(SlashCommand("usage", "Show usage and token estimates", _usage_handler))
-    registry.register(SlashCommand("stats", "Show session statistics", _stats_handler))
-    registry.register(SlashCommand("memory", "Inspect and manage project memory", _memory_handler))
-    registry.register(SlashCommand("hooks", "Show configured hooks", _hooks_handler))
-    registry.register(SlashCommand("resume", "Restore the latest saved session", _resume_handler))
-    registry.register(SlashCommand("session", "Inspect the current session storage", _session_handler))
-    registry.register(SlashCommand("export", "Export the current transcript", _export_handler))
-    registry.register(SlashCommand("share", "Create a shareable transcript snapshot", _share_handler))
-    registry.register(SlashCommand("copy", "Copy the latest response or provided text", _copy_handler))
-    registry.register(SlashCommand("tag", "Create a named snapshot of the current session", _tag_handler))
-    registry.register(SlashCommand("rewind", "Remove the latest conversation turn(s)", _rewind_handler))
-    registry.register(SlashCommand("files", "List files in the current workspace", _files_handler))
-    registry.register(SlashCommand("init", "Initialize project OpenHarness files", _init_handler))
-    registry.register(SlashCommand("bridge", "Inspect bridge helpers and spawn bridge sessions", _bridge_handler))
-    registry.register(SlashCommand("login", "Show auth status or store an API key", _login_handler))
-    registry.register(SlashCommand("logout", "Clear the stored API key", _logout_handler))
-    registry.register(SlashCommand("feedback", "Save CLI feedback to the local feedback log", _feedback_handler))
-    registry.register(SlashCommand("onboarding", "Show the quickstart guide", _onboarding_handler))
-    registry.register(SlashCommand("skills", "List, show, or toggle available skills", _skills_handler))
+    registry.register(SlashCommand("clear", "현재 대화 기록을 지웁니다", _clear_handler))
+    registry.register(SlashCommand("version", "설치된 OpenHarness 버전을 보여줍니다", _version_handler))
+    registry.register(SlashCommand("status", "세션 상태를 보여줍니다", _status_handler))
+    registry.register(SlashCommand("context", "현재 런타임 시스템 프롬프트를 보여줍니다", _context_handler))
+    registry.register(SlashCommand("summary", "대화 기록을 요약합니다", _summary_handler))
+    registry.register(SlashCommand("compact", "오래된 대화 기록을 압축합니다", _compact_handler))
+    registry.register(SlashCommand("cost", "토큰 사용량과 예상 비용을 보여줍니다", _cost_handler))
+    registry.register(SlashCommand("usage", "사용량과 토큰 추정치를 보여줍니다", _usage_handler))
+    registry.register(SlashCommand("stats", "세션 통계를 보여줍니다", _stats_handler))
+    registry.register(SlashCommand("memory", "프로젝트 메모리를 확인하고 관리합니다", _memory_handler))
+    registry.register(SlashCommand("hooks", "설정된 훅을 보여줍니다", _hooks_handler))
+    registry.register(SlashCommand("resume", "최근 저장된 세션을 복원합니다", _resume_handler))
+    registry.register(SlashCommand("session", "현재 세션 저장 정보를 확인합니다", _session_handler))
+    registry.register(SlashCommand("export", "현재 대화 기록을 내보냅니다", _export_handler))
+    registry.register(SlashCommand("share", "공유 가능한 대화 스냅샷을 만듭니다", _share_handler))
+    registry.register(SlashCommand("copy", "최근 응답이나 입력한 텍스트를 복사합니다", _copy_handler))
+    registry.register(SlashCommand("tag", "현재 세션의 이름 있는 스냅샷을 만듭니다", _tag_handler))
+    registry.register(SlashCommand("rewind", "최근 대화 턴을 되돌립니다", _rewind_handler))
+    registry.register(SlashCommand("files", "현재 작업공간의 파일을 나열합니다", _files_handler))
+    registry.register(SlashCommand("init", "프로젝트 OpenHarness 파일을 초기화합니다", _init_handler))
+    registry.register(SlashCommand("bridge", "브리지 헬퍼와 브리지 세션을 확인합니다", _bridge_handler))
+    registry.register(SlashCommand("login", "인증 상태를 보거나 API 키를 저장합니다", _login_handler))
+    registry.register(SlashCommand("logout", "저장된 API 키를 지웁니다", _logout_handler))
+    registry.register(SlashCommand("feedback", "CLI 피드백을 로컬 로그에 저장합니다", _feedback_handler))
+    registry.register(SlashCommand("onboarding", "빠른 시작 안내를 보여줍니다", _onboarding_handler))
+    registry.register(SlashCommand("skills", "사용 가능한 스킬을 보거나 자세히 확인합니다", _skills_handler))
     registry.register(
         SlashCommand(
             "learned-skills",
-            "Show or toggle automatic learned skills",
+            "자동 학습 스킬을 보거나 켜고 끕니다",
             _learned_skills_handler,
         )
     )
-    registry.register(SlashCommand("config", "Show or update configuration", _config_handler))
-    registry.register(SlashCommand("mcp", "List or toggle MCP servers", _mcp_handler))
+    registry.register(SlashCommand("config", "설정을 보거나 변경합니다", _config_handler))
+    registry.register(SlashCommand("mcp", "MCP 서버를 나열하거나 켜고 끕니다", _mcp_handler))
     registry.register(
         SlashCommand(
             "plugin",
-            "Manage plugins",
+            "플러그인을 관리합니다",
             _plugin_handler,
             remote_invocable=False,
             remote_admin_opt_in=True,
@@ -2138,7 +2138,7 @@ def create_default_command_registry(
     registry.register(
         SlashCommand(
             "reload-plugins",
-            "Reload plugin discovery for this workspace",
+            "이 작업공간의 플러그인 검색을 다시 실행합니다",
             _reload_plugins_handler,
             remote_invocable=False,
             remote_admin_opt_in=True,
@@ -2147,7 +2147,7 @@ def create_default_command_registry(
     registry.register(
         SlashCommand(
             "permissions",
-            "Show or update permission mode",
+            "권한 모드를 보거나 변경합니다",
             _permissions_handler,
             remote_invocable=False,
             remote_admin_opt_in=True,
@@ -2156,39 +2156,39 @@ def create_default_command_registry(
     registry.register(
         SlashCommand(
             "plan",
-            "Toggle plan permission mode",
+            "계획 권한 모드를 켜거나 끕니다",
             _plan_handler,
             remote_invocable=False,
             remote_admin_opt_in=True,
         )
     )
-    registry.register(SlashCommand("fast", "Show or update fast mode", _fast_handler))
-    registry.register(SlashCommand("effort", "Show or update reasoning effort", _effort_handler))
-    registry.register(SlashCommand("passes", "Show or update reasoning pass count", _passes_handler))
-    registry.register(SlashCommand("turns", "Show or update maximum agentic turn count", _turns_handler))
-    registry.register(SlashCommand("continue", "Continue the previous tool loop if it was interrupted", _continue_handler))
-    registry.register(SlashCommand("provider", "Show or switch provider profiles", _provider_handler))
-    registry.register(SlashCommand("model", "Show or update the default model", _model_handler))
-    registry.register(SlashCommand("theme", "List, set, show or preview TUI themes", _theme_handler))
-    registry.register(SlashCommand("output-style", "Show or update output style", _output_style_handler))
-    registry.register(SlashCommand("keybindings", "Show resolved keybindings", _keybindings_handler))
-    registry.register(SlashCommand("vim", "Show or update Vim mode", _vim_handler))
-    registry.register(SlashCommand("voice", "Show or update voice mode", _voice_handler))
-    registry.register(SlashCommand("doctor", "Show environment diagnostics", _doctor_handler))
-    registry.register(SlashCommand("diff", "Show git diff output", _diff_handler))
-    registry.register(SlashCommand("branch", "Show git branch information", _branch_handler))
-    registry.register(SlashCommand("commit", "Show status or create a git commit", _commit_handler))
-    registry.register(SlashCommand("issue", "Show or update project issue context", _issue_handler))
-    registry.register(SlashCommand("pr_comments", "Show or update project PR comments context", _pr_comments_handler))
-    registry.register(SlashCommand("privacy-settings", "Show local privacy and storage settings", _privacy_settings_handler))
-    registry.register(SlashCommand("rate-limit-options", "Show ways to reduce provider rate pressure", _rate_limit_options_handler))
-    registry.register(SlashCommand("release-notes", "Show recent OpenHarness release notes", _release_notes_handler))
-    registry.register(SlashCommand("upgrade", "Show upgrade instructions", _upgrade_handler))
-    registry.register(SlashCommand("agents", "List or inspect agent and teammate tasks", _agents_handler))
-    registry.register(SlashCommand("subagents", "Show subagent usage and inspect worker tasks", _agents_handler))
-    registry.register(SlashCommand("tasks", "Manage background tasks", _tasks_handler))
-    registry.register(SlashCommand("autopilot", "Manage repo autopilot intake and context", _autopilot_handler))
-    registry.register(SlashCommand("ship", "Queue and execute an ohmo-driven repo task", _ship_handler))
+    registry.register(SlashCommand("fast", "빠른 모드를 보거나 변경합니다", _fast_handler))
+    registry.register(SlashCommand("effort", "추론 강도를 보거나 변경합니다", _effort_handler))
+    registry.register(SlashCommand("passes", "추론 반복 횟수를 보거나 변경합니다", _passes_handler))
+    registry.register(SlashCommand("turns", "최대 에이전트 턴 수를 보거나 변경합니다", _turns_handler))
+    registry.register(SlashCommand("continue", "중단된 이전 도구 루프를 이어서 실행합니다", _continue_handler))
+    registry.register(SlashCommand("provider", "프로바이더 프로필을 보거나 전환합니다", _provider_handler))
+    registry.register(SlashCommand("model", "기본 모델을 보거나 변경합니다", _model_handler))
+    registry.register(SlashCommand("theme", "TUI 테마를 나열, 설정, 표시 또는 미리보기합니다", _theme_handler))
+    registry.register(SlashCommand("output-style", "출력 스타일을 보거나 변경합니다", _output_style_handler))
+    registry.register(SlashCommand("keybindings", "적용된 키 바인딩을 보여줍니다", _keybindings_handler))
+    registry.register(SlashCommand("vim", "Vim 모드를 보거나 변경합니다", _vim_handler))
+    registry.register(SlashCommand("voice", "음성 모드를 보거나 변경합니다", _voice_handler))
+    registry.register(SlashCommand("doctor", "환경 진단 정보를 보여줍니다", _doctor_handler))
+    registry.register(SlashCommand("diff", "Git diff 출력을 보여줍니다", _diff_handler))
+    registry.register(SlashCommand("branch", "Git 브랜치 정보를 보여줍니다", _branch_handler))
+    registry.register(SlashCommand("commit", "Git 상태를 보거나 커밋을 생성합니다", _commit_handler))
+    registry.register(SlashCommand("issue", "프로젝트 이슈 컨텍스트를 보거나 변경합니다", _issue_handler))
+    registry.register(SlashCommand("pr_comments", "PR 코멘트 컨텍스트를 보거나 변경합니다", _pr_comments_handler))
+    registry.register(SlashCommand("privacy-settings", "로컬 개인정보와 저장 설정을 보여줍니다", _privacy_settings_handler))
+    registry.register(SlashCommand("rate-limit-options", "요청 제한 부담을 줄이는 방법을 보여줍니다", _rate_limit_options_handler))
+    registry.register(SlashCommand("release-notes", "최근 OpenHarness 릴리스 노트를 보여줍니다", _release_notes_handler))
+    registry.register(SlashCommand("upgrade", "업그레이드 안내를 보여줍니다", _upgrade_handler))
+    registry.register(SlashCommand("agents", "에이전트와 팀 작업을 나열하거나 확인합니다", _agents_handler))
+    registry.register(SlashCommand("subagents", "서브에이전트 사용량과 작업자 태스크를 확인합니다", _agents_handler))
+    registry.register(SlashCommand("tasks", "백그라운드 작업을 관리합니다", _tasks_handler))
+    registry.register(SlashCommand("autopilot", "저장소 자동 작업 입력과 컨텍스트를 관리합니다", _autopilot_handler))
+    registry.register(SlashCommand("ship", "ohmo 기반 저장소 작업을 큐에 넣고 실행합니다", _ship_handler))
 
     for plugin_command in plugin_commands or ():
         if not plugin_command.user_invocable:

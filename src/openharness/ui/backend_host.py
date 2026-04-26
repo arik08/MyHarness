@@ -338,6 +338,7 @@ class ReactBackendHost:
                         type="assistant_complete",
                         message=event.message.text.strip(),
                         item=TranscriptItem(role="assistant", text=event.message.text.strip()),
+                        has_tool_uses=bool(event.message.tool_uses),
                     )
                 )
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))

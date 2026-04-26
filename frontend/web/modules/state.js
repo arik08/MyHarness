@@ -1,6 +1,7 @@
 const appSettingsKey = "openharness:appSettings";
 const defaultAppSettings = {
   streamScrollDurationMs: 1200,
+  streamStartBufferMs: 180,
   downloadMode: "ask",
   downloadFolderPath: "",
 };
@@ -9,10 +10,12 @@ function loadAppSettings() {
   try {
     const parsed = JSON.parse(localStorage.getItem(appSettingsKey) || "{}");
     const parsedScrollDuration = Number(parsed.streamScrollDurationMs);
+    const parsedStartBuffer = Number(parsed.streamStartBufferMs);
     return {
       ...defaultAppSettings,
       ...parsed,
       streamScrollDurationMs: Math.max(0, Math.min(5000, Number.isFinite(parsedScrollDuration) ? parsedScrollDuration : defaultAppSettings.streamScrollDurationMs)),
+      streamStartBufferMs: Math.max(0, Math.min(2000, Number.isFinite(parsedStartBuffer) ? parsedStartBuffer : defaultAppSettings.streamStartBufferMs)),
       downloadMode: parsed.downloadMode === "folder" ? "folder" : "ask",
       downloadFolderPath: String(parsed.downloadFolderPath || ""),
     };
@@ -28,7 +31,9 @@ export function saveAppSettings(nextSettings) {
     ...(nextSettings || {}),
   };
   const scrollDuration = Number(state.appSettings.streamScrollDurationMs);
+  const startBuffer = Number(state.appSettings.streamStartBufferMs);
   state.appSettings.streamScrollDurationMs = Math.max(0, Math.min(5000, Number.isFinite(scrollDuration) ? scrollDuration : defaultAppSettings.streamScrollDurationMs));
+  state.appSettings.streamStartBufferMs = Math.max(0, Math.min(2000, Number.isFinite(startBuffer) ? startBuffer : defaultAppSettings.streamStartBufferMs));
   state.appSettings.downloadMode = state.appSettings.downloadMode === "folder" ? "folder" : "ask";
   state.appSettings.downloadFolderPath = String(state.appSettings.downloadFolderPath || "");
   localStorage.setItem(appSettingsKey, JSON.stringify(state.appSettings));
@@ -53,6 +58,7 @@ export const state = {
   plugins: [],
   projectFiles: [],
   projectFilesLoadedForSession: "",
+  projectFileSortMode: "recent",
   slashMenuOpen: false,
   slashMenuIndex: 0,
   slashMenuMode: "command",

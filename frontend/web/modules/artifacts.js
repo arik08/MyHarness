@@ -23,6 +23,10 @@ const artifactExtensions = new Set([
 ]);
 const imageExtensions = new Set(["png", "jpg", "jpeg", "webp", "svg"]);
 const textExtensions = new Set(["md", "markdown", "txt", "json", "csv"]);
+const hiddenProjectFilePrefixes = [
+  "autopilot-dashboard/",
+  "docs/autopilot/",
+];
 
 function normalizeArtifactPath(value) {
   return String(value || "")
@@ -528,6 +532,28 @@ async function downloadProjectFile(artifact, control) {
   }
 }
 
+function projectFileSortKey(file) {
+  return String(file?.path || file?.name || "").replace(/\\/g, "/");
+}
+
+function isVisibleProjectFile(file) {
+  const key = projectFileSortKey(file).replace(/^\/+/, "");
+  return !hiddenProjectFilePrefixes.some((prefix) => key === prefix.slice(0, -1) || key.startsWith(prefix));
+}
+
+function sortedProjectFiles(files) {
+  const source = Array.isArray(files) ? files.filter(isVisibleProjectFile) : [];
+  if (state.projectFileSortMode !== "path") {
+    return source;
+  }
+  return source.sort((left, right) =>
+    projectFileSortKey(left).localeCompare(projectFileSortKey(right), "ko", {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
+}
+
 function renderProjectFiles(files) {
   artifactPanelReturnView = null;
   setArtifactCloseMode("close");
@@ -540,13 +566,39 @@ function renderProjectFiles(files) {
     return;
   }
   els.artifactViewer.textContent = "";
-  if (!files.length) {
+  const visibleFiles = sortedProjectFiles(files);
+  if (!visibleFiles.length) {
     const empty = document.createElement("p");
     empty.className = "artifact-empty";
     empty.textContent = "현재 프로젝트에 열 수 있는 파일이 없습니다.";
     els.artifactViewer.append(empty);
     return;
   }
+  const toolbar = document.createElement("div");
+  toolbar.className = "project-file-toolbar";
+  const sortSummary = document.createElement("span");
+  sortSummary.className = "project-file-sort-summary";
+  sortSummary.textContent = state.projectFileSortMode === "path"
+    ? "경로와 파일명 순으로 표시됩니다"
+    : "최근 생성된 파일 순으로 표시됩니다";
+  const sortLabel = document.createElement("label");
+  sortLabel.className = "project-file-sort";
+  const sortText = document.createElement("span");
+  sortText.textContent = "정렬";
+  const sortSelect = document.createElement("select");
+  sortSelect.setAttribute("aria-label", "프로젝트 파일 정렬");
+  sortSelect.innerHTML = `
+    <option value="recent">최신순</option>
+    <option value="path">경로+이름순</option>
+  `;
+  sortSelect.value = state.projectFileSortMode === "path" ? "path" : "recent";
+  sortSelect.addEventListener("change", () => {
+    state.projectFileSortMode = sortSelect.value === "path" ? "path" : "recent";
+    renderProjectFiles(state.projectFiles || []);
+  });
+  sortLabel.append(sortText, sortSelect);
+  toolbar.append(sortSummary, sortLabel);
+
   const list = document.createElement("div");
   list.className = "project-file-list";
   let pendingDeletePath = "";
@@ -597,7 +649,7 @@ function renderProjectFiles(files) {
       }, { capture: true, once: true });
     }, 0);
   };
-  for (const file of files) {
+  for (const file of visibleFiles) {
     const artifact = {
       id: `project-file-${file.path}`,
       path: file.path,
@@ -711,7 +763,7 @@ function renderProjectFiles(files) {
     item.append(openButton, actions);
     list.append(item);
   }
-  els.artifactViewer.append(list);
+  els.artifactViewer.append(toolbar, list);
 }
 
 async function openProjectFiles() {
