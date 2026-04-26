@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 from openharness.config.settings import Settings
-from openharness.utils.shell import create_shell_subprocess, resolve_shell_command
+from openharness.utils.shell import (
+    _resolve_windows_direct_command,
+    create_shell_subprocess,
+    resolve_shell_command,
+)
 
 
 def test_resolve_shell_command_prefers_bash_on_linux(monkeypatch):
@@ -145,3 +149,35 @@ async def test_create_shell_subprocess_defaults_stdin_to_devnull(monkeypatch, tm
 
     assert captured["args"] == ("/usr/bin/bash", "-lc", "echo hi")
     assert captured["kwargs"]["stdin"] is asyncio.subprocess.DEVNULL
+
+
+def test_windows_python_launcher_choice_is_cached(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    calls: list[tuple[str, ...]] = []
+
+    def fake_which(name: str) -> str | None:
+        return {"python": "C:/WindowsApps/python.exe", "py": "C:/Windows/py.exe"}.get(name)
+
+    def fake_run(argv, **kwargs):
+        del kwargs
+        calls.append(tuple(argv))
+
+        class _Result:
+            returncode = 0 if argv[0] == "C:/Windows/py.exe" else 1
+            stdout = "Python 3.13.3" if returncode == 0 else "Python"
+            stderr = ""
+
+        return _Result()
+
+    monkeypatch.setattr("openharness.utils.shell.shutil.which", fake_which)
+    monkeypatch.setattr("openharness.utils.shell.subprocess.run", fake_run)
+
+    first = _resolve_windows_direct_command('python -u -c "print(1)"')
+    second = _resolve_windows_direct_command('python -u -c "print(2)"')
+
+    assert first == ["C:/Windows/py.exe", "-3", "-u", "-c", "print(1)"]
+    assert second == ["C:/Windows/py.exe", "-3", "-u", "-c", "print(2)"]
+    assert calls == [
+        ("C:/WindowsApps/python.exe", "--version"),
+        ("C:/Windows/py.exe", "-3", "--version"),
+    ]

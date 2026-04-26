@@ -53,6 +53,7 @@ from openharness.services import (
 )
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 from openharness.skills import load_skill_registry
+from openharness.skills.state import set_skill_enabled, toggle_skill_enabled
 from openharness.tasks import get_task_manager
 from openharness.plugins.types import PluginCommandDefinition
 
@@ -61,11 +62,22 @@ if TYPE_CHECKING:
     from openharness.tools.base import ToolRegistry
 
 
-_BUILT_IN_SKILL_SOURCES = {"bundled", "program"}
+_BUILT_IN_SKILL_SOURCES = {"bundled"}
 
 
 def _custom_skills(skills):
     return [skill for skill in skills if skill.source not in _BUILT_IN_SKILL_SOURCES]
+
+
+def _format_skills_management_text(skills) -> str:
+    if not skills:
+        return "Available skills:\n(no custom skills available)"
+    lines = ["Available skills:"]
+    for skill in skills:
+        status = "enabled" if skill.enabled else "disabled"
+        source = f" [{skill.source}]"
+        lines.append(f"- {skill.name}{source} [{status}]: {skill.description}")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -313,8 +325,14 @@ def create_default_command_registry(
         return "Auto" if normalized.lower() in {"", "none", "auto"} else normalized
 
     async def _help_handler(_: str, context: CommandContext) -> CommandResult:
-        del context
-        return CommandResult(message=registry.help_text())
+        skill_registry = load_skill_registry(
+            context.cwd,
+            extra_skill_dirs=context.extra_skill_dirs,
+            extra_plugin_roots=context.extra_plugin_roots,
+            include_disabled=True,
+        )
+        skills = _custom_skills(skill_registry.list_skills())
+        return CommandResult(message=f"{registry.help_text()}\n\n{_format_skills_management_text(skills)}")
 
     async def _exit_handler(_: str, context: CommandContext) -> CommandResult:
         del context
@@ -617,7 +635,7 @@ def create_default_command_registry(
                 for path in sorted(root.rglob("*"))
                 if path.is_dir() and ".git" not in path.parts and ".venv" not in path.parts
             ]
-            lines = [str(path.relative_to(root)) for path in dirs[:max_items]]
+            lines = [path.relative_to(root).as_posix() for path in dirs[:max_items]]
             if len(dirs) > max_items:
                 lines.append(f"... {len(dirs) - max_items} more")
             return CommandResult(message="\n".join(lines) if lines else "(no directories)")
@@ -631,8 +649,8 @@ def create_default_command_registry(
             if path.is_file() and ".git" not in path.parts and ".venv" not in path.parts
         ]
         if needle:
-            files = [path for path in files if needle in str(path.relative_to(root)).lower()]
-        lines = [str(path.relative_to(root)) for path in files[:max_items]]
+            files = [path for path in files if needle in path.relative_to(root).as_posix().lower()]
+        lines = [path.relative_to(root).as_posix() for path in files[:max_items]]
         if len(files) > max_items:
             lines.append(f"... {len(files) - max_items} more")
         return CommandResult(
@@ -785,6 +803,7 @@ def create_default_command_registry(
             extra_skill_dirs=context.extra_skill_dirs,
             extra_plugin_roots=context.extra_plugin_roots,
             settings=settings,
+            include_disabled=True,
         )
         skills = _custom_skills(skill_registry.list_skills())
         lines = [
@@ -812,20 +831,48 @@ def create_default_command_registry(
             context.cwd,
             extra_skill_dirs=context.extra_skill_dirs,
             extra_plugin_roots=context.extra_plugin_roots,
+            include_disabled=True,
         )
-        if args:
+        tokens = args.split(maxsplit=1)
+        action = tokens[0].lower() if tokens else "list"
+        rest = tokens[1].strip() if len(tokens) > 1 else ""
+        if action in {"on", "off", "enable", "disable", "toggle"} and rest:
+            skill = skill_registry.get(rest)
+            if skill is None:
+                return CommandResult(message=f"Skill not found: {rest}")
+            if action in {"on", "enable"}:
+                enabled = set_skill_enabled(skill.name, True)
+            elif action in {"off", "disable"}:
+                enabled = set_skill_enabled(skill.name, False)
+            else:
+                enabled = toggle_skill_enabled(skill.name)
+            refreshed = load_skill_registry(
+                context.cwd,
+                extra_skill_dirs=context.extra_skill_dirs,
+                extra_plugin_roots=context.extra_plugin_roots,
+                include_disabled=True,
+            )
+            skills = _custom_skills(refreshed.list_skills())
+            return CommandResult(
+                message=(
+                    f"Skill '{skill.name}' {'enabled' if enabled else 'disabled'}.\n\n"
+                    f"{_format_skills_management_text(skills)}"
+                )
+            )
+        if args and action not in {"list", "show"}:
             skill = skill_registry.get(args)
             if skill is None:
-                return CommandResult(message=f"Skill not found: {args}")
+                return CommandResult(
+                    message="Usage: /skills [list|show NAME|enable NAME|disable NAME|toggle NAME]"
+                )
+            return CommandResult(message=skill.content)
+        if action == "show" and rest:
+            skill = skill_registry.get(rest)
+            if skill is None:
+                return CommandResult(message=f"Skill not found: {rest}")
             return CommandResult(message=skill.content)
         skills = _custom_skills(skill_registry.list_skills())
-        if not skills:
-            return CommandResult(message="No custom skills available.")
-        lines = ["Available custom skills:"]
-        for skill in skills:
-            source = f" [{skill.source}]"
-            lines.append(f"- {skill.name}{source}: {skill.description}")
-        return CommandResult(message="\n".join(lines))
+        return CommandResult(message=_format_skills_management_text(skills))
 
     async def _learned_skills_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()

@@ -18,7 +18,7 @@ function liveHistoryOptions() {
       && slot.showInHistory
       && !slot.busy
       && !slot.container?.querySelector(".message")
-      && (slot.title === "New Chat" || !slot.savedSessionId)
+      && (slot.title === "새 채팅" || slot.title === "New Chat" || !slot.savedSessionId)
   );
   const activeDraft = isEmptyDraft(state.chatSlots.get(state.activeFrontendId))
     ? state.activeFrontendId
@@ -32,7 +32,7 @@ function liveHistoryOptions() {
     )
     .map((slot) => ({
       value: `live:${slot.frontendId}`,
-      label: slot.showInHistory && !slot.hasConversation ? "New Chat" : slot.title || (slot.busy ? "진행 중인 채팅" : "New Chat"),
+      label: slot.showInHistory && !slot.hasConversation ? "새 채팅" : slot.title || (slot.busy ? "진행 중인 채팅" : "새 채팅"),
       description: slot.busy ? "진행 중" : "새 채팅",
       liveSlotId: slot.frontendId,
       savedSessionId: slot.savedSessionId || "",

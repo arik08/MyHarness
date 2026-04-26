@@ -389,11 +389,23 @@ function showSelect(event) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `select-option${normalizedOption.active ? " active" : ""}`;
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const returnToSettings = els.modalHost.dataset.dismissAction === "settings";
-      respond({ type: "apply_select_command", command: modal.command, value: normalizedOption.value });
-      if (returnToSettings) {
-        window.setTimeout(showModelSettingsModal, 0);
+      const previousModel = state.model;
+      const previousEffort = state.effort;
+      button.disabled = true;
+      applySelectOptimistic(modal.command, normalizedOption.value);
+      try {
+        await respond({ type: "apply_select_command", command: modal.command, value: normalizedOption.value });
+      } catch (error) {
+        state.model = previousModel;
+        state.effort = previousEffort;
+        refreshModelSummary();
+        appendMessage("system", `Selection failed: ${error.message}`);
+      } finally {
+        if (returnToSettings) {
+          showModelSettingsModal();
+        }
       }
     });
     button.title = normalizedOption.description || "";
@@ -426,6 +438,32 @@ function normalizeSelectOption(modal, option) {
     normalized.description = "Provider default";
   }
   return normalized;
+}
+
+function applySelectOptimistic(command, value) {
+  const normalizedCommand = String(command || "").trim().toLowerCase();
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return;
+  }
+  if (normalizedCommand === "effort") {
+    state.effort = normalizedValue;
+    refreshModelSummary();
+  } else if (normalizedCommand === "model") {
+    state.model = normalizedValue;
+    refreshModelSummary();
+  }
+}
+
+function refreshModelSummary() {
+  if (!els.model) {
+    return;
+  }
+  const modelLabel = state.model || "-";
+  const effortLabel = formatEffort(state.effort);
+  const text = `Model: ${modelLabel}, Effort: ${effortLabel}`;
+  els.model.textContent = text;
+  els.model.title = text;
 }
 
 function modalCloseButton(onClick) {

@@ -88,6 +88,7 @@ const themeOptions = [
   { id: "mono", label: "MonoChrome-Green" },
   { id: "mono-orange", label: "MonoChrome-Orange" },
 ];
+let workspaceDropdownOpen = false;
 
 function applyTheme(themeId) {
   const theme = themeOptions.find((item) => item.id === themeId) || themeOptions[0];
@@ -104,6 +105,88 @@ function cycleTheme() {
   const currentIndex = Math.max(0, themeOptions.findIndex((item) => item.id === current));
   const next = themeOptions[(currentIndex + 1) % themeOptions.length];
   applyTheme(next.id);
+}
+
+function workspaceButtons() {
+  return [...document.querySelectorAll("[data-action='open-workspace']")];
+}
+
+function setWorkspaceDropdownOpen(open) {
+  workspaceDropdownOpen = Boolean(open);
+  els.workspaceDropdown?.classList.toggle("hidden", !workspaceDropdownOpen);
+  workspaceButtons().forEach((button) => {
+    button.setAttribute("aria-expanded", workspaceDropdownOpen ? "true" : "false");
+  });
+}
+
+function closeWorkspaceDropdown() {
+  setWorkspaceDropdownOpen(false);
+}
+
+function renderWorkspaceDropdown(workspaces) {
+  if (!els.workspaceDropdown) {
+    return;
+  }
+  els.workspaceDropdown.textContent = "";
+  const items = Array.isArray(workspaces) ? workspaces : [];
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "sidebar-project-empty";
+    empty.textContent = "No projects";
+    els.workspaceDropdown.append(empty);
+  }
+  for (const workspace of items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `sidebar-project-option${workspace.name === state.workspaceName ? " active" : ""}`;
+    button.setAttribute("role", "menuitem");
+    button.textContent = workspace.name || "Untitled";
+    button.title = workspace.name || "Untitled";
+    button.disabled = state.switchingWorkspace;
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      closeWorkspaceDropdown();
+      if (workspace.name === state.workspaceName) {
+        return;
+      }
+      try {
+        await ctx.restartSessionForWorkspace(workspace);
+      } catch (error) {
+        appendMessage("system", `Project switch failed: ${error.message}`);
+      }
+    });
+    els.workspaceDropdown.append(button);
+  }
+  const manage = document.createElement("button");
+  manage.type = "button";
+  manage.className = "sidebar-project-manage";
+  manage.setAttribute("role", "menuitem");
+  manage.textContent = "Project Manage";
+  manage.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeWorkspaceDropdown();
+    showWorkspaceModal().catch((error) => appendMessage("system", `Project list failed: ${error.message}`));
+  });
+  els.workspaceDropdown.append(manage);
+}
+
+async function toggleWorkspaceDropdown() {
+  if (workspaceDropdownOpen) {
+    closeWorkspaceDropdown();
+    return;
+  }
+  if (!els.workspaceDropdown) {
+    await showWorkspaceModal();
+    return;
+  }
+  renderWorkspaceDropdown(state.workspaces?.length ? state.workspaces : []);
+  setWorkspaceDropdownOpen(true);
+  try {
+    renderWorkspaceDropdown(await ctx.loadWorkspaces());
+  } catch (error) {
+    renderWorkspaceDropdown([]);
+    appendMessage("system", `Project list failed: ${error.message}`);
+  }
 }
 
 function imageId() {
@@ -360,6 +443,9 @@ els.modalHost.addEventListener("click", (event) => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && workspaceDropdownOpen) {
+    closeWorkspaceDropdown();
+  }
   if (!event.defaultPrevented && handlePlanModeShortcut(event)) {
     return;
   }
@@ -368,6 +454,16 @@ window.addEventListener("keydown", (event) => {
     closeSlashMenu();
     clearChat().catch((error) => appendMessage("system", `채팅을 초기화하지 못했습니다: ${error.message}`));
   }
+});
+
+document.addEventListener("click", (event) => {
+  if (!workspaceDropdownOpen) {
+    return;
+  }
+  if (event.target.closest(".sidebar-project-menu")) {
+    return;
+  }
+  closeWorkspaceDropdown();
 });
 
 document.querySelectorAll("[data-prompt]").forEach((button) => {
@@ -389,8 +485,9 @@ document.querySelectorAll("[data-action='open-model-settings']").forEach((button
 });
 
 document.querySelectorAll("[data-action='open-workspace']").forEach((button) => {
-  button.addEventListener("click", () => {
-    showWorkspaceModal().catch((error) => appendMessage("system", `프로젝트 목록을 열지 못했습니다: ${error.message}`));
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleWorkspaceDropdown().catch((error) => appendMessage("system", `Project list failed: ${error.message}`));
   });
 });
 

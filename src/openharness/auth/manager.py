@@ -160,7 +160,11 @@ class AuthManager:
                     state = "missing_emp_no"
                     detail = "P-GPT requires empNo."
             elif source in {"codex_subscription", "claude_subscription"}:
+                from openharness.auth.external import default_binding_for_provider
+
                 binding = load_external_binding(storage_provider)
+                if binding is None and source == "codex_subscription":
+                    binding = default_binding_for_provider(storage_provider)
                 if binding is not None:
                     external_state = describe_external_binding(binding)
                     configured = external_state.configured
@@ -234,10 +238,15 @@ class AuthManager:
                     source = "file"
 
             elif provider == "openai_codex":
+                from openharness.auth.external import default_binding_for_provider, describe_external_binding
+
                 binding = load_external_binding(provider)
+                if binding is None:
+                    binding = default_binding_for_provider(provider)
                 if binding is not None:
-                    configured = True
-                    source = "external"
+                    external_state = describe_external_binding(binding)
+                    configured = external_state.configured
+                    source = external_state.source
 
             elif provider == "copilot":
                 from openharness.api.copilot_auth import load_copilot_auth

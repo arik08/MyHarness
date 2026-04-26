@@ -14,6 +14,7 @@ export function createEvents(ctx) {
   function resetWorkflowPanel(...args) { return ctx.resetWorkflowPanel(...args); }
   function collapseWorkflowPanel(...args) { return ctx.collapseWorkflowPanel(...args); }
   function finalizeWorkflowSummary(...args) { return ctx.finalizeWorkflowSummary(...args); }
+  function failWorkflowPanel(...args) { return ctx.failWorkflowPanel?.(...args); }
   function setMarkdown(...args) { return ctx.setMarkdown(...args); }
   function scrollMessagesToBottom(...args) { return ctx.scrollMessagesToBottom(...args); }
   function finishScrollRestore(...args) { return ctx.finishScrollRestore(...args); }
@@ -46,6 +47,7 @@ function normalizeSkills(skills) {
           name: String(skill.name || "").trim(),
           description: String(skill.description || "").trim(),
           source: String(skill.source || "").trim(),
+          enabled: skill.enabled !== false,
         }))
         .filter((skill) => skill.name)
         .sort((left, right) => left.name.localeCompare(right.name))
@@ -380,6 +382,7 @@ function handleEvent(event) {
 
   if (event.type === "skills_snapshot") {
     state.skills = normalizeSkills(event.skills);
+    ctx.refreshSkillCatalogs?.();
     updateSlashMenu();
     return;
   }
@@ -441,7 +444,7 @@ function handleEvent(event) {
     if (activeSlot) {
       activeSlot.hasConversation = false;
       activeSlot.showInHistory = !activeSlot.suppressNewChatHistory;
-      activeSlot.title = activeSlot.suppressNewChatHistory ? "MyHarness" : "New Chat";
+      activeSlot.title = activeSlot.suppressNewChatHistory ? "MyHarness" : "새 채팅";
       activeSlot.assistantNode = null;
       activeSlot.workflowNode = null;
       activeSlot.workflowList = null;
@@ -628,6 +631,9 @@ function handleEvent(event) {
     state.suppressNextLineCompleteScroll = false;
     restoringWorkflowEvents = [];
     restoringWorkflowInputDeltas = [];
+    resetStreamingState();
+    state.assistantNode = null;
+    failWorkflowPanel(event.message || "");
     appendMessage("system", `오류: ${event.message || "알 수 없는 오류"}`);
     setBusy(false, STATUS_LABELS.error);
     return;

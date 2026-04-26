@@ -23,6 +23,7 @@ export function createMessages(ctx) {
   function scheduleScrollRestore(...args) { return ctx.scheduleScrollRestore(...args); }
   function sendLine(...args) { return ctx.sendLine(...args); }
   function setBusy(...args) { return ctx.setBusy(...args); }
+  function sendBackendRequest(...args) { return ctx.sendBackendRequest?.(...args); }
 
 function isCommandCatalog(text) {
   return String(text || "").includes("Available commands:");
@@ -31,13 +32,16 @@ function isCommandCatalog(text) {
 function splitCommandCatalog(text) {
   const source = String(text || "");
   const marker = "Available commands:";
+  const skillMarker = "Available skills:";
   const index = source.indexOf(marker);
   if (index < 0) {
     return { intro: "", catalog: source };
   }
+  const skillIndex = source.indexOf(skillMarker, index + marker.length);
   return {
     intro: source.slice(0, index).trim(),
-    catalog: source.slice(index).trim(),
+    catalog: source.slice(index, skillIndex < 0 ? undefined : skillIndex).trim(),
+    skills: skillIndex < 0 ? "" : source.slice(skillIndex).trim(),
   };
 }
 
@@ -57,6 +61,37 @@ function parseCommandCatalog(text) {
       description: source.slice(start, end).trim(),
     };
   });
+}
+
+function splitSkillCatalog(text) {
+  const source = String(text || "");
+  const marker = "Available skills:";
+  const index = source.indexOf(marker);
+  return index < 0 ? "" : source.slice(index).trim();
+}
+
+function parseSkillCatalog(text) {
+  const source = splitSkillCatalog(text).replace(/^Available skills:\s*/i, "").trim();
+  if (!source || source === "(no custom skills available)") {
+    return [];
+  }
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => {
+      const match = line.match(/^-\s+(.+?)(?:\s+\[([^\]]+)\])?\s+\[(enabled|disabled)\]\s*:\s*(.*)$/i);
+      if (!match) {
+        return null;
+      }
+      return {
+        name: match[1].trim(),
+        source: (match[2] || "skill").trim(),
+        enabled: match[3].toLowerCase() === "enabled",
+        description: (match[4] || "").trim(),
+      };
+    })
+    .filter(Boolean);
 }
 
 function createCommandCatalog(text) {
@@ -104,6 +139,103 @@ function createCommandCatalog(text) {
   return details;
 }
 
+function currentSkillState(name, fallback) {
+  const skill = state.skills.find((item) => item.name.toLowerCase() === String(name || "").toLowerCase());
+  return skill ? skill.enabled !== false : fallback !== false;
+}
+
+function updateSkillToggleButton(button) {
+  const enabled = currentSkillState(button.dataset.skillName, button.dataset.skillEnabled !== "false");
+  button.dataset.skillEnabled = enabled ? "true" : "false";
+  button.classList.toggle("disabled", !enabled);
+  button.setAttribute("aria-pressed", enabled ? "true" : "false");
+  const status = button.querySelector("[data-skill-status]");
+  if (status) {
+    status.textContent = enabled ? "Active" : "Inactive";
+  }
+}
+
+function refreshSkillCatalogs() {
+  document.querySelectorAll(".skill-toggle-pill").forEach((button) => {
+    updateSkillToggleButton(button);
+  });
+}
+
+function createSkillCatalog(text) {
+  const skills = parseSkillCatalog(text);
+  if (!skills.length) {
+    return null;
+  }
+  const details = document.createElement("details");
+  details.className = "command-card skill-card";
+  details.open = true;
+
+  const summary = document.createElement("summary");
+  const label = document.createElement("span");
+  label.textContent = "Skills";
+  const count = document.createElement("span");
+  count.className = "command-count";
+  count.textContent = `${skills.length}개`;
+  summary.append(label, count);
+  details.append(summary);
+
+  const grid = document.createElement("div");
+  grid.className = "command-grid skill-grid";
+  for (const skill of skills) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "command-pill skill-toggle-pill";
+    item.dataset.skillName = skill.name;
+    item.dataset.skillEnabled = skill.enabled ? "true" : "false";
+    item.addEventListener("click", async () => {
+      const nextEnabled = item.dataset.skillEnabled === "false";
+      const existing = state.skills.find((entry) => entry.name.toLowerCase() === skill.name.toLowerCase());
+      if (existing) {
+        existing.enabled = nextEnabled;
+      }
+      item.dataset.skillEnabled = nextEnabled ? "true" : "false";
+      updateSkillToggleButton(item);
+      try {
+        if (ctx.sendBackendRequest) {
+          await sendBackendRequest({ type: "set_skill_enabled", value: skill.name, enabled: nextEnabled });
+        } else {
+          await sendLine(`/skills ${nextEnabled ? "enable" : "disable"} ${skill.name}`);
+        }
+      } catch (error) {
+        if (existing) {
+          existing.enabled = !nextEnabled;
+        }
+        item.dataset.skillEnabled = nextEnabled ? "false" : "true";
+        updateSkillToggleButton(item);
+        appendMessage("system", `Skill toggle failed: ${error.message}`);
+      }
+    });
+    const header = document.createElement("span");
+    header.className = "skill-pill-header";
+    const name = document.createElement("strong");
+    name.textContent = skill.name;
+    const status = document.createElement("small");
+    status.dataset.skillStatus = "true";
+    const description = document.createElement("span");
+    description.className = "skill-pill-description";
+    description.textContent = skill.description || "Skill";
+    const tooltip = document.createElement("span");
+    tooltip.className = "skill-pill-tooltip";
+    tooltip.setAttribute("aria-hidden", "true");
+    const tooltipName = document.createElement("strong");
+    tooltipName.textContent = skill.name;
+    const tooltipDescription = document.createElement("span");
+    tooltipDescription.textContent = skill.description || "Skill";
+    tooltip.append(tooltipName, tooltipDescription);
+    header.append(name, status);
+    item.append(header, description, tooltip);
+    grid.append(item);
+    updateSkillToggleButton(item);
+  }
+  details.append(grid);
+  return details;
+}
+
 function createCommandCatalogContent(text) {
   const { intro } = splitCommandCatalog(text);
   const wrap = document.createElement("div");
@@ -111,11 +243,21 @@ function createCommandCatalogContent(text) {
   if (intro) {
     const introNode = document.createElement("div");
     introNode.className = "markdown-body command-help-intro";
-    setMarkdown(introNode, intro);
+    setMarkdown(introNode, formatHelpIntro(intro));
     wrap.append(introNode);
+  }
+  const skillCatalog = createSkillCatalog(text);
+  if (skillCatalog) {
+    wrap.append(skillCatalog);
   }
   wrap.append(createCommandCatalog(text));
   return wrap;
+}
+
+function formatHelpIntro(text) {
+  return String(text || "")
+    .replace(/^입력 단축키:\s*$/gm, "**입력 단축키**")
+    .replace(/^자주 쓰는 기능:\s*$/gm, "**자주 쓰는 기능**");
 }
 
 function createAttachmentPreview(attachments = []) {
@@ -287,7 +429,11 @@ function collapseWorkflowPanel() {
   if (!state.workflowNode) {
     return;
   }
-  state.workflowNode.open = false;
+  if (state.restoringHistory || state.batchingHistoryRestore) {
+    state.workflowNode.open = false;
+    return;
+  }
+  animateWorkflowDetails(state.workflowNode, false);
 }
 
 function finalizeWorkflowSummary() {
@@ -311,6 +457,39 @@ function finalizeWorkflowSummary() {
   updateWorkflowSummary();
   flushWorkflowOutputPreview();
   stopWorkflowTimer();
+}
+
+function failWorkflowPanel(message = "") {
+  stopWorkflowWaitingTimer();
+  for (const timer of workflowMutationWaitingTimers.values()) {
+    window.clearTimeout(timer);
+  }
+  workflowMutationWaitingTimers.clear();
+  workflowEventQueue = [];
+  window.clearTimeout(workflowEventQueueTimer);
+  workflowEventQueueTimer = 0;
+  flushWorkflowOutputPreview();
+  stopWorkflowTimer();
+
+  const hasToolStep = state.workflowSteps.some((row) => row.dataset.toolName);
+  if (!hasToolStep) {
+    const article = state.workflowNode?.closest(".workflow-message");
+    article?.remove();
+    resetWorkflowPanel();
+    return;
+  }
+
+  markPlanningStepDone();
+  state.workflowList?.querySelectorAll(".workflow-step.running").forEach((row) => {
+    row.classList.remove("running");
+    row.classList.add("error");
+    const detail = row.querySelector("small");
+    if (detail) {
+      detail.textContent = message || "작업이 실패했습니다.";
+    }
+  });
+  updateWorkflowSummary();
+  collapseWorkflowPanel();
 }
 
 function detectWorkflowIntent(promptText = "") {
@@ -361,7 +540,11 @@ function ensureWorkflowPanel(promptText = "") {
   previewBody.className = "workflow-output-body";
   preview.append(previewTitle, previewBody);
 
-  details.append(summary, list, preview);
+  const body = document.createElement("div");
+  body.className = "workflow-body";
+  body.append(list, preview);
+  details.append(summary, body);
+  setupWorkflowToggle(details);
   article.append(details);
   if (state.restoringHistory) {
     const firstUserMessage = els.messages.querySelector(".message.user");
@@ -392,6 +575,86 @@ function ensureWorkflowPanel(promptText = "") {
     startWorkflowWaitingTimer();
     scrollMessagesToBottom();
   }
+}
+
+function setupWorkflowToggle(details) {
+  const summary = details.querySelector("summary");
+  if (!summary) {
+    return;
+  }
+  summary.addEventListener("click", (event) => {
+    event.preventDefault();
+    animateWorkflowDetails(details, !details.open);
+  });
+}
+
+function animateWorkflowDetails(details, open) {
+  const body = details.querySelector(".workflow-body");
+  if (!body) {
+    details.open = open;
+    return;
+  }
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  if (reduceMotion) {
+    details.open = open;
+    body.style.maxHeight = "";
+    body.style.opacity = "";
+    body.style.transform = "";
+    details.classList.remove("is-collapsing", "is-expanding");
+    return;
+  }
+  if (details.dataset.workflowAnimating === "1") {
+    return;
+  }
+  if (open && details.open) {
+    return;
+  }
+  if (!open && !details.open) {
+    return;
+  }
+
+  details.dataset.workflowAnimating = "1";
+  body.style.overflow = "hidden";
+
+  if (open) {
+    details.open = true;
+    details.classList.add("is-expanding");
+    body.style.maxHeight = "0px";
+    body.style.opacity = "0";
+    body.style.transform = "translateY(-6px)";
+    window.requestAnimationFrame(() => {
+      body.style.maxHeight = `${body.scrollHeight}px`;
+      body.style.opacity = "1";
+      body.style.transform = "translateY(0)";
+    });
+  } else {
+    details.classList.add("is-collapsing");
+    body.style.maxHeight = `${body.scrollHeight}px`;
+    body.style.opacity = "1";
+    body.style.transform = "translateY(0)";
+    window.requestAnimationFrame(() => {
+      body.style.maxHeight = "0px";
+      body.style.opacity = "0";
+      body.style.transform = "translateY(-6px)";
+    });
+  }
+
+  const finish = (event) => {
+    if (event.target !== body || event.propertyName !== "max-height") {
+      return;
+    }
+    body.removeEventListener("transitionend", finish);
+    if (!open) {
+      details.open = false;
+    }
+    details.classList.remove("is-collapsing", "is-expanding");
+    delete details.dataset.workflowAnimating;
+    body.style.maxHeight = "";
+    body.style.opacity = "";
+    body.style.transform = "";
+    body.style.overflow = "";
+  };
+  body.addEventListener("transitionend", finish);
 }
 
 function startWorkflowTimer() {
@@ -863,11 +1126,14 @@ function updateTasks(tasks) {
     isCommandCatalog,
     parseCommandCatalog,
     createCommandCatalog,
+    createSkillCatalog,
+    refreshSkillCatalogs,
     createAttachmentPreview,
     appendMessage,
     resetWorkflowPanel,
     collapseWorkflowPanel,
     finalizeWorkflowSummary,
+    failWorkflowPanel,
     startWorkflowTimer,
     stopWorkflowTimer,
     ensureWorkflowPanel,

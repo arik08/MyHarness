@@ -30,6 +30,7 @@ class FrontendRequest(BaseModel):
         "list_sessions",
         "delete_session",
         "refresh_skills",
+        "set_skill_enabled",
         "set_system_prompt",
         "select_command",
         "apply_select_command",
@@ -39,6 +40,7 @@ class FrontendRequest(BaseModel):
     line: str | None = None
     command: str | None = None
     value: str | None = None
+    enabled: bool | None = None
     request_id: str | None = None
     allowed: bool | None = None
     answer: str | None = None
@@ -81,6 +83,7 @@ class SkillSnapshot(BaseModel):
     name: str
     description: str
     source: str
+    enabled: bool = True
 
 
 class PluginSnapshot(BaseModel):

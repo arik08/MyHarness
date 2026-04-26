@@ -235,15 +235,17 @@ function updateSendState() {
   const composerText = buildComposerLine().trim();
   const hasText = composerText.length > 0;
   const shellCommand = /^!(?!\s*$)/.test(composerText);
+  const showStop = Boolean(state.busy && state.busyVisual);
   els.input.disabled = Boolean(state.switchingWorkspace);
   els.send.disabled =
     state.switchingWorkspace
+    || (state.busy && !showStop)
     || (!shellCommand && !state.ready)
     || (!state.busy && !hasText && state.attachments.length === 0);
-  els.send.classList.toggle("is-stop", state.busy);
-  els.send.setAttribute("aria-label", state.busy ? "작업 중단" : "메시지 보내기");
-  els.send.innerHTML = state.busy
-    ? '<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect></svg>'
+  els.send.classList.toggle("is-stop", showStop);
+  els.send.setAttribute("aria-label", showStop ? "작업 중단" : "메시지 보내기");
+  els.send.innerHTML = showStop
+    ? '<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M15.5 8.5 8.5 15.5"></path><path d="m8.5 8.5 7 7"></path></svg>'
     : '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>';
 }
 
@@ -264,6 +266,7 @@ function setBusy(value, label = value ? STATUS_LABELS.thinking : STATUS_LABELS.r
         activeSlot.busyVisual = true;
       }
       setStatus(pendingBusyLabel || label, "busy");
+      updateSendState();
       markActiveHistory();
     }, BUSY_VISUAL_DELAY_MS);
   } else {

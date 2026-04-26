@@ -62,7 +62,7 @@ async function refreshProjectFiles(force = false) {
 }
 
 function extensionItems() {
-  const skillItems = state.skills.map((skill) => ({
+  const skillItems = state.skills.filter((skill) => skill.enabled !== false).map((skill) => ({
     name: `$${skill.name}`,
     description: skill.description || "Skill",
     source: skill.source || "skill",

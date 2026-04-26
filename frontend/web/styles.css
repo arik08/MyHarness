@@ -51,6 +51,11 @@
   --command-token-ink: #2f5aa8;
   --command-token-mark-bg: #4775d1;
   --command-token-mark-ink: #fff;
+  --send-button-bg: var(--line-strong);
+  --send-button-ink: var(--inverse-ink);
+  --stop-button-bg: var(--danger-soft);
+  --stop-button-ink: var(--danger);
+  --stop-button-border: rgba(194, 75, 53, 0.28);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -107,6 +112,11 @@
   --command-token-ink: #0065a8;
   --command-token-mark-bg: #0072bc;
   --command-token-mark-ink: #fff;
+  --send-button-bg: #afc5db;
+  --send-button-ink: #0a365f;
+  --stop-button-bg: #f2e6e6;
+  --stop-button-ink: #9d4444;
+  --stop-button-border: rgba(185, 71, 71, 0.26);
 }
 
 :root[data-theme="dark"] {
@@ -162,6 +172,11 @@
   --command-token-ink: #c0f5e9;
   --command-token-mark-bg: #5bd0b6;
   --command-token-mark-ink: #07111d;
+  --send-button-bg: #31506f;
+  --send-button-ink: #eaf5ff;
+  --stop-button-bg: rgba(255, 119, 112, 0.13);
+  --stop-button-ink: #f0aaa7;
+  --stop-button-border: rgba(255, 119, 112, 0.28);
 }
 
 :root[data-theme="mono"] {
@@ -217,6 +232,11 @@
   --command-token-ink: #dcffc5;
   --command-token-mark-bg: #b9f08a;
   --command-token-mark-ink: #02100b;
+  --send-button-bg: #1e6d49;
+  --send-button-ink: #dcffe9;
+  --stop-button-bg: rgba(109, 255, 176, 0.1);
+  --stop-button-ink: #9dffd2;
+  --stop-button-border: rgba(109, 255, 176, 0.28);
 }
 
 :root[data-theme="mono-orange"] {
@@ -272,6 +292,11 @@
   --command-token-ink: #ffc66a;
   --command-token-mark-bg: #ffb13b;
   --command-token-mark-ink: #140300;
+  --send-button-bg: #7a2a08;
+  --send-button-ink: #ffd39a;
+  --stop-button-bg: rgba(255, 122, 24, 0.11);
+  --stop-button-ink: #ffb76b;
+  --stop-button-border: rgba(255, 122, 24, 0.3);
 }
 
 * {
@@ -632,6 +657,7 @@ a:focus-visible {
 }
 
 .app-shell.sidebar-collapsed .brand,
+.app-shell.sidebar-collapsed .sidebar-project-menu,
 .app-shell.sidebar-collapsed .sidebar-project,
 .app-shell.sidebar-collapsed .new-chat,
 .app-shell.sidebar-collapsed .history-panel,
@@ -701,6 +727,97 @@ a:focus-visible {
   border-color: var(--line);
   border-radius: 12px;
   text-align: left;
+}
+
+.sidebar-project-menu {
+  position: relative;
+  width: 100%;
+}
+
+.sidebar-project[aria-expanded="true"] {
+  background: var(--sidebar-hover);
+  border-color: var(--line-strong);
+}
+
+.sidebar-project[aria-expanded="true"]::after {
+  display: none;
+}
+
+.sidebar-project[aria-expanded="true"] .sidebar-project-chevron {
+  transform: rotate(180deg);
+}
+
+.sidebar-project-dropdown {
+  display: grid;
+  position: absolute;
+  top: calc(100% - 3px);
+  left: 4px;
+  right: 4px;
+  z-index: 35;
+  max-height: min(48vh, 360px);
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 18px 42px rgba(20, 18, 16, 0.2);
+}
+
+.sidebar-project-dropdown.hidden {
+  display: none;
+}
+
+.sidebar-project-option,
+.sidebar-project-manage {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.sidebar-project-option {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-project-option:hover,
+.sidebar-project-option:focus-visible,
+.sidebar-project-manage:hover,
+.sidebar-project-manage:focus-visible {
+  background: var(--sidebar-hover);
+}
+
+.sidebar-project-option.active {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.sidebar-project-manage {
+  position: sticky;
+  bottom: -6px;
+  margin-top: 6px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 7px 7px;
+  color: var(--muted);
+}
+
+.sidebar-project-empty {
+  padding: 8px 9px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .sidebar-project::after {
@@ -1370,28 +1487,14 @@ a:focus-visible {
   justify-content: space-between;
   gap: 16px;
   min-width: 0;
-  padding: 6px clamp(18px, 2.5vw, 34px) 3px;
+  padding: 4px clamp(18px, 2.5vw, 34px) 0;
   background: var(--panel-glass);
   backdrop-filter: blur(14px);
   z-index: 2;
 }
 
 .chat-header::after {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  left: 0;
-  height: 42px;
-  background:
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--composer-fade) 100%, transparent) 0%,
-      color-mix(in srgb, var(--composer-fade) 78%, transparent) 30%,
-      color-mix(in srgb, var(--composer-fade) 34%, transparent) 66%,
-      transparent 100%
-    );
-  content: "";
-  pointer-events: none;
+  display: none;
 }
 
 .header-left {
@@ -2039,6 +2142,20 @@ a:focus-visible {
   display: none;
 }
 
+.workflow-body {
+  overflow: hidden;
+  transition:
+    max-height 240ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 180ms ease,
+    transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: max-height, opacity, transform;
+}
+
+.workflow-card.is-collapsing .workflow-body,
+.workflow-card.is-expanding .workflow-body {
+  pointer-events: none;
+}
+
 .workflow-title {
   color: var(--ink);
 }
@@ -2163,6 +2280,10 @@ a:focus-visible {
   display: grid;
   gap: 10px;
   width: 100%;
+  max-height: min(64vh, 680px);
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
 }
 
 .command-help-intro {
@@ -2173,6 +2294,20 @@ a:focus-visible {
 
 .command-help-intro p {
   margin: 0 0 6px;
+}
+
+.command-help-intro p:has(> strong:only-child) {
+  margin: 10px 0 7px;
+}
+
+.command-help-intro p:first-child:has(> strong:only-child) {
+  margin-top: 0;
+}
+
+.command-help-intro p > strong:only-child {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 760;
 }
 
 .command-card summary {
@@ -2202,10 +2337,7 @@ a:focus-visible {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 8px;
-  max-height: 520px;
-  overflow: auto;
   padding: 0 10px 10px;
-  scrollbar-gutter: stable;
 }
 
 .command-pill {
@@ -2223,6 +2355,118 @@ a:focus-visible {
 .command-pill:hover {
   background: var(--sidebar-hover);
   border-color: var(--line-strong);
+}
+
+.skill-toggle-pill {
+  position: relative;
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+}
+
+.skill-toggle-pill .skill-pill-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-bottom: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.skill-toggle-pill .skill-pill-header strong {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-toggle-pill.disabled {
+  opacity: 0.62;
+  border-color: var(--line);
+}
+
+.skill-toggle-pill small {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.skill-toggle-pill.disabled small {
+  background: var(--sidebar-hover);
+  color: var(--faint);
+}
+
+.skill-toggle-pill .skill-pill-description {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-pill-tooltip {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  min-width: min(260px, calc(100vw - 48px));
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--panel-raised) 94%, var(--accent-soft) 6%);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow:
+    0 10px 28px color-mix(in srgb, var(--shadow) 70%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.skill-pill-tooltip strong,
+.skill-pill-tooltip span {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.35;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.skill-pill-tooltip strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.skill-pill-tooltip span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.skill-toggle-pill:hover .skill-pill-tooltip,
+.skill-toggle-pill:focus-visible .skill-pill-tooltip {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .command-pill strong {
@@ -2283,13 +2527,13 @@ a:focus-visible {
 }
 
 .markdown-body code {
-  padding: 1px 5px;
+  padding: 1px 4px;
   background: var(--sidebar-hover);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  font-family: Consolas, "SFMono-Regular", "Liberation Mono", monospace;
-  font-size: 0.86em;
-  font-weight: 760;
+  border: 0;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 400;
 }
 
 .markdown-body pre {
@@ -2311,6 +2555,7 @@ a:focus-visible {
   background: transparent;
   border: 0;
   color: inherit;
+  font-family: Consolas, "SFMono-Regular", "Liberation Mono", monospace;
   font-size: inherit;
   font-weight: inherit;
   white-space: pre-wrap;
@@ -2443,30 +2688,16 @@ a:focus-visible {
 .composer {
   position: absolute;
   right: 0;
-  bottom: 10px;
+  bottom: 6px;
   left: 0;
-  padding: 0 18px 10px;
+  padding: 0 18px 6px;
   background: transparent;
   z-index: 2;
   pointer-events: none;
 }
 
 .composer::before {
-  position: absolute;
-  inset: -24px 0 -24px;
-  z-index: -1;
-  background:
-    radial-gradient(
-      ellipse at center,
-      color-mix(in srgb, var(--composer-fade) 100%, transparent) 0%,
-      color-mix(in srgb, var(--composer-fade) 100%, transparent) 38%,
-      color-mix(in srgb, var(--composer-fade) 78%, transparent) 58%,
-      color-mix(in srgb, var(--composer-fade) 38%, transparent) 72%,
-      color-mix(in srgb, var(--composer-fade) 12%, transparent) 90%,
-      transparent 100%
-    );
-  content: "";
-  pointer-events: none;
+  display: none;
 }
 
 .attachment-tray {
@@ -2649,13 +2880,15 @@ a:focus-visible {
   row-gap: 6px;
   align-items: center;
   width: min(804px, 100%);
-  min-height: 42px;
+  min-height: 40px;
   margin: 0 auto;
   padding: 4px 5px 4px 14px;
   background: var(--composer-bg);
   border: 1px solid var(--composer-border);
   border-radius: 999px;
-  box-shadow: var(--composer-shadow);
+  box-shadow:
+    var(--composer-shadow),
+    0 0 5px 3px color-mix(in srgb, var(--composer-fade) 58%, transparent);
   backdrop-filter: blur(8px) saturate(1.02);
   overflow: hidden;
   pointer-events: auto;
@@ -2664,7 +2897,7 @@ a:focus-visible {
 
 .composer-box.multiline {
   border-radius: 22px;
-  padding: 8px 5px 6px 18px;
+  padding: 6px 4px 5px 16px;
 }
 
 .composer-token-slot {
@@ -2698,7 +2931,7 @@ a:focus-visible {
   background: transparent;
   border: 0;
   color: var(--ink);
-  line-height: 1.38;
+  line-height: 1.34;
   outline: none;
   overscroll-behavior: contain;
   scrollbar-width: none;
@@ -2758,12 +2991,12 @@ a:focus-visible {
   align-self: end;
   width: 32px;
   height: 32px;
-  margin-bottom: 1px;
+  margin-bottom: 0;
   padding: 0;
-  background: var(--line-strong);
-  border: 0;
+  background: var(--send-button-bg);
+  border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--inverse-ink);
+  color: var(--send-button-ink);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
@@ -2772,18 +3005,22 @@ a:focus-visible {
 }
 
 .composer-box > #sendButton.is-stop {
-  background: var(--danger);
-  color: #fff;
+  background: var(--stop-button-bg);
+  border-color: var(--stop-button-border);
+  color: var(--stop-button-ink);
 }
 
 .composer-box > #sendButton.is-stop svg {
+  display: block;
+  width: 18px;
+  height: 18px;
   fill: currentColor;
   stroke: none;
 }
 
 .composer-box > #sendButton svg {
-  width: 17px;
-  height: 17px;
+  width: 19px;
+  height: 19px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;

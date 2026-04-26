@@ -170,7 +170,7 @@ function snapshotActiveSlot() {
   Object.assign(slot, {
     backendSessionId: state.sessionId,
     savedSessionId: state.activeHistoryId || slot.savedSessionId || "",
-    title: slot.showInHistory && !slot.hasConversation ? "New Chat" : state.chatTitle,
+    title: slot.showInHistory && !slot.hasConversation ? "새 채팅" : state.chatTitle,
     ready: state.ready,
     busy: state.busy,
     busyVisual: state.busyVisual,
@@ -315,7 +315,7 @@ function isEmptyNewChatSlot(slot) {
       && slot.showInHistory
       && !slot.busy
       && !slot.container?.querySelector(".message")
-      && (slot.title === "New Chat" || !slot.savedSessionId)
+      && (slot.title === "새 채팅" || slot.title === "New Chat" || !slot.savedSessionId)
   );
 }
 
@@ -347,7 +347,7 @@ function updateSlotFromEvent(slot, event) {
   if (event.type === "clear_transcript") {
     slot.hasConversation = false;
     slot.showInHistory = !slot.suppressNewChatHistory;
-    slot.title = slot.suppressNewChatHistory ? "MyHarness" : "New Chat";
+    slot.title = slot.suppressNewChatHistory ? "MyHarness" : "새 채팅";
     slot.assistantNode = null;
     slot.workflowNode = null;
     slot.workflowList = null;
@@ -806,7 +806,7 @@ async function openHistorySession(sessionId, title) {
     activeSlot.hasConversation = false;
     activeSlot.showInHistory = true;
     activeSlot.suppressNewChatHistory = false;
-    activeSlot.title = "New Chat";
+    activeSlot.title = "새 채팅";
     activeSlot = await startBackendSlot({ makeActive: true });
   }
   if (activeSlot) {
@@ -840,7 +840,7 @@ async function clearChat() {
     resetArtifacts();
     activeSlot.showInHistory = true;
     activeSlot.suppressNewChatHistory = false;
-    activeSlot.title = "New Chat";
+    activeSlot.title = "새 채팅";
     markActiveHistory();
     ctx.renderHistory?.([]);
     updateSendState();
@@ -878,7 +878,7 @@ async function clearChat() {
     clearedSlot.hasConversation = false;
     clearedSlot.showInHistory = true;
     clearedSlot.suppressNewChatHistory = false;
-    clearedSlot.title = "New Chat";
+    clearedSlot.title = "새 채팅";
     clearedSlot.assistantNode = null;
     clearedSlot.workflowNode = null;
     clearedSlot.workflowList = null;

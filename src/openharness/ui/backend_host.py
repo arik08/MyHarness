@@ -37,6 +37,7 @@ from openharness.permissions.mutation_lock import release_mutation_lock
 from openharness.prompts import build_runtime_system_prompt
 from openharness.services.session_storage import fallback_session_title_from_user_text, title_matches_first_user
 from openharness.skills import load_skill_registry
+from openharness.skills.state import set_skill_enabled
 from openharness.skills.types import SkillDefinition
 from openharness.tasks import get_task_manager
 from openharness.ui.protocol import BackendEvent, FrontendRequest, PluginSnapshot, SkillSnapshot, TranscriptItem
@@ -148,6 +149,9 @@ class ReactBackendHost:
                 if request.type == "refresh_skills":
                     await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
                     await self._emit(self._status_snapshot())
+                    continue
+                if request.type == "set_skill_enabled":
+                    await self._handle_set_skill_enabled(request.value or "", request.enabled)
                     continue
                 if request.type == "set_system_prompt":
                     await self._handle_set_system_prompt(request.value or "")
@@ -385,9 +389,6 @@ class ReactBackendHost:
                 return
             if isinstance(event, ErrorEvent):
                 await self._emit(BackendEvent(type="error", message=event.message))
-                await self._emit(
-                    BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=event.message))
-                )
                 return
             if isinstance(event, StatusEvent):
                 await self._emit(
@@ -422,7 +423,7 @@ class ReactBackendHost:
                 parts = line.strip().split(maxsplit=1)
                 if len(parts) > 1 and parts[1].strip():
                     self._set_saved_session_id(parts[1].strip().split()[0])
-            if first_token == "/reload-plugins":
+            if first_token in {"/reload-plugins", "/skills"}:
                 await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
             if first_token != "/clear":
                 await self._maybe_update_session_title()
@@ -568,16 +569,26 @@ class ReactBackendHost:
             extra_skill_dirs=self._bundle.extra_skill_dirs,
             extra_plugin_roots=self._bundle.extra_plugin_roots,
             settings=self._bundle.current_settings(),
+            include_disabled=True,
         )
         return [
             SkillSnapshot(
                 name=skill.name,
                 description=skill.description,
                 source=skill.source,
+                enabled=skill.enabled,
             )
             for skill in registry.list_skills()
             if skill.source not in _BUILT_IN_SKILL_SOURCES
         ]
+
+    async def _handle_set_skill_enabled(self, name: str, enabled: bool | None) -> None:
+        if not name.strip():
+            await self._emit(BackendEvent(type="error", message="Skill name is required"))
+            return
+        set_skill_enabled(name, bool(enabled))
+        await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
+        await self._emit(self._status_snapshot())
 
     def _line_with_forced_skill(self, line: str) -> str:
         parsed = self._parse_forced_skill_line(line)
@@ -820,7 +831,7 @@ class ReactBackendHost:
         options = []
         for s in sessions:
             ts = _time.strftime("%m/%d %H:%M", _time.localtime(s["created_at"]))
-            summary = s.get("summary", "")[:50] or "(no summary)"
+            summary = s.get("summary", "")[:50] or "새 채팅"
             options.append({
                 "value": s["session_id"],
                 "label": f"{ts}  {s['message_count']}msg  {summary}",

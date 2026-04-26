@@ -78,6 +78,30 @@ def test_load_skill_registry_includes_project_dot_skills(tmp_path: Path, monkeyp
     assert "project release checklist" in ship.content
 
 
+def test_load_skill_registry_filters_disabled_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    from openharness.skills.state import set_skill_enabled
+
+    skill_dir = tmp_path / ".skills" / "ship"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: ship\n"
+        "description: Project-local shipping checklist\n---\n\n"
+        "# Ship\nUse the project release checklist.\n",
+        encoding="utf-8",
+    )
+
+    set_skill_enabled("ship", False)
+
+    registry = load_skill_registry(tmp_path)
+    all_registry = load_skill_registry(tmp_path, include_disabled=True)
+
+    assert registry.get("ship") is None
+    disabled_ship = all_registry.get("ship")
+    assert disabled_ship is not None
+    assert disabled_ship.enabled is False
+
+
 # --- parse_skill_markdown unit tests ---
 
 

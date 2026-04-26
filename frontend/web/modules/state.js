@@ -82,6 +82,7 @@ export const els = {
   chatTitle: document.querySelector("#chatTitle span"),
   projectFilesButton: document.querySelector("#projectFilesButton"),
   themeToggle: document.querySelector("[data-action='toggle-theme']"),
+  workspaceDropdown: document.querySelector("#workspaceDropdown"),
   planModeIndicator: document.querySelector("#planModeIndicator"),
   slashMenu: document.querySelector("#slashMenu"),
   attachmentTray: document.querySelector("#attachmentTray"),

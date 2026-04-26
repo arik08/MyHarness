@@ -18,6 +18,7 @@ from openharness.auth.external import (
     load_external_credential,
     refresh_claude_oauth_credential,
 )
+from openharness.auth.manager import AuthManager
 from openharness.auth.storage import ExternalAuthBinding, load_external_binding, store_external_binding
 from openharness.cli import app
 from openharness.config.settings import Settings, load_settings
@@ -64,6 +65,58 @@ def test_load_codex_external_credential(monkeypatch, tmp_path: Path):
     assert credential.refresh_token == "refresh-token"
     assert credential.profile_label == "dev@example.com"
     assert credential.expires_at_ms == 4_102_444_800_000
+
+
+def test_settings_resolve_auth_uses_default_codex_auth_json(monkeypatch, tmp_path: Path):
+    config_dir = tmp_path / "config"
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    token = _fake_jwt(
+        {
+            "exp": 4_102_444_800,
+            "https://api.openai.com/profile": {"email": "dev@example.com"},
+        }
+    )
+    (codex_home / "auth.json").write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": token,
+                    "refresh_token": "refresh-token",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    resolved = Settings(active_profile="codex").resolve_auth()
+
+    assert resolved.provider == CODEX_PROVIDER
+    assert resolved.auth_kind == "api_key"
+    assert resolved.value == token
+    assert str(codex_home / "auth.json") in resolved.source
+    assert load_external_binding(CODEX_PROVIDER) is None
+
+
+def test_auth_manager_reports_default_codex_auth_json_ready(monkeypatch, tmp_path: Path):
+    config_dir = tmp_path / "config"
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    token = _fake_jwt({"exp": 4_102_444_800})
+    (codex_home / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": token}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    status = AuthManager(Settings(active_profile="codex")).get_profile_statuses()["codex"]
+
+    assert status["configured"] is True
+    assert status["auth_state"] == "configured"
 
 
 def test_load_claude_external_credential(monkeypatch, tmp_path: Path):

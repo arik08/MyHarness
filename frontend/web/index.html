@@ -48,21 +48,24 @@
           </button>
         </div>
 
-        <button class="sidebar-project" type="button" data-action="open-workspace" aria-label="프로젝트 선택" data-tooltip="현재 프로젝트 선택">
-          <span class="sidebar-project-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24">
-              <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2.5h6.5A2.5 2.5 0 0 1 21 9v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5Z"></path>
+        <div class="sidebar-project-menu">
+          <button class="sidebar-project" type="button" data-action="open-workspace" aria-label="프로젝트 선택" aria-expanded="false" data-tooltip="현재 프로젝트 선택">
+            <span class="sidebar-project-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2.5h6.5A2.5 2.5 0 0 1 21 9v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5Z"></path>
+              </svg>
+            </span>
+            <strong data-workspace-name>Default</strong>
+            <svg class="sidebar-project-chevron" aria-hidden="true" viewBox="0 0 24 24">
+              <path d="m7 10 5 5 5-5"></path>
             </svg>
-          </span>
-          <strong data-workspace-name>Default</strong>
-          <svg aria-hidden="true" viewBox="0 0 24 24">
-            <path d="m7 10 5 5 5-5"></path>
-          </svg>
-        </button>
+          </button>
+          <div class="sidebar-project-dropdown hidden" id="workspaceDropdown" role="menu" aria-label="Project list"></div>
+        </div>
 
-        <button class="new-chat" type="button" data-action="new-chat" aria-label="New Chat (Ctrl+Shift+O)" data-tooltip="단축키: Ctrl+Shift+O">
+        <button class="new-chat" type="button" data-action="new-chat" aria-label="새 채팅 (Ctrl+Shift+O)" data-tooltip="단축키: Ctrl+Shift+O">
           <span aria-hidden="true"></span>
-          New Chat
+          새 채팅
         </button>
 
         <section class="history-panel" aria-label="Chat History">

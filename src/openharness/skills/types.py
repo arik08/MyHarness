@@ -14,3 +14,4 @@ class SkillDefinition:
     content: str
     source: str
     path: str | None = None
+    enabled: bool = True

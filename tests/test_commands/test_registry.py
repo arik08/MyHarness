@@ -130,6 +130,27 @@ async def test_learned_skills_command_shows_recent_metadata(tmp_path: Path, monk
 
 
 @pytest.mark.asyncio
+async def test_skills_command_toggles_skill_enabled_state(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / ".skills" / "ship"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: ship\n"
+        "description: Project-local shipping checklist\n---\n\n"
+        "# Ship\nUse the project release checklist.\n",
+        encoding="utf-8",
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/skills toggle ship")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "disabled" in result.message
+    assert "[disabled]" in result.message
+
+
+@pytest.mark.asyncio
 async def test_plugin_command_is_marked_local_only(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()

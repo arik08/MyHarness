@@ -78,6 +78,25 @@ def _is_prompt_too_long_error(exc: Exception) -> bool:
     )
 
 
+def _is_network_error_message(message: str) -> bool:
+    text = message.lower()
+    return any(
+        needle in text
+        for needle in (
+            "connect",
+            "connection",
+            "timeout",
+            "network",
+            "getaddrinfo",
+            "gaierror",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "nodename nor servname provided",
+            "errno 11001",
+        )
+    )
+
+
 class MaxTurnsExceeded(RuntimeError):
     """Raised when the agent exceeds the configured max_turns for one user prompt."""
 
@@ -585,7 +604,7 @@ async def run_query(
                 messages, was_compacted = last_compaction_result
                 if was_compacted:
                     continue
-            if "connect" in error_msg.lower() or "timeout" in error_msg.lower() or "network" in error_msg.lower():
+            if _is_network_error_message(error_msg):
                 yield ErrorEvent(message=f"Network error: {error_msg}. Check your internet connection and try again."), None
             else:
                 yield ErrorEvent(message=f"API error: {error_msg}"), None

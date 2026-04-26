@@ -642,6 +642,7 @@ class Settings(BaseModel):
         auth_source = profile.auth_source.strip() or default_auth_source_for_provider(provider, profile.api_format)
         if auth_source in {"codex_subscription", "claude_subscription"}:
             from openharness.auth.external import (
+                default_binding_for_provider,
                 is_third_party_anthropic_endpoint,
                 load_external_credential,
             )
@@ -652,7 +653,10 @@ class Settings(BaseModel):
                     "Claude subscription auth only supports direct Anthropic/Claude endpoints. "
                     "Use an API-key-backed Anthropic-compatible profile for third-party base URLs."
                 )
-            binding = load_external_binding(auth_source_provider_name(auth_source))
+            storage_provider = auth_source_provider_name(auth_source)
+            binding = load_external_binding(storage_provider)
+            if binding is None and auth_source == "codex_subscription":
+                binding = default_binding_for_provider(storage_provider)
             if binding is None:
                 raise ValueError(
                     f"No external auth binding found for {auth_source}. Run 'oh auth "
