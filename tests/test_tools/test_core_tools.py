@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,6 +30,13 @@ from openharness.tools.skill_tool import SkillTool, SkillToolInput
 from openharness.tools.todo_write_tool import TodoWriteTool, TodoWriteToolInput
 from openharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 from openharness.tools import create_default_tool_registry
+
+
+def _python_stdout_command(text: str) -> str:
+    code = f"import sys; sys.stdout.write({text!r})"
+    if sys.platform == "win32":
+        return f"& {sys.executable!r} -c {code!r}"
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
 
 
 @pytest.mark.asyncio
@@ -81,7 +90,7 @@ async def test_glob_and_grep(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_bash_tool_runs_command(tmp_path: Path):
     result = await BashTool().execute(
-        BashToolInput(command="printf 'hello'"),
+        BashToolInput(command=_python_stdout_command("hello")),
         ToolExecutionContext(cwd=tmp_path),
     )
     assert result.is_error is False
@@ -193,13 +202,13 @@ async def test_lsp_tool(tmp_path: Path):
         LspToolInput(operation="go_to_definition", file_path="pkg/app.py", symbol="greet"),
         context,
     )
-    assert "pkg/utils.py:1:1" in definition.output
+    assert "pkg/utils.py:1:1" in definition.output.replace("\\", "/")
 
     references = await LspTool().execute(
         LspToolInput(operation="find_references", file_path="pkg/app.py", symbol="greet"),
         context,
     )
-    assert "pkg/app.py:1:from pkg.utils import greet" in references.output
+    assert "pkg/app.py:1:from pkg.utils import greet" in references.output.replace("\\", "/")
 
     hover = await LspTool().execute(
         LspToolInput(operation="hover", file_path="pkg/app.py", symbol="greet"),
@@ -257,7 +266,11 @@ async def test_cron_and_remote_trigger_tools(tmp_path: Path, monkeypatch):
     context = ToolExecutionContext(cwd=tmp_path)
 
     create_result = await CronCreateTool().execute(
-        CronCreateToolInput(name="nightly", schedule="0 0 * * *", command="printf 'CRON_OK'"),
+        CronCreateToolInput(
+            name="nightly",
+            schedule="0 0 * * *",
+            command=_python_stdout_command("CRON_OK"),
+        ),
         context,
     )
     assert create_result.is_error is False

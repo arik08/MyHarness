@@ -415,6 +415,18 @@ function switchChatSlot(frontendId) {
   processPendingSlotEvents(slot);
 }
 
+function removeChatSlot(frontendId) {
+  const slot = state.chatSlots.get(frontendId);
+  if (!slot) {
+    return;
+  }
+  slot.source?.close();
+  if (slot.container !== els.messages) {
+    slot.container.remove();
+  }
+  state.chatSlots.delete(frontendId);
+}
+
 async function startBackendSlot({ makeActive = true } = {}) {
   const payload = { permissionMode: "full_auto", clientId: state.clientId };
   if (state.workspacePath) {
@@ -783,6 +795,11 @@ async function openHistorySession(sessionId, title) {
   if (!sessionId) {
     return;
   }
+  const existingSlot = [...state.chatSlots.values()].find((slot) => slot.savedSessionId === sessionId);
+  if (existingSlot) {
+    switchChatSlot(existingSlot.frontendId);
+    return;
+  }
   let activeSlot = state.chatSlots.get(state.activeFrontendId);
   const activeSlotHasMessages = Boolean(activeSlot?.container?.querySelector(".message"));
   if (isEmptyNewChatSlot(activeSlot) || (activeSlot?.showInHistory && !activeSlot.busy && !activeSlotHasMessages)) {
@@ -825,6 +842,7 @@ async function clearChat() {
     activeSlot.suppressNewChatHistory = false;
     activeSlot.title = "New Chat";
     markActiveHistory();
+    ctx.renderHistory?.([]);
     updateSendState();
     ctx.requestHistory?.().catch(() => {});
     return;
@@ -868,6 +886,7 @@ async function clearChat() {
     clearedSlot.workflowSteps = [];
   }
   markActiveHistory();
+  ctx.renderHistory?.([]);
   updateSendState();
   ctx.requestHistory?.().catch(() => {});
   if (state.sessionId) {
@@ -909,6 +928,32 @@ async function deleteHistorySession(sessionId, item) {
   await sendBackendRequest({ type: "delete_session", value: sessionId });
 }
 
+async function deleteLiveChatSlot(frontendId) {
+  const slot = state.chatSlots.get(frontendId);
+  if (!slot || slot.busy) {
+    return;
+  }
+  const wasActive = slot.frontendId === state.activeFrontendId;
+  const backendSessionId = slot.backendSessionId;
+  removeChatSlot(frontendId);
+  if (backendSessionId) {
+    shutdownSession(backendSessionId).catch(() => {});
+  }
+  if (wasActive) {
+    const nextSlot = [...state.chatSlots.values()][0];
+    if (nextSlot) {
+      restoreSlot(nextSlot);
+    } else {
+      await startBackendSlot({ makeActive: true });
+      renderWelcome();
+    }
+  }
+  markActiveHistory();
+  if (!els.historyList.querySelector(".history-item")) {
+    ctx.renderHistory?.([]);
+  }
+}
+
   return {
     postJson,
     getJson,
@@ -932,5 +977,6 @@ async function deleteHistorySession(sessionId, item) {
     clearChat,
     requestHistory,
     deleteHistorySession,
+    deleteLiveChatSlot,
   };
 }

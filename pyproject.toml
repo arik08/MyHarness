@@ -71,6 +71,13 @@ exclude = [
 "frontend/terminal/package.json" = "openharness/_frontend/package.json"
 "frontend/terminal/tsconfig.json" = "openharness/_frontend/tsconfig.json"
 "frontend/terminal/src" = "openharness/_frontend/src"
+"frontend/web/index.html" = "openharness/_web/index.html"
+"frontend/web/package.json" = "openharness/_web/package.json"
+"frontend/web/package-lock.json" = "openharness/_web/package-lock.json"
+"frontend/web/script.js" = "openharness/_web/script.js"
+"frontend/web/server.mjs" = "openharness/_web/server.mjs"
+"frontend/web/styles.css" = "openharness/_web/styles.css"
+"frontend/web/modules" = "openharness/_web/modules"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

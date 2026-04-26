@@ -6,6 +6,7 @@ export function createHistory(ctx) {
   function setBusy(...args) { return ctx.setBusy(...args); }
   function sendBackendRequest(...args) { return ctx.sendBackendRequest(...args); }
   function deleteHistorySession(...args) { return ctx.deleteHistorySession(...args); }
+  function deleteLiveChatSlot(...args) { return ctx.deleteLiveChatSlot?.(...args); }
   function appendMessage(...args) { return ctx.appendMessage(...args); }
   function switchChatSlot(...args) { return ctx.switchChatSlot?.(...args); }
   function openHistorySession(...args) { return ctx.openHistorySession?.(...args); }
@@ -129,7 +130,10 @@ function renderHistory(options) {
       deleteButton.addEventListener("click", (event) => {
         event.stopPropagation();
         if (isLive) {
-          deleteLiveHistorySlot(option.liveSlotId, item);
+          deleteLiveHistorySlot(option.liveSlotId, item).catch((error) => {
+            appendMessage("system", `Chat close failed: ${error.message}`);
+            setBusy(false, STATUS_LABELS.error);
+          });
           return;
         }
         deleteHistorySession(option.value || "", item).catch((error) => {
@@ -164,17 +168,13 @@ function markActiveHistory() {
   });
 }
 
-function deleteLiveHistorySlot(frontendId, item) {
+async function deleteLiveHistorySlot(frontendId, item) {
   const slot = state.chatSlots.get(frontendId);
   if (!slot || slot.busy) {
     return;
   }
-  slot.showInHistory = false;
-  slot.suppressNewChatHistory = false;
   item?.remove();
-  if (slot.frontendId === state.activeFrontendId && !slot.hasConversation) {
-    setChatTitle("MyHarness");
-  }
+  await deleteLiveChatSlot(frontendId);
   markActiveHistory();
   if (!els.historyList.querySelector(".history-item")) {
     renderHistory([]);

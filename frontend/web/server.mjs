@@ -1076,13 +1076,18 @@ async function handleApi(request, response, pathname) {
       json(response, 400, { error: "Message is empty" });
       return true;
     }
-    if (!session.busy && session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
+    if (session.busy) {
+      json(response, 409, { error: "Session is already busy" });
+      return true;
+    }
+    if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
       json(response, 429, { error: "Concurrent response limit reached" });
       return true;
     }
+    session.busy = true;
     const ok = sendBackend(session, { type: "submit_line", line, attachments });
-    if (ok) {
-      session.busy = true;
+    if (!ok) {
+      session.busy = false;
     }
     json(response, ok ? 200 : 409, { ok });
     return true;
