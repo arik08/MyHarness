@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openharness.swarm.spawn_utils import (
@@ -62,19 +64,12 @@ class SubprocessBackend:
 
         command = config.command
         if command is None:
-            # Build environment export prefix for shell invocation
-            env_prefix = " ".join(f"{k}={v!r}" for k, v in extra_env.items())
-
             teammate_cmd = get_teammate_command()
-            if (
-                teammate_cmd.endswith("python")
-                or teammate_cmd.endswith("python3")
-                or "/python" in teammate_cmd
-            ):
+            if _is_python_executable(teammate_cmd):
                 cmd_parts = [teammate_cmd, "-m", "openharness", "--task-worker"] + flags
             else:
                 cmd_parts = [teammate_cmd, "--task-worker"] + flags
-            command = f"{env_prefix} {' '.join(cmd_parts)}" if env_prefix else " ".join(cmd_parts)
+            command = _shell_command_from_parts(cmd_parts)
 
         manager = get_task_manager()
         try:
@@ -85,6 +80,7 @@ class SubprocessBackend:
                 task_type=config.task_type,
                 model=config.model,
                 command=command,
+                env=extra_env,
             )
         except Exception as exc:
             logger.error("Failed to spawn teammate %s: %s", agent_id, exc)
@@ -159,3 +155,19 @@ class SubprocessBackend:
     def get_task_id(self, agent_id: str) -> str | None:
         """Return the task manager task ID for a given agent, if known."""
         return self._agent_tasks.get(agent_id)
+
+
+def _is_python_executable(command: str) -> bool:
+    name = Path(command.strip().strip("\"'")).name.lower()
+    return name in {"python", "python.exe", "python3", "python3.exe"}
+
+
+def _shell_command_from_parts(parts: list[str]) -> str:
+    if os.name != "nt" or not parts:
+        return " ".join(parts)
+    executable, *args = parts
+    return "& " + " ".join([_quote_powershell_arg(executable), *args])
+
+
+def _quote_powershell_arg(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"

@@ -46,12 +46,14 @@ run_openharness_web.bat
 ```text
 .openharness/settings.json
 .openharness/credentials.json
+.openharness/credentials.example.json
 ```
 
 `run_openharness_web.bat`는 기본적으로 이 프로젝트-local `.openharness/` 폴더를 사용합니다. 그래서 이 폴더를 통째로 옮긴 뒤에도 사용자 홈 디렉터리에 인증 정보를 다시 만들지 않고 바로 실행할 수 있습니다.
 
 - `.openharness/settings.json`: 기본 provider profile을 고릅니다. 현재 기본값은 `p-gpt`입니다.
 - `.openharness/credentials.json`: `posco_gpt` provider가 사용할 P-GPT `api_key`, `emp_no`, `comp_no`를 저장합니다.
+- `.openharness/credentials.example.json`: 저장소에 올리는 예시 파일입니다. 실제 값은 `.openharness/credentials.json`에만 저장하세요.
 - P-GPT endpoint는 built-in `p-gpt` profile에 `http://pgpt.posco.com/s0la01-gpt/gptApi/personalApi`로 정의되어 있습니다.
 - 앱이 다른 provider로 열리면 채팅창에서 `/provider p-gpt`를 실행하세요.
 

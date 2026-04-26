@@ -22,6 +22,7 @@ class TaskRecord:
     cwd: str
     output_file: Path
     command: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
     prompt: str | None = None
     created_at: float = 0.0
     started_at: float | None = None

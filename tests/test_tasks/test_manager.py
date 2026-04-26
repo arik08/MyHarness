@@ -3,11 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
+import sys
 from pathlib import Path
 
 import pytest
 
 from openharness.tasks.manager import BackgroundTaskManager
+
+
+def _python_stdout_command(text: str) -> str:
+    code = f"import sys; sys.stdout.write({text!r})"
+    if sys.platform == "win32":
+        return f"& {sys.executable!r} -c {code!r}"
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
+
+
+def _python_stdin_echo_command() -> str:
+    code = "import sys; line=sys.stdin.readline().rstrip('\\n'); print('got:' + line)"
+    if sys.platform == "win32":
+        return f"& {sys.executable!r} -u -c {code!r}"
+    return f"{shlex.quote(sys.executable)} -u -c {shlex.quote(code)}"
 
 
 @pytest.mark.asyncio
@@ -16,7 +32,7 @@ async def test_create_shell_task_and_read_output(tmp_path: Path, monkeypatch):
     manager = BackgroundTaskManager()
 
     task = await manager.create_shell_task(
-        command="printf 'hello task'",
+        command=_python_stdout_command("hello task"),
         description="hello",
         cwd=tmp_path,
     )
@@ -37,7 +53,7 @@ async def test_create_agent_task_with_command_override_and_write(tmp_path: Path,
         prompt="first",
         description="agent",
         cwd=tmp_path,
-        command="while read line; do echo \"got:$line\"; break; done",
+        command=_python_stdin_echo_command(),
     )
 
     await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
@@ -53,7 +69,7 @@ async def test_write_to_stopped_agent_task_restarts_process(tmp_path: Path, monk
         prompt="ready",
         description="agent",
         cwd=tmp_path,
-        command="while read line; do echo \"got:$line\"; break; done",
+        command=_python_stdin_echo_command(),
     )
     await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
 
@@ -98,7 +114,7 @@ async def test_completion_listener_fires_when_task_finishes(tmp_path: Path, monk
     manager.register_completion_listener(_listener)
 
     task = await manager.create_shell_task(
-        command="printf 'done'",
+        command=_python_stdout_command("done"),
         description="listener",
         cwd=tmp_path,
     )

@@ -390,6 +390,12 @@ function sleep(ms) {
 
 async function deleteWorkspace(name) {
   const workspace = workspacePathFromName(name);
+  const activeSession = [...sessions.values()].find(
+    (session) => session.workspace?.path === workspace.path && !session.shuttingDown
+  );
+  if (activeSession) {
+    throw new Error("Cannot delete a project while it has an active session");
+  }
   const retryableCodes = new Set(["EBUSY", "ENOTEMPTY", "EPERM"]);
   const delays = [0, 120, 300, 700, 1200];
   for (let attempt = 0; attempt < delays.length; attempt += 1) {

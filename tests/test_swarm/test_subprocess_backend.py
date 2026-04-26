@@ -30,7 +30,7 @@ async def test_subprocess_backend_forwards_system_prompt_in_command(monkeypatch,
 
     monkeypatch.setattr(BackgroundTaskManager, "create_agent_task", _fake_create_agent_task)
     monkeypatch.setattr("openharness.swarm.subprocess_backend.get_teammate_command", lambda: "/usr/bin/python3")
-    monkeypatch.setattr("openharness.swarm.subprocess_backend.build_inherited_env_vars", lambda: {})
+    monkeypatch.setattr("openharness.swarm.subprocess_backend.build_inherited_env_vars", lambda: {"OPENHARNESS_MODEL": "test-model"})
 
     backend = SubprocessBackend()
     config = TeammateSpawnConfig(
@@ -49,6 +49,7 @@ async def test_subprocess_backend_forwards_system_prompt_in_command(monkeypatch,
     command = str(captured["command"])
     assert "--system-prompt" in command
     assert "You are a careful code reviewer." in command
+    assert captured["env"] == {"OPENHARNESS_MODEL": "test-model"}
 
 
 @pytest.mark.asyncio

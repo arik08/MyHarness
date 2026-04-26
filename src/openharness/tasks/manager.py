@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import shlex
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -40,6 +41,7 @@ class BackgroundTaskManager:
         description: str,
         cwd: str | Path,
         task_type: TaskType = "local_bash",
+        env: dict[str, str] | None = None,
     ) -> TaskRecord:
         """Start a background shell command."""
         task_id = _task_id(task_type)
@@ -52,6 +54,7 @@ class BackgroundTaskManager:
             cwd=str(Path(cwd).resolve()),
             output_file=output_path,
             command=command,
+            env=dict(env or {}),
             created_at=time.time(),
             started_at=time.time(),
         )
@@ -72,6 +75,7 @@ class BackgroundTaskManager:
         model: str | None = None,
         api_key: str | None = None,
         command: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> TaskRecord:
         """Start a local agent task as a subprocess."""
         if command is None:
@@ -80,16 +84,17 @@ class BackgroundTaskManager:
                 raise ValueError(
                     "Local agent tasks require ANTHROPIC_API_KEY or an explicit command override"
                 )
-            cmd = ["python", "-m", "openharness", "--api-key", effective_api_key]
+            cmd = [sys.executable, "-m", "openharness", "--api-key", effective_api_key]
             if model:
                 cmd.extend(["--model", model])
-            command = " ".join(shlex.quote(part) for part in cmd)
+            command = _shell_command_from_argv(cmd)
 
         record = await self.create_shell_task(
             command=command,
             description=description,
             cwd=cwd,
             task_type=task_type,
+            env=env,
         )
         updated = replace(record, prompt=prompt)
         if task_type != "local_agent":
@@ -239,6 +244,7 @@ class BackgroundTaskManager:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, **task.env} if task.env else None,
         )
         self._processes[task_id] = process
         self._waiters[task_id] = asyncio.create_task(
@@ -372,6 +378,16 @@ def _task_id(task_type: TaskType) -> str:
         "in_process_teammate": "t",
     }
     return f"{prefixes[task_type]}{uuid4().hex[:8]}"
+
+
+def _shell_command_from_argv(argv: list[str]) -> str:
+    if sys.platform == "win32":
+        return "& " + " ".join(_quote_powershell_arg(part) for part in argv)
+    return " ".join(shlex.quote(part) for part in argv)
+
+
+def _quote_powershell_arg(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 async def _close_process_stdin(process: asyncio.subprocess.Process) -> None:
