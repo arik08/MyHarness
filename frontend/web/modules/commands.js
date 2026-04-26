@@ -68,7 +68,7 @@ function extensionItems() {
     source: skill.source || "skill",
     kind: "skill",
   }));
-  const mcpItems = state.mcpServers.map((server) => {
+  const mcpItems = state.mcpServers.filter((server) => server.state !== "disabled").map((server) => {
     const counts = [
       server.toolCount ? `${server.toolCount} tools` : "",
       server.resourceCount ? `${server.resourceCount} resources` : "",
@@ -81,7 +81,7 @@ function extensionItems() {
       kind: "mcp",
     };
   });
-  const pluginItems = state.plugins.map((plugin) => {
+  const pluginItems = state.plugins.filter((plugin) => plugin.enabled !== false).map((plugin) => {
     const counts = [
       plugin.skillCount ? `${plugin.skillCount} skills` : "",
       plugin.commandCount ? `${plugin.commandCount} commands` : "",

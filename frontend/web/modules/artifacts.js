@@ -149,6 +149,20 @@ function renderArtifactCards(container, artifacts) {
   if (!container || !artifacts.length) {
     return;
   }
+  const keys = new Set(artifacts.map((artifact) => normalizeArtifactPath(artifact.path).toLowerCase()));
+  for (const existing of els.messages?.querySelectorAll(".artifact-card") || []) {
+    const existingKey = String(existing.dataset.artifactPath || "").toLowerCase();
+    if (keys.has(existingKey) && !container.contains(existing)) {
+      const wrap = existing.closest(".artifact-cards");
+      existing.remove();
+      if (wrap && !wrap.querySelector(".artifact-card")) {
+        wrap.remove();
+      }
+    }
+  }
+  for (const existingWrap of container.querySelectorAll(".artifact-cards")) {
+    existingWrap.remove();
+  }
   const wrap = document.createElement("div");
   wrap.className = "artifact-cards";
   for (const artifact of artifacts) {
@@ -156,6 +170,7 @@ function renderArtifactCards(container, artifacts) {
     button.type = "button";
     button.className = "artifact-card";
     button.dataset.artifactId = artifact.id;
+    button.dataset.artifactPath = normalizeArtifactPath(artifact.path);
     button.innerHTML = `
       <span class="artifact-card-icon" aria-hidden="true">${artifactIcon(artifact.kind)}</span>
       <span class="artifact-card-copy">
@@ -421,6 +436,54 @@ function renderProjectFiles(files) {
   }
   const list = document.createElement("div");
   list.className = "project-file-list";
+  let pendingDeletePath = "";
+  const setDeleteIcon = (button, armed = false) => {
+    button.innerHTML = armed
+      ? `
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M12 3l9 16H3L12 3z"></path>
+          <path d="M12 9v4"></path>
+          <path d="M12 17h.01"></path>
+        </svg>
+      `
+      : `
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M3 6h18"></path>
+          <path d="M8 6V4h8v2"></path>
+          <path d="M19 6l-1 14H6L5 6"></path>
+          <path d="M10 11v5"></path>
+          <path d="M14 11v5"></path>
+        </svg>
+      `;
+  };
+  const clearPendingDelete = () => {
+    pendingDeletePath = "";
+    list.querySelectorAll(".project-file-item.delete-ready").forEach((row) => {
+      row.classList.remove("delete-ready");
+      const deleteButton = row.querySelector(".project-file-delete");
+      if (deleteButton) {
+        deleteButton.dataset.tooltip = "파일 삭제";
+        deleteButton.setAttribute("aria-label", `${deleteButton.dataset.fileName || ""} 삭제`);
+        setDeleteIcon(deleteButton, false);
+      }
+    });
+  };
+  list.addEventListener("click", (event) => {
+    if (!pendingDeletePath || event.target.closest(".project-file-delete")) {
+      return;
+    }
+    clearPendingDelete();
+  });
+  const armOutsideDeleteClear = () => {
+    window.setTimeout(() => {
+      document.addEventListener("click", (event) => {
+        if (!pendingDeletePath || list.contains(event.target)) {
+          return;
+        }
+        clearPendingDelete();
+      }, { capture: true, once: true });
+    }, 0);
+  };
   for (const file of files) {
     const artifact = {
       id: `project-file-${file.path}`,
@@ -464,7 +527,65 @@ function renderProjectFiles(files) {
       </svg>
     `;
 
-    item.append(openButton, download);
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "project-file-delete";
+    deleteButton.dataset.fileName = artifact.name;
+    deleteButton.dataset.tooltip = "파일 삭제";
+    deleteButton.setAttribute("aria-label", `${artifact.name} 삭제`);
+    setDeleteIcon(deleteButton, false);
+    deleteButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      if (pendingDeletePath !== artifact.path) {
+        clearPendingDelete();
+        pendingDeletePath = artifact.path;
+        item.classList.add("delete-ready");
+        deleteButton.dataset.tooltip = "한 번 더 누르면 삭제됩니다";
+        deleteButton.setAttribute("aria-label", `${artifact.name} 삭제 확인`);
+        setDeleteIcon(deleteButton, true);
+        armOutsideDeleteClear();
+        return;
+      }
+      deleteButton.disabled = true;
+      item.classList.add("deleting");
+      try {
+        const response = await fetch("/api/artifact", {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            session: state.sessionId || "",
+            path: artifact.path,
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || "파일을 삭제하지 못했습니다.");
+        }
+        state.projectFiles = (state.projectFiles || []).filter((entry) => entry.path !== artifact.path);
+        if (state.activeArtifact?.path === artifact.path) {
+          state.activeArtifact = null;
+          state.activeArtifactRaw = "";
+          state.activeArtifactPayload = null;
+        }
+        renderProjectFiles(state.projectFiles);
+      } catch (error) {
+        item.classList.remove("deleting", "delete-ready");
+        pendingDeletePath = "";
+        deleteButton.disabled = false;
+        deleteButton.dataset.tooltip = `삭제 실패: ${error.message}`;
+        setDeleteIcon(deleteButton, false);
+      }
+    });
+
+    const actions = document.createElement("span");
+    actions.className = "project-file-actions";
+    actions.append(download, deleteButton);
+
+    item.append(openButton, actions);
     list.append(item);
   }
   els.artifactViewer.append(list);

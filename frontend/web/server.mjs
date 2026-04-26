@@ -3,8 +3,8 @@ import { spawn } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
-import { extname, isAbsolute, join, normalize, relative } from "node:path";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 
@@ -225,6 +225,54 @@ async function artifactDownloadTarget(session, artifactPath) {
   };
 }
 
+async function deleteArtifactFile(session, artifactPath) {
+  const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
+  const info = await stat(target);
+  if (!info.isFile()) {
+    throw new Error("Artifact is not a file");
+  }
+  await rm(target);
+  return {
+    path: rel,
+    name: rel.split(/[\\/]/).pop() || rel,
+  };
+}
+
+async function saveArtifactFile(session, artifactPath, content) {
+  let requestedPath = String(artifactPath || "").trim();
+  if (!requestedPath) {
+    requestedPath = "answer.md";
+  }
+  if (!/\.[A-Za-z0-9]{1,8}$/.test(requestedPath)) {
+    requestedPath = `${requestedPath}.md`;
+  }
+  const ext = extname(requestedPath).toLowerCase();
+  if (!artifactTypes[ext]) {
+    throw new Error("Unsupported artifact type");
+  }
+  let { target, rel } = workspaceRelativeTarget(session.workspace.path, requestedPath);
+  const dotIndex = rel.lastIndexOf(".");
+  const baseRel = dotIndex > 0 ? rel.slice(0, dotIndex) : rel;
+  const suffix = dotIndex > 0 ? rel.slice(dotIndex) : "";
+  let index = 2;
+  while (true) {
+    try {
+      await stat(target);
+      const nextRel = `${baseRel}-${index}${suffix}`;
+      ({ target, rel } = workspaceRelativeTarget(session.workspace.path, nextRel));
+      index += 1;
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        break;
+      }
+      throw error;
+    }
+  }
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, String(content || ""), "utf8");
+  return readArtifactMetadata(session, rel);
+}
+
 async function listProjectArtifacts(session) {
   const files = [];
   async function walk(directory) {
@@ -440,6 +488,159 @@ async function listWorkspaces() {
     return [await ensureWorkspace(defaultWorkspaceName)];
   }
   return directories;
+}
+
+function sessionDirectoryForWorkspace(workspace) {
+  return join(workspace.path, ".openharness", "sessions");
+}
+
+function compactText(value, limit = 80) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function messageText(message) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+  if (typeof message.text === "string") {
+    return message.text;
+  }
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  if (!Array.isArray(message.content)) {
+    return "";
+  }
+  return message.content
+    .map((block) => {
+      if (!block || typeof block !== "object") {
+        return "";
+      }
+      if (typeof block.text === "string") {
+        return block.text;
+      }
+      if (typeof block.content === "string") {
+        return block.content;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function firstUserSummary(messages) {
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message?.role === "user") {
+      return compactText(messageText(message));
+    }
+  }
+  return "";
+}
+
+async function readSessionListItem(path) {
+  const data = JSON.parse(await readFile(path, "utf8"));
+  const info = await stat(path);
+  const fileName = basename(path);
+  const sessionId = String(data.session_id || "").trim()
+    || fileName.replace(/^session-/, "").replace(/\.json$/i, "");
+  const summary = compactText(data.summary) || firstUserSummary(data.messages) || "(untitled chat)";
+  const createdAt = Number(data.created_at || info.mtimeMs || Date.now());
+  const date = new Date(createdAt * (createdAt < 10_000_000_000 ? 1000 : 1));
+  const labelDate = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const messageCount = Number(data.message_count || (Array.isArray(data.messages) ? data.messages.length : 0));
+  return {
+    value: sessionId || fileName.replace(/^session-/, "").replace(/\.json$/i, ""),
+    label: `${labelDate}  ${messageCount}msg  ${summary}`,
+    description: summary,
+    createdAt,
+  };
+}
+
+async function listWorkspaceHistory(workspace) {
+  const sessionDir = sessionDirectoryForWorkspace(workspace);
+  let entries = [];
+  try {
+    entries = await readdir(sessionDir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  const items = [];
+  const seen = new Set();
+  const sessionFiles = entries
+    .filter((entry) => entry.isFile() && /^session-.+\.json$/i.test(entry.name))
+    .map((entry) => join(sessionDir, entry.name));
+  for (const file of sessionFiles) {
+    try {
+      const item = await readSessionListItem(file);
+      if (item.value) {
+        seen.add(item.value);
+        items.push(item);
+      }
+    } catch {
+      // Ignore corrupt or partially written snapshots.
+    }
+  }
+
+  const latestPath = join(sessionDir, "latest.json");
+  try {
+    const latest = await readSessionListItem(latestPath);
+    if (latest.value && !seen.has(latest.value)) {
+      items.push(latest);
+    }
+  } catch {
+    // latest.json is optional.
+  }
+
+  return items
+    .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
+    .map(({ createdAt, ...item }) => item);
+}
+
+function workspaceFromHistoryRequest(paramsOrBody = {}) {
+  const workspacePath = String(paramsOrBody.workspacePath || "").trim();
+  const workspaceName = String(paramsOrBody.workspaceName || paramsOrBody.name || "").trim();
+  if (workspacePath) {
+    return workspaceFromPath(workspacePath);
+  }
+  if (workspaceName) {
+    return workspaceFromDirectoryName(workspaceName);
+  }
+  return workspacePathFromName(defaultWorkspaceName);
+}
+
+async function deleteWorkspaceHistoryItem(workspace, sessionId) {
+  const cleanId = String(sessionId || "").trim();
+  if (!cleanId) {
+    throw new Error("Session id is required");
+  }
+  const sessionDir = sessionDirectoryForWorkspace(workspace);
+  const target = join(sessionDir, `session-${cleanId}.json`);
+  let deleted = false;
+  try {
+    await rm(target);
+    deleted = true;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const latestPath = join(sessionDir, "latest.json");
+  try {
+    const latest = JSON.parse(await readFile(latestPath, "utf8"));
+    if (String(latest.session_id || "latest") === cleanId || cleanId === "latest") {
+      await rm(latestPath);
+      deleted = true;
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
+      throw error;
+    }
+  }
+  return deleted;
 }
 
 async function resolveSessionWorkspace(options = {}) {
@@ -928,6 +1129,35 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
+  if (request.method === "GET" && pathname === "/api/history") {
+    try {
+      const params = new URL(request.url, `http://localhost:${port}`).searchParams;
+      const workspace = workspaceFromHistoryRequest({
+        workspacePath: params.get("workspacePath"),
+        workspaceName: params.get("workspaceName"),
+      });
+      json(response, 200, {
+        workspace,
+        options: await listWorkspaceHistory(workspace),
+      });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not list history" });
+    }
+    return true;
+  }
+
+  if (request.method === "DELETE" && pathname === "/api/history") {
+    try {
+      const body = await readJson(request);
+      const workspace = workspaceFromHistoryRequest(body);
+      const deleted = await deleteWorkspaceHistoryItem(workspace, body.sessionId);
+      json(response, deleted ? 200 : 404, { deleted, workspace });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not delete history" });
+    }
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/session") {
     try {
       const options = await readJson(request);
@@ -1030,6 +1260,38 @@ async function handleApi(request, response, pathname) {
       createReadStream(payload.target).pipe(response);
     } catch (error) {
       json(response, 400, { error: error.message || "Could not download artifact" });
+    }
+    return true;
+  }
+
+  if (request.method === "DELETE" && pathname === "/api/artifact") {
+    const body = await readJson(request);
+    const session = sessions.get(body.session);
+    if (!session) {
+      json(response, 404, { error: "Unknown session" });
+      return true;
+    }
+    try {
+      const deleted = await deleteArtifactFile(session, body.path);
+      json(response, 200, { deleted });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not delete artifact" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/artifact/save") {
+    const body = await readJson(request);
+    const session = sessions.get(body.session);
+    if (!session) {
+      json(response, 404, { error: "Unknown session" });
+      return true;
+    }
+    try {
+      const artifact = await saveArtifactFile(session, body.path, body.content);
+      json(response, 200, { artifact });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not save artifact" });
     }
     return true;
   }

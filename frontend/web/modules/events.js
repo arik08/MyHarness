@@ -27,6 +27,7 @@ export function createEvents(ctx) {
   function extractAndRenderArtifacts(...args) { return ctx.extractAndRenderArtifacts?.(...args); }
   function resetArtifacts(...args) { return ctx.resetArtifacts?.(...args); }
   function setPlanModeIndicatorActive(...args) { return ctx.setPlanModeIndicatorActive?.(...args); }
+  function attachAssistantActions(...args) { return ctx.attachAssistantActions?.(...args); }
 
 let streamingRenderTimer = 0;
 let streamingFlushTimer = 0;
@@ -226,6 +227,10 @@ function stabilizeStreamingTableRows(markdown) {
     tableEnd += 1;
   }
 
+  if (tableEnd < lines.length) {
+    return source;
+  }
+
   return lines
     .map((line, index) =>
       index >= tableStart && index < tableEnd
@@ -237,26 +242,30 @@ function stabilizeStreamingTableRows(markdown) {
 
 function keepStreamingTailVisible() {
   if (state.restoringHistory || !state.autoFollowMessages) {
+    els.messages.classList.remove("streaming-follow");
     return;
   }
+  els.messages.classList.add("streaming-follow");
   if (streamingScrollTimer) {
     return;
   }
   streamingScrollTimer = window.setTimeout(() => {
     streamingScrollTimer = 0;
     if (!state.restoringHistory && state.autoFollowMessages) {
-      scrollMessagesToBottom({ smooth: true, duration: 1450 });
+      scrollMessagesToBottom({ smooth: true, duration: 1200 });
     }
-  }, 260);
+  }, 60);
 }
 
 function settleStreamingTailVisible() {
   if (state.restoringHistory || !state.autoFollowMessages) {
+    els.messages.classList.remove("streaming-follow");
     return;
   }
   window.clearTimeout(streamingScrollTimer);
   requestAnimationFrame(() => {
-    scrollMessagesToBottom({ smooth: true, duration: 900 });
+    els.messages.classList.remove("streaming-follow");
+    scrollMessagesToBottom({ smooth: true, duration: 760 });
   });
 }
 
@@ -326,6 +335,7 @@ function resetStreamingState() {
   streamingLiveNode = null;
   streamingRenderedTextLength = 0;
   streamingDisplayStarted = false;
+  els.messages.classList.remove("streaming-follow");
 }
 
 function handleEvent(event) {
@@ -377,6 +387,11 @@ function handleEvent(event) {
 
   if (event.type === "tasks_snapshot") {
     updateTasks(event.tasks || []);
+    return;
+  }
+
+  if (event.type === "status") {
+    setBusy(true, event.message || STATUS_LABELS.processing);
     return;
   }
 
@@ -564,10 +579,12 @@ function handleEvent(event) {
       const finalText = event.message || state.assistantNode.dataset.rawText || "";
       setMarkdown(state.assistantNode, finalText);
       extractAndRenderArtifacts(finalText, state.assistantNode);
+      attachAssistantActions(state.assistantNode, finalText);
       state.assistantNode = null;
     } else if (event.message) {
       const node = appendMessage("assistant", event.message);
       extractAndRenderArtifacts(event.message, node);
+      attachAssistantActions(node, event.message);
     }
     return;
   }

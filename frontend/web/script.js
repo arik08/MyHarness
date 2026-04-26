@@ -531,6 +531,7 @@ setSidebarCollapsed(localStorage.getItem("openharness:sidebarCollapsed") === "1"
 
 async function boot() {
   await initializeWorkspace();
+  requestHistory().catch(() => {});
   await startSession();
 }
 

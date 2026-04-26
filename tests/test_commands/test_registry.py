@@ -489,6 +489,65 @@ async def test_doctor_command_reports_context(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_help_lists_skills_mcp_and_plugins_even_when_empty(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+
+    help_command, help_args = registry.lookup("/help")
+    assert help_command is not None
+    result = await help_command.handler(help_args, context)
+
+    assert "Available skills:" in result.message
+    assert "MCP servers:" in result.message
+    assert "(no MCP servers configured)" in result.message
+    assert "Plugins:" in result.message
+    assert "(no plugins discovered)" in result.message
+    assert "/mcp toggle NAME" in result.message
+    assert "/plugin toggle NAME" in result.message
+
+
+@pytest.mark.asyncio
+async def test_mcp_command_toggles_server_usage(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(Settings(mcp_servers={"demo": McpStdioServerConfig(command="python", args=["server.py"])}))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+
+    toggle_command, toggle_args = registry.lookup("/mcp toggle demo")
+    assert toggle_command is not None
+    toggle_result = await toggle_command.handler(toggle_args, context)
+
+    assert "disabled" in toggle_result.message
+    assert toggle_result.refresh_runtime is True
+    assert "demo" in load_settings().disabled_mcp_servers
+
+    list_command, list_args = registry.lookup("/mcp list")
+    list_result = await list_command.handler(list_args, context)
+    assert "- demo [disabled] (stdio)" in list_result.message
+
+
+@pytest.mark.asyncio
+async def test_plugin_command_toggles_plugin_usage(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    plugin_root = tmp_path / "config" / "plugins" / "fixture-plugin"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "plugin.json").write_text(
+        '{"name":"fixture-plugin","version":"1.0.0","description":"Fixture plugin"}',
+        encoding="utf-8",
+    )
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+
+    toggle_command, toggle_args = registry.lookup("/plugin toggle fixture-plugin")
+    assert toggle_command is not None
+    toggle_result = await toggle_command.handler(toggle_args, context)
+
+    assert "Disabled plugin 'fixture-plugin'" in toggle_result.message
+    assert load_settings().enabled_plugins["fixture-plugin"] is False
+
+
+@pytest.mark.asyncio
 async def test_memory_command_manages_entries(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))

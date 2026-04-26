@@ -60,7 +60,13 @@ def load_mcp_configs_from_dirs(directories: list[Path]) -> dict[str, object]:
     return servers
 
 
-def load_mcp_server_configs(settings, plugins: list[LoadedPlugin], cwd: str | Path | None = None) -> dict[str, object]:
+def load_mcp_server_configs(
+    settings,
+    plugins: list[LoadedPlugin],
+    cwd: str | Path | None = None,
+    *,
+    include_disabled: bool = False,
+) -> dict[str, object]:
     """Merge settings and plugin MCP server configs."""
     mcp_dirs = get_program_mcp_dirs()
     servers = load_mcp_configs_from_dirs(mcp_dirs)
@@ -70,4 +76,9 @@ def load_mcp_server_configs(settings, plugins: list[LoadedPlugin], cwd: str | Pa
             continue
         for name, config in plugin.mcp_servers.items():
             servers.setdefault(f"{plugin.manifest.name}:{name}", config)
+    if include_disabled:
+        return servers
+    disabled = set(getattr(settings, "disabled_mcp_servers", set()) or set())
+    if disabled:
+        servers = {name: config for name, config in servers.items() if name not in disabled}
     return servers

@@ -102,13 +102,28 @@ class RuntimeBundle:
 
     def mcp_summary(self) -> str:
         """Return the current MCP summary."""
-        statuses = self.mcp_manager.list_statuses()
-        if not statuses:
+        statuses = {status.name: status for status in self.mcp_manager.list_statuses()}
+        configs = load_mcp_server_configs(
+            self.current_settings(),
+            self.current_plugins(),
+            cwd=self.cwd,
+            include_disabled=True,
+        )
+        disabled = set(self.current_settings().disabled_mcp_servers or set())
+        if not statuses and not configs:
             return "No MCP servers configured."
         lines = ["MCP servers:"]
-        for status in statuses:
+        for name in sorted(set(statuses) | set(configs)):
+            status = statuses.get(name)
+            if status is None:
+                config = configs[name]
+                state = "disabled" if name in disabled else "pending"
+                detail = "Disabled in settings." if name in disabled else "Configured; restart or reload backend to connect."
+                transport = str(getattr(config, "type", "unknown"))
+                lines.append(f"- {name}: {state} ({transport}) - {detail}")
+                continue
             suffix = f" - {status.detail}" if status.detail else ""
-            lines.append(f"- {status.name}: {status.state}{suffix}")
+            lines.append(f"- {name}: {status.state}{suffix}")
             if status.tools:
                 lines.append(f"  tools: {', '.join(tool.name for tool in status.tools)}")
             if status.resources:

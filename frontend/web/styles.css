@@ -1754,6 +1754,10 @@ a:focus-visible {
   scrollbar-gutter: stable;
 }
 
+.messages.streaming-follow {
+  padding-bottom: calc(96px + 2.8em);
+}
+
 .welcome {
   width: min(760px, calc(100% - 40px));
   margin: clamp(48px, 13vh, 130px) auto 0;
@@ -1799,6 +1803,110 @@ a:focus-visible {
 
 .message.assistant .bubble {
   width: 100%;
+}
+
+.assistant-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.assistant-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: color-mix(in srgb, var(--success) 78%, var(--muted));
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.assistant-done svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.assistant-action-button {
+  display: inline-grid;
+  position: relative;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+}
+
+.assistant-action-button:hover,
+.assistant-action-button:focus-visible {
+  background: color-mix(in srgb, var(--success) 11%, transparent);
+  border-color: transparent;
+  color: color-mix(in srgb, var(--success) 88%, var(--ink));
+}
+
+.assistant-action-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.assistant-action-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.9;
+}
+
+.assistant-action-button::after {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  z-index: 20;
+  width: max-content;
+  max-width: 160px;
+  padding: 7px 9px;
+  background: var(--tooltip-bg);
+  border-radius: 7px;
+  color: var(--tooltip-ink);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 3px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.assistant-action-button:hover::after,
+.assistant-action-button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.assistant-action-status {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 640;
 }
 
 .streaming-text {
@@ -2078,12 +2186,14 @@ a:focus-visible {
 
 .artifact-card-copy {
   display: grid;
+  width: 100%;
   min-width: 0;
   gap: 2px;
 }
 
 .artifact-card-copy strong,
 .artifact-card-copy small {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2138,27 +2248,47 @@ a:focus-visible {
   text-align: left;
 }
 
-.project-file-download {
+.project-file-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.project-file-download,
+.project-file-delete {
   display: inline-grid;
   position: relative;
   place-items: center;
   width: 32px;
   height: 32px;
   flex: 0 0 32px;
+  padding: 0;
+  background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
   color: var(--muted);
+  cursor: pointer;
   text-decoration: none;
 }
 
 .project-file-download:hover,
-.project-file-download:focus-visible {
+.project-file-download:focus-visible,
+.project-file-delete:hover,
+.project-file-delete:focus-visible {
   background: var(--panel-raised);
   border-color: var(--line);
   color: var(--ink);
 }
 
-.project-file-download svg {
+.project-file-item.delete-ready .project-file-delete {
+  background: color-mix(in srgb, var(--danger, #c2410c) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger, #c2410c) 42%, var(--line));
+  color: var(--danger, #c2410c);
+}
+
+.project-file-download svg,
+.project-file-delete svg {
   width: 17px;
   height: 17px;
   fill: none;
@@ -2168,7 +2298,8 @@ a:focus-visible {
   stroke-width: 2;
 }
 
-.project-file-download::after {
+.project-file-download::after,
+.project-file-delete::after {
   position: absolute;
   top: 50%;
   right: calc(100% + 8px);
@@ -2193,7 +2324,9 @@ a:focus-visible {
 }
 
 .project-file-download:hover::after,
-.project-file-download:focus-visible::after {
+.project-file-download:focus-visible::after,
+.project-file-delete:hover::after,
+.project-file-delete:focus-visible::after {
   opacity: 1;
   transform: translate(0, -50%);
 }
@@ -2355,23 +2488,32 @@ a:focus-visible {
 }
 
 .command-card {
+  min-width: 0;
+  max-width: 100%;
   width: 100%;
+  overflow-x: hidden;
 }
 
 .command-help-stack {
   display: grid;
   gap: 10px;
+  min-width: 0;
   width: 100%;
+  max-width: 100%;
   max-height: min(64vh, 680px);
+  overflow-x: hidden;
   overflow-y: auto;
   padding-right: 2px;
   scrollbar-gutter: stable;
 }
 
 .command-help-intro {
+  min-width: 0;
+  max-width: 100%;
   padding: 2px 12px 0;
   color: var(--muted);
   font-size: 13px;
+  overflow-x: hidden;
 }
 
 .command-help-intro p {
@@ -2397,12 +2539,20 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 40px;
   padding: 0 12px;
   color: var(--ink);
   cursor: pointer;
   font-weight: 650;
   list-style: none;
+}
+
+.command-card summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .command-card summary::-webkit-details-marker {
@@ -2417,8 +2567,11 @@ a:focus-visible {
 
 .command-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   padding: 0 10px 10px;
 }
 
@@ -3137,6 +3290,8 @@ a:focus-visible {
 }
 
 .composer .slash-menu-item strong {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 13px;
@@ -3146,6 +3301,8 @@ a:focus-visible {
 }
 
 .composer .slash-menu-item span {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: var(--muted);
   font-size: 12px;
@@ -3252,6 +3409,8 @@ a:focus-visible {
 .composer .slash-menu-item small {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
+  min-width: 0;
   min-height: 18px;
   padding: 0 7px;
   background: var(--sidebar-hover);
@@ -3261,6 +3420,9 @@ a:focus-visible {
   font-size: 10px;
   font-weight: 760;
   line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .system-settings-card {

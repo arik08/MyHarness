@@ -24,6 +24,7 @@ export function createMessages(ctx) {
   function sendLine(...args) { return ctx.sendLine(...args); }
   function setBusy(...args) { return ctx.setBusy(...args); }
   function sendBackendRequest(...args) { return ctx.sendBackendRequest?.(...args); }
+  function copyTextToClipboard(...args) { return ctx.copyTextToClipboard(...args); }
 
 function isCommandCatalog(text) {
   return String(text || "").includes("Available commands:");
@@ -63,15 +64,23 @@ function parseCommandCatalog(text) {
   });
 }
 
-function splitSkillCatalog(text) {
+function splitNamedCatalog(text, marker) {
   const source = String(text || "");
-  const marker = "Available skills:";
   const index = source.indexOf(marker);
-  return index < 0 ? "" : source.slice(index).trim();
+  if (index < 0) {
+    return "";
+  }
+  const headings = ["Available skills:", "MCP servers:", "Plugins:", "Toggle usage:", "Available commands:"];
+  const end = headings
+    .filter((heading) => heading !== marker)
+    .map((heading) => source.indexOf(heading, index + marker.length))
+    .filter((position) => position >= 0)
+    .sort((left, right) => left - right)[0];
+  return source.slice(index, end === undefined ? undefined : end).trim();
 }
 
 function parseSkillCatalog(text) {
-  const source = splitSkillCatalog(text).replace(/^Available skills:\s*/i, "").trim();
+  const source = splitNamedCatalog(text, "Available skills:").replace(/^Available skills:\s*/i, "").trim();
   if (!source || source === "(no custom skills available)") {
     return [];
   }
@@ -89,6 +98,52 @@ function parseSkillCatalog(text) {
         source: (match[2] || "skill").trim(),
         enabled: match[3].toLowerCase() === "enabled",
         description: (match[4] || "").trim(),
+      };
+    })
+    .filter(Boolean);
+}
+
+function parseMcpCatalog(text) {
+  const source = splitNamedCatalog(text, "MCP servers:").replace(/^MCP servers:\s*/i, "").trim();
+  if (!source || source === "(no MCP servers configured)") {
+    return [];
+  }
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => {
+      const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled)\]\s+\(([^)]*)\)/i);
+      if (!match) {
+        return null;
+      }
+      return {
+        name: match[1].trim(),
+        enabled: match[2].toLowerCase() === "enabled",
+        description: match[3].trim() || "MCP server",
+      };
+    })
+    .filter(Boolean);
+}
+
+function parsePluginCatalog(text) {
+  const source = splitNamedCatalog(text, "Plugins:").replace(/^Plugins:\s*/i, "").trim();
+  if (!source || source === "(no plugins discovered)") {
+    return [];
+  }
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => {
+      const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled)\](?::\s*(.*))?$/i);
+      if (!match) {
+        return null;
+      }
+      return {
+        name: match[1].trim(),
+        enabled: match[2].toLowerCase() === "enabled",
+        description: (match[3] || "Plugin").trim(),
       };
     })
     .filter(Boolean);
@@ -163,7 +218,7 @@ function refreshSkillCatalogs() {
 
 function createSkillCatalog(text) {
   const skills = parseSkillCatalog(text);
-  if (!skills.length) {
+  if (!skills.length && !splitNamedCatalog(text, "Available skills:")) {
     return null;
   }
   const details = document.createElement("details");
@@ -181,6 +236,14 @@ function createSkillCatalog(text) {
 
   const grid = document.createElement("div");
   grid.className = "command-grid skill-grid";
+  if (!skills.length) {
+    const empty = document.createElement("span");
+    empty.className = "skill-pill-description";
+    empty.textContent = "No custom skills available";
+    grid.append(empty);
+    details.append(grid);
+    return details;
+  }
   for (const skill of skills) {
     const item = document.createElement("button");
     item.type = "button";
@@ -236,6 +299,79 @@ function createSkillCatalog(text) {
   return details;
 }
 
+function updateExtensionToggleButton(button) {
+  const enabled = button.dataset.itemEnabled !== "false";
+  button.classList.toggle("disabled", !enabled);
+  button.setAttribute("aria-pressed", enabled ? "true" : "false");
+  const status = button.querySelector("[data-extension-status]");
+  if (status) {
+    status.textContent = enabled ? "Active" : "Inactive";
+  }
+}
+
+function createExtensionCatalog({ label, items, emptyText, requestType }) {
+  const details = document.createElement("details");
+  details.className = "command-card skill-card";
+  details.open = true;
+
+  const summary = document.createElement("summary");
+  const title = document.createElement("span");
+  title.textContent = label;
+  const count = document.createElement("span");
+  count.className = "command-count";
+  count.textContent = items.length ? `${items.length}개` : "0개";
+  summary.append(title, count);
+  details.append(summary);
+
+  const grid = document.createElement("div");
+  grid.className = "command-grid skill-grid";
+  if (!items.length) {
+    const empty = document.createElement("span");
+    empty.className = "skill-pill-description";
+    empty.textContent = emptyText;
+    grid.append(empty);
+    details.append(grid);
+    return details;
+  }
+
+  for (const entry of items) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "command-pill skill-toggle-pill";
+    item.dataset.itemName = entry.name;
+    item.dataset.itemEnabled = entry.enabled ? "true" : "false";
+    item.addEventListener("click", async () => {
+      const nextEnabled = item.dataset.itemEnabled === "false";
+      item.dataset.itemEnabled = nextEnabled ? "true" : "false";
+      updateExtensionToggleButton(item);
+      try {
+        if (ctx.sendBackendRequest) {
+          await sendBackendRequest({ type: requestType, value: entry.name, enabled: nextEnabled });
+        }
+      } catch (error) {
+        item.dataset.itemEnabled = nextEnabled ? "false" : "true";
+        updateExtensionToggleButton(item);
+        appendMessage("system", `${label} toggle failed: ${error.message}`);
+      }
+    });
+    const header = document.createElement("span");
+    header.className = "skill-pill-header";
+    const name = document.createElement("strong");
+    name.textContent = entry.name;
+    const status = document.createElement("small");
+    status.dataset.extensionStatus = "true";
+    const description = document.createElement("span");
+    description.className = "skill-pill-description";
+    description.textContent = entry.description || label;
+    header.append(name, status);
+    item.append(header, description);
+    grid.append(item);
+    updateExtensionToggleButton(item);
+  }
+  details.append(grid);
+  return details;
+}
+
 function createCommandCatalogContent(text) {
   const { intro } = splitCommandCatalog(text);
   const wrap = document.createElement("div");
@@ -249,6 +385,22 @@ function createCommandCatalogContent(text) {
   const skillCatalog = createSkillCatalog(text);
   if (skillCatalog) {
     wrap.append(skillCatalog);
+  }
+  if (splitNamedCatalog(text, "MCP servers:")) {
+    wrap.append(createExtensionCatalog({
+      label: "MCP",
+      items: parseMcpCatalog(text),
+      emptyText: "No MCP servers configured",
+      requestType: "set_mcp_enabled",
+    }));
+  }
+  if (splitNamedCatalog(text, "Plugins:")) {
+    wrap.append(createExtensionCatalog({
+      label: "Plugins",
+      items: parsePluginCatalog(text),
+      emptyText: "No plugins discovered",
+      requestType: "set_plugin_enabled",
+    }));
   }
   wrap.append(createCommandCatalog(text));
   return wrap;
@@ -353,6 +505,133 @@ function renderCollapsedUserMessage(content, text, expanded = false) {
   preview.className = "user-message-preview";
   preview.textContent = value.replace(/\s+/g, " ").trim();
   content.append(preview, toggle);
+}
+
+function answerFileName(text) {
+  const title = String(state.chatTitle || "").trim();
+  const source = title && title !== "MyHarness"
+    ? title
+    : String(text || "").split(/\r?\n/).find((line) => line.trim()) || "answer";
+  const clean = source
+    .replace(/[#*_`~[\](){}<>]/g, "")
+    .replace(/[\\/:*?"|]/g, " ")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return `${clean || "answer"}.md`;
+}
+
+function attachAssistantActions(content, rawText) {
+  const text = String(rawText || "").trim();
+  if (!content || !text || content.dataset.answerActionsAttached === "true") {
+    return;
+  }
+  const bubble = content.closest(".bubble");
+  if (!bubble) {
+    return;
+  }
+  const actions = document.createElement("div");
+  actions.className = "assistant-actions";
+
+  const done = document.createElement("span");
+  done.className = "assistant-done";
+  done.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M20 6 9 17l-5-5"></path>
+    </svg>
+    <span>답변 완료</span>
+  `;
+
+  const status = document.createElement("span");
+  status.className = "assistant-action-status";
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "assistant-action-button";
+  copyButton.dataset.tooltip = "원문 복사";
+  copyButton.setAttribute("aria-label", "원문 복사");
+  copyButton.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+    </svg>
+  `;
+  copyButton.addEventListener("click", async () => {
+    copyButton.disabled = true;
+    try {
+      await copyTextToClipboard(text);
+      status.textContent = "복사했습니다.";
+    } catch (error) {
+      status.textContent = `복사 실패: ${error.message}`;
+    } finally {
+      window.setTimeout(() => {
+        copyButton.disabled = false;
+        status.textContent = "";
+      }, 1400);
+    }
+  });
+
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "assistant-action-button";
+  saveButton.dataset.tooltip = "파일로 저장";
+  saveButton.setAttribute("aria-label", "파일로 저장");
+  saveButton.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path>
+      <path d="M17 21v-8H7v8"></path>
+      <path d="M7 3v5h8"></path>
+    </svg>
+  `;
+  saveButton.addEventListener("click", async () => {
+    if (!state.sessionId) {
+      status.textContent = "저장할 세션이 없습니다.";
+      return;
+    }
+    saveButton.disabled = true;
+    status.textContent = "저장 중...";
+    try {
+      const response = await fetch("/api/artifact/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          session: state.sessionId,
+          path: answerFileName(text),
+          content: text,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      state.projectFilesLoadedForSession = "";
+      if (payload.artifact) {
+        const existing = new Set((state.projectFiles || []).map((file) => file.path));
+        if (!existing.has(payload.artifact.path)) {
+          state.projectFiles = [payload.artifact, ...(state.projectFiles || [])];
+        }
+        status.textContent = `${payload.artifact.path} 저장됨`;
+      } else {
+        status.textContent = "저장했습니다.";
+      }
+    } catch (error) {
+      status.textContent = `저장 실패: ${error.message}`;
+    } finally {
+      window.setTimeout(() => {
+        saveButton.disabled = false;
+        if (!status.textContent.includes("실패")) {
+          status.textContent = "";
+        }
+      }, 1800);
+    }
+  });
+
+  actions.append(done, copyButton, saveButton, status);
+  content.dataset.answerActionsAttached = "true";
+  bubble.append(actions);
 }
 
 function appendMessage(role, text, attachments = []) {
@@ -940,15 +1219,16 @@ function appendWorkflowEventNow(event) {
   }
   if (!isStart) {
     clearMutationWaitingStep(toolName);
-    const matchingRunningSteps = [...state.workflowList.querySelectorAll(".workflow-step.running")]
-      .filter((item) => item.dataset.toolName === toolName)
-    for (const item of matchingRunningSteps) {
+    const matchingRunningStep = [...state.workflowList.querySelectorAll(".workflow-step.running")]
+      .find((item) => item.dataset.toolName === toolName);
+    if (matchingRunningStep) {
+      const item = matchingRunningStep;
       item.classList.remove("running");
       item.classList.add(event.is_error ? "error" : "done");
       item.querySelector("strong").textContent = workflowTitle(event);
-      item.querySelector("small").textContent = workflowDetail(event);
-    }
-    if (matchingRunningSteps.length) {
+      if (event.is_error) {
+        item.querySelector("small").textContent = workflowDetail(event);
+      }
       updateWorkflowSummary();
       if (!state.restoringHistory && state.autoFollowMessages) {
         scrollMessagesToBottom();
@@ -1130,6 +1410,7 @@ function updateTasks(tasks) {
     refreshSkillCatalogs,
     createAttachmentPreview,
     appendMessage,
+    attachAssistantActions,
     resetWorkflowPanel,
     collapseWorkflowPanel,
     finalizeWorkflowSummary,

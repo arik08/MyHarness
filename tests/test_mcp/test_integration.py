@@ -49,6 +49,19 @@ def test_load_mcp_server_configs_merges_plugins():
     assert "demo:remote" in servers
 
 
+def test_load_mcp_server_configs_filters_disabled_servers():
+    settings = Settings(
+        mcp_servers={"local": McpStdioServerConfig(command="python", args=["server.py"])},
+        disabled_mcp_servers={"local"},
+    )
+
+    servers = load_mcp_server_configs(settings, [])
+    all_servers = load_mcp_server_configs(settings, [], include_disabled=True)
+
+    assert "local" not in servers
+    assert "local" in all_servers
+
+
 async def test_mcp_tools_are_registered():
     manager = FakeMcpManager(
         tools=[

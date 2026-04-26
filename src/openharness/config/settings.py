@@ -480,6 +480,7 @@ class Settings(BaseModel):
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     enabled_plugins: dict[str, bool] = Field(default_factory=dict)
     allow_project_plugins: bool = False
+    disabled_mcp_servers: set[str] = Field(default_factory=set)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
     # UI

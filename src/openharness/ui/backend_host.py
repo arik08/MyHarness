@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from openharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, SupportsStreamingMessages
 from openharness.auth.manager import AuthManager
-from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, resolve_model_setting
+from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, resolve_model_setting, save_settings
 from openharness.bridge import get_bridge_manager
 from openharness.mcp.config import load_mcp_server_configs
 from openharness.mcp.types import McpConnectionStatus
@@ -152,6 +152,12 @@ class ReactBackendHost:
                     continue
                 if request.type == "set_skill_enabled":
                     await self._handle_set_skill_enabled(request.value or "", request.enabled)
+                    continue
+                if request.type == "set_mcp_enabled":
+                    await self._handle_set_mcp_enabled(request.value or "", request.enabled)
+                    continue
+                if request.type == "set_plugin_enabled":
+                    await self._handle_set_plugin_enabled(request.value or "", request.enabled)
                     continue
                 if request.type == "set_system_prompt":
                     await self._handle_set_system_prompt(request.value or "")
@@ -391,9 +397,7 @@ class ReactBackendHost:
                 await self._emit(BackendEvent(type="error", message=event.message))
                 return
             if isinstance(event, StatusEvent):
-                await self._emit(
-                    BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=event.message))
-                )
+                await self._emit(BackendEvent(type="status", message=event.message))
                 return
 
         async def _clear_output() -> None:
@@ -590,6 +594,44 @@ class ReactBackendHost:
         await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
         await self._emit(self._status_snapshot())
 
+    async def _handle_set_mcp_enabled(self, name: str, enabled: bool | None) -> None:
+        assert self._bundle is not None
+        if not name.strip():
+            await self._emit(BackendEvent(type="error", message="MCP server name is required"))
+            return
+        settings = self._bundle.current_settings()
+        configs = load_mcp_server_configs(
+            settings,
+            self._bundle.current_plugins(),
+            cwd=self._bundle.cwd,
+            include_disabled=True,
+        )
+        if name not in configs:
+            await self._emit(BackendEvent(type="error", message=f"Unknown MCP server: {name}"))
+            return
+        disabled = set(settings.disabled_mcp_servers or set())
+        if enabled is False:
+            disabled.add(name)
+        else:
+            disabled.discard(name)
+        settings.disabled_mcp_servers = disabled
+        save_settings(settings)
+        await self._emit(self._status_snapshot())
+
+    async def _handle_set_plugin_enabled(self, name: str, enabled: bool | None) -> None:
+        assert self._bundle is not None
+        if not name.strip():
+            await self._emit(BackendEvent(type="error", message="Plugin name is required"))
+            return
+        settings = self._bundle.current_settings()
+        plugins = {plugin.manifest.name: plugin for plugin in self._bundle.current_plugins()}
+        if name not in plugins:
+            await self._emit(BackendEvent(type="error", message=f"Unknown plugin: {name}"))
+            return
+        settings.enabled_plugins[name] = enabled is not False
+        save_settings(settings)
+        await self._emit(self._status_snapshot())
+
     def _line_with_forced_skill(self, line: str) -> str:
         parsed = self._parse_forced_skill_line(line)
         if parsed is None:
@@ -778,11 +820,21 @@ class ReactBackendHost:
             self._bundle.current_settings(),
             self._bundle.current_plugins(),
             cwd=self._bundle.cwd,
+            include_disabled=True,
         )
+        disabled = set(self._bundle.current_settings().disabled_mcp_servers or set())
         for name, config in configs.items():
             if name in statuses:
                 continue
             transport = getattr(config, "type", "unknown")
+            if name in disabled:
+                statuses[name] = McpConnectionStatus(
+                    name=name,
+                    state="disabled",
+                    detail="Disabled in settings.",
+                    transport=str(transport),
+                )
+                continue
             statuses[name] = McpConnectionStatus(
                 name=name,
                 state="pending",

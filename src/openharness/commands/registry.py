@@ -39,6 +39,7 @@ from openharness.memory import (
     list_memory_files,
     remove_memory_entry,
 )
+from openharness.mcp.config import load_mcp_server_configs
 from openharness.output_styles import load_output_styles
 from openharness.permissions import PermissionChecker, PermissionMode
 from openharness.plugins import load_plugins
@@ -78,6 +79,41 @@ def _format_skills_management_text(skills) -> str:
         source = f" [{skill.source}]"
         lines.append(f"- {skill.name}{source} [{status}]: {skill.description}")
     return "\n".join(lines)
+
+
+def _format_mcp_management_text(settings, plugins, cwd: str | Path) -> str:
+    servers = load_mcp_server_configs(settings, plugins, cwd=cwd, include_disabled=True)
+    if not servers:
+        return "MCP servers:\n(no MCP servers configured)"
+    disabled = set(settings.disabled_mcp_servers or set())
+    lines = ["MCP servers:"]
+    for name, config in sorted(servers.items()):
+        status = "disabled" if name in disabled else "enabled"
+        transport = getattr(config, "type", "unknown")
+        lines.append(f"- {name} [{status}] ({transport})")
+    return "\n".join(lines)
+
+
+def _format_plugins_management_text(plugins) -> str:
+    if not plugins:
+        return "Plugins:\n(no plugins discovered)"
+    lines = ["Plugins:"]
+    for plugin in sorted(plugins, key=lambda item: item.manifest.name):
+        status = "enabled" if plugin.enabled else "disabled"
+        description = f": {plugin.manifest.description}" if plugin.manifest.description else ""
+        lines.append(f"- {plugin.manifest.name} [{status}]{description}")
+    return "\n".join(lines)
+
+
+def _format_capability_management_text(settings, plugins, skills, cwd: str | Path) -> str:
+    return "\n\n".join(
+        [
+            _format_skills_management_text(skills),
+            _format_mcp_management_text(settings, plugins, cwd),
+            _format_plugins_management_text(plugins),
+            "Toggle usage: /skills toggle NAME, /mcp toggle NAME, /plugin toggle NAME",
+        ]
+    )
 
 
 @dataclass
@@ -325,14 +361,19 @@ def create_default_command_registry(
         return "Auto" if normalized.lower() in {"", "none", "auto"} else normalized
 
     async def _help_handler(_: str, context: CommandContext) -> CommandResult:
+        settings = load_settings()
+        plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
         skill_registry = load_skill_registry(
             context.cwd,
             extra_skill_dirs=context.extra_skill_dirs,
             extra_plugin_roots=context.extra_plugin_roots,
+            settings=settings,
             include_disabled=True,
         )
         skills = _custom_skills(skill_registry.list_skills())
-        return CommandResult(message=f"{registry.help_text()}\n\n{_format_skills_management_text(skills)}")
+        return CommandResult(
+            message=f"{registry.help_text()}\n\n{_format_capability_management_text(settings, plugins, skills, context.cwd)}"
+        )
 
     async def _exit_handler(_: str, context: CommandContext) -> CommandResult:
         del context
@@ -809,21 +850,8 @@ def create_default_command_registry(
         lines = [
             f"Reloaded plugin and skill registry: {len(plugins)} plugin(s), {len(skills)} custom skill(s)."
         ]
-        if plugins:
-            lines.append("")
-            lines.append("Plugins:")
-            for plugin in plugins:
-                state = "enabled" if plugin.enabled else "disabled"
-                lines.append(f"- {plugin.manifest.name} [{state}]")
-        else:
-            lines.append("- Plugins: none discovered.")
-        if skills:
-            lines.append("")
-            lines.append("Skills:")
-            for skill in skills:
-                lines.append(f"- {skill.name}: {skill.description}")
-        else:
-            lines.append("- Skills: none available.")
+        lines.append("")
+        lines.append(_format_capability_management_text(settings, plugins, skills, context.cwd))
         return CommandResult(message="\n".join(lines))
 
     async def _skills_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1176,6 +1204,31 @@ def create_default_command_registry(
     async def _mcp_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         tokens = args.split()
+        plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+        servers = load_mcp_server_configs(settings, plugins, cwd=context.cwd, include_disabled=True)
+        if not tokens or tokens[0] == "list":
+            return CommandResult(message=_format_mcp_management_text(settings, plugins, context.cwd))
+        if tokens[0] in {"enable", "disable", "toggle"} and len(tokens) == 2:
+            server_name = tokens[1]
+            if server_name not in servers:
+                return CommandResult(message=f"Unknown MCP server: {server_name}")
+            disabled = set(settings.disabled_mcp_servers or set())
+            if tokens[0] == "enable":
+                disabled.discard(server_name)
+            elif tokens[0] == "disable":
+                disabled.add(server_name)
+            else:
+                if server_name in disabled:
+                    disabled.remove(server_name)
+                else:
+                    disabled.add(server_name)
+            settings.disabled_mcp_servers = disabled
+            save_settings(settings)
+            enabled = server_name not in disabled
+            return CommandResult(
+                message=f"MCP server '{server_name}' {'enabled' if enabled else 'disabled'}.",
+                refresh_runtime=True,
+            )
         if tokens and tokens[0] == "auth" and len(tokens) >= 3:
             server_name = tokens[1]
             config = settings.mcp_servers.get(server_name)
@@ -1221,13 +1274,14 @@ def create_default_command_registry(
                 return CommandResult(message=f"Server {server_name} does not support auth updates")
             save_settings(settings)
             return CommandResult(message=f"Saved MCP auth for {server_name}. Restart session to reconnect.")
-        return CommandResult(message=context.mcp_summary or "No MCP servers configured.")
+        return CommandResult(message="Usage: /mcp [list|enable NAME|disable NAME|toggle NAME|auth SERVER ...]")
 
     async def _plugin_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         tokens = args.split()
         if not tokens or tokens[0] == "list":
-            return CommandResult(message=context.plugin_summary or "No plugins discovered.")
+            plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+            return CommandResult(message=_format_plugins_management_text(plugins))
         if tokens[0] == "enable" and len(tokens) == 2:
             settings.enabled_plugins[tokens[1]] = True
             save_settings(settings)
@@ -1236,6 +1290,18 @@ def create_default_command_registry(
             settings.enabled_plugins[tokens[1]] = False
             save_settings(settings)
             return CommandResult(message=f"Disabled plugin '{tokens[1]}'. Restart session to reload.")
+        if tokens[0] == "toggle" and len(tokens) == 2:
+            plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+            known_plugins = {plugin.manifest.name: plugin for plugin in plugins}
+            current = known_plugins.get(tokens[1])
+            if current is None:
+                return CommandResult(message=f"Unknown plugin: {tokens[1]}")
+            enabled = not current.enabled
+            settings.enabled_plugins[tokens[1]] = enabled
+            save_settings(settings)
+            return CommandResult(
+                message=f"{'Enabled' if enabled else 'Disabled'} plugin '{tokens[1]}'. Restart session to reload."
+            )
         if tokens[0] == "install" and len(tokens) == 2:
             path = install_plugin_from_path(tokens[1])
             return CommandResult(message=f"Installed plugin to {path}")
@@ -1245,8 +1311,8 @@ def create_default_command_registry(
             return CommandResult(message=f"Plugin '{tokens[1]}' not found")
         plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
         if plugins:
-            return CommandResult(message=context.plugin_summary)
-        return CommandResult(message="Usage: /plugin [list|enable NAME|disable NAME|install PATH|uninstall NAME]")
+            return CommandResult(message=_format_plugins_management_text(plugins))
+        return CommandResult(message="Usage: /plugin [list|enable NAME|disable NAME|toggle NAME|install PATH|uninstall NAME]")
 
     _MODE_LABELS = {"default": "Default", "plan": "Plan Mode", "full_auto": "Auto"}
 
@@ -2050,7 +2116,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("logout", "Clear the stored API key", _logout_handler))
     registry.register(SlashCommand("feedback", "Save CLI feedback to the local feedback log", _feedback_handler))
     registry.register(SlashCommand("onboarding", "Show the quickstart guide", _onboarding_handler))
-    registry.register(SlashCommand("skills", "List or show available skills", _skills_handler))
+    registry.register(SlashCommand("skills", "List, show, or toggle available skills", _skills_handler))
     registry.register(
         SlashCommand(
             "learned-skills",
@@ -2059,7 +2125,7 @@ def create_default_command_registry(
         )
     )
     registry.register(SlashCommand("config", "Show or update configuration", _config_handler))
-    registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler))
+    registry.register(SlashCommand("mcp", "List or toggle MCP servers", _mcp_handler))
     registry.register(
         SlashCommand(
             "plugin",

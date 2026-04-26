@@ -722,9 +722,6 @@ async function restartSessionForWorkspace(workspace) {
   state.sessionId = null;
   for (const slot of previousSlots) {
     slot.source?.close();
-    if (slot.backendSessionId) {
-      await shutdownSession(slot.backendSessionId).catch(() => {});
-    }
     if (slot.container !== els.messages) {
       slot.container.remove();
     }
@@ -732,6 +729,9 @@ async function restartSessionForWorkspace(workspace) {
   state.chatSlots.clear();
   state.activeFrontendId = "";
   setActiveWorkspace(workspace);
+  requestHistory().catch(() => {
+    ctx.renderHistory?.([]);
+  });
   state.assistantNode = null;
   state.activeHistoryId = null;
   state.pendingScrollRestoreId = null;
@@ -746,6 +746,9 @@ async function restartSessionForWorkspace(workspace) {
   clearPastedTexts();
   clearAttachments();
   try {
+    await Promise.all(previousSlots.map((slot) =>
+      slot.backendSessionId ? shutdownSession(slot.backendSessionId).catch(() => {}) : Promise.resolve()
+    ));
     await startSession();
     state.switchingWorkspace = false;
     updateSendState();
@@ -901,11 +904,25 @@ async function requestHistory() {
   if (els.historyList.querySelector(".empty")) {
     els.historyList.querySelector(".empty").textContent = "대화 내역을 불러오는 중...";
   }
-  await sendBackendRequest({ type: "list_sessions" });
+  const workspacePath = state.workspacePath || "";
+  const workspaceName = state.workspaceName || "";
+  const params = new URLSearchParams();
+  if (workspacePath) {
+    params.set("workspacePath", workspacePath);
+  } else if (workspaceName) {
+    params.set("workspaceName", workspaceName);
+  }
+  const data = await getJson(`/api/history?${params.toString()}`);
+  const currentPath = String(state.workspacePath || "").trim();
+  const responsePath = String(data.workspace?.path || "").trim();
+  if (currentPath && responsePath && currentPath !== responsePath) {
+    return;
+  }
+  ctx.renderHistory?.(Array.isArray(data.options) ? data.options : []);
 }
 
 async function deleteHistorySession(sessionId, item) {
-  if (!sessionId || !state.sessionId) {
+  if (!sessionId) {
     return;
   }
   item?.classList.add("deleting");
@@ -920,8 +937,17 @@ async function deleteHistorySession(sessionId, item) {
   if (!els.historyList.querySelector(".history-item")) {
     ctx.renderHistory?.([]);
   }
-  sendBackendRequest({ type: "delete_session", value: sessionId }).catch((error) => {
+  deleteJson("/api/history", {
+    sessionId,
+    workspacePath: state.workspacePath,
+    workspaceName: state.workspaceName,
+  }).then(() => {
+    requestHistory().catch(() => {});
+  }).catch((error) => {
     console.warn("History delete failed", error);
+    if (state.sessionId) {
+      sendBackendRequest({ type: "delete_session", value: sessionId }).catch(() => {});
+    }
   });
 }
 

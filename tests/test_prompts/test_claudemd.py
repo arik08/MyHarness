@@ -58,6 +58,18 @@ def test_build_runtime_system_prompt_combines_sections(tmp_path: Path, monkeypat
     assert "Memory" in prompt
 
 
+def test_build_runtime_system_prompt_guides_artifact_filenames(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="make a tetris html")
+
+    assert "meaningful kebab-case filename" in prompt
+    assert "`index.html` only when the user explicitly asks" in prompt
+
+
 def test_build_runtime_system_prompt_includes_project_context_and_fast_mode(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
     repo = tmp_path / "repo"
