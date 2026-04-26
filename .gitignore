@@ -30,6 +30,7 @@ frontend/web/node_modules/
 
 # User data (never commit API keys or session data)
 .openharness/*
+!.openharness/settings.json
 !.openharness/credentials.example.json
 Playground/
 react_tui_smoke.txt

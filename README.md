@@ -18,7 +18,13 @@ MyHarness는 OpenHarness agent runtime을 브라우저 UI로 감싼 도구입니
 
 ## 빠른 시작
 
-이 폴더에서 아래 파일을 실행하세요.
+처음 받은 PC에서는 이 폴더에서 아래 파일을 한 번 실행하세요.
+
+```bat
+Installer.bat
+```
+
+설치가 끝난 뒤, 또는 이미 설치된 PC에서는 아래 파일을 실행하세요.
 
 ```bat
 run_openharness_web.bat
@@ -30,7 +36,9 @@ run_openharness_web.bat
 http://localhost:4173
 ```
 
-런처는 Python과 web 의존성을 확인하고, 같은 포트를 잡고 있는 기존 프로세스가 있으면 정리한 뒤 MyHarness web server를 시작합니다.
+설치기와 런처는 모두 프로젝트 안의 `.openharness/` 폴더를 사용합니다. 그래서 폴더를 다른 PC로 옮겨도 사용자 홈 디렉터리 설정과 섞이지 않습니다.
+
+런처는 Python 가상환경, Python 패키지, web 의존성, 기본 P-GPT 설정을 확인합니다. 설치기를 먼저 실행하지 않았더라도 가능한 범위에서 자동으로 보정한 뒤 MyHarness web server를 시작합니다.
 
 다른 포트를 쓰고 싶으면 다음처럼 실행하세요.
 
@@ -41,7 +49,7 @@ run_openharness_web.bat
 
 ## P-GPT 설정
 
-초기 사용자에게 가장 중요한 설정 파일은 프로젝트 안의 아래 두 파일입니다.
+초기 사용자에게 가장 중요한 설정 파일은 프로젝트 안의 아래 파일입니다.
 
 ```text
 .openharness/settings.json
@@ -51,11 +59,12 @@ run_openharness_web.bat
 
 `run_openharness_web.bat`는 기본적으로 이 프로젝트-local `.openharness/` 폴더를 사용합니다. 그래서 이 폴더를 통째로 옮긴 뒤에도 사용자 홈 디렉터리에 인증 정보를 다시 만들지 않고 바로 실행할 수 있습니다.
 
-- `.openharness/settings.json`: 기본 provider profile을 고릅니다. 현재 기본값은 `p-gpt`입니다.
-- `.openharness/credentials.json`: `posco_gpt` provider가 사용할 P-GPT `api_key`, `emp_no`, `comp_no`를 저장합니다.
+- `.openharness/settings.json`: 기본 provider profile을 고릅니다. 배포 기본값은 `p-gpt`입니다.
+- `.openharness/credentials.json`: `posco_gpt` provider가 사용할 P-GPT `api_key`, `emp_no`, `comp_no`를 저장합니다. 이 파일은 사용자별 비밀 파일이라 저장소에는 올리지 않습니다.
 - `.openharness/credentials.example.json`: 저장소에 올리는 예시 파일입니다. 실제 값은 `.openharness/credentials.json`에만 저장하세요.
 - P-GPT endpoint는 built-in `p-gpt` profile에 `http://pgpt.posco.com/s0la01-gpt/gptApi/personalApi`로 정의되어 있습니다.
-- 앱이 다른 provider로 열리면 채팅창에서 `/provider p-gpt`를 실행하세요.
+- 인증값이 없어도 앱은 `Provider: P-GPT`, `Auth: missing` 상태로 열립니다. 브라우저의 설정/모델 설정에서 P-GPT API Key와 Emp No를 저장하면 바로 사용할 수 있습니다.
+- 앱이 다른 provider로 열리면 채팅창에서 `/provider p-gpt`를 실행하거나 `.openharness/settings.json`의 `active_profile`을 `p-gpt`로 되돌리세요.
 
 ## 워크스페이스 모델
 
@@ -126,6 +135,7 @@ src/openharness/           Python agent runtime과 backend host
 .plugins/                  프로그램-level plugin
 Playground/                워크스페이스 폴더와 생성 파일
 run_openharness_web.bat    Windows 런처
+Installer.bat              프로젝트-local 설치/복구 스크립트
 README.openharness.md      보존된 upstream OpenHarness README
 ```
 

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import asyncio
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Iterable
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterable
 
-from openharness.api.client import AnthropicApiClient, SupportsStreamingMessages
+from openharness.api.client import AnthropicApiClient, ApiMessageRequest, ApiStreamEvent, SupportsStreamingMessages
+from openharness.api.errors import AuthenticationFailure
 from openharness.api.codex_client import CodexApiClient
 from openharness.api.copilot_client import CopilotClient
 from openharness.api.openai_client import OpenAICompatibleClient
@@ -45,6 +45,18 @@ AskUserPrompt = Callable[[str], Awaitable[str]]
 SystemPrinter = Callable[[str], Awaitable[None]]
 StreamRenderer = Callable[[StreamEvent], Awaitable[None]]
 ClearHandler = Callable[[], Awaitable[None]]
+
+
+class MissingAuthClient:
+    """Runtime placeholder that lets the UI start before credentials are configured."""
+
+    def __init__(self, message: str) -> None:
+        self._message = message
+
+    async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
+        del request
+        raise AuthenticationFailure(self._message)
+        yield  # pragma: no cover
 
 
 @dataclass
@@ -141,14 +153,8 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
     def _safe_resolve_auth():
         try:
             return settings.resolve_auth()
-        except (ValueError, Exception):
-            print(
-                "Error: No API key configured.\n"
-                "  Run `oh auth login` to set up authentication, or set the\n"
-                "  ANTHROPIC_API_KEY (or OPENAI_API_KEY) environment variable.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
+        except Exception as exc:
+            raise ValueError(_missing_auth_message(settings)) from exc
 
     if settings.api_format == "copilot":
         from openharness.api.copilot_client import COPILOT_DEFAULT_MODEL
@@ -190,6 +196,22 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
     return AnthropicApiClient(
         api_key=auth.value,
         base_url=settings.base_url,
+    )
+
+
+def _missing_auth_message(settings) -> str:
+    if settings.provider == "posco_gpt" or settings.api_format == "posco_gpt":
+        return (
+            "P-GPT 인증 정보가 없습니다. 설정에서 P-GPT API Key와 Emp No를 저장하거나 "
+            "POSCO_API_KEY, POSCO_EMP_NO 환경 변수를 설정하세요."
+        )
+    if settings.provider == "openai_codex":
+        return "Codex 인증 정보가 없습니다. `oh auth codex-login`으로 로그인하세요."
+    if settings.provider == "anthropic_claude":
+        return "Claude 인증 정보가 없습니다. `oh auth claude-login`으로 로그인하세요."
+    return (
+        "API key가 없습니다. 설정에서 현재 provider 인증 정보를 저장하거나 "
+        "해당 환경 변수를 설정하세요."
     )
 
 
@@ -237,7 +259,10 @@ async def build_runtime(
     if api_client:
         resolved_api_client = api_client
     else:
-        resolved_api_client = _resolve_api_client_from_settings(settings)
+        try:
+            resolved_api_client = _resolve_api_client_from_settings(settings)
+        except ValueError as exc:
+            resolved_api_client = MissingAuthClient(str(exc))
     mcp_manager = McpClientManager(load_mcp_server_configs(settings, plugins, cwd=cwd))
     await mcp_manager.connect_all()
     tool_registry = create_default_tool_registry(mcp_manager)
@@ -507,7 +532,10 @@ def refresh_runtime_client(bundle: RuntimeBundle) -> None:
     """Refresh the active runtime client after provider/auth/profile changes."""
     settings = bundle.current_settings()
     if not bundle.external_api_client:
-        bundle.api_client = _resolve_api_client_from_settings(settings)
+        try:
+            bundle.api_client = _resolve_api_client_from_settings(settings)
+        except ValueError as exc:
+            bundle.api_client = MissingAuthClient(str(exc))
         bundle.engine.set_api_client(bundle.api_client)
         bundle.hook_executor.update_context(
             api_client=bundle.api_client,

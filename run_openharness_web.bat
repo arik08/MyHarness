@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 
 title OpenHarness Web Backend
 
@@ -15,6 +15,7 @@ if "%OPENHARNESS_DATA_DIR%"=="" set "OPENHARNESS_DATA_DIR=%OPENHARNESS_CONFIG_DI
 if "%OPENHARNESS_LOGS_DIR%"=="" set "OPENHARNESS_LOGS_DIR=%OPENHARNESS_CONFIG_DIR%\logs"
 set "OPENHARNESS_HOME=%OPENHARNESS_CONFIG_DIR%"
 set "OPENHARNESS_VENV_PY=%OPENHARNESS_HOME%\venv\Scripts\python.exe"
+set "OPENHARNESS_SETTINGS=%OPENHARNESS_CONFIG_DIR%\settings.json"
 
 echo.
 echo ============================================================
@@ -57,15 +58,34 @@ if errorlevel 1 if not exist "%OPENHARNESS_VENV_PY%" (
   exit /b 1
 )
 
-echo [INFO] Checking Python package dependencies...
-set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
-if exist "%OPENHARNESS_VENV_PY%" (
-  set "OPENHARNESS_PYTHON=%OPENHARNESS_VENV_PY%"
-) else (
-  set "OPENHARNESS_PYTHON=py -3"
+echo [INFO] Preparing project-local runtime directories...
+if not exist "%OPENHARNESS_CONFIG_DIR%" mkdir "%OPENHARNESS_CONFIG_DIR%"
+if not exist "%OPENHARNESS_DATA_DIR%" mkdir "%OPENHARNESS_DATA_DIR%"
+if not exist "%OPENHARNESS_LOGS_DIR%" mkdir "%OPENHARNESS_LOGS_DIR%"
+if not exist "Playground" mkdir "Playground"
+if not exist "Playground\Default" mkdir "Playground\Default"
+if not exist "%OPENHARNESS_SETTINGS%" (
+  > "%OPENHARNESS_SETTINGS%" echo {
+  >> "%OPENHARNESS_SETTINGS%" echo   "active_profile": "p-gpt"
+  >> "%OPENHARNESS_SETTINGS%" echo }
 )
 
-%OPENHARNESS_PYTHON% -c "import importlib.util, sys; required=['openharness','pydantic','yaml','httpx']; missing=[name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" >nul 2>nul
+echo [INFO] Checking Python package dependencies...
+set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
+if not exist "%OPENHARNESS_VENV_PY%" (
+  echo [INFO] Creating project-local Python virtual environment...
+  py -3 -m venv "%OPENHARNESS_HOME%\venv"
+  if errorlevel 1 (
+    echo.
+    echo [ERROR] Python virtual environment creation failed.
+    echo Run Installer.bat and try again.
+    pause
+    exit /b 1
+  )
+)
+set "OPENHARNESS_PYTHON=%OPENHARNESS_VENV_PY%"
+
+%OPENHARNESS_PYTHON% -c "import importlib.util, sys; required=['openharness','anthropic','openai','rich','prompt_toolkit','textual','typer','pydantic','httpx','websockets','mcp','pyperclip','yaml','questionary','watchfiles','croniter','slack_sdk','telegram','discord','lark_oapi']; missing=[name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" >nul 2>nul
 if errorlevel 1 (
   echo [INFO] Missing Python dependencies detected. Installing now...
   %OPENHARNESS_PYTHON% -m pip install -e .
@@ -76,7 +96,7 @@ if errorlevel 1 (
     pause
     exit /b 1
   )
-  %OPENHARNESS_PYTHON% -c "import openharness, pydantic, yaml, httpx" >nul 2>nul
+  %OPENHARNESS_PYTHON% -c "import importlib.util, sys; required=['openharness','anthropic','openai','rich','prompt_toolkit','textual','typer','pydantic','httpx','websockets','mcp','pyperclip','yaml','questionary','watchfiles','croniter','slack_sdk','telegram','discord','lark_oapi']; missing=[name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" >nul 2>nul
   if errorlevel 1 (
     echo.
     echo [ERROR] Python dependencies are still not importable after installation.
@@ -91,7 +111,15 @@ if errorlevel 1 (
 if not exist "frontend\web\node_modules\.package-lock.json" (
   echo [INFO] Missing web dependencies detected. Installing now...
   pushd "frontend\web"
-  call npm install
+  if exist "package-lock.json" (
+    call npm ci
+    if errorlevel 1 (
+      echo [WARN] npm ci failed. Retrying with npm install...
+      call npm install
+    )
+  ) else (
+    call npm install
+  )
   if errorlevel 1 (
     popd
     echo.

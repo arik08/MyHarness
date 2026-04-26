@@ -835,7 +835,22 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     if auto_compact_threshold_tokens:
         updates["auto_compact_threshold_tokens"] = int(auto_compact_threshold_tokens)
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    api_key = ""
+    if active_profile.auth_source == "anthropic_api_key":
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    elif active_profile.auth_source == "openai_api_key":
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+    elif active_profile.auth_source not in {
+        "codex_subscription",
+        "claude_subscription",
+        "copilot_oauth",
+        "posco_gpt_api_key",
+        "dashscope_api_key",
+        "moonshot_api_key",
+        "gemini_api_key",
+        "minimax_api_key",
+    }:
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if api_key:
         updates["api_key"] = api_key
 
