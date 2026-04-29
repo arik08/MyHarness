@@ -1,13 +1,13 @@
 {
-  "model": "gpt-5.4",
+  "model": "gpt-5.5",
   "max_tokens": 16384,
-  "base_url": "http://pgpt.posco.com/s0la01-gpt/v1",
+  "base_url": null,
   "timeout": 30.0,
   "context_window_tokens": null,
   "auto_compact_threshold_tokens": null,
   "api_format": "openai",
-  "provider": "openai",
-  "active_profile": "p-gpt",
+  "provider": "openai_codex",
+  "active_profile": "codex",
   "profiles": {
     "p-gpt": {
       "label": "P-GPT",
@@ -136,11 +136,13 @@
   "system_prompt": null,
   "permission": {
     "mode": "default",
+    "plan_previous_mode": null,
     "allowed_tools": [],
     "denied_tools": [],
     "path_rules": [],
     "denied_commands": []
   },
+  "yolo_mode_enabled": true,
   "hooks": {},
   "memory": {
     "enabled": true,
