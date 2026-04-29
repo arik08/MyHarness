@@ -948,7 +948,7 @@ function answerFileName(text) {
     .replace(/\s+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
-  return `${clean || "answer"}.md`;
+  return `outputs/${clean || "answer"}.md`;
 }
 
 function attachAssistantActions(content, rawText) {
@@ -1033,6 +1033,7 @@ function attachAssistantActions(content, rawText) {
         },
         body: JSON.stringify({
           session: state.sessionId,
+          clientId: state.clientId,
           path: answerFileName(text),
           content: text,
         }),
@@ -1177,7 +1178,7 @@ function createTodoChecklistCard(items, {
   toggle.setAttribute("aria-controls", listId);
   toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
   toggle.setAttribute("aria-label", collapsed ? "Check List 펼치기" : "Check List 접기");
-  toggle.addEventListener("click", () => {
+  const toggleChecklist = () => {
     if (archived) {
       const nextCollapsed = !card.classList.contains("collapsed");
       card.classList.toggle("collapsed", nextCollapsed);
@@ -1188,13 +1189,28 @@ function createTodoChecklistCard(items, {
     }
     state.todoCollapsed = !state.todoCollapsed;
     renderTodoChecklist(markdown || state.todoMarkdown);
+  };
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleChecklist();
+  });
+  card.addEventListener("click", (event) => {
+    let node = event.target;
+    while (node && node !== card) {
+      if (node.classList?.contains("todo-dismiss-button")) {
+        return;
+      }
+      node = node.parentElement;
+    }
+    toggleChecklist();
   });
   if (!archived) {
     const dismiss = document.createElement("button");
     dismiss.type = "button";
     dismiss.className = "todo-dismiss-button";
     dismiss.setAttribute("aria-label", "Check List 삭제");
-    dismiss.addEventListener("click", () => {
+    dismiss.addEventListener("click", (event) => {
+      event.stopPropagation();
       resetTodoChecklist();
     });
     actions.append(toggle, dismiss);
@@ -1223,7 +1239,7 @@ function createTodoChecklistCard(items, {
     spinner.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
     label.className = "todo-label";
-    label.textContent = item.text;
+    label.textContent = item.checked ? `(완료) ${item.text}` : item.text;
     row.append(checkbox, spinner, label);
     list.append(row);
   }
@@ -1501,7 +1517,7 @@ function ensureWorkflowPanel(promptText = "") {
   startWorkflowTimer();
   appendWorkflowStep("요청 이해", "사용자 요청을 확인했습니다.", "done");
   appendWorkflowStep(
-    "작업 방향 정리",
+    "작업 계획 수립",
     workflowIntent === "file" ? "파일 작성 방향과 저장 방식을 정리합니다." : "필요한 맥락과 진행 방향을 정리합니다.",
     "running",
     "",
@@ -2203,7 +2219,7 @@ function clearMutationWaitingStep(toolName) {
 function markPlanningStepDone() {
   const planning = state.workflowSteps.find((row) =>
     row.dataset.workflowRole === "planning"
-    || ["작업 계획", "작업 방향 정리"].includes(row.querySelector("strong")?.textContent || "")
+    || ["작업 계획", "작업 계획 수립"].includes(row.querySelector("strong")?.textContent || "")
   );
   if (planning && planning.classList.contains("running")) {
     planning.classList.remove("running");

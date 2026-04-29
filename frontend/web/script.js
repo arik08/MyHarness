@@ -62,6 +62,7 @@ const {
   renderSlashMenu,
   requestHistory,
   requestSelectCommand,
+  readYoloModeSettings,
   renderAttachments,
   removePastedText,
   selectSlashCommand,
@@ -137,7 +138,7 @@ installNativeTooltipGuard();
 function applyTheme(themeId) {
   const theme = themeOptions.find((item) => item.id === themeId) || themeOptions[0];
   document.documentElement.dataset.theme = theme.id === "light" ? "" : theme.id;
-  localStorage.setItem("openharness:theme", theme.id);
+  localStorage.setItem("myharness:theme", theme.id);
   if (els.themeToggle) {
     els.themeToggle.dataset.tooltip = `테마: ${theme.label}`;
     els.themeToggle.setAttribute("aria-label", `테마 전환: ${theme.label}`);
@@ -145,7 +146,7 @@ function applyTheme(themeId) {
 }
 
 function cycleTheme() {
-  const current = localStorage.getItem("openharness:theme") || "light";
+  const current = localStorage.getItem("myharness:theme") || "light";
   const currentIndex = Math.max(0, themeOptions.findIndex((item) => item.id === current));
   const next = themeOptions[(currentIndex + 1) % themeOptions.length];
   applyTheme(next.id);
@@ -321,7 +322,7 @@ function handlePlanModeShortcut(event) {
   if (state.busy) {
     return true;
   }
-  sendLine("/plan").catch((error) => {
+  sendLine("/plan", { preserveDraft: true }).catch((error) => {
     appendMessage("system", `Plan mode toggle failed: ${error.message}`);
     setBusy(false, STATUS_LABELS.error);
   });
@@ -431,7 +432,7 @@ els.input.addEventListener("blur", () => {
 });
 
 els.planModeIndicator?.addEventListener("click", () => {
-  sendLine("/plan").catch((error) => {
+  sendLine("/plan", { preserveDraft: true }).catch((error) => {
     appendMessage("system", `Plan mode toggle failed: ${error.message}`);
     setBusy(false, STATUS_LABELS.error);
   });
@@ -552,10 +553,14 @@ document.querySelectorAll("[data-action='new-chat']").forEach((button) => {
 });
 
 els.historyRefresh?.addEventListener("click", async () => {
+  els.historyRefresh.disabled = true;
   try {
-    await requestHistory();
+    await ctx.restartActiveBackendSession();
   } catch (error) {
-    appendMessage("system", `대화 내역 갱신 실패: ${error.message}`);
+    appendMessage("system", `터미널 세션 재시작 실패: ${error.message}`);
+    setBusy(false, STATUS_LABELS.error);
+  } finally {
+    els.historyRefresh.disabled = false;
   }
 });
 
@@ -575,11 +580,12 @@ els.sidebar?.addEventListener("click", (event) => {
   setSidebarCollapsed(false);
 });
 
-applyTheme(localStorage.getItem("openharness:theme") || "light");
-setSidebarCollapsed(localStorage.getItem("openharness:sidebarCollapsed") === "1");
+applyTheme(localStorage.getItem("myharness:theme") || "light");
+setSidebarCollapsed(localStorage.getItem("myharness:sidebarCollapsed") === "1");
 
 async function boot() {
   await initializeWorkspace();
+  await readYoloModeSettings();
   requestHistory().catch(() => {});
   await startSession();
 }

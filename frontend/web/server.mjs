@@ -1,14 +1,21 @@
 import { createServer } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, delimiter, dirname, extname, isAbsolute, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 import { countTokens } from "gpt-tokenizer";
+import { historyOrderTimestamp } from "./modules/historyOrder.js";
+import {
+  artifactCategoryForPath,
+  isDefaultProjectFileCandidate,
+  nextAvailableRelativePath,
+  normalizeProjectFilePath,
+} from "./modules/projectFiles.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = normalize(join(root, "../.."));
@@ -16,27 +23,28 @@ const webRoot = normalize(root);
 const assetsRoot = normalize(join(repoRoot, "assets"));
 const vendorRoot = normalize(join(root, "node_modules"));
 const playgroundRoot = normalize(join(repoRoot, "Playground"));
-const appConfigRoot = normalize(join(repoRoot, ".openharness"));
-if (!String(process.env.OPENHARNESS_CONFIG_DIR || "").trim()) {
-  process.env.OPENHARNESS_CONFIG_DIR = appConfigRoot;
+const appConfigRoot = normalize(join(repoRoot, ".myharness"));
+if (!String(process.env.MYHARNESS_CONFIG_DIR || "").trim()) {
+  process.env.MYHARNESS_CONFIG_DIR = appConfigRoot;
 }
-if (!String(process.env.OPENHARNESS_DATA_DIR || "").trim()) {
-  process.env.OPENHARNESS_DATA_DIR = join(appConfigRoot, "data");
+if (!String(process.env.MYHARNESS_DATA_DIR || "").trim()) {
+  process.env.MYHARNESS_DATA_DIR = join(appConfigRoot, "data");
 }
-if (!String(process.env.OPENHARNESS_LOGS_DIR || "").trim()) {
-  process.env.OPENHARNESS_LOGS_DIR = join(appConfigRoot, "logs");
+if (!String(process.env.MYHARNESS_LOGS_DIR || "").trim()) {
+  process.env.MYHARNESS_LOGS_DIR = join(appConfigRoot, "logs");
 }
-if (!String(process.env.OPENHARNESS_HOME || "").trim()) {
-  process.env.OPENHARNESS_HOME = appConfigRoot;
+if (!String(process.env.MYHARNESS_HOME || "").trim()) {
+  process.env.MYHARNESS_HOME = appConfigRoot;
 }
+const runtimeLogPath = join(process.env.MYHARNESS_LOGS_DIR, "myharness-web-runtime.log");
 configurePoscoCertificate();
 const sharedWorkspaceScopeName = "shared";
 const defaultWorkspaceName = "Default";
-const projectPreferencesRel = join(".openharness", "preferences.json");
+const projectPreferencesRel = join(".myharness", "preferences.json");
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
-let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.OPENHARNESS_WORKSPACE_SCOPE);
-let shellPreference = normalizeShellPreference(process.env.OPENHARNESS_SHELL);
+let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.MYHARNESS_WORKSPACE_SCOPE);
+let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
 let server = null;
@@ -123,9 +131,11 @@ const artifactTypes = {
   ".pptx": { kind: "file", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", encoding: "binary" },
   ".zip": { kind: "file", mime: "application/zip", encoding: "binary" },
 };
-const artifactListSkipDirs = new Set([".git", ".openharness", "node_modules", "__pycache__", ".venv", "venv"]);
+const artifactListSkipDirs = new Set([".git", ".myharness", "node_modules", "__pycache__", ".venv", "venv"]);
 const artifactListMaxItems = 300;
 const projectFileListMaxItems = 600;
+const projectFileCacheTtlMs = 10_000;
+const projectFileListCache = new Map();
 const projectFileListSkipPrefixes = [
   "autopilot-dashboard/",
   "docs/autopilot/",
@@ -133,6 +143,35 @@ const projectFileListSkipPrefixes = [
 const shellCommandTimeoutMs = 60_000;
 const shellOutputMaxChars = 24_000;
 const tokenCountMaxChars = 200_000;
+
+function errorPayload(error) {
+  return {
+    name: error?.name || "Error",
+    message: error?.message || String(error || ""),
+    stack: error?.stack || "",
+  };
+}
+
+function writeRuntimeLog(event, details = {}) {
+  try {
+    mkdirSync(process.env.MYHARNESS_LOGS_DIR, { recursive: true });
+    appendFileSync(runtimeLogPath, `${JSON.stringify({
+      ts: new Date().toISOString(),
+      event,
+      pid: process.pid,
+      ...details,
+    })}\n`, "utf8");
+  } catch {
+    // Logging must never be the reason the web server exits.
+  }
+}
+
+writeRuntimeLog("server_process_start", {
+  node: process.version,
+  port,
+  host,
+  cwd: repoRoot,
+});
 
 function normalizeWorkspaceScopeMode(value) {
   const mode = String(value || "").trim().toLowerCase();
@@ -157,14 +196,17 @@ function configurePoscoCertificate() {
   if (process.platform !== "win32") {
     return;
   }
-  const certPath = "C:\\POSCO.crt";
+  const certPath = "C:\\POSCO_CA.crt";
+  const bundlePath = join(repoRoot, "certs", "posco-ca-bundle.pem");
   if (!existsSync(certPath)) {
     return;
   }
-  process.env.SSL_CERT_FILE = certPath;
-  process.env.REQUESTS_CA_BUNDLE = certPath;
-  process.env.CURL_CA_BUNDLE = certPath;
-  process.env.PIP_CERT = certPath;
+  if (existsSync(bundlePath)) {
+    process.env.SSL_CERT_FILE = bundlePath;
+    process.env.REQUESTS_CA_BUNDLE = bundlePath;
+    process.env.CURL_CA_BUNDLE = bundlePath;
+    process.env.PIP_CERT = bundlePath;
+  }
   process.env.NODE_EXTRA_CA_CERTS = process.env.NODE_EXTRA_CA_CERTS || certPath;
   process.env.npm_config_cafile = process.env.npm_config_cafile || certPath;
 }
@@ -332,13 +374,35 @@ const chatHtmlPreviewAutosizeScript = `<script>
       token = window.name;
     }
     parent.postMessage({
-      type: "openharness-html-preview-size",
+      type: "myharness-html-preview-size",
       token: token,
       height: height()
     }, "*");
   }
+  function handleParentResize(event) {
+    var token = "";
+    try {
+      token = new URLSearchParams(location.search).get("ohPreviewToken") || window.name;
+    } catch (error) {
+      token = window.name;
+    }
+    if (!event.data || event.data.type !== "myharness-html-preview-resize" || event.data.token !== token) {
+      return;
+    }
+    try {
+      window.dispatchEvent(new Event("resize"));
+    } catch (error) {
+      var resizeEvent = document.createEvent("Event");
+      resizeEvent.initEvent("resize", true, true);
+      window.dispatchEvent(resizeEvent);
+    }
+    send();
+    requestAnimationFrame(send);
+    setTimeout(send, 120);
+  }
   window.addEventListener("load", send);
   window.addEventListener("resize", send);
+  window.addEventListener("message", handleParentResize);
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", send);
   } else {
@@ -417,7 +481,7 @@ function workspaceRelativeTarget(workspacePath, candidate) {
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error("Artifact must stay inside the current project");
   }
-  return { target, rel };
+  return { target, rel: rel.replace(/\\/g, "/") };
 }
 
 async function readArtifactPreview(session, artifactPath) {
@@ -500,9 +564,33 @@ function asciiHeaderFilename(name) {
   return safe || "download";
 }
 
+class SessionAccessError extends Error {
+  constructor(message = "Session does not belong to this client") {
+    super(message);
+    this.status = 403;
+  }
+}
+
+function assertClientOwnsSession(session, clientId) {
+  const expected = String(session?.clientId || "").trim();
+  const actual = String(clientId || "").trim();
+  if (expected && expected !== actual) {
+    throw new SessionAccessError();
+  }
+}
+
+function sessionFromIdForClient(sessionId, clientId) {
+  const session = sessions.get(sessionId);
+  if (session) {
+    assertClientOwnsSession(session, clientId);
+  }
+  return session;
+}
+
 async function workspaceSessionFromRequest(params, artifactPath = "", scope = defaultWorkspaceScope()) {
   const session = sessions.get(params.get("session"));
   if (session) {
+    assertClientOwnsSession(session, params.get("clientId"));
     return session;
   }
   if (!params.get("workspacePath") && !params.get("workspaceName") && artifactPath) {
@@ -533,6 +621,7 @@ async function deleteArtifactFile(session, artifactPath) {
     throw new Error("Artifact is not a file");
   }
   await rm(target);
+  invalidateProjectFileCache(session.workspace.path);
   return {
     path: rel,
     name: rel.split(/[\\/]/).pop() || rel,
@@ -589,8 +678,8 @@ $owner.Opacity = 0
 $owner.ShowInTaskbar = $false
 $owner.TopMost = $true
 $initial = [Environment]::GetFolderPath("MyDocuments")
-if ($env:OPENHARNESS_DIALOG_INITIAL -and (Test-Path -LiteralPath $env:OPENHARNESS_DIALOG_INITIAL -PathType Container)) {
-  $initial = $env:OPENHARNESS_DIALOG_INITIAL
+if ($env:MYHARNESS_DIALOG_INITIAL -and (Test-Path -LiteralPath $env:MYHARNESS_DIALOG_INITIAL -PathType Container)) {
+  $initial = $env:MYHARNESS_DIALOG_INITIAL
 }
 $dialog.SelectedPath = $initial
 try {
@@ -615,7 +704,7 @@ exit 2
         cwd: repoRoot,
         env: {
           ...process.env,
-          OPENHARNESS_DIALOG_INITIAL: String(initialPath || ""),
+          MYHARNESS_DIALOG_INITIAL: String(initialPath || ""),
         },
         windowsHide: false,
         stdio: ["ignore", "pipe", "pipe"],
@@ -645,7 +734,7 @@ exit 2
 async function saveArtifactFile(session, artifactPath, content) {
   let requestedPath = String(artifactPath || "").trim();
   if (!requestedPath) {
-    requestedPath = "answer.md";
+    requestedPath = "outputs/answer.md";
   }
   if (!/\.[A-Za-z0-9]{1,8}$/.test(requestedPath)) {
     requestedPath = `${requestedPath}.md`;
@@ -678,7 +767,36 @@ async function saveArtifactFile(session, artifactPath, content) {
   }
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, String(content || ""), "utf8");
+  invalidateProjectFileCache(session.workspace.path);
   return readArtifactMetadata(session, rel);
+}
+
+function projectFileCacheKey(workspacePath, scope = "default") {
+  return `${normalize(String(workspacePath || ""))}\u0000${scope}`;
+}
+
+function invalidateProjectFileCache(workspacePath = "") {
+  const normalized = normalize(String(workspacePath || ""));
+  for (const key of projectFileListCache.keys()) {
+    if (!normalized || key.startsWith(`${normalized}\u0000`)) {
+      projectFileListCache.delete(key);
+    }
+  }
+}
+
+function projectFilePayloadFromInfo(session, target, rel, info) {
+  const ext = extname(target).toLowerCase();
+  const type = artifactTypes[ext] || { kind: "file", mime: "application/octet-stream" };
+  return {
+    path: rel,
+    name: basename(target),
+    kind: type.kind,
+    category: artifactCategoryForPath(rel),
+    mime: type.mime,
+    size: info.size,
+    mtimeMs: info.mtimeMs,
+    birthtimeMs: info.birthtimeMs,
+  };
 }
 
 async function listProjectArtifacts(session) {
@@ -728,12 +846,101 @@ async function listProjectArtifacts(session) {
   return files;
 }
 
-async function listProjectFiles(session) {
+async function listProjectFiles(session, options = {}) {
+  const scope = String(options.scope || "default").toLowerCase() === "all" ? "all" : "default";
+  const force = options.force === true;
+  const key = projectFileCacheKey(session.workspace.path, scope);
+  const cached = projectFileListCache.get(key);
+  if (!force && cached && Date.now() - cached.createdAt < projectFileCacheTtlMs) {
+    return cached.files;
+  }
+  const files = scope === "all"
+    ? await scanAllProjectFiles(session)
+    : await scanDefaultProjectFiles(session);
+  projectFileListCache.set(key, { createdAt: Date.now(), files });
+  return files;
+}
+
+function shouldSkipProjectFileRel(rel) {
+  const normalized = normalizeProjectFilePath(rel);
+  return projectFileListSkipPrefixes.some((prefix) => normalized === prefix.slice(0, -1) || normalized.startsWith(prefix));
+}
+
+async function pushProjectFile(files, session, target) {
+  const rel = relative(session.workspace.path, target);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel) || shouldSkipProjectFileRel(rel)) {
+    return;
+  }
+  const normalizedRel = normalizeProjectFilePath(rel);
+  const info = await stat(target);
+  if (!info.isFile()) {
+    return;
+  }
+  files.push(projectFilePayloadFromInfo(session, target, normalizedRel, info));
+}
+
+async function scanOutputsProjectFiles(session, files) {
+  const outputsRoot = join(session.workspace.path, "outputs");
+  async function walk(directory) {
+    if (files.length >= projectFileListMaxItems) {
+      return;
+    }
+    let entries = [];
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+    for (const entry of entries) {
+      if (files.length >= projectFileListMaxItems) {
+        return;
+      }
+      const target = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!artifactListSkipDirs.has(entry.name)) {
+          await walk(target);
+        }
+        continue;
+      }
+      if (entry.isFile()) {
+        await pushProjectFile(files, session, target);
+      }
+    }
+  }
+  await walk(outputsRoot);
+}
+
+async function scanDefaultProjectFiles(session) {
   const files = [];
-  const shouldSkipProjectFileRel = (rel) => {
-    const normalized = String(rel || "").replace(/\\/g, "/").replace(/^\/+/, "");
-    return projectFileListSkipPrefixes.some((prefix) => normalized === prefix.slice(0, -1) || normalized.startsWith(prefix));
-  };
+  try {
+    const entries = await readdir(session.workspace.path, { withFileTypes: true });
+    for (const entry of entries) {
+      if (files.length >= projectFileListMaxItems) {
+        break;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      const rel = normalizeProjectFilePath(entry.name);
+      if (isDefaultProjectFileCandidate(rel)) {
+        await pushProjectFile(files, session, join(session.workspace.path, entry.name));
+      }
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await scanOutputsProjectFiles(session, files);
+  files.sort((left, right) => left.path.localeCompare(right.path));
+  return files;
+}
+
+async function scanAllProjectFiles(session) {
+  const files = [];
   async function walk(directory) {
     if (files.length >= projectFileListMaxItems) {
       return;
@@ -762,23 +969,57 @@ async function listProjectFiles(session) {
       if (shouldSkipProjectFileRel(rel)) {
         continue;
       }
-      const info = await stat(target);
-      const ext = extname(entry.name).toLowerCase();
-      const type = artifactTypes[ext] || { kind: "file", mime: "application/octet-stream" };
-      files.push({
-        path: rel,
-        name: entry.name,
-        kind: type.kind,
-        mime: type.mime,
-        size: info.size,
-        mtimeMs: info.mtimeMs,
-        birthtimeMs: info.birthtimeMs,
-      });
+      await pushProjectFile(files, session, target);
     }
   }
   await walk(session.workspace.path);
   files.sort((left, right) => left.path.localeCompare(right.path));
   return files;
+}
+
+async function collisionSafeOutputsPath(session, fileName, existingPaths) {
+  let rel = nextAvailableRelativePath(`outputs/${fileName}`, existingPaths);
+  while (true) {
+    const { target } = workspaceRelativeTarget(session.workspace.path, rel);
+    try {
+      await stat(target);
+      existingPaths.add(rel);
+      rel = nextAvailableRelativePath(`outputs/${fileName}`, existingPaths);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return rel;
+      }
+      throw error;
+    }
+  }
+}
+
+async function organizeRootProjectFiles(session, paths = []) {
+  const requested = [...new Set((Array.isArray(paths) ? paths : []).map(normalizeProjectFilePath).filter(Boolean))];
+  if (!requested.length) {
+    return [];
+  }
+  const existingPaths = new Set((await scanAllProjectFiles(session)).map((file) => normalizeProjectFilePath(file.path)));
+  const moved = [];
+  for (const requestedPath of requested) {
+    if (requestedPath.includes("/") || requestedPath.startsWith("outputs/") || !isDefaultProjectFileCandidate(requestedPath)) {
+      throw new Error(`Only root artifact candidates can be organized: ${requestedPath}`);
+    }
+    const { target, rel } = workspaceRelativeTarget(session.workspace.path, requestedPath);
+    const info = await stat(target);
+    if (!info.isFile()) {
+      throw new Error(`Not a file: ${requestedPath}`);
+    }
+    const destinationRel = await collisionSafeOutputsPath(session, basename(target), existingPaths);
+    const { target: destinationTarget } = workspaceRelativeTarget(session.workspace.path, destinationRel);
+    await mkdir(dirname(destinationTarget), { recursive: true });
+    await rename(target, destinationTarget);
+    existingPaths.delete(normalizeProjectFilePath(rel));
+    existingPaths.add(destinationRel);
+    moved.push(await readArtifactMetadata(session, destinationRel));
+  }
+  invalidateProjectFileCache(session.workspace.path);
+  return moved;
 }
 
 function validateWorkspaceName(value) {
@@ -865,11 +1106,11 @@ function projectPreferencesPath(workspace) {
 }
 
 function globalConfigDir() {
-  const envDir = String(process.env.OPENHARNESS_CONFIG_DIR || "").trim();
+  const envDir = String(process.env.MYHARNESS_CONFIG_DIR || "").trim();
   if (envDir) {
     return normalize(envDir);
   }
-  return normalize(join(process.env.USERPROFILE || process.env.HOME || ".", ".openharness"));
+  return normalize(join(process.env.USERPROFILE || process.env.HOME || ".", ".myharness"));
 }
 
 function maskSecret(value) {
@@ -973,6 +1214,28 @@ async function saveShellSettings(body = {}) {
   settings.shell = preference;
   await writeJsonFile(settingsPath, settings);
   return readShellSettings();
+}
+
+async function readYoloModeSettings() {
+  const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
+  return {
+    enabled: settings.yolo_mode_enabled !== false,
+    permissionMode: settings.yolo_mode_enabled === false ? "default" : "full_auto",
+  };
+}
+
+async function saveYoloModeSettings(body = {}) {
+  const enabled = body.enabled !== false;
+  const settingsPath = join(globalConfigDir(), "settings.json");
+  const settings = await readJsonFileIfExists(settingsPath) || {};
+  settings.yolo_mode_enabled = enabled;
+  await writeJsonFile(settingsPath, settings);
+  return readYoloModeSettings();
+}
+
+async function defaultPermissionMode() {
+  const { permissionMode } = await readYoloModeSettings();
+  return permissionMode;
 }
 
 function shellOptions() {
@@ -1157,7 +1420,7 @@ async function copyLegacyWorkspaceIfNeeded(workspace, scope = defaultWorkspaceSc
 async function looksLikeLegacyWorkspace(path) {
   try {
     const entries = await readdir(path, { withFileTypes: true });
-    return entries.some((entry) => entry.name === ".openharness" || entry.isFile());
+    return entries.some((entry) => entry.name === ".myharness" || entry.isFile());
   } catch {
     return false;
   }
@@ -1265,7 +1528,7 @@ async function listWorkspaces(scope = defaultWorkspaceScope()) {
 }
 
 function sessionDirectoryForWorkspace(workspace) {
-  return join(workspace.path, ".openharness", "sessions");
+  return join(workspace.path, ".myharness", "sessions");
 }
 
 function compactText(value, limit = 80) {
@@ -1318,7 +1581,7 @@ async function readSessionListItem(path) {
   const sessionId = String(data.session_id || "").trim()
     || fileName.replace(/^session-/, "").replace(/\.json$/i, "");
   const summary = compactText(data.summary) || firstUserSummary(data.messages) || "(untitled chat)";
-  const createdAt = Number(data.created_at || info.mtimeMs || Date.now());
+  const createdAt = historyOrderTimestamp(data, info);
   const date = new Date(createdAt * (createdAt < 10_000_000_000 ? 1000 : 1));
   const labelDate = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
   const messageCount = Number(data.message_count || (Array.isArray(data.messages) ? data.messages.length : 0));
@@ -1512,6 +1775,10 @@ async function shellCommandForPlatform(command) {
     if (pythonHeredoc) {
       return pythonHeredoc;
     }
+    const pythonCommand = directPythonCommandForWindows(command);
+    if (pythonCommand) {
+      return pythonCommand;
+    }
     const { shell } = await readShellSettings();
     return windowsShellCommand(command, shell);
   }
@@ -1566,7 +1833,7 @@ function resolveGitBash() {
   const candidates = [
     resolveCommandOnPath("git-bash.exe"),
     resolveCommandOnPath("bash.exe"),
-    process.env.OPENHARNESS_GIT_BASH,
+    process.env.MYHARNESS_GIT_BASH,
     process.env.ProgramFiles ? join(process.env.ProgramFiles, "Git", "bin", "bash.exe") : "",
     process.env["ProgramFiles(x86)"] ? join(process.env["ProgramFiles(x86)"], "Git", "bin", "bash.exe") : "",
     process.env.LocalAppData ? join(process.env.LocalAppData, "Programs", "Git", "bin", "bash.exe") : "",
@@ -1601,6 +1868,37 @@ function powershellUtf8Command(command) {
   return "[Console]::InputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
     + "$OutputEncoding = [Console]::OutputEncoding; "
     + command;
+}
+
+function directPythonCommandForWindows(command) {
+  if (hasUnquotedShellOperator(command)) {
+    return null;
+  }
+  let parts;
+  try {
+    parts = splitWindowsCommand(command);
+  } catch {
+    return null;
+  }
+  if (parts[0] === "&") {
+    parts = parts.slice(1);
+  }
+  if (!parts.length) {
+    return null;
+  }
+  const executable = basename(String(parts[0] || "").replace(/^["']|["']$/g, "")).toLowerCase();
+  if (!["python", "python.exe", "python3", "python3.exe", "py", "py.exe"].includes(executable)) {
+    return null;
+  }
+  const requestedArgs = executable === "py" || executable === "py.exe"
+    ? (parts[1] === "-3" ? ["-3"] : [])
+    : [];
+  const remaining = parts.slice(1 + requestedArgs.length);
+  const python = resolvePythonCommand(parts[0], requestedArgs);
+  return {
+    file: python.file,
+    args: [...python.args, ...remaining],
+  };
 }
 
 function pythonHeredocCommandForWindows(command) {
@@ -1638,11 +1936,24 @@ function resolvePythonCommand(requestedExecutable = "", requestedArgs = []) {
   const requestedHasPath = requestedName.includes("\\") || requestedName.includes("/") || isAbsolute(requestedName);
   const candidates = [];
 
+  if (requestedIsGeneric) {
+    const cached = loadCachedWindowsPythonLauncher();
+    if (cached) {
+      candidates.push({
+        file: cached.file,
+        args: cached.args,
+        label: "cached python",
+        cacheable: false,
+      });
+    }
+  }
+
   if (requestedName && (requestedHasPath || !requestedIsGeneric)) {
     candidates.push({
       file: resolveExecutable(requestedName),
       args: requestedArgs,
       label: [requestedName, ...requestedArgs].join(" "),
+      cacheable: requestedIsGeneric,
     });
   } else if (requestedIsPy) {
     candidates.push({
@@ -1675,7 +1986,11 @@ function resolvePythonCommand(requestedExecutable = "", requestedArgs = []) {
     seen.add(key);
     attempts.push(candidate.label || [candidate.file, ...(candidate.args || [])].join(" "));
     if (pythonCandidateIsUsable(candidate)) {
-      return { file: candidate.file, args: candidate.args || [] };
+      const resolved = { file: candidate.file, args: candidate.args || [] };
+      if (requestedIsGeneric && candidate.label !== "cached python") {
+        storeCachedWindowsPythonLauncher(resolved, candidate.label || "detected");
+      }
+      return resolved;
     }
   }
 
@@ -1688,9 +2003,9 @@ function resolveExecutable(commandName) {
 
 function defaultPythonCandidates() {
   const candidates = [];
-  const configured = String(process.env.OPENHARNESS_PYTHON || "").trim();
+  const configured = String(process.env.MYHARNESS_PYTHON || "").trim();
   if (configured) {
-    candidates.push({ file: configured, args: [], label: "OPENHARNESS_PYTHON" });
+    candidates.push({ file: configured, args: [], label: "MYHARNESS_PYTHON" });
   }
 
   const envPython = String(process.env.PYTHON || "").trim();
@@ -1711,6 +2026,99 @@ function defaultPythonCandidates() {
     );
   }
   return candidates;
+}
+
+function hasUnquotedShellOperator(command) {
+  let quote = "";
+  for (let index = 0; index < String(command || "").length; index += 1) {
+    const char = command[index];
+    if ((char === "'" || char === '"') && (!quote || quote === char)) {
+      quote = quote === char ? "" : char;
+      continue;
+    }
+    if (!quote && "<>|&;".includes(char)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function splitWindowsCommand(command) {
+  const parts = [];
+  let current = "";
+  let quote = "";
+  let started = false;
+  const text = String(command || "");
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (/\s/.test(char) && !quote) {
+      if (started) {
+        parts.push(current);
+        current = "";
+        started = false;
+      }
+      continue;
+    }
+    started = true;
+    if ((char === "'" || char === '"') && (!quote || quote === char)) {
+      quote = quote === char ? "" : char;
+      continue;
+    }
+    current += char;
+  }
+  if (quote) {
+    throw new Error("No closing quotation");
+  }
+  if (started) {
+    parts.push(current);
+  }
+  return parts;
+}
+
+function loadCachedWindowsPythonLauncher() {
+  const path = windowsPythonLauncherCachePath();
+  try {
+    const payload = JSON.parse(readFileSync(path, "utf8"));
+    if (!payload || payload.version !== 1 || !Array.isArray(payload.launcher)) {
+      return null;
+    }
+    const [file, ...args] = payload.launcher;
+    if (typeof file !== "string" || !file || args.some((arg) => typeof arg !== "string")) {
+      return null;
+    }
+    if ((isAbsolute(file) && !existsSync(file)) || (!isAbsolute(file) && !resolveCommandOnPath(file))) {
+      return null;
+    }
+    const candidate = { file, args };
+    return pythonCandidateIsUsable(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeCachedWindowsPythonLauncher(python, source) {
+  if (process.platform !== "win32") {
+    return;
+  }
+  try {
+    const path = windowsPythonLauncherCachePath();
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      `${JSON.stringify({
+        version: 1,
+        launcher: [python.file, ...(python.args || [])],
+        source,
+      }, null, 2)}\n`,
+      "utf8",
+    );
+  } catch {
+    // Cache failures should never block Python execution.
+  }
+}
+
+function windowsPythonLauncherCachePath() {
+  return join(process.env.MYHARNESS_DATA_DIR || join(appConfigRoot, "data"), "runtime", "windows_python_launcher.json");
 }
 
 function pythonCandidateIsUsable(candidate) {
@@ -1977,14 +2385,15 @@ async function createBackendSession(options = {}) {
     throw new Error("Concurrent response limit reached");
   }
   const python = backendPythonCommand();
-  const args = [...python.args, "-m", "openharness", "--backend-only", "--cwd", workspace.path];
+  const args = [...python.args, "-m", "myharness", "--backend-only", "--cwd", workspace.path];
   const env = {
     ...process.env,
     PYTHONPATH: [join(repoRoot, "src"), process.env.PYTHONPATH].filter(Boolean).join(delimiter),
   };
 
-  if (options.permissionMode) {
-    args.push("--permission-mode", options.permissionMode);
+  const permissionMode = options.permissionMode || await defaultPermissionMode();
+  if (permissionMode) {
+    args.push("--permission-mode", permissionMode);
   }
   if (options.model) {
     args.push("--model", options.model);
@@ -2044,7 +2453,7 @@ async function createBackendSession(options = {}) {
     emit(session, { type: "error", message: `Failed to start backend: ${error.message}` });
   });
 
-  child.on("exit", (code) => {
+  child.on("exit", (code, signal) => {
     if (session.forceKillTimer) {
       clearTimeout(session.forceKillTimer);
       session.forceKillTimer = null;
@@ -2053,6 +2462,13 @@ async function createBackendSession(options = {}) {
       clearTimeout(session.clientCloseTimer);
       session.clientCloseTimer = null;
     }
+    writeRuntimeLog("backend_session_exit", {
+      session_id: id,
+      code: code ?? null,
+      signal: signal || "",
+      workspace: session.workspace?.path || "",
+      shutting_down: Boolean(session.shuttingDown),
+    });
     emit(session, { type: "shutdown", code, message: `Backend exited with code ${code ?? 0}` });
     sessions.delete(id);
   });
@@ -2246,6 +2662,51 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
+  if (request.method === "POST" && pathname === "/api/session/restart") {
+    try {
+      const body = await readJson(request);
+      const oldSessionId = String(body.sessionId || "").trim();
+      const oldSession = oldSessionId ? sessionFromIdForClient(oldSessionId, body.clientId) : null;
+      const options = {
+        permissionMode: body.permissionMode || await defaultPermissionMode(),
+        clientId: oldSession?.clientId || String(body.clientId || "").trim(),
+        cwd: oldSession?.workspace?.path || body.cwd,
+        systemPrompt: body.systemPrompt,
+        workspaceScope,
+      };
+      writeRuntimeLog("backend_session_restart_requested", {
+        old_session_id: oldSessionId,
+        old_child_pid: oldSession?.process?.pid || null,
+        workspace: oldSession?.workspace?.path || body.cwd || "",
+        client_id: options.clientId,
+      });
+      if (oldSession) {
+        shutdownSession(oldSession, "ui restart");
+        killProcessTree(oldSession.process);
+      }
+      const session = await createBackendSession(options);
+      writeRuntimeLog("backend_session_restart_created", {
+        old_session_id: oldSessionId,
+        new_session_id: session.id,
+        new_child_pid: session.process?.pid || null,
+        workspace: session.workspace?.path || "",
+        client_id: session.clientId || "",
+      });
+      json(response, 200, {
+        ok: true,
+        oldSessionId,
+        sessionId: session.id,
+        workspace: session.workspace,
+      });
+    } catch (error) {
+      writeRuntimeLog("backend_session_restart_failed", {
+        error: errorPayload(error),
+      });
+      json(response, error.status || 400, { error: error.message || "Could not restart session" });
+    }
+    return true;
+  }
+
   if (request.method === "GET" && pathname === "/api/live-sessions") {
     const searchParams = new URL(request.url, `http://localhost:${port}`).searchParams;
     const clientId = searchParams.get("clientId") || "";
@@ -2335,6 +2796,25 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
+  if (request.method === "GET" && pathname === "/api/settings/yolo-mode") {
+    try {
+      json(response, 200, await readYoloModeSettings());
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not read Yolo mode settings" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/settings/yolo-mode") {
+    try {
+      const body = await readJson(request);
+      json(response, 200, await saveYoloModeSettings(body));
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not save Yolo mode settings" });
+    }
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/dialog/folder") {
     try {
       const body = await readJson(request);
@@ -2346,8 +2826,15 @@ async function handleApi(request, response, pathname) {
   }
 
   if (request.method === "GET" && pathname === "/api/events") {
-    const id = new URL(request.url, `http://localhost:${port}`).searchParams.get("session");
-    const session = sessions.get(id);
+    const params = new URL(request.url, `http://localhost:${port}`).searchParams;
+    const id = params.get("session");
+    let session;
+    try {
+      session = sessionFromIdForClient(id, params.get("clientId"));
+    } catch (error) {
+      json(response, error.status || 403, { error: error.message || "Forbidden session" });
+      return true;
+    }
     if (!session) {
       json(response, 404, { error: "Unknown session" });
       return true;
@@ -2376,7 +2863,7 @@ async function handleApi(request, response, pathname) {
     try {
       const sessionId = params.get("session");
       const session = sessionId
-        ? sessions.get(sessionId)
+        ? sessionFromIdForClient(sessionId, params.get("clientId"))
         : await workspaceSessionFromRequest(params, params.get("path"), workspaceScope);
       if (!session) {
         json(response, 404, { error: "Unknown session" });
@@ -2385,7 +2872,7 @@ async function handleApi(request, response, pathname) {
       const payload = await readArtifactPreview(session, params.get("path"));
       json(response, 200, payload);
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not preview artifact" });
+      json(response, error.status || 400, { error: error.message || "Could not preview artifact" });
     }
     return true;
   }
@@ -2395,7 +2882,7 @@ async function handleApi(request, response, pathname) {
     try {
       const sessionId = params.get("session");
       const session = sessionId
-        ? sessions.get(sessionId)
+        ? sessionFromIdForClient(sessionId, params.get("clientId"))
         : await workspaceSessionFromRequest(params, params.get("path"), workspaceScope);
       if (!session) {
         json(response, 404, { error: "Unknown session" });
@@ -2404,7 +2891,7 @@ async function handleApi(request, response, pathname) {
       const payload = await readArtifactMetadata(session, params.get("path"));
       json(response, 200, payload);
     } catch (error) {
-      json(response, 404, { error: error.message || "Artifact not found" });
+      json(response, error.status || 404, { error: error.message || "Artifact not found" });
     }
     return true;
   }
@@ -2427,7 +2914,7 @@ async function handleApi(request, response, pathname) {
       });
       createReadStream(payload.target).pipe(response);
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not download artifact" });
+      json(response, error.status || 400, { error: error.message || "Could not download artifact" });
     }
     return true;
   }
@@ -2437,13 +2924,14 @@ async function handleApi(request, response, pathname) {
       const body = await readJson(request);
       const params = new URLSearchParams();
       if (body.session) params.set("session", body.session);
+      if (body.clientId) params.set("clientId", body.clientId);
       if (body.workspacePath) params.set("workspacePath", body.workspacePath);
       if (body.workspaceName) params.set("workspaceName", body.workspaceName);
       const session = await workspaceSessionFromRequest(params, body.path, workspaceScope);
       const saved = await copyArtifactToFolder(session, body.path, body.folderPath);
       json(response, 200, { saved });
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not save artifact" });
+      json(response, error.status || 400, { error: error.message || "Could not save artifact" });
     }
     return true;
   }
@@ -2453,47 +2941,48 @@ async function handleApi(request, response, pathname) {
       const body = await readJson(request);
       const params = new URLSearchParams();
       if (body.session) params.set("session", body.session);
+      if (body.clientId) params.set("clientId", body.clientId);
       if (body.workspacePath) params.set("workspacePath", body.workspacePath);
       if (body.workspaceName) params.set("workspaceName", body.workspaceName);
       const session = await workspaceSessionFromRequest(params, body.path, workspaceScope);
       const deleted = await deleteArtifactFile(session, body.path);
       json(response, 200, { deleted });
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not delete artifact" });
+      json(response, error.status || 400, { error: error.message || "Could not delete artifact" });
     }
     return true;
   }
 
   if (request.method === "POST" && pathname === "/api/artifact/save") {
     const body = await readJson(request);
-    const session = sessions.get(body.session);
-    if (!session) {
-      json(response, 404, { error: "Unknown session" });
-      return true;
-    }
     try {
+      const session = sessionFromIdForClient(body.session, body.clientId);
+      if (!session) {
+        json(response, 404, { error: "Unknown session" });
+        return true;
+      }
       const artifact = await saveArtifactFile(session, body.path, body.content);
       json(response, 200, { artifact });
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not save artifact" });
+      json(response, error.status || 400, { error: error.message || "Could not save artifact" });
     }
     return true;
   }
 
   if (request.method === "GET" && pathname === "/api/artifacts") {
     const params = new URL(request.url, `http://localhost:${port}`).searchParams;
-    const session = sessions.get(params.get("session"));
-    if (!session) {
-      json(response, 404, { error: "Unknown session" });
-      return true;
-    }
     try {
+      const session = sessionFromIdForClient(params.get("session"), params.get("clientId"));
+      if (!session) {
+        json(response, 404, { error: "Unknown session" });
+        return true;
+      }
       json(response, 200, {
         workspace: session.workspace,
         files: await listProjectArtifacts(session),
       });
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not list project files" });
+      json(response, error.status || 400, { error: error.message || "Could not list project files" });
     }
     return true;
   }
@@ -2502,59 +2991,83 @@ async function handleApi(request, response, pathname) {
     const params = new URL(request.url, `http://localhost:${port}`).searchParams;
     try {
       const session = await workspaceSessionFromRequest(params, "", workspaceScope);
+      const scope = params.get("scope") === "all" ? "all" : "default";
+      const force = params.get("force") === "true" || params.get("force") === "1";
       json(response, 200, {
         workspace: session.workspace,
-        files: await listProjectFiles(session),
+        scope,
+        files: await listProjectFiles(session, { scope, force }),
       });
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not list project files" });
+      json(response, error.status || 400, { error: error.message || "Could not list project files" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/project-files/organize") {
+    try {
+      const body = await readJson(request);
+      const params = new URLSearchParams();
+      if (body.session) params.set("session", body.session);
+      if (body.clientId) params.set("clientId", body.clientId);
+      if (body.workspacePath) params.set("workspacePath", body.workspacePath);
+      if (body.workspaceName) params.set("workspaceName", body.workspaceName);
+      const session = await workspaceSessionFromRequest(params, "", workspaceScope);
+      const files = await organizeRootProjectFiles(session, body.paths);
+      json(response, 200, { workspace: session.workspace, files });
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not organize project files" });
     }
     return true;
   }
 
   if (request.method === "POST" && pathname === "/api/message") {
     const body = await readJson(request);
-    const session = sessions.get(body.sessionId);
-    if (!session) {
-      json(response, 404, { error: "Unknown session" });
-      return true;
-    }
-    const line = String(body.line || "").trim();
-    const attachments = Array.isArray(body.attachments)
-      ? body.attachments.map(normalizeAttachment).filter(Boolean)
-      : [];
-    const deliveryMode = String(body.mode || "").trim().toLowerCase();
-    if (!line && attachments.length === 0) {
-      json(response, 400, { error: "Message is empty" });
-      return true;
-    }
-    if (session.busy) {
-      if (attachments.length > 0) {
-        json(response, 409, { error: "Attachments cannot be sent while the session is busy" });
+    try {
+      const session = sessionFromIdForClient(body.sessionId, body.clientId);
+      if (!session) {
+        json(response, 404, { error: "Unknown session" });
         return true;
       }
-      const queued = deliveryMode === "queue" || deliveryMode === "queued";
-      const ok = sendBackend(session, { type: queued ? "queue_line" : "steer_line", line });
-      json(response, ok ? 200 : 409, { ok, queued, steering: !queued });
-      return true;
+      const line = String(body.line || "").trim();
+      const attachments = Array.isArray(body.attachments)
+        ? body.attachments.map(normalizeAttachment).filter(Boolean)
+        : [];
+      const deliveryMode = String(body.mode || "").trim().toLowerCase();
+      if (!line && attachments.length === 0) {
+        json(response, 400, { error: "Message is empty" });
+        return true;
+      }
+      if (session.busy) {
+        if (attachments.length > 0) {
+          json(response, 409, { error: "Attachments cannot be sent while the session is busy" });
+          return true;
+        }
+        const queued = deliveryMode === "queue" || deliveryMode === "queued";
+        const ok = sendBackend(session, { type: queued ? "queue_line" : "steer_line", line });
+        json(response, ok ? 200 : 409, { ok, queued, steering: !queued });
+        return true;
+      }
+      if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
+        json(response, 429, { error: "Concurrent response limit reached" });
+        return true;
+      }
+      session.busy = true;
+      const ok = sendBackend(session, { type: "submit_line", line, attachments });
+      if (!ok) {
+        session.busy = false;
+      }
+      json(response, ok ? 200 : 409, { ok });
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not send message" });
     }
-    if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
-      json(response, 429, { error: "Concurrent response limit reached" });
-      return true;
-    }
-    session.busy = true;
-    const ok = sendBackend(session, { type: "submit_line", line, attachments });
-    if (!ok) {
-      session.busy = false;
-    }
-    json(response, ok ? 200 : 409, { ok });
     return true;
   }
 
   if (request.method === "POST" && pathname === "/api/shell") {
     try {
       const body = await readJson(request);
-      const session = body.sessionId ? sessions.get(body.sessionId) : null;
+      const session = body.sessionId ? sessionFromIdForClient(body.sessionId, body.clientId) : null;
       const result = await runShellCommand({
         command: body.command,
         cwd: body.cwd,
@@ -2563,7 +3076,7 @@ async function handleApi(request, response, pathname) {
       });
       json(response, 200, result);
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not run command" });
+      json(response, error.status || 400, { error: error.message || "Could not run command" });
     }
     return true;
   }
@@ -2571,7 +3084,7 @@ async function handleApi(request, response, pathname) {
   if (request.method === "POST" && pathname === "/api/shell/stream") {
     try {
       const body = await readJson(request);
-      const session = body.sessionId ? sessions.get(body.sessionId) : null;
+      const session = body.sessionId ? sessionFromIdForClient(body.sessionId, body.clientId) : null;
       await streamShellCommand({
         command: body.command,
         cwd: body.cwd,
@@ -2580,7 +3093,7 @@ async function handleApi(request, response, pathname) {
       }, request, response);
     } catch (error) {
       if (!response.headersSent) {
-        json(response, 400, { error: error.message || "Could not run command" });
+        json(response, error.status || 400, { error: error.message || "Could not run command" });
       } else if (!response.writableEnded) {
         response.end();
       }
@@ -2590,35 +3103,47 @@ async function handleApi(request, response, pathname) {
 
   if (request.method === "POST" && pathname === "/api/respond") {
     const body = await readJson(request);
-    const session = sessions.get(body.sessionId);
-    if (!session) {
-      json(response, 404, { error: "Unknown session" });
-      return true;
+    try {
+      const session = sessionFromIdForClient(body.sessionId, body.clientId);
+      if (!session) {
+        json(response, 404, { error: "Unknown session" });
+        return true;
+      }
+      const ok = sendBackend(session, body.payload || {});
+      json(response, ok ? 200 : 409, { ok });
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not respond to session" });
     }
-    const ok = sendBackend(session, body.payload || {});
-    json(response, ok ? 200 : 409, { ok });
     return true;
   }
 
   if (request.method === "POST" && pathname === "/api/cancel") {
     const body = await readJson(request);
-    const session = sessions.get(body.sessionId);
-    if (!session) {
-      json(response, 404, { error: "Unknown session" });
-      return true;
+    try {
+      const session = sessionFromIdForClient(body.sessionId, body.clientId);
+      if (!session) {
+        json(response, 404, { error: "Unknown session" });
+        return true;
+      }
+      const ok = sendBackend(session, { type: "cancel_current" });
+      json(response, ok ? 200 : 409, { ok });
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not cancel session" });
     }
-    const ok = sendBackend(session, { type: "cancel_current" });
-    json(response, ok ? 200 : 409, { ok });
     return true;
   }
 
   if (request.method === "POST" && pathname === "/api/shutdown") {
     const body = await readJson(request);
-    const session = sessions.get(body.sessionId);
-    if (session) {
-      shutdownSession(session, "api shutdown");
+    try {
+      const session = sessionFromIdForClient(body.sessionId, body.clientId);
+      if (session) {
+        shutdownSession(session, "api shutdown");
+      }
+      json(response, 200, { ok: true });
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not shutdown session" });
     }
-    json(response, 200, { ok: true });
     return true;
   }
 
@@ -2653,6 +3178,10 @@ server = createServer(async (request, response) => {
 });
 
 function stopServer(signal = "shutdown") {
+  writeRuntimeLog("server_stop_requested", {
+    signal,
+    active_sessions: sessions.size,
+  });
   shutdownAllSessions(signal);
   if (!server) {
     process.exit(0);
@@ -2667,15 +3196,32 @@ function stopServer(signal = "shutdown") {
 process.once("SIGINT", () => stopServer("SIGINT"));
 process.once("SIGTERM", () => stopServer("SIGTERM"));
 process.once("SIGHUP", () => stopServer("SIGHUP"));
-process.once("exit", () => {
+process.once("uncaughtException", (error) => {
+  writeRuntimeLog("server_uncaught_exception", { error: errorPayload(error), active_sessions: sessions.size });
+  shutdownAllSessions("uncaught exception");
+  process.exit(1);
+});
+process.once("unhandledRejection", (reason) => {
+  writeRuntimeLog("server_unhandled_rejection", { error: errorPayload(reason), active_sessions: sessions.size });
+  shutdownAllSessions("unhandled rejection");
+  process.exit(1);
+});
+process.on("warning", (warning) => {
+  writeRuntimeLog("server_warning", { warning: errorPayload(warning) });
+});
+process.once("exit", (code) => {
+  writeRuntimeLog("server_process_exit", {
+    code,
+    active_sessions: sessions.size,
+  });
   shutdownAllSessions("process exit");
 });
 
-if (!String(process.env.OPENHARNESS_WORKSPACE_SCOPE || "").trim()) {
+if (!String(process.env.MYHARNESS_WORKSPACE_SCOPE || "").trim()) {
   const savedScopeSettings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
   workspaceScopeMode = normalizeWorkspaceScopeMode(savedScopeSettings.web_workspace_scope || savedScopeSettings.workspace_scope || workspaceScopeMode);
 }
-if (!String(process.env.OPENHARNESS_SHELL || "").trim()) {
+if (!String(process.env.MYHARNESS_SHELL || "").trim()) {
   const savedShellSettings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
   shellPreference = normalizeShellPreference(savedShellSettings.shell || savedShellSettings.web_shell || shellPreference);
 }

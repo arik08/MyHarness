@@ -8,11 +8,11 @@ import os
 import sys
 from pathlib import Path
 
-from openharness.api.client import SupportsStreamingMessages
-from openharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete, CompactProgressEvent, ErrorEvent, StatusEvent
-from openharness.ui.backend_host import run_backend_host
-from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
-from openharness.ui.react_launcher import _resolve_npm, _resolve_tsx, get_frontend_dir
+from myharness.api.client import SupportsStreamingMessages
+from myharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete, CompactProgressEvent, ErrorEvent, StatusEvent
+from myharness.ui.backend_host import run_backend_host
+from myharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
+from myharness.ui.react_launcher import _resolve_npm, _resolve_tsx, get_frontend_dir
 
 from ohmo.prompts import build_ohmo_system_prompt
 from ohmo.session_storage import OhmoSessionBackend
@@ -109,7 +109,7 @@ async def launch_ohmo_react_tui(
     cwd_path = str(Path(cwd or Path.cwd()).resolve())
     workspace_root = initialize_workspace(workspace)
     env = os.environ.copy()
-    env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
+    env["MYHARNESS_FRONTEND_CONFIG"] = json.dumps(
         {
             "backend_command": build_ohmo_backend_command(
                 cwd=cwd_path,

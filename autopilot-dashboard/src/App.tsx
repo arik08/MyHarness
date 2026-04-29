@@ -204,11 +204,11 @@ export function App() {
           <div className="hero-main">
             <div className="eyebrow">// AUTOPILOT_KANBAN</div>
             <h1>
-              OpenHarness<br />
+              MyHarness<br />
               <span className="accent">SELF-EVOLUTION</span>
             </h1>
             <p className="hero-sub">
-              Kanban for OpenHarness self-evolution.
+              Kanban for MyHarness self-evolution.
             </p>
             <div className="focus-box">
               <div className="focus-label">// CURRENT_FOCUS</div>

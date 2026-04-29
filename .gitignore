@@ -10,7 +10,7 @@ build/
 .mypy_cache/
 .ruff_cache/
 .venv/
-.openharness-venv/
+.myharness-venv/
 venv/
 env/
 .env
@@ -29,8 +29,8 @@ frontend/terminal/node_modules/
 frontend/web/node_modules/
 
 # User data (never commit API keys or session data)
-.openharness/*
-!.openharness/settings.json
+.myharness/*
+!.myharness/settings.json
 tests/test_api/PGPT_OpenAI_Compatible.py
 Playground/
 react_tui_smoke.txt
@@ -38,9 +38,9 @@ react_tui_smoke.txt
 
 # Local UI/browser check artifacts
 .tmp-chrome-check/
-openharness-*.err.log
-openharness-*.out.log
-openharness-*.png
+myharness-*.err.log
+myharness-*.out.log
+myharness-*.png
 
 # OS
 .DS_Store

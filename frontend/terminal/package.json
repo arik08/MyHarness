@@ -1,5 +1,5 @@
 {
-  "name": "@openharness/terminal",
+  "name": "@myharness/terminal",
   "private": true,
   "type": "module",
   "scripts": {

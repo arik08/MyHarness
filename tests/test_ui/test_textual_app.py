@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from openharness.api.client import ApiMessageCompleteEvent
-from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
-from openharness.ui.textual_app import OpenHarnessTerminalApp
+from myharness.api.client import ApiMessageCompleteEvent
+from myharness.api.usage import UsageSnapshot
+from myharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
+from myharness.ui.textual_app import MyHarnessTerminalApp
 
 
 class StaticApiClient:
@@ -44,26 +44,26 @@ class ScriptedApiClient:
 @pytest.mark.asyncio
 async def test_textual_app_handles_commands(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
-    app = OpenHarnessTerminalApp(api_client=StaticApiClient("unused"))
+    app = MyHarnessTerminalApp(api_client=StaticApiClient("unused"))
     async with app.run_test() as pilot:
         composer = app.query_one("#composer")
         composer.value = "/version"
         await pilot.press("enter")
         await pilot.pause()
 
-    assert any("OpenHarness" in line for line in app.transcript_lines)
+    assert any("MyHarness" in line for line in app.transcript_lines)
 
 
 @pytest.mark.asyncio
 async def test_textual_app_runs_one_model_turn(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
-    app = OpenHarnessTerminalApp(api_client=StaticApiClient("hello from textual"))
+    app = MyHarnessTerminalApp(api_client=StaticApiClient("hello from textual"))
     async with app.run_test() as pilot:
         composer = app.query_one("#composer")
         composer.value = "hi"
@@ -77,10 +77,10 @@ async def test_textual_app_runs_one_model_turn(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_textual_app_handles_ask_user_tool(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
-    app = OpenHarnessTerminalApp(
+    app = MyHarnessTerminalApp(
         api_client=ScriptedApiClient(
             [
                 ConversationMessage(
@@ -119,10 +119,10 @@ async def test_textual_app_handles_ask_user_tool(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_textual_sidebar_refresh_is_snapshot_based(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
-    app = OpenHarnessTerminalApp(api_client=StaticApiClient("hello"))
+    app = MyHarnessTerminalApp(api_client=StaticApiClient("hello"))
     async with app.run_test():
         status_bar = app.query_one("#status-bar")
         tasks_panel = app.query_one("#tasks-panel")
@@ -162,10 +162,10 @@ async def test_textual_sidebar_refresh_is_snapshot_based(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_textual_current_response_update_is_deduplicated(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
-    app = OpenHarnessTerminalApp(api_client=StaticApiClient("hello"))
+    app = MyHarnessTerminalApp(api_client=StaticApiClient("hello"))
     async with app.run_test():
         current_response = app.query_one("#current-response")
         updates: list[str] = []

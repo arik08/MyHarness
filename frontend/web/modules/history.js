@@ -1,3 +1,36 @@
+export function mergeHistoryOptionsForRender(savedOptions, liveOptions) {
+  const saved = Array.isArray(savedOptions) ? savedOptions : [];
+  const live = Array.isArray(liveOptions) ? liveOptions : [];
+  const savedValues = new Set(saved.map((option) => String(option.value || "")));
+  const liveBySavedId = new Map();
+  for (const option of live) {
+    const savedSessionId = String(option.savedSessionId || "");
+    if (savedSessionId) {
+      liveBySavedId.set(savedSessionId, option);
+    }
+  }
+
+  const usedLiveValues = new Set();
+  const merged = saved.map((option) => {
+    const liveOption = liveBySavedId.get(String(option.value || ""));
+    if (!liveOption) {
+      return option;
+    }
+    usedLiveValues.add(String(liveOption.value || ""));
+    return liveOption;
+  });
+
+  for (const option of live) {
+    const value = String(option.value || "");
+    const savedSessionId = String(option.savedSessionId || "");
+    if (!usedLiveValues.has(value) && (!savedSessionId || !savedValues.has(savedSessionId))) {
+      merged.push(option);
+      usedLiveValues.add(value);
+    }
+  }
+  return merged;
+}
+
 export function createHistory(ctx) {
   const { state, els, STATUS_LABELS } = ctx;
   function closeModal(...args) { return ctx.closeModal(...args); }
@@ -88,11 +121,7 @@ function renderHistory(options) {
       description: option.busy ? "진행 중" : saved.description || option.description,
     };
   });
-  const liveSavedIds = new Set(liveOptions.map((option) => option.savedSessionId).filter(Boolean));
-  const mergedOptions = [
-    ...liveOptions,
-    ...savedOptions.filter((option) => !liveSavedIds.has(String(option.value || ""))),
-  ];
+  const mergedOptions = mergeHistoryOptionsForRender(savedOptions, liveOptions);
   if (!mergedOptions.length) {
     const empty = document.createElement("p");
     empty.className = "empty";

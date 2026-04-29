@@ -1,7 +1,7 @@
 """Tests for personalization fact extraction."""
 
-from openharness.personalization.extractor import extract_facts_from_text, facts_to_rules_markdown
-from openharness.personalization.rules import merge_facts
+from myharness.personalization.extractor import extract_facts_from_text, facts_to_rules_markdown
+from myharness.personalization.rules import merge_facts
 
 
 class TestExtractFacts:

@@ -35,13 +35,13 @@ RESULTS: dict[str, tuple[bool, float]] = {}
 # ==================================================================
 
 def _make_registry(extra_tools=None):
-    from openharness.tools.base import ToolRegistry
-    from openharness.tools.bash_tool import BashTool
-    from openharness.tools.file_read_tool import FileReadTool
-    from openharness.tools.file_write_tool import FileWriteTool
-    from openharness.tools.file_edit_tool import FileEditTool
-    from openharness.tools.glob_tool import GlobTool
-    from openharness.tools.grep_tool import GrepTool
+    from myharness.tools.base import ToolRegistry
+    from myharness.tools.bash_tool import BashTool
+    from myharness.tools.file_read_tool import FileReadTool
+    from myharness.tools.file_write_tool import FileWriteTool
+    from myharness.tools.file_edit_tool import FileEditTool
+    from myharness.tools.glob_tool import GlobTool
+    from myharness.tools.grep_tool import GrepTool
 
     reg = ToolRegistry()
     for t in [BashTool(), FileReadTool(), FileWriteTool(), FileEditTool(), GlobTool(), GrepTool()]:
@@ -52,15 +52,15 @@ def _make_registry(extra_tools=None):
 
 
 def _make_checker():
-    from openharness.config.settings import PermissionSettings
-    from openharness.permissions.checker import PermissionChecker
-    from openharness.permissions.modes import PermissionMode
+    from myharness.config.settings import PermissionSettings
+    from myharness.permissions.checker import PermissionChecker
+    from myharness.permissions.modes import PermissionMode
     return PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
 
 
 def make_anthropic_engine(system_prompt, extra_tools=None):
-    from openharness.api.client import AnthropicApiClient
-    from openharness.engine.query_engine import QueryEngine
+    from myharness.api.client import AnthropicApiClient
+    from myharness.engine.query_engine import QueryEngine
     api = AnthropicApiClient(api_key=API_KEY, base_url=ANTHROPIC_BASE)
     return QueryEngine(
         api_client=api, tool_registry=_make_registry(extra_tools),
@@ -70,8 +70,8 @@ def make_anthropic_engine(system_prompt, extra_tools=None):
 
 
 def make_openai_engine(system_prompt, extra_tools=None):
-    from openharness.api.openai_client import OpenAICompatibleClient
-    from openharness.engine.query_engine import QueryEngine
+    from myharness.api.openai_client import OpenAICompatibleClient
+    from myharness.engine.query_engine import QueryEngine
     api = OpenAICompatibleClient(api_key=API_KEY, base_url=OPENAI_BASE)
     return QueryEngine(
         api_client=api, tool_registry=_make_registry(extra_tools),
@@ -81,7 +81,7 @@ def make_openai_engine(system_prompt, extra_tools=None):
 
 
 def collect(events):
-    from openharness.engine.stream_events import (
+    from myharness.engine.stream_events import (
         AssistantTextDelta, AssistantTurnComplete,
         ToolExecutionStarted, ToolExecutionCompleted,
     )
@@ -114,7 +114,7 @@ async def task_diagnose_autoagent():
     print("  Task 1: PR#17 — Use diagnose skill to investigate AutoAgent tests")
     print("=" * 70)
 
-    from openharness.tools.skill_tool import SkillTool
+    from myharness.tools.skill_tool import SkillTool
 
     engine = make_anthropic_engine(
         "You are a debugger. Start by loading the 'diagnose' skill to get "
@@ -156,11 +156,11 @@ async def task_memory_research_autoagent():
     print("  Task 2: PR#12 — Research AutoAgent → save to memory → search → use")
     print("=" * 70)
 
-    from openharness.memory.search import find_relevant_memories
-    from openharness.memory.scan import scan_memory_files
-    import openharness.memory.paths as mp
-    import openharness.memory.manager as mm
-    import openharness.memory.scan as ms
+    from myharness.memory.search import find_relevant_memories
+    from myharness.memory.scan import scan_memory_files
+    import myharness.memory.paths as mp
+    import myharness.memory.manager as mm
+    import myharness.memory.scan as ms
 
     with tempfile.TemporaryDirectory() as tmpdir:
         mem_dir = Path(tmpdir) / "memory"
@@ -330,10 +330,10 @@ async def task_session_resume_autoagent():
     print("  Task 4: PR#16 — Research AutoAgent → save → resume → continue")
     print("=" * 70)
 
-    from openharness.services.session_storage import (
+    from myharness.services.session_storage import (
         save_session_snapshot, load_session_snapshot,
     )
-    from openharness.engine.messages import ConversationMessage
+    from myharness.engine.messages import ConversationMessage
 
     with tempfile.TemporaryDirectory() as session_dir:
         # Phase 1: Original 3-turn research session
@@ -415,12 +415,12 @@ async def task_cron_autoagent_maintenance():
     print("  Task 5: PR#16 — Cron scheduler for AutoAgent maintenance")
     print("=" * 70)
 
-    from openharness.services.cron import (
+    from myharness.services.cron import (
         load_cron_jobs, upsert_cron_job, delete_cron_job,
         get_cron_job, set_job_enabled,
         mark_job_run, next_run_time,
     )
-    import openharness.services.cron as cron_mod
+    import myharness.services.cron as cron_mod
 
     with tempfile.TemporaryDirectory() as tmpdir:
         registry_path = Path(tmpdir) / "cron_jobs.json"
@@ -503,16 +503,16 @@ async def task_full_dev_workflow():
     print("  Task 6: ALL PRs — Full development workflow on AutoAgent")
     print("=" * 70)
 
-    from openharness.tools.skill_tool import SkillTool
-    from openharness.memory.scan import scan_memory_files
-    from openharness.memory.search import find_relevant_memories
-    from openharness.services.session_storage import save_session_snapshot, load_session_snapshot
-    from openharness.services.cron import upsert_cron_job, load_cron_jobs, validate_cron_expression
-    from openharness.engine.messages import ConversationMessage
-    import openharness.memory.paths as mp
-    import openharness.memory.manager as mm
-    import openharness.memory.scan as ms
-    import openharness.services.cron as cron_mod
+    from myharness.tools.skill_tool import SkillTool
+    from myharness.memory.scan import scan_memory_files
+    from myharness.memory.search import find_relevant_memories
+    from myharness.services.session_storage import save_session_snapshot, load_session_snapshot
+    from myharness.services.cron import upsert_cron_job, load_cron_jobs, validate_cron_expression
+    from myharness.engine.messages import ConversationMessage
+    import myharness.memory.paths as mp
+    import myharness.memory.manager as mm
+    import myharness.memory.scan as ms
+    import myharness.services.cron as cron_mod
 
     with tempfile.TemporaryDirectory() as tmpdir:
         mem_dir = Path(tmpdir) / "memory"

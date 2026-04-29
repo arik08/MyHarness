@@ -1,7 +1,7 @@
 import base64
 import json
 
-from openharness.api.pgpt_auth import build_pgpt_auth_token
+from myharness.api.pgpt_auth import build_pgpt_auth_token
 
 
 def test_build_pgpt_auth_token_uses_openai_compatible_payload_keys():

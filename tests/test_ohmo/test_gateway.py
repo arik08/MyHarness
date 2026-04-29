@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from openharness.api.usage import UsageSnapshot
-from openharness.channels.bus.events import InboundMessage
-from openharness.channels.bus.queue import MessageBus
-from openharness.commands import CommandResult
-from openharness.commands.registry import SlashCommand
-from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolUseBlock
-from openharness.engine.stream_events import AssistantTextDelta, CompactProgressEvent, ToolExecutionStarted
+from myharness.api.usage import UsageSnapshot
+from myharness.channels.bus.events import InboundMessage
+from myharness.channels.bus.queue import MessageBus
+from myharness.commands import CommandResult
+from myharness.commands.registry import SlashCommand
+from myharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolUseBlock
+from myharness.engine.stream_events import AssistantTextDelta, CompactProgressEvent, ToolExecutionStarted
 
 from ohmo.gateway.bridge import OhmoGatewayBridge, _format_gateway_error
 from ohmo.gateway.config import save_gateway_config
@@ -461,7 +461,7 @@ async def test_runtime_pool_blocks_local_only_commands_from_remote_messages(tmp_
 
     assert handler_called is False
     assert updates[-1].kind == "final"
-    assert updates[-1].text == "/permissions is only available in the local OpenHarness UI."
+    assert updates[-1].text == "/permissions is only available in the local MyHarness UI."
 
 
 @pytest.mark.asyncio

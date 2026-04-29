@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from openharness.learning.service import (
+from myharness.learning.service import (
     analyze_learning_candidate,
     persist_learning_candidate,
     remember_tool_failure,
     run_auto_skill_learning,
 )
-from openharness.skills import load_skill_registry
+from myharness.skills import load_skill_registry
 
 
 def test_repeated_verified_failure_creates_program_local_skill(tmp_path: Path):
@@ -26,7 +26,7 @@ def test_repeated_verified_failure_creates_program_local_skill(tmp_path: Path):
     assert result is not None
     assert result.action == "created"
     assert result.skill_path.exists()
-    assert "repeated, verified OpenHarness failure pattern" in result.skill_path.read_text(encoding="utf-8")
+    assert "repeated, verified MyHarness failure pattern" in result.skill_path.read_text(encoding="utf-8")
     patterns = result.skill_path.parent / "references" / "learned-patterns.md"
     assert result.candidate.evidence_hash in patterns.read_text(encoding="utf-8")
     learned = metadata.get("recent_learned_skills")

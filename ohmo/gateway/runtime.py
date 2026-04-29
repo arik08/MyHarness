@@ -11,16 +11,16 @@ import json
 import os
 import string
 
-from openharness.channels.bus.events import InboundMessage
-from openharness.commands import CommandContext, CommandResult
-from openharness.engine.messages import (
+from myharness.channels.bus.events import InboundMessage
+from myharness.commands import CommandContext, CommandResult
+from myharness.engine.messages import (
     ConversationMessage,
     ImageBlock,
     TextBlock,
     sanitize_conversation_messages,
 )
-from openharness.engine.query import MaxTurnsExceeded
-from openharness.engine.stream_events import (
+from myharness.engine.query import MaxTurnsExceeded
+from myharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
@@ -29,8 +29,8 @@ from openharness.engine.stream_events import (
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
-from openharness.prompts import build_runtime_system_prompt
-from openharness.ui.runtime import RuntimeBundle, _last_user_text, build_runtime, close_runtime, start_runtime
+from myharness.prompts import build_runtime_system_prompt
+from myharness.ui.runtime import RuntimeBundle, _last_user_text, build_runtime, close_runtime, start_runtime
 
 from ohmo.gateway.config import load_gateway_config
 from ohmo.prompts import build_ohmo_system_prompt
@@ -181,7 +181,7 @@ class OhmoSessionRuntimePool:
                 )
             if not remote_allowed:
                 result = CommandResult(
-                    message=f"/{command.name} is only available in the local OpenHarness UI."
+                    message=f"/{command.name} is only available in the local MyHarness UI."
                 )
                 async for update in self._stream_command_result(
                     bundle=bundle,

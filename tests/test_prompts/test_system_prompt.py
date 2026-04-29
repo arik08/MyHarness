@@ -1,9 +1,9 @@
-"""Tests for openharness.prompts.system_prompt."""
+"""Tests for myharness.prompts.system_prompt."""
 
 from __future__ import annotations
 
-from openharness.prompts.environment import EnvironmentInfo
-from openharness.prompts.system_prompt import build_system_prompt
+from myharness.prompts.environment import EnvironmentInfo
+from myharness.prompts.system_prompt import build_system_prompt
 
 
 def _make_env(**overrides) -> EnvironmentInfo:
@@ -16,8 +16,8 @@ def _make_env(**overrides) -> EnvironmentInfo:
         home_dir="/home/user",
         date="2026-04-01",
         python_version="3.10.17",
-        python_executable="/home/user/.openharness-venv/bin/python",
-        virtual_env="/home/user/.openharness-venv",
+        python_executable="/home/user/.myharness-venv/bin/python",
+        virtual_env="/home/user/.myharness-venv",
         is_git_repo=True,
         git_branch="main",
         hostname="testhost",
@@ -35,8 +35,8 @@ def test_build_system_prompt_contains_environment():
     assert "/home/user/project" in prompt
     assert "2026-04-01" in prompt
     assert "3.10.17" in prompt
-    assert "/home/user/.openharness-venv/bin/python" in prompt
-    assert "Virtual environment: /home/user/.openharness-venv" in prompt
+    assert "/home/user/.myharness-venv/bin/python" in prompt
+    assert "Virtual environment: /home/user/.myharness-venv" in prompt
     assert "branch: main" in prompt
 
 
@@ -59,7 +59,7 @@ def test_build_system_prompt_custom_prompt():
     assert prompt.startswith("You are a helpful bot.")
     assert "Linux 5.15.0" in prompt
     # Base prompt should not appear
-    assert "OpenHarness" not in prompt
+    assert "MyHarness" not in prompt
 
 
 def test_build_system_prompt_default_includes_base():
@@ -67,7 +67,7 @@ def test_build_system_prompt_default_includes_base():
     prompt = build_system_prompt(env=env)
     assert "You are MyHarness" in prompt
     assert "You are OpenHarness" not in prompt
-    assert "OpenHarness" in prompt
+    assert "MyHarness" in prompt
 
 
 def test_build_system_prompt_encourages_parallel_research_tools():
@@ -132,9 +132,11 @@ def test_build_system_prompt_prefers_existing_files_and_batched_edits():
     assert "Do not reuse a generic file such as `index.html`" in prompt
     assert "For unrelated standalone HTML previews or demos" in prompt
     assert "required app/framework/hosting entrypoint would otherwise break" in prompt
+    assert "place it under `outputs/`" in prompt
+    assert "keep files that reference each other in the same subfolder" in prompt
     assert "If both editing and creating are plausible" in prompt
-    assert "create, install, persist, or update a MyHarness/OpenHarness skill" in prompt
-    assert "(program location)\\OpenHarness\\.skills" in prompt
+    assert "create, install, persist, or update a MyHarness skill" in prompt
+    assert "(program location)\\MyHarness\\.skills" in prompt
     assert "Use a workspace `.skills`, user-level skill directory, or another location only" in prompt
     assert "batch them into one `edit_file` call with the `edits` array" in prompt
     assert "issue the necessary `edit_file` calls in the same assistant response" in prompt

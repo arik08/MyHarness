@@ -1,17 +1,27 @@
+import {
+  artifactCategoryForPath,
+  isDefaultProjectFileCandidate,
+  projectFileCategories,
+  projectFileDirectory,
+} from "./projectFiles.js";
+
 export function createArtifacts(ctx) {
   const { state, els } = ctx;
   function setMarkdown(...args) { return ctx.setMarkdown(...args); }
 
-const artifactPanelWidthKey = "openharness:artifactPanelWidth";
+const artifactPanelWidthKey = "myharness:artifactPanelWidth";
 const artifactPanelMinWidth = 320;
 const artifactPanelMaxWidth = 920;
 let artifactPanelReturnView = null;
+let pendingArtifactPanelReturnView = null;
 let artifactHistoryMode = "";
 let restoringArtifactHistory = false;
 let artifactHistoryBackPending = false;
 let activeArtifactFrameWindow = null;
 let artifactFrameBackFallbackTimer = 0;
-const artifactFrameBackMessage = "openharness:artifact-panel-back";
+const artifactFrameBackMessage = "myharness:artifact-panel-back";
+const artifactFrameResizeMessage = "myharness:artifact-panel-resize";
+let artifactFrameResizeCleanup = null;
 const artifactExtensions = new Set([
   "html",
   "htm",
@@ -87,14 +97,16 @@ const hiddenProjectFilePrefixes = [
   "autopilot-dashboard/",
   "docs/autopilot/",
 ];
+const projectFileFilterKey = "myharness:projectFileFilter";
+const projectFileCollapsedDirsKey = "myharness:projectFileCollapsedDirs";
 
 function isArtifactHistoryState(value) {
-  return Boolean(value && value.openharnessArtifactPanel === true);
+  return Boolean(value && value.myharnessArtifactPanel === true);
 }
 
 function artifactHistoryState(view, artifact = null) {
   return {
-    openharnessArtifactPanel: true,
+    myharnessArtifactPanel: true,
     view,
     session: state.sessionId || "",
     workspaceName: state.workspaceName || "",
@@ -153,6 +165,66 @@ function clearArtifactFrameBackFallback() {
   artifactFrameBackFallbackTimer = 0;
 }
 
+function cleanupArtifactFrameResizeObserver() {
+  artifactFrameResizeCleanup?.();
+  artifactFrameResizeCleanup = null;
+}
+
+function postArtifactFrameResize(frame) {
+  if (!frame?.isConnected || !frame.contentWindow) {
+    return;
+  }
+  const rect = frame.getBoundingClientRect();
+  frame.contentWindow.postMessage({
+    type: artifactFrameResizeMessage,
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  }, "*");
+}
+
+function observeArtifactFrameResize(frame) {
+  cleanupArtifactFrameResizeObserver();
+  let lastWidth = -1;
+  let frameId = 0;
+  let observer = null;
+  const targets = [frame, els.artifactViewer, els.artifactPanel].filter(Boolean);
+  const cleanup = () => {
+    if (frameId) {
+      window.cancelAnimationFrame(frameId);
+      frameId = 0;
+    }
+    observer?.disconnect();
+    window.removeEventListener("resize", schedule);
+  };
+  const schedule = () => {
+    if (!frame.isConnected) {
+      cleanupArtifactFrameResizeObserver();
+      return;
+    }
+    const width = Math.round(frame.getBoundingClientRect().width);
+    if (width < 1 || width === lastWidth) {
+      return;
+    }
+    lastWidth = width;
+    if (frameId) {
+      window.cancelAnimationFrame(frameId);
+    }
+    frameId = window.requestAnimationFrame(() => {
+      frameId = 0;
+      postArtifactFrameResize(frame);
+    });
+  };
+  if (window.ResizeObserver) {
+    observer = new ResizeObserver(schedule);
+    targets.forEach((target) => observer.observe(target));
+  }
+  window.addEventListener("resize", schedule);
+  schedule();
+  window.setTimeout(schedule, 120);
+  window.setTimeout(schedule, 420);
+  artifactFrameResizeCleanup = cleanup;
+}
+
 function withArtifactFrameBackBridge(content) {
   const bridge = `
 <script>
@@ -170,6 +242,21 @@ function withArtifactFrameBackBridge(content) {
   window.addEventListener("mousedown", sendBack, true);
   window.addEventListener("mouseup", sendBack, true);
   window.addEventListener("auxclick", sendBack, true);
+  const dispatchResize = () => {
+    try {
+      window.dispatchEvent(new Event("resize"));
+    } catch (error) {
+      const resizeEvent = document.createEvent("Event");
+      resizeEvent.initEvent("resize", true, true);
+      window.dispatchEvent(resizeEvent);
+    }
+  };
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== "${artifactFrameResizeMessage}") return;
+    dispatchResize();
+    requestAnimationFrame(dispatchResize);
+    setTimeout(dispatchResize, 120);
+  });
 })();
 </script>`;
   const value = String(content || "");
@@ -191,6 +278,7 @@ function projectFileQuery(extra = {}) {
   const query = new URLSearchParams();
   if (state.sessionId) {
     query.set("session", state.sessionId);
+    query.set("clientId", state.clientId);
   }
   if (state.workspacePath) {
     query.set("workspacePath", state.workspacePath);
@@ -280,6 +368,10 @@ function artifactLabelForPath(path, kind = artifactKind(path)) {
 
 function labelForArtifact(artifact) {
   return artifact.label || artifactLabelForPath(artifact.path, artifact.kind);
+}
+
+function isProjectFileArtifact(artifact) {
+  return String(artifact?.id || "").startsWith("project-file-");
 }
 
 function artifactIcon(kind) {
@@ -402,6 +494,7 @@ async function resolveExistingArtifacts(artifacts) {
     artifacts.map(async (artifact) => {
       const query = new URLSearchParams({
         session: state.sessionId,
+        clientId: state.clientId,
         path: artifact.path,
       });
       try {
@@ -521,6 +614,7 @@ function renderArtifactRenderedView(artifact, payload) {
     return;
   }
   activeArtifactFrameWindow = null;
+  cleanupArtifactFrameResizeObserver();
   els.artifactViewer.textContent = "";
   if (payload.name && els.artifactPanelTitle) {
     els.artifactPanelTitle.textContent = payload.name;
@@ -536,9 +630,11 @@ function renderArtifactRenderedView(artifact, payload) {
     iframe.sandbox = "allow-scripts";
     iframe.addEventListener("load", () => {
       activeArtifactFrameWindow = iframe.contentWindow;
+      postArtifactFrameResize(iframe);
     });
     iframe.srcdoc = withArtifactFrameBackBridge(payload.content);
     els.artifactViewer.append(iframe);
+    observeArtifactFrameResize(iframe);
     return;
   }
   if (payload.kind === "image") {
@@ -609,6 +705,7 @@ function renderArtifactSourceView(artifact, payload) {
     return;
   }
   activeArtifactFrameWindow = null;
+  cleanupArtifactFrameResizeObserver();
   els.artifactViewer.textContent = "";
   if (payload.name && els.artifactPanelTitle) {
     els.artifactPanelTitle.textContent = payload.name;
@@ -645,6 +742,7 @@ function renderArtifactError(error) {
   state.activeArtifactRaw = "";
   state.activeArtifactPayload = null;
   state.artifactSourceMode = false;
+  cleanupArtifactFrameResizeObserver();
   updateArtifactCopyButton(false);
   updateArtifactSourceButton(false);
   if (!els.artifactViewer) {
@@ -678,6 +776,7 @@ async function saveArtifactCopy(artifact, folderPath = "") {
     },
     body: JSON.stringify({
       session: state.sessionId || "",
+      clientId: state.clientId,
       workspacePath: state.workspacePath || "",
       workspaceName: state.workspaceName || "",
       path: artifact.path,
@@ -809,7 +908,9 @@ function isVisibleProjectFile(file) {
 }
 
 function sortedProjectFiles(files) {
-  const source = Array.isArray(files) ? files.filter(isVisibleProjectFile) : [];
+  const filter = String(state.projectFileFilter || "all");
+  const source = (Array.isArray(files) ? files.filter(isVisibleProjectFile) : [])
+    .filter((file) => filter === "all" || artifactCategoryForPath(file?.path || file?.name) === filter);
   const comparePath = (left, right) =>
     projectFileSortKey(left).localeCompare(projectFileSortKey(right), "ko", {
       numeric: true,
@@ -823,13 +924,146 @@ function sortedProjectFiles(files) {
   );
 }
 
+function saveProjectFileCollapsedDirs() {
+  localStorage.setItem(projectFileCollapsedDirsKey, JSON.stringify([...state.projectFileCollapsedDirs || []]));
+}
+
+function groupedProjectFiles(files) {
+  const groups = new Map();
+  for (const file of files) {
+    const directory = projectFileDirectory(file.path || file.name);
+    if (!groups.has(directory)) {
+      groups.set(directory, []);
+    }
+    groups.get(directory).push(file);
+  }
+  return [...groups.entries()];
+}
+
+function closeProjectFileModal() {
+  if (!els.modalHost) {
+    return;
+  }
+  els.modalHost.classList.add("hidden");
+  els.modalHost.textContent = "";
+  delete els.modalHost.dataset.dismissible;
+}
+
+function showOrganizeProjectFilesModal(candidates) {
+  if (!els.modalHost) {
+    return;
+  }
+  const files = Array.isArray(candidates) ? candidates : [];
+  els.modalHost.classList.remove("hidden");
+  els.modalHost.textContent = "";
+  els.modalHost.dataset.dismissible = "true";
+
+  const card = document.createElement("div");
+  card.className = "modal-card project-file-organize-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "modal-close";
+  close.setAttribute("aria-label", "닫기");
+  close.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M6 6l12 12"></path>
+      <path d="M18 6L6 18"></path>
+    </svg>
+  `;
+  close.addEventListener("click", closeProjectFileModal);
+
+  const title = document.createElement("h2");
+  title.textContent = "루트 산출물 정리";
+  const body = document.createElement("p");
+  body.textContent = "선택한 루트 파일을 outputs 폴더로 이동합니다. 같은 이름은 자동으로 번호를 붙입니다.";
+
+  const list = document.createElement("div");
+  list.className = "project-file-organize-list";
+  for (const file of files) {
+    const path = String(file.path || file.name || "");
+    const row = document.createElement("label");
+    row.className = "project-file-organize-row";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = path;
+    input.checked = true;
+    const copy = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = path;
+    const target = document.createElement("small");
+    target.textContent = `outputs/${file.name || path}`;
+    copy.append(name, target);
+    row.append(input, copy);
+    list.append(row);
+  }
+
+  const status = document.createElement("p");
+  status.className = "settings-helper workspace-error";
+  status.textContent = "";
+
+  const actions = document.createElement("div");
+  actions.className = "modal-actions";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "modal-button";
+  cancel.textContent = "취소";
+  cancel.addEventListener("click", closeProjectFileModal);
+  const submit = document.createElement("button");
+  submit.type = "button";
+  submit.className = "modal-button primary";
+  submit.textContent = "선택 파일 이동";
+  submit.addEventListener("click", async () => {
+    const paths = [...list.querySelectorAll("input[type='checkbox']:checked")].map((input) => input.value);
+    if (!paths.length) {
+      status.textContent = "이동할 파일을 선택하세요.";
+      return;
+    }
+    submit.disabled = true;
+    status.textContent = "이동 중...";
+    try {
+      const response = await fetch("/api/project-files/organize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          session: state.sessionId || "",
+          clientId: state.clientId,
+          workspacePath: state.workspacePath || "",
+          workspaceName: state.workspaceName || "",
+          paths,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "파일을 정리하지 못했습니다.");
+      }
+      closeProjectFileModal();
+      state.projectFilesLoadedForSession = "";
+      await openProjectFiles({ scope: state.projectFileScope || "default", force: true });
+    } catch (error) {
+      submit.disabled = false;
+      status.textContent = `정리 실패: ${error.message}`;
+    }
+  });
+  actions.append(cancel, submit);
+  card.append(close, title, body, list, status, actions);
+  els.modalHost.append(card);
+}
+
 function renderProjectFiles(files) {
   artifactPanelReturnView = null;
+  pendingArtifactPanelReturnView = null;
   setArtifactCloseMode("close");
   if (state.artifactPanelOpen) {
     artifactHistoryMode = "list";
   }
   activeArtifactFrameWindow = null;
+  cleanupArtifactFrameResizeObserver();
   state.activeArtifactRaw = "";
   state.activeArtifactPayload = null;
   state.artifactSourceMode = false;
@@ -840,20 +1074,36 @@ function renderProjectFiles(files) {
   }
   els.artifactViewer.textContent = "";
   const visibleFiles = sortedProjectFiles(files);
-  if (!visibleFiles.length) {
-    const empty = document.createElement("p");
-    empty.className = "artifact-empty";
-    empty.textContent = "현재 프로젝트에 열 수 있는 파일이 없습니다.";
-    els.artifactViewer.append(empty);
-    return;
-  }
   const toolbar = document.createElement("div");
   toolbar.className = "project-file-toolbar";
   const sortSummary = document.createElement("span");
   sortSummary.className = "project-file-sort-summary";
-  sortSummary.textContent = state.projectFileSortMode === "path"
-    ? "경로와 파일명 순으로 표시됩니다"
-    : "최근 생성된 파일 순으로 표시됩니다";
+  sortSummary.textContent = state.projectFileScope === "all"
+    ? "전체 프로젝트 파일을 표시합니다"
+    : "outputs와 루트 산출물 후보를 표시합니다";
+
+  const controls = document.createElement("div");
+  controls.className = "project-file-controls";
+
+  const filterLabel = document.createElement("label");
+  filterLabel.className = "project-file-sort";
+  const filterText = document.createElement("span");
+  filterText.textContent = "유형";
+  const filterSelect = document.createElement("select");
+  filterSelect.setAttribute("aria-label", "프로젝트 파일 유형 필터");
+  filterSelect.innerHTML = projectFileCategories
+    .map((category) => `<option value="${category.value}">${category.label}</option>`)
+    .join("");
+  filterSelect.value = projectFileCategories.some((category) => category.value === state.projectFileFilter)
+    ? state.projectFileFilter
+    : "all";
+  filterSelect.addEventListener("change", () => {
+    state.projectFileFilter = filterSelect.value || "all";
+    localStorage.setItem(projectFileFilterKey, state.projectFileFilter);
+    renderProjectFiles(state.projectFiles || []);
+  });
+  filterLabel.append(filterText, filterSelect);
+
   const sortLabel = document.createElement("label");
   sortLabel.className = "project-file-sort";
   const sortText = document.createElement("span");
@@ -867,10 +1117,47 @@ function renderProjectFiles(files) {
   sortSelect.value = state.projectFileSortMode === "path" ? "path" : "recent";
   sortSelect.addEventListener("change", () => {
     state.projectFileSortMode = sortSelect.value === "path" ? "path" : "recent";
+    localStorage.setItem("myharness:projectFileSortMode", state.projectFileSortMode);
     renderProjectFiles(state.projectFiles || []);
   });
   sortLabel.append(sortText, sortSelect);
-  toolbar.append(sortSummary, sortLabel);
+
+  const rootCandidates = (Array.isArray(files) ? files : [])
+    .filter((file) => isDefaultProjectFileCandidate(file.path || file.name) && !String(file.path || file.name).includes("/"));
+
+  const organizeButton = document.createElement("button");
+  organizeButton.type = "button";
+  organizeButton.className = "project-file-toolbar-button";
+  organizeButton.textContent = "정리";
+  organizeButton.disabled = rootCandidates.length === 0;
+  organizeButton.addEventListener("click", () => showOrganizeProjectFilesModal(rootCandidates));
+
+  const scopeButton = document.createElement("button");
+  scopeButton.type = "button";
+  scopeButton.className = "project-file-toolbar-button";
+  scopeButton.textContent = state.projectFileScope === "all" ? "outputs만" : "전체 보기";
+  scopeButton.addEventListener("click", () => {
+    openProjectFiles({ scope: state.projectFileScope === "all" ? "default" : "all", force: true });
+  });
+
+  const refreshButton = document.createElement("button");
+  refreshButton.type = "button";
+  refreshButton.className = "project-file-toolbar-button";
+  refreshButton.setAttribute("aria-label", "프로젝트 파일 새로고침");
+  refreshButton.textContent = "새로고침";
+  refreshButton.addEventListener("click", () => openProjectFiles({ scope: state.projectFileScope || "default", force: true }));
+
+  controls.append(filterLabel, sortLabel, organizeButton, scopeButton, refreshButton);
+  toolbar.append(sortSummary, controls);
+  els.artifactViewer.append(toolbar);
+
+  if (!visibleFiles.length) {
+    const empty = document.createElement("p");
+    empty.className = "artifact-empty";
+    empty.textContent = "현재 조건에 맞는 파일이 없습니다.";
+    els.artifactViewer.append(empty);
+    return;
+  }
 
   const list = document.createElement("div");
   list.className = "project-file-list";
@@ -922,7 +1209,8 @@ function renderProjectFiles(files) {
       }, { capture: true, once: true });
     }, 0);
   };
-  for (const file of visibleFiles) {
+
+  const appendProjectFileItem = (parent, file) => {
     const artifact = {
       id: `project-file-${file.path}`,
       path: file.path,
@@ -1007,6 +1295,7 @@ function renderProjectFiles(files) {
           },
           body: JSON.stringify({
             session: state.sessionId || "",
+            clientId: state.clientId,
             workspacePath: state.workspacePath || "",
             workspaceName: state.workspaceName || "",
             path: artifact.path,
@@ -1037,19 +1326,64 @@ function renderProjectFiles(files) {
     actions.append(download, deleteButton);
 
     item.append(openButton, actions);
-    list.append(item);
+    parent.append(item);
+  };
+
+  for (const [directory, groupFiles] of groupedProjectFiles(visibleFiles)) {
+    const section = document.createElement("section");
+    section.className = "project-file-section";
+    const collapsed = state.projectFileCollapsedDirs?.has(directory);
+    section.classList.toggle("collapsed", Boolean(collapsed));
+
+    const header = document.createElement("button");
+    header.type = "button";
+    header.className = "project-file-section-header";
+    header.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    header.innerHTML = `
+      <span class="project-file-section-caret" aria-hidden="true">›</span>
+      <span class="project-file-section-title"></span>
+      <small></small>
+    `;
+    header.querySelector(".project-file-section-title").textContent = directory;
+    header.querySelector("small").textContent = `${groupFiles.length}개`;
+    header.addEventListener("click", () => {
+      if (!state.projectFileCollapsedDirs) {
+        state.projectFileCollapsedDirs = new Set();
+      }
+      if (state.projectFileCollapsedDirs.has(directory)) {
+        state.projectFileCollapsedDirs.delete(directory);
+      } else {
+        state.projectFileCollapsedDirs.add(directory);
+      }
+      saveProjectFileCollapsedDirs();
+      renderProjectFiles(state.projectFiles || []);
+    });
+
+    const body = document.createElement("div");
+    body.className = "project-file-section-body";
+    if (!collapsed) {
+      for (const file of groupFiles) {
+        appendProjectFileItem(body, file);
+      }
+    }
+    section.append(header, body);
+    list.append(section);
   }
-  els.artifactViewer.append(toolbar, list);
+  els.artifactViewer.append(list);
 }
 
-async function openProjectFiles() {
+async function openProjectFiles(options = {}) {
   if (!state.sessionId && !state.workspacePath && !state.workspaceName) {
     return;
   }
+  const scope = options.scope === "all" ? "all" : "default";
+  const force = options.force === true;
+  state.projectFileScope = scope;
   state.activeArtifactRaw = "";
   state.activeArtifactPayload = null;
   state.artifactSourceMode = false;
   artifactPanelReturnView = null;
+  pendingArtifactPanelReturnView = null;
   updateArtifactCopyButton(false);
   updateArtifactSourceButton(false);
   setArtifactPanel(true);
@@ -1058,13 +1392,15 @@ async function openProjectFiles() {
     els.artifactPanelTitle.textContent = "프로젝트 파일";
   }
   if (els.artifactPanelMeta) {
-    els.artifactPanelMeta.textContent = "열 수 있는 파일을 불러오는 중";
+    els.artifactPanelMeta.textContent = scope === "all"
+      ? "전체 프로젝트 파일을 불러오는 중"
+      : "outputs와 루트 산출물을 불러오는 중";
   }
   if (els.artifactViewer) {
     els.artifactViewer.innerHTML = `<p class="artifact-empty">파일 목록을 불러오는 중...</p>`;
   }
   try {
-    const query = projectFileQuery();
+    const query = projectFileQuery({ scope, force: force ? "true" : undefined });
     const response = await fetch(`/api/project-files?${query.toString()}`, { headers: { Accept: "application/json" } });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -1072,6 +1408,7 @@ async function openProjectFiles() {
     }
     const files = Array.isArray(payload.files) ? payload.files : [];
     state.projectFiles = files;
+    state.projectFileScope = payload.scope || scope;
     if (els.artifactPanelMeta) {
       els.artifactPanelMeta.textContent = `${files.length}개 파일`;
     }
@@ -1083,7 +1420,11 @@ async function openProjectFiles() {
 
 async function openArtifact(artifact, options = {}) {
   state.activeArtifact = artifact;
-  if (els.artifactPanelTitle?.textContent === "프로젝트 파일" || options.projectFilesReturn) {
+  if (
+    els.artifactPanelTitle?.textContent === "프로젝트 파일"
+    || options.projectFilesReturn
+    || isProjectFileArtifact(artifact)
+  ) {
     artifactPanelReturnView = {
       kind: "project-files",
       files: Array.isArray(state.projectFiles) ? state.projectFiles : [],
@@ -1100,6 +1441,7 @@ async function openArtifact(artifact, options = {}) {
   try {
     const query = new URLSearchParams({
       session: state.sessionId || "",
+      clientId: state.clientId,
       path: artifact.path,
     });
     const response = await fetch(`/api/artifact?${query.toString()}`, { headers: { Accept: "application/json" } });
@@ -1115,12 +1457,17 @@ async function openArtifact(artifact, options = {}) {
 
 function closeArtifactPanel(options = {}) {
   const fromHistory = options?.fromHistory === true;
+  if (!fromHistory && artifactPanelReturnView?.kind === "project-files") {
+    pendingArtifactPanelReturnView = artifactPanelReturnView;
+  }
   if (!fromHistory && requestArtifactHistoryBack()) {
     return;
   }
-  if (artifactPanelReturnView?.kind === "project-files") {
-    const files = artifactPanelReturnView.files || [];
+  const returnView = artifactPanelReturnView || pendingArtifactPanelReturnView;
+  if (returnView?.kind === "project-files") {
+    const files = returnView.files || [];
     artifactPanelReturnView = null;
+    pendingArtifactPanelReturnView = null;
     state.activeArtifact = null;
     state.activeArtifactRaw = "";
     state.activeArtifactPayload = null;
@@ -1142,8 +1489,10 @@ function closeArtifactPanel(options = {}) {
   state.activeArtifactPayload = null;
   state.artifactSourceMode = false;
   artifactPanelReturnView = null;
+  pendingArtifactPanelReturnView = null;
   artifactHistoryMode = "";
   activeArtifactFrameWindow = null;
+  cleanupArtifactFrameResizeObserver();
   clearArtifactFrameBackFallback();
   setArtifactCloseMode("close");
   updateArtifactCopyButton(false);
@@ -1168,8 +1517,10 @@ function resetArtifacts() {
   state.activeArtifactPayload = null;
   state.artifactSourceMode = false;
   artifactPanelReturnView = null;
+  pendingArtifactPanelReturnView = null;
   artifactHistoryMode = "";
   activeArtifactFrameWindow = null;
+  cleanupArtifactFrameResizeObserver();
   clearArtifactFrameBackFallback();
   setArtifactCloseMode("close");
   updateArtifactCopyButton(false);

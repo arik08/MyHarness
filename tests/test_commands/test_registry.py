@@ -8,19 +8,19 @@ from pathlib import Path
 
 import pytest
 
-import openharness.commands.registry as registry_module
-from openharness.commands.registry import CommandContext, create_default_command_registry
-from openharness.autopilot import RepoVerificationStep
-from openharness.config.paths import get_feedback_log_path, get_project_issue_file, get_project_pr_comments_file
-from openharness.config.settings import load_settings, save_settings, Settings
-from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.engine.query_engine import QueryEngine
-from openharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
-from openharness.permissions import PermissionChecker
-from openharness.plugins.types import PluginCommandDefinition
-from openharness.state import AppState, AppStateStore
-from openharness.tasks import get_task_manager
-from openharness.tools import create_default_tool_registry
+import myharness.commands.registry as registry_module
+from myharness.commands.registry import CommandContext, create_default_command_registry
+from myharness.autopilot import RepoVerificationStep
+from myharness.config.paths import get_feedback_log_path, get_project_issue_file, get_project_pr_comments_file
+from myharness.config.settings import load_settings, save_settings, Settings
+from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.engine.query_engine import QueryEngine
+from myharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
+from myharness.permissions import PermissionChecker
+from myharness.plugins.types import PluginCommandDefinition
+from myharness.state import AppState, AppStateStore
+from myharness.tasks import get_task_manager
+from myharness.tools import create_default_tool_registry
 
 
 class FakeApiClient:
@@ -66,7 +66,7 @@ def _make_context(tmp_path: Path) -> CommandContext:
 
 @pytest.mark.asyncio
 async def test_permissions_command_persists(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, args = registry.lookup("/permissions set full_auto")
     assert command is not None
@@ -78,8 +78,75 @@ async def test_permissions_command_persists(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_plan_toggle_restores_full_auto_without_persisting_default(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    context.app_state.set(permission_mode="full_auto")
+
+    command, args = registry.lookup("/plan on")
+    assert command is not None
+    enabled = await command.handler(args, context)
+
+    assert enabled.message == "Plan mode enabled."
+    assert enabled.refresh_runtime is False
+    assert context.app_state.get().permission_mode == "plan"
+    assert context.app_state.get().plan_previous_permission_mode == "full_auto"
+    assert load_settings().permission.mode == "default"
+
+    command, args = registry.lookup("/plan off")
+    assert command is not None
+    disabled = await command.handler(args, context)
+
+    assert disabled.message == "Plan mode disabled."
+    assert disabled.refresh_runtime is False
+    assert context.app_state.get().permission_mode == "full_auto"
+    assert context.app_state.get().plan_previous_permission_mode == ""
+    assert load_settings().permission.mode == "default"
+
+
+@pytest.mark.asyncio
+async def test_plan_toggle_without_args_returns_to_previous_mode(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    context.app_state.set(permission_mode="full_auto")
+
+    command, args = registry.lookup("/plan")
+    assert command is not None
+    enabled = await command.handler(args, context)
+
+    assert enabled.message == "Plan mode enabled."
+    assert context.app_state.get().permission_mode == "plan"
+
+    command, args = registry.lookup("/plan")
+    assert command is not None
+    disabled = await command.handler(args, context)
+
+    assert disabled.message == "Plan mode disabled."
+    assert context.app_state.get().permission_mode == "full_auto"
+    assert load_settings().permission.mode == "default"
+
+
+@pytest.mark.asyncio
+async def test_plan_exit_uses_global_yolo_fallback(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(Settings(yolo_mode_enabled=True))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    context.app_state.set(permission_mode="plan", plan_previous_permission_mode="")
+
+    command, args = registry.lookup("/plan off")
+    assert command is not None
+    result = await command.handler(args, context)
+
+    assert result.message == "Plan mode disabled."
+    assert context.app_state.get().permission_mode == "full_auto"
+
+
+@pytest.mark.asyncio
 async def test_permissions_command_is_marked_local_only(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, _ = registry.lookup("/permissions set full_auto")
     assert command is not None
@@ -88,7 +155,7 @@ async def test_permissions_command_is_marked_local_only(tmp_path: Path, monkeypa
 
 @pytest.mark.asyncio
 async def test_permissions_command_supports_explicit_remote_admin_opt_in(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, _ = registry.lookup("/permissions set full_auto")
     assert command is not None
@@ -97,7 +164,7 @@ async def test_permissions_command_supports_explicit_remote_admin_opt_in(tmp_pat
 
 @pytest.mark.asyncio
 async def test_learned_skills_command_toggles_setting(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, args = registry.lookup("/learned-skills off")
     assert command is not None
@@ -109,7 +176,7 @@ async def test_learned_skills_command_toggles_setting(tmp_path: Path, monkeypatc
 
 
 def test_learned_skills_default_mode_is_hide(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
 
     settings = load_settings()
 
@@ -119,7 +186,7 @@ def test_learned_skills_default_mode_is_hide(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_learned_skills_command_sets_hide_mode(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, args = registry.lookup("/learned-skills hide")
     assert command is not None
@@ -134,7 +201,7 @@ async def test_learned_skills_command_sets_hide_mode(tmp_path: Path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_learned_skills_command_shows_recent_metadata(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     engine = _make_engine(tmp_path)
     engine.tool_metadata["recent_learned_skills"] = [
         {
@@ -156,7 +223,7 @@ async def test_learned_skills_command_shows_recent_metadata(tmp_path: Path, monk
 
 @pytest.mark.asyncio
 async def test_help_hides_learned_skills_in_hide_mode(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     save_settings(Settings(learning={"enabled": True, "mode": "hide"}))
     skills_root = tmp_path / "skills"
     learned_dir = skills_root / "learned-demo"
@@ -194,7 +261,7 @@ async def test_help_hides_learned_skills_in_hide_mode(tmp_path: Path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_skills_command_toggles_skill_enabled_state(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     skill_dir = tmp_path / ".skills" / "ship"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -215,7 +282,7 @@ async def test_skills_command_toggles_skill_enabled_state(tmp_path: Path, monkey
 
 @pytest.mark.asyncio
 async def test_plugin_command_is_marked_local_only(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, _ = registry.lookup("/plugin list")
     assert command is not None
@@ -224,7 +291,7 @@ async def test_plugin_command_is_marked_local_only(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_plugin_command_supports_explicit_remote_admin_opt_in(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, _ = registry.lookup("/plugin list")
     assert command is not None
@@ -233,7 +300,7 @@ async def test_plugin_command_supports_explicit_remote_admin_opt_in(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_reload_plugins_command_is_marked_local_only(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, _ = registry.lookup("/reload-plugins")
     assert command is not None
@@ -242,7 +309,7 @@ async def test_reload_plugins_command_is_marked_local_only(tmp_path: Path, monke
 
 @pytest.mark.asyncio
 async def test_reload_plugins_command_supports_explicit_remote_admin_opt_in(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, _ = registry.lookup("/reload-plugins")
     assert command is not None
@@ -251,8 +318,8 @@ async def test_reload_plugins_command_supports_explicit_remote_admin_opt_in(tmp_
 
 @pytest.mark.asyncio
 async def test_memory_show_rejects_path_traversal(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_command_registry()
     command, args = registry.lookup("/memory show ../../../../../../etc/hosts")
     assert command is not None
@@ -264,8 +331,8 @@ async def test_memory_show_rejects_path_traversal(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_memory_show_reads_normal_entries_with_md_fallback(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_command_registry()
 
     add_command, add_args = registry.lookup("/memory add Notes :: hello world")
@@ -280,7 +347,7 @@ async def test_memory_show_reads_normal_entries_with_md_fallback(tmp_path: Path,
 
 @pytest.mark.asyncio
 async def test_model_command_persists(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, args = registry.lookup("/model opus")
     assert command is not None
@@ -294,7 +361,7 @@ async def test_model_command_persists(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_model_command_accepts_direct_value(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, args = registry.lookup("/model gpt-5.5")
     assert command is not None
@@ -307,7 +374,7 @@ async def test_model_command_accepts_direct_value(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_model_command_default_clears_profile_override(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     save_settings(
         Settings().model_copy(
             update={
@@ -338,7 +405,7 @@ async def test_model_command_default_clears_profile_override(tmp_path: Path, mon
 
 @pytest.mark.asyncio
 async def test_turns_show_reports_unlimited_engine_when_session_is_unbounded(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
     context.engine.set_max_turns(None)
@@ -353,7 +420,7 @@ async def test_turns_show_reports_unlimited_engine_when_session_is_unbounded(tmp
 
 @pytest.mark.asyncio
 async def test_turns_command_accepts_unlimited(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -368,7 +435,7 @@ async def test_turns_command_accepts_unlimited(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_provider_command_switches_profile_and_requests_runtime_refresh(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     save_settings(
         Settings().model_copy(
             update={
@@ -404,7 +471,7 @@ async def test_provider_command_switches_profile_and_requests_runtime_refresh(tm
 
 @pytest.mark.asyncio
 async def test_autopilot_command_add_list_and_complete(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -434,7 +501,7 @@ async def test_autopilot_command_add_list_and_complete(tmp_path: Path, monkeypat
 
 @pytest.mark.asyncio
 async def test_autopilot_command_export_dashboard(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -450,7 +517,7 @@ async def test_autopilot_command_export_dashboard(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ship_command_queues_and_executes_card(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -461,11 +528,11 @@ async def test_ship_command_queues_and_executes_card(tmp_path: Path, monkeypatch
         return [RepoVerificationStep(command="uv run pytest -q", returncode=0, status="success")]
 
     monkeypatch.setattr(
-        "openharness.autopilot.service.RepoAutopilotStore._run_agent_prompt",
+        "myharness.autopilot.service.RepoAutopilotStore._run_agent_prompt",
         fake_run_agent_prompt,
     )
     monkeypatch.setattr(
-        "openharness.autopilot.service.RepoAutopilotStore._run_verification_steps",
+        "myharness.autopilot.service.RepoAutopilotStore._run_verification_steps",
         fake_run_verification_steps,
     )
 
@@ -480,7 +547,7 @@ async def test_ship_command_queues_and_executes_card(tmp_path: Path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_plugin_command_registers_and_submits_prompt(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry(
         plugin_commands=[
             PluginCommandDefinition(
@@ -501,7 +568,7 @@ async def test_plugin_command_registers_and_submits_prompt(tmp_path: Path, monke
 
 @pytest.mark.asyncio
 async def test_model_command_rejects_values_outside_profile_allowlist(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     save_settings(
         Settings().model_copy(
             update={
@@ -532,7 +599,7 @@ async def test_model_command_rejects_values_outside_profile_allowlist(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_doctor_command_reports_context(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, args = registry.lookup("/doctor")
     assert command is not None
@@ -553,7 +620,7 @@ async def test_doctor_command_reports_context(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_help_lists_skills_mcp_and_plugins_even_when_empty(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -572,7 +639,7 @@ async def test_help_lists_skills_mcp_and_plugins_even_when_empty(tmp_path: Path,
 
 @pytest.mark.asyncio
 async def test_mcp_command_toggles_server_usage(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     save_settings(Settings(mcp_servers={"demo": McpStdioServerConfig(command="python", args=["server.py"])}))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
@@ -592,7 +659,7 @@ async def test_mcp_command_toggles_server_usage(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_plugin_command_toggles_plugin_usage(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     plugin_root = tmp_path / "config" / "plugins" / "fixture-plugin"
     plugin_root.mkdir(parents=True)
     (plugin_root / "plugin.json").write_text(
@@ -612,8 +679,8 @@ async def test_plugin_command_toggles_plugin_usage(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_memory_command_manages_entries(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -636,7 +703,7 @@ async def test_memory_command_manages_entries(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
     context.engine.load_messages(
@@ -668,7 +735,7 @@ async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -698,7 +765,8 @@ async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeyp
     plan_command, plan_args = registry.lookup("/plan on")
     plan_result = await plan_command.handler(plan_args, context)
     assert "enabled" in plan_result.message
-    assert load_settings().permission.mode == "plan"
+    assert context.app_state.get().permission_mode == "plan"
+    assert load_settings().permission.mode == "default"
 
     fast_command, fast_args = registry.lookup("/fast on")
     fast_result = await fast_command.handler(fast_args, context)
@@ -721,18 +789,18 @@ async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeyp
 
 @pytest.mark.asyncio
 async def test_version_context_and_share_commands(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
     version_command, version_args = registry.lookup("/version")
     version_result = await version_command.handler(version_args, context)
-    assert "OpenHarness" in version_result.message
+    assert "MyHarness" in version_result.message
 
     context_command, context_args = registry.lookup("/context")
     context_result = await context_command.handler(context_args, context)
-    assert "OpenHarness" in context_result.message or "interactive agent" in context_result.message
+    assert "MyHarness" in context_result.message or "interactive agent" in context_result.message
 
     share_command, share_args = registry.lookup("/share")
     share_result = await share_command.handler(share_args, context)
@@ -741,8 +809,8 @@ async def test_version_context_and_share_commands(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     save_settings(Settings(active_profile="claude-api"))
     registry = create_default_command_registry()
@@ -778,13 +846,13 @@ async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkey
 
 @pytest.mark.asyncio
 async def test_login_loads_pgpt_openai_compatible_identity_into_env(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("PGPT_API_KEY", raising=False)
     monkeypatch.delenv("PGPT_EMPLOYEE_NO", raising=False)
-    from openharness.auth.storage import load_credential
-    from openharness.config import save_settings
-    from openharness.config.settings import Settings
+    from myharness.auth.storage import load_credential
+    from myharness.config import save_settings
+    from myharness.config.settings import Settings
 
     save_settings(Settings(active_profile="p-gpt"))
     registry = create_default_command_registry()
@@ -805,8 +873,8 @@ async def test_login_loads_pgpt_openai_compatible_identity_into_env(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_agents_session_files_and_reload_plugins_commands(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
     (tmp_path / "src").mkdir()
@@ -866,8 +934,8 @@ async def test_agents_session_files_and_reload_plugins_commands(tmp_path: Path, 
 
 @pytest.mark.asyncio
 async def test_agents_help_and_subagents_alias(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -890,8 +958,8 @@ async def test_agents_help_and_subagents_alias(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_init_and_bridge_commands(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -899,7 +967,7 @@ async def test_init_and_bridge_commands(tmp_path: Path, monkeypatch):
     init_result = await init_command.handler(init_args, context)
     assert "Initialized project files" in init_result.message or "already initialized" in init_result.message
     assert (tmp_path / "AGENTS.md").exists()
-    assert (tmp_path / ".openharness" / "memory" / "MEMORY.md").exists()
+    assert (tmp_path / ".myharness" / "memory" / "MEMORY.md").exists()
 
     bridge_show_command, bridge_show_args = registry.lookup("/bridge show")
     bridge_show_result = await bridge_show_command.handler(bridge_show_args, context)
@@ -937,8 +1005,8 @@ async def test_init_and_bridge_commands(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_copy_rewind_and_meta_commands(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
     context.engine.load_messages(
@@ -986,8 +1054,8 @@ async def test_copy_rewind_and_meta_commands(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcp_and_voice_commands_report_richer_state(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     settings = Settings(
         mcp_servers={
             "http-demo": McpHttpServerConfig(url="https://example.com/mcp"),
@@ -1018,17 +1086,17 @@ async def test_mcp_and_voice_commands_report_richer_state(tmp_path: Path, monkey
 
 @pytest.mark.asyncio
 async def test_git_commands_report_repository_state(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
     subprocess.run(
-        ["git", "config", "user.email", "openharness@example.com"],
+        ["git", "config", "user.email", "myharness@example.com"],
         cwd=tmp_path,
         check=True,
         capture_output=True,
         text=True,
     )
     subprocess.run(
-        ["git", "config", "user.name", "OpenHarness Tests"],
+        ["git", "config", "user.name", "MyHarness Tests"],
         cwd=tmp_path,
         check=True,
         capture_output=True,

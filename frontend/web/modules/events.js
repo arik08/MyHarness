@@ -925,7 +925,11 @@ function handleEvent(event) {
     restoringWorkflowInputDeltas = [];
     clearPendingAssistantActions();
     state.ready = false;
-    setStatus(STATUS_LABELS.stopped);
+    state.sessionId = null;
+    if (els.sessionId) {
+      els.sessionId.textContent = "";
+    }
+    setBusy(false, STATUS_LABELS.stopped);
     updateSendState();
   }
 }

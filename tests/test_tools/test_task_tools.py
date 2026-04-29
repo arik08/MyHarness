@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from openharness.coordinator.coordinator_mode import get_team_registry
-from openharness.tasks import get_task_manager
-from openharness.tools.agent_tool import AgentTool, AgentToolInput
-from openharness.tools.base import ToolExecutionContext
-from openharness.tools.task_create_tool import TaskCreateTool, TaskCreateToolInput
-from openharness.tools.task_output_tool import TaskOutputTool, TaskOutputToolInput
-from openharness.tools.task_update_tool import TaskUpdateTool, TaskUpdateToolInput
-from openharness.tools.team_create_tool import TeamCreateTool, TeamCreateToolInput
+from myharness.coordinator.coordinator_mode import get_team_registry
+from myharness.tasks import get_task_manager
+from myharness.tools.agent_tool import AgentTool, AgentToolInput
+from myharness.tools.base import ToolExecutionContext
+from myharness.tools.task_create_tool import TaskCreateTool, TaskCreateToolInput
+from myharness.tools.task_output_tool import TaskOutputTool, TaskOutputToolInput
+from myharness.tools.task_update_tool import TaskUpdateTool, TaskUpdateToolInput
+from myharness.tools.team_create_tool import TeamCreateTool, TeamCreateToolInput
 
 
 async def _wait_for_terminal_task(task_id: str, *, timeout_seconds: float = 2.0) -> None:
@@ -30,7 +30,7 @@ async def _wait_for_terminal_task(task_id: str, *, timeout_seconds: float = 2.0)
 
 @pytest.mark.asyncio
 async def test_task_create_and_output_tool(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(cwd=tmp_path)
 
     create_result = await TaskCreateTool().execute(
@@ -68,7 +68,7 @@ async def test_team_create_tool(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_task_update_tool_updates_metadata(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(cwd=tmp_path)
 
     create_result = await TaskCreateTool().execute(
@@ -113,7 +113,7 @@ async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
     returned IDs like "in_process_3f7a9b1c2d4e" that BackgroundTaskManager
     never saw — every poll attempt raised ValueError.
     """
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(cwd=tmp_path)
 
     result = await AgentTool().execute(
@@ -169,18 +169,18 @@ async def test_send_message_swarm_path_uses_subprocess_backend(
     """
     from unittest.mock import AsyncMock, patch
 
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(cwd=tmp_path)
 
-    from openharness.tools.send_message_tool import SendMessageTool
+    from myharness.tools.send_message_tool import SendMessageTool
 
     with patch(
-        "openharness.swarm.subprocess_backend.SubprocessBackend.send_message",
+        "myharness.swarm.subprocess_backend.SubprocessBackend.send_message",
         new_callable=AsyncMock,
     ) as mock_send:
         await SendMessageTool().execute(
             __import__(
-                "openharness.tools.send_message_tool",
+                "myharness.tools.send_message_tool",
                 fromlist=["SendMessageToolInput"],
             ).SendMessageToolInput(
                 task_id="worker@default",
@@ -198,7 +198,7 @@ async def test_send_message_swarm_path_uses_subprocess_backend(
 
 
 def test_send_message_input_accepts_to_alias():
-    from openharness.tools.send_message_tool import SendMessageToolInput
+    from myharness.tools.send_message_tool import SendMessageToolInput
 
     args = SendMessageToolInput.model_validate(
         {"to": "worker@default", "message": "ping"}
@@ -210,7 +210,7 @@ def test_send_message_input_accepts_to_alias():
 
 @pytest.mark.asyncio
 async def test_agent_tool_creates_missing_team_when_team_argument_is_provided(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     get_team_registry()._teams.clear()
     context = ToolExecutionContext(cwd=tmp_path)
 
@@ -233,7 +233,7 @@ async def test_agent_tool_creates_missing_team_when_team_argument_is_provided(tm
 
 @pytest.mark.asyncio
 async def test_agent_tool_supports_remote_and_teammate_modes(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(cwd=tmp_path)
 
     for i, mode in enumerate(("remote_agent", "in_process_teammate")):

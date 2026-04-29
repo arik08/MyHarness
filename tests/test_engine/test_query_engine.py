@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from openharness.api.client import ApiMessageCompleteEvent, ApiRetryEvent, ApiTextDeltaEvent
-from openharness.api.errors import RequestFailure
-from openharness.api.usage import UsageSnapshot
-from openharness.config.settings import PermissionSettings, Settings
-from openharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
-from openharness.engine.query_engine import QueryEngine
-from openharness.prompts.context import build_runtime_system_prompt
-from openharness.engine.stream_events import (
+from myharness.api.client import ApiMessageCompleteEvent, ApiRetryEvent, ApiTextDeltaEvent
+from myharness.api.errors import RequestFailure
+from myharness.api.usage import UsageSnapshot
+from myharness.config.settings import PermissionSettings, Settings
+from myharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
+from myharness.engine.query_engine import QueryEngine
+from myharness.prompts.context import build_runtime_system_prompt
+from myharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
@@ -24,19 +24,19 @@ from openharness.engine.stream_events import (
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
-from openharness.permissions import PermissionChecker, PermissionMode
-from openharness.platforms import get_platform
-from openharness.tasks import get_task_manager
-from openharness.tools import create_default_tool_registry
-from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
-from openharness.tools.glob_tool import GlobTool
-from openharness.tools.grep_tool import GrepTool
+from myharness.permissions import PermissionChecker, PermissionMode
+from myharness.platforms import get_platform
+from myharness.tasks import get_task_manager
+from myharness.tools import create_default_tool_registry
+from myharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
+from myharness.tools.glob_tool import GlobTool
+from myharness.tools.grep_tool import GrepTool
 from pydantic import BaseModel
-from openharness.engine.messages import ToolResultBlock
-from openharness.hooks import HookExecutionContext, HookExecutor, HookEvent
-from openharness.hooks.loader import HookRegistry
-from openharness.hooks.schemas import PromptHookDefinition
-from openharness.engine.query import QueryContext, _execute_tool_call
+from myharness.engine.messages import ToolResultBlock
+from myharness.hooks import HookExecutionContext, HookExecutor, HookEvent
+from myharness.hooks.loader import HookRegistry
+from myharness.hooks.schemas import PromptHookDefinition
+from myharness.engine.query import QueryContext, _execute_tool_call
 
 
 def _command_tool_name() -> str:
@@ -311,7 +311,7 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_query_engine_coordinator_mode_uses_coordinator_prompt_and_runs_agent_loop(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
 
     api_client = CoordinatorLoopApiClient()
@@ -408,8 +408,8 @@ async def test_query_engine_surfaces_retry_status_events(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_query_engine_emits_compact_progress_before_reply(tmp_path: Path, monkeypatch):
     long_text = "alpha " * 50000
-    monkeypatch.setattr("openharness.services.compact.try_session_memory_compaction", lambda *args, **kwargs: None)
-    monkeypatch.setattr("openharness.services.compact.should_autocompact", lambda *args, **kwargs: True)
+    monkeypatch.setattr("myharness.services.compact.try_session_memory_compaction", lambda *args, **kwargs: None)
+    monkeypatch.setattr("myharness.services.compact.should_autocompact", lambda *args, **kwargs: True)
     engine = QueryEngine(
         api_client=FakeApiClient(
             [
@@ -454,8 +454,8 @@ async def test_query_engine_emits_compact_progress_before_reply(tmp_path: Path, 
 
 @pytest.mark.asyncio
 async def test_query_engine_reactive_compacts_after_prompt_too_long(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr("openharness.services.compact.try_session_memory_compaction", lambda *args, **kwargs: None)
-    monkeypatch.setattr("openharness.services.compact.should_autocompact", lambda *args, **kwargs: False)
+    monkeypatch.setattr("myharness.services.compact.try_session_memory_compaction", lambda *args, **kwargs: None)
+    monkeypatch.setattr("myharness.services.compact.should_autocompact", lambda *args, **kwargs: False)
     engine = QueryEngine(
         api_client=PromptTooLongThenSuccessApiClient(),
         tool_registry=create_default_tool_registry(),
@@ -602,7 +602,7 @@ async def test_query_engine_auto_learning_persists_repeated_verified_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    import openharness.learning.service as learning_service
+    import myharness.learning.service as learning_service
 
     missing = tmp_path / "missing.txt"
     sample = tmp_path / "hello.txt"
@@ -772,7 +772,7 @@ class _RecordingHookExecutor:
         self.calls: list[tuple[HookEvent, dict]] = []
 
     async def execute(self, event: HookEvent, payload: dict):
-        from openharness.hooks.types import AggregatedHookResult
+        from myharness.hooks.types import AggregatedHookResult
 
         self.calls.append((event, dict(payload)))
         return AggregatedHookResult(results=[])
@@ -933,7 +933,7 @@ async def test_notification_hook_fires_on_permission_prompt(tmp_path: Path, monk
 @pytest.mark.asyncio
 async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     recorder = _RecordingHookExecutor()
     engine = QueryEngine(
         api_client=FakeApiClient(

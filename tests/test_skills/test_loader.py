@@ -5,13 +5,13 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import openharness.skills.loader as skill_loader
-from openharness.skills import get_user_skills_dir, load_skill_registry
-from openharness.skills.loader import _parse_skill_markdown as parse_skill_markdown
+import myharness.skills.loader as skill_loader
+from myharness.skills import get_user_skills_dir, load_skill_registry
+from myharness.skills.loader import _parse_skill_markdown as parse_skill_markdown
 
 
 def test_load_skill_registry_includes_bundled(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = load_skill_registry()
 
     names = [skill.name for skill in registry.list_skills()]
@@ -20,7 +20,7 @@ def test_load_skill_registry_includes_bundled(tmp_path: Path, monkeypatch):
 
 
 def test_load_skill_registry_includes_user_skills(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     skills_dir = get_user_skills_dir()
     deploy_dir = skills_dir / "deploy"
     deploy_dir.mkdir(parents=True)
@@ -35,9 +35,9 @@ def test_load_skill_registry_includes_user_skills(tmp_path: Path, monkeypatch):
 
 
 def test_load_skill_registry_includes_program_dot_skills(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     program_root = tmp_path / "program"
-    package_skills_dir = program_root / "src" / "openharness" / "skills"
+    package_skills_dir = program_root / "src" / "myharness" / "skills"
     package_skills_dir.mkdir(parents=True)
     (program_root / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
     program_skill_dir = program_root / ".skills" / "program-guide"
@@ -45,7 +45,7 @@ def test_load_skill_registry_includes_program_dot_skills(tmp_path: Path, monkeyp
     (program_skill_dir / "SKILL.md").write_text(
         "---\nname: program-guide\n"
         "description: Program-local guide\n---\n\n"
-        "# Program Guide\nLoaded from the OpenHarness program folder.\n",
+        "# Program Guide\nLoaded from the MyHarness program folder.\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(skill_loader, "__file__", str(package_skills_dir / "loader.py"))
@@ -59,9 +59,9 @@ def test_load_skill_registry_includes_program_dot_skills(tmp_path: Path, monkeyp
 
 
 def test_program_dot_skills_take_priority_over_other_skill_dirs(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     program_root = tmp_path / "program"
-    package_skills_dir = program_root / "src" / "openharness" / "skills"
+    package_skills_dir = program_root / "src" / "myharness" / "skills"
     package_skills_dir.mkdir(parents=True)
     (program_root / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
     monkeypatch.setattr(skill_loader, "__file__", str(package_skills_dir / "loader.py"))
@@ -95,7 +95,7 @@ def test_program_dot_skills_take_priority_over_other_skill_dirs(tmp_path: Path, 
     (program_skill_dir / "SKILL.md").write_text(
         "---\nname: skill-creator\n"
         "description: Program-local copy\n---\n\n"
-        "# Program Skill Creator\nUse the OpenHarness program-local .skills folder.\n",
+        "# Program Skill Creator\nUse the MyHarness program-local .skills folder.\n",
         encoding="utf-8",
     )
 
@@ -105,11 +105,11 @@ def test_program_dot_skills_take_priority_over_other_skill_dirs(tmp_path: Path, 
     assert skill_creator is not None
     assert skill_creator.source == "program"
     assert str(program_root / ".skills" / "skill-creator" / "SKILL.md") == skill_creator.path
-    assert "OpenHarness program-local .skills" in skill_creator.content
+    assert "MyHarness program-local .skills" in skill_creator.content
 
 
 def test_load_skill_registry_includes_project_dot_skills(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     skill_dir = tmp_path / ".skills" / "ship"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -129,8 +129,8 @@ def test_load_skill_registry_includes_project_dot_skills(tmp_path: Path, monkeyp
 
 
 def test_load_skill_registry_filters_disabled_skills(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    from openharness.skills.state import set_skill_enabled
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    from myharness.skills.state import set_skill_enabled
 
     skill_dir = tmp_path / ".skills" / "ship"
     skill_dir.mkdir(parents=True)
@@ -153,8 +153,8 @@ def test_load_skill_registry_filters_disabled_skills(tmp_path: Path, monkeypatch
 
 
 def test_load_skill_registry_skips_learned_skills_when_learning_off(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    from openharness.config.settings import Settings
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    from myharness.config.settings import Settings
 
     skills_root = tmp_path / "skills"
     skill_dir = skills_root / "learned-demo"

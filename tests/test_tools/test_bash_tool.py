@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from openharness.tools.base import ToolExecutionContext
-from openharness.tools.bash_tool import BashTool, BashToolInput, _format_output
+from myharness.tools.base import ToolExecutionContext
+from myharness.tools.bash_tool import BashTool, BashToolInput, _format_output
 
 
 class _FakeStdout:

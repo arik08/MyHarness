@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import ssl
 from pathlib import Path
 
-from openharness.utils import certificates
+from myharness.utils import certificates
 
 
 def test_configure_certificate_returns_none_when_cert_is_missing(tmp_path: Path, monkeypatch) -> None:
@@ -23,13 +24,13 @@ def test_configure_certificate_returns_none_when_cert_is_missing(tmp_path: Path,
 
 def test_configure_certificate_writes_combined_bundle(tmp_path: Path, monkeypatch) -> None:
     base_ca = tmp_path / "base-ca.pem"
-    posco_cert = tmp_path / "POSCO.crt"
+    posco_cert = tmp_path / "POSCO_CA.crt"
     data_dir = tmp_path / "data"
     base_ca.write_text("BASE CERT\n", encoding="utf-8")
     posco_cert.write_text("POSCO CERT\n", encoding="utf-8")
 
     monkeypatch.setattr(certificates, "_configured_bundle", None)
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(data_dir))
     for key in certificates._PYTHON_CA_ENV_VARS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NODE_EXTRA_CA_CERTS", raising=False)
@@ -47,9 +48,13 @@ def test_configure_certificate_writes_combined_bundle(tmp_path: Path, monkeypatc
     assert certificates.os.environ["npm_config_cafile"] == str(posco_cert)
 
 
-def test_httpx_verify_argument_uses_configured_ca_bundle(monkeypatch, tmp_path: Path) -> None:
-    bundle = tmp_path / "bundle.pem"
-    bundle.write_text("CERT\n", encoding="utf-8")
-    monkeypatch.setattr(certificates, "_configured_bundle", str(bundle))
+def test_httpx_verify_argument_uses_configured_ca_bundle(monkeypatch) -> None:
+    bundle = certificates._certifi_ca_bundle()
+    assert bundle is not None
+    monkeypatch.setattr(certificates, "_configured_bundle", bundle)
 
-    assert certificates.httpx_verify_argument() == str(bundle)
+    verify = certificates.httpx_verify_argument()
+
+    assert isinstance(verify, ssl.SSLContext)
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        assert not verify.verify_flags & ssl.VERIFY_X509_STRICT

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from openharness.permissions.mutation_lock import (
+from myharness.permissions.mutation_lock import (
     MutationLockTimeout,
     acquire_mutation_lock,
     lock_is_contended,

@@ -4,22 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from openharness.config.paths import (
+from myharness.config.paths import (
     get_project_active_repo_context_path,
     get_project_issue_file,
     get_project_pr_comments_file,
 )
-from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.personalization import rules as personalization_rules
-from openharness.personalization.session_hook import update_rules_from_session
-from openharness.prompts import (
+from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.personalization import rules as personalization_rules
+from myharness.personalization.session_hook import update_rules_from_session
+from myharness.prompts import (
     build_runtime_system_prompt,
     discover_claude_md_files,
     discover_project_instruction_files,
     load_claude_md_prompt,
     load_project_instructions_prompt,
 )
-from openharness.config.settings import Settings
+from myharness.config.settings import Settings
 
 
 def test_discover_claude_md_files(tmp_path: Path):
@@ -41,14 +41,14 @@ def test_discover_project_instruction_files_includes_agents_md(tmp_path: Path):
     repo = tmp_path / "repo"
     nested = repo / "pkg" / "mod"
     nested.mkdir(parents=True)
-    (repo / "AGENTS.md").write_text("openharness instructions", encoding="utf-8")
-    (repo / "OPENHARNESS.md").write_text("project instructions", encoding="utf-8")
+    (repo / "AGENTS.md").write_text("myharness instructions", encoding="utf-8")
+    (repo / "MYHARNESS.md").write_text("project instructions", encoding="utf-8")
     (repo / "CLAUDE.md").write_text("legacy instructions", encoding="utf-8")
 
     files = discover_project_instruction_files(nested)
 
     assert repo / "AGENTS.md" in files
-    assert repo / "OPENHARNESS.md" in files
+    assert repo / "MYHARNESS.md" in files
     assert repo / "CLAUDE.md" in files
 
 
@@ -78,7 +78,7 @@ def test_load_project_instructions_prompt_prefers_general_project_files(tmp_path
 
 
 def test_build_runtime_system_prompt_combines_sections(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -93,7 +93,7 @@ def test_build_runtime_system_prompt_combines_sections(tmp_path: Path, monkeypat
 
 
 def test_build_runtime_system_prompt_guides_artifact_filenames(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -105,10 +105,12 @@ def test_build_runtime_system_prompt_guides_artifact_filenames(tmp_path: Path, m
     assert "Use `index.html` only when the user explicitly asks" in prompt
     assert "Do not reuse a generic file such as `index.html`" in prompt
     assert "For unrelated standalone HTML previews or demos" in prompt
+    assert "place it under `outputs/`" in prompt
+    assert "keep files that reference each other in the same subfolder" in prompt
 
 
 def test_build_runtime_system_prompt_includes_project_context_and_fast_mode(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     repo = tmp_path / "repo"
     repo.mkdir()
     get_project_issue_file(repo).write_text("# Bug\nNeed to fix flaky test.\n", encoding="utf-8")
@@ -127,7 +129,7 @@ def test_build_runtime_system_prompt_includes_project_context_and_fast_mode(tmp_
 
 
 def test_build_runtime_system_prompt_includes_active_repo_context(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     repo = tmp_path / "repo"
     repo.mkdir()
     get_project_active_repo_context_path(repo).write_text(
@@ -142,7 +144,7 @@ def test_build_runtime_system_prompt_includes_active_repo_context(tmp_path: Path
 
 
 def test_build_runtime_system_prompt_uses_coordinator_prompt_when_enabled(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -155,7 +157,7 @@ def test_build_runtime_system_prompt_uses_coordinator_prompt_when_enabled(tmp_pa
 
 
 def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -171,7 +173,7 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
 
 
 def test_build_runtime_system_prompt_does_not_reinject_exported_secret_values(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     repo = tmp_path / "repo"
     repo.mkdir()

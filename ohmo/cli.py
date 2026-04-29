@@ -9,8 +9,8 @@ from pathlib import Path
 
 import typer
 
-from openharness.auth.manager import AuthManager
-from openharness.config import load_settings
+from myharness.auth.manager import AuthManager
+from myharness.config import load_settings
 
 from ohmo.gateway.config import load_gateway_config, save_gateway_config
 from ohmo.gateway.models import GatewayConfig
@@ -36,7 +36,7 @@ from ohmo.workspace import (
 
 app = typer.Typer(
     name="ohmo",
-    help="ohmo: a personal-agent app built on top of OpenHarness.",
+    help="ohmo: a personal-agent app built on top of MyHarness.",
     invoke_without_command=True,
     add_completion=False,
 )

@@ -1,0 +1,195 @@
+{
+  "model": "gpt-5.4",
+  "max_tokens": 16384,
+  "base_url": "http://pgpt.posco.com/s0la01-gpt/v1",
+  "timeout": 30.0,
+  "context_window_tokens": null,
+  "auto_compact_threshold_tokens": null,
+  "api_format": "openai",
+  "provider": "openai",
+  "active_profile": "p-gpt",
+  "profiles": {
+    "p-gpt": {
+      "label": "P-GPT",
+      "provider": "openai",
+      "api_format": "openai",
+      "auth_source": "pgpt_api_key",
+      "default_model": "gpt-5.4",
+      "base_url": "http://pgpt.posco.com/s0la01-gpt/v1",
+      "last_model": "gpt-5.4",
+      "credential_slot": null,
+      "allowed_models": [
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano"
+      ],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    },
+    "codex": {
+      "label": "Codex Subscription",
+      "provider": "openai_codex",
+      "api_format": "openai",
+      "auth_source": "codex_subscription",
+      "default_model": "gpt-5.5",
+      "base_url": null,
+      "last_model": "gpt-5.5",
+      "credential_slot": null,
+      "allowed_models": [],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    },
+    "openai-compatible": {
+      "label": "OpenAI-Compatible API",
+      "provider": "openai",
+      "api_format": "openai",
+      "auth_source": "openai_api_key",
+      "default_model": "gpt-5.5",
+      "base_url": null,
+      "last_model": "gpt-5.4",
+      "credential_slot": null,
+      "allowed_models": [],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    },
+    "claude-subscription": {
+      "label": "Claude Subscription",
+      "provider": "anthropic_claude",
+      "api_format": "anthropic",
+      "auth_source": "claude_subscription",
+      "default_model": "claude-sonnet-4-6",
+      "base_url": null,
+      "last_model": null,
+      "credential_slot": null,
+      "allowed_models": [],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    },
+    "claude-api": {
+      "label": "Anthropic-Compatible API",
+      "provider": "anthropic",
+      "api_format": "anthropic",
+      "auth_source": "anthropic_api_key",
+      "default_model": "claude-sonnet-4-6",
+      "base_url": null,
+      "last_model": "",
+      "credential_slot": null,
+      "allowed_models": [],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    },
+    "copilot": {
+      "label": "GitHub Copilot",
+      "provider": "copilot",
+      "api_format": "copilot",
+      "auth_source": "copilot_oauth",
+      "default_model": "gpt-5.5",
+      "base_url": null,
+      "last_model": null,
+      "credential_slot": null,
+      "allowed_models": [],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    },
+    "moonshot": {
+      "label": "Moonshot (Kimi)",
+      "provider": "moonshot",
+      "api_format": "openai",
+      "auth_source": "moonshot_api_key",
+      "default_model": "kimi-k2.5",
+      "base_url": "https://api.moonshot.cn/v1",
+      "last_model": null,
+      "credential_slot": null,
+      "allowed_models": [],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    },
+    "gemini": {
+      "label": "Google Gemini",
+      "provider": "gemini",
+      "api_format": "openai",
+      "auth_source": "gemini_api_key",
+      "default_model": "gemini-2.5-flash",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "last_model": null,
+      "credential_slot": null,
+      "allowed_models": [],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    },
+    "minimax": {
+      "label": "MiniMax",
+      "provider": "minimax",
+      "api_format": "openai",
+      "auth_source": "minimax_api_key",
+      "default_model": "MiniMax-M2.7",
+      "base_url": "https://api.minimax.io/v1",
+      "last_model": null,
+      "credential_slot": null,
+      "allowed_models": [],
+      "context_window_tokens": null,
+      "auto_compact_threshold_tokens": null
+    }
+  },
+  "max_turns": 200,
+  "system_prompt": null,
+  "permission": {
+    "mode": "default",
+    "allowed_tools": [],
+    "denied_tools": [],
+    "path_rules": [],
+    "denied_commands": []
+  },
+  "hooks": {},
+  "memory": {
+    "enabled": true,
+    "max_files": 5,
+    "max_entrypoint_lines": 200,
+    "context_window_tokens": null,
+    "auto_compact_threshold_tokens": null
+  },
+  "learning": {
+    "enabled": true,
+    "mode": "hide"
+  },
+  "sandbox": {
+    "enabled": false,
+    "backend": "srt",
+    "fail_if_unavailable": false,
+    "enabled_platforms": [],
+    "network": {
+      "allowed_domains": [],
+      "denied_domains": []
+    },
+    "filesystem": {
+      "allow_read": [],
+      "deny_read": [],
+      "allow_write": [
+        "."
+      ],
+      "deny_write": []
+    },
+    "docker": {
+      "image": "myharness-sandbox:latest",
+      "auto_build_image": true,
+      "cpu_limit": 0.0,
+      "memory_limit": "",
+      "extra_mounts": [],
+      "extra_env": {}
+    }
+  },
+  "enabled_plugins": {},
+  "allow_project_plugins": false,
+  "disabled_mcp_servers": [],
+  "mcp_servers": {},
+  "theme": "default",
+  "output_style": "default",
+  "vim_mode": false,
+  "voice_mode": false,
+  "fast_mode": false,
+  "effort": "low",
+  "shell": "auto",
+  "passes": 1,
+  "verbose": false
+}

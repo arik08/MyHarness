@@ -16,6 +16,9 @@ export function createModals(ctx) {
   function changeLearnedSkillsMode(...args) { return ctx.changeLearnedSkillsMode(...args); }
   function readShellSettings(...args) { return ctx.readShellSettings(...args); }
   function changeShellPreference(...args) { return ctx.changeShellPreference(...args); }
+  function readYoloModeSettings(...args) { return ctx.readYoloModeSettings(...args); }
+  function changeYoloMode(...args) { return ctx.changeYoloMode(...args); }
+  function restartActiveBackendSession(...args) { return ctx.restartActiveBackendSession(...args); }
   function restartSessionForWorkspace(...args) { return ctx.restartSessionForWorkspace(...args); }
   function formatEffort(...args) { return ctx.formatEffort(...args); }
   function formatProviderName(...args) { return ctx.formatProviderName(...args); }
@@ -116,6 +119,10 @@ function shellPreferenceLabel(value = state.appSettings?.shell) {
     cmd: "cmd",
   };
   return labels[value] || labels.auto;
+}
+
+function yoloModeLabel(enabled = state.yoloModeEnabled) {
+  return enabled === false ? "꺼짐: 실행 전 확인" : "켜짐: 자동 실행";
 }
 
 function setAppSettingsDismissAction() {
@@ -221,6 +228,8 @@ function showSettingsModal() {
     settingsButton("스트리밍 스크롤", streamingSettingsLabel(), showBehaviorSettingsModal),
     settingsButton("파일 저장경로", downloadModeLabel(), showDownloadSettingsModal),
     settingsButton("명령어 셀 (CLI)", shellPreferenceLabel(), showShellSettingsModal, "shell"),
+    settingsButton("Yolo 모드", yoloModeLabel(), showYoloModeSettingsModal, "yolo-mode"),
+    settingsButton("터미널 세션 재시작", state.sessionId ? "현재 세션 강제 재연결" : "새 세션 시작", showRestartSessionModal),
     settingsButton("작업공간 범위", workspaceScopeLabel(), showWorkspaceScopeSettingsModal),
     settingsButton("자동학습 스킬 표시", learnedSkillsLabel(), showLearnedSkillsSettingsModal, "learned-skills"),
     settingsButton("P-GPT API KEY", "API Key / 사번 / 회사번호", showPgptSettingsModal),
@@ -248,6 +257,59 @@ function showSettingsModal() {
       }
     })
     .catch(() => {});
+  readYoloModeSettings()
+    .then((current) => {
+      state.yoloModeEnabled = current.enabled !== false;
+      const value = list.querySelector("[data-setting-value='yolo-mode']");
+      if (value) {
+        value.textContent = yoloModeLabel(state.yoloModeEnabled);
+      }
+    })
+    .catch(() => {});
+}
+
+function showRestartSessionModal() {
+  closeRuntimePicker();
+  els.modalHost.classList.remove("hidden");
+  els.modalHost.textContent = "";
+  els.modalHost.dataset.dismissible = "true";
+  els.modalHost.dataset.dismissAction = "app-settings";
+
+  const card = document.createElement("div");
+  card.className = "modal-card settings-card app-settings-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  card.append(modalCloseButton(dismissModal));
+
+  const title = document.createElement("h2");
+  title.textContent = "터미널 세션 재시작";
+  const body = document.createElement("p");
+  body.textContent = "현재 터미널 세션을 강제로 종료하고 같은 작업공간에서 새 세션을 시작합니다. 실행 중인 응답이나 명령은 중단될 수 있습니다.";
+  const helper = document.createElement("p");
+  helper.className = "settings-helper";
+  helper.textContent = state.sessionId
+    ? `현재 세션: ${state.sessionId}`
+    : "현재 연결된 세션이 없어 새 세션을 시작합니다.";
+  const actions = document.createElement("div");
+  actions.className = "modal-actions";
+  const cancel = modalButton("취소", false, dismissModal);
+  const restart = modalButton("재시작", true, async () => {
+    cancel.disabled = true;
+    restart.disabled = true;
+    helper.textContent = "터미널 세션을 재시작하는 중...";
+    try {
+      await restartActiveBackendSession();
+      closeModal();
+    } catch (error) {
+      cancel.disabled = false;
+      restart.disabled = false;
+      helper.textContent = `재시작 실패: ${error.message || "알 수 없는 오류"}`;
+    }
+  });
+  actions.append(cancel, restart);
+  card.append(title, body, helper, actions);
+  els.modalHost.append(card);
+  restart.focus();
 }
 
 function showSystemPromptModal() {
@@ -740,6 +802,89 @@ async function showShellSettingsModal() {
   }
 }
 
+function showYoloModeSettingsModal() {
+  els.modalHost.classList.remove("hidden");
+  els.modalHost.textContent = "";
+  setAppSettingsDismissAction();
+
+  const card = document.createElement("div");
+  card.className = "modal-card settings-card app-settings-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  card.append(modalCloseButton(showSettingsModal));
+
+  const title = document.createElement("h2");
+  title.textContent = "Yolo 모드";
+  const body = document.createElement("p");
+  body.textContent = "에이전트가 명령 실행이나 파일 작업 권한을 자동 승인할지 선택합니다. 꺼두면 안전 확인 질문이 더 자주 표시됩니다.";
+
+  let selectedMode = state.yoloModeEnabled === false ? "off" : "on";
+  const previousMode = selectedMode;
+  const control = document.createElement("div");
+  control.className = "scope-segmented-control yolo-mode-list";
+  control.setAttribute("role", "radiogroup");
+  control.setAttribute("aria-label", "Yolo 모드");
+
+  const onButton = scopeModeButton("on", "켜짐", "새 터미널 세션을 full_auto 권한 모드로 시작합니다.");
+  const offButton = scopeModeButton("off", "꺼짐", "새 터미널 세션을 기본 권한 모드로 시작합니다.");
+  const buttons = [onButton, offButton];
+  const syncButtons = () => {
+    for (const button of buttons) {
+      const active = button.dataset.mode === selectedMode;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-checked", active ? "true" : "false");
+    }
+  };
+  for (const button of buttons) {
+    button.addEventListener("click", () => {
+      selectedMode = button.dataset.mode;
+      syncButtons();
+    });
+  }
+  control.append(onButton, offButton);
+  syncButtons();
+
+  const helper = document.createElement("p");
+  helper.className = "settings-helper";
+  helper.textContent = state.sessionId
+    ? "변경 내용은 터미널 세션을 재시작한 뒤 적용됩니다. 진행 중인 작업이 없으면 저장 후 자동 재시작합니다."
+    : "변경 내용은 다음 터미널 세션부터 적용됩니다.";
+
+  const actions = document.createElement("div");
+  actions.className = "modal-actions";
+  actions.append(
+    modalButton("뒤로", false, showSettingsModal),
+    modalButton("저장", true, async () => {
+      try {
+        const saved = await changeYoloMode(selectedMode === "on");
+        const enabled = saved.enabled !== false;
+        state.yoloModeEnabled = enabled;
+        showSettingsModal();
+        if (selectedMode === previousMode) {
+          return;
+        }
+        const label = yoloModeLabel(enabled);
+        if (state.sessionId && !state.busy) {
+          appendMessage("system", `Yolo 모드를 ${label}으로 변경했습니다. 전체 적용을 위해 터미널 세션을 재시작합니다.`);
+          try {
+            await restartActiveBackendSession();
+          } catch (error) {
+            appendMessage("system", `터미널 세션 재시작 실패: ${error.message}`);
+          }
+        } else {
+          appendMessage("system", `Yolo 모드를 ${label}으로 변경했습니다. 다음 터미널 세션부터 전체 적용됩니다.`);
+        }
+      } catch (error) {
+        appendMessage("system", `Yolo 모드 저장 실패: ${error.message}`);
+      }
+    }),
+  );
+
+  card.append(title, body, control, helper, actions);
+  els.modalHost.append(card);
+  onButton.focus();
+}
+
 async function showPgptSettingsModal() {
   els.modalHost.classList.remove("hidden");
   els.modalHost.textContent = "";
@@ -1093,37 +1238,70 @@ function showModal(modal) {
     showInlineQuestion(modal);
     return;
   }
-  closeInlineQuestion();
   const question = modal.question || `${modal.tool_name || "이 도구"} 실행을 허용할까요?`;
-  els.modalHost.classList.remove("hidden");
-  els.modalHost.textContent = "";
-  delete els.modalHost.dataset.dismissible;
-  delete els.modalHost.dataset.dismissAction;
+  closeRuntimePicker();
+  closeModal();
+  closeInlineQuestion({ clearSlot: false });
 
-  const card = document.createElement("div");
-  card.className = "modal-card";
+  const card = document.createElement("section");
+  card.className = "inline-question-card permission-question-card";
   card.setAttribute("role", "dialog");
   card.setAttribute("aria-modal", "true");
+  card.dataset.requestId = modal.request_id || "";
 
-  const title = document.createElement("h2");
-  title.textContent = modal.kind === "question" ? "질문" : "권한 요청";
-  const body = document.createElement("p");
-  body.textContent = question;
+  const header = document.createElement("div");
+  header.className = "inline-question-header";
+  const label = document.createElement("strong");
+  const labelCopy = document.createElement("span");
+  labelCopy.className = "inline-question-label-copy";
+  labelCopy.textContent = `권한 요청: ${question}`;
+  label.dataset.tooltipText = question;
+  label.append(labelCopy);
+  const helper = document.createElement("small");
+  helper.textContent = "에이전트가 실행 허용을 기다리고 있습니다.";
+  header.append(label, helper);
+
   const actions = document.createElement("div");
-  actions.className = "modal-actions";
-
-  card.append(title, body);
-
-  actions.append(
-    modalButton("거부", false, () =>
-      respond({ type: "permission_response", request_id: modal.request_id, allowed: false }),
-    ),
-    modalButton("허용", true, () =>
-      respond({ type: "permission_response", request_id: modal.request_id, allowed: true }),
-    ),
+  actions.className = "inline-question-choices permission-question-choices";
+  const deny = document.createElement("button");
+  deny.type = "button";
+  deny.className = "inline-question-choice";
+  deny.append(inlineQuestionNumber("1."), inlineQuestionChoiceCopy("거부"));
+  deny.addEventListener("click", () =>
+    respond({ type: "permission_response", request_id: modal.request_id, allowed: false }),
   );
-  card.append(actions);
-  els.modalHost.append(card);
+
+  const allow = document.createElement("button");
+  allow.type = "button";
+  allow.className = "inline-question-choice";
+  allow.append(inlineQuestionNumber("2."), inlineQuestionChoiceCopy("허용"));
+  allow.addEventListener("click", () =>
+    respond({ type: "permission_response", request_id: modal.request_id, allowed: true }),
+  );
+
+  actions.append(deny, allow);
+  card.append(header, actions);
+  els.composerBox?.before(card);
+  const activeSlot = state.chatSlots?.get?.(state.activeFrontendId);
+  if (activeSlot) {
+    activeSlot.inlineQuestionModal = modal;
+  }
+  state.inlineQuestion = { root: card, modal, frontendId: state.activeFrontendId };
+  requestAnimationFrame(() => updateInlineQuestionTooltips(card));
+}
+
+function inlineQuestionNumber(text) {
+  const number = document.createElement("span");
+  number.className = "inline-question-number";
+  number.textContent = text;
+  return number;
+}
+
+function inlineQuestionChoiceCopy(text) {
+  const copy = document.createElement("span");
+  copy.className = "inline-question-choice-copy";
+  copy.textContent = text;
+  return copy;
 }
 
 function showImagePreview(image) {
@@ -2097,6 +2275,7 @@ async function applySelectChoice(modal, normalizedOption, options = {}) {
     } else {
       await postJson("/api/respond", {
         sessionId: state.sessionId,
+        clientId: state.clientId,
         payload: { type: "apply_select_command", command: modal.command, value: normalizedOption.value },
       });
     }
@@ -2210,7 +2389,7 @@ function modalButton(label, primary, onClick) {
 
 async function respond(payload) {
   closeModal();
-  await postJson("/api/respond", { sessionId: state.sessionId, payload });
+  await postJson("/api/respond", { sessionId: state.sessionId, clientId: state.clientId, payload });
 }
 
 function closeModal() {

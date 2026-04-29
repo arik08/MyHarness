@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from openharness.coordinator.coordinator_mode import (
+from myharness.coordinator.coordinator_mode import (
     TaskNotification,
     WorkerConfig,
     format_task_notification,
@@ -14,7 +14,7 @@ from openharness.coordinator.coordinator_mode import (
     match_session_mode,
     parse_task_notification,
 )
-from openharness.platforms import get_platform
+from myharness.platforms import get_platform
 
 
 # ---------------------------------------------------------------------------

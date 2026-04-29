@@ -1,13 +1,13 @@
 # dot-skill Installation
 
-This folder is a complete local skill. Place it in a skill directory supported by your agent host, or keep it inside OpenHarness program-local `.skills` so it travels with a zipped OpenHarness bundle.
+This folder is a complete local skill. Place it in a skill directory supported by your agent host, or keep it inside MyHarness program-local `.skills` so it travels with a zipped MyHarness bundle.
 
-## OpenHarness Program-Local Install
+## MyHarness Program-Local Install
 
-Recommended for portable OpenHarness bundles:
+Recommended for portable MyHarness bundles:
 
 ```text
-OpenHarness/
+MyHarness/
   .skills/
     dot-skill/
       SKILL.md
@@ -15,7 +15,7 @@ OpenHarness/
       tools/
 ```
 
-OpenHarness loads this folder as a program-local skill with source `program`.
+MyHarness loads this folder as a program-local skill with source `program`.
 
 ## Other Host Paths
 

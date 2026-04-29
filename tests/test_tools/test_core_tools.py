@@ -9,27 +9,30 @@ from pathlib import Path
 
 import pytest
 
-from openharness.tools.bash_tool import BashTool, BashToolInput
-from openharness.tools.base import ToolExecutionContext
-from openharness.tools.brief_tool import BriefTool, BriefToolInput
-from openharness.tools.cron_create_tool import CronCreateTool, CronCreateToolInput
-from openharness.tools.cron_delete_tool import CronDeleteTool, CronDeleteToolInput
-from openharness.tools.cron_list_tool import CronListTool, CronListToolInput
-from openharness.tools.config_tool import ConfigTool, ConfigToolInput
-from openharness.tools.enter_worktree_tool import EnterWorktreeTool, EnterWorktreeToolInput
-from openharness.tools.exit_worktree_tool import ExitWorktreeTool, ExitWorktreeToolInput
-from openharness.tools.file_edit_tool import FileEditTool, FileEditToolInput
-from openharness.tools.file_read_tool import FileReadTool, FileReadToolInput
-from openharness.tools.file_write_tool import FileWriteTool, FileWriteToolInput
-from openharness.tools.glob_tool import GlobTool, GlobToolInput
-from openharness.tools.grep_tool import GrepTool, GrepToolInput
-from openharness.tools.lsp_tool import LspTool, LspToolInput
-from openharness.tools.notebook_edit_tool import NotebookEditTool, NotebookEditToolInput
-from openharness.tools.remote_trigger_tool import RemoteTriggerTool, RemoteTriggerToolInput
-from openharness.tools.skill_tool import SkillTool, SkillToolInput
-from openharness.tools.todo_write_tool import TodoWriteTool, TodoWriteToolInput
-from openharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
-from openharness.tools import create_default_tool_registry
+from myharness.tools.bash_tool import BashTool, BashToolInput
+from myharness.tools.base import ToolExecutionContext
+from myharness.tools.brief_tool import BriefTool, BriefToolInput
+from myharness.tools.cron_create_tool import CronCreateTool, CronCreateToolInput
+from myharness.tools.cron_delete_tool import CronDeleteTool, CronDeleteToolInput
+from myharness.tools.cron_list_tool import CronListTool, CronListToolInput
+from myharness.tools.enter_plan_mode_tool import EnterPlanModeTool, EnterPlanModeToolInput
+from myharness.tools.config_tool import ConfigTool, ConfigToolInput
+from myharness.tools.exit_plan_mode_tool import ExitPlanModeTool, ExitPlanModeToolInput
+from myharness.tools.enter_worktree_tool import EnterWorktreeTool, EnterWorktreeToolInput
+from myharness.tools.exit_worktree_tool import ExitWorktreeTool, ExitWorktreeToolInput
+from myharness.tools.file_edit_tool import FileEditTool, FileEditToolInput
+from myharness.tools.file_read_tool import FileReadTool, FileReadToolInput
+from myharness.tools.file_write_tool import FileWriteTool, FileWriteToolInput
+from myharness.tools.glob_tool import GlobTool, GlobToolInput
+from myharness.tools.grep_tool import GrepTool, GrepToolInput
+from myharness.tools.lsp_tool import LspTool, LspToolInput
+from myharness.tools.notebook_edit_tool import NotebookEditTool, NotebookEditToolInput
+from myharness.tools.remote_trigger_tool import RemoteTriggerTool, RemoteTriggerToolInput
+from myharness.tools.skill_tool import SkillTool, SkillToolInput
+from myharness.tools.todo_write_tool import TodoWriteTool, TodoWriteToolInput
+from myharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
+from myharness.tools import create_default_tool_registry
+from myharness.config.settings import load_settings
 
 
 def _python_stdout_command(text: str) -> str:
@@ -162,7 +165,7 @@ async def test_tool_search_and_brief_tools(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     skills_dir = tmp_path / "config" / "skills"
     skills_dir.mkdir(parents=True)
     pytest_dir = skills_dir / "pytest"
@@ -187,6 +190,30 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
         ToolExecutionContext(cwd=tmp_path),
     )
     assert config_result.output == "Updated theme"
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_tools_restore_previous_full_auto_mode(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+
+    enter_result = await EnterPlanModeTool().execute(
+        EnterPlanModeToolInput(),
+        ToolExecutionContext(cwd=tmp_path, metadata={"permission_mode": "full_auto"}),
+    )
+
+    assert enter_result.metadata["permission_mode"] == "plan"
+    assert enter_result.metadata["plan_previous_permission_mode"] == "full_auto"
+    assert load_settings().permission.mode == "plan"
+    assert load_settings().permission.plan_previous_mode == "full_auto"
+
+    exit_result = await ExitPlanModeTool().execute(
+        ExitPlanModeToolInput(),
+        ToolExecutionContext(cwd=tmp_path, metadata=enter_result.metadata),
+    )
+
+    assert exit_result.metadata["permission_mode"] == "full_auto"
+    assert load_settings().permission.mode == "full_auto"
+    assert load_settings().permission.plan_previous_mode is None
 
 
 @pytest.mark.asyncio
@@ -283,14 +310,14 @@ async def test_lsp_tool(tmp_path: Path):
 async def test_worktree_tools(tmp_path: Path):
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
     subprocess.run(
-        ["git", "config", "user.email", "openharness@example.com"],
+        ["git", "config", "user.email", "myharness@example.com"],
         cwd=tmp_path,
         check=True,
         capture_output=True,
         text=True,
     )
     subprocess.run(
-        ["git", "config", "user.name", "OpenHarness Tests"],
+        ["git", "config", "user.name", "MyHarness Tests"],
         cwd=tmp_path,
         check=True,
         capture_output=True,
@@ -324,7 +351,7 @@ async def test_worktree_tools(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_cron_and_remote_trigger_tools(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(cwd=tmp_path)
 
     create_result = await CronCreateTool().execute(

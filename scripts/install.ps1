@@ -1,5 +1,5 @@
-# OpenHarness Windows Installer (PowerShell)
-# Usage: iex (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HKUDS/OpenHarness/main/scripts/install.ps1')
+# MyHarness Windows Installer (PowerShell)
+# Usage: iex (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HKUDS/MyHarness/main/scripts/install.ps1')
 #        or: powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 
 param(
@@ -22,7 +22,7 @@ function Write-Step { Write-Host ""; Write-Host "==>$args" -ForegroundColor Blue
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "  ==============================" -ForegroundColor Cyan
-Write-Host "    OpenHarness Installer" -ForegroundColor Cyan
+Write-Host "    MyHarness Installer" -ForegroundColor Cyan
 Write-Host "    Windows Native Setup" -ForegroundColor Cyan
 Write-Host "  ==============================" -ForegroundColor Cyan
 Write-Host ""
@@ -122,13 +122,13 @@ if ($NodePath) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 4: Install OpenHarness
+# Step 4: Install MyHarness
 # ---------------------------------------------------------------------------
-Write-Step "Installing OpenHarness"
+Write-Step "Installing MyHarness"
 
-$RepoUrl = "https://github.com/HKUDS/OpenHarness.git"
-$InstallDir = "$env:USERPROFILE\.openharness-src"
-$VenvDir = "$env:USERPROFILE\.openharness-venv"
+$RepoUrl = "https://github.com/HKUDS/MyHarness.git"
+$InstallDir = "$env:USERPROFILE\.myharness-src"
+$VenvDir = "$env:USERPROFILE\.myharness-venv"
 
 # Create virtual environment
 if (Test-Path $VenvDir) {
@@ -154,7 +154,7 @@ Write-Info "Activating virtual environment..."
 
 Write-Success "Virtual environment ready: $VenvDir"
 
-# Install OpenHarness
+# Install MyHarness
 if ($FromSource) {
     Write-Info "Mode: -FromSource (git clone + pip install -e .)"
     
@@ -173,7 +173,7 @@ if ($FromSource) {
         git pull --ff-only
         Pop-Location
     } else {
-        Write-Info "Cloning OpenHarness into $InstallDir..."
+        Write-Info "Cloning MyHarness into $InstallDir..."
         git clone $RepoUrl $InstallDir
         if (-not (Test-Path $InstallDir)) {
             Write-Error "Failed to clone repository"
@@ -184,11 +184,11 @@ if ($FromSource) {
     Write-Info "Installing in editable mode (pip install -e .)..."
     pip install -e $InstallDir --quiet
 } else {
-    Write-Info "Mode: pip install openharness-ai"
-    pip install openharness-ai --quiet --upgrade
+    Write-Info "Mode: pip install myharness-ai"
+    pip install myharness-ai --quiet --upgrade
 }
 
-Write-Success "OpenHarness package installed"
+Write-Success "MyHarness package installed"
 
 # ---------------------------------------------------------------------------
 # Step 5: Install frontend/terminal npm dependencies
@@ -198,11 +198,11 @@ if ($NodeOk) {
         $FrontendDir = "$InstallDir\frontend\terminal"
     } else {
         # Find installed package location
-        $PackageInfo = pip show openharness-ai 2>&1
+        $PackageInfo = pip show myharness-ai 2>&1
         $LocationMatch = $PackageInfo -match "Location: (.+)"
         if ($LocationMatch) {
             $PackageLocation = $matches[1].Trim()
-            $FrontendDir = "$PackageLocation\openharness\_frontend"
+            $FrontendDir = "$PackageLocation\myharness\_frontend"
         } else {
             $FrontendDir = $null
         }
@@ -221,11 +221,11 @@ if ($NodeOk) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 6: Create OpenHarness config directory
+# Step 6: Create MyHarness config directory
 # ---------------------------------------------------------------------------
-Write-Step "Setting up OpenHarness config directory"
+Write-Step "Setting up MyHarness config directory"
 
-$ConfigDir = "$env:USERPROFILE\.openharness"
+$ConfigDir = "$env:USERPROFILE\.myharness"
 $SkillsDir = "$ConfigDir\skills"
 $PluginsDir = "$ConfigDir\plugins"
 
@@ -233,7 +233,7 @@ New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 New-Item -ItemType Directory -Force -Path $SkillsDir | Out-Null
 New-Item -ItemType Directory -Force -Path $PluginsDir | Out-Null
 
-Write-Success "Config directory ready: ~/.openharness/"
+Write-Success "Config directory ready: ~/.myharness/"
 
 # ---------------------------------------------------------------------------
 # Step 7: Add to PATH (Windows environment variable)
@@ -259,22 +259,21 @@ if ($CurrentPath -like "*$VenvBinDir*") {
 Write-Step "Verifying installation"
 
 $OhPath = "$VenvBinDir\oh.exe"
-$OpenhPath = "$VenvBinDir\openh.exe"
-$OpenharnessPath = "$VenvBinDir\openharness.exe"
+$MyhPath = "$VenvBinDir\myh.exe"
+$MyharnessPath = "$VenvBinDir\myharness.exe"
 $OhmoPath = "$VenvBinDir\ohmo.exe"
 
-# Pick the best available launcher. The 'openh' alias was added after v0.1.6,
-# so PyPI installs of older releases won't have openh.exe. Prefer it when
-# present, otherwise fall back to 'openharness', then 'oh' (which collides
+# Pick the best available launcher. Prefer the full MyHarness command when
+# present, otherwise fall back to 'myh', then 'oh' (which collides
 # with PowerShell's Out-Host alias unless invoked as oh.exe).
 $Launcher = $null
 $LauncherExe = $null
-if (Test-Path $OpenhPath) {
-    $Launcher = "openh"
-    $LauncherExe = $OpenhPath
-} elseif (Test-Path $OpenharnessPath) {
-    $Launcher = "openharness"
-    $LauncherExe = $OpenharnessPath
+if (Test-Path $MyharnessPath) {
+    $Launcher = "myharness"
+    $LauncherExe = $MyharnessPath
+} elseif (Test-Path $MyhPath) {
+    $Launcher = "myh"
+    $LauncherExe = $MyhPath
 } elseif (Test-Path $OhPath) {
     $Launcher = "oh"
     $LauncherExe = $OhPath
@@ -287,20 +286,20 @@ if ($LauncherExe -and (Test-Path $OhmoPath)) {
     Write-Host "  $Launcher is ready: $OhVersion" -ForegroundColor Green
     if ($Launcher -eq "oh") {
         Write-Host "  Note: 'oh' collides with PowerShell's built-in Out-Host alias." -ForegroundColor Yellow
-        Write-Host "        Invoke it as 'oh.exe', or use 'openharness' instead." -ForegroundColor Yellow
+        Write-Host "        Invoke it as 'oh.exe', or use 'myharness' instead." -ForegroundColor Yellow
     } elseif (Test-Path $OhPath) {
         Write-Host "  'oh' is also installed, but PowerShell may resolve it to Out-Host first." -ForegroundColor Yellow
     }
     Write-Host "  ohmo is ready" -ForegroundColor Green
 } else {
     # Try module execution
-    $ModuleVersion = python -m openharness --version 2>&1
+    $ModuleVersion = python -m myharness --version 2>&1
     if ($ModuleVersion) {
-        Write-Warn "Launcher commands not yet available on PATH. Run via: python -m openharness"
+        Write-Warn "Launcher commands not yet available on PATH. Run via: python -m myharness"
         Write-Host "  Version: $ModuleVersion"
     } else {
         Write-Warn "Could not verify launcher commands. The package may need a PATH update."
-        Write-Host "  Try: python -m openharness --version"
+        Write-Host "  Try: python -m myharness --version"
     }
 }
 
@@ -308,22 +307,25 @@ if ($LauncherExe -and (Test-Path $OhmoPath)) {
 # Done
 # ---------------------------------------------------------------------------
 Write-Host ""
-Write-Host "OpenHarness is installed!" -ForegroundColor Green -BackgroundColor White
+Write-Host "MyHarness is installed!" -ForegroundColor Green -BackgroundColor White
 Write-Host ""
 Write-Host "  Next steps:"
 Write-Host "    1. Restart terminal, or run: refreshenv (if using Chocolatey)"
 Write-Host "       Or manually refresh: `$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','User')"
 Write-Host "    2. Set your API key:        `$env:ANTHROPIC_API_KEY = 'your_key'"
-if ($Launcher -eq "openharness") {
-    Write-Host "    3. Launch (PowerShell):     openharness"
-    Write-Host "       ('openh' is not available on this release; 'oh' collides with PowerShell's Out-Host alias.)"
+if ($Launcher -eq "myharness") {
+    Write-Host "    3. Launch (PowerShell):     myharness"
+    Write-Host "       ('oh' collides with PowerShell's Out-Host alias.)"
+} elseif ($Launcher -eq "myh") {
+    Write-Host "    3. Launch (PowerShell):     myh"
+    Write-Host "       ('myharness' is not available on this release; 'oh' collides with PowerShell's Out-Host alias.)"
 } elseif ($Launcher -eq "oh") {
     Write-Host "    3. Launch (PowerShell):     oh.exe"
-    Write-Host "       ('oh' alone collides with PowerShell's Out-Host alias — use 'oh.exe' or 'openharness'.)"
+    Write-Host "       ('oh' alone collides with PowerShell's Out-Host alias — use 'oh.exe' or 'myharness'.)"
 } else {
-    Write-Host "    3. Launch (PowerShell):     openh"
+    Write-Host "    3. Launch (PowerShell):     myharness"
     Write-Host "       Note: 'oh' may collide with the built-in Out-Host alias in PowerShell."
 }
 Write-Host "    4. Launch ohmo:             ohmo"
-Write-Host "    5. Docs:                    https://github.com/HKUDS/OpenHarness"
+Write-Host "    5. Docs:                    https://github.com/HKUDS/MyHarness"
 Write-Host ""

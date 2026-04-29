@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from openharness.api.client import ApiMessageCompleteEvent
-from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.hooks import HookEvent, HookExecutionContext, HookExecutor
-from openharness.hooks.executor import _inject_arguments
-from openharness.hooks.loader import HookRegistry
-from openharness.hooks.schemas import CommandHookDefinition, PromptHookDefinition
+from myharness.api.client import ApiMessageCompleteEvent
+from myharness.api.usage import UsageSnapshot
+from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.hooks import HookEvent, HookExecutionContext, HookExecutor
+from myharness.hooks.executor import _inject_arguments
+from myharness.hooks.loader import HookRegistry
+from myharness.hooks.schemas import CommandHookDefinition, PromptHookDefinition
 
 
 class FakeApiClient:

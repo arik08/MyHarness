@@ -1747,6 +1747,8 @@ a:focus-visible {
 .artifact-frame {
   display: block;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   min-height: calc(100dvh - 94px);
   background: var(--panel-raised);
@@ -2565,10 +2567,12 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 10px;
 }
 
 .project-file-sort-summary {
+  flex: 1 1 180px;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -2576,6 +2580,15 @@ a:focus-visible {
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-file-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .project-file-sort {
@@ -2598,7 +2611,92 @@ a:focus-visible {
   font: inherit;
 }
 
+.project-file-toolbar-button {
+  min-height: 30px;
+  padding: 4px 9px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-file-toolbar-button:hover:not(:disabled),
+.project-file-toolbar-button:focus-visible:not(:disabled) {
+  background: var(--sidebar-hover);
+  border-color: var(--line-strong);
+}
+
+.project-file-toolbar-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .project-file-list {
+  display: grid;
+  gap: 10px;
+}
+
+.project-file-section {
+  display: grid;
+  gap: 7px;
+}
+
+.project-file-section-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 2px;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.project-file-section-header:hover,
+.project-file-section-header:focus-visible {
+  color: var(--accent);
+}
+
+.project-file-section-caret {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  transform: rotate(90deg);
+  transition: transform 0.12s ease;
+}
+
+.project-file-section.collapsed .project-file-section-caret {
+  transform: rotate(0deg);
+}
+
+.project-file-section-title {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-file-section-header small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.project-file-section-body {
   display: grid;
   gap: 8px;
 }
@@ -2718,6 +2816,56 @@ a:focus-visible {
 .project-file-delete:focus-visible::after {
   opacity: 1;
   transform: translate(0, -50%);
+}
+
+.project-file-organize-card {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.project-file-organize-list {
+  display: grid;
+  gap: 7px;
+  max-height: min(340px, 52vh);
+  overflow: auto;
+  margin: 12px 0 4px;
+}
+
+.project-file-organize-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.project-file-organize-row input {
+  flex: 0 0 auto;
+}
+
+.project-file-organize-row span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.project-file-organize-row strong,
+.project-file-organize-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-file-organize-row strong {
+  font-size: 13px;
+}
+
+.project-file-organize-row small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .workflow-message {
@@ -2903,8 +3051,8 @@ a:focus-visible {
 }
 
 .todo-card-list li.done .todo-label {
-  color: var(--muted);
-  text-decoration: line-through;
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .todo-spinner {
@@ -3462,6 +3610,8 @@ a:focus-visible {
 }
 
 .markdown-body .html-render-preview {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   margin: -4px 0 13px;
   background: #fff;
@@ -3472,6 +3622,8 @@ a:focus-visible {
 .html-render-frame {
   display: block;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: 320px;
   min-height: 220px;
   background: #fff;
@@ -3880,6 +4032,10 @@ a:focus-visible {
 .inline-question-choice:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.permission-question-choices {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 @keyframes inlineQuestionRise {
@@ -5005,6 +5161,10 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.scope-segmented-control.yolo-mode-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .scope-segmented-control.shell-mode-list {
   grid-template-columns: 1fr;
 }
@@ -5043,6 +5203,12 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   gap: 10px;
 }
 
+.yolo-mode-list .scope-mode-option {
+  min-height: 54px;
+  padding: 11px 14px;
+  gap: 10px;
+}
+
 .shell-mode-list .scope-mode-option {
   min-height: 56px;
   padding: 12px 14px;
@@ -5051,6 +5217,7 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 
 .workspace-scope-mode-list .scope-mode-copy,
 .learned-skill-mode-list .scope-mode-copy,
+.yolo-mode-list .scope-mode-copy,
 .shell-mode-list .scope-mode-copy {
   display: flex;
   flex-wrap: wrap;
@@ -5060,6 +5227,7 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 
 .workspace-scope-mode-list .scope-mode-option strong,
 .learned-skill-mode-list .scope-mode-option strong,
+.yolo-mode-list .scope-mode-option strong,
 .shell-mode-list .scope-mode-option strong {
   flex: 0 0 auto;
   font-size: 13px;
@@ -5067,6 +5235,7 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 
 .workspace-scope-mode-list .scope-mode-option small,
 .learned-skill-mode-list .scope-mode-option small,
+.yolo-mode-list .scope-mode-option small,
 .shell-mode-list .scope-mode-option small {
   flex: 1 1 260px;
   font-size: 12px;
@@ -5075,6 +5244,7 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 
 .workspace-scope-mode-list .scope-mode-marker,
 .learned-skill-mode-list .scope-mode-marker,
+.yolo-mode-list .scope-mode-marker,
 .shell-mode-list .scope-mode-marker {
   width: 12px;
   height: 12px;

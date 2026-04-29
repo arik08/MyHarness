@@ -1,5 +1,5 @@
-from openharness.skills.display import display_skill_description, translate_skill_description
-from openharness.skills.types import SkillDefinition
+from myharness.skills.display import display_skill_description, translate_skill_description
+from myharness.skills.types import SkillDefinition
 
 
 def test_known_skill_description_is_translated_for_display():

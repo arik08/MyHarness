@@ -1,4 +1,4 @@
-"""Tests for openharness.config.settings."""
+"""Tests for myharness.config.settings."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from openharness.auth.storage import store_credential
-from openharness.config.settings import (
+from myharness.auth.storage import store_credential
+from myharness.config.settings import (
     ProviderProfile,
     Settings,
     display_model_setting,
@@ -96,7 +96,7 @@ class TestSettings:
         """_apply_env_overrides should pick up OPENAI_BASE_URL for relay
         providers that use OpenAI-compatible format."""
         monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
-        monkeypatch.delenv("OPENHARNESS_BASE_URL", raising=False)
+        monkeypatch.delenv("MYHARNESS_BASE_URL", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setenv("OPENAI_BASE_URL", "https://relay.example.com/v1")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-relay-key")
@@ -106,8 +106,8 @@ class TestSettings:
         assert s.base_url == "https://relay.example.com/v1"
 
     def test_env_overrides_pick_up_compact_threshold_settings(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setenv("OPENHARNESS_CONTEXT_WINDOW_TOKENS", "123456")
-        monkeypatch.setenv("OPENHARNESS_AUTO_COMPACT_THRESHOLD_TOKENS", "120000")
+        monkeypatch.setenv("MYHARNESS_CONTEXT_WINDOW_TOKENS", "123456")
+        monkeypatch.setenv("MYHARNESS_AUTO_COMPACT_THRESHOLD_TOKENS", "120000")
         path = tmp_path / "settings.json"
         path.write_text(json.dumps({}))
         s = load_settings(path)
@@ -131,9 +131,9 @@ class TestLoadSaveSettings:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
         monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-        monkeypatch.delenv("OPENHARNESS_BASE_URL", raising=False)
+        monkeypatch.delenv("MYHARNESS_BASE_URL", raising=False)
         monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
-        monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
+        monkeypatch.delenv("MYHARNESS_MODEL", raising=False)
         path = tmp_path / "nonexistent.json"
         s = load_settings(path)
         assert s == Settings().materialize_active_profile()
@@ -144,7 +144,7 @@ class TestLoadSaveSettings:
         monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
         monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
-        monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
+        monkeypatch.delenv("MYHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
         path.write_text(json.dumps({"model": "claude-opus-4-20250514", "verbose": True, "fast_mode": True}))
         s = load_settings(path)
@@ -159,7 +159,7 @@ class TestLoadSaveSettings:
         monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
         monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
-        monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
+        monkeypatch.delenv("MYHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
         original = Settings(api_key="sk-roundtrip", model="claude-opus-4-20250514", verbose=True)
         save_settings(original, path)
@@ -399,7 +399,7 @@ class TestLoadSaveSettings:
         assert materialized.model == "claude-opus-4-6"
 
     def test_resolve_auth_prefers_profile_scoped_credential_for_custom_compatible_profile(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path))
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-global-env")
         store_credential("profile:kimi-anthropic", "api_key", "sk-profile-specific", use_keyring=False)
         settings = Settings(
@@ -453,11 +453,11 @@ def test_normalize_anthropic_model_name_matches_hermes_behavior():
         path.write_text(json.dumps({"model": "from-file", "base_url": "https://file.example"}))
         monkeypatch.setenv("ANTHROPIC_MODEL", "from-env-model")
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.example/anthropic")
-        monkeypatch.setenv("OPENHARNESS_TIMEOUT", "42.5")
-        monkeypatch.setenv("OPENHARNESS_MAX_TURNS", "42")
+        monkeypatch.setenv("MYHARNESS_TIMEOUT", "42.5")
+        monkeypatch.setenv("MYHARNESS_MAX_TURNS", "42")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-override")
-        monkeypatch.setenv("OPENHARNESS_SANDBOX_ENABLED", "true")
-        monkeypatch.setenv("OPENHARNESS_SANDBOX_FAIL_IF_UNAVAILABLE", "1")
+        monkeypatch.setenv("MYHARNESS_SANDBOX_ENABLED", "true")
+        monkeypatch.setenv("MYHARNESS_SANDBOX_FAIL_IF_UNAVAILABLE", "1")
 
         s = load_settings(path)
 
@@ -521,9 +521,9 @@ class TestAnsiEscapeSequences:
         updated = _apply_env_overrides(s)
         assert updated.model == "claude-opus-4-6"
 
-    def test_env_override_strips_ansi_from_openharness_model(self, monkeypatch):
-        """Test that ANSI escape sequences are stripped from OPENHARNESS_MODEL env var."""
-        monkeypatch.setenv("OPENHARNESS_MODEL", "\x1b[32mclaude-sonnet-4-6\x1b[0m")
+    def test_env_override_strips_ansi_from_myharness_model(self, monkeypatch):
+        """Test that ANSI escape sequences are stripped from MYHARNESS_MODEL env var."""
+        monkeypatch.setenv("MYHARNESS_MODEL", "\x1b[32mclaude-sonnet-4-6\x1b[0m")
         s = Settings()
         updated = _apply_env_overrides(s)
         assert updated.model == "claude-sonnet-4-6"
@@ -539,7 +539,7 @@ class TestMiniMaxProvider:
     """Tests for MiniMax provider profile and auth integration."""
 
     def test_minimax_in_default_provider_profiles(self):
-        from openharness.config.settings import default_provider_profiles
+        from myharness.config.settings import default_provider_profiles
 
         profiles = default_provider_profiles()
         assert "minimax" in profiles
@@ -551,12 +551,12 @@ class TestMiniMaxProvider:
         assert profile.base_url == "https://api.minimax.io/v1"
 
     def test_auth_source_provider_name_minimax(self):
-        from openharness.config.settings import auth_source_provider_name
+        from myharness.config.settings import auth_source_provider_name
 
         assert auth_source_provider_name("minimax_api_key") == "minimax"
 
     def test_default_auth_source_for_minimax_provider(self):
-        from openharness.config.settings import default_auth_source_for_provider
+        from myharness.config.settings import default_auth_source_for_provider
 
         assert default_auth_source_for_provider("minimax") == "minimax_api_key"
 
@@ -603,7 +603,7 @@ class TestPgptOpenAICompatibleProvider:
     """Tests for the P-GPT OpenAI-compatible provider profile."""
 
     def test_pgpt_in_default_provider_profiles(self):
-        from openharness.config.settings import default_provider_profiles
+        from myharness.config.settings import default_provider_profiles
 
         profiles = default_provider_profiles()
         profile = profiles["p-gpt"]
@@ -612,8 +612,30 @@ class TestPgptOpenAICompatibleProvider:
         assert profile.api_format == "openai"
         assert profile.auth_source == "pgpt_api_key"
         assert profile.default_model == "gpt-5.4"
-        assert profile.allowed_models == ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+        assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
         assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
+
+    def test_pgpt_saved_builtin_profile_receives_new_allowed_models(self):
+        from myharness.config.settings import ProviderProfile
+
+        settings = Settings(
+            profiles={
+                "p-gpt": ProviderProfile(
+                    label="P-GPT",
+                    provider="openai",
+                    api_format="openai",
+                    auth_source="pgpt_api_key",
+                    default_model="gpt-5.4",
+                    base_url="http://pgpt.posco.com/s0la01-gpt/v1",
+                    last_model="gpt-5.4",
+                    allowed_models=["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
+                )
+            }
+        )
+
+        profile = settings.merged_profiles()["p-gpt"]
+
+        assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
 
     def test_default_profile_is_pgpt(self):
         materialized = Settings().materialize_active_profile()
@@ -624,7 +646,7 @@ class TestPgptOpenAICompatibleProvider:
         assert materialized.model == "gpt-5.4"
 
     def test_auth_source_provider_name_pgpt(self):
-        from openharness.config.settings import auth_source_provider_name
+        from myharness.config.settings import auth_source_provider_name
 
         assert auth_source_provider_name("pgpt_api_key") == "pgpt"
 

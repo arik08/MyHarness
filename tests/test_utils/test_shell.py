@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from openharness.config.settings import Settings
-from openharness.platforms import get_platform
-from openharness.utils.shell import (
+from myharness.config.settings import Settings
+from myharness.platforms import get_platform
+from myharness.utils.shell import (
     _resolve_windows_direct_command,
     create_shell_subprocess,
     resolve_shell_command,
@@ -19,7 +19,7 @@ from openharness.utils.shell import (
 
 def test_resolve_shell_command_prefers_bash_on_linux(monkeypatch):
     monkeypatch.setattr(
-        "openharness.utils.shell.shutil.which",
+        "myharness.utils.shell.shutil.which",
         lambda name: {"bash": "/usr/bin/bash", "cmd.exe": "C:/Windows/System32/cmd.exe"}.get(name),
     )
     command = resolve_shell_command("echo hi", platform_name="linux")
@@ -35,7 +35,7 @@ def test_resolve_shell_command_wraps_with_script_when_pty_requested(monkeypatch)
         }
         return mapping.get(name)
 
-    monkeypatch.setattr("openharness.utils.shell.shutil.which", fake_which)
+    monkeypatch.setattr("myharness.utils.shell.shutil.which", fake_which)
 
     command = resolve_shell_command("echo hi", platform_name="linux", prefer_pty=True)
 
@@ -50,7 +50,7 @@ def test_resolve_shell_command_prefers_powershell_on_windows(monkeypatch):
         }
         return mapping.get(name)
 
-    monkeypatch.setattr("openharness.utils.shell.shutil.which", fake_which)
+    monkeypatch.setattr("myharness.utils.shell.shutil.which", fake_which)
 
     command = resolve_shell_command("echo hi", platform_name="windows")
 
@@ -73,7 +73,7 @@ def test_resolve_shell_command_can_use_cmd_on_windows(monkeypatch):
         }
         return mapping.get(name)
 
-    monkeypatch.setattr("openharness.utils.shell.shutil.which", fake_which)
+    monkeypatch.setattr("myharness.utils.shell.shutil.which", fake_which)
 
     command = resolve_shell_command("py -3 --version", platform_name="windows", shell="cmd")
 
@@ -88,8 +88,8 @@ def test_resolve_shell_command_can_use_git_bash_on_windows(monkeypatch):
         }
         return mapping.get(name)
 
-    monkeypatch.setattr("openharness.utils.shell.shutil.which", fake_which)
-    monkeypatch.setattr("openharness.utils.shell.Path.exists", lambda self: True)
+    monkeypatch.setattr("myharness.utils.shell.shutil.which", fake_which)
+    monkeypatch.setattr("myharness.utils.shell.Path.exists", lambda self: True)
 
     command = resolve_shell_command("echo hi", platform_name="windows", shell="git-bash")
 
@@ -104,7 +104,7 @@ def test_resolve_shell_command_skips_script_on_macos(monkeypatch):
         }
         return mapping.get(name)
 
-    monkeypatch.setattr("openharness.utils.shell.shutil.which", fake_which)
+    monkeypatch.setattr("myharness.utils.shell.shutil.which", fake_which)
 
     command = resolve_shell_command("echo hi", platform_name="macos", prefer_pty=True)
 
@@ -118,7 +118,7 @@ def test_resolve_shell_command_linux_without_script_falls_back(monkeypatch):
         }
         return mapping.get(name)
 
-    monkeypatch.setattr("openharness.utils.shell.shutil.which", fake_which)
+    monkeypatch.setattr("myharness.utils.shell.shutil.which", fake_which)
 
     command = resolve_shell_command("echo hi", platform_name="linux", prefer_pty=True)
 
@@ -142,18 +142,18 @@ async def test_create_shell_subprocess_defaults_stdin_to_devnull(monkeypatch, tm
         return _FakeProcess()
 
     monkeypatch.setattr(
-        "openharness.utils.shell.asyncio.create_subprocess_exec",
+        "myharness.utils.shell.asyncio.create_subprocess_exec",
         fake_create_subprocess_exec,
     )
     monkeypatch.setattr(
-        "openharness.utils.shell.wrap_command_for_sandbox",
+        "myharness.utils.shell.wrap_command_for_sandbox",
         lambda argv, settings=None: (argv, None),
     )
     monkeypatch.setattr(
-        "openharness.utils.shell.shutil.which",
+        "myharness.utils.shell.shutil.which",
         lambda name: {"bash": "/usr/bin/bash", "cmd.exe": "C:/Windows/System32/cmd.exe"}.get(name),
     )
-    monkeypatch.setattr("openharness.utils.shell.Path.exists", lambda self: False)
+    monkeypatch.setattr("myharness.utils.shell.Path.exists", lambda self: False)
 
     await create_shell_subprocess(
         "echo hi",
@@ -186,7 +186,7 @@ def test_windows_simple_printf_is_translated_without_shell():
 
 
 def test_windows_python_launcher_choice_is_cached(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     calls: list[tuple[str, ...]] = []
 
     def fake_which(name: str) -> str | None:
@@ -203,8 +203,8 @@ def test_windows_python_launcher_choice_is_cached(monkeypatch, tmp_path: Path):
 
         return _Result()
 
-    monkeypatch.setattr("openharness.utils.shell.shutil.which", fake_which)
-    monkeypatch.setattr("openharness.utils.shell.subprocess.run", fake_run)
+    monkeypatch.setattr("myharness.utils.shell.shutil.which", fake_which)
+    monkeypatch.setattr("myharness.utils.shell.subprocess.run", fake_run)
 
     first = _resolve_windows_direct_command('python -u -c "print(1)"')
     second = _resolve_windows_direct_command('python -u -c "print(2)"')
@@ -221,10 +221,10 @@ def test_windows_python_direct_command_preserves_inline_quoted_arguments(
     monkeypatch,
     tmp_path: Path,
 ):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     monkeypatch.setattr(
-        "openharness.utils.shell.shutil.which",
+        "myharness.utils.shell.shutil.which",
         lambda name: "C:/Python/python.exe" if name == "python" else None,
     )
 
@@ -238,7 +238,7 @@ def test_windows_python_direct_command_preserves_inline_quoted_arguments(
 
         return _Result()
 
-    monkeypatch.setattr("openharness.utils.shell.subprocess.run", fake_run)
+    monkeypatch.setattr("myharness.utils.shell.subprocess.run", fake_run)
 
     argv = _resolve_windows_direct_command(
         'python C:\\Users\\user\\script.py --interface display_name="UI Design Essence" '
@@ -259,10 +259,10 @@ def test_windows_py_direct_command_bypasses_shell_and_keeps_quoted_arguments(
     monkeypatch,
     tmp_path: Path,
 ):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     monkeypatch.setattr(
-        "openharness.utils.shell.shutil.which",
+        "myharness.utils.shell.shutil.which",
         lambda name: "C:/Windows/py.exe" if name == "py" else None,
     )
 
@@ -276,7 +276,7 @@ def test_windows_py_direct_command_bypasses_shell_and_keeps_quoted_arguments(
 
         return _Result()
 
-    monkeypatch.setattr("openharness.utils.shell.subprocess.run", fake_run)
+    monkeypatch.setattr("myharness.utils.shell.subprocess.run", fake_run)
 
     argv = _resolve_windows_direct_command(
         'py -3 init_skill.py ui-design-essence --interface display_name="UI Design Essence"'
@@ -293,10 +293,10 @@ def test_windows_py_direct_command_bypasses_shell_and_keeps_quoted_arguments(
 
 
 def test_windows_python_heredoc_is_translated_to_python_c(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     monkeypatch.setattr(
-        "openharness.utils.shell.shutil.which",
+        "myharness.utils.shell.shutil.which",
         lambda name: "C:/Python/python.exe" if name == "python" else None,
     )
 
@@ -310,7 +310,7 @@ def test_windows_python_heredoc_is_translated_to_python_c(monkeypatch, tmp_path:
 
         return _Result()
 
-    monkeypatch.setattr("openharness.utils.shell.subprocess.run", fake_run)
+    monkeypatch.setattr("myharness.utils.shell.subprocess.run", fake_run)
 
     command = "python - <<'PY'\nprint('안녕')\nPY"
     argv = _resolve_windows_direct_command(command)

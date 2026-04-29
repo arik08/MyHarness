@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from openharness.config.settings import Settings, load_settings
-from openharness.mcp.client import McpClientManager
-from openharness.mcp.config import load_mcp_server_configs
-from openharness.plugins import load_plugins
-from openharness.plugins.installer import install_plugin_from_path, uninstall_plugin
-from openharness.tools import create_default_tool_registry
-from openharness.tools.base import ToolExecutionContext
+from myharness.config.settings import Settings, load_settings
+from myharness.mcp.client import McpClientManager
+from myharness.mcp.config import load_mcp_server_configs
+from myharness.plugins import load_plugins
+from myharness.plugins.installer import install_plugin_from_path, uninstall_plugin
+from myharness.tools import create_default_tool_registry
+from myharness.tools.base import ToolExecutionContext
 
 
 def _write_plugin(source_root: Path, server_script: Path) -> Path:
@@ -54,7 +54,7 @@ def _write_plugin(source_root: Path, server_script: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_plugin_install_load_and_uninstall_flow(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "project"
     project.mkdir()
     server_script = Path(__file__).resolve().parents[1] / "fixtures" / "fake_mcp_server.py"

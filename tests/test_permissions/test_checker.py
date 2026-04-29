@@ -4,9 +4,9 @@ import logging
 
 import pytest
 
-from openharness.config.settings import PathRuleConfig, PermissionSettings
-from openharness.permissions import PermissionChecker, PermissionMode
-from openharness.permissions.checker import SENSITIVE_PATH_PATTERNS
+from myharness.config.settings import PathRuleConfig, PermissionSettings
+from myharness.permissions import PermissionChecker, PermissionMode
+from myharness.permissions.checker import SENSITIVE_PATH_PATTERNS
 
 
 def test_default_mode_allows_read_only():
@@ -127,7 +127,7 @@ def _settings_with_rules(*rules) -> PermissionSettings:
 def test_invalid_pattern_rule_is_skipped_and_warns(bad_rule, caplog):
     """Rules with missing, empty, or non-string patterns are skipped with a warning."""
     settings = _settings_with_rules(bad_rule)
-    with caplog.at_level(logging.WARNING, logger="openharness.permissions.checker"):
+    with caplog.at_level(logging.WARNING, logger="myharness.permissions.checker"):
         checker = PermissionChecker(settings)
 
     assert checker._path_rules == []
@@ -209,8 +209,8 @@ class TestSensitivePathProtection:
             "/home/user/.azure/accessTokens.json",
             "/home/user/.docker/config.json",
             "/home/user/.kube/config",
-            "/home/user/.openharness/credentials.json",
-            "/home/user/.openharness/copilot_auth.json",
+            "/home/user/.myharness/credentials.json",
+            "/home/user/.myharness/copilot_auth.json",
         ):
             decision = checker.evaluate("read_file", is_read_only=True, file_path=path)
             assert decision.allowed is False, f"Expected {path} to be denied"
@@ -271,8 +271,8 @@ class TestSensitivePathProtection:
             "*/.gnupg/*": "/home/u/.gnupg/secring.gpg",
             "*/.docker/config.json": "/home/u/.docker/config.json",
             "*/.kube/config": "/home/u/.kube/config",
-            "*/.openharness/credentials.json": "/home/u/.openharness/credentials.json",
-            "*/.openharness/copilot_auth.json": "/home/u/.openharness/copilot_auth.json",
+            "*/.myharness/credentials.json": "/home/u/.myharness/credentials.json",
+            "*/.myharness/copilot_auth.json": "/home/u/.myharness/copilot_auth.json",
         }
         test_path = example_paths[pattern]
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))

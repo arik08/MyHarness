@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from openharness.tasks.manager import BackgroundTaskManager
+from myharness.tasks.manager import BackgroundTaskManager
 
 
 def _python_stdout_command(text: str) -> str:
@@ -28,7 +28,7 @@ def _python_stdin_echo_command() -> str:
 
 @pytest.mark.asyncio
 async def test_create_shell_task_and_read_output(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     manager = BackgroundTaskManager()
 
     task = await manager.create_shell_task(
@@ -46,7 +46,7 @@ async def test_create_shell_task_and_read_output(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_agent_task_with_command_override_and_write(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     manager = BackgroundTaskManager()
 
     task = await manager.create_agent_task(
@@ -62,7 +62,7 @@ async def test_create_agent_task_with_command_override_and_write(tmp_path: Path,
 
 @pytest.mark.asyncio
 async def test_write_to_stopped_agent_task_restarts_process(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     manager = BackgroundTaskManager()
 
     task = await manager.create_agent_task(
@@ -86,7 +86,7 @@ async def test_write_to_stopped_agent_task_restarts_process(tmp_path: Path, monk
 
 @pytest.mark.asyncio
 async def test_stop_task(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     manager = BackgroundTaskManager()
 
     task = await manager.create_shell_task(
@@ -102,7 +102,7 @@ async def test_stop_task(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_completion_listener_fires_when_task_finishes(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     manager = BackgroundTaskManager()
     seen: list[tuple[str, str, int | None]] = []
     done = asyncio.Event()

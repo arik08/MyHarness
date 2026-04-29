@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.services.session_storage import (
+from myharness.api.usage import UsageSnapshot
+from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.services.session_storage import (
     display_summary_for_first_user,
     export_session_markdown,
     fallback_session_title_from_user_text,
@@ -19,7 +19,7 @@ from openharness.services.session_storage import (
 
 
 def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     project = tmp_path / "repo"
     project.mkdir()
 
@@ -36,7 +36,7 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
     )
 
     assert path.exists()
-    assert path == project / ".openharness" / "sessions" / "latest.json"
+    assert path == project / ".myharness" / "sessions" / "latest.json"
     snapshot = load_session_snapshot(project)
     assert snapshot is not None
     assert snapshot["model"] == "claude-test"
@@ -46,7 +46,7 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
 
 
 def test_user_edited_session_title_is_preserved(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     project = tmp_path / "repo"
     project.mkdir()
 
@@ -69,7 +69,7 @@ def test_user_edited_session_title_is_preserved(tmp_path: Path, monkeypatch):
 
 
 def test_export_session_markdown(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     project = tmp_path / "repo"
     project.mkdir()
 
@@ -83,13 +83,13 @@ def test_export_session_markdown(tmp_path: Path, monkeypatch):
 
     assert path.exists()
     content = path.read_text(encoding="utf-8")
-    assert "OpenHarness Session Transcript" in content
+    assert "MyHarness Session Transcript" in content
     assert "hello" in content
     assert "world" in content
 
 
 def test_load_session_snapshot_sanitizes_legacy_empty_assistant_messages(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     project = tmp_path / "repo"
     project.mkdir()
 
@@ -146,3 +146,7 @@ def test_korean_first_clause_title_counts_as_prompt_echo():
 
     assert title_echoes_first_user(echoed_clause, prompt) is True
     assert display_summary_for_first_user(echoed_clause, prompt) == "삼성전자 메모리 경쟁사"
+
+
+def test_korean_recommendation_prompt_fallback_title():
+    assert fallback_session_title_from_user_text("서울 피자 맛집 추천해줘") == "서울 피자 맛집 추천"

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from openharness.auth.external import (
+from myharness.auth.external import (
     CLAUDE_PROVIDER,
     CODEX_PROVIDER,
     ExternalAuthState,
@@ -18,10 +18,10 @@ from openharness.auth.external import (
     load_external_credential,
     refresh_claude_oauth_credential,
 )
-from openharness.auth.manager import AuthManager
-from openharness.auth.storage import ExternalAuthBinding, load_external_binding, store_external_binding
-from openharness.cli import app
-from openharness.config.settings import Settings, load_settings
+from myharness.auth.manager import AuthManager
+from myharness.auth.storage import ExternalAuthBinding, load_external_binding, store_external_binding
+from myharness.cli import app
+from myharness.config.settings import Settings, load_settings
 
 
 def _b64url(data: dict[str, object]) -> str:
@@ -89,7 +89,7 @@ def test_settings_resolve_auth_uses_default_codex_auth_json(monkeypatch, tmp_pat
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
     resolved = Settings(active_profile="codex").resolve_auth()
@@ -110,7 +110,7 @@ def test_auth_manager_reports_default_codex_auth_json_ready(monkeypatch, tmp_pat
         json.dumps({"tokens": {"access_token": token}}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
     status = AuthManager(Settings(active_profile="codex")).get_profile_statuses()["codex"]
@@ -135,7 +135,7 @@ def test_load_claude_external_credential(monkeypatch, tmp_path: Path):
         encoding="utf-8",
     )
     monkeypatch.setenv("CLAUDE_HOME", str(claude_home))
-    monkeypatch.setattr("openharness.auth.external.platform.system", lambda: "Linux")
+    monkeypatch.setattr("myharness.auth.external.platform.system", lambda: "Linux")
 
     binding = default_binding_for_provider(CLAUDE_PROVIDER)
     credential = load_external_credential(binding)
@@ -150,7 +150,7 @@ def test_load_claude_external_credential(monkeypatch, tmp_path: Path):
 def test_default_claude_binding_uses_keychain_on_macos(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CLAUDE_HOME", raising=False)
-    monkeypatch.setattr("openharness.auth.external.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("myharness.auth.external.platform.system", lambda: "Darwin")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     binding = default_binding_for_provider(CLAUDE_PROVIDER)
@@ -162,7 +162,7 @@ def test_default_claude_binding_uses_keychain_on_macos(monkeypatch, tmp_path: Pa
 def test_default_claude_binding_prefers_config_dir_on_macos(monkeypatch, tmp_path: Path):
     config_dir = tmp_path / "claude-config"
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
-    monkeypatch.setattr("openharness.auth.external.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("myharness.auth.external.platform.system", lambda: "Darwin")
 
     binding = default_binding_for_provider(CLAUDE_PROVIDER)
 
@@ -193,7 +193,7 @@ def test_load_claude_external_credential_from_keychain(monkeypatch, tmp_path: Pa
             )
         raise AssertionError(args)
 
-    monkeypatch.setattr("openharness.auth.external.subprocess.check_output", _fake_check_output)
+    monkeypatch.setattr("myharness.auth.external.subprocess.check_output", _fake_check_output)
 
     credential = load_external_credential(
         ExternalAuthBinding(
@@ -216,7 +216,7 @@ def test_load_claude_external_credential_from_keychain(monkeypatch, tmp_path: Pa
 
 def test_settings_resolve_auth_uses_external_binding(monkeypatch, tmp_path: Path):
     config_dir = tmp_path / "config"
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     source = tmp_path / "claude-credentials.json"
     source.write_text(
         json.dumps(
@@ -249,7 +249,7 @@ def test_settings_resolve_auth_uses_external_binding(monkeypatch, tmp_path: Path
 
 def test_settings_resolve_auth_refreshes_expired_external_binding(monkeypatch, tmp_path: Path):
     config_dir = tmp_path / "config"
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     source = tmp_path / "claude-credentials.json"
     source.write_text(
         json.dumps(
@@ -264,7 +264,7 @@ def test_settings_resolve_auth_refreshes_expired_external_binding(monkeypatch, t
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "openharness.auth.external.refresh_claude_oauth_credential",
+        "myharness.auth.external.refresh_claude_oauth_credential",
         lambda refresh_token: {
             "access_token": "fresh-token",
             "refresh_token": refresh_token,
@@ -307,7 +307,7 @@ def test_cli_codex_login_binds_without_switching(monkeypatch, tmp_path: Path):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
     (config_dir / "settings.json").write_text(
@@ -354,9 +354,9 @@ def test_cli_claude_login_binds_without_switching(monkeypatch, tmp_path: Path):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("CLAUDE_HOME", str(claude_home))
-    monkeypatch.setattr("openharness.auth.external.platform.system", lambda: "Linux")
+    monkeypatch.setattr("myharness.auth.external.platform.system", lambda: "Linux")
 
     runner = CliRunner()
     result = runner.invoke(app, ["auth", "claude-login"])
@@ -390,11 +390,11 @@ def test_cli_claude_login_refreshes_expired_credentials(monkeypatch, tmp_path: P
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("CLAUDE_HOME", str(claude_home))
-    monkeypatch.setattr("openharness.auth.external.platform.system", lambda: "Linux")
+    monkeypatch.setattr("myharness.auth.external.platform.system", lambda: "Linux")
     monkeypatch.setattr(
-        "openharness.auth.external.refresh_claude_oauth_credential",
+        "myharness.auth.external.refresh_claude_oauth_credential",
         lambda refresh_token: {
             "access_token": "fresh-token",
             "refresh_token": refresh_token,
@@ -440,10 +440,10 @@ def test_load_claude_external_credential_refreshes_expired_keychain(monkeypatch,
         writes.append(args)
         return None
 
-    monkeypatch.setattr("openharness.auth.external.subprocess.check_output", _fake_check_output)
-    monkeypatch.setattr("openharness.auth.external.subprocess.run", _fake_run)
+    monkeypatch.setattr("myharness.auth.external.subprocess.check_output", _fake_check_output)
+    monkeypatch.setattr("myharness.auth.external.subprocess.run", _fake_run)
     monkeypatch.setattr(
-        "openharness.auth.external.refresh_claude_oauth_credential",
+        "myharness.auth.external.refresh_claude_oauth_credential",
         lambda refresh_token: {
             "access_token": "fresh-token",
             "refresh_token": refresh_token,
@@ -493,7 +493,7 @@ def test_cli_provider_use_activates_codex_profile(monkeypatch, tmp_path: Path):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
     runner = CliRunner()
@@ -515,7 +515,7 @@ def test_settings_resolve_auth_rejects_third_party_base_url_for_claude_subscript
     tmp_path: Path,
 ):
     config_dir = tmp_path / "config"
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
     source = tmp_path / "claude-credentials.json"
     source.write_text(
         json.dumps(
@@ -604,7 +604,7 @@ def test_describe_external_binding_reports_configured_claude_keychain(
             )
         raise AssertionError(args)
 
-    monkeypatch.setattr("openharness.auth.external.subprocess.check_output", _fake_check_output)
+    monkeypatch.setattr("myharness.auth.external.subprocess.check_output", _fake_check_output)
 
     state = describe_external_binding(
         ExternalAuthBinding(
@@ -649,8 +649,8 @@ def test_refresh_claude_oauth_credential(monkeypatch):
         seen["body"] = json.loads(request.data.decode("utf-8"))
         return _FakeResponse()
 
-    monkeypatch.setattr("openharness.auth.external.urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr("openharness.auth.external.time.time", lambda: 1000)
+    monkeypatch.setattr("myharness.auth.external.urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr("myharness.auth.external.time.time", lambda: 1000)
 
     refreshed = refresh_claude_oauth_credential("refresh-token")
 
@@ -681,7 +681,7 @@ def test_refresh_claude_oauth_credential_reports_invalid_grant(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "openharness.auth.external.urllib.request.urlopen",
+        "myharness.auth.external.urllib.request.urlopen",
         lambda request, timeout=10: (_ for _ in ()).throw(error),
     )
 
@@ -695,9 +695,9 @@ def test_get_claude_code_version_uses_fallback(monkeypatch):
         stdout = ""
 
     monkeypatch.setattr(
-        "openharness.auth.external.subprocess.run",
+        "myharness.auth.external.subprocess.run",
         lambda *args, **kwargs: _Result(),
     )
-    monkeypatch.setattr("openharness.auth.external._claude_code_version_cache", None)
+    monkeypatch.setattr("myharness.auth.external._claude_code_version_cache", None)
 
     assert get_claude_code_version() == "2.1.92"

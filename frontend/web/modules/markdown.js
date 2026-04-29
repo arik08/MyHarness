@@ -204,6 +204,61 @@ function htmlPreviewToken() {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function notifyHtmlPreviewResize(frame, token) {
+  if (!frame?.isConnected || !frame.contentWindow) {
+    return;
+  }
+  const rect = frame.getBoundingClientRect();
+  frame.contentWindow.postMessage({
+    type: "myharness-html-preview-resize",
+    token,
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  }, "*");
+}
+
+function observeHtmlPreviewFrame(frame, token) {
+  let lastWidth = -1;
+  let frameId = 0;
+  let observer = null;
+  const targets = [frame, frame.parentElement].filter(Boolean);
+  const cleanup = () => {
+    if (frameId) {
+      window.cancelAnimationFrame(frameId);
+      frameId = 0;
+    }
+    observer?.disconnect();
+    window.removeEventListener("resize", schedule);
+  };
+  const schedule = () => {
+    if (!frame.isConnected) {
+      cleanup();
+      return;
+    }
+    const width = Math.round(frame.getBoundingClientRect().width);
+    if (width < 1 || width === lastWidth) {
+      return;
+    }
+    lastWidth = width;
+    if (frameId) {
+      window.cancelAnimationFrame(frameId);
+    }
+    frameId = window.requestAnimationFrame(() => {
+      frameId = 0;
+      notifyHtmlPreviewResize(frame, token);
+    });
+  };
+  if (window.ResizeObserver) {
+    observer = new ResizeObserver(schedule);
+    targets.forEach((target) => observer.observe(target));
+  }
+  window.addEventListener("resize", schedule);
+  schedule();
+  window.setTimeout(schedule, 120);
+  window.setTimeout(schedule, 420);
+  return cleanup;
+}
+
 async function loadHtmlPreview(frame, errorNode, source) {
   try {
     const cacheKey = normalizeHtmlPreviewSource(source);
@@ -224,18 +279,23 @@ async function loadHtmlPreview(frame, errorNode, source) {
     if (frame.isConnected) {
       const token = htmlPreviewToken();
       frame.name = token;
+      const stopResizeObserver = observeHtmlPreviewFrame(frame, token);
       const onMessage = (event) => {
         if (!frame.isConnected) {
           window.removeEventListener("message", onMessage);
+          stopResizeObserver?.();
           return;
         }
-        if (event.data?.type !== "openharness-html-preview-size" || event.data?.token !== token) {
+        if (event.data?.type !== "myharness-html-preview-size" || event.data?.token !== token) {
           return;
         }
         frame.style.height = `${htmlPreviewHeight(event.data.height)}px`;
       };
       window.addEventListener("message", onMessage);
       frame.src = `${previewUrl}?ohPreviewToken=${encodeURIComponent(token)}`;
+      frame.addEventListener("load", () => {
+        notifyHtmlPreviewResize(frame, token);
+      });
     }
   } catch {
     if (!frame.isConnected) {

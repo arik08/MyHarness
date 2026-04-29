@@ -6,8 +6,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from openharness.channels.bus.events import OutboundMessage
-from openharness.channels.bus.queue import MessageBus
+from myharness.channels.bus.events import OutboundMessage
+from myharness.channels.bus.queue import MessageBus
 
 from ohmo.gateway.router import session_key_for_message
 from ohmo.gateway.runtime import OhmoSessionRuntimePool

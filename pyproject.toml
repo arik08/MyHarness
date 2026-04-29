@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "openharness-ai"
+name = "myharness-ai"
 version = "0.1.7"
 description = "Open-source Python port of Claude Code - an AI-powered CLI coding assistant"
 readme = "README.md"
@@ -22,6 +22,7 @@ dependencies = [
     "typer>=0.12.0",
     "pydantic>=2.0.0",
     "httpx>=0.27.0",
+    "feedparser>=6.0.0",
     "websockets>=12.0",
     "mcp>=1.0.0",
     "pyperclip>=1.9.0",
@@ -46,20 +47,20 @@ dev = [
 ]
 
 [project.scripts]
-openharness = "openharness.cli:app"
-oh = "openharness.cli:app"
-openh = "openharness.cli:app"
+myharness = "myharness.cli:app"
+myh = "myharness.cli:app"
+oh = "myharness.cli:app"
 ohmo = "ohmo.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/openharness", "ohmo"]
+packages = ["src/myharness", "ohmo"]
 
 [tool.hatch.build]
 exclude = [
     "/.git",
     "/.venv",
-    "/.openharness-venv",
-    "/.openharness",
+    "/.myharness-venv",
+    "/.myharness",
     "/.pytest_cache",
     "/.mypy_cache",
     "/.ruff_cache",
@@ -68,16 +69,16 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
-"frontend/terminal/package.json" = "openharness/_frontend/package.json"
-"frontend/terminal/tsconfig.json" = "openharness/_frontend/tsconfig.json"
-"frontend/terminal/src" = "openharness/_frontend/src"
-"frontend/web/index.html" = "openharness/_web/index.html"
-"frontend/web/package.json" = "openharness/_web/package.json"
-"frontend/web/package-lock.json" = "openharness/_web/package-lock.json"
-"frontend/web/script.js" = "openharness/_web/script.js"
-"frontend/web/server.mjs" = "openharness/_web/server.mjs"
-"frontend/web/styles.css" = "openharness/_web/styles.css"
-"frontend/web/modules" = "openharness/_web/modules"
+"frontend/terminal/package.json" = "myharness/_frontend/package.json"
+"frontend/terminal/tsconfig.json" = "myharness/_frontend/tsconfig.json"
+"frontend/terminal/src" = "myharness/_frontend/src"
+"frontend/web/index.html" = "myharness/_web/index.html"
+"frontend/web/package.json" = "myharness/_web/package.json"
+"frontend/web/package-lock.json" = "myharness/_web/package-lock.json"
+"frontend/web/script.js" = "myharness/_web/script.js"
+"frontend/web/server.mjs" = "myharness/_web/server.mjs"
+"frontend/web/styles.css" = "myharness/_web/styles.css"
+"frontend/web/modules" = "myharness/_web/modules"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

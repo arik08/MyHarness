@@ -9,19 +9,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from openharness.api.client import ApiMessageCompleteEvent
-from openharness.api.usage import UsageSnapshot
-from openharness.engine.stream_events import (
+from myharness.api.client import ApiMessageCompleteEvent
+from myharness.api.usage import UsageSnapshot
+from myharness.engine.stream_events import (
     AssistantTextDelta,
     CompactProgressEvent,
     ToolExecutionCompleted,
     ToolExecutionStarted,
     ToolInputDelta,
 )
-from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
-from openharness.ui.protocol import BackendEvent
-from openharness.ui.runtime import build_runtime, close_runtime, start_runtime
+from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
+from myharness.ui.protocol import BackendEvent
+from myharness.ui.runtime import build_runtime, close_runtime, start_runtime
 
 
 class StaticApiClient:
@@ -34,6 +34,23 @@ class StaticApiClient:
         del request
         yield ApiMessageCompleteEvent(
             message=ConversationMessage(role="assistant", content=[TextBlock(text=self._text)]),
+            usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            stop_reason=None,
+        )
+
+
+class SequencedApiClient:
+    """Fake streaming client that returns one complete message per call."""
+
+    def __init__(self, texts: list[str]) -> None:
+        self._texts = list(texts)
+        self.requests = []
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        text = self._texts.pop(0)
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text=text)]),
             usage=UsageSnapshot(input_tokens=2, output_tokens=3),
             stop_reason=None,
         )
@@ -70,7 +87,7 @@ async def test_run_backend_host_accepts_permission_mode(monkeypatch):
         captured["permission_mode"] = self._config.permission_mode
         return 0
 
-    monkeypatch.setattr("openharness.ui.backend_host.ReactBackendHost.run", _fake_run)
+    monkeypatch.setattr("myharness.ui.backend_host.ReactBackendHost.run", _fake_run)
 
     result = await run_backend_host(
         api_client=StaticApiClient("unused"),
@@ -102,7 +119,7 @@ async def test_read_requests_resolves_permission_response_without_queueing(monke
     class _FakeStdin:
         buffer = _FakeBuffer()
 
-    monkeypatch.setattr("openharness.ui.backend_host.sys.stdin", _FakeStdin())
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", _FakeStdin())
 
     await host._read_requests()
 
@@ -138,7 +155,7 @@ async def test_read_requests_queues_steering_line_while_busy(monkeypatch):
     class _FakeStdin:
         buffer = _FakeBuffer()
 
-    monkeypatch.setattr("openharness.ui.backend_host.sys.stdin", _FakeStdin())
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", _FakeStdin())
 
     await host._read_requests()
 
@@ -181,7 +198,7 @@ async def test_read_requests_queues_line_after_busy_turn(monkeypatch):
     class _FakeStdin:
         buffer = _FakeBuffer()
 
-    monkeypatch.setattr("openharness.ui.backend_host.sys.stdin", _FakeStdin())
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", _FakeStdin())
 
     await host._read_requests()
 
@@ -222,8 +239,8 @@ async def test_promote_next_queued_line_submits_after_current_turn():
 @pytest.mark.asyncio
 async def test_backend_host_processes_command(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -245,7 +262,7 @@ async def test_backend_host_processes_command(tmp_path, monkeypatch):
         event.type == "transcript_item"
         and event.item
         and event.item.role == "system"
-        and "OpenHarness" in event.item.text
+        and "MyHarness" in event.item.text
         for event in events
     )
     assert any(event.type == "state_snapshot" for event in events)
@@ -254,8 +271,8 @@ async def test_backend_host_processes_command(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("hello from react backend")))
     host._bundle = await build_runtime(api_client=StaticApiClient("hello from react backend"))
@@ -314,8 +331,8 @@ async def test_backend_host_enqueues_completed_async_agent_notification(monkeypa
             assert max_bytes == 8000
             return "worker result <ready>"
 
-    monkeypatch.setattr("openharness.ui.backend_host.is_coordinator_mode", lambda: True)
-    monkeypatch.setattr("openharness.ui.async_agents.get_task_manager", lambda: _FakeTaskManager())
+    monkeypatch.setattr("myharness.ui.backend_host.is_coordinator_mode", lambda: True)
+    monkeypatch.setattr("myharness.ui.async_agents.get_task_manager", lambda: _FakeTaskManager())
     host._emit = _emit  # type: ignore[method-assign]
 
     host._ensure_async_agent_monitor()
@@ -337,8 +354,8 @@ async def test_backend_host_enqueues_completed_async_agent_notification(monkeypa
 @pytest.mark.asyncio
 async def test_backend_host_emits_title_before_answer_stream(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("피자 추천")))
     host._bundle = await build_runtime(api_client=StaticApiClient("피자 추천"))
@@ -352,7 +369,7 @@ async def test_backend_host_emits_title_before_answer_stream(tmp_path, monkeypat
         await render_event(AssistantTextDelta(text="답변 시작"))
         return True
 
-    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
@@ -363,14 +380,47 @@ async def test_backend_host_emits_title_before_answer_stream(tmp_path, monkeypat
     assert should_continue is True
     event_types = [event.type for event in events]
     assert event_types.index("session_title") < event_types.index("assistant_delta")
-    assert next(event for event in events if event.type == "session_title").message == "피자 추천"
+    assert next(event for event in events if event.type == "session_title").message == "서울 피자 맛집 추천"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_refines_initial_title_once_from_early_conversation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = SequencedApiClient([
+        "첫 답변입니다",
+        "초기 제품 전략 보고서",
+        "두 번째 답변입니다",
+    ])
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line("초기 제품 전략 정리해줘")
+        await host._process_line("완전히 다른 주제로 오늘 날씨 알려줘")
+    finally:
+        await close_runtime(host._bundle)
+
+    title_events = [event.message for event in events if event.type == "session_title"]
+    assert title_events == ["초기 제품 전략", "초기 제품 전략 보고서"]
+    assert host._bundle.engine.tool_metadata["session_title_source"] == "conversation"
+    assert len(client.requests) == 3
+    assert "Create a short chat history title" in client.requests[1].messages[0].text
 
 
 @pytest.mark.asyncio
 async def test_backend_host_persists_user_edited_session_title(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -400,8 +450,8 @@ async def test_backend_host_persists_user_edited_session_title(tmp_path, monkeyp
 @pytest.mark.asyncio
 async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     skill_dir = tmp_path / "config" / "skills" / "review-pr"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -421,7 +471,7 @@ async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatc
         captured["line"] = line
         return True
 
-    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
@@ -439,8 +489,8 @@ async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatc
 @pytest.mark.asyncio
 async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -462,7 +512,7 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
         )
         return True
 
-    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
@@ -483,10 +533,10 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_backend_host_emits_tool_progress_heartbeat(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setattr("openharness.ui.backend_host._TOOL_PROGRESS_FIRST_DELAY_SECONDS", 0.01)
-    monkeypatch.setattr("openharness.ui.backend_host._TOOL_PROGRESS_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("myharness.ui.backend_host._TOOL_PROGRESS_FIRST_DELAY_SECONDS", 0.01)
+    monkeypatch.setattr("myharness.ui.backend_host._TOOL_PROGRESS_INTERVAL_SECONDS", 0.01)
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -502,7 +552,7 @@ async def test_backend_host_emits_tool_progress_heartbeat(tmp_path, monkeypatch)
         await render_event(ToolExecutionCompleted(tool_name="bash", output="done", is_error=False))
         return True
 
-    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
@@ -522,8 +572,8 @@ async def test_backend_host_emits_tool_progress_heartbeat(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_backend_host_emits_tool_input_delta(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -552,7 +602,7 @@ async def test_backend_host_emits_tool_input_delta(tmp_path, monkeypatch):
         )
         return True
 
-    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
@@ -569,8 +619,8 @@ async def test_backend_host_emits_tool_input_delta(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_backend_host_emits_todo_update_from_todo_write(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -602,7 +652,7 @@ async def test_backend_host_emits_todo_update_from_todo_write(tmp_path, monkeypa
         )
         return True
 
-    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
@@ -621,8 +671,8 @@ async def test_backend_host_emits_todo_update_from_todo_write(tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_backend_host_surfaces_query_errors(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=FailingApiClient("rate limit")))
     host._bundle = await build_runtime(api_client=FailingApiClient("rate limit"))
@@ -655,12 +705,12 @@ async def test_backend_host_command_does_not_reset_cli_overrides(tmp_path, monke
 
     When the session is launched with CLI overrides (e.g. --provider openai -m 5.4),
     issuing a command like /fast triggers a UI state refresh. That refresh must
-    preserve the effective session settings, not reload ~/.openharness/settings.json
+    preserve the effective session settings, not reload ~/.myharness/settings.json
     verbatim.
     """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(
@@ -694,9 +744,9 @@ async def test_backend_host_command_does_not_reset_cli_overrides(tmp_path, monke
 async def test_backend_host_uses_effective_model_from_env_override(tmp_path, monkeypatch):
     """Regression: header model should reflect effective env override, not stale profile last_model."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("OPENHARNESS_MODEL", "minimax-m1")
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_MODEL", "minimax-m1")
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -720,8 +770,8 @@ async def test_backend_host_uses_effective_model_from_env_override(tmp_path, mon
 @pytest.mark.asyncio
 async def test_build_runtime_leaves_interactive_sessions_unbounded_by_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     bundle = await build_runtime(
         api_client=StaticApiClient("unused"),
@@ -738,7 +788,7 @@ async def test_build_runtime_leaves_interactive_sessions_unbounded_by_default(tm
 async def test_backend_host_emits_utf8_protocol_bytes(monkeypatch):
     host = ReactBackendHost(BackendHostConfig())
     fake_stdout = FakeBinaryStdout()
-    monkeypatch.setattr("openharness.ui.backend_host.sys.stdout", fake_stdout)
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdout", fake_stdout)
 
     await host._emit(BackendEvent(type="assistant_delta", message="你好😊"))
 
@@ -753,8 +803,8 @@ async def test_backend_host_emits_utf8_protocol_bytes(monkeypatch):
 @pytest.mark.asyncio
 async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"), model="opus", api_format="anthropic")
@@ -779,8 +829,8 @@ async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_backend_host_emits_theme_select_request(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -804,8 +854,8 @@ async def test_backend_host_emits_theme_select_request(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_backend_host_emits_turns_select_request_with_unlimited_option(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"), enforce_max_turns=False)
@@ -829,8 +879,8 @@ async def test_backend_host_emits_turns_select_request_with_unlimited_option(tmp
 @pytest.mark.asyncio
 async def test_backend_host_emits_provider_select_request(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -854,8 +904,8 @@ async def test_backend_host_emits_provider_select_request(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -876,14 +926,15 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     runtime_options = event.modal["runtime_options"]
     active_provider = next(option["value"] for option in runtime_options["providers"] if option.get("active"))
     assert runtime_options["models_by_provider"][active_provider]
+    assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:2] == ["gpt-5.5", "gpt-5.4"]
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
 
 
 @pytest.mark.asyncio
 async def test_backend_host_apply_select_command_shows_single_segment_transcript(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -907,8 +958,8 @@ async def test_backend_host_apply_select_command_shows_single_segment_transcript
 @pytest.mark.asyncio
 async def test_backend_host_apply_provider_select_command_shows_single_segment_transcript(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))

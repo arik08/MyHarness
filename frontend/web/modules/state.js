@@ -1,4 +1,4 @@
-const appSettingsKey = "openharness:appSettings";
+const appSettingsKey = "myharness:appSettings";
 const defaultAppSettings = {
   streamScrollDurationMs: 2000,
   streamStartBufferMs: 180,
@@ -9,6 +9,8 @@ const defaultAppSettings = {
   downloadFolderPath: "",
   shell: "auto",
 };
+
+const clientSessionKey = "myharness:clientSessionId";
 
 function loadAppSettings() {
   try {
@@ -32,6 +34,49 @@ function loadAppSettings() {
     };
   } catch {
     return { ...defaultAppSettings };
+  }
+}
+
+function createClientSessionId() {
+  return globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isReloadNavigation() {
+  const perf = typeof performance === "undefined" ? null : performance;
+  const navigation = perf?.getEntriesByType?.("navigation")?.[0];
+  if (navigation?.type) {
+    return navigation.type === "reload";
+  }
+  return perf?.navigation?.type === 1;
+}
+
+function loadClientSessionId() {
+  if (!isReloadNavigation()) {
+    return "";
+  }
+  try {
+    return sessionStorage.getItem(clientSessionKey) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveClientSessionId(value) {
+  try {
+    sessionStorage.setItem(clientSessionKey, value);
+  } catch {
+    // Private browsing or embedded contexts may block sessionStorage.
+  }
+}
+
+function loadStringArraySetting(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(value) ? value.map(String) : [];
+  } catch {
+    return [];
   }
 }
 
@@ -62,7 +107,7 @@ export function saveAppSettings(nextSettings) {
 
 export const state = {
   sessionId: null,
-  clientId: localStorage.getItem("openharness:clientId") || "",
+  clientId: loadClientSessionId(),
   chatSlots: new Map(),
   activeSlotByWorkspace: new Map(),
   activeFrontendId: "",
@@ -81,7 +126,10 @@ export const state = {
   plugins: [],
   projectFiles: [],
   projectFilesLoadedForSession: "",
-  projectFileSortMode: "recent",
+  projectFileSortMode: localStorage.getItem("myharness:projectFileSortMode") || "recent",
+  projectFileFilter: localStorage.getItem("myharness:projectFileFilter") || "all",
+  projectFileScope: "default",
+  projectFileCollapsedDirs: new Set(loadStringArraySetting("myharness:projectFileCollapsedDirs")),
   slashMenuOpen: false,
   slashMenuIndex: 0,
   slashMenuMode: "command",
@@ -100,10 +148,11 @@ export const state = {
   providerLabel: "",
   permissionMode: "-",
   planModePinned: null,
-  systemPrompt: localStorage.getItem("openharness:systemPrompt") || "",
+  yoloModeEnabled: true,
+  systemPrompt: localStorage.getItem("myharness:systemPrompt") || "",
   learnedSkillsMode: "hide",
   appSettings: loadAppSettings(),
-  workspaceName: localStorage.getItem("openharness:workspaceName") || "",
+  workspaceName: localStorage.getItem("myharness:workspaceName") || "",
   workspacePath: "",
   workspaceScope: { mode: "shared", name: "shared", root: "" },
   workspaces: [],
@@ -134,10 +183,8 @@ export const state = {
 };
 
 if (!state.clientId) {
-  state.clientId = globalThis.crypto?.randomUUID
-    ? globalThis.crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  localStorage.setItem("openharness:clientId", state.clientId);
+  state.clientId = createClientSessionId();
+  saveClientSessionId(state.clientId);
 }
 
 export const els = {

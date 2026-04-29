@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from openharness.config.settings import Settings, save_settings, load_settings
-from openharness.project_preferences import (
+from myharness.config.settings import Settings, save_settings, load_settings
+from myharness.project_preferences import (
     apply_project_preferences_to_settings,
     effective_project_preferences,
     get_project_preferences_path,
@@ -15,7 +15,7 @@ from openharness.project_preferences import (
 
 
 def test_project_preferences_fall_back_to_global_settings(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     save_settings(
         Settings(
             disabled_mcp_servers={"global-mcp"},
@@ -33,7 +33,7 @@ def test_project_preferences_fall_back_to_global_settings(tmp_path: Path, monkey
 
 
 def test_project_preferences_overlay_settings(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     save_settings(
         Settings(
             disabled_mcp_servers={"global-mcp"},
@@ -56,7 +56,7 @@ def test_project_preferences_overlay_settings(tmp_path: Path, monkeypatch):
 
 
 def test_project_toggle_writes_portable_json(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     save_settings(
         Settings(
             disabled_mcp_servers={"global-mcp"},

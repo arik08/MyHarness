@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from openharness.memory import load_memory_prompt as load_project_memory_prompt
-from openharness.prompts.system_prompt import get_base_system_prompt
+from myharness.memory import load_memory_prompt as load_project_memory_prompt
+from myharness.prompts.system_prompt import get_base_system_prompt
 
 from ohmo.memory import load_memory_prompt as load_ohmo_memory_prompt
 from ohmo.workspace import (
@@ -59,7 +59,7 @@ def build_ohmo_system_prompt(
             "# ohmo Workspace",
             f"- Personal workspace root: {root}",
             "- Personal memory and sessions live under the shared ohmo workspace root.",
-            "- Resume only within ohmo sessions; do not assume interoperability with plain OpenHarness sessions.",
+            "- Resume only within ohmo sessions; do not assume interoperability with plain MyHarness sessions.",
         ]
     )
 

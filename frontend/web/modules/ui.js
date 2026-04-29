@@ -1,4 +1,5 @@
-const scrollStorageKey = "openharness:scrollPositions";
+const scrollStorageKey = "myharness:scrollPositions";
+let fallbackScrollPositions = {};
 let scrollRestoreTimer = 0;
 let scrollSaveTimer = 0;
 let scrollAnimationFrame = 0;
@@ -42,9 +43,9 @@ function updateComposerMetrics() {
 
 function readScrollPositions() {
   try {
-    return JSON.parse(localStorage.getItem(scrollStorageKey) || "{}");
+    return JSON.parse(sessionStorage.getItem(scrollStorageKey) || "{}");
   } catch {
-    return {};
+    return fallbackScrollPositions;
   }
 }
 
@@ -54,7 +55,12 @@ function saveScrollPosition(sessionId = state.activeHistoryId) {
   }
   const positions = readScrollPositions();
   positions[sessionId] = els.messages.scrollTop;
-  localStorage.setItem(scrollStorageKey, JSON.stringify(positions));
+  fallbackScrollPositions = positions;
+  try {
+    sessionStorage.setItem(scrollStorageKey, JSON.stringify(positions));
+  } catch {
+    // Embedded or private browsing contexts can block sessionStorage.
+  }
 }
 
 function scheduleScrollPositionSave() {
@@ -80,7 +86,12 @@ function forgetScrollPosition(sessionId) {
   }
   const positions = readScrollPositions();
   delete positions[sessionId];
-  localStorage.setItem(scrollStorageKey, JSON.stringify(positions));
+  fallbackScrollPositions = positions;
+  try {
+    sessionStorage.setItem(scrollStorageKey, JSON.stringify(positions));
+  } catch {
+    // Embedded or private browsing contexts can block sessionStorage.
+  }
 }
 
 function isNearMessageBottom(container = els.messages) {
@@ -422,7 +433,7 @@ function setSidebarCollapsed(collapsed) {
     toggle.setAttribute("aria-label", label);
     toggle.dataset.tooltip = label;
   }
-  localStorage.setItem("openharness:sidebarCollapsed", collapsed ? "1" : "0");
+  localStorage.setItem("myharness:sidebarCollapsed", collapsed ? "1" : "0");
 }
 
 function setStatus(label, mode = "") {

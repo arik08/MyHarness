@@ -55,7 +55,7 @@ async function refreshProjectFiles(force = false) {
   if (!force && state.projectFilesLoadedForSession === state.sessionId) {
     return state.projectFiles;
   }
-  const query = new URLSearchParams({ session: state.sessionId });
+  const query = new URLSearchParams({ session: state.sessionId, clientId: state.clientId, scope: "all" });
   const payload = await getJson(`/api/project-files?${query.toString()}`);
   state.projectFiles = Array.isArray(payload.files) ? payload.files.filter(isVisibleProjectFile) : [];
   state.projectFilesLoadedForSession = state.sessionId;

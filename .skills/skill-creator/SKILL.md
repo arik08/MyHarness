@@ -253,7 +253,7 @@ For example, when building an image-editor skill, relevant questions include:
 - "Can you give some examples of how this skill would be used?"
 - "I can imagine users asking for things like 'Remove the red-eye from this image' or 'Rotate this image'. Are there other ways you imagine this skill being used?"
 - "What would a user say that should trigger this skill?"
-- "Where should I create this skill? If you do not have a preference inside OpenHarness, I will place it in the program-local `.skills/` directory so it travels with a zipped OpenHarness bundle. For Codex-only usage, use `$CODEX_HOME/skills` or `~/.codex/skills`."
+- "Where should I create this skill? If you do not have a preference inside MyHarness, I will place it in the program-local `.skills/` directory so it travels with a zipped MyHarness bundle. For Codex-only usage, use `$CODEX_HOME/skills` or `~/.codex/skills`."
 
 To avoid overwhelming users, avoid asking too many questions in a single message. Start with the most important questions and follow up as needed for better effectiveness.
 
@@ -289,7 +289,7 @@ At this point, it is time to actually create the skill.
 
 Skip this step only if the skill being developed already exists. In this case, continue to the next step.
 
-Before running `init_skill.py`, ask where the user wants the skill created. In OpenHarness, if they do not specify a location, default to the program-local `.skills/` directory at the OpenHarness root so the skill is bundled and auto-discovered with the app. For Codex-only usage outside OpenHarness, default to `$CODEX_HOME/skills`; when `CODEX_HOME` is unset, fall back to `~/.codex/skills`.
+Before running `init_skill.py`, ask where the user wants the skill created. In MyHarness, if they do not specify a location, default to the program-local `.skills/` directory at the MyHarness root so the skill is bundled and auto-discovered with the app. For Codex-only usage outside MyHarness, default to `$CODEX_HOME/skills`; when `CODEX_HOME` is unset, fall back to `~/.codex/skills`.
 
 When creating a new skill from scratch, always run the `init_skill.py` script. The script conveniently generates a new template skill directory that automatically includes everything a skill requires, making the skill creation process much more efficient and reliable.
 

@@ -13,9 +13,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from openharness.channels.bus.events import OutboundMessage
-from openharness.channels.bus.queue import MessageBus
-from openharness.channels.impl.manager import ChannelManager
+from myharness.channels.bus.events import OutboundMessage
+from myharness.channels.bus.queue import MessageBus
+from myharness.channels.impl.manager import ChannelManager
 
 from ohmo.gateway.bridge import OhmoGatewayBridge
 from ohmo.gateway.config import build_channel_manager_config, load_gateway_config

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from openharness.tools import create_default_tool_registry
-from openharness.tools.base import ToolExecutionContext
-from openharness.tools.image_generation_tool import (
+from myharness.tools import create_default_tool_registry
+from myharness.tools.base import ToolExecutionContext
+from myharness.tools.image_generation_tool import (
     DEFAULT_IMAGE_MODEL,
     ImageGenerationTool,
     ImageGenerationToolInput,
@@ -96,8 +96,8 @@ def json_dumps(value: object) -> str:
 
 @pytest.mark.asyncio
 async def test_generate_image_saves_api_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("OPENHARNESS_IMAGE_API_KEY", "sk-test")
-    monkeypatch.setattr("openharness.tools.image_generation_tool.AsyncOpenAI", _FakeOpenAI)
+    monkeypatch.setenv("MYHARNESS_IMAGE_API_KEY", "sk-test")
+    monkeypatch.setattr("myharness.tools.image_generation_tool.AsyncOpenAI", _FakeOpenAI)
 
     result = await ImageGenerationTool().execute(
         ImageGenerationToolInput(prompt="small red cube", path="out/cube.png"),
@@ -120,11 +120,11 @@ async def test_generate_image_saves_api_image(tmp_path: Path, monkeypatch: pytes
 
 @pytest.mark.asyncio
 async def test_generate_image_requires_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("OPENHARNESS_IMAGE_API_KEY", raising=False)
+    monkeypatch.delenv("MYHARNESS_IMAGE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr("openharness.tools.image_generation_tool.load_credential", lambda *_: None)
+    monkeypatch.setattr("myharness.tools.image_generation_tool.load_credential", lambda *_: None)
     monkeypatch.setattr(
-        "openharness.tools.image_generation_tool.load_external_credential",
+        "myharness.tools.image_generation_tool.load_external_credential",
         lambda *_: (_ for _ in ()).throw(ValueError("missing codex auth")),
     )
 
@@ -142,11 +142,11 @@ async def test_generate_image_reports_missing_codex_auth_for_codex_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.delenv("OPENHARNESS_IMAGE_API_KEY", raising=False)
+    monkeypatch.delenv("MYHARNESS_IMAGE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr("openharness.tools.image_generation_tool.load_credential", lambda *_: None)
+    monkeypatch.setattr("myharness.tools.image_generation_tool.load_credential", lambda *_: None)
     monkeypatch.setattr(
-        "openharness.tools.image_generation_tool.load_external_credential",
+        "myharness.tools.image_generation_tool.load_external_credential",
         lambda *_: (_ for _ in ()).throw(ValueError("missing codex auth")),
     )
 
@@ -164,19 +164,19 @@ async def test_generate_image_uses_codex_oauth_when_api_key_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.delenv("OPENHARNESS_IMAGE_API_KEY", raising=False)
+    monkeypatch.delenv("MYHARNESS_IMAGE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr("openharness.tools.image_generation_tool.load_credential", lambda *_: None)
-    monkeypatch.setattr("openharness.tools.image_generation_tool.load_external_binding", lambda *_: None)
+    monkeypatch.setattr("myharness.tools.image_generation_tool.load_credential", lambda *_: None)
+    monkeypatch.setattr("myharness.tools.image_generation_tool.load_external_binding", lambda *_: None)
     monkeypatch.setattr(
-        "openharness.tools.image_generation_tool.load_external_credential",
+        "myharness.tools.image_generation_tool.load_external_credential",
         lambda *_: _FakeCredential(),
     )
     monkeypatch.setattr(
-        "openharness.tools.image_generation_tool._build_codex_headers",
+        "myharness.tools.image_generation_tool._build_codex_headers",
         lambda token, **_: {"Authorization": f"Bearer {token}"},
     )
-    monkeypatch.setattr("openharness.tools.image_generation_tool.httpx.AsyncClient", _FakeHttpClient)
+    monkeypatch.setattr("myharness.tools.image_generation_tool.httpx.AsyncClient", _FakeHttpClient)
 
     result = await ImageGenerationTool().execute(
         ImageGenerationToolInput(prompt="small red cube", path="out/codex.png", size="2048x1152"),

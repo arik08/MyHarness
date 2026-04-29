@@ -31,6 +31,10 @@ function isPlanModeActive() {
   return mode === "plan" || mode === "plan_mode" || mode === "permissionmode.plan";
 }
 
+function currentPermissionMode() {
+  return state.yoloModeEnabled === false ? "default" : "full_auto";
+}
+
 function previewPlanModeCommand(text) {
   const normalized = String(text || "").trim().toLowerCase();
   if (!/^\/plan(?:\s|$)/.test(normalized)) {
@@ -103,9 +107,30 @@ async function postJson(url, payload) {
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(body || `HTTP ${response.status}`);
+    let message = body || `HTTP ${response.status}`;
+    let data = null;
+    try {
+      data = body ? JSON.parse(body) : null;
+      if (data?.error) {
+        message = String(data.error);
+      }
+    } catch {
+      // Keep the raw response text when the server did not return JSON.
+    }
+    const error = new Error(message);
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
   return response.json();
+}
+
+function isUnknownSessionError(error) {
+  return Number(error?.status) === 404 && String(error?.message || "").trim() === "Unknown session";
+}
+
+function withClientId(payload = {}) {
+  return { ...payload, clientId: state.clientId };
 }
 
 async function deleteJson(url, payload) {
@@ -140,7 +165,7 @@ function setActiveWorkspace(workspace) {
     state.workspaceScope = workspace.scope;
   }
   if (state.workspaceName) {
-    localStorage.setItem("openharness:workspaceName", state.workspaceName);
+    localStorage.setItem("myharness:workspaceName", state.workspaceName);
   }
   updateWorkspaceDisplay();
 }
@@ -257,6 +282,7 @@ function snapshotActiveSlot() {
     projectFiles: state.projectFiles,
     projectFilesLoadedForSession: state.projectFilesLoadedForSession,
     projectFileSortMode: state.projectFileSortMode,
+    projectFileScope: state.projectFileScope,
     inlineQuestionModal: state.inlineQuestion?.frontendId === slot.frontendId
       ? state.inlineQuestion.modal
       : slot.inlineQuestionModal || null,
@@ -292,6 +318,7 @@ function restoreSlot(slot) {
   state.projectFiles = slot.projectFiles || [];
   state.projectFilesLoadedForSession = slot.projectFilesLoadedForSession || "";
   state.projectFileSortMode = slot.projectFileSortMode || "recent";
+  state.projectFileScope = slot.projectFileScope || "default";
   if (els.sessionId) {
     els.sessionId.textContent = state.sessionId || "";
   }
@@ -371,6 +398,7 @@ function createChatSlot({ sessionId, workspace, container = null, makeActive = t
     projectFiles: [],
     projectFilesLoadedForSession: "",
     projectFileSortMode: "recent",
+    projectFileScope: "default",
     inlineQuestionModal: null,
     source: null,
     pendingEvents: [],
@@ -392,7 +420,11 @@ function attachSlotSource(slot) {
     return;
   }
   const sessionId = slot.backendSessionId;
-  slot.source = new EventSource(`/api/events?session=${encodeURIComponent(sessionId)}`);
+  const query = new URLSearchParams({
+    session: sessionId,
+    clientId: state.clientId,
+  });
+  slot.source = new EventSource(`/api/events?${query.toString()}`);
   slot.source.onmessage = (event) => handleSessionEvent(sessionId, JSON.parse(event.data));
   slot.source.onerror = () => {
     if (slot.frontendId === state.activeFrontendId && !slot.ready) {
@@ -552,6 +584,11 @@ function handleSessionEvent(sessionId, event) {
     return;
   }
   updateSlotFromEvent(slot, event);
+  if (event.type === "shutdown") {
+    slot.source?.close();
+    slot.source = null;
+    slot.backendSessionId = "";
+  }
   if (slot.frontendId !== state.activeFrontendId) {
     slot.pendingEvents.push(event);
     if (event.type === "line_complete" || event.type === "error" || event.type === "shutdown" || event.type === "session_title") {
@@ -594,7 +631,7 @@ function removeChatSlot(frontendId) {
 }
 
 async function startBackendSlot({ makeActive = true } = {}) {
-  const payload = { permissionMode: "full_auto", clientId: state.clientId };
+  const payload = { permissionMode: currentPermissionMode(), clientId: state.clientId };
   if (state.workspacePath) {
     payload.cwd = state.workspacePath;
   }
@@ -609,6 +646,65 @@ async function startBackendSlot({ makeActive = true } = {}) {
   const slot = createChatSlot({ sessionId, workspace: session.workspace, container, makeActive });
   attachSlotSource(slot);
   return slot;
+}
+
+async function recoverActiveBackendSession() {
+  const previousSlot = state.chatSlots.get(state.activeFrontendId);
+  previousSlot?.source?.close();
+  if (previousSlot) {
+    previousSlot.source = null;
+    previousSlot.ready = false;
+    previousSlot.busy = false;
+    previousSlot.busyVisual = false;
+  }
+  state.sessionId = null;
+  state.ready = false;
+  setStatus(STATUS_LABELS.startingBackend, "busy");
+
+  const payload = { permissionMode: currentPermissionMode(), clientId: state.clientId };
+  if (state.workspacePath) {
+    payload.cwd = state.workspacePath;
+  }
+  const systemPrompt = String(state.systemPrompt || "").trim();
+  if (systemPrompt) {
+    payload.systemPrompt = systemPrompt;
+  }
+  const session = await postJson("/api/session", payload);
+  setActiveWorkspace(session.workspace);
+
+  const slot = previousSlot || createChatSlot({
+    sessionId: session.sessionId,
+    workspace: session.workspace,
+    container: els.messages,
+    makeActive: true,
+  });
+  slot.backendSessionId = session.sessionId;
+  slot.workspace = session.workspace;
+  slot.ready = false;
+  slot.busy = true;
+  slot.busyVisual = true;
+  state.sessionId = session.sessionId;
+  if (els.sessionId) {
+    els.sessionId.textContent = state.sessionId;
+  }
+  attachSlotSource(slot);
+  return slot;
+}
+
+async function postMessageWithSessionRecovery(payload) {
+  try {
+    return await postJson("/api/message", withClientId(payload));
+  } catch (error) {
+    if (!isUnknownSessionError(error)) {
+      throw error;
+    }
+    await recoverActiveBackendSession();
+    return postJson("/api/message", withClientId({
+      ...payload,
+      sessionId: state.sessionId,
+      mode: payload.mode === "queue" || payload.mode === "queued" ? "queue" : undefined,
+    }));
+  }
 }
 
 async function restoreLiveSlots() {
@@ -653,7 +749,7 @@ async function loadWorkspaces() {
 
 async function initializeWorkspace() {
   const workspaces = await loadWorkspaces();
-  const savedName = localStorage.getItem("openharness:workspaceName") || "";
+  const savedName = localStorage.getItem("myharness:workspaceName") || "";
   const selected =
     workspaces.find((workspace) => workspace.name === savedName)
     || workspaces.find((workspace) => workspace.name === "Default")
@@ -726,6 +822,7 @@ async function runStreamingShellCommand(command) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sessionId: state.sessionId,
+        clientId: state.clientId,
         cwd: state.workspacePath,
         command,
       }),
@@ -791,8 +888,9 @@ async function sendLine(line, options = {}) {
   const text = line.trim();
   const queueAfterBusy = Boolean(options.queueAfterBusy);
   const planModeCommand = /^\/plan(?:\s|$)/i.test(text);
+  const preserveDraft = planModeCommand && Boolean(options.preserveDraft);
   const shellCommand = /^!(?!\s*$)/.test(text);
-  const attachments = state.attachments.map((attachment) => ({
+  const attachments = preserveDraft ? [] : state.attachments.map((attachment) => ({
     media_type: attachment.media_type || attachment.mediaType,
     data: attachment.data,
     name: attachment.name,
@@ -811,25 +909,29 @@ async function sendLine(line, options = {}) {
       return;
     }
     if (queueAfterBusy) {
+      if (!preserveDraft) {
+        els.input.value = "";
+        clearComposerToken();
+        clearPastedTexts();
+        clearAttachments();
+        autoSizeInput();
+      }
+      setStatus("대기열 추가됨", "busy");
+      state.autoFollowMessages = true;
+      await postMessageWithSessionRecovery({ sessionId: state.sessionId, line: text, attachments: [], mode: "queue" });
+      snapshotActiveSlot();
+      return;
+    }
+    if (!preserveDraft) {
       els.input.value = "";
       clearComposerToken();
       clearPastedTexts();
       clearAttachments();
       autoSizeInput();
-      setStatus("대기열 추가됨", "busy");
-      state.autoFollowMessages = true;
-      await postJson("/api/message", { sessionId: state.sessionId, line: text, attachments: [], mode: "queue" });
-      snapshotActiveSlot();
-      return;
     }
-    els.input.value = "";
-    clearComposerToken();
-    clearPastedTexts();
-    clearAttachments();
-    autoSizeInput();
     setStatus("스티어링 전송됨", "busy");
     state.autoFollowMessages = true;
-    await postJson("/api/message", { sessionId: state.sessionId, line: text, attachments: [] });
+    await postMessageWithSessionRecovery({ sessionId: state.sessionId, line: text, attachments: [] });
     snapshotActiveSlot();
     return;
   }
@@ -871,11 +973,13 @@ async function sendLine(line, options = {}) {
   if (!text.startsWith("/") && !planModeCommand) {
     ensureWorkflowPanel(text);
   }
-  els.input.value = "";
-  clearComposerToken();
-  clearPastedTexts();
-  clearAttachments();
-  autoSizeInput();
+  if (!preserveDraft) {
+    els.input.value = "";
+    clearComposerToken();
+    clearPastedTexts();
+    clearAttachments();
+    autoSizeInput();
+  }
   setBusy(true, STATUS_LABELS.sending);
   const activeSlot = state.chatSlots.get(state.activeFrontendId);
   if (activeSlot) {
@@ -886,7 +990,7 @@ async function sendLine(line, options = {}) {
     activeSlot.title = state.chatTitle;
   }
   state.autoFollowMessages = true;
-  await postJson("/api/message", { sessionId: state.sessionId, line: text, attachments });
+  await postMessageWithSessionRecovery({ sessionId: state.sessionId, line: text, attachments });
   snapshotActiveSlot();
 }
 
@@ -902,21 +1006,84 @@ async function cancelCurrent() {
   if (!state.sessionId || !state.busy) {
     return;
   }
-  await postJson("/api/cancel", { sessionId: state.sessionId });
+  await postJson("/api/cancel", withClientId({ sessionId: state.sessionId }));
 }
 
 async function sendBackendRequest(payload) {
   if (!state.sessionId) {
     return;
   }
-  await postJson("/api/respond", { sessionId: state.sessionId, payload });
+  await postJson("/api/respond", withClientId({ sessionId: state.sessionId, payload }));
 }
 
 async function shutdownSession(sessionId = state.sessionId) {
   if (!sessionId) {
     return;
   }
-  await postJson("/api/shutdown", { sessionId });
+  await postJson("/api/shutdown", withClientId({ sessionId }));
+}
+
+async function restartActiveBackendSession() {
+  closeInlineQuestion({ clearSlot: false });
+  const previousSlot = state.chatSlots.get(state.activeFrontendId);
+  const previousSessionId = state.sessionId;
+  if (!previousSessionId) {
+    setStatus(STATUS_LABELS.startingBackend, "busy");
+    setBusy(true, STATUS_LABELS.startingBackend);
+    await startSession();
+    return;
+  }
+
+  setStatus("터미널 세션 재시작 중", "busy");
+  setBusy(true, "터미널 세션 재시작 중");
+  const payload = {
+    sessionId: previousSessionId,
+    cwd: state.workspacePath,
+    clientId: state.clientId,
+    permissionMode: currentPermissionMode(),
+  };
+  const systemPrompt = String(state.systemPrompt || "").trim();
+  if (systemPrompt) {
+    payload.systemPrompt = systemPrompt;
+  }
+
+  const next = await postJson("/api/session/restart", payload);
+  previousSlot?.source?.close();
+  const container = previousSlot?.container || els.messages;
+  if (previousSlot) {
+    state.chatSlots.delete(previousSlot.frontendId);
+  }
+  container.textContent = "";
+  els.messages = container;
+  state.sessionId = next.sessionId;
+  state.ready = false;
+  state.assistantNode = null;
+  state.activeHistoryId = null;
+  state.pendingScrollRestoreId = null;
+  state.restoringHistory = false;
+  state.batchingHistoryRestore = false;
+  state.ignoreScrollSave = false;
+  state.skipNextReadyHistoryRefresh = true;
+  state.clearHistoryOnNextReady = true;
+  clearComposerToken();
+  clearPastedTexts();
+  clearAttachments();
+  resetWorkflowPanel();
+  resetArtifacts();
+  const slot = createChatSlot({
+    sessionId: next.sessionId,
+    workspace: next.workspace,
+    container,
+    makeActive: true,
+  });
+  slot.showInHistory = true;
+  slot.title = "새 채팅";
+  setActiveWorkspace(next.workspace);
+  setChatTitle("MyHarness");
+  markActiveHistory();
+  attachSlotSource(slot);
+  appendMessage("system", "터미널 세션을 재시작했습니다. 이전 실행 중 작업은 중단됐을 수 있습니다.");
+  updateSendState();
 }
 
 async function restartSessionForWorkspace(workspace, options = {}) {
@@ -1033,7 +1200,7 @@ async function deleteWorkspace(name) {
   const data = await deleteJson("/api/workspaces", { name });
   state.workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
   if (state.workspaceName === name) {
-    localStorage.removeItem("openharness:workspaceName");
+    localStorage.removeItem("myharness:workspaceName");
   }
   return data;
 }
@@ -1047,7 +1214,7 @@ async function readWorkspaceScopeSettings() {
 }
 
 async function changeWorkspaceScope(mode) {
-  const previousName = state.workspaceName || localStorage.getItem("openharness:workspaceName") || "Default";
+  const previousName = state.workspaceName || localStorage.getItem("myharness:workspaceName") || "Default";
   const data = await postJson("/api/settings/workspace-scope", { mode });
   if (data.scope) {
     state.workspaceScope = data.scope;
@@ -1086,9 +1253,21 @@ async function changeShellPreference(shell) {
   return postJson("/api/settings/shell", { shell });
 }
 
+async function readYoloModeSettings() {
+  const data = await getJson("/api/settings/yolo-mode");
+  state.yoloModeEnabled = data.enabled !== false;
+  return data;
+}
+
+async function changeYoloMode(enabled) {
+  const data = await postJson("/api/settings/yolo-mode", { enabled });
+  state.yoloModeEnabled = data.enabled !== false;
+  return data;
+}
+
 async function setSystemPrompt(value) {
   state.systemPrompt = String(value || "");
-  localStorage.setItem("openharness:systemPrompt", state.systemPrompt);
+  localStorage.setItem("myharness:systemPrompt", state.systemPrompt);
   if (!state.sessionId) {
     return;
   }
@@ -1307,7 +1486,7 @@ async function clearChat() {
   updateSendState();
   ctx.requestHistory?.().catch(() => {});
   if (state.sessionId) {
-    await postJson("/api/message", { sessionId: state.sessionId, line: "/clear" });
+    await postMessageWithSessionRecovery({ sessionId: state.sessionId, line: "/clear", attachments: [] });
     refreshSkills().catch(() => {});
   }
 }
@@ -1399,6 +1578,7 @@ async function deleteLiveChatSlot(frontendId) {
     initializeWorkspace,
     startSession,
     shutdownSession,
+    restartActiveBackendSession,
     restartSessionForWorkspace,
     createWorkspace,
     deleteWorkspace,
@@ -1408,6 +1588,8 @@ async function deleteLiveChatSlot(frontendId) {
     changeLearnedSkillsMode,
     readShellSettings,
     changeShellPreference,
+    readYoloModeSettings,
+    changeYoloMode,
     switchChatSlot,
     activeRunningSlotCount,
     setActiveWorkspace,
