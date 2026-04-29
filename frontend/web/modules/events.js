@@ -709,9 +709,17 @@ function handleEvent(event) {
       ? restoredSeconds * 1000
       : 0;
     els.messages.textContent = "";
+    let restoredUserTurnCount = 0;
     for (const item of event.history_events || []) {
       if (item.type === "user") {
+        if (restoredUserTurnCount > 0 && state.workflowNode) {
+          finalizeWorkflowSummary();
+          archiveTodoChecklist();
+          collapseWorkflowPanel();
+          resetWorkflowPanel();
+        }
         appendMessage("user", item.text || "");
+        restoredUserTurnCount += 1;
       } else if (item.type === "assistant") {
         const node = appendMessage("assistant", item.text || "");
         extractAndRenderArtifacts(item.text || "", node);

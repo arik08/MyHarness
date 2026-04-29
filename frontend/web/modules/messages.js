@@ -1498,9 +1498,10 @@ function ensureWorkflowPanel(promptText = "") {
   setupWorkflowToggle(details);
   article.append(details);
   if (state.restoringHistory) {
-    const firstUserMessage = els.messages.querySelector(".message.user");
-    if (firstUserMessage?.parentElement === els.messages) {
-      firstUserMessage.after(article);
+    const userMessages = [...(els.messages.querySelectorAll?.(".message.user") || [])];
+    const latestUserMessage = userMessages[userMessages.length - 1];
+    if (latestUserMessage?.parentElement === els.messages) {
+      latestUserMessage.after(article);
     } else {
       els.messages.prepend(article);
     }
