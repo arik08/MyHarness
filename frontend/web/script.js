@@ -55,6 +55,7 @@ const {
   cancelCurrent,
   clearChat,
   clearComposerToken,
+  closeArtifactPanel,
   closeSlashMenu,
   dismissModal,
   filteredSlashCommands,
@@ -83,7 +84,7 @@ const {
 } = ctx;
 
 const maxImageBytes = 10 * 1024 * 1024;
-const longPastedTextLineThreshold = 5;
+const longPastedTextLineThreshold = 10;
 const nativeTooltipBackupAttr = "data-native-title";
 const themeOptions = [
   { id: "light", label: "Claude" },
@@ -150,6 +151,27 @@ function cycleTheme() {
   const currentIndex = Math.max(0, themeOptions.findIndex((item) => item.id === current));
   const next = themeOptions[(currentIndex + 1) % themeOptions.length];
   applyTheme(next.id);
+}
+
+function fullscreenButtons() {
+  return [...document.querySelectorAll("[data-action='toggle-fullscreen']")];
+}
+
+function updateFullscreenButtons() {
+  const active = Boolean(document.fullscreenElement);
+  const label = active ? "전체화면 해제" : "전체화면";
+  fullscreenButtons().forEach((button) => {
+    button.setAttribute("aria-label", label);
+    button.dataset.tooltip = label;
+  });
+}
+
+async function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    await document.exitFullscreen();
+    return;
+  }
+  await document.documentElement.requestFullscreen();
 }
 
 function workspaceButtons() {
@@ -478,6 +500,16 @@ attachMessageAutoFollow();
 
 els.chatTitleButton?.addEventListener("click", startTitleEdit);
 
+els.messages?.addEventListener("click", (event) => {
+  if (!state.artifactPanelOpen) {
+    return;
+  }
+  if (event.target.closest("button, a, input, textarea, select, [role='button']")) {
+    return;
+  }
+  closeArtifactPanel({ skipHistory: true });
+});
+
 els.modalHost.addEventListener("click", (event) => {
   if (event.target === els.modalHost && els.modalHost.dataset.dismissible === "true") {
     dismissModal();
@@ -536,6 +568,15 @@ document.querySelectorAll("[data-action='open-workspace']").forEach((button) => 
 document.querySelectorAll("[data-action='toggle-theme']").forEach((button) => {
   button.addEventListener("click", cycleTheme);
 });
+
+document.querySelectorAll("[data-action='toggle-fullscreen']").forEach((button) => {
+  button.addEventListener("click", () => {
+    toggleFullscreen().catch((error) => appendMessage("system", `전체화면 전환 실패: ${error.message}`));
+  });
+});
+document.addEventListener("fullscreenchange", updateFullscreenButtons);
+updateFullscreenButtons();
+
 document.querySelectorAll("[data-select-command]").forEach((button) => {
   button.addEventListener("click", () => {
     const command = button.dataset.selectCommand || "";

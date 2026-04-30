@@ -581,6 +581,7 @@ a:focus-visible {
 }
 
 .brand-command,
+.fullscreen-command,
 .settings-command,
 .theme-command,
 .sidebar-toggle {
@@ -600,6 +601,7 @@ a:focus-visible {
 }
 
 .brand-command,
+.fullscreen-command,
 .settings-command,
 .theme-command,
 .sidebar-toggle {
@@ -607,6 +609,7 @@ a:focus-visible {
 }
 
 .brand-command:hover,
+.fullscreen-command:hover,
 .settings-command:hover,
 .theme-command:hover,
 .sidebar-toggle:hover {
@@ -614,6 +617,7 @@ a:focus-visible {
   color: var(--ink);
 }
 
+.fullscreen-command svg,
 .settings-command svg,
 .theme-command svg,
 .sidebar-toggle svg {
@@ -632,6 +636,7 @@ a:focus-visible {
 }
 
 .brand-command::after,
+.fullscreen-command::after,
 .settings-command::after,
 .theme-command::after,
 .sidebar-toggle::after {
@@ -662,6 +667,8 @@ a:focus-visible {
 .sidebar-toggle:focus-visible::after,
 .brand-command:hover::after,
 .brand-command:focus-visible::after,
+.fullscreen-command:hover::after,
+.fullscreen-command:focus-visible::after,
 .settings-command:hover::after,
 .settings-command:focus-visible::after,
 .theme-command:hover::after,
@@ -705,6 +712,7 @@ a:focus-visible {
 }
 
 .app-shell.sidebar-collapsed .brand-command,
+.app-shell.sidebar-collapsed .fullscreen-command,
 .app-shell.sidebar-collapsed .settings-command,
 .app-shell.sidebar-collapsed .theme-command {
   display: none;

@@ -1,6 +1,6 @@
 ---
 name: visual-artifact
-description: Create polished single-file HTML visual artifacts such as reports, dashboards, infographics, one-pagers, slide-like webpages, visual summaries, comparison pages, timelines, and interactive previews. Use when the user asks for a beautiful/dynamic webpage-like output, HTML preview, visual report, presentation-style page, screenshot-ready artifact, PDF-ready page, business/research summary, or any reusable visual deliverable intended to be opened in a browser or captured into PPT/PDF.
+description: Create polished single-file HTML visual artifacts such as dense reports, dashboards, infographics, one-pagers, slide-like webpages, visual summaries, comparison pages, timelines, and interactive previews. Use when the user asks for a beautiful/dynamic webpage-like output, HTML preview, visual report, presentation-style page, screenshot-ready artifact, PDF-ready page, business/research summary, or any reusable visual deliverable intended to be opened in a browser or captured into PPT/PDF. Preserve the requested artifact type; report-style HTML should not default to a homepage or landing page layout.
 ---
 
 # Visual Artifact
@@ -22,6 +22,21 @@ Create browser-native visual deliverables that are polished enough to screenshot
 - **Infographic/one-pager**: strong story flow, big numbers, compact sections, print/capture-ready layout.
 - **Slide-like HTML**: 16:9 sections, keyboard or scroll navigation only if useful.
 - **Diagram/timeline/comparison**: SVG, Mermaid, or HTML/CSS layouts depending on complexity.
+
+## Report-first rule
+
+When the user asks for analysis, research, company information, financial results, market review,
+quarterly trends, sources, or a report:
+
+- Make it read like a report, not like a company homepage.
+- Start with report metadata and an executive summary, not a marketing hero with CTA buttons.
+- Prefer dense section bands, tables, footnotes, callouts, and charts over oversized feature cards.
+- Use brand/style references as surface treatment only: typography, spacing, material, color, chart
+  finish, and tone.
+- Avoid nav menus, sign-up buttons, pricing blocks, testimonials, "features" funnels, and generic
+  landing-page conversion sections unless explicitly requested.
+- Put exact numbers in tables and chart labels; use charts for trend cognition.
+- For financial/company reports, include a compact source note area and make uncertainty explicit.
 
 ## Design bar
 

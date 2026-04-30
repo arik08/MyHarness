@@ -1,0 +1,357 @@
+﻿[
+    {
+        "slug":  "airbnb",
+        "file":  "references/designs/airbnb.md",
+        "description":  "Travel marketplace. Warm coral accent, photography-driven, rounded UI."
+    },
+    {
+        "slug":  "airtable",
+        "file":  "references/designs/airtable.md",
+        "description":  "Spreadsheet-database hybrid. Colorful, friendly, structured data aesthetic."
+    },
+    {
+        "slug":  "apple",
+        "file":  "references/designs/apple.md",
+        "description":  "Consumer electronics. Premium white space, SF Pro, cinematic imagery."
+    },
+    {
+        "slug":  "binance",
+        "file":  "references/designs/binance.md",
+        "description":  "Crypto exchange. Bold yellow accent on monochrome, trading-floor urgency."
+    },
+    {
+        "slug":  "bmw",
+        "file":  "references/designs/bmw.md",
+        "description":  "Luxury automotive. Dark premium surfaces, precise German engineering aesthetic."
+    },
+    {
+        "slug":  "bmw-m",
+        "file":  "references/designs/bmw-m.md",
+        "description":  "Motorsport automotive. Pure black canvas, M tricolor stripe accents, full-bleed photography."
+    },
+    {
+        "slug":  "bugatti",
+        "file":  "references/designs/bugatti.md",
+        "description":  "Hypercar brand. Cinema-black canvas, monochrome austerity, monumental display type."
+    },
+    {
+        "slug":  "cal",
+        "file":  "references/designs/cal.md",
+        "description":  "Open-source scheduling. Clean neutral UI, developer-oriented simplicity."
+    },
+    {
+        "slug":  "claude",
+        "file":  "references/designs/claude.md",
+        "description":  "Anthropic\u0027s AI assistant. Warm terracotta accent, clean editorial layout."
+    },
+    {
+        "slug":  "clay",
+        "file":  "references/designs/clay.md",
+        "description":  "Creative agency. Organic shapes, soft gradients, art-directed layout."
+    },
+    {
+        "slug":  "clickhouse",
+        "file":  "references/designs/clickhouse.md",
+        "description":  "Fast analytics database. Yellow-accented, technical documentation style."
+    },
+    {
+        "slug":  "cohere",
+        "file":  "references/designs/cohere.md",
+        "description":  "Enterprise AI platform. Vibrant gradients, data-rich dashboard aesthetic."
+    },
+    {
+        "slug":  "coinbase",
+        "file":  "references/designs/coinbase.md",
+        "description":  "Crypto exchange. Clean blue identity, trust-focused, institutional feel."
+    },
+    {
+        "slug":  "composio",
+        "file":  "references/designs/composio.md",
+        "description":  "Tool integration platform. Modern dark with colorful integration icons."
+    },
+    {
+        "slug":  "cursor",
+        "file":  "references/designs/cursor.md",
+        "description":  "AI-first code editor. Sleek dark interface, gradient accents."
+    },
+    {
+        "slug":  "elevenlabs",
+        "file":  "references/designs/elevenlabs.md",
+        "description":  "AI voice platform. Dark cinematic UI, audio-waveform aesthetics."
+    },
+    {
+        "slug":  "expo",
+        "file":  "references/designs/expo.md",
+        "description":  "React Native platform. Dark theme, tight letter-spacing, code-centric."
+    },
+    {
+        "slug":  "ferrari",
+        "file":  "references/designs/ferrari.md",
+        "description":  "Luxury automotive. Chiaroscuro editorial, Ferrari Red accents, cinematic black."
+    },
+    {
+        "slug":  "figma",
+        "file":  "references/designs/figma.md",
+        "description":  "Collaborative design tool. Vibrant multi-color, playful yet professional."
+    },
+    {
+        "slug":  "framer",
+        "file":  "references/designs/framer.md",
+        "description":  "Website builder. Bold black and blue, motion-first, design-forward."
+    },
+    {
+        "slug":  "hashicorp",
+        "file":  "references/designs/hashicorp.md",
+        "description":  "Infrastructure automation. Enterprise-clean, black and white."
+    },
+    {
+        "slug":  "ibm",
+        "file":  "references/designs/ibm.md",
+        "description":  "Enterprise technology. Carbon design system, structured blue palette."
+    },
+    {
+        "slug":  "intercom",
+        "file":  "references/designs/intercom.md",
+        "description":  "Customer messaging. Friendly blue palette, conversational UI patterns."
+    },
+    {
+        "slug":  "kraken",
+        "file":  "references/designs/kraken.md",
+        "description":  "Crypto trading. Purple-accented dark UI, data-dense dashboards."
+    },
+    {
+        "slug":  "lamborghini",
+        "file":  "references/designs/lamborghini.md",
+        "description":  "Supercar brand. True black surfaces, gold accents, dramatic uppercase typography."
+    },
+    {
+        "slug":  "linear.app",
+        "file":  "references/designs/linear.app.md",
+        "description":  "Project management. Ultra-minimal, precise, purple accent."
+    },
+    {
+        "slug":  "lovable",
+        "file":  "references/designs/lovable.md",
+        "description":  "AI full-stack builder. Playful gradients, friendly dev aesthetic."
+    },
+    {
+        "slug":  "mastercard",
+        "file":  "references/designs/mastercard.md",
+        "description":  "Global payments network. Warm cream canvas, orbital pill shapes, editorial warmth."
+    },
+    {
+        "slug":  "meta",
+        "file":  "references/designs/meta.md",
+        "description":  "Tech retail store. Photography-first, binary light/dark surfaces, Meta Blue CTAs."
+    },
+    {
+        "slug":  "minimax",
+        "file":  "references/designs/minimax.md",
+        "description":  "AI model provider. Bold dark interface with neon accents."
+    },
+    {
+        "slug":  "mintlify",
+        "file":  "references/designs/mintlify.md",
+        "description":  "Documentation platform. Clean, green-accented, reading-optimized."
+    },
+    {
+        "slug":  "miro",
+        "file":  "references/designs/miro.md",
+        "description":  "Visual collaboration. Bright yellow accent, infinite canvas aesthetic."
+    },
+    {
+        "slug":  "mistral.ai",
+        "file":  "references/designs/mistral.ai.md",
+        "description":  "Open-weight LLM provider. French-engineered minimalism, purple-toned."
+    },
+    {
+        "slug":  "mongodb",
+        "file":  "references/designs/mongodb.md",
+        "description":  "Document database. Green leaf branding, developer documentation focus."
+    },
+    {
+        "slug":  "nike",
+        "file":  "references/designs/nike.md",
+        "description":  "Athletic retail. Monochrome UI, massive uppercase type, full-bleed photography."
+    },
+    {
+        "slug":  "notion",
+        "file":  "references/designs/notion.md",
+        "description":  "All-in-one workspace. Warm minimalism, serif headings, soft surfaces."
+    },
+    {
+        "slug":  "nvidia",
+        "file":  "references/designs/nvidia.md",
+        "description":  "GPU computing. Green-black energy, technical power aesthetic."
+    },
+    {
+        "slug":  "ollama",
+        "file":  "references/designs/ollama.md",
+        "description":  "Run LLMs locally. Terminal-first, monochrome simplicity."
+    },
+    {
+        "slug":  "opencode.ai",
+        "file":  "references/designs/opencode.ai.md",
+        "description":  "AI coding platform. Developer-centric dark theme."
+    },
+    {
+        "slug":  "pinterest",
+        "file":  "references/designs/pinterest.md",
+        "description":  "Visual discovery. Red accent, masonry grid, image-first."
+    },
+    {
+        "slug":  "playstation",
+        "file":  "references/designs/playstation.md",
+        "description":  "Gaming console retail. Three-surface channel layout, quiet-authority display type, cyan hover-scale."
+    },
+    {
+        "slug":  "posthog",
+        "file":  "references/designs/posthog.md",
+        "description":  "Product analytics. Playful hedgehog branding, developer-friendly dark UI."
+    },
+    {
+        "slug":  "raycast",
+        "file":  "references/designs/raycast.md",
+        "description":  "Productivity launcher. Sleek dark chrome, vibrant gradient accents."
+    },
+    {
+        "slug":  "renault",
+        "file":  "references/designs/renault.md",
+        "description":  "French automotive. Vibrant aurora gradients, NouvelR typography, bold energy."
+    },
+    {
+        "slug":  "replicate",
+        "file":  "references/designs/replicate.md",
+        "description":  "Run ML models via API. Clean white canvas, code-forward."
+    },
+    {
+        "slug":  "resend",
+        "file":  "references/designs/resend.md",
+        "description":  "Email API. Minimal dark theme, monospace accents."
+    },
+    {
+        "slug":  "revolut",
+        "file":  "references/designs/revolut.md",
+        "description":  "Digital banking. Sleek dark interface, gradient cards, fintech precision."
+    },
+    {
+        "slug":  "runwayml",
+        "file":  "references/designs/runwayml.md",
+        "description":  "AI video generation. Cinematic dark UI, media-rich layout."
+    },
+    {
+        "slug":  "sanity",
+        "file":  "references/designs/sanity.md",
+        "description":  "Headless CMS. Red accent, content-first editorial layout."
+    },
+    {
+        "slug":  "sentry",
+        "file":  "references/designs/sentry.md",
+        "description":  "Error monitoring. Dark dashboard, data-dense, pink-purple accent."
+    },
+    {
+        "slug":  "shopify",
+        "file":  "references/designs/shopify.md",
+        "description":  "E-commerce platform. Dark-first cinematic, neon green accent, ultra-light type."
+    },
+    {
+        "slug":  "slack",
+        "file":  "references/designs/slack.md",
+        "description":  "slack design system template."
+    },
+    {
+        "slug":  "spacex",
+        "file":  "references/designs/spacex.md",
+        "description":  "Space technology. Stark black and white, full-bleed imagery, futuristic."
+    },
+    {
+        "slug":  "spotify",
+        "file":  "references/designs/spotify.md",
+        "description":  "Music streaming. Vibrant green on dark, bold type, album-art-driven."
+    },
+    {
+        "slug":  "starbucks",
+        "file":  "references/designs/starbucks.md",
+        "description":  "Global coffee retail brand. Four-tier green system, warm cream canvas, full-pill buttons."
+    },
+    {
+        "slug":  "stripe",
+        "file":  "references/designs/stripe.md",
+        "description":  "Payment infrastructure. Signature purple gradients, weight-300 elegance."
+    },
+    {
+        "slug":  "supabase",
+        "file":  "references/designs/supabase.md",
+        "description":  "Open-source Firebase alternative. Dark emerald theme, code-first."
+    },
+    {
+        "slug":  "superhuman",
+        "file":  "references/designs/superhuman.md",
+        "description":  "Fast email client. Premium dark UI, keyboard-first, purple glow."
+    },
+    {
+        "slug":  "tesla",
+        "file":  "references/designs/tesla.md",
+        "description":  "Electric automotive. Radical subtraction, full-viewport photography, near-zero UI."
+    },
+    {
+        "slug":  "theverge",
+        "file":  "references/designs/theverge.md",
+        "description":  "Tech editorial media. Acid-mint and ultraviolet accents, Manuka display, rave-flyer story tiles."
+    },
+    {
+        "slug":  "together.ai",
+        "file":  "references/designs/together.ai.md",
+        "description":  "Open-source AI infrastructure. Technical, blueprint-style design."
+    },
+    {
+        "slug":  "uber",
+        "file":  "references/designs/uber.md",
+        "description":  "Mobility platform. Bold black and white, tight type, urban energy."
+    },
+    {
+        "slug":  "vercel",
+        "file":  "references/designs/vercel.md",
+        "description":  "Frontend deployment. Black and white precision, Geist font."
+    },
+    {
+        "slug":  "vodafone",
+        "file":  "references/designs/vodafone.md",
+        "description":  "Global telecom brand. Monumental uppercase display, Vodafone Red chapter bands."
+    },
+    {
+        "slug":  "voltagent",
+        "file":  "references/designs/voltagent.md",
+        "description":  "AI agent framework. Void-black canvas, emerald accent, terminal-native."
+    },
+    {
+        "slug":  "warp",
+        "file":  "references/designs/warp.md",
+        "description":  "Modern terminal. Dark IDE-like interface, block-based command UI."
+    },
+    {
+        "slug":  "webflow",
+        "file":  "references/designs/webflow.md",
+        "description":  "Visual web builder. Blue-accented, polished marketing site aesthetic."
+    },
+    {
+        "slug":  "wired",
+        "file":  "references/designs/wired.md",
+        "description":  "Tech magazine. Paper-white broadsheet density, custom serif display, mono kickers, ink-blue links."
+    },
+    {
+        "slug":  "wise",
+        "file":  "references/designs/wise.md",
+        "description":  "Money transfer. Bright green accent, friendly and clear."
+    },
+    {
+        "slug":  "x.ai",
+        "file":  "references/designs/x.ai.md",
+        "description":  "Elon Musk\u0027s AI lab. Stark monochrome, futuristic minimalism."
+    },
+    {
+        "slug":  "zapier",
+        "file":  "references/designs/zapier.md",
+        "description":  "Automation platform. Warm orange, friendly illustration-driven."
+    }
+]

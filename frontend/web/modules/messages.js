@@ -14,7 +14,6 @@ export function createMessages(ctx) {
   const WORKFLOW_EVENT_STAGGER_MS = 90;
   const WORKFLOW_WAITING_FIRST_MS = 4500;
   const WORKFLOW_WAITING_NEXT_MS = 12000;
-  const WORKFLOW_PREVIEW_MAX_CHARS = 12000;
   const WORKFLOW_PURPOSE_DETAILS = {
     info: {
       title: "정보 수집",
@@ -254,10 +253,7 @@ function scrollWorkflowPreviewToBottom(preview) {
 }
 
 function workflowPreviewDisplayText(content) {
-  const value = String(content || "");
-  return value.length > WORKFLOW_PREVIEW_MAX_CHARS
-    ? `${value.slice(0, WORKFLOW_PREVIEW_MAX_CHARS)}\n\n...`
-    : value;
+  return String(content || "");
 }
 
 function renderWorkflowPreviewBody(preview, text) {
@@ -2422,9 +2418,32 @@ function workflowDetail(event) {
   if (warningInfo) {
     return warningInfo.detail;
   }
+  const skillInfo = skillWorkflowDetail(event);
+  if (skillInfo) {
+    return skillInfo;
+  }
   const output = String(event.output || "").trim();
   const friendlyError = friendlyToolErrorDetail(event);
   return friendlyError || (output ? truncateText(output.replace(/\s+/g, " "), 140) : "완료되었습니다.");
+}
+
+function skillWorkflowDetail(event) {
+  const toolName = String(event.tool_name || "").toLowerCase();
+  if (toolName !== "skill") {
+    return "";
+  }
+  const requestedName = String(event.tool_input?.name || "").trim();
+  const skill = state.skills.find((item) => item.name.toLowerCase() === requestedName.toLowerCase());
+  if (skill) {
+    return `${skill.name}: ${skill.description || "Skill"}`;
+  }
+  const output = String(event.output || "");
+  const name = output.match(/^Skill:\s*(.+)$/m)?.[1]?.trim() || requestedName;
+  const description = output.match(/^Description:\s*(.+)$/m)?.[1]?.trim();
+  if (name && description) {
+    return `${name}: ${description}`;
+  }
+  return name || "";
 }
 
 function workflowEventStatus(event) {
@@ -2522,6 +2541,10 @@ function friendlyToolErrorDetail(event) {
 
 function summarizeToolInput(toolName, input = {}) {
   const lower = String(toolName || "").toLowerCase();
+  const requestedSkillName = String(input?.name || "").trim();
+  if (lower === "skill" && requestedSkillName) {
+    return requestedSkillName;
+  }
   const valueFor = (...keys) => {
     for (const key of keys) {
       const value = input?.[key];

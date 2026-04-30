@@ -82,10 +82,12 @@ def test_build_system_prompt_encourages_parallel_research_tools():
     assert "Avoid 6 or more parallel web calls" in prompt
     assert "call those `web_fetch` or `web_search` tools in parallel" in prompt
     assert "Escalate blocked web research by source importance" in prompt
+    assert "directly asks for a specific URL, page, or source" in prompt
+    assert "when you judge that a blocked or sparse source needs to be fetched" in prompt
     assert "central to the answer" in prompt
     assert 'invoke `skill(name="insane-search")`' in prompt
     assert "401, 402, 403, 429" in prompt
-    assert "source-importance test" in prompt
+    assert "direct-request/source-importance test" in prompt
     assert "casual lead, duplicate source, low-value search result" in prompt
     assert "Do not use `insane-search` for simple web searches" in prompt
 

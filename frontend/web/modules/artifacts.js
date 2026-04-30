@@ -11,7 +11,7 @@ export function createArtifacts(ctx) {
 
 const artifactPanelWidthKey = "myharness:artifactPanelWidth";
 const artifactPanelMinWidth = 320;
-const artifactPanelMaxWidth = 920;
+const artifactPanelMaxWidth = 1280;
 let artifactPanelReturnView = null;
 let pendingArtifactPanelReturnView = null;
 let artifactHistoryMode = "";
@@ -21,6 +21,7 @@ let activeArtifactFrameWindow = null;
 let artifactFrameBackFallbackTimer = 0;
 const artifactFrameBackMessage = "myharness:artifact-panel-back";
 const artifactFrameResizeMessage = "myharness:artifact-panel-resize";
+const artifactFrameOptimalWidthMessage = "myharness:artifact-panel-optimal-width";
 let artifactFrameResizeCleanup = null;
 const artifactExtensions = new Set([
   "html",
@@ -230,6 +231,7 @@ function withArtifactFrameBackBridge(content) {
 <script>
 (() => {
   let pending = false;
+  let lastOptimalWidth = 0;
   const sendBack = (event) => {
     if (event.button !== 3 && event.button !== 4) return;
     event.preventDefault();
@@ -251,12 +253,92 @@ function withArtifactFrameBackBridge(content) {
       window.dispatchEvent(resizeEvent);
     }
   };
+  const cssLengthToPx = (value) => {
+    const text = String(value || "");
+    const rootSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    let best = 0;
+    for (const match of text.matchAll(/(-?\\d*\\.?\\d+)\\s*(px|rem|em)/gi)) {
+      const number = Number(match[1]);
+      if (!Number.isFinite(number) || number <= 0) continue;
+      const unit = match[2].toLowerCase();
+      const px = unit === "px" ? number : number * rootSize;
+      if (px >= 280 && px <= 2400) {
+        best = Math.max(best, px);
+      }
+    }
+    return best;
+  };
+  const maxWidthFromStylesheets = () => {
+    let best = 0;
+    for (const sheet of Array.from(document.styleSheets || [])) {
+      let rules = [];
+      try {
+        rules = Array.from(sheet.cssRules || []);
+      } catch {
+        continue;
+      }
+      const visit = (rule) => {
+        if (rule?.cssRules) {
+          Array.from(rule.cssRules || []).forEach(visit);
+          return;
+        }
+        best = Math.max(best, cssLengthToPx(rule?.style?.maxWidth));
+      };
+      rules.forEach(visit);
+    }
+    return best;
+  };
+  const maxWidthFromElements = () => {
+    let best = 0;
+    const selectors = [
+      "body",
+      "main",
+      "article",
+      "section",
+      "[class*='container' i]",
+      "[class*='wrapper' i]",
+      "[class*='layout' i]",
+      "[class*='dashboard' i]",
+      "[class*='canvas' i]",
+      "[class*='app' i]",
+      "[class*='page' i]"
+    ];
+    const nodes = new Set();
+    for (const selector of selectors) {
+      document.querySelectorAll(selector).forEach((node) => nodes.add(node));
+    }
+    nodes.forEach((node) => {
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1 || style.display === "none" || style.visibility === "hidden") {
+        return;
+      }
+      best = Math.max(best, cssLengthToPx(style.maxWidth), cssLengthToPx(node.style?.maxWidth));
+    });
+    return best;
+  };
+  const postOptimalWidth = () => {
+    const width = Math.ceil(Math.max(maxWidthFromStylesheets(), maxWidthFromElements()));
+    if (width < 1 || Math.abs(width - lastOptimalWidth) < 4) return;
+    lastOptimalWidth = width;
+    parent.postMessage({ type: "${artifactFrameOptimalWidthMessage}", width }, "*");
+  };
+  const scheduleOptimalWidth = () => {
+    requestAnimationFrame(() => {
+      postOptimalWidth();
+      setTimeout(postOptimalWidth, 120);
+      setTimeout(postOptimalWidth, 420);
+    });
+  };
   window.addEventListener("message", (event) => {
     if (event.data?.type !== "${artifactFrameResizeMessage}") return;
     dispatchResize();
     requestAnimationFrame(dispatchResize);
     setTimeout(dispatchResize, 120);
+    scheduleOptimalWidth();
   });
+  window.addEventListener("load", scheduleOptimalWidth);
+  scheduleOptimalWidth();
 })();
 </script>`;
   const value = String(content || "");
@@ -571,7 +653,7 @@ function toggleArtifactFullscreen() {
 }
 
 function clampArtifactPanelWidth(value) {
-  const viewportLimit = Math.max(artifactPanelMinWidth, Math.floor(window.innerWidth * 0.72));
+  const viewportLimit = Math.max(artifactPanelMinWidth, Math.floor(window.innerWidth * 0.84));
   const maxWidth = Math.min(artifactPanelMaxWidth, viewportLimit);
   return Math.min(maxWidth, Math.max(artifactPanelMinWidth, Math.round(Number(value) || 0)));
 }
@@ -583,6 +665,24 @@ function setArtifactPanelWidth(width, persist = false) {
     localStorage.setItem(artifactPanelWidthKey, String(nextWidth));
   }
   return nextWidth;
+}
+
+function setArtifactPanelWidthForFrameContent(contentWidth) {
+  if (!Number.isFinite(contentWidth) || contentWidth < 1 || els.artifactPanel?.classList.contains("fullscreen")) {
+    return;
+  }
+  const frame = els.artifactViewer?.querySelector(".artifact-frame");
+  if (!frame) {
+    return;
+  }
+  const panelWidth = els.artifactPanel?.getBoundingClientRect().width || 0;
+  const frameWidth = frame.getBoundingClientRect().width || 0;
+  const chromeWidth = Math.max(0, panelWidth - frameWidth);
+  const nextWidth = clampArtifactPanelWidth(contentWidth + chromeWidth);
+  if (!panelWidth || Math.abs(nextWidth - panelWidth) < 8) {
+    return;
+  }
+  setArtifactPanelWidth(nextWidth);
 }
 
 function applyStoredArtifactPanelWidth() {
@@ -1457,13 +1557,14 @@ async function openArtifact(artifact, options = {}) {
 
 function closeArtifactPanel(options = {}) {
   const fromHistory = options?.fromHistory === true;
-  if (!fromHistory && artifactPanelReturnView?.kind === "project-files") {
+  const skipHistory = options?.skipHistory === true;
+  if (!fromHistory && !skipHistory && artifactPanelReturnView?.kind === "project-files") {
     pendingArtifactPanelReturnView = artifactPanelReturnView;
   }
-  if (!fromHistory && requestArtifactHistoryBack()) {
+  if (!fromHistory && !skipHistory && requestArtifactHistoryBack()) {
     return;
   }
-  const returnView = artifactPanelReturnView || pendingArtifactPanelReturnView;
+  const returnView = skipHistory ? null : artifactPanelReturnView || pendingArtifactPanelReturnView;
   if (returnView?.kind === "project-files") {
     const files = returnView.files || [];
     artifactPanelReturnView = null;
@@ -1635,7 +1736,14 @@ function initializeArtifactPanel() {
   els.artifactPanelClose?.addEventListener("click", closeArtifactPanel);
   els.projectFilesButton?.addEventListener("click", openProjectFiles);
   window.addEventListener("message", (event) => {
-    if (event.source !== activeArtifactFrameWindow || event.data?.type !== artifactFrameBackMessage) {
+    if (event.source !== activeArtifactFrameWindow) {
+      return;
+    }
+    if (event.data?.type === artifactFrameOptimalWidthMessage) {
+      setArtifactPanelWidthForFrameContent(Number(event.data.width));
+      return;
+    }
+    if (event.data?.type !== artifactFrameBackMessage) {
       return;
     }
     clearArtifactFrameBackFallback();

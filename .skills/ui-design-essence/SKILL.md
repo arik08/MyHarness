@@ -64,6 +64,20 @@ Use honest placeholders: `[icon]`, simple geometry, aspect-ratio image placehold
 
 For business-style reports and dashboards, prefer restrained, work-focused visuals: aligned tables, clear labels, compact panels, and square or lightly rounded corners.
 
+## Preserve the requested format
+
+Style direction is not product definition. If the user asks for a report, dashboard, note, analysis,
+or briefing "in the style of" a brand, keep the artifact's structure in that format and apply the
+brand as visual language only. Do not turn reports into landing pages merely because the referenced
+brand has strong homepage patterns.
+
+For dense reports, prioritize:
+
+- compact editorial hierarchy over hero-scale marketing hierarchy
+- tables, charts, source notes, and findings over CTA sections
+- slim section headers and repeated data blocks over big feature cards
+- readable print/export behavior over immersive website storytelling
+
 ## Use motion only for state
 
 Use motion to explain state changes, not to decorate:

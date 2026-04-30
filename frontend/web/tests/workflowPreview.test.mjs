@@ -315,6 +315,28 @@ test("streamed write_file arguments create workflow previews before tool start",
   assert.equal(previewBody.textContent, "hello world");
 });
 
+test("write_file workflow previews keep full long content", async () => {
+  installBrowserGlobals();
+  const { createMessages } = await import("../modules/messages.js");
+  const ctx = createContext();
+  const messages = createMessages(ctx);
+  const longContent = `${"a".repeat(12050)}\n</html>`;
+
+  messages.appendWorkflowEvent({
+    type: "tool_started",
+    tool_name: "write_file",
+    tool_input: {
+      path: "long-report.html",
+      content: longContent,
+    },
+  });
+  messages.finalizeWorkflowSummary();
+
+  const previewBody = ctx.els.messages.querySelector(".workflow-output-body");
+  assert.ok(previewBody);
+  assert.equal(previewBody.textContent, longContent);
+});
+
 test("streamed notebook_edit arguments create workflow previews from new_source", async () => {
   installBrowserGlobals();
   const { createMessages } = await import("../modules/messages.js");

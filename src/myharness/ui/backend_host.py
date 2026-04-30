@@ -908,10 +908,13 @@ class ReactBackendHost:
         if skill is None:
             return line
         request_text = user_request.strip() or "(No additional request was provided.)"
+        skill_description = display_skill_description(skill).strip() or skill.description.strip()
         return (
             f"The user explicitly selected the `{skill.name}` skill with `$`. "
             "Treat the selected skill content below as mandatory task guidance and follow it "
             "before applying any general approach.\n\n"
+            f"Selected skill: {skill.name}\n"
+            f"Description: {skill_description}\n\n"
             "# Selected Skill Content\n"
             "```md\n"
             f"{skill.content.strip()}\n"

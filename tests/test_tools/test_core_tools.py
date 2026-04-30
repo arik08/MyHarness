@@ -176,6 +176,9 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
         SkillToolInput(name="Pytest"),
         ToolExecutionContext(cwd=tmp_path),
     )
+    assert skill_result.output.startswith("Skill: Pytest\nDescription: Helpful pytest notes.")
+    assert "Skill file:" not in skill_result.output
+    assert "Skill directory:" not in skill_result.output
     assert "Helpful pytest notes." in skill_result.output
 
     todo_result = await TodoWriteTool().execute(
