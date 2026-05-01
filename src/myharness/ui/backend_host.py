@@ -1485,7 +1485,7 @@ class ReactBackendHost:
 
     def _effort_select_options(self, settings: Settings) -> list[dict[str, object]]:
         return [
-            {"value": "none", "label": "Auto", "description": "Use the provider default", "active": settings.effort in {"none", "auto", ""}},
+            {"value": "none", "label": "None", "description": "Disable explicit reasoning effort", "active": settings.effort in {"none", "auto", ""}},
             {"value": "low", "label": "Low", "description": "Fastest responses", "active": settings.effort == "low"},
             {"value": "medium", "label": "Medium", "description": "Balanced reasoning", "active": settings.effort == "medium"},
             {"value": "high", "label": "High", "description": "Deepest reasoning", "active": settings.effort == "high"},
@@ -1493,17 +1493,17 @@ class ReactBackendHost:
         ]
 
     def _model_select_options(self, current_model: str, provider: str, allowed_models: list[str] | None = None) -> list[dict[str, object]]:
+        provider_name = provider.lower()
         if allowed_models:
             return [
                 {
                     "value": value,
                     "label": value,
-                    "description": "Allowed for this profile",
+                    "description": self._model_option_description(provider_name, value),
                     "active": value == current_model,
                 }
                 for value in allowed_models
             ]
-        provider_name = provider.lower()
         if provider_name in {"anthropic", "anthropic_claude"}:
             resolved_current = resolve_model_setting(current_model, provider_name)
             return [
@@ -1520,10 +1520,10 @@ class ReactBackendHost:
         if provider_name == "pgpt":
             families.extend(
                 [
-                    ("gpt-5.5", "P-GPT GPT-5.5"),
-                    ("gpt-5.4", "P-GPT GPT-5.4"),
-                    ("gpt-5.4-mini", "P-GPT GPT-5.4 mini"),
-                    ("gpt-5.4-nano", "P-GPT GPT-5.4 nano"),
+                    ("gpt-5.5", self._model_option_description(provider_name, "gpt-5.5")),
+                    ("gpt-5.4", self._model_option_description(provider_name, "gpt-5.4")),
+                    ("gpt-5.4-mini", self._model_option_description(provider_name, "gpt-5.4-mini")),
+                    ("gpt-5.4-nano", self._model_option_description(provider_name, "gpt-5.4-nano")),
                 ]
             )
         elif provider_name in {"openai-codex", "openai", "openai-compatible", "openrouter", "github_copilot"}:
@@ -1580,6 +1580,20 @@ class ReactBackendHost:
                 }
             )
         return options
+
+    def _model_option_description(self, provider_name: str, model: str) -> str:
+        normalized = model.strip().lower()
+        if normalized == "gpt-5.5":
+            return "Strongest coding and reasoning"
+        if normalized == "gpt-5.4":
+            return "Balanced default model"
+        if normalized == "gpt-5.4-mini":
+            return "Faster and lighter"
+        if normalized == "gpt-5.4-nano":
+            return "Lowest latency"
+        if provider_name == "pgpt":
+            return "P-GPT model"
+        return "Available model"
 
     async def _ask_permission(self, tool_name: str, reason: str) -> bool:
         async with self._permission_lock:

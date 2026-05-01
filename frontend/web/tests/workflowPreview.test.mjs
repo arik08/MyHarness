@@ -152,6 +152,7 @@ function createContext() {
   const state = {
     autoFollowMessages: false,
     restoringHistory: false,
+    skills: [],
     workflowNode: null,
     workflowSteps: [],
   };
@@ -239,6 +240,32 @@ test("finalizing drains queued start and completion events in order", async () =
   assert.ok(previewTitle);
   assert.match(previewTitle.textContent, /작성 완료 - queued-report\.md/);
   assert.equal(runningSteps.length, 0);
+});
+
+test("completed skill workflow events use usage label", async () => {
+  installBrowserGlobals();
+  const { createMessages } = await import("../modules/messages.js");
+  const ctx = createContext();
+  const messages = createMessages(ctx);
+
+  messages.appendWorkflowEvent({
+    type: "tool_started",
+    tool_name: "skill",
+    tool_input: { name: "diagnose" },
+  });
+  messages.appendWorkflowEvent({
+    type: "tool_completed",
+    tool_name: "skill",
+    tool_input: { name: "diagnose" },
+    output: "Skill: diagnose\nDescription: Diagnose why an agent run failed.",
+    is_error: false,
+  });
+  messages.finalizeWorkflowSummary();
+
+  const titles = [...ctx.els.messages.querySelectorAll(".workflow-step")]
+    .map((item) => item.querySelector("strong")?.textContent || "");
+  assert.ok(titles.includes("skill 사용"));
+  assert.ok(!titles.includes("skill 완료"));
 });
 
 test("failure path also drains queued file preview events", async () => {

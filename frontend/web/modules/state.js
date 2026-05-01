@@ -416,8 +416,8 @@ export function formatProviderName(value) {
 export function formatEffort(value) {
   const normalized = String(value || "").trim();
   const labels = {
-    none: "Auto",
-    auto: "Auto",
+    none: "None",
+    auto: "None",
     low: "low",
     medium: "medium",
     high: "high",

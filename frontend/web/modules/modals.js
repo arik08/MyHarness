@@ -2465,8 +2465,8 @@ function normalizeSelectOption(modal, option) {
   }
   const value = String(normalized.value || "").trim().toLowerCase();
   if (value === "none" || value === "auto") {
-    normalized.label = "Auto";
-    normalized.description = "Provider default";
+    normalized.label = "None";
+    normalized.description = "Disable explicit reasoning effort";
   }
   return normalized;
 }

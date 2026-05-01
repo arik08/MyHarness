@@ -2415,6 +2415,9 @@ function workflowTitle(event) {
   if (warningInfo) {
     return `${name} ${warningInfo.title}`;
   }
+  if (!event.is_error && String(event.tool_name || "").trim().toLowerCase() === "skill") {
+    return `${name} 사용`;
+  }
   return event.is_error ? `${name} 실패` : `${name} 완료`;
 }
 

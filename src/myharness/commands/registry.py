@@ -361,7 +361,7 @@ def create_default_command_registry(
 
     def _effort_label(value: object) -> str:
         normalized = str(value or "").strip()
-        return "Auto" if normalized.lower() in {"", "none", "auto"} else normalized
+        return "None" if normalized.lower() in {"", "none", "auto"} else normalized
 
     async def _help_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()

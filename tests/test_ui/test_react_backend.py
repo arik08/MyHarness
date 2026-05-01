@@ -927,7 +927,10 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     active_provider = next(option["value"] for option in runtime_options["providers"] if option.get("active"))
     assert runtime_options["models_by_provider"][active_provider]
     assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:2] == ["gpt-5.5", "gpt-5.4"]
+    assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Strongest coding and reasoning"
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
+    none_option = next(option for option in runtime_options["efforts"] if option["value"] == "none")
+    assert none_option["label"] == "None"
 
 
 @pytest.mark.asyncio

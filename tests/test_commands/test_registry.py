@@ -780,6 +780,12 @@ async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeyp
     assert load_settings().effort == "high"
     assert context.app_state.get().effort == "high"
 
+    effort_auto_command, effort_auto_args = registry.lookup("/effort auto")
+    effort_auto_result = await effort_auto_command.handler(effort_auto_args, context)
+    assert "None" in effort_auto_result.message
+    assert load_settings().effort == "none"
+    assert context.app_state.get().effort == "none"
+
     passes_command, passes_args = registry.lookup("/passes 3")
     passes_result = await passes_command.handler(passes_args, context)
     assert "3" in passes_result.message
