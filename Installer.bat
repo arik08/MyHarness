@@ -154,13 +154,17 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-node --check "frontend\web\script.js"
+echo [INFO] Building React web UI...
+pushd "frontend\web"
+call npm run build
 if errorlevel 1 (
+  popd
   echo.
-  echo [ERROR] frontend\web\script.js has a syntax error.
+  echo [ERROR] React web UI build failed.
   pause
   exit /b 1
 )
+popd
 
 echo [INFO] Verifying provider defaults...
 call "%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -c "from myharness.config.settings import load_settings; s=load_settings(); print(f'Provider: {s.provider} / {s.api_format} / {s.model}')"

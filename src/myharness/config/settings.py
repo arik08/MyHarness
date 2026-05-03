@@ -201,7 +201,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             provider="openai",
             api_format="openai",
             auth_source="pgpt_api_key",
-            default_model="gpt-5.4",
+            default_model="gpt-5.5",
             base_url="http://pgpt.posco.com/s0la01-gpt/v1",
             allowed_models=["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
         ),
@@ -288,7 +288,6 @@ def _matches_builtin_profile(profile: ProviderProfile, builtin: ProviderProfile)
         profile.provider == builtin.provider
         and profile.api_format == builtin.api_format
         and profile.auth_source == builtin.auth_source
-        and profile.default_model == builtin.default_model
         and profile.base_url == builtin.base_url
     )
 
@@ -538,8 +537,15 @@ class Settings(BaseModel):
                 profile = profile.model_copy(update={"base_url": builtin.base_url})
             if builtin is not None and _matches_builtin_profile(profile, builtin):
                 allowed_models = _merge_allowed_models(builtin.allowed_models, profile.allowed_models)
+                profile_updates: dict[str, object] = {}
                 if allowed_models != profile.allowed_models:
-                    profile = profile.model_copy(update={"allowed_models": allowed_models})
+                    profile_updates["allowed_models"] = allowed_models
+                if profile.default_model != builtin.default_model:
+                    profile_updates["default_model"] = builtin.default_model
+                    if (profile.last_model or "").strip() == profile.default_model:
+                        profile_updates["last_model"] = None
+                if profile_updates:
+                    profile = profile.model_copy(update=profile_updates)
             merged[name] = profile
         return merged
 
@@ -756,11 +762,6 @@ class Settings(BaseModel):
                     state="configured",
                 )
 
-        if auth_source == "pgpt_api_key":
-            raise ValueError(
-                "No credentials found for P-GPT. Set PGPT_API_KEY and PGPT_EMPLOYEE_NO environment variables first."
-            )
-
         stored = load_credential(storage_provider, "api_key")
         if stored:
             return ResolvedAuth(
@@ -769,6 +770,11 @@ class Settings(BaseModel):
                 value=stored,
                 source=f"file:{storage_provider}",
                 state="configured",
+            )
+
+        if auth_source == "pgpt_api_key":
+            raise ValueError(
+                "No credentials found for P-GPT. Set PGPT_API_KEY and PGPT_EMPLOYEE_NO environment variables first."
             )
 
         explicit_key = "" if profile.credential_slot else self.api_key

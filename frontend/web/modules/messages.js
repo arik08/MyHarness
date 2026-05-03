@@ -1131,7 +1131,7 @@ function appendMessage(role, text, attachments = [], options = {}) {
   els.messages.append(article);
   if (state.restoringHistory) {
     scheduleScrollRestore();
-  } else {
+  } else if (role === "user" || state.autoFollowMessages) {
     scrollMessagesToBottom();
   }
   return content;

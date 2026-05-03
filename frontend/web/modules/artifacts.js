@@ -1424,7 +1424,7 @@ function renderProjectFiles(files) {
 
     const actions = document.createElement("span");
     actions.className = "project-file-actions";
-    actions.append(download, deleteButton);
+    actions.append(deleteButton, download);
 
     item.append(openButton, actions);
     parent.append(item);
@@ -1812,20 +1812,36 @@ function initializeArtifactPanel() {
     event.preventDefault();
     els.artifactResizeHandle.setPointerCapture?.(event.pointerId);
     els.appShell.classList.add("resizing-artifact");
-    const onMove = (moveEvent) => {
-      setArtifactPanelWidth(window.innerWidth - moveEvent.clientX);
-    };
-    const onUp = (upEvent) => {
-      els.artifactResizeHandle.releasePointerCapture?.(upEvent.pointerId);
+    let currentWidth = els.artifactPanel.getBoundingClientRect().width || Number(localStorage.getItem(artifactPanelWidthKey) || 0);
+    let finished = false;
+    const finishResize = (finishEvent) => {
+      if (finished) return;
+      finished = true;
+      if (Number.isFinite(finishEvent?.clientX)) {
+        currentWidth = window.innerWidth - finishEvent.clientX;
+      }
+      els.artifactResizeHandle.releasePointerCapture?.(finishEvent?.pointerId ?? event.pointerId);
       els.appShell.classList.remove("resizing-artifact");
-      setArtifactPanelWidth(window.innerWidth - upEvent.clientX, true);
+      setArtifactPanelWidth(currentWidth, true);
       window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+      window.removeEventListener("mouseup", finishResize);
+      window.removeEventListener("blur", finishResize);
+    };
+    const onMove = (moveEvent) => {
+      if (moveEvent.buttons === 0) {
+        finishResize();
+        return;
+      }
+      currentWidth = window.innerWidth - moveEvent.clientX;
+      setArtifactPanelWidth(currentWidth);
     };
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+    window.addEventListener("mouseup", finishResize);
+    window.addEventListener("blur", finishResize);
   });
   window.addEventListener("resize", () => {
     const stored = Number(localStorage.getItem(artifactPanelWidthKey) || 0);

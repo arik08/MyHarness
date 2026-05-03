@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>TodoDock Check</title>
+  <style>body{margin:0;min-height:100vh;background:#f7f7f4;display:grid;place-items:end start;padding:24px;font-family:Arial,sans-serif}</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import React from "react";
+    import { createRoot } from "react-dom/client";
+    import "../../styles.css";
+    import { AppStateProvider } from "../../src/state/app-state.tsx";
+    import { initialAppState } from "../../src/state/reducer.ts";
+    import { TodoDock } from "../../src/components/TodoDock.tsx";
+
+    createRoot(document.getElementById("root")).render(
+      React.createElement(AppStateProvider, {
+        initialState: {
+          ...initialAppState,
+          todoMarkdown: "- [x] 프로젝트에서 해당 버튼 스타일 위치 찾기\n- [x] 닫기 버튼 제거\n- [x] 화면 점검",
+          busy: false,
+        },
+      }, React.createElement(TodoDock, null))
+    );
+  </script>
+</body>
+</html>

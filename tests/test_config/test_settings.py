@@ -611,7 +611,7 @@ class TestPgptOpenAICompatibleProvider:
         assert profile.provider == "openai"
         assert profile.api_format == "openai"
         assert profile.auth_source == "pgpt_api_key"
-        assert profile.default_model == "gpt-5.4"
+        assert profile.default_model == "gpt-5.5"
         assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
         assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
 
@@ -643,7 +643,7 @@ class TestPgptOpenAICompatibleProvider:
         assert materialized.active_profile == "p-gpt"
         assert materialized.provider == "openai"
         assert materialized.api_format == "openai"
-        assert materialized.model == "gpt-5.4"
+        assert materialized.model == "gpt-5.5"
 
     def test_auth_source_provider_name_pgpt(self):
         from myharness.config.settings import auth_source_provider_name
@@ -659,3 +659,17 @@ class TestPgptOpenAICompatibleProvider:
         assert resolved.provider == "openai"
         assert resolved.value == "pgpt-test-key"
         assert "PGPT_API_KEY" in resolved.source
+
+    def test_resolve_auth_reads_pgpt_api_key_from_credentials_file(self, tmp_path, monkeypatch):
+        from myharness.auth.storage import store_credential
+
+        monkeypatch.delenv("PGPT_API_KEY", raising=False)
+        monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path))
+        store_credential("pgpt", "api_key", "pgpt-file-key", use_keyring=False)
+        settings = Settings(active_profile="p-gpt")
+
+        resolved = settings.resolve_auth()
+
+        assert resolved.provider == "openai"
+        assert resolved.value == "pgpt-file-key"
+        assert resolved.source == "file:pgpt"

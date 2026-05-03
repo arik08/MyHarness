@@ -31,6 +31,23 @@ export function mergeHistoryOptionsForRender(savedOptions, liveOptions) {
   return merged;
 }
 
+export function formatHistoryTitle(label) {
+  const withoutPrefix = String(label || "")
+    .replace(/^\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}\s+\d+\s*msg\s*/i, "")
+    .replace(/^\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}\s*/i, "")
+    .trim();
+  return compactHistoryTitle(withoutPrefix || "저장된 대화");
+}
+
+function compactHistoryTitle(title) {
+  const maxLength = 26;
+  const normalized = String(title || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
+}
+
 export function createHistory(ctx) {
   const { state, els, STATUS_LABELS } = ctx;
   function closeModal(...args) { return ctx.closeModal(...args); }
@@ -207,14 +224,6 @@ function renderHistory(options) {
     item.append(openButton, busySpinner, deleteButton);
     els.historyList.append(item);
   }
-}
-
-function formatHistoryTitle(label) {
-  const withoutPrefix = String(label || "")
-    .replace(/^\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}\s+\d+\s*msg\s*/i, "")
-    .replace(/^\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}\s*/i, "")
-    .trim();
-  return withoutPrefix || "저장된 대화";
 }
 
 function markActiveHistory() {

@@ -268,3 +268,47 @@ test("pending assistant actions survive slot state snapshots", async () => {
     ["전환 직전 최종 답변입니다."],
   );
 });
+
+test("appending restored-session updates does not force-scroll while auto-follow is paused", async () => {
+  globalThis.document = {
+    createElement: (tagName) => ({
+      tagName,
+      className: "",
+      dataset: {},
+      children: [],
+      textContent: "",
+      append(...nodes) {
+        this.children.push(...nodes);
+      },
+      closest: () => null,
+      querySelector: () => null,
+      classList: {
+        add: () => undefined,
+        remove: () => undefined,
+        toggle: () => undefined,
+      },
+    }),
+  };
+
+  let scrollCalls = 0;
+  const ctx = createContext();
+  ctx.state.autoFollowMessages = false;
+  ctx.els.messages = {
+    append: () => undefined,
+    querySelector: () => null,
+  };
+  ctx.removeWelcome = () => undefined;
+  ctx.scrollMessagesToBottom = () => {
+    scrollCalls += 1;
+  };
+  ctx.setMarkdown = (node, text) => {
+    node.textContent = text;
+  };
+
+  const { createMessages } = await import("../modules/messages.js");
+  const messages = createMessages(ctx);
+
+  messages.appendMessage("system", "늦게 들어온 완료 상태");
+
+  assert.equal(scrollCalls, 0);
+});

@@ -46,3 +46,4 @@ myharness-*.png
 .DS_Store
 Thumbs.db
 uv.lock
+.gstack/

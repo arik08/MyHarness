@@ -30,6 +30,18 @@ Installer.bat
 run_myharness_web.bat
 ```
 
+React UI를 개발하면서 저장 즉시 화면에 반영하려면 개발용 all-in-one 런처를 실행하세요. 이 파일 하나가 backend server와 Vite HMR dev server를 같이 띄웁니다.
+
+```bat
+run_myharness_web_dev.bat
+```
+
+개발용 런처를 쓸 때는 브라우저에서 아래 주소를 엽니다.
+
+```text
+http://127.0.0.1:5173
+```
+
 브라우저에서 아래 주소를 엽니다.
 
 ```text
@@ -45,6 +57,18 @@ http://localhost:4173
 ```bat
 set PORT=4174
 run_myharness_web.bat
+```
+
+React/Vite/TypeScript 기반 Web UI가 기본 루트 화면입니다.
+
+```text
+http://localhost:4173/
+```
+
+기존 DOM 기반 UI는 임시 fallback으로 아래 주소에 보존되어 있습니다.
+
+```text
+http://localhost:4173/legacy
 ```
 
 ## Provider 설정
@@ -134,6 +158,7 @@ src/myharness/           Python agent runtime과 backend host
 .plugins/                  프로그램-level plugin
 Playground/                워크스페이스 폴더와 생성 파일
 run_myharness_web.bat    Windows 런처
+run_myharness_web_dev.bat React/Vite 개발용 all-in-one 런처
 Installer.bat              프로젝트-local 설치/복구 스크립트
 README.openharness.md    보존된 upstream OpenHarness README
 ```
@@ -144,8 +169,7 @@ README.openharness.md    보존된 upstream OpenHarness README
 
 ```bat
 node --check frontend/web/server.mjs
-node --check frontend/web/script.js
-node --check frontend/web/modules/commands.js
+cd frontend/web && npm run typecheck && npm run build && npm test
 py -3 -m compileall src
 ```
 
@@ -153,4 +177,10 @@ py -3 -m compileall src
 
 ```bat
 run_myharness_web.bat
+```
+
+React UI 개발 중에는 아래 런처 하나만 실행하면 됩니다.
+
+```bat
+run_myharness_web_dev.bat
 ```

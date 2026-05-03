@@ -140,6 +140,22 @@ if not exist "frontend\web\node_modules\.package-lock.json" (
   echo [INFO] Web dependencies are already available.
 )
 
+if not exist "frontend\web\dist\index.html" (
+  echo [INFO] Building React web UI...
+  pushd "frontend\web"
+  call npm run build
+  if errorlevel 1 (
+    popd
+    echo.
+    echo [ERROR] React web UI build failed.
+    pause
+    exit /b 1
+  )
+  popd
+) else (
+  echo [INFO] React web UI build is already available.
+)
+
 set "MYHARNESS_PORT_PID="
 for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort ([int]$env:PORT) -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($conn) { Write-Output $conn.OwningProcess }"`) do (
   set "MYHARNESS_PORT_PID=%%A"

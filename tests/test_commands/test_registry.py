@@ -467,6 +467,8 @@ async def test_provider_command_switches_profile_and_requests_runtime_refresh(tm
     assert loaded.active_profile == "kimi-anthropic"
     assert loaded.base_url == "https://api.moonshot.cn/anthropic"
     assert loaded.model == "kimi-k2.5"
+    assert context.app_state.get().active_profile == "kimi-anthropic"
+    assert context.app_state.get().provider_label == "Kimi Anthropic"
 
 
 @pytest.mark.asyncio

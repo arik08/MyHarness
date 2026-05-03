@@ -264,8 +264,9 @@ function scrollMessagesToBottom(options = {}) {
     state.autoScrollUntil = Date.now() + duration + 260;
 
     const step = (now) => {
-      const target = Math.max(0, els.messages.scrollHeight - els.messages.clientHeight);
       if (continuousFollow) {
+        const rawTarget = Math.max(0, els.messages.scrollHeight - els.messages.clientHeight);
+        const target = Math.max(rawTarget, dampedTarget, els.messages.scrollTop);
         const elapsed = Math.min(64, Math.max(0, now - previousFrameAt));
         previousFrameAt = now;
         const dampingMs = Math.max(180, Math.min(520, duration * 0.22));
@@ -275,9 +276,7 @@ function scrollMessagesToBottom(options = {}) {
         const distance = dampedTarget - els.messages.scrollTop;
         const followMs = Math.max(120, Math.min(360, duration * 0.16));
         const followBlend = elapsed > 0 ? 1 - Math.exp(-elapsed / followMs) : 0;
-        els.messages.scrollTop = Math.abs(target - els.messages.scrollTop) < 0.75
-          ? target
-          : els.messages.scrollTop + (distance * followBlend);
+        els.messages.scrollTop += distance * followBlend;
         els.messages.dataset.lastScrollTop = String(els.messages.scrollTop);
         if (state.autoFollowMessages && tailFollowAnimationActive) {
           scrollAnimationFrame = window.requestAnimationFrame(step);
@@ -288,6 +287,7 @@ function scrollMessagesToBottom(options = {}) {
         return;
       }
 
+      const target = Math.max(0, els.messages.scrollHeight - els.messages.clientHeight);
       const progress = Math.min(1, (now - startedAt) / duration);
       const eased = 1 - Math.pow(1 - progress, 3);
       els.messages.scrollTop = start + (target - start) * eased;

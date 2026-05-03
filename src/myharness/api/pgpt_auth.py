@@ -13,6 +13,8 @@ def resolve_pgpt_employee_no() -> str | None:
         os.environ.get("PGPT_EMPLOYEE_NO")
         or os.environ.get("PGPT_SYSTEM_CODE")
         or os.environ.get("POSCO_EMP_NO")
+        or _stored_pgpt_value("employee_no")
+        or _stored_pgpt_value("system_code")
     )
 
 
@@ -21,6 +23,7 @@ def resolve_pgpt_company_code() -> str:
     return (
         os.environ.get("PGPT_COMPANY_CODE")
         or os.environ.get("POSCO_COMP_NO")
+        or _stored_pgpt_value("company_code")
         or "30"
     )
 
@@ -36,3 +39,12 @@ def build_pgpt_auth_token(api_key: str, employee_no: str, company_code: str = "3
         ensure_ascii=False,
     )
     return base64.b64encode(payload.encode("utf-8")).decode("utf-8")
+
+
+def _stored_pgpt_value(key: str) -> str | None:
+    try:
+        from myharness.auth.storage import load_credential
+    except Exception:
+        return None
+    value = load_credential("pgpt", key, use_keyring=False)
+    return value.strip() if isinstance(value, str) and value.strip() else None

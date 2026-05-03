@@ -20,6 +20,7 @@ import {
 const root = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = normalize(join(root, "../.."));
 const webRoot = normalize(root);
+const webDistRoot = normalize(join(root, "dist"));
 const assetsRoot = normalize(join(repoRoot, "assets"));
 const vendorRoot = normalize(join(root, "node_modules"));
 const playgroundRoot = normalize(join(repoRoot, "Playground"));
@@ -46,6 +47,7 @@ const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
 let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.MYHARNESS_WORKSPACE_SCOPE);
 let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
+const webUiMode = String(process.env.MYHARNESS_WEB_UI || "react").trim().toLowerCase();
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
 let server = null;
@@ -132,7 +134,28 @@ const artifactTypes = {
   ".pptx": { kind: "file", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", encoding: "binary" },
   ".zip": { kind: "file", mime: "application/zip", encoding: "binary" },
 };
-const artifactListSkipDirs = new Set([".git", ".myharness", "node_modules", "__pycache__", ".venv", "venv"]);
+const artifactListSkipDirs = new Set([
+  ".git",
+  ".github",
+  ".mcp",
+  ".myharness",
+  ".next",
+  ".openharness",
+  ".playwright-mcp",
+  ".plugins",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".skills",
+  ".venv",
+  ".vite",
+  "__pycache__",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "Playground",
+  "venv",
+]);
 const artifactListMaxItems = 300;
 const projectFileListMaxItems = 600;
 const projectFileCacheTtlMs = 10_000;
@@ -247,6 +270,22 @@ function isPageVisitPath(pathname) {
   return pathname === "/" || pathname === "/index.html";
 }
 
+function isReactPreviewPath(pathname) {
+  return pathname === "/react" || pathname === "/react/";
+}
+
+function hasBuiltReactUi() {
+  return existsSync(join(webDistRoot, "index.html"));
+}
+
+function shouldServeReactRoot(pathname) {
+  return webUiMode !== "legacy" && hasBuiltReactUi() && (pathname === "/" || pathname === "/index.html");
+}
+
+function isLegacyUiPath(pathname) {
+  return pathname === "/legacy" || pathname === "/legacy/" || pathname === "/legacy-index.html";
+}
+
 function workspaceScopeFromRequest(request) {
   const name = workspaceScopeMode === "ip"
     ? safeWorkspaceScopeName(forwardedAddressFromRequest(request))
@@ -268,8 +307,14 @@ function resolvePath(url) {
   const pathname = decodeURIComponent(new URL(url, `http://localhost:${port}`).pathname);
   const relativePath = pathname.replace(/^\/+/, "");
   const filePath =
-    pathname === "/"
-      ? join(root, "index.html")
+    isReactPreviewPath(pathname)
+      ? (existsSync(join(webDistRoot, "react.html")) ? join(webDistRoot, "react.html") : join(root, "legacy-index.html"))
+      : shouldServeReactRoot(pathname)
+        ? (existsSync(join(webDistRoot, "index.html")) ? join(webDistRoot, "index.html") : join(root, "index.html"))
+      : pathname.startsWith("/web-assets/")
+        ? join(webDistRoot, relativePath)
+        : isLegacyUiPath(pathname) || pathname === "/"
+      ? join(root, "legacy-index.html")
       : pathname === "/vendor/marked/marked.esm.js"
         ? join(vendorRoot, "marked/lib/marked.esm.js")
         : pathname === "/vendor/highlight/highlight.min.js"
@@ -290,6 +335,8 @@ function resolvePath(url) {
   if (
     normalized !== webRoot &&
     !normalized.startsWith(webRoot) &&
+    normalized !== webDistRoot &&
+    !normalized.startsWith(webDistRoot) &&
     !normalized.startsWith(assetsRoot) &&
     !normalized.startsWith(vendorRoot)
   ) {
@@ -434,8 +481,29 @@ const chatHtmlPreviewAutosizeScript = `<script>
 })();
 <\/script>`;
 
-function injectChatHtmlPreviewAutosize(content) {
+const chatHtmlPreviewBaseStyle = `<style>
+html,
+body {
+  background: transparent;
+}
+body {
+  margin: 0;
+}
+</style>`;
+
+function injectChatHtmlPreviewBaseStyle(content) {
   const value = String(content || "");
+  if (/<head(?:\s[^>]*)?>/i.test(value)) {
+    return value.replace(/<head(?:\s[^>]*)?>/i, (match) => `${match}${chatHtmlPreviewBaseStyle}`);
+  }
+  if (/<html(?:\s[^>]*)?>/i.test(value)) {
+    return value.replace(/<html(?:\s[^>]*)?>/i, (match) => `${match}<head>${chatHtmlPreviewBaseStyle}</head>`);
+  }
+  return `${chatHtmlPreviewBaseStyle}${value}`;
+}
+
+function injectChatHtmlPreviewAutosize(content) {
+  const value = injectChatHtmlPreviewBaseStyle(content);
   if (/<\/body\s*>/i.test(value)) {
     return value.replace(/<\/body\s*>/i, `${chatHtmlPreviewAutosizeScript}</body>`);
   }
@@ -2899,14 +2967,14 @@ async function handleApi(request, response, pathname) {
         permissionMode: body.permissionMode || await defaultPermissionMode(),
         clientId: oldSession?.clientId || String(body.clientId || "").trim(),
         clientAddress: oldSession?.clientAddress || clientAddress,
-        cwd: oldSession?.workspace?.path || body.cwd,
+        cwd: body.cwd || oldSession?.workspace?.path,
         systemPrompt: body.systemPrompt,
         workspaceScope,
       };
       writeRuntimeLog("backend_session_restart_requested", {
         old_session_id: oldSessionId,
         old_child_pid: oldSession?.process?.pid || null,
-        workspace: oldSession?.workspace?.path || body.cwd || "",
+        workspace: body.cwd || oldSession?.workspace?.path || "",
         client_id: options.clientId,
       });
       if (oldSession) {
@@ -3296,7 +3364,12 @@ async function handleApi(request, response, pathname) {
         return true;
       }
       session.busy = true;
-      const ok = sendBackend(session, { type: "submit_line", line, attachments });
+      const ok = sendBackend(session, {
+        type: "submit_line",
+        line,
+        attachments,
+        suppress_user_transcript: body.suppressUserTranscript === true,
+      });
       if (!ok) {
         session.busy = false;
       }

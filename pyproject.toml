@@ -74,11 +74,14 @@ exclude = [
 "frontend/terminal/tsconfig.json" = "myharness/_frontend/tsconfig.json"
 "frontend/terminal/src" = "myharness/_frontend/src"
 "frontend/web/index.html" = "myharness/_web/index.html"
+"frontend/web/legacy-index.html" = "myharness/_web/legacy-index.html"
 "frontend/web/package.json" = "myharness/_web/package.json"
 "frontend/web/package-lock.json" = "myharness/_web/package-lock.json"
+"frontend/web/react.html" = "myharness/_web/react.html"
 "frontend/web/script.js" = "myharness/_web/script.js"
 "frontend/web/server.mjs" = "myharness/_web/server.mjs"
 "frontend/web/styles.css" = "myharness/_web/styles.css"
+"frontend/web/dist" = "myharness/_web/dist"
 "frontend/web/modules" = "myharness/_web/modules"
 
 [tool.pytest.ini_options]

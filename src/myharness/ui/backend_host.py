@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import inspect
 import json
 import logging
@@ -71,6 +72,29 @@ _TOOL_PROGRESS_FIRST_DELAY_SECONDS = 2.5
 _TOOL_PROGRESS_INTERVAL_SECONDS = 3.0
 _SESSION_TITLE_SOURCE_PROMPT = "prompt"
 _SESSION_TITLE_SOURCE_CONVERSATION = "conversation"
+_RESTORABLE_TOOL_METADATA_DEFAULTS = {
+    "read_file_state": {},
+    "invoked_skills": [],
+    "async_agent_state": [],
+    "async_agent_tasks": [],
+    "recent_work_log": [],
+    "recent_verified_work": [],
+    "recent_tool_failures": [],
+    "recent_learned_skills": [],
+    "task_focus_state": {
+        "goal": "",
+        "recent_goals": [],
+        "active_artifacts": [],
+        "verified_state": [],
+        "next_step": "",
+    },
+    "compact_checkpoints": [],
+    "compact_last": None,
+    "session_title": "",
+    "session_title_source": "",
+    "session_title_user_edited": False,
+    "workflow_duration_seconds": None,
+}
 
 
 def _truncate_progress_text(value: object, limit: int = 96) -> str:
@@ -187,6 +211,7 @@ class ReactBackendHost:
                 self._skill_snapshots(),
             )
         )
+        await self._emit(BackendEvent(type="active_session", value=self._bundle.session_id))
         await self._emit(self._status_snapshot())
         self._ensure_async_agent_monitor()
 
@@ -800,6 +825,18 @@ class ReactBackendHost:
         self._set_saved_session_id(session_id)
         return session_id
 
+    def _restore_session_tool_metadata(self, snapshot: dict[str, object]) -> None:
+        assert self._bundle is not None
+        metadata = self._bundle.engine.tool_metadata
+        for key, default_value in _RESTORABLE_TOOL_METADATA_DEFAULTS.items():
+            if default_value is None:
+                metadata.pop(key, None)
+            else:
+                metadata[key] = copy.deepcopy(default_value)
+        snapshot_metadata = snapshot.get("tool_metadata")
+        if isinstance(snapshot_metadata, dict):
+            metadata.update(snapshot_metadata)
+
     def _save_empty_session_snapshot(self, title: str) -> None:
         assert self._bundle is not None
         metadata = dict(self._bundle.engine.tool_metadata)
@@ -1017,6 +1054,7 @@ class ReactBackendHost:
             [ConversationMessage.model_validate(item) for item in snapshot.get("messages", [])]
         )
         self._bundle.engine.load_messages(messages)
+        self._restore_session_tool_metadata(snapshot)
         self._set_saved_session_id(selected)
         await self._emit(BackendEvent(type="clear_transcript"))
         await self._emit(
@@ -1526,7 +1564,7 @@ class ReactBackendHost:
                     ("gpt-5.4-nano", self._model_option_description(provider_name, "gpt-5.4-nano")),
                 ]
             )
-        elif provider_name in {"openai-codex", "openai", "openai-compatible", "openrouter", "github_copilot"}:
+        elif provider_name in {"openai_codex", "openai-codex", "openai", "openai-compatible", "openrouter", "github_copilot"}:
             families.extend(
                 [
                     ("gpt-5.5", "OpenAI flagship"),
@@ -1567,7 +1605,7 @@ class ReactBackendHost:
             )
         seen: set[str] = set()
         options: list[dict[str, object]] = []
-        for value, description in [(current_model, "Current model"), *families]:
+        for value, description in [*families, (current_model, "Current model")]:
             if not value or value in seen:
                 continue
             seen.add(value)

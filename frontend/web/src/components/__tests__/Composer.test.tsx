@@ -1,0 +1,522 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Composer } from "../Composer";
+import { ModalHost } from "../ModalHost";
+import { AppStateProvider } from "../../state/app-state";
+import { initialAppState } from "../../state/reducer";
+import { cancelMessage, sendBackendRequest, sendMessage } from "../../api/messages";
+
+vi.mock("../../api/messages", () => ({
+  cancelMessage: vi.fn().mockResolvedValue({ ok: true }),
+  sendBackendRequest: vi.fn().mockResolvedValue({ ok: true }),
+  sendMessage: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+describe("Composer", () => {
+  beforeEach(() => {
+    vi.mocked(cancelMessage).mockClear();
+    vi.mocked(sendMessage).mockClear();
+    vi.mocked(sendBackendRequest).mockClear();
+    document.documentElement.style.removeProperty("--composer-stack-height");
+  });
+
+  it("keeps send disabled until a backend session exists", async () => {
+    render(
+      <AppStateProvider>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const send = screen.getByRole<HTMLButtonElement>("button", { name: "메시지 보내기" });
+
+    expect(send.disabled).toBe(true);
+    await userEvent.type(input, "hello");
+    expect(send.disabled).toBe(true);
+  });
+
+  it("uses a subdued neutral send button color in the default theme", () => {
+    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
+
+    expect(stylesheet).toContain("--send-button-bg: #cdb6aa;");
+    expect(stylesheet).toContain("--send-button-ink: #ffffff;");
+  });
+
+  it("does not expose an image file attachment button", () => {
+    render(
+      <AppStateProvider>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(screen.queryByRole("button", { name: "이미지 첨부" })).toBeNull();
+  });
+
+  it("renders long pasted text with the legacy tray chip", () => {
+    render(
+      <AppStateProvider>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => type === "text/plain"
+          ? Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n")
+          : "",
+      },
+    });
+
+    const chip = document.querySelector(".pasted-text-chip");
+    expect(chip).toBeTruthy();
+    expect(chip?.textContent).toContain("[Pasted text #1 +10 lines]");
+    expect(document.querySelector(".react-pasted-chip")).toBeNull();
+  });
+
+  it("renders pasted images with the legacy thumbnail chip and preview modal", async () => {
+    const file = new File(["image"], "pasted-image.png", { type: "image/png" });
+    const item = { kind: "file", type: "image/png", getAsFile: () => file };
+    const readerSpy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function readAsDataURLMock(this: FileReader) {
+      Object.defineProperty(this, "result", {
+        configurable: true,
+        value: "data:image/png;base64,aW1hZ2U=",
+      });
+      this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>);
+    });
+
+    render(
+      <AppStateProvider>
+        <Composer />
+        <ModalHost />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [item],
+        getData: () => "",
+      },
+    });
+
+    const image = await screen.findByRole("button", { name: "pasted-image.png" });
+    expect(document.querySelector(".attachment-chip")).toBeTruthy();
+    expect(document.querySelector(".react-attachment-chip")).toBeNull();
+
+    await userEvent.click(image);
+    expect(await screen.findByRole("dialog", { name: "pasted-image.png" })).toBeTruthy();
+    readerSpy.mockRestore();
+  });
+
+  it("moves the active command suggestion with arrow keys and applies it", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          commands: [
+            { name: "help", description: "도움말" },
+            { name: "plan", description: "계획 모드" },
+            { name: "review", description: "리뷰" },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    await user.type(input, "/");
+
+    expect(screen.getByRole("option", { selected: true }).textContent).toContain("/help");
+
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("option", { selected: true }).textContent).toContain("/plan");
+
+    await user.keyboard("{ArrowUp}");
+    expect(screen.getByRole("option", { selected: true }).textContent).toContain("/help");
+
+    await user.keyboard("{ArrowUp}");
+    expect(screen.getByRole("option", { selected: true }).textContent).toContain("/review");
+
+    await user.keyboard("{Enter}");
+    expect(input).toHaveProperty("value", "/review");
+  });
+
+  it("grows the input and composer frame for multiline drafts", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...") as HTMLTextAreaElement;
+    Object.defineProperty(input, "scrollHeight", {
+      configurable: true,
+      get: () => (input.value.includes("\n") ? 44 : 20),
+    });
+
+    await user.type(input, "첫 줄{Shift>}{Enter}{/Shift}둘째 줄");
+
+    expect(input.style.height).toBe("44px");
+    expect(input.closest(".composer-box")?.classList.contains("multiline")).toBe(true);
+  });
+
+  it("queues the draft with Ctrl+Enter while a response is running", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          busy: true,
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    await user.type(input, "다음 질문");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "다음 질문",
+      mode: "queue",
+    }));
+  });
+
+  it("sends the draft as steering with Enter while a response is running", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          busy: true,
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    await user.type(input, "방금 조건 반영");
+    await user.keyboard("{Enter}");
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "방금 조건 반영",
+      mode: "steer",
+    }));
+  });
+
+  it("clicks the send button as steering while a response is running and the draft has text", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          busy: true,
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    await user.type(input, "지금 이 조건 반영");
+    await user.click(screen.getByRole("button", { name: "스티어링 보내기" }));
+
+    expect(cancelMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "지금 이 조건 반영",
+      mode: "steer",
+    }));
+  });
+
+  it("ignores duplicate form submits while the first send is being accepted", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise(() => {}));
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    await user.type(input, "2");
+    const form = input.closest("form");
+    expect(form).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.submit(form!);
+      fireEvent.submit(form!);
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "2",
+      suppressUserTranscript: true,
+    }));
+  });
+
+  it("does not flash the send button into stop state when toggling plan mode", async () => {
+    const user = userEvent.setup();
+    let resolvePlan!: (value: Record<string, unknown>) => void;
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => {
+      resolvePlan = resolve;
+    }));
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    await user.type(input, "작성 중");
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "메시지 보내기" }).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "작업 중단" })).toBeNull();
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ line: "/plan" }));
+
+    await act(async () => {
+      resolvePlan({ ok: true });
+    });
+  });
+
+  it("renders the legacy stop button while a response is running without draft text", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          busy: true,
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const stop = screen.getByRole<HTMLButtonElement>("button", { name: "작업 중단" });
+    expect(stop.classList.contains("is-stop")).toBe(true);
+    expect(stop.querySelector("circle")?.getAttribute("r")).toBe("8.5");
+    expect(stop.querySelectorAll("path")).toHaveLength(2);
+
+    await userEvent.click(stop);
+
+    expect(cancelMessage).toHaveBeenCalledWith("session-1", "client-1");
+  });
+
+  it("shows a compact todo icon inside the composer when the checklist is collapsed", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          todoMarkdown: "- [x] 조사\n- [ ] 구현",
+          todoCollapsed: true,
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const todoButton = screen.getByRole("button", { name: "작업 목록 펼치기 1/2" });
+    expect(todoButton.closest(".composer-box")).toBeTruthy();
+    expect(document.querySelector(".todo-checklist-dock")).toBeNull();
+
+    await user.click(todoButton);
+
+    expect(document.querySelector(".todo-checklist-dock")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "작업 목록 펼치기 1/2" })).toBeNull();
+  });
+
+  it("does not show a dismiss button on the expanded todo checklist", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          todoMarkdown: "- [x] 조사\n- [ ] 구현",
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByLabelText("작업 체크리스트")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "작업 목록 접기" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "작업 목록 닫기" })).toBeNull();
+  });
+
+  it("renders backend questions inline directly above the composer input", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "question",
+              request_id: "question-1",
+              question: "어떤 색으로 진행할까요?",
+              choices: [
+                { label: "파랑", value: "blue", description: "차분한 느낌" },
+                { label: "초록", value: "green" },
+              ],
+            },
+          },
+        }}
+      >
+        <Composer />
+        <ModalHost />
+      </AppStateProvider>,
+    );
+
+    const card = document.querySelector(".inline-question-card");
+    const composerBox = document.querySelector(".composer-box");
+    expect(card).toBeTruthy();
+    expect(card?.nextElementSibling).toBe(composerBox);
+    expect(screen.queryByRole("dialog", { name: "질문" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /파랑/ }));
+
+    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+      type: "question_response",
+      request_id: "question-1",
+      answer: "blue",
+    });
+  });
+
+  it("reserves bottom scroll space for inline questions above the composer input", () => {
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function mockRect(this: HTMLElement) {
+      if (this.classList.contains("composer")) {
+        return {
+          x: 0,
+          y: 500,
+          top: 500,
+          right: 800,
+          bottom: 700,
+          left: 0,
+          width: 800,
+          height: 200,
+          toJSON: () => ({}),
+        };
+      }
+      if (this.classList.contains("composer-box")) {
+        return {
+          x: 0,
+          y: 640,
+          top: 640,
+          right: 800,
+          bottom: 700,
+          left: 0,
+          width: 800,
+          height: 60,
+          toJSON: () => ({}),
+        };
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            sessionId: "session-1",
+            clientId: "client-1",
+            modal: {
+              kind: "backend",
+              payload: {
+                kind: "question",
+                request_id: "question-1",
+                question: "이 방향으로 바로 수정해도 될까요?",
+              },
+            },
+          }}
+        >
+          <Composer />
+        </AppStateProvider>,
+      );
+
+      expect(document.querySelector(".inline-question-card")).toBeTruthy();
+      expect(document.documentElement.style.getPropertyValue("--composer-stack-height")).toBe("200px");
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
+  });
+
+  it("turns completed assistant confirmation questions into inline quick replies", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "3번 혼합형을 추천드립니다.\n\n이 방향으로 바로 진행해도 될까요?",
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const card = document.querySelector(".inline-question-card");
+    const composerBox = document.querySelector(".composer-box");
+    expect(card).toBeTruthy();
+    expect(card?.nextElementSibling).toBe(composerBox);
+    expect(screen.getByText("질문: 이 방향으로 바로 진행해도 될까요?")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /네, 진행해주세요/ }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "네, 진행해주세요",
+      suppressUserTranscript: true,
+    }));
+  });
+});

@@ -448,6 +448,48 @@ async def test_backend_host_persists_user_edited_session_title(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_backend_host_restore_history_replaces_session_metadata(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        host._bundle.engine.tool_metadata["session_title"] = "이전 세션 제목"
+        host._bundle.session_backend.save_snapshot(
+            cwd=host._bundle.cwd,
+            model=host._bundle.engine.model,
+            system_prompt=host._bundle.engine.system_prompt,
+            messages=[ConversationMessage(role="user", content=[TextBlock(text="복원할 질문")])],
+            usage=host._bundle.engine.total_usage,
+            session_id="restored123",
+            tool_metadata={
+                "session_title": "복원된 세션 제목",
+                "session_title_source": "conversation",
+                "workflow_duration_seconds": 42,
+            },
+        )
+
+        await host._restore_history_snapshot("restored123")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert host._bundle.session_id == "restored123"
+    assert host._bundle.engine.tool_metadata["session_title"] == "복원된 세션 제목"
+    assert host._bundle.engine.tool_metadata["session_title_source"] == "conversation"
+    snapshot_event = next(event for event in events if event.type == "history_snapshot")
+    assert snapshot_event.compact_metadata == {"workflow_duration_seconds": 42}
+
+
+@pytest.mark.asyncio
 async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -972,6 +1014,7 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     assert runtime_options["models_by_provider"][active_provider]
     assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:2] == ["gpt-5.5", "gpt-5.4"]
     assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Strongest coding and reasoning"
+    assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == ["gpt-5.5", "gpt-5.4"]
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
     none_option = next(option for option in runtime_options["efforts"] if option["value"] == "none")
     assert none_option["label"] == "None"

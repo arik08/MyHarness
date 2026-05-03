@@ -515,7 +515,7 @@ const chatPanel = els.composer?.closest(".chat-panel") || els.messages?.closest(
 chatPanel?.addEventListener("click", handleChatPanelClickForArtifactPanel);
 
 els.modalHost.addEventListener("click", (event) => {
-  if (event.target === els.modalHost && els.modalHost.dataset.dismissible === "true") {
+  if (event.target === els.modalHost && els.modalHost.dataset.dismissible !== "false") {
     dismissModal();
   }
 });

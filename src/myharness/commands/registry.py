@@ -1535,6 +1535,8 @@ def create_default_command_registry(
             context.app_state.set(
                 model=display_model_setting(profile),
                 provider=detect_provider(updated).name,
+                active_profile=target,
+                provider_label=profile.label,
                 auth_status=auth_status(updated),
                 base_url=updated.base_url or "",
             )
