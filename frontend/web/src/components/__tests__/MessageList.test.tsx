@@ -62,6 +62,27 @@ function StreamingDeltaProbe() {
   );
 }
 
+function StreamingCompleteProbe({ answer }: { answer: string }) {
+  const { dispatch } = useAppState();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        dispatch({
+          type: "backend_event",
+          event: { type: "assistant_delta", message: answer },
+        });
+        dispatch({
+          type: "backend_event",
+          event: { type: "assistant_complete", message: answer },
+        });
+      }}
+    >
+      complete stream
+    </button>
+  );
+}
+
 describe("MessageList", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -809,7 +830,7 @@ describe("MessageList", () => {
     expect(screen.queryByLabelText("본문 저장")).toBeNull();
   });
 
-  it("buffers and reveals only the active streaming assistant answer", () => {
+  it("renders the active streaming assistant answer as soon as text arrives", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider
@@ -825,17 +846,10 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.body.textContent || "").not.toContain("스트리밍");
-
-    act(() => {
-      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 40);
-    });
-
-    expect(document.body.textContent || "").toContain("스트");
-    expect(document.querySelector(".stream-reveal-sentence")).toBeTruthy();
+    expect(document.body.textContent || "").toContain("스트리밍 답변입니다.");
   });
 
-  it("does not keep postponing the first streaming reveal while new deltas arrive", () => {
+  it("keeps appending streaming deltas directly to the visible answer", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider initialState={{ ...initialAppState, busy: true }}>
@@ -847,17 +861,47 @@ describe("MessageList", () => {
     act(() => {
       screen.getByText("delta one").click();
     });
+    expect(document.body.textContent || "").toContain("스트");
+
     act(() => {
-      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs - 20);
       screen.getByText("delta two").click();
-      vi.advanceTimersByTime(25);
     });
 
-    expect(document.body.textContent || "").toContain("스트");
+    expect(document.body.textContent || "").toContain("스트리밍 답변입니다.");
     expect(document.querySelector(".stream-reveal-sentence")).toBeTruthy();
   });
 
-  it("keeps following the bottom as buffered streaming text becomes visible", () => {
+  it("renders a completed answer immediately even when it finished before the buffer flushed", () => {
+    vi.useFakeTimers();
+    const answer = [
+      "시작: 스트리밍이 보이는 첫 문장입니다.",
+      ...Array.from({ length: 40 }, (_, index) => `중간 문장 ${index}번입니다.`),
+      "끝부분: 완료 이벤트가 오면 답변이 바로 보여야 합니다.",
+    ].join(" ");
+
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, busy: true }}>
+        <StreamingCompleteProbe answer={answer} />
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    act(() => {
+      screen.getByText("complete stream").click();
+    });
+
+    expect(document.body.textContent || "").toContain("시작");
+    expect(document.body.textContent || "").toContain("끝부분");
+    expect(document.querySelector(".react-streaming-text")).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(180);
+    });
+
+    expect(document.body.textContent || "").toContain("끝부분");
+  });
+
+  it("keeps following the bottom as streaming text becomes visible", () => {
     vi.useFakeTimers();
     const scrollHeights = new WeakMap<Element, number>();
     const clientHeights = new WeakMap<Element, number>();
@@ -894,35 +938,23 @@ describe("MessageList", () => {
           initialState={{
             ...initialAppState,
             busy: true,
-            messages: [
-              {
-                id: "assistant-1",
-                role: "assistant",
-                text: "길게 이어지는 스트리밍 답변입니다. 화면에 드러나는 텍스트가 늘어나도 맨 아래를 따라가야 합니다.",
-              },
-            ],
             appSettings: {
               ...initialAppState.appSettings,
-              streamStartBufferMs: 0,
               streamScrollDurationMs: 0,
             },
           }}
         >
+          <StreamingDeltaProbe />
           <MessageList />
         </AppStateProvider>,
       );
 
       const messages = document.querySelector(".messages") as HTMLElement;
       clientHeights.set(messages, 80);
-      scrollHeights.set(messages, 100);
-
-      act(() => {
-        vi.advanceTimersByTime(40);
-      });
       scrollHeights.set(messages, 340);
 
       act(() => {
-        vi.advanceTimersByTime(40);
+        screen.getByText("delta one").click();
       });
 
       expect(messages.scrollTop).toBe(340);

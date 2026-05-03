@@ -427,9 +427,6 @@ function AssistantArtifactCards({ message }: { message: ChatMessage }) {
   );
 }
 
-const streamFlushIntervalMs = 36;
-const streamMinCharsPerFlush = 3;
-const streamMaxCharsPerFlush = 12;
 const nearBottomPx = 96;
 const streamingRejoinBottomPx = 260;
 const scrollStorageKey = "myharness:scrollPositions";
@@ -469,99 +466,33 @@ function restoredScrollPosition(sessionId: string | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function streamingRevealCount(pendingChars: string[], flushAll = false) {
-  if (flushAll) {
-    return pendingChars.length;
-  }
-  const text = pendingChars.join("");
-  const sentenceMatch = text.match(/^.{18,}?[.!?。！？…]\s*/u);
-  if (sentenceMatch && sentenceMatch[0].length <= streamMaxCharsPerFlush) {
-    return sentenceMatch[0].length;
-  }
-  const lineBreakIndex = text.slice(streamMinCharsPerFlush).search(/\n/);
-  if (lineBreakIndex >= 0) {
-    return Math.min(streamMaxCharsPerFlush, streamMinCharsPerFlush + lineBreakIndex + 1);
-  }
-  return Math.min(
-    pendingChars.length,
-    Math.max(streamMinCharsPerFlush, Math.min(streamMaxCharsPerFlush, Math.ceil(pendingChars.length / 2))),
-  );
-}
-
-function useStreamingText(targetText: string, isComplete: boolean, settings: AppSettings) {
-  const [visibleText, setVisibleText] = useState(isComplete ? targetText : "");
+function useStreamingText(
+  targetText: string,
+  visuallyStreaming: boolean,
+) {
+  const [visibleText, setVisibleText] = useState(targetText);
   const revealFromRef = useRef<number | null>(null);
   const visibleTextRef = useRef(visibleText);
-  const targetTextRef = useRef(targetText);
-  const displayStartedRef = useRef(false);
-  const timerRef = useRef<number>(0);
-  const flushRef = useRef<(flushAll?: boolean) => void>(() => undefined);
-  const scheduleFlushRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     visibleTextRef.current = visibleText;
   }, [visibleText]);
 
   useEffect(() => {
-    return () => window.clearTimeout(timerRef.current);
-  }, []);
-
-  flushRef.current = (flushAll = false) => {
-    timerRef.current = 0;
-    const current = visibleTextRef.current;
-    const target = targetTextRef.current;
-    if (!target.startsWith(current) || current.length >= target.length) {
-      return;
-    }
-    displayStartedRef.current = true;
-    const pending = Array.from(target.slice(current.length));
-    const nextCount = streamingRevealCount(pending, flushAll);
-    const nextText = `${current}${pending.slice(0, nextCount).join("")}`;
-    revealFromRef.current = Array.from(current).length;
-    visibleTextRef.current = nextText;
-    setVisibleText(nextText);
-    if (nextText.length < target.length) {
-      scheduleFlushRef.current();
-    }
-  };
-
-  scheduleFlushRef.current = () => {
-    if (timerRef.current) {
-      return;
-    }
-    const delay = displayStartedRef.current
-      ? streamFlushIntervalMs
-      : Math.max(0, Math.min(2000, settings.streamStartBufferMs));
-    timerRef.current = window.setTimeout(() => flushRef.current(false), delay);
-  };
-
-  useEffect(() => {
-    targetTextRef.current = targetText;
-
-    if (isComplete) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = 0;
+    if (!visuallyStreaming) {
       revealFromRef.current = null;
       visibleTextRef.current = targetText;
       setVisibleText(targetText);
       return;
     }
 
-    if (!targetText.startsWith(visibleTextRef.current)) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = 0;
-      revealFromRef.current = 0;
-      visibleTextRef.current = "";
-      setVisibleText("");
-      displayStartedRef.current = false;
-    }
+    const current = visibleTextRef.current;
+    revealFromRef.current = targetText.startsWith(current) ? Array.from(current).length : 0;
+    visibleTextRef.current = targetText;
+    setVisibleText(targetText);
+  }, [targetText, visuallyStreaming]);
 
-    if (targetText.length > visibleTextRef.current.length) {
-      scheduleFlushRef.current();
-    }
-  }, [targetText, isComplete, settings.streamStartBufferMs]);
-
-  return { visibleText, revealFrom: revealFromRef.current };
+  return { visibleText, revealFrom: revealFromRef.current, visualComplete: visibleText === targetText };
 }
 
 function StreamingAssistantMessage({
@@ -575,22 +506,25 @@ function StreamingAssistantMessage({
   active: boolean;
   onVisibleTextChange?: () => void;
 }) {
-  const isStreaming = active && !message.isComplete;
-  const { visibleText, revealFrom } = useStreamingText(message.text, !isStreaming, settings);
+  const visuallyStreaming = active && !message.isComplete;
+  const { visibleText, revealFrom, visualComplete } = useStreamingText(
+    message.text,
+    visuallyStreaming,
+  );
   const style = useMemo(() => ({
     "--stream-reveal-duration": `${Math.max(0, Math.min(2000, settings.streamRevealDurationMs))}ms`,
     "--stream-reveal-wipe": `${Math.max(100, Math.min(400, settings.streamRevealWipePercent))}%`,
   }) as React.CSSProperties, [settings.streamRevealDurationMs, settings.streamRevealWipePercent]);
 
   useEffect(() => {
-    if (isStreaming && visibleText) {
+    if (visuallyStreaming && visibleText) {
       onVisibleTextChange?.();
     }
-  }, [isStreaming, onVisibleTextChange, visibleText]);
+  }, [visuallyStreaming, onVisibleTextChange, visibleText]);
 
   return (
-    <div className={isStreaming ? "react-streaming-text streaming-text" : undefined} style={style}>
-      <MarkdownMessage text={isStreaming ? visibleText : message.text} revealFrom={isStreaming ? revealFrom : null} />
+    <div className={visuallyStreaming && !visualComplete ? "react-streaming-text streaming-text" : undefined} style={style}>
+      <MarkdownMessage text={visuallyStreaming ? visibleText : message.text} revealFrom={visuallyStreaming ? revealFrom : null} />
     </div>
   );
 }

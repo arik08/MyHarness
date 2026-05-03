@@ -321,7 +321,8 @@ function assistantFollowUpQuestion(messages: Array<{ role: string; text: string;
     return null;
   }
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const question = [...lines].reverse().find(isFollowUpQuestionLine) || "";
+  const trailingLines = lines.slice(-3);
+  const question = [...trailingLines].reverse().find(isFollowUpQuestionLine) || "";
   if (!question) {
     return null;
   }
@@ -333,6 +334,9 @@ function assistantFollowUpQuestion(messages: Array<{ role: string; text: string;
 
 function isFollowUpQuestionLine(line: string) {
   const value = line.replace(/^[(（]|[)）]$/g, "").trim();
+  if (/^(?:#{1,6}\s+|[-*]\s+|\d+[.)]\s+)/.test(value)) {
+    return false;
+  }
   if (!/[?？]\s*$/.test(value) && !/(할까요|될까요|괜찮을까요|원하시나요|맞나요)\s*$/.test(value)) {
     return false;
   }

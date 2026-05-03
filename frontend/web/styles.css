@@ -2356,6 +2356,10 @@ a:focus-visible {
   white-space: pre-wrap;
 }
 
+.react-streaming-text.streaming-text ~ .assistant-actions {
+  display: none;
+}
+
 .stream-live-text {
   white-space: pre-wrap;
 }

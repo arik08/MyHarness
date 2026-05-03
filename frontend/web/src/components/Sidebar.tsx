@@ -99,7 +99,21 @@ export function Sidebar() {
         if (liveSession.workspace) {
           dispatch({ type: "set_workspace", workspace: liveSession.workspace });
         }
-        dispatch({ type: "set_busy", value: liveSession.busy });
+        if (liveSession.busy) {
+          dispatch({ type: "set_busy", value: true });
+          dispatch({ type: "finish_history_restore" });
+          return;
+        }
+        if (liveSession.savedSessionId) {
+          dispatch({ type: "set_busy", value: true });
+          await sendBackendRequest(liveSession.sessionId, state.clientId, {
+            type: "apply_select_command",
+            command: "resume",
+            value: liveSession.savedSessionId,
+          });
+          return;
+        }
+        dispatch({ type: "set_busy", value: false });
         dispatch({ type: "finish_history_restore" });
         return;
       }

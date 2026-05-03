@@ -547,6 +547,41 @@ describe("Composer", () => {
     }));
   });
 
+  it("does not turn markdown answer headings into inline follow-up questions", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: [
+                "맞습니다. 구조적으로 보면 이렇습니다.",
+                "",
+                "## 왜 AI가 PPT를 기본 상태에서 잘 못 만들까?",
+                "",
+                "PPT는 텍스트보다 레이아웃 검수가 중요한 문서입니다.",
+                "",
+                "## PPTX가 왜 프리뷰 안 되나?",
+                "",
+                "PPTX는 브라우저가 직접 렌더링하기 어려운 Office 패키지입니다.",
+              ].join("\n"),
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".inline-question-card")).toBeNull();
+    expect(screen.queryByText(/질문:/)).toBeNull();
+  });
+
   it("does not attach generic quick replies to assistant alternative questions", () => {
     render(
       <AppStateProvider

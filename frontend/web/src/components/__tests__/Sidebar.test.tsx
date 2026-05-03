@@ -261,13 +261,13 @@ describe("Sidebar", () => {
     });
   });
 
-  it("reattaches to a live saved session even when the current session is idle", async () => {
+  it("restores a live saved session snapshot when the current session is idle", async () => {
     vi.mocked(listLiveSessions).mockResolvedValue({
       sessions: [{
         sessionId: "live-session-old",
         savedSessionId: "session-old",
         workspace: { name: "Default", path: "C:/demo" },
-        busy: true,
+        busy: false,
         createdAt: 1,
       }],
     });
@@ -294,7 +294,11 @@ describe("Sidebar", () => {
       clientId: "client-1",
       workspacePath: "C:/demo",
     }));
-    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(sendBackendRequest).toHaveBeenCalledWith("live-session-old", "client-1", {
+      type: "apply_select_command",
+      command: "resume",
+      value: "session-old",
+    });
     expect(startSession).not.toHaveBeenCalled();
   });
 
