@@ -165,6 +165,9 @@ def test_build_system_prompt_prefers_existing_files_and_batched_edits():
     assert "For unrelated standalone HTML previews or demos" in prompt
     assert "required app/framework/hosting entrypoint would otherwise break" in prompt
     assert "place it under `outputs/`" in prompt
+    assert "prefer a concise readable Korean filename" in prompt
+    assert "outputs/인터넷-문화-변천사-보고서.html" in prompt
+    assert "English snake/kebab-style names are fine" in prompt
     assert "keep files that reference each other in the same subfolder" in prompt
     assert "If both editing and creating are plausible" in prompt
     assert "create, install, persist, or update a MyHarness skill" in prompt

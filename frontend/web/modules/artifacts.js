@@ -928,6 +928,19 @@ async function downloadProjectFile(artifact, control) {
   const suggestedName = artifact.name || artifactName(artifact.path);
   const downloadSettings = state.appSettings || {};
   setArtifactDownloadStatus("다운로드 준비 중...");
+  if (downloadSettings.downloadMode === "browser") {
+    await saveArtifactWithBrowserDownload(artifact, suggestedName);
+    setArtifactDownloadStatus("브라우저 다운로드 시작됨");
+    if (control) {
+      control.dataset.tooltip = "브라우저 다운로드 시작됨";
+      window.setTimeout(() => {
+        if (control.isConnected) {
+          control.dataset.tooltip = "다운로드";
+        }
+      }, 3000);
+    }
+    return;
+  }
   if (downloadSettings.downloadMode === "folder" && downloadSettings.downloadFolderPath && isLocalBrowserHost()) {
     const saved = await saveArtifactCopy(artifact, downloadSettings.downloadFolderPath);
     const savedPath = saved.path || downloadSettings.downloadFolderPath;
@@ -1328,13 +1341,16 @@ function renderProjectFiles(files) {
       <span class="artifact-card-icon" aria-hidden="true">${artifactIcon(artifact.kind)}</span>
       <span class="artifact-card-copy">
         <strong></strong>
-        <small></small>
       </span>
     `;
-    openButton.dataset.tooltip = artifact.path;
+    openButton.dataset.tooltip = artifact.name || artifact.path;
     openButton.querySelector("strong").textContent = artifact.name || artifact.path;
-    openButton.querySelector("small").textContent = `${artifact.label} · ${formatBytes(artifact.size)}`;
     openButton.addEventListener("click", () => openArtifact(artifact));
+
+    const size = document.createElement("span");
+    size.className = "project-file-size artifact-card-size";
+    size.textContent = formatBytes(artifact.size);
+    openButton.append(size);
 
     const download = document.createElement("a");
     const query = projectFileQuery({ path: artifact.path });

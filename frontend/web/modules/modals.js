@@ -77,6 +77,9 @@ function downloadModeLabel() {
   if (!isLocalBrowserHost()) {
     return "브라우저 다운로드";
   }
+  if (settings.downloadMode === "browser") {
+    return "브라우저 다운로드";
+  }
   if (settings.downloadMode === "folder") {
     return settings.downloadFolderPath ? `지정 폴더: ${settings.downloadFolderPath}` : "지정 폴더 필요";
   }
@@ -802,7 +805,7 @@ function showDownloadSettingsModal() {
   title.textContent = "파일 저장경로";
   const body = document.createElement("p");
   body.textContent = localBrowserHost
-    ? "다운로드할 때마다 위치를 물어볼지, 지정 폴더에 바로 저장할지 선택합니다."
+    ? "브라우저 기본 다운로드를 사용할지, 매번 위치를 물어볼지, 지정 폴더에 바로 저장할지 선택합니다."
     : "원격 접속에서는 Host 폴더 선택 창을 열지 않고 브라우저 다운로드를 사용합니다.";
 
   const modeField = settingField(
@@ -813,11 +816,12 @@ function showDownloadSettingsModal() {
   );
   const mode = document.createElement("select");
   mode.innerHTML = `
+    <option value="browser">브라우저 다운로드</option>
     <option value="ask">매번 저장 위치 선택</option>
     <option value="folder">지정 폴더에 자동 저장</option>
   `;
   mode.querySelector("option[value='folder']").disabled = !localBrowserHost;
-  mode.value = localBrowserHost ? state.appSettings?.downloadMode || "ask" : "ask";
+  mode.value = localBrowserHost ? state.appSettings?.downloadMode || "browser" : "browser";
   modeField.append(mode);
 
   const folderField = settingField(
@@ -860,7 +864,7 @@ function showDownloadSettingsModal() {
     modalButton("뒤로", false, showSettingsModal),
     modalButton("저장", true, () => {
       saveAppSettings({
-        downloadMode: localBrowserHost ? mode.value : "ask",
+        downloadMode: localBrowserHost ? mode.value : "browser",
         downloadFolderPath: localBrowserHost ? folder.value : "",
       });
       showSettingsModal();

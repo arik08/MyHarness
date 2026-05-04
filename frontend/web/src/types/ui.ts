@@ -94,6 +94,7 @@ export type AppState = {
   artifactPanelPreviewWidth: number | null;
   artifactResizing: boolean;
   modal: ModalState | null;
+  backendModalsBySessionId: Record<string, Extract<ModalState, { kind: "backend" }>>;
   messages: ChatMessage[];
   workflowAnchorMessageId: string | null;
   workflowEventsByMessageId: Record<string, WorkflowEvent[]>;
@@ -103,6 +104,7 @@ export type AppState = {
   todoCollapsed: boolean;
   workflowEvents: WorkflowEvent[];
   workflowDurationSeconds: number | null;
+  workflowStartedAtMs: number | null;
   composer: ComposerState;
   runtimePicker: RuntimePickerState;
 };
@@ -113,7 +115,7 @@ export type AppSettings = {
   streamFollowLeadPx: number;
   streamRevealDurationMs: number;
   streamRevealWipePercent: number;
-  downloadMode: "ask" | "folder";
+  downloadMode: "browser" | "ask" | "folder";
   downloadFolderPath: string;
   shell: "auto" | "powershell" | "git-bash" | "cmd";
 };

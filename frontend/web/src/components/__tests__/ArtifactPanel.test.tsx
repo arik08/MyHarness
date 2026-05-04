@@ -20,6 +20,7 @@ describe("ArtifactPanel", () => {
     vi.mocked(deleteArtifact).mockResolvedValue({ deleted: true });
     vi.mocked(listProjectFiles).mockResolvedValue({ scope: "default", files: [] });
     vi.mocked(organizeProjectFiles).mockResolvedValue({ files: [] });
+    localStorage.removeItem("myharness:projectFileFilter");
     history.replaceState(null, "", window.location.href);
   });
 
@@ -436,7 +437,8 @@ describe("ArtifactPanel", () => {
     await screen.findByText("report.html");
     const actions = document.querySelector(".project-file-actions");
     expect(actions?.children[0]?.getAttribute("aria-label")).toBe("report.html 삭제");
-    expect(actions?.children[1]?.getAttribute("aria-label")).toBe("report.html 다운로드");
+    expect(actions?.children[1]?.textContent).toBe("42 B");
+    expect(actions?.children[2]?.getAttribute("aria-label")).toBe("report.html 다운로드");
 
     await userEvent.click(screen.getByRole("button", { name: "report.html 삭제" }));
     expect(deleteArtifact).not.toHaveBeenCalled();
@@ -459,6 +461,8 @@ describe("ArtifactPanel", () => {
       scope: "default",
       files: [
         { path: "outputs/report.html", name: "report.html", kind: "file", label: "HTML", size: 42 },
+        { path: "outputs/notes.md", name: "notes.md", kind: "markdown", size: 30 },
+        { path: "outputs/deck.pptx", name: "deck.pptx", kind: "file", label: "PPTX", size: 26 },
         { path: "outputs/data.csv", name: "data.csv", kind: "file", label: "CSV", size: 24 },
         { path: "outputs/script.py", name: "script.py", kind: "text", size: 18 },
         { path: "outputs/chart.png", name: "chart.png", kind: "image", size: 12 },
@@ -472,6 +476,8 @@ describe("ArtifactPanel", () => {
           artifactPanelOpen: true,
           artifacts: [
             { path: "outputs/report.html", name: "report.html", kind: "file", label: "HTML", size: 42 },
+            { path: "outputs/notes.md", name: "notes.md", kind: "markdown", size: 30 },
+            { path: "outputs/deck.pptx", name: "deck.pptx", kind: "file", label: "PPTX", size: 26 },
             { path: "outputs/data.csv", name: "data.csv", kind: "file", label: "CSV", size: 24 },
             { path: "outputs/script.py", name: "script.py", kind: "text", size: 18 },
             { path: "outputs/chart.png", name: "chart.png", kind: "image", size: 12 },
@@ -491,12 +497,95 @@ describe("ArtifactPanel", () => {
     );
     expect(badgeByFileName.get("report.html")?.textContent).toBe("HTML");
     expect(badgeByFileName.get("report.html")?.classList.contains("artifact-card-icon-web")).toBe(true);
+    expect(badgeByFileName.get("notes.md")?.textContent).toBe("MD");
+    expect(badgeByFileName.get("notes.md")?.classList.contains("artifact-card-icon-markdown")).toBe(true);
+    expect(badgeByFileName.get("deck.pptx")?.textContent).toBe("PPTX");
+    expect(badgeByFileName.get("deck.pptx")?.classList.contains("artifact-card-icon-docs")).toBe(true);
     expect(badgeByFileName.get("data.csv")?.textContent).toBe("CSV");
     expect(badgeByFileName.get("data.csv")?.classList.contains("artifact-card-icon-data")).toBe(true);
     expect(badgeByFileName.get("script.py")?.textContent).toBe("PY");
     expect(badgeByFileName.get("script.py")?.classList.contains("artifact-card-icon-code")).toBe(true);
     expect(badgeByFileName.get("chart.png")?.textContent).toBe("PNG");
     expect(badgeByFileName.get("chart.png")?.classList.contains("artifact-card-icon-image")).toBe(true);
+  });
+
+  it("separates markdown files from document files in the project file filter", async () => {
+    vi.mocked(listProjectFiles).mockResolvedValueOnce({
+      scope: "default",
+      files: [
+        { path: "outputs/summary.md", name: "summary.md", kind: "markdown", size: 42 },
+        { path: "outputs/deck.pptx", name: "deck.pptx", kind: "file", label: "PPTX", size: 24 },
+      ],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          artifacts: [
+            { path: "outputs/summary.md", name: "summary.md", kind: "markdown", size: 42 },
+            { path: "outputs/deck.pptx", name: "deck.pptx", kind: "file", label: "PPTX", size: 24 },
+          ],
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await screen.findByText("summary.md");
+    const filter = screen.getByLabelText("프로젝트 파일 유형 필터");
+    const filterLabels = [...filter.querySelectorAll("option")].map((option) => option.textContent);
+    expect(filterLabels).toContain("웹페이지");
+    expect(filterLabels).toContain("마크다운");
+
+    await userEvent.selectOptions(filter, "markdown");
+    expect(screen.getByText("summary.md")).toBeTruthy();
+    expect(screen.queryByText("deck.pptx")).toBeNull();
+
+    await userEvent.selectOptions(filter, "docs");
+    expect(screen.getByText("deck.pptx")).toBeTruthy();
+    expect(screen.queryByText("summary.md")).toBeNull();
+  });
+
+  it("shows project file size without repeating the file type label", async () => {
+    vi.mocked(listProjectFiles).mockResolvedValueOnce({
+      scope: "default",
+      files: [
+        {
+          path: "outputs/evangelion-story-analysis-report.html",
+          name: "evangelion-story-analysis-report.html",
+          kind: "html",
+          size: 21504,
+        },
+      ],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          artifacts: [
+            {
+              path: "outputs/evangelion-story-analysis-report.html",
+              name: "evangelion-story-analysis-report.html",
+              kind: "html",
+              size: 21504,
+            },
+          ],
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await screen.findByText("evangelion-story-analysis-report.html");
+    const item = document.querySelector(".project-file-item");
+    expect(item?.querySelector(".artifact-card-icon")?.textContent).toBe("HTML");
+    expect(item?.querySelector(".artifact-card-size")?.textContent).toBe("21.0 KB");
+    expect(item?.querySelector(".artifact-card-copy")?.textContent).not.toContain("HTML");
+    expect(item?.querySelector(".project-file-open")?.getAttribute("data-tooltip")).toBe("evangelion-story-analysis-report.html");
   });
 
   it("organizes root project files into outputs", async () => {

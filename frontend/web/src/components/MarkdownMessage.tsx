@@ -41,6 +41,116 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
+function promptTokenKind(rawToken: string) {
+  if (rawToken.startsWith("@")) return "file";
+  const lower = rawToken.toLowerCase();
+  if (lower.startsWith("$mcp:")) return "mcp";
+  if (lower.startsWith("$plugin:")) return "plugin";
+  return "skill";
+}
+
+function titleCaseToken(value: string) {
+  return value
+    .replace(/[-_]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function promptTokenLabel(rawToken: string) {
+  const token = rawToken.trim();
+  if (token.startsWith("@")) {
+    const name = token.slice(1).split(/[\\/]/).filter(Boolean).pop() || token.slice(1);
+    return name || token;
+  }
+  const normalized = token.slice(1).replace(/^["']|["']$/g, "").trim();
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith("mcp:") || lower.startsWith("plugin:")) {
+    return titleCaseToken(normalized.slice(normalized.indexOf(":") + 1)) || normalized;
+  }
+  return normalized || token;
+}
+
+function createPromptToken(rawToken: string) {
+  const span = document.createElement("span");
+  span.className = `prompt-token ${promptTokenKind(rawToken)}`;
+  span.setAttribute("aria-label", rawToken);
+  span.textContent = promptTokenLabel(rawToken);
+  return span;
+}
+
+function promptTokenPattern() {
+  return /(^|\s)(\$"[^"]+"|\$'[^']+'|\$[A-Za-z][A-Za-z0-9_.:-]*|@[A-Za-z0-9_.\\/:-]+)/g;
+}
+
+function isSinglePromptToken(value: string) {
+  return /^(\$"[^"]+"|\$'[^']+'|\$[A-Za-z][A-Za-z0-9_.:-]*|@[A-Za-z0-9_.\\/:-]+)$/.test(value.trim());
+}
+
+function replacePromptTokensInTextNode(node: Text) {
+  const value = node.nodeValue || "";
+  const pattern = promptTokenPattern();
+  if (!pattern.test(value)) {
+    return;
+  }
+  pattern.lastIndex = 0;
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  for (const match of value.matchAll(pattern)) {
+    const leading = match[1] || "";
+    const rawToken = match[2] || "";
+    const tokenStart = (match.index || 0) + leading.length;
+    const before = value.slice(cursor, tokenStart);
+    if (before) {
+      fragment.append(document.createTextNode(before));
+    }
+    fragment.append(createPromptToken(rawToken));
+    cursor = tokenStart + rawToken.length;
+  }
+  const after = value.slice(cursor);
+  if (after) {
+    fragment.append(document.createTextNode(after));
+  }
+  node.replaceWith(fragment);
+}
+
+function enhancePromptTokens(root: HTMLElement | null) {
+  if (!root) {
+    return;
+  }
+
+  root.querySelectorAll("code").forEach((code) => {
+    if (code.closest("pre")) {
+      return;
+    }
+    const value = code.textContent || "";
+    if (isSinglePromptToken(value)) {
+      code.replaceWith(createPromptToken(value.trim()));
+    }
+  });
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || parent.closest("pre, code, .prompt-token, .code-copy")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return promptTokenPattern().test(node.nodeValue || "") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode as Text);
+  }
+  textNodes.forEach(replacePromptTokensInTextNode);
+}
+
+function enhanceRenderedPromptTokenHtml(html: string) {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  enhancePromptTokens(container);
+  return container.innerHTML;
+}
+
 function normalizeHighlightLanguage(language: string) {
   const value = String(language || "").toLowerCase();
   if (value === "py") return "python";
@@ -434,13 +544,14 @@ export function MarkdownMessage({ text, revealFrom = null }: { text: string; rev
   const html = useMemo(() => {
     const previewMarkdown = replaceHtmlFencesWithPreviewPlaceholders(text || "");
     const rendered = marked.parse(previewMarkdown, { async: false }) as string;
-    return enhanceRenderedCodeBlockHtml(sanitizeRenderedHtml(rendered));
+    return enhanceRenderedCodeBlockHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered)));
   }, [text]);
 
   useLayoutEffect(() => {
     replaceHtmlPreviewPlaceholders(ref.current);
     enhanceHtmlPreviews(ref.current);
     enhanceCodeBlocks(ref.current);
+    enhancePromptTokens(ref.current);
     revealRenderedText(ref.current, revealFrom);
   }, [html, revealFrom]);
 

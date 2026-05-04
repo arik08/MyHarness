@@ -5,7 +5,7 @@ const defaultAppSettings = {
   streamFollowLeadPx: 60,
   streamRevealDurationMs: 420,
   streamRevealWipePercent: 180,
-  downloadMode: "ask",
+  downloadMode: "browser",
   downloadFolderPath: "",
   shell: "auto",
 };
@@ -28,7 +28,7 @@ function loadAppSettings() {
       streamFollowLeadPx: Math.max(0, Math.min(220, Number.isFinite(parsedFollowLead) ? parsedFollowLead : defaultAppSettings.streamFollowLeadPx)),
       streamRevealDurationMs: Math.max(0, Math.min(2000, Number.isFinite(parsedRevealDuration) ? parsedRevealDuration : defaultAppSettings.streamRevealDurationMs)),
       streamRevealWipePercent: Math.max(100, Math.min(400, Number.isFinite(parsedRevealWipe) ? parsedRevealWipe : defaultAppSettings.streamRevealWipePercent)),
-      downloadMode: parsed.downloadMode === "folder" ? "folder" : "ask",
+      downloadMode: parsed.downloadMode === "folder" || parsed.downloadMode === "ask" ? parsed.downloadMode : "browser",
       downloadFolderPath: String(parsed.downloadFolderPath || ""),
       shell: ["auto", "powershell", "git-bash", "cmd"].includes(parsed.shell) ? parsed.shell : defaultAppSettings.shell,
     };
@@ -96,7 +96,7 @@ export function saveAppSettings(nextSettings) {
   state.appSettings.streamFollowLeadPx = Math.max(0, Math.min(220, Number.isFinite(followLead) ? followLead : defaultAppSettings.streamFollowLeadPx));
   state.appSettings.streamRevealDurationMs = Math.max(0, Math.min(2000, Number.isFinite(revealDuration) ? revealDuration : defaultAppSettings.streamRevealDurationMs));
   state.appSettings.streamRevealWipePercent = Math.max(100, Math.min(400, Number.isFinite(revealWipe) ? revealWipe : defaultAppSettings.streamRevealWipePercent));
-  state.appSettings.downloadMode = state.appSettings.downloadMode === "folder" ? "folder" : "ask";
+  state.appSettings.downloadMode = state.appSettings.downloadMode === "folder" || state.appSettings.downloadMode === "ask" ? state.appSettings.downloadMode : "browser";
   state.appSettings.downloadFolderPath = String(state.appSettings.downloadFolderPath || "");
   state.appSettings.shell = ["auto", "powershell", "git-bash", "cmd"].includes(state.appSettings.shell)
     ? state.appSettings.shell

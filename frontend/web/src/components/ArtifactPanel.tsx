@@ -1,23 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import hljs from "highlight.js/lib/common";
 import { deleteArtifact, listProjectFiles, organizeProjectFiles, readArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary } from "../types/backend";
-import type { ArtifactPayload } from "../types/ui";
-import { MarkdownMessage } from "./MarkdownMessage";
-
-type IconName = "source" | "preview" | "copy" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh";
+import {
+  artifactCategory,
+  artifactExtension,
+  artifactIcon,
+  artifactKindLabel,
+  formatBytes,
+  isRootProjectFileCandidatePath,
+  normalizeProjectFilePath,
+} from "../utils/artifacts";
+import { Icon, type IconName } from "./ArtifactIcons";
+import { ArtifactPreview, artifactFrameBackMessage, isEditablePayload } from "./ArtifactPreview";
 
 const artifactHistoryMarker = "myharnessArtifactPanel";
-const artifactFrameBackMessage = "myharness:artifact-panel-back";
 const artifactPanelMinWidth = 320;
 const visibleChatMinWidth = 300;
 const desktopSidebarWidth = 268;
 const collapsedSidebarWidth = 16;
 const projectFileCategories = [
   ["all", "전체"],
-  ["web", "웹"],
+  ["web", "웹페이지"],
+  ["markdown", "마크다운"],
   ["docs", "문서"],
   ["data", "데이터"],
   ["code", "코드"],
@@ -54,52 +60,16 @@ export function clampArtifactPanelWidth(value: number, options: { windowWidth: n
   return Math.min(Math.max(value, artifactPanelMinWidth), maxWidth);
 }
 
-function iframeBackBridge(content: string) {
-  const bridge = `
-<script>
-(() => {
-  let pending = false;
-  const sendBack = (event) => {
-    if (event.button !== 3 && event.button !== 4) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (pending) return;
-    pending = true;
-    setTimeout(() => { pending = false; }, 900);
-    parent.postMessage({ type: "${artifactFrameBackMessage}" }, "*");
-  };
-  window.addEventListener("mousedown", sendBack, true);
-  window.addEventListener("mouseup", sendBack, true);
-  window.addEventListener("auxclick", sendBack, true);
-})();
-</script>`;
-  if (/<\/body\s*>/i.test(content)) {
-    return content.replace(/<\/body\s*>/i, `${bridge}</body>`);
-  }
-  return `${content}${bridge}`;
-}
-
 function artifactLabel(artifact: ArtifactSummary) {
-  if (artifact.kind === "html") return "HTML";
-  if (artifact.kind === "image") return "이미지";
-  if (artifact.kind === "pdf") return "PDF";
-  if (artifact.kind === "text") return "텍스트";
+  if (["html", "image", "pdf", "text"].includes(artifact.kind)) return artifactKindLabel(artifact.kind);
   return artifact.label || artifact.kind || "파일";
-}
-
-function artifactIcon(kind: string) {
-  if (kind === "html") return "</>";
-  if (kind === "image") return "IMG";
-  if (kind === "pdf") return "PDF";
-  if (kind === "text" || kind === "markdown" || kind === "json") return "TXT";
-  return "FILE";
 }
 
 function artifactTypeBadge(artifact: ArtifactSummary) {
   const ext = artifactExtension(artifact.path || artifact.name);
   const category = artifactCategory(artifact);
   if (["html", "htm"].includes(ext)) return { label: "HTML", tone: "web" };
-  if (["md", "markdown"].includes(ext)) return { label: "MD", tone: "docs" };
+  if (["md", "markdown"].includes(ext)) return { label: "MD", tone: "markdown" };
   if (["txt", "log"].includes(ext)) return { label: "TXT", tone: "docs" };
   if (["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ext)) return { label: ext.toUpperCase(), tone: "docs" };
   if (["json", "csv", "xml", "yaml", "yml", "toml", "ini"].includes(ext)) return { label: ext.toUpperCase(), tone: "data" };
@@ -107,14 +77,6 @@ function artifactTypeBadge(artifact: ArtifactSummary) {
   if (["png", "gif", "jpg", "jpeg", "webp", "svg"].includes(ext)) return { label: ext.toUpperCase(), tone: "image" };
   if (ext === "zip") return { label: "ZIP", tone: "archive" };
   return { label: artifactIcon(artifact.kind), tone: category };
-}
-
-function formatBytes(value?: number) {
-  const bytes = Number(value || 0);
-  if (!bytes) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function projectFileDirectory(path: string) {
@@ -138,114 +100,6 @@ function downloadUrl(artifact: ArtifactSummary, state: ReturnType<typeof useAppS
   if (state.workspacePath) query.set("workspacePath", state.workspacePath);
   if (state.workspaceName) query.set("workspaceName", state.workspaceName);
   return `/api/artifact/download?${query.toString()}`;
-}
-
-function Icon({ name }: { name: IconName }) {
-  if (name === "source") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="m16 18 6-6-6-6" />
-        <path d="m8 6-6 6 6 6" />
-      </svg>
-    );
-  }
-  if (name === "preview") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg>
-    );
-  }
-  if (name === "copy") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <rect x="9" y="9" width="11" height="11" rx="2" />
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-      </svg>
-    );
-  }
-  if (name === "fullscreen") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-        <path d="M16 3h3a2 2 0 0 1 2 2v3" />
-        <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
-        <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-      </svg>
-    );
-  }
-  if (name === "restore") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M8 3v3a2 2 0 0 1-2 2H3" />
-        <path d="M16 3v3a2 2 0 0 0 2 2h3" />
-        <path d="M8 21v-3a2 2 0 0 0-2-2H3" />
-        <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
-      </svg>
-    );
-  }
-  if (name === "back") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="m15 18-6-6 6-6" />
-      </svg>
-    );
-  }
-  if (name === "download") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M12 3v11" />
-        <path d="m7 10 5 5 5-5" />
-        <path d="M5 20h14" />
-      </svg>
-    );
-  }
-  if (name === "save") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
-        <path d="M17 21v-8H7v8" />
-        <path d="M7 3v5h8" />
-      </svg>
-    );
-  }
-  if (name === "trash") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M3 6h18" />
-        <path d="M8 6V4h8v2" />
-        <path d="M19 6l-1 14H6L5 6" />
-        <path d="M10 11v5" />
-        <path d="M14 11v5" />
-      </svg>
-    );
-  }
-  if (name === "warning") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M12 3 21 20H3L12 3Z" />
-        <path d="M12 9v5" />
-        <path d="M12 17h.01" />
-      </svg>
-    );
-  }
-  if (name === "refresh") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" />
-        <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
-        <path d="M3 21v-5h5" />
-        <path d="M21 3v5h-5" />
-      </svg>
-    );
-  }
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24">
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
-  );
 }
 
 function ArtifactAction({
@@ -276,7 +130,6 @@ function ArtifactAction({
     </button>
   );
 }
-
 export function ArtifactPanel() {
   const { state, dispatch } = useAppState();
   const [loadingPath, setLoadingPath] = useState("");
@@ -643,66 +496,8 @@ export function ArtifactPanel() {
   );
 }
 
-const projectFileCandidateExtensions = new Set([
-  "html",
-  "htm",
-  "md",
-  "markdown",
-  "txt",
-  "pdf",
-  "doc",
-  "docx",
-  "xls",
-  "xlsx",
-  "ppt",
-  "pptx",
-  "json",
-  "csv",
-  "xml",
-  "yaml",
-  "yml",
-  "toml",
-  "ini",
-  "log",
-  "py",
-  "js",
-  "mjs",
-  "cjs",
-  "ts",
-  "tsx",
-  "jsx",
-  "css",
-  "sql",
-  "sh",
-  "ps1",
-  "bat",
-  "cmd",
-  "png",
-  "gif",
-  "jpg",
-  "jpeg",
-  "webp",
-  "svg",
-  "zip",
-]);
-
-function normalizeProjectFilePath(value: string) {
-  return String(value || "").replace(/\\/g, "/").replace(/^\/+/, "");
-}
-
 function isRootOrganizeCandidate(artifact: ArtifactSummary) {
-  const path = normalizeProjectFilePath(artifact.path || artifact.name || "");
-  if (!path || path.includes("/") || path.startsWith("outputs/")) return false;
-  return projectFileCandidateExtensions.has(artifactExtension(path));
-}
-
-function artifactCategory(artifact: ArtifactSummary) {
-  const ext = artifactExtension(artifact.path || artifact.name);
-  if (["html", "htm"].includes(ext)) return "web";
-  if (["md", "markdown", "txt", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ext)) return "docs";
-  if (["json", "csv", "xml", "yaml", "yml", "toml", "ini", "log"].includes(ext)) return "data";
-  if (["py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "css", "sql", "sh", "ps1", "bat", "cmd"].includes(ext)) return "code";
-  return "other";
+  return isRootProjectFileCandidatePath(artifact.path || artifact.name || "");
 }
 
 function sortedArtifacts(artifacts: ArtifactSummary[], filter: string, sort: string) {
@@ -850,11 +645,10 @@ function ProjectFileItem({
   const badge = artifactTypeBadge(artifact);
   return (
     <div className={`project-file-item${deleteReady ? " delete-ready" : ""}${deleting ? " deleting" : ""}`}>
-      <button className="project-file-open" type="button" aria-label={`${artifact.name || artifact.path} 열기`} data-tooltip={artifact.path} onClick={() => void onOpen(artifact)}>
+      <button className="project-file-open" type="button" aria-label={`${artifact.name || artifact.path} 열기`} data-tooltip={artifact.name || artifact.path} onClick={() => void onOpen(artifact)}>
         <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
         <span className="artifact-card-copy">
           <strong>{artifact.name || artifact.path}</strong>
-          <small>{loading ? "불러오는 중" : [artifactLabel(artifact), formatBytes(artifact.size)].filter(Boolean).join(" · ")}</small>
         </span>
       </button>
       <span className="project-file-actions">
@@ -871,6 +665,7 @@ function ProjectFileItem({
         >
           <Icon name={deleteReady ? "warning" : "trash"} />
         </button>
+        <span className="project-file-size artifact-card-size">{loading ? "불러오는 중" : formatBytes(artifact.size)}</span>
         <a className="project-file-download" href={downloadUrl} download={artifact.name} aria-label={`${artifact.name} 다운로드`} data-tooltip="다운로드" onClick={(event) => event.stopPropagation()}>
           <Icon name="download" />
         </a>
@@ -1001,156 +796,5 @@ function OrganizeProjectFilesModal({
         </div>
       </div>
     </div>
-  );
-}
-
-function isEditablePayload(artifact: ArtifactSummary, payload: ArtifactPayload) {
-  const kind = String(payload.kind || artifact.kind || "");
-  return kind === "html" || kind === "text" || kind === "markdown" || kind === "json";
-}
-
-function isMarkdownArtifact(artifact: ArtifactSummary, payload: ArtifactPayload) {
-  const kind = String(payload.kind || artifact.kind || "").toLowerCase();
-  const path = String(artifact.path || "").toLowerCase();
-  return kind === "markdown" || path.endsWith(".md") || path.endsWith(".markdown");
-}
-
-const sourceCodeExtensions = new Set(["py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "css", "sql", "sh", "ps1", "bat", "cmd"]);
-
-function isSourceCodeArtifact(artifact: ArtifactSummary) {
-  return sourceCodeExtensions.has(artifactExtension(artifact.path || artifact.name));
-}
-
-function ArtifactPreview({
-  artifact,
-  payload,
-  draftContent,
-  sourceMode,
-  downloadUrl,
-  onDraftContentChange,
-}: {
-  artifact: ArtifactSummary;
-  payload: ArtifactPayload;
-  draftContent: string;
-  sourceMode: boolean;
-  downloadUrl: string;
-  onDraftContentChange: (value: string) => void;
-}) {
-  const kind = String(payload.kind || artifact.kind || "");
-  const content = String(payload.content || "");
-  const dataUrl = String(payload.dataUrl || "");
-  if (sourceMode && content && (kind === "html" || isSourceCodeArtifact(artifact))) {
-    return <HighlightedArtifactSource artifact={artifact} content={draftContent || content} />;
-  }
-  if (sourceMode && content) {
-    return (
-      <textarea
-        className="artifact-text artifact-source-editor"
-        value={draftContent || content}
-        aria-label={`${artifact.name} 원문`}
-        onChange={(event) => onDraftContentChange(event.currentTarget.value)}
-      />
-    );
-  }
-  if (kind === "html") {
-    return <iframe className="artifact-frame artifact-html-frame" title={artifact.name} sandbox="allow-scripts" srcDoc={iframeBackBridge(draftContent || content)} />;
-  }
-  if (kind === "image") {
-    return <img className="artifact-image" src={dataUrl} alt={artifact.name} />;
-  }
-  if (kind === "pdf") {
-    return <iframe className="artifact-frame" title={artifact.name} src={dataUrl} />;
-  }
-  if (isMarkdownArtifact(artifact, payload)) {
-    return (
-      <div className="artifact-markdown">
-        <MarkdownMessage text={content || "(내용 없음)"} />
-      </div>
-    );
-  }
-  if (content && isSourceCodeArtifact(artifact)) {
-    return <HighlightedArtifactSource artifact={artifact} content={draftContent || content} />;
-  }
-  if (kind === "file") {
-    return (
-      <div className="artifact-file">
-        <p className="artifact-empty">이 파일 형식은 미리보기 대신 다운로드로 열 수 있습니다.</p>
-        <a className="artifact-file-download" href={downloadUrl} download={artifact.name} aria-label={`${artifact.name} 다운로드`}>
-          <Icon name="download" />
-          <span>다운로드</span>
-        </a>
-      </div>
-    );
-  }
-  return (
-    <textarea
-      className="artifact-text artifact-source-editor"
-      value={draftContent || content}
-      aria-label={`${artifact.name} 내용`}
-      onChange={(event) => onDraftContentChange(event.currentTarget.value)}
-    />
-  );
-}
-
-function artifactExtension(path: string) {
-  const match = String(path || "").match(/\.([a-z0-9]+)$/i);
-  return match ? match[1].toLowerCase() : "";
-}
-
-function sourceLanguageForArtifact(path: string) {
-  const aliases: Record<string, string> = {
-    htm: "html",
-    html: "html",
-    md: "markdown",
-    markdown: "markdown",
-    txt: "plaintext",
-    json: "json",
-    csv: "csv",
-    yaml: "yaml",
-    yml: "yaml",
-    toml: "toml",
-    ini: "ini",
-    log: "plaintext",
-    svg: "xml",
-    xml: "xml",
-    js: "javascript",
-    mjs: "javascript",
-    cjs: "javascript",
-    ts: "typescript",
-    tsx: "typescript",
-    jsx: "javascript",
-    css: "css",
-    py: "python",
-    sql: "sql",
-    ps1: "powershell",
-    sh: "bash",
-    bat: "dos",
-    cmd: "dos",
-  };
-  const ext = artifactExtension(path);
-  return aliases[ext] || ext || "plaintext";
-}
-
-function escapeHtml(value: string) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function HighlightedArtifactSource({ artifact, content }: { artifact: ArtifactSummary; content: string }) {
-  const language = sourceLanguageForArtifact(artifact.path);
-  const highlighted = hljs.getLanguage(language)
-    ? hljs.highlight(content, { language, ignoreIllegals: true }).value
-    : escapeHtml(content);
-  return (
-    <pre className="artifact-text artifact-source">
-      <code
-        className={`hljs language-${language}`}
-        data-highlighted="yes"
-        dangerouslySetInnerHTML={{ __html: highlighted }}
-      />
-    </pre>
   );
 }

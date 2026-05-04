@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from myharness.api.client import ApiMessageCompleteEvent
+from myharness.api.errors import RequestFailure
 from myharness.api.usage import UsageSnapshot
 from myharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
 from myharness.hooks import HookEvent
@@ -132,6 +133,12 @@ class _HookExecutorStub:
         return AggregatedHookResult()
 
 
+class _PromptTooLargeApiClient:
+    async def stream_message(self, request):
+        del request
+        raise RequestFailure("Your input exceeds the context window of this model. (code=context_length_exceeded)")
+
+
 def test_try_session_memory_compaction_reduces_long_history():
     messages = [
         ConversationMessage(role="user", content=[TextBlock(text=(f"user {index} " * 200).strip())])
@@ -165,6 +172,58 @@ def test_try_context_collapse_trims_oversized_messages():
 
     assert result is not None
     assert "[collapsed" in result[0].text
+
+
+def test_try_context_collapse_can_trim_recent_tool_results():
+    giant = ("search result " * 1000).strip()
+    messages = [
+        ConversationMessage(role="user", content=[TextBlock(text="search this")]),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="call_search", name="web_search", input={"query": "large"})],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="call_search", content=giant)],
+        ),
+    ]
+
+    result = try_context_collapse(messages, preserve_recent=6, include_preserved=True)
+
+    assert result is not None
+    tool_result = result[-1].content[0]
+    assert isinstance(tool_result, ToolResultBlock)
+    assert "[collapsed" in tool_result.content
+
+
+@pytest.mark.asyncio
+async def test_forced_auto_compact_returns_collapsed_messages_when_summary_prompt_is_too_large():
+    giant = ("search result " * 1000).strip()
+    messages = [
+        ConversationMessage(role="user", content=[TextBlock(text="search this")]),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="call_search", name="web_search", input={"query": "large"})],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="call_search", content=giant)],
+        ),
+    ]
+
+    compacted, was_compacted = await auto_compact_if_needed(
+        messages,
+        api_client=_PromptTooLargeApiClient(),
+        model="gpt-5.5",
+        state=AutoCompactState(),
+        force=True,
+        trigger="reactive",
+    )
+
+    assert was_compacted is True
+    tool_result = compacted[-1].content[0]
+    assert isinstance(tool_result, ToolResultBlock)
+    assert "[collapsed" in tool_result.content
 
 
 @pytest.mark.asyncio

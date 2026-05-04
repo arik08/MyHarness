@@ -88,31 +88,6 @@ function formatWorkflowContentCount(text, tokens) {
   return `${formatWorkflowTokenCount(tokens)} (${countWorkflowPreviewLines(text).toLocaleString()}줄)`;
 }
 
-const workflowPreviewBodyLineSummaryThreshold = 10;
-const workflowPreviewBodyCharSummaryThreshold = 4000;
-const workflowPreviewCollapsedLines = 11;
-const workflowPreviewCollapsedChars = 1200;
-
-function workflowPreviewBodyDisplay(text, kind = "content", expanded = false) {
-  const value = String(text || "");
-  const shouldCollapse = kind !== "diff"
-    && value
-    && (value.length > workflowPreviewBodyCharSummaryThreshold
-      || countWorkflowPreviewLines(value) >= workflowPreviewBodyLineSummaryThreshold);
-  if (
-    !shouldCollapse
-    || expanded
-  ) {
-    return { text: value, canCollapse: Boolean(shouldCollapse) };
-  }
-  const lines = value.replace(/\r\n/g, "\n").split("\n");
-  let preview = lines.slice(0, workflowPreviewCollapsedLines).join("\n").trimEnd();
-  if (preview.length > workflowPreviewCollapsedChars) {
-    preview = preview.slice(0, workflowPreviewCollapsedChars).trimEnd();
-  }
-  return { text: `${preview}...`, canCollapse: true };
-}
-
 function workflowInputValue(input, keys) {
   for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(input || {}, key) && input[key] !== null && input[key] !== undefined) {
@@ -298,19 +273,7 @@ function renderWorkflowPreviewBody(preview, text) {
   preview.body.classList.toggle("diff", preview.kind === "diff");
   preview.body.textContent = "";
   if (preview.kind !== "diff") {
-    const display = workflowPreviewBodyDisplay(text, preview.kind, Boolean(preview.expanded));
-    preview.body.textContent = display.text;
-    if (display.canCollapse) {
-      const toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = "workflow-output-toggle";
-      toggle.textContent = preview.expanded ? "접기" : "더 보기";
-      toggle.addEventListener("click", () => {
-        preview.expanded = !preview.expanded;
-        renderWorkflowPreviewBody(preview, text);
-      });
-      preview.node.append(toggle);
-    }
+    preview.body.textContent = String(text || "");
     return;
   }
   for (const line of String(text || "").split(/\r?\n/)) {
@@ -1530,7 +1493,7 @@ function detectWorkflowIntent(promptText = "") {
   return "default";
 }
 
-function ensureWorkflowPanel(promptText = "") {
+function ensureWorkflowPanel(promptText = "", options = {}) {
   if (state.workflowNode && state.workflowList && state.workflowSummary) {
     return;
   }
@@ -1592,7 +1555,7 @@ function ensureWorkflowPanel(promptText = "") {
     "",
     { role: "planning" },
   );
-  if (!state.restoringHistory) {
+  if (!state.restoringHistory && !options.suppressScroll) {
     startWorkflowWaitingTimer();
     scrollMessagesToBottom();
   }
@@ -1820,7 +1783,8 @@ function appendWorkflowInputDelta(event) {
   if (!delta) {
     return;
   }
-  ensureWorkflowPanel();
+  ensureWorkflowPanel("", { suppressScroll: true });
+  const toolName = String(event.tool_name || "");
   const key = workflowToolBufferKey(event);
   let current = workflowToolArgBuffers.get(key) || "";
   if (current && /^\s*\{/.test(delta) && /\}\s*$/.test(current)) {
@@ -1828,28 +1792,18 @@ function appendWorkflowInputDelta(event) {
   }
   const next = current + delta;
   workflowToolArgBuffers.set(key, next);
-  const oldField = firstPartialJsonStringField(next, ["old_str", "old_string"]);
-  const newField = firstPartialJsonStringField(next, ["new_str", "new_string"]);
-  const oldString = oldField.value;
-  const newString = newField.value;
-  const lower = String(event.tool_name || "").toLowerCase();
-  const diff = lower.includes("edit") && (oldField.found || newField.found)
-    ? formatWorkflowEditBlock(oldString, newString)
-    : "";
-  const contentField = firstPartialJsonStringField(next, ["content", "new_string", "new_source"]);
-  const content = diff || contentField.value;
-  const kind = diff ? "diff" : "content";
-  const path = extractPartialJsonStringValue(next, "file_path") || extractPartialJsonStringValue(next, "path");
-  if (!isWorkflowOutputTool(event.tool_name) || (!diff && !contentField.found)) {
+  const draft = workflowDraftFromBuffer(toolName, next);
+  if (!draft) {
     return;
   }
-  const fallbackKey = `delta:${key}`;
-  const previewKey = workflowPreviewKey(event.tool_name, { file_path: path }, fallbackKey);
+  const { content, kind, path, toolName: workflowToolName } = draft;
+  const previewFallbackKey = `delta:${key}`;
+  const previewKey = workflowPreviewKey(workflowToolName, { file_path: path }, previewFallbackKey);
   let preview = workflowPreviews.get(previewKey);
   if (!preview && path) {
-    preview = workflowPreviews.get(fallbackKey);
+    preview = workflowPreviews.get(previewFallbackKey);
     if (preview) {
-      workflowPreviews.delete(fallbackKey);
+      workflowPreviews.delete(previewFallbackKey);
       preview.key = previewKey;
       workflowPreviews.set(previewKey, preview);
     }
@@ -1863,9 +1817,37 @@ function appendWorkflowInputDelta(event) {
   preview.kind = kind;
   updateWorkflowPreviewTitle(preview, path);
   setWorkflowPreviewTarget(preview, content, { kind });
-  if (!state.restoringHistory && state.autoFollowMessages) {
-    scrollMessagesToBottom({ smooth: true, duration: 900 });
+}
+
+function workflowDraftFromBuffer(toolName, buffer) {
+  const oldField = firstPartialJsonStringField(buffer, ["old_str", "old_string"]);
+  const newField = firstPartialJsonStringField(buffer, ["new_str", "new_string"]);
+  const newSourceField = firstPartialJsonStringField(buffer, ["new_source"]);
+  const contentField = firstPartialJsonStringField(buffer, ["content", "new_string"]);
+  let inferredToolName = isWorkflowOutputTool(toolName) ? toolName : "";
+  if (!inferredToolName && !String(toolName || "").trim()) {
+    if (newSourceField.found) inferredToolName = "notebook_edit";
+    else if (oldField.found || newField.found) inferredToolName = "edit_file";
+    else if (contentField.found) inferredToolName = "write_file";
   }
+  if (!isWorkflowOutputTool(inferredToolName)) {
+    return null;
+  }
+  const path = extractPartialJsonStringValue(buffer, "file_path") || extractPartialJsonStringValue(buffer, "path");
+  const isDiff = inferredToolName.toLowerCase().includes("edit") && (oldField.found || newField.found);
+  if (isDiff) {
+    return {
+      toolName: inferredToolName,
+      path,
+      kind: "diff",
+      content: formatWorkflowEditBlock(oldField.value, newField.value),
+    };
+  }
+  const content = newSourceField.found ? newSourceField.value : contentField.value;
+  if (!newSourceField.found && !contentField.found) {
+    return null;
+  }
+  return { toolName: inferredToolName, path, kind: "content", content };
 }
 
 function startWorkflowWaitingTimer() {
@@ -2153,11 +2135,11 @@ function appendWorkflowEventNow(event) {
   if (isStart) {
     clearWorkflowActivityStep();
     startWorkflowOutputPreview(toolName, event.tool_input || {});
-    clearWorkflowToolArgBuffers(toolName);
+    clearWorkflowToolArgBuffers(event);
     scheduleMutationWaitingStep(toolName);
   }
   if (!isStart) {
-    clearWorkflowToolArgBuffers(toolName);
+    clearWorkflowToolArgBuffers(event);
     clearMutationWaitingStep(toolName);
     const matchingRunningStep = [...state.workflowList.querySelectorAll(".workflow-step.running")]
       .find((item) => item.dataset.toolName === toolName);
@@ -2199,17 +2181,15 @@ function appendWorkflowEventNow(event) {
 }
 
 function workflowToolBufferKey(event) {
-  const index = Number.isFinite(event.tool_call_index) ? event.tool_call_index : 0;
-  return `${event.tool_name || "tool"}:${index}`;
+  return `call:${workflowToolBufferIndex(event)}`;
 }
 
-function clearWorkflowToolArgBuffers(toolName) {
-  const prefix = `${toolName || "tool"}:`;
-  for (const key of workflowToolArgBuffers.keys()) {
-    if (key.startsWith(prefix)) {
-      workflowToolArgBuffers.delete(key);
-    }
-  }
+function workflowToolBufferIndex(event) {
+  return Number.isFinite(event.tool_call_index) ? event.tool_call_index : 0;
+}
+
+function clearWorkflowToolArgBuffers(event) {
+  workflowToolArgBuffers.delete(`call:${workflowToolBufferIndex(event || {})}`);
 }
 
 function appendWorkflowProgress(event) {

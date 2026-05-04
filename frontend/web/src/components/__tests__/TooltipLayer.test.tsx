@@ -41,4 +41,43 @@ describe("TooltipLayer", () => {
     expect(tooltip.className).toBe("tooltip-layer");
     expect(tooltip.style.position).toBe("fixed");
   });
+
+  it("places right-positioned tooltips beside the target", () => {
+    render(
+      <div>
+        <button
+          type="button"
+          data-tooltip="프로젝트 폴더 선택"
+          data-tooltip-placement="right"
+          ref={(node) => {
+            if (!node) {
+              return;
+            }
+            node.getBoundingClientRect = () => ({
+              bottom: 126,
+              height: 52,
+              left: 10,
+              right: 314,
+              top: 74,
+              width: 304,
+              x: 10,
+              y: 74,
+              toJSON: () => ({}),
+            });
+          }}
+        >
+          Default
+        </button>
+        <TooltipLayer />
+      </div>,
+    );
+
+    fireEvent.pointerOver(screen.getByRole("button", { name: "Default" }));
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toBe("프로젝트 폴더 선택");
+    expect(tooltip.style.left).toBe("322px");
+    expect(tooltip.style.top).toBe("100px");
+    expect(tooltip.style.transform).toBe("translate(0, -50%)");
+  });
 });

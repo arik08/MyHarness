@@ -4,6 +4,29 @@ import { appReducer, initialAppState } from "../reducer";
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
 
 describe("appReducer", () => {
+  it("uses browser download as the default file save mode", () => {
+    expect(initialAppState.appSettings.downloadMode).toBe("browser");
+  });
+
+  it("keeps all supported file save modes when settings change", () => {
+    const browser = appReducer(initialAppState, {
+      type: "set_app_settings",
+      value: { downloadMode: "browser" },
+    });
+    const ask = appReducer(initialAppState, {
+      type: "set_app_settings",
+      value: { downloadMode: "ask" },
+    });
+    const folder = appReducer(initialAppState, {
+      type: "set_app_settings",
+      value: { downloadMode: "folder" },
+    });
+
+    expect(browser.appSettings.downloadMode).toBe("browser");
+    expect(ask.appSettings.downloadMode).toBe("ask");
+    expect(folder.appSettings.downloadMode).toBe("folder");
+  });
+
   it("applies ready snapshots", () => {
     const next = appReducer(initialAppState, {
       type: "backend_event",
@@ -106,6 +129,32 @@ describe("appReducer", () => {
     expect(optimistic.messages[0].text).toBe("안녕?");
   });
 
+  it("ignores delayed duplicate regular user transcripts after an assistant tool-use handoff", () => {
+    const withOptimisticUser = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "랜딩 페이지에 작업 가능한 샘플 프롬프트 제안 필요" },
+    });
+    const withToolUseHandoff = appReducer(withOptimisticUser, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "도구 호출 준비", has_tool_uses: true },
+    });
+    const withWorkflow = appReducer(withToolUseHandoff, {
+      type: "backend_event",
+      event: { type: "tool_started", tool_name: "skill", tool_input: { name: "using-superpowers" } },
+    });
+    const next = appReducer(withWorkflow, {
+      type: "backend_event",
+      event: {
+        type: "transcript_item",
+        item: { role: "user", text: "랜딩 페이지에 작업 가능한 샘플 프롬프트 제안 필요" },
+      },
+    });
+
+    expect(next.messages).toHaveLength(2);
+    expect(next.messages[0].text).toBe("랜딩 페이지에 작업 가능한 샘플 프롬프트 제안 필요");
+    expect(next.messages[1].text).toBe("도구 호출 준비");
+  });
+
   it("restores regular backend user transcript when reconnecting to a live answer", () => {
     const reconnected = appReducer(
       { ...initialAppState, sessionId: "session-live", busy: true },
@@ -177,6 +226,176 @@ describe("appReducer", () => {
     expect(next.history.map((item) => item.value)).toEqual(["saved-old"]);
   });
 
+  it("keeps a saved history row when its live backend session becomes active", () => {
+    const next = appReducer(
+      {
+        ...initialAppState,
+        sessionId: "old-session",
+        history: [
+          {
+            value: "saved-live",
+            label: "5/3 10:00 2 msg",
+            description: "저장된 live 대화",
+            live: true,
+            liveSessionId: "web-live",
+            busy: false,
+          },
+          {
+            value: "web-live",
+            label: "진행 중인 채팅",
+            description: "열려 있는 세션",
+            live: true,
+            liveSessionId: "web-live",
+            busy: false,
+          },
+        ],
+      },
+      {
+        type: "session_started",
+        sessionId: "web-live",
+        clientId: "client-1",
+      },
+    );
+
+    expect(next.history.map((item) => item.value)).toEqual(["saved-live"]);
+  });
+
+  it("hides the active backend question when switching to another live session", () => {
+    const withQuestion = appReducer(
+      { ...initialAppState, sessionId: "session-a" },
+      {
+        type: "backend_event",
+        event: {
+          type: "modal_request",
+          modal: { kind: "question", request_id: "question-a", question: "A 세션 질문" },
+        },
+      },
+    );
+
+    const switched = appReducer(withQuestion, {
+      type: "session_started",
+      sessionId: "session-b",
+      clientId: "client-1",
+    });
+
+    expect(switched.modal).toBeNull();
+  });
+
+  it("restores each live session's pending backend question when switching back", () => {
+    const sessionAQuestion = appReducer(
+      { ...initialAppState, sessionId: "session-a" },
+      {
+        type: "backend_event",
+        event: {
+          type: "modal_request",
+          modal: { kind: "question", request_id: "question-a", question: "A 세션 질문" },
+        },
+      },
+    );
+    const sessionB = appReducer(sessionAQuestion, {
+      type: "session_started",
+      sessionId: "session-b",
+      clientId: "client-1",
+    });
+    const sessionBQuestion = appReducer(sessionB, {
+      type: "backend_event",
+      event: {
+        type: "modal_request",
+        modal: { kind: "question", request_id: "question-b", question: "B 세션 질문" },
+      },
+    });
+
+    const restoredSessionA = appReducer(sessionBQuestion, {
+      type: "session_started",
+      sessionId: "session-a",
+      clientId: "client-1",
+    });
+
+    expect(restoredSessionA.modal).toEqual({
+      kind: "backend",
+      payload: { kind: "question", request_id: "question-a", question: "A 세션 질문" },
+    });
+  });
+
+  it("restores pending backend questions after returning through a saved history id alias", () => {
+    const withQuestion = appReducer(
+      { ...initialAppState, sessionId: "live-a", activeHistoryId: "saved-a" },
+      {
+        type: "backend_event",
+        event: {
+          type: "modal_request",
+          modal: { kind: "question", request_id: "question-a", question: "저장된 A 질문" },
+        },
+      },
+    );
+    const switchedAway = appReducer(withQuestion, {
+      type: "begin_history_restore",
+      sessionId: "saved-b",
+    });
+    const sessionB = appReducer(switchedAway, {
+      type: "session_started",
+      sessionId: "live-b",
+      clientId: "client-1",
+    });
+
+    const restoringA = appReducer(sessionB, {
+      type: "begin_history_restore",
+      sessionId: "saved-a",
+    });
+    const restored = appReducer(restoringA, {
+      type: "session_started",
+      sessionId: "live-a",
+      clientId: "client-1",
+    });
+
+    expect(restored.modal).toEqual({
+      kind: "backend",
+      payload: { kind: "question", request_id: "question-a", question: "저장된 A 질문" },
+    });
+  });
+
+  it("keeps backend resume selection requests in the sidebar instead of opening a modal", () => {
+    const next = appReducer(
+      { ...initialAppState, sessionId: "session-current" },
+      {
+        type: "backend_event",
+        event: {
+          type: "select_request",
+          modal: { command: "resume" },
+          select_options: [
+            { value: "saved-a", label: "05/05 04:12 6msg", description: "역질문 테스트" },
+            { value: "saved-b", label: "05/05 03:28 6msg", description: "$dispatching-parallel-agents 설명" },
+          ],
+        },
+      },
+    );
+
+    expect(next.modal).toBeNull();
+    expect(next.history).toEqual([
+      { value: "saved-a", label: "05/05 04:12 6msg", description: "역질문 테스트" },
+      { value: "saved-b", label: "05/05 03:28 6msg", description: "$dispatching-parallel-agents 설명" },
+    ]);
+  });
+
+  it("closes stale resume selection modals when the history list changes", () => {
+    const next = appReducer(
+      {
+        ...initialAppState,
+        sessionId: "session-current",
+        modal: {
+          kind: "backend",
+          payload: {
+            command: "resume",
+            select_options: [{ value: "saved-a", label: "05/05 04:12 6msg", description: "역질문 테스트" }],
+          },
+        },
+      },
+      { type: "set_history", history: [] },
+    );
+
+    expect(next.modal).toBeNull();
+  });
+
   it("keeps queued and steering user transcript items visible", () => {
     const next = appReducer(initialAppState, {
       type: "backend_event",
@@ -217,6 +436,39 @@ describe("appReducer", () => {
     expect(next.busy).toBe(false);
     expect(next.artifactRefreshKey).toBe(busy.artifactRefreshKey + 1);
     expect(next.historyRefreshKey).toBe(busy.historyRefreshKey + 1);
+  });
+
+  it("measures workflow duration from the user request across stage changes", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-05-05T00:00:00Z"));
+      const withUserMessage = appReducer(initialAppState, {
+        type: "append_message",
+        message: { role: "user", text: "테스트해줘" },
+      });
+
+      vi.setSystemTime(new Date("2026-05-05T00:00:02Z"));
+      const withTool = appReducer(withUserMessage, {
+        type: "backend_event",
+        event: { type: "tool_started", tool_name: "shell_command", tool_input: { command: "npm test" } },
+      });
+
+      vi.setSystemTime(new Date("2026-05-05T00:00:05Z"));
+      const withAnswer = appReducer(withTool, {
+        type: "backend_event",
+        event: { type: "assistant_delta", message: "완료했습니다." },
+      });
+
+      vi.setSystemTime(new Date("2026-05-05T00:00:07Z"));
+      const completed = appReducer(withAnswer, {
+        type: "backend_event",
+        event: { type: "line_complete" },
+      });
+
+      expect(completed.workflowDurationSeconds).toBe(7);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps backend errors visible after line completion", () => {
@@ -510,6 +762,53 @@ describe("appReducer", () => {
     ]);
   });
 
+  it("treats blocked web research tool failures as warnings instead of failing the whole purpose group", () => {
+    const startedSearch = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "web_search",
+        tool_call_id: "call-search",
+        tool_input: { query: "Neon Genesis Evangelion overview production impact official" },
+      } as any,
+    });
+    const completedSearch = appReducer(startedSearch, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "web_search",
+        tool_call_id: "call-search",
+        output: "Search results for: Neon Genesis Evangelion overview production impact official",
+      } as any,
+    });
+    const startedFetch = appReducer(completedSearch, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "web_fetch",
+        tool_call_id: "call-fetch",
+        tool_input: { url: "https://en.wikipedia.org/wiki/Neon_Genesis_Evangelion" },
+      } as any,
+    });
+    const completedFetch = appReducer(startedFetch, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "web_fetch",
+        tool_call_id: "call-fetch",
+        output: "web_fetch failed: Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Neon_Genesis_Evangelion'",
+        is_error: true,
+      } as any,
+    });
+
+    const purpose = completedFetch.workflowEvents.find((event) => event.role === "purpose");
+    const fetchStep = completedFetch.workflowEvents.find((event) => event.toolName === "web_fetch");
+
+    expect(fetchStep?.status).toBe("warning");
+    expect(purpose?.status).toBe("warning");
+    expect(purpose?.detail).toBe("일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.");
+  });
+
   it("keeps the header status compact for web tools and answer streaming", () => {
     const started = appReducer(initialAppState, {
       type: "backend_event",
@@ -639,6 +938,113 @@ describe("appReducer", () => {
       toolCallIndex: 0,
     });
     expect(writeEvents[0].toolInput?.path).toBe("agent-harness-trend-report.html");
+  });
+
+  it("shows file write previews even when streamed tool deltas arrive before the tool name", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_call_index: 0,
+        arguments_delta: "{\"path\":\"outputs/evangelion-content-report.html\",\"content\":\"<!doctype html>",
+      },
+    });
+    const second = appReducer(first, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_call_index: 0,
+        arguments_delta: "<html><body>streaming</body></html>",
+      },
+    });
+    const previewBeforeStart = second.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(previewBeforeStart).toHaveLength(1);
+    expect(previewBeforeStart[0].status).toBe("running");
+    expect(previewBeforeStart[0].toolInput?.content).toContain("<body>streaming</body>");
+
+    const started = appReducer(second, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        tool_input: {
+          path: "outputs/evangelion-content-report.html",
+          content: "<!doctype html><html><body>streaming</body></html>",
+        },
+      },
+    });
+
+    const writeEvents = started.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(writeEvents).toHaveLength(1);
+    expect(writeEvents[0].status).toBe("running");
+    expect(writeEvents[0].toolInput?.path).toBe("outputs/evangelion-content-report.html");
+    expect(writeEvents[0].toolInput?.content).toContain("<body>streaming</body>");
+  });
+
+  it("keeps appending to the same file preview when the streamed tool name appears late", () => {
+    const unnamed = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_call_index: 0,
+        arguments_delta: "{\"path\":\"outputs/live-report.html\",\"content\":\"hello",
+      },
+    });
+    const named = appReducer(unnamed, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        arguments_delta: " world",
+      },
+    });
+
+    const writeEvents = named.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(writeEvents).toHaveLength(1);
+    expect(writeEvents[0].toolInput?.content).toBe("hello world");
+  });
+
+  it("infers notebook edit previews from unnamed new_source deltas", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_call_index: 1,
+        arguments_delta: "{\"path\":\"analysis.ipynb\",\"new_source\":\"print",
+      },
+    });
+    const second = appReducer(first, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_call_index: 1,
+        arguments_delta: "(42)",
+      },
+    });
+    const previewBeforeStart = second.workflowEvents.filter((event) => event.toolName === "notebook_edit");
+    expect(previewBeforeStart).toHaveLength(1);
+    expect(previewBeforeStart[0].toolInput?.new_source).toBe("print(42)");
+    expect(second.workflowEvents.some((event) => event.toolName === "write_file")).toBe(false);
+
+    const started = appReducer(second, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "notebook_edit",
+        tool_call_index: 1,
+        tool_input: {
+          path: "analysis.ipynb",
+          new_source: "print(42)",
+        },
+      },
+    });
+
+    const notebookEvents = started.workflowEvents.filter((event) => event.toolName === "notebook_edit");
+    expect(notebookEvents).toHaveLength(1);
+    expect(notebookEvents[0].toolInput?.new_source).toBe("print(42)");
+    expect(started.workflowEvents.some((event) => event.toolName === "write_file")).toBe(false);
   });
 
   it("merges shell shortcut output into the optimistic terminal message", () => {

@@ -201,6 +201,72 @@ async def test_generate_image_uses_codex_oauth_when_api_key_missing(
     ]
 
 
+@pytest.mark.asyncio
+async def test_generate_image_uses_codex_oauth_for_codex_provider_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("MYHARNESS_IMAGE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("myharness.tools.image_generation_tool.load_credential", lambda *_: None)
+    monkeypatch.setattr("myharness.tools.image_generation_tool.load_external_binding", lambda *_: None)
+    monkeypatch.setattr(
+        "myharness.tools.image_generation_tool.load_external_credential",
+        lambda *_: _FakeCredential(),
+    )
+    monkeypatch.setattr(
+        "myharness.tools.image_generation_tool._build_codex_headers",
+        lambda token, **_: {"Authorization": f"Bearer {token}"},
+    )
+    monkeypatch.setattr("myharness.tools.image_generation_tool.httpx.AsyncClient", _FakeHttpClient)
+    _FakeHttpClient.last_post = None
+
+    result = await ImageGenerationTool().execute(
+        ImageGenerationToolInput(
+            prompt="small red cube",
+            path="out/provider-codex.png",
+            size="1024x1024",
+            background="transparent",
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={"provider": "openai_codex", "runtime_model": "gpt-5.5-mini"},
+        ),
+    )
+
+    assert result.is_error is False
+    assert (tmp_path / "out" / "provider-codex.png").read_bytes() == b"codex-png"
+    assert result.metadata == {
+        "path": str((tmp_path / "out" / "provider-codex.png").resolve()),
+        "mime_type": "image/png",
+        "backend": "codex_oauth_responses_image_generation",
+        "image_model": "gpt-image-2",
+        "image_model_label": "GPT Image 2",
+        "requested_image_model_hint": "gpt-image-2",
+        "codex_model": "gpt-5.5-mini",
+    }
+
+    post = _FakeHttpClient.last_post
+    assert post is not None
+    assert post["headers"] == {
+        "Authorization": "Bearer codex-token",
+        "version": "0.122.0",
+        "originator": "codex_cli_rs",
+    }
+    body = post["json"]
+    assert isinstance(body, dict)
+    assert body["model"] == "gpt-5.5-mini"
+    assert body["tools"] == [
+        {
+            "type": "image_generation",
+            "size": "1024x1024",
+            "quality": "auto",
+            "output_format": "png",
+            "background": "transparent",
+        }
+    ]
+
+
 def test_default_registry_includes_generate_image():
     registry = create_default_tool_registry()
 

@@ -181,3 +181,44 @@ test("smooth vertical auto-scroll accelerates before slowing down", async () => 
   assert.ok(deltas[1] > deltas[0], `expected acceleration, got deltas ${deltas.join(", ")}`);
   assert.ok(deltas[4] < deltas[3], `expected deceleration near the target, got deltas ${deltas.join(", ")}`);
 });
+
+test("continuous streaming follow eases into sudden target growth", async () => {
+  const animationFrames = [];
+  installBrowserGlobals();
+  globalThis.window.matchMedia = () => ({ matches: false });
+  globalThis.window.requestAnimationFrame = (callback) => {
+    animationFrames.push(callback);
+    return animationFrames.length;
+  };
+  globalThis.performance.now = () => 0;
+  const { createUI } = await import("../modules/ui.js");
+  const messages = createMessagesContainer({
+    scrollHeight: 800,
+    clientHeight: 200,
+    scrollTop: 0,
+    lastScrollTop: 0,
+  });
+  const { state, ui } = createUiWithMessages(createUI, messages);
+  state.autoFollowMessages = true;
+
+  ui.scrollMessagesToBottom({ smooth: true, duration: 1000, followTail: true, continuous: true });
+
+  const samples = [];
+  for (const now of [0, 16]) {
+    const frame = animationFrames.shift();
+    assert.equal(typeof frame, "function");
+    frame(now);
+    samples.push(messages.scrollTop);
+  }
+  messages.scrollHeight = 1400;
+  for (const now of [32, 48, 64]) {
+    const frame = animationFrames.shift();
+    assert.equal(typeof frame, "function");
+    frame(now);
+    samples.push(messages.scrollTop);
+  }
+
+  const deltas = samples.slice(1).map((value, index) => value - samples[index]);
+  const accelerations = deltas.slice(1).map((value, index) => value - deltas[index]);
+  assert.ok(Math.max(...accelerations) < 5, `expected bounded acceleration after target jump, got deltas ${deltas.join(", ")}`);
+});

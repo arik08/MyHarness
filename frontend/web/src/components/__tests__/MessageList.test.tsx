@@ -48,6 +48,62 @@ function WorkflowProgressProbe() {
   );
 }
 
+function WorkflowWriteDeltaProbe() {
+  const { dispatch } = useAppState();
+  const sendDelta = (content: string) => dispatch({
+    type: "backend_event",
+    event: {
+      type: "tool_input_delta",
+      tool_name: "write_file",
+      tool_call_index: 0,
+      arguments_delta: JSON.stringify({
+        path: "outputs/internet-ai-future-report.html",
+        content,
+      }),
+    },
+  });
+  return (
+    <>
+      <button type="button" onClick={() => sendDelta("<!doctype html>\n<section>1</section>")}>write first</button>
+      <button type="button" onClick={() => sendDelta("<!doctype html>\n<section>1</section>\n<section>2</section>")}>write more</button>
+    </>
+  );
+}
+
+function WorkflowWriteCompleteProbe() {
+  const { dispatch } = useAppState();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        dispatch({
+          type: "backend_event",
+          event: {
+            type: "tool_input_delta",
+            tool_name: "write_file",
+            tool_call_index: 0,
+            arguments_delta: JSON.stringify({
+              path: "outputs/internet-ai-future-report.html",
+              content: "<!doctype html>\n<section>완성 중</section>",
+            }),
+          },
+        });
+        dispatch({
+          type: "backend_event",
+          event: {
+            type: "tool_completed",
+            tool_name: "file_write",
+            tool_call_index: 0,
+            output: "outputs/internet-ai-future-report.html",
+          },
+        });
+      }}
+    >
+      complete write
+    </button>
+  );
+}
+
 function StreamingDeltaProbe() {
   const { dispatch } = useAppState();
   const sendDelta = (message: string) => dispatch({
@@ -135,6 +191,25 @@ describe("MessageList", () => {
     expect(document.querySelector(".react-message-text")?.textContent).toContain("당신은 누구입니까");
   });
 
+  it("renders skill tokens as inline pills in assistant markdown", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "assistant-1", role: "assistant", text: "`$dispatching-parallel-agents` 는 병렬 작업용 스킬입니다." },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const skill = screen.getByText("dispatching-parallel-agents");
+    expect(skill.className).toContain("prompt-token skill");
+    expect(document.querySelector(".markdown-body code")).toBeNull();
+  });
+
   it("renders legacy badges for steering and queued user messages", () => {
     render(
       <AppStateProvider
@@ -210,11 +285,37 @@ describe("MessageList", () => {
 
     const group = document.querySelector('[data-workflow-group-id="group-info"]');
     expect(group).toBeTruthy();
+    expect(document.querySelector(".workflow-narration")?.textContent || "").toContain("판단 근거를 모으고 있습니다");
     expect(group?.querySelector('[data-workflow-role="purpose"]')?.textContent).toContain("정보 수집");
     const childTitles = [...(group?.querySelectorAll(".workflow-children .workflow-step.child strong") || [])]
       .map((node) => node.textContent);
     expect(childTitles).toEqual(["web_search", "web_fetch"]);
-    expect(document.querySelector(".workflow-count")?.textContent).toBe("1개 실행 중");
+    expect(document.querySelector(".workflow-count")?.textContent).toBe("4개 기록 · 1개 실행 중");
+  });
+
+  it("renders a natural workflow narration for active verification work", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [{ id: "user-1", role: "user", text: "화면 점검해줘" }],
+          workflowEvents: [
+            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
+            { id: "workflow-2", toolName: "", title: "결과 검증", detail: "결과를 확인하고 있습니다.", status: "running", level: "parent", role: "purpose", purpose: "verification", groupId: "group-verify" },
+            { id: "workflow-3", toolName: "shell_command", title: "명령 실행", detail: "npm test", status: "done", level: "child", groupId: "group-verify" },
+            { id: "workflow-4", toolName: "playwright", title: "브라우저 확인", detail: "localhost", status: "running", level: "child", groupId: "group-verify" },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const narration = document.querySelector(".workflow-narration")?.textContent || "";
+    expect(narration).toContain("방금 1개 결과를 확인했고");
+    expect(narration).toContain("오류나 깨진 화면이 없는지 검증");
   });
 
   it("stagger-reveals active workflow rows instead of showing a web tool batch at once", () => {
@@ -321,6 +422,42 @@ describe("MessageList", () => {
       .find((text) => text.includes("작업 진행")) || "";
 
     expect(workflowArticle).toContain("5개 기록 (42초)");
+  });
+
+  it("updates the active workflow total duration every second", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-05T00:00:00Z"));
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          messages: [
+            { id: "user-1", role: "user", text: "테스트해줘" },
+            { id: "assistant-1", role: "assistant", text: "작성 중입니다." },
+          ],
+          workflowAnchorMessageId: "user-1",
+          workflowStartedAtMs: Date.now(),
+          workflowEvents: [
+            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
+            { id: "workflow-2", toolName: "", title: "응답 작성", detail: "답변 본문을 작성하고 있습니다.", status: "running", level: "parent", role: "final" },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    const workflowArticle = [...document.querySelectorAll("article.message")]
+      .map((node) => node.textContent || "")
+      .find((text) => text.includes("작업 진행")) || "";
+
+    expect(workflowArticle).toContain("2개 기록 (1초)");
   });
 
   it("renders restored workflow records under each user turn", () => {
@@ -549,8 +686,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-card")?.hasAttribute("open")).toBe(true);
   });
 
-  it("collapses long write tool content in the workflow output preview body", async () => {
-    const user = userEvent.setup();
+  it("does not collapse long completed write tool content in the workflow output preview body", () => {
     const longContent = [
       "첫 줄입니다.",
       ...Array.from({ length: 24 }, (_, index) => `긴 본문 ${index + 1}번째 줄입니다.`),
@@ -586,16 +722,50 @@ describe("MessageList", () => {
     );
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
-    expect(body.textContent).not.toBe(longContent);
-    expect(body.textContent).toContain("첫 줄입니다.");
-    expect(body.textContent).toContain("긴 본문 10번째 줄입니다.");
-    expect(body.textContent).not.toContain("긴 본문 11번째 줄입니다.");
-    expect(screen.getByRole("button", { name: "더 보기" })).toBeTruthy();
-    expect(screen.getByText(/\d+ 토큰 \(26줄\)/)).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: "더 보기" }));
     expect(body.textContent).toBe(longContent);
-    expect(screen.getByRole("button", { name: "접기" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
+    expect(screen.getByText(/\d+ 토큰 \(26줄\)/)).toBeTruthy();
+  });
+
+  it("does not collapse long write tool content while it is still streaming", () => {
+    const longContent = [
+      "<!doctype html>",
+      ...Array.from({ length: 24 }, (_, index) => `<section>작성 중 ${index + 1}</section>`),
+      "</html>",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "긴 HTML 파일 만들어줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "outputs/internet-ai-future-report.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/internet-ai-future-report.html",
+                content: longContent,
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const body = document.querySelector(".workflow-output-body") as HTMLElement;
+    expect(screen.getByText("작성 중인 결과물 - internet-ai-future-report.html")).toBeTruthy();
+    expect(body.textContent).toBe(longContent);
+    expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
   });
 
   it("renders edit previews as colored diff rows", () => {
@@ -691,6 +861,110 @@ describe("MessageList", () => {
       if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
       if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
     }
+  });
+
+  it("does not move the message list scroll when streamed write content grows", async () => {
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            busy: true,
+            workflowAnchorMessageId: "user-1",
+            messages: [
+              { id: "user-1", role: "user", text: "인터넷 AI 미래 보고서 작성해줘" },
+            ],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 0,
+            },
+          }}
+        >
+          <WorkflowWriteDeltaProbe />
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      clientHeights.set(messages, 80);
+      scrollHeights.set(messages, 420);
+
+      await userEvent.click(screen.getByRole("button", { name: "write first" }));
+      await waitFor(() => expect(messages.scrollTop).toBe(420));
+
+      await waitFor(() => expect(document.querySelector(".workflow-output-body")).toBeTruthy());
+      const body = document.querySelector(".workflow-output-body") as HTMLElement;
+      scrollHeights.set(body, 640);
+      messages.scrollTop = 111;
+      messages.dataset.lastScrollTop = "111";
+      await userEvent.click(screen.getByRole("button", { name: "write more" }));
+
+      expect(messages.scrollTop).toBe(111);
+      expect(body.scrollTop).toBe(640);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
+  it("replaces a streamed write preview when the completed tool name differs", async () => {
+    vi.useFakeTimers();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
+          ],
+        }}
+      >
+        <WorkflowWriteCompleteProbe />
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    act(() => {
+      screen.getByRole("button", { name: "complete write" }).click();
+    });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(screen.queryByText("작성 중인 결과물 - internet-ai-future-report.html")).toBeNull();
+    expect(screen.getByText("작성 완료 - internet-ai-future-report.html")).toBeTruthy();
+    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
   });
 
   it("renders web investigation sources after the completed assistant answer", async () => {
@@ -1105,6 +1379,94 @@ describe("MessageList", () => {
       const deltas = samples.slice(1).map((value, index) => value - samples[index]);
       expect(deltas[1]).toBeGreaterThan(deltas[0]);
       expect(deltas[4]).toBeLessThan(deltas[3]);
+    } finally {
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+      window.cancelAnimationFrame = originalCancelAnimationFrame;
+      window.matchMedia = originalMatchMedia;
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
+  it("eases continuous streaming follow into sudden target growth", () => {
+    const animationFrames: FrameRequestCallback[] = [];
+    const scrollHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    const originalCancelAnimationFrame = window.cancelAnimationFrame;
+    const originalMatchMedia = window.matchMedia;
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as unknown as typeof window.matchMedia;
+    window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = vi.fn() as unknown as typeof window.cancelAnimationFrame;
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("messages") ? scrollHeights.get(this) ?? 800 : originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("messages") ? 200 : originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            busy: true,
+            messages: [
+              { id: "assistant-1", role: "assistant", text: "스트리밍 중", isComplete: false },
+            ],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 1000,
+            },
+          }}
+        >
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      scrollHeights.set(messages, 800);
+      const samples: number[] = [];
+      for (const now of [0, 16]) {
+        const frame = animationFrames.shift();
+        expect(frame).toBeTruthy();
+        act(() => frame?.(now));
+        samples.push(messages.scrollTop);
+      }
+      scrollHeights.set(messages, 1400);
+      for (const now of [32, 48, 64]) {
+        const frame = animationFrames.shift();
+        expect(frame).toBeTruthy();
+        act(() => frame?.(now));
+        samples.push(messages.scrollTop);
+      }
+
+      const deltas = samples.slice(1).map((value, index) => value - samples[index]);
+      const accelerations = deltas.slice(1).map((value, index) => value - deltas[index]);
+      expect(Math.max(...accelerations)).toBeLessThan(5);
     } finally {
       window.requestAnimationFrame = originalRequestAnimationFrame;
       window.cancelAnimationFrame = originalCancelAnimationFrame;

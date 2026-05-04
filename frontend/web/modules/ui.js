@@ -266,23 +266,33 @@ function scrollMessagesToBottom(options = {}) {
     const start = els.messages.scrollTop;
     const startedAt = performance.now();
     let previousFrameAt = startedAt;
-    let dampedTarget = start;
+    let dampedTarget = continuousFollow
+      ? Math.max(start, els.messages.scrollHeight - els.messages.clientHeight)
+      : start;
+    let followVelocity = 0;
     state.autoScrollUntil = Date.now() + duration + 260;
 
     const step = (now) => {
       if (continuousFollow) {
         const rawTarget = Math.max(0, els.messages.scrollHeight - els.messages.clientHeight);
-        const target = Math.max(rawTarget, dampedTarget, els.messages.scrollTop);
         const elapsed = Math.min(64, Math.max(0, now - previousFrameAt));
         previousFrameAt = now;
-        const dampingMs = Math.max(180, Math.min(520, duration * 0.22));
-        const targetBlend = elapsed > 0 ? 1 - Math.exp(-elapsed / dampingMs) : 0;
+        const targetMs = Math.max(180, Math.min(520, duration * 0.22));
+        const targetBlend = elapsed > 0 ? 1 - Math.exp(-elapsed / targetMs) : 0;
+        const target = Math.max(rawTarget, dampedTarget, els.messages.scrollTop);
         dampedTarget += (target - dampedTarget) * targetBlend;
-
+        const dt = elapsed / 1000;
         const distance = dampedTarget - els.messages.scrollTop;
-        const followMs = Math.max(120, Math.min(360, duration * 0.16));
-        const followBlend = elapsed > 0 ? 1 - Math.exp(-elapsed / followMs) : 0;
-        els.messages.scrollTop += distance * followBlend;
+        const responseMs = Math.max(420, Math.min(960, duration * 0.32));
+        const omega = (1000 / responseMs) * 2.6;
+        const acceleration = distance * omega * omega - followVelocity * 2 * omega;
+        const maxAcceleration = Math.max(14000, Math.min(36000, els.messages.clientHeight * 80));
+        const boundedAcceleration = Math.max(-maxAcceleration, Math.min(maxAcceleration, acceleration));
+        followVelocity += boundedAcceleration * dt;
+        const maxVelocity = Math.max(360, Math.min(3600, els.messages.clientHeight * 4.4 + Math.abs(distance) * 4.5));
+        followVelocity = Math.max(0, Math.min(maxVelocity, followVelocity));
+        const nextTop = els.messages.scrollTop + followVelocity * dt;
+        els.messages.scrollTop = Math.max(els.messages.scrollTop, Math.min(rawTarget, nextTop));
         els.messages.dataset.lastScrollTop = String(els.messages.scrollTop);
         if (state.autoFollowMessages && tailFollowAnimationActive) {
           scrollAnimationFrame = window.requestAnimationFrame(step);

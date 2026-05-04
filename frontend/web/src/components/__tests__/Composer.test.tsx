@@ -524,6 +524,7 @@ describe("Composer", () => {
     expect(card).toBeTruthy();
     expect(card?.nextElementSibling).toBe(composerBox);
     expect(screen.queryByRole("dialog", { name: "질문" })).toBeNull();
+    expect(screen.getByText("Q1")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /파랑/ }));
 
@@ -718,9 +719,9 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("답변 선택 (1/3)")).toBeTruthy();
+    expect(screen.getByText("답변 입력 (3개)")).toBeTruthy();
     expect(document.body.textContent || "").toContain("(1/3) 보고서의 대상 독자는 누구인가요?");
-    expect(screen.getByPlaceholderText("직접 답변 입력...")).toBeTruthy();
+    expect(screen.getAllByPlaceholderText("답변 입력...")).toHaveLength(3);
   });
 
   it("shows progress for batched backend clarification questions", () => {
@@ -748,7 +749,323 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText(/질문 \(1\/3\):/)).toBeTruthy();
+    expect(screen.getByText("질문 (3개)")).toBeTruthy();
+    expect(screen.getByText("보고서의 대상 독자는 누구인가요?")).toBeTruthy();
+    expect(screen.getByText("원하는 톤은 어떻게 할까요?")).toBeTruthy();
+    expect(screen.getByText("분량은 어느 정도가 좋을까요?")).toBeTruthy();
+  });
+
+  it("renders batched backend clarification questions as multiple question-answer pairs", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "question",
+              request_id: "question-1",
+              question: [
+                "(1/3) 피해금액은 얼마인가요?",
+                "(2/3) 송금한 날짜와 시간은 언제인가요?",
+                "(3/3) 현재 상태는 무엇인가요?",
+              ].join("\n"),
+            },
+          },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("질문 (3개)")).toBeTruthy();
+    expect(screen.getByText("피해금액은 얼마인가요?")).toBeTruthy();
+    expect(screen.getByText("송금한 날짜와 시간은 언제인가요?")).toBeTruthy();
+    expect(screen.getByText("현재 상태는 무엇인가요?")).toBeTruthy();
+
+    const answerInputs = screen.getAllByPlaceholderText("답변 입력...");
+    expect(answerInputs).toHaveLength(3);
+    await user.type(answerInputs[0], "10만원");
+    await user.type(answerInputs[1], "2026-05-05 10시");
+    await user.type(answerInputs[2], "연락두절");
+    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
+
+    await waitFor(() => {
+      expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+        type: "question_response",
+        request_id: "question-1",
+        answer: [
+          "(1/3) 피해금액은 얼마인가요?\n답변: 10만원",
+          "(2/3) 송금한 날짜와 시간은 언제인가요?\n답변: 2026-05-05 10시",
+          "(3/3) 현재 상태는 무엇인가요?\n답변: 연락두절",
+        ].join("\n\n"),
+      });
+    });
+  });
+
+  it("renders batched multiple-choice backend questions as one shared choice set", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "question",
+              request_id: "question-1",
+              question: [
+                "(1/3) 피해금액은 얼마인가요?",
+                "(2/3) 송금한 날짜와 시간은 언제인가요?",
+                "(3/3) 현재 상태는 무엇인가요?",
+              ].join("\n"),
+              choices: [
+                { label: "직접 입력 양식", value: "직접 입력 양식", description: "빈칸을 채워서 답변합니다." },
+                { label: "정보가 아직 부족함", value: "정보가 아직 부족함" },
+              ],
+            },
+          },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("질문 (3개)")).toBeTruthy();
+    expect(screen.getByText("피해금액은 얼마인가요?")).toBeTruthy();
+    expect(screen.getByText("송금한 날짜와 시간은 언제인가요?")).toBeTruthy();
+    expect(screen.getAllByPlaceholderText("답변 입력...")).toHaveLength(3);
+    expect(screen.getByPlaceholderText("기타 직접 입력...")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /정보가 아직 부족함/ }));
+
+    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+      type: "question_response",
+      request_id: "question-1",
+      answer: "정보가 아직 부족함",
+    });
+  });
+
+  it("does not duplicate visible numbering when backend choice labels already include list markers", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "question",
+              request_id: "question-1",
+              question: [
+                "오늘 답변은 어떤 톤으로 드릴까요?",
+                "제가 다음에 해볼 테스트 유형을 골라주세요.",
+              ].join("\n"),
+              choices: [
+                { label: "1. 친근한 톤 + 짧은 선택형", value: "1. 친근한 톤 + 짧은 선택형", description: "가볍고 빠른 UI 확인용" },
+                { label: "2. 전문적인 톤 + 일괄 질문", value: "2. 전문적인 톤 + 일괄 질문", description: "실제 업무형 역질문 UI 확인용" },
+              ],
+            },
+          },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: /A1\s*친근한 톤 \+ 짧은 선택형/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /A1\s*1\.\s*친근한 톤/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /A1\s*1\s+친근한 톤/ })).toBeNull();
+  });
+
+  it("only gives text inputs to batched questions that are not answered by quick choices", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "question",
+              request_id: "question-1",
+              question: [
+                "오늘 답변은 어떤 톤으로 드릴까요?",
+                "제가 다음에 해볼 테스트 유형을 골라주세요.",
+              ].join("\n"),
+              choices: [
+                { label: "친근한 톤 + 짧은 선택형", value: "친근한 톤 + 짧은 선택형" },
+                { label: "전문적인 톤 + 일괄 질문", value: "전문적인 톤 + 일괄 질문" },
+              ],
+            },
+          },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const answerInputs = screen.getAllByPlaceholderText("답변 입력...");
+    expect(answerInputs).toHaveLength(1);
+    await user.type(answerInputs[0], "친근하게");
+    await user.click(screen.getByRole("button", { name: /A1\s*친근한 톤 \+ 짧은 선택형/ }));
+    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
+
+    await waitFor(() => {
+      expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+        type: "question_response",
+        request_id: "question-1",
+        answer: [
+          "(1/2) 오늘 답변은 어떤 톤으로 드릴까요?\n답변: 친근하게",
+          "(2/2) 제가 다음에 해볼 테스트 유형을 골라주세요.\n답변: 친근한 톤 + 짧은 선택형",
+        ].join("\n\n"),
+      });
+    });
+  });
+
+  it("lets batched multiple-choice backend questions submit a custom objective answer", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "question",
+              request_id: "question-1",
+              question: [
+                "(1/2) 확인할 동작은 무엇인가요?",
+                "(2/2) 어떤 답변 형태가 편한가요?",
+              ].join("\n"),
+              choices: [
+                { label: "짧은 한 문장 답변", value: "짧은 한 문장 답변" },
+                { label: "불릿 목록 답변", value: "불릿 목록 답변" },
+              ],
+            },
+          },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("답변 입력..."), "확인할 동작 정리");
+    await user.type(screen.getByPlaceholderText("기타 직접 입력..."), "표와 짧은 설명 혼합");
+    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
+
+    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+      type: "question_response",
+      request_id: "question-1",
+      answer: [
+        "(1/2) 확인할 동작은 무엇인가요?\n답변: 확인할 동작 정리",
+        "(2/2) 어떤 답변 형태가 편한가요?\n답변: 표와 짧은 설명 혼합",
+      ].join("\n\n"),
+    });
+  });
+
+  it("keeps subjective inputs when batched questions mix subjective and multiple-choice prompts", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "question",
+              request_id: "question-1",
+              question: [
+                "주관식: 지금 테스트하려는 역질문 UI에서 가장 확인하고 싶은 동작은 무엇인가요?",
+                "객관식: 아래 중 어떤 답변 형태가 가장 편한가요?",
+              ].join("\n"),
+              choices: [
+                { label: "짧은 한 문장 답변", value: "짧은 한 문장 답변" },
+                { label: "불릿 목록 답변", value: "불릿 목록 답변" },
+              ],
+            },
+          },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("답변 입력...");
+    expect(input).toBeTruthy();
+    expect(screen.getByRole("button", { name: "질문별 답변 보내기" })).toHaveProperty("disabled", true);
+
+    await user.type(input, "주관식 입력칸 유지");
+    await user.click(screen.getByRole("button", { name: /불릿 목록 답변/ }));
+    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
+
+    await waitFor(() => {
+      expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+        type: "question_response",
+        request_id: "question-1",
+        answer: [
+          "(1/2) 주관식: 지금 테스트하려는 역질문 UI에서 가장 확인하고 싶은 동작은 무엇인가요?\n답변: 주관식 입력칸 유지",
+          "(2/2) 객관식: 아래 중 어떤 답변 형태가 가장 편한가요?\n답변: 불릿 목록 답변",
+        ].join("\n\n"),
+      });
+    });
+  });
+
+  it("lets mixed subjective and multiple-choice prompts use a custom objective answer", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "question",
+              request_id: "question-1",
+              question: [
+                "주관식: 확인하고 싶은 동작은 무엇인가요?",
+                "객관식: 어떤 답변 형태가 가장 편한가요?",
+              ].join("\n"),
+              choices: [
+                { label: "짧은 한 문장 답변", value: "짧은 한 문장 답변" },
+                { label: "불릿 목록 답변", value: "불릿 목록 답변" },
+              ],
+            },
+          },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("답변 입력..."), "혼합형 입력 확인");
+    await user.type(screen.getByPlaceholderText("기타 직접 입력..."), "표 형태 답변");
+    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
+
+    await waitFor(() => {
+      expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+        type: "question_response",
+        request_id: "question-1",
+        answer: [
+          "(1/2) 주관식: 확인하고 싶은 동작은 무엇인가요?\n답변: 혼합형 입력 확인",
+          "(2/2) 객관식: 어떤 답변 형태가 가장 편한가요?\n답변: 표 형태 답변",
+        ].join("\n\n"),
+      });
+    });
   });
 
   it("does not turn markdown answer headings into inline follow-up questions", () => {

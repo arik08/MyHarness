@@ -69,6 +69,8 @@ def _is_prompt_too_long_error(exc: Exception) -> bool:
         needle in text
         for needle in (
             "prompt too long",
+            "context_length_exceeded",
+            "input exceeds",
             "context length",
             "maximum context",
             "context window",

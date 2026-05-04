@@ -89,3 +89,24 @@
 - Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://ko.wikipedia.org/wiki/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4%EC%9D%98_%EB%85%BC%EB%9E%80'
 - Do next time: Start by applying the verified corrective path: Ran command python - <<'PY' from pathlib import Path from pptx import Presentation p=Path('outputs/namuwiki-history-report.pptx') prs=Presentation(str(p)) print('exists', p [exists True]
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence cbaba36c6772d356
+- Confidence: 0.85
+- Signature: `web-fetch-web-fetch-failed-client-error-403-forbidden-for-url-https-en-wikipedia`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Neon_Genesis_Evangelion'
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.ign.com/articles/evangelion-series-in-order
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence 2ab6932bb9faa1c3
+- Confidence: 0.85
+- Signature: `web-fetch-web-fetch-failed-client-error-403-forbidden-for-url-https-en-wikipedia`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Neon_Genesis_Evangelion'
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://wiki.evageeks.org/Human_Instrumentality_Project
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence 496cb5d7911f31d2
+- Confidence: 0.85
+- Signature: `web-fetch-web-fetch-failed-client-error-403-forbidden-for-url-https-en-wikipedia`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Neon_Genesis_Evangelion'
+- Do next time: Start by applying the verified corrective path: Ran command python .skills/visual-review/scripts/check_render.py Playground/shared/Default/outputs/evangelion-content-report.html --width 1440 --height 1000 [{]
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

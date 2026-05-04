@@ -1,9 +1,11 @@
 const webExtensions = new Set(["html", "htm"]);
-const docsExtensions = new Set(["md", "markdown", "txt", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
+const markdownExtensions = new Set(["md", "markdown"]);
+const docsExtensions = new Set(["txt", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
 const dataExtensions = new Set(["json", "csv", "xml", "yaml", "yml", "toml", "ini", "log"]);
 const codeExtensions = new Set(["py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "css", "sql", "sh", "ps1", "bat", "cmd"]);
 const artifactCandidateExtensions = new Set([
   ...webExtensions,
+  ...markdownExtensions,
   ...docsExtensions,
   ...dataExtensions,
   ...codeExtensions,
@@ -23,7 +25,8 @@ const hiddenProjectFilePrefixes = [
 
 export const projectFileCategories = [
   { value: "all", label: "전체" },
-  { value: "web", label: "웹" },
+  { value: "web", label: "웹페이지" },
+  { value: "markdown", label: "마크다운" },
   { value: "docs", label: "문서" },
   { value: "data", label: "데이터" },
   { value: "code", label: "코드" },
@@ -42,6 +45,7 @@ export function projectFileExtension(path) {
 export function artifactCategoryForPath(path) {
   const ext = projectFileExtension(path);
   if (webExtensions.has(ext)) return "web";
+  if (markdownExtensions.has(ext)) return "markdown";
   if (docsExtensions.has(ext)) return "docs";
   if (dataExtensions.has(ext)) return "data";
   if (codeExtensions.has(ext)) return "code";

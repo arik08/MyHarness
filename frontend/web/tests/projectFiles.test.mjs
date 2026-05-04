@@ -10,7 +10,8 @@ import {
 
 test("classifies project files into UI filter categories", () => {
   assert.equal(artifactCategoryForPath("outputs/dashboard.html"), "web");
-  assert.equal(artifactCategoryForPath("outputs/summary.md"), "docs");
+  assert.equal(artifactCategoryForPath("outputs/summary.md"), "markdown");
+  assert.equal(artifactCategoryForPath("outputs/notes.markdown"), "markdown");
   assert.equal(artifactCategoryForPath("outputs/report.pptx"), "docs");
   assert.equal(artifactCategoryForPath("outputs/data.csv"), "data");
   assert.equal(artifactCategoryForPath("outputs/app.tsx"), "code");

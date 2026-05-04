@@ -85,6 +85,14 @@ async def test_file_write_result_hides_local_path_before_playground(tmp_path: Pa
     assert str(tmp_path) not in write_result.output
 
 
+def test_file_write_tool_description_guides_human_artifact_filenames():
+    description = FileWriteTool.description
+
+    assert "human-facing HTML, Markdown, PDF, DOCX, XLSX, and PPTX artifacts" in description
+    assert "Korean filenames" in description
+    assert "PY, JS, JSON, or CSV" in description
+
+
 @pytest.mark.asyncio
 async def test_file_tool_results_hide_absolute_paths_outside_workspace(tmp_path: Path):
     workspace = tmp_path / "repo" / "Playground" / "shared" / "Default"

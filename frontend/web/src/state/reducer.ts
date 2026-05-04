@@ -1,5 +1,6 @@
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, ModalState, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
+import { isLiveOnlyHistoryItem } from "../utils/history";
 
 const clientSessionKey = "myharness:clientSessionId";
 const appSettingsKey = "myharness:appSettings";
@@ -10,7 +11,7 @@ const defaultAppSettings: AppSettings = {
   streamFollowLeadPx: 60,
   streamRevealDurationMs: 420,
   streamRevealWipePercent: 180,
-  downloadMode: "ask",
+  downloadMode: "browser",
   downloadFolderPath: "",
   shell: "auto",
 };
@@ -96,7 +97,7 @@ function normalizeAppSettings(value: Partial<AppSettings> = {}): AppSettings {
     streamFollowLeadPx: clampNumber(value.streamFollowLeadPx, defaultAppSettings.streamFollowLeadPx, 0, 220),
     streamRevealDurationMs: clampNumber(value.streamRevealDurationMs, defaultAppSettings.streamRevealDurationMs, 0, 2000),
     streamRevealWipePercent: clampNumber(value.streamRevealWipePercent, defaultAppSettings.streamRevealWipePercent, 100, 400),
-    downloadMode: value.downloadMode === "folder" ? "folder" : "ask",
+    downloadMode: value.downloadMode === "folder" || value.downloadMode === "ask" ? value.downloadMode : "browser",
     downloadFolderPath: String(value.downloadFolderPath || ""),
     shell: value.shell === "powershell" || value.shell === "git-bash" || value.shell === "cmd" ? value.shell : "auto",
   };
@@ -209,6 +210,7 @@ export const initialAppState: AppState = {
   artifactPanelPreviewWidth: initialArtifactPanelPreviewWidth(),
   artifactResizing: false,
   modal: null,
+  backendModalsBySessionId: {},
   messages: [],
   workflowAnchorMessageId: null,
   workflowEventsByMessageId: {},
@@ -218,6 +220,7 @@ export const initialAppState: AppState = {
   todoCollapsed: false,
   workflowEvents: [],
   workflowDurationSeconds: null,
+  workflowStartedAtMs: null,
   runtimePicker: {
     open: false,
     loading: false,
@@ -313,6 +316,18 @@ function isNonConversationTranscriptItem(item: { role?: string; text?: string })
   if (role === "system" && ["Plan mode enabled.", "Plan mode disabled."].includes(text)) return true;
   if (role === "system" && text.startsWith("Session restored")) return true;
   return false;
+}
+
+function isDuplicateActiveUserTranscript(state: AppState, text: string) {
+  const last = state.messages[state.messages.length - 1];
+  if (last?.role === "user" && last.text === text && !last.kind) {
+    return true;
+  }
+  if (!state.busy || !state.workflowAnchorMessageId) {
+    return false;
+  }
+  const anchor = state.messages.find((message) => message.id === state.workflowAnchorMessageId);
+  return anchor?.role === "user" && !anchor.kind && anchor.text === text;
 }
 
 function isFinalRestoredAssistantAnswer(historyEvents: Array<Record<string, unknown>>, index: number) {
@@ -467,14 +482,34 @@ function isWorkflowOutputTool(toolName: string) {
   return lower !== "todo_write" && lower !== "todowrite" && (lower.includes("write") || lower.includes("edit"));
 }
 
-function workflowInputBufferKey(event: Extract<BackendEvent, { type: "tool_input_delta" }>) {
+function workflowInputBufferIndex(event: Extract<BackendEvent, { type: "tool_input_delta" }>) {
   const rawIndex = Number(event.tool_call_index);
-  const index = Number.isFinite(rawIndex) ? rawIndex : 0;
-  return `${event.tool_name || "tool"}:${index}`;
+  return Number.isFinite(rawIndex) ? rawIndex : 0;
 }
 
-function partialToolInputFromBuffer(toolName: string, buffer: string): Record<string, unknown> | null {
-  if (!isWorkflowOutputTool(toolName)) {
+function workflowInputBufferKey(event: Extract<BackendEvent, { type: "tool_input_delta" }>) {
+  return `call:${workflowInputBufferIndex(event)}`;
+}
+
+function clearWorkflowInputBuffer(buffers: Record<string, string>, toolCallIndex: number | null) {
+  const index = toolCallIndex ?? 0;
+  const next = { ...buffers };
+  delete next[`call:${index}`];
+  return next;
+}
+
+function workflowDraftFromBuffer(toolName: string, buffer: string): { toolName: string; toolInput: Record<string, unknown> } | null {
+  const oldField = firstPartialJsonStringField(buffer, ["old_str", "old_string"]);
+  const newField = firstPartialJsonStringField(buffer, ["new_str", "new_string"]);
+  const newSourceField = firstPartialJsonStringField(buffer, ["new_source"]);
+  const contentField = firstPartialJsonStringField(buffer, ["content", "new_string"]);
+  let inferredToolName = isWorkflowOutputTool(toolName) ? toolName : "";
+  if (!inferredToolName && !toolName.trim()) {
+    if (newSourceField.found) inferredToolName = "notebook_edit";
+    else if (oldField.found || newField.found) inferredToolName = "edit_file";
+    else if (contentField.found) inferredToolName = "write_file";
+  }
+  if (!isWorkflowOutputTool(inferredToolName)) {
     return null;
   }
   const path = firstPartialJsonStringField(buffer, ["file_path", "path"]);
@@ -482,21 +517,22 @@ function partialToolInputFromBuffer(toolName: string, buffer: string): Record<st
   if (path.found) {
     input.path = path.value;
   }
-  const lower = toolName.toLowerCase();
-  const oldField = firstPartialJsonStringField(buffer, ["old_str", "old_string"]);
-  const newField = firstPartialJsonStringField(buffer, ["new_str", "new_string"]);
-  if (lower.includes("edit") && (oldField.found || newField.found)) {
+  if (inferredToolName.toLowerCase().includes("edit") && (oldField.found || newField.found)) {
     input.old_str = oldField.value;
     input.new_str = newField.value;
     input.content = formatWorkflowEditBlock(oldField.value, newField.value);
-    return input;
+    return { toolName: inferredToolName, toolInput: input };
   }
-  const contentField = firstPartialJsonStringField(buffer, ["content", "new_string", "new_source"]);
+  if (newSourceField.found) {
+    input.new_source = newSourceField.value;
+    input.content = newSourceField.value;
+    return { toolName: inferredToolName, toolInput: input };
+  }
   if (!contentField.found) {
     return null;
   }
   input.content = contentField.value;
-  return input;
+  return { toolName: inferredToolName, toolInput: input };
 }
 
 function recordOrNull(value: unknown): Record<string, unknown> | null {
@@ -557,6 +593,25 @@ function purposeCopy(purpose: WorkflowEvent["purpose"]) {
   return { title: "작업 실행", running: "필요한 변경이나 명령을 실행하고 있습니다.", done: "작업 실행을 마쳤습니다." };
 }
 
+function warningDetailForPurpose(purpose: WorkflowEvent["purpose"]) {
+  if (purpose === "info") {
+    return "일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.";
+  }
+  return "일부 단계에서 확인이 필요합니다.";
+}
+
+function isRecoverableToolError(toolName: string) {
+  const lower = toolName.toLowerCase();
+  return lower.includes("web_search") || lower.includes("web_fetch");
+}
+
+function workflowCompletionStatus(toolName: string, isError: boolean): WorkflowEventStatus {
+  if (!isError) {
+    return "done";
+  }
+  return isRecoverableToolError(toolName) ? "warning" : "error";
+}
+
 function ensurePurposeEvent(events: WorkflowEvent[], toolName: string): { events: WorkflowEvent[]; groupId: string } {
   const purpose = purposeForTool(toolName);
   const latestPurpose = [...events].reverse().find((event) => event.role === "purpose");
@@ -592,10 +647,11 @@ function refreshPurposeEvents(events: WorkflowEvent[]) {
     const copy = purposeCopy(event.purpose);
     const hasRunning = children.some((item) => item.status === "running");
     const hasError = children.some((item) => item.status === "error");
+    const hasWarning = children.some((item) => item.status === "warning");
     return {
       ...event,
-      status: hasError ? "error" as const : hasRunning ? "running" as const : "done" as const,
-      detail: hasError ? "작업 중 문제가 발생했습니다." : hasRunning ? copy.running : copy.done,
+      status: hasError ? "error" as const : hasRunning ? "running" as const : hasWarning ? "warning" as const : "done" as const,
+      detail: hasError ? "작업 중 문제가 발생했습니다." : hasRunning ? copy.running : hasWarning ? warningDetailForPurpose(event.purpose) : copy.done,
     };
   });
 }
@@ -680,6 +736,11 @@ function updateLatestWorkflowEvent(
       (event) => event.toolName === toolName && event.toolCallIndex === callIndex && event.status === "running",
     );
   }
+  if (index === -1 && callIndex !== null && isWorkflowOutputTool(toolName)) {
+    index = reversed.findIndex(
+      (event) => event.toolCallIndex === callIndex && event.status === "running" && isWorkflowOutputTool(event.toolName),
+    );
+  }
   if (index === -1) {
     index = reversed.findIndex((event) => (
       event.toolName === toolName
@@ -704,18 +765,27 @@ function workflowSnapshotMap(state: AppState) {
 }
 
 function workflowDurationSnapshotMap(state: AppState) {
-  if (!state.workflowAnchorMessageId || !state.workflowDurationSeconds) {
+  const durationSeconds = state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state);
+  if (!state.workflowAnchorMessageId || durationSeconds === null) {
     return state.workflowDurationSecondsByMessageId;
   }
   return {
     ...state.workflowDurationSecondsByMessageId,
-    [state.workflowAnchorMessageId]: state.workflowDurationSeconds,
+    [state.workflowAnchorMessageId]: durationSeconds,
   };
 }
 
 function workflowDurationFromMetadata(metadata?: Record<string, unknown> | null) {
   const seconds = Number(metadata?.workflow_duration_seconds);
   return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : null;
+}
+
+function workflowElapsedDurationSeconds(state: AppState) {
+  if (state.workflowStartedAtMs === null) {
+    return null;
+  }
+  const seconds = Math.floor((Date.now() - state.workflowStartedAtMs) / 1000);
+  return Number.isFinite(seconds) ? Math.max(0, seconds) : null;
 }
 
 function normalizeCommands(commands: unknown[]): CommandItem[] {
@@ -771,10 +841,7 @@ function updateCurrentHistoryTitle(history: HistoryItem[], sessionId: string | n
 function removeLiveHistoryRowsForSession(history: HistoryItem[], sessionId: string | null) {
   const activeSessionId = String(sessionId || "").trim();
   if (!activeSessionId) return history;
-  return history.filter((item) => (
-    item.live !== true
-    || (item.liveSessionId !== activeSessionId && item.value !== activeSessionId)
-  ));
+  return history.filter((item) => !isLiveOnlyHistoryItem(item, activeSessionId));
 }
 
 function ensureLiveHistoryItem(state: AppState, userText: string) {
@@ -881,18 +948,71 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
   };
 }
 
+type BackendModalState = Extract<ModalState, { kind: "backend" }>;
+
+function backendModalKeysForState(state: AppState) {
+  return Array.from(new Set([state.sessionId, state.activeHistoryId].filter((value): value is string => Boolean(value))));
+}
+
+function rememberCurrentBackendModal(state: AppState) {
+  const keys = backendModalKeysForState(state);
+  if (!keys.length || state.modal?.kind !== "backend") {
+    return state.backendModalsBySessionId;
+  }
+  return keys.reduce((next, key) => ({ ...next, [key]: state.modal as BackendModalState }), state.backendModalsBySessionId);
+}
+
+function forgetCurrentBackendModal(state: AppState) {
+  const keys = backendModalKeysForState(state);
+  if (!keys.length || state.modal?.kind !== "backend") {
+    return state.backendModalsBySessionId;
+  }
+  const next = { ...state.backendModalsBySessionId };
+  for (const key of keys) {
+    delete next[key];
+  }
+  return next;
+}
+
+function rememberBackendModalForActiveSession(state: AppState, modal: BackendModalState) {
+  const keys = backendModalKeysForState(state);
+  if (!keys.length) {
+    return state.backendModalsBySessionId;
+  }
+  return keys.reduce((next, key) => ({ ...next, [key]: modal }), state.backendModalsBySessionId);
+}
+
+function backendModalForSession(
+  backendModalsBySessionId: AppState["backendModalsBySessionId"],
+  sessionId: string,
+) {
+  return backendModalsBySessionId[sessionId] || null;
+}
+
+function isResumeSelectModal(modal: ModalState | null) {
+  if (modal?.kind !== "backend") {
+    return false;
+  }
+  return String(modal.payload?.command || "").trim().toLowerCase() === "resume";
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "session_started":
-      return {
+      {
+        const backendModalsBySessionId = rememberCurrentBackendModal(state);
+        return {
         ...state,
         sessionId: action.sessionId,
         clientId: action.clientId || state.clientId,
+        modal: backendModalForSession(backendModalsBySessionId, action.sessionId),
+        backendModalsBySessionId,
         history: removeLiveHistoryRowsForSession(state.history, action.sessionId),
         pendingFreshChat: false,
         status: "ready",
         statusText: "준비됨",
       };
+      }
 
     case "append_message":
       if (action.message.role === "user") {
@@ -906,6 +1026,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
           workflowEvents: initialWorkflowEvents(),
           workflowDurationSeconds: null,
+          workflowStartedAtMs: Date.now(),
         };
       }
       return {
@@ -914,7 +1035,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case "session_replaced":
-      return {
+      {
+        const backendModalsBySessionId = rememberCurrentBackendModal(state);
+        return {
         ...state,
         sessionId: action.sessionId,
         chatTitle: "MyHarness",
@@ -935,15 +1058,19 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         activeArtifact: null,
         activeArtifactPayload: null,
         artifactRefreshKey: state.artifactRefreshKey + 1,
+        modal: backendModalForSession(backendModalsBySessionId, action.sessionId),
+        backendModalsBySessionId,
         todoMarkdown: "",
         todoCollapsed: false,
         workflowEvents: [],
         workflowDurationSeconds: null,
+        workflowStartedAtMs: null,
         history: removeLiveHistoryRowsForSession(state.history, action.sessionId),
         workspaceName: action.workspace?.name || state.workspaceName,
         workspacePath: action.workspace?.path || state.workspacePath,
         workspaceScope: action.workspace?.scope || state.workspaceScope,
       };
+      }
 
     case "set_theme":
       return { ...state, themeId: action.themeId };
@@ -1043,6 +1170,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         history: removeLiveHistoryRowsForSession(action.history, state.sessionId),
         historyLoading: false,
+        modal: isResumeSelectModal(state.modal) ? null : state.modal,
       };
 
     case "set_history_loading":
@@ -1070,15 +1198,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         todoCollapsed: false,
         workflowEvents: [],
         workflowDurationSeconds: null,
+        workflowStartedAtMs: null,
+        modal: null,
+        backendModalsBySessionId: rememberCurrentBackendModal(state),
       };
 
     case "begin_history_restore":
-      return {
+      {
+        const backendModalsBySessionId = rememberCurrentBackendModal(state);
+        return {
         ...state,
         activeHistoryId: action.sessionId,
         restoringHistory: true,
         pendingFreshChat: false,
+        modal: null,
+        backendModalsBySessionId,
       };
+      }
 
     case "finish_history_restore":
       return { ...state, restoringHistory: false };
@@ -1127,10 +1263,20 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case "open_modal":
-      return { ...state, modal: action.modal };
+      return {
+        ...state,
+        modal: action.modal,
+        backendModalsBySessionId: action.modal.kind === "backend"
+          ? rememberBackendModalForActiveSession(state, action.modal)
+          : state.backendModalsBySessionId,
+      };
 
     case "close_modal":
-      return { ...state, modal: null };
+      return {
+        ...state,
+        modal: null,
+        backendModalsBySessionId: forgetCurrentBackendModal(state),
+      };
 
     case "open_runtime_picker":
       return {
@@ -1190,10 +1336,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, todoMarkdown: "", todoCollapsed: false };
 
     case "clear_workflow":
-      return { ...state, workflowEvents: [], workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowDurationSeconds: null };
+      return { ...state, workflowEvents: [], workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowDurationSeconds: null, workflowStartedAtMs: null };
 
     case "clear_messages":
-      return { ...state, messages: [], workflowAnchorMessageId: null, workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowInputBuffers: {}, todoMarkdown: "", todoCollapsed: false, workflowEvents: [], workflowDurationSeconds: null };
+      return { ...state, messages: [], workflowAnchorMessageId: null, workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowInputBuffers: {}, todoMarkdown: "", todoCollapsed: false, workflowEvents: [], workflowDurationSeconds: null, workflowStartedAtMs: null };
 
     case "backend_event": {
       if (action.sessionId && action.sessionId !== state.sessionId) {
@@ -1231,6 +1377,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           todoMarkdown: "",
           workflowEvents: [],
           workflowDurationSeconds: null,
+          workflowStartedAtMs: null,
         };
       }
 
@@ -1289,10 +1436,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
             const output = String(record.output || "");
             const isError = record.is_error === true;
+            const completionStatus = workflowCompletionStatus(toolName, isError);
             let nextEvents = updateLatestWorkflowEvent(workflowEvents, toolName, {
               detail: output.split(/\r?\n/).find((line) => line.trim()) || `${toolName || "도구"} 완료`,
               output,
-              status: isError ? "error" : "done",
+              status: completionStatus,
               toolCallId,
               toolCallIndex,
             }, { toolCallId, toolCallIndex });
@@ -1303,7 +1451,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
                 title: workflowTitle(toolName),
                 detail: output.split(/\r?\n/).find((line) => line.trim()) || `${toolName || "도구"} 완료`,
                 output,
-                status: isError ? "error" : "done",
+                status: completionStatus,
                 level: "child",
                 groupId: purpose.groupId,
                 toolCallId,
@@ -1330,6 +1478,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           workflowDurationSecondsByMessageId,
           workflowEvents,
           workflowDurationSeconds: workflowAnchorMessageId ? workflowDurationSecondsByMessageId[workflowAnchorMessageId] ?? null : null,
+          workflowStartedAtMs: null,
           restoringHistory: true,
           pendingFreshChat: false,
           busy: false,
@@ -1378,8 +1527,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
         const text = normalizeVisibleText(item.text);
         if (item.role === "user" && item.kind !== "steering" && item.kind !== "queued") {
-          const last = state.messages[state.messages.length - 1];
-          if (last?.role === "user" && last.text === text && !last.kind) {
+          if (isDuplicateActiveUserTranscript(state, text)) {
             return state;
           }
         }
@@ -1486,9 +1634,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           messages,
           status: "processing",
           statusText: label,
-          workflowInputBuffers: Object.fromEntries(
-            Object.entries(state.workflowInputBuffers).filter(([key]) => !key.startsWith(`${toolName || "tool"}:`)),
-          ),
+          workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
           workflowEvents: startedWorkflowEvents,
         };
       }
@@ -1504,13 +1650,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const key = workflowInputBufferKey(deltaEvent);
         const current = state.workflowInputBuffers[key] || "";
         const nextBuffer = current && /^\s*\{/.test(delta) && /\}\s*$/.test(current) ? delta : `${current}${delta}`;
-        const toolInput = partialToolInputFromBuffer(toolName, nextBuffer);
+        const draft = workflowDraftFromBuffer(toolName, nextBuffer);
         const workflowInputBuffers = { ...state.workflowInputBuffers, [key]: nextBuffer };
-        if (!toolInput) {
+        if (!draft) {
           return { ...state, busy: true, workflowInputBuffers };
         }
+        const { toolName: workflowToolName, toolInput } = draft;
         const detail = workflowDetailFromInput(toolInput) || "작성 내용 수신 중";
-        let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, toolName, {
+        let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, workflowToolName, {
           detail,
           status: "running",
           toolCallIndex,
@@ -1519,11 +1666,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         if (!workflowEvents) {
           const purpose = ensurePurposeEvent(
             completePlanning(removeWorkflowEventsByRole(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), "activity")),
-            toolName,
+            workflowToolName,
           );
           workflowEvents = appendWorkflowEvent(purpose.events, {
-            toolName,
-            title: workflowTitle(toolName),
+            toolName: workflowToolName,
+            title: workflowTitle(workflowToolName),
             detail,
             status: "running",
             level: "child",
@@ -1538,7 +1685,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           workflowInputBuffers,
           workflowEvents: refreshPurposeEvents(workflowEvents),
           status: "processing",
-          statusText: compactToolStatus(toolName, `${workflowTitle(toolName)} 중`),
+          statusText: compactToolStatus(workflowToolName, `${workflowTitle(workflowToolName)} 중`),
         };
       }
 
@@ -1594,6 +1741,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             return workflowEvent.toolName === toolName && workflowEvent.toolInput;
           })?.toolInput || null;
         const command = isShellTool(toolName) ? commandFromToolInput(lastToolInput) : "";
+        const completionStatus = workflowCompletionStatus(toolName, isError);
         const messages = command
           ? updateLatestTerminalMessage(state.messages, command, {
               command,
@@ -1604,7 +1752,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, toolName, {
           detail: output.split(/\r?\n/).find((line) => line.trim()) || `${toolName || "도구"} 완료`,
           output,
-          status: isError ? "error" : "done",
+          status: completionStatus,
           toolCallId,
           toolCallIndex,
         }, { toolCallId, toolCallIndex });
@@ -1615,7 +1763,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             title: workflowTitle(toolName),
             detail: output.split(/\r?\n/).find((line) => line.trim()) || `${toolName || "도구"} 완료`,
             output,
-            status: isError ? "error" : "done",
+            status: completionStatus,
             level: "child",
             groupId: purpose.groupId,
             toolCallId,
@@ -1628,9 +1776,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           busy: true,
           messages,
           workflowEvents,
-          workflowInputBuffers: Object.fromEntries(
-            Object.entries(state.workflowInputBuffers).filter(([key]) => !key.startsWith(`${toolName || "tool"}:`)),
-          ),
+          workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
           artifactRefreshKey: state.artifactRefreshKey + 1,
           status: "processing",
           statusText: isError ? "도구 결과 확인 중" : "도구 결과 검토 중",
@@ -1650,15 +1796,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const payload = event.modal && typeof event.modal === "object"
           ? event.modal as Record<string, unknown>
           : {};
+        const modal: BackendModalState = { kind: "backend", payload };
         return {
           ...state,
-          modal: { kind: "backend", payload },
+          modal,
+          backendModalsBySessionId: rememberBackendModalForActiveSession(state, modal),
         };
       }
 
       if (event.type === "select_request") {
         const modal = event.modal && typeof event.modal === "object" ? event.modal as Record<string, unknown> : {};
         const command = String(modal.command || "").trim().toLowerCase();
+        if (command === "resume") {
+          const history = Array.isArray(event.select_options)
+            ? event.select_options as HistoryItem[]
+            : [];
+          return {
+            ...state,
+            history: removeLiveHistoryRowsForSession(history, state.sessionId),
+            historyLoading: false,
+            modal: state.modal?.kind === "backend" ? null : state.modal,
+          };
+        }
         if (state.runtimePicker.open && command === "runtime-picker") {
           const runtimeOptions = modal.runtime_options && typeof modal.runtime_options === "object"
             ? modal.runtime_options as Record<string, unknown>
@@ -1673,15 +1832,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           select_options: Array.isArray(event.select_options) ? event.select_options : [],
           message: event.message || "",
         };
+        const nextModal: BackendModalState = { kind: "backend", payload };
         return {
           ...state,
-          modal: { kind: "backend", payload },
+          modal: nextModal,
+          backendModalsBySessionId: rememberBackendModalForActiveSession(state, nextModal),
         };
       }
 
       if (event.type === "line_complete") {
-        const workflowDurationSeconds = workflowDurationFromMetadata(recordOrNull(event.compact_metadata));
-        const workflowDurationSecondsByMessageId = workflowDurationSeconds && state.workflowAnchorMessageId
+        const workflowDurationSeconds = workflowDurationFromMetadata(recordOrNull(event.compact_metadata))
+          ?? workflowElapsedDurationSeconds(state);
+        const workflowDurationSecondsByMessageId = workflowDurationSeconds !== null && state.workflowAnchorMessageId
           ? {
               ...state.workflowDurationSecondsByMessageId,
               [state.workflowAnchorMessageId]: workflowDurationSeconds,
@@ -1696,6 +1858,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           historyRefreshKey: state.historyRefreshKey + 1,
           workflowDurationSeconds: workflowDurationSeconds ?? state.workflowDurationSeconds,
           workflowDurationSecondsByMessageId,
+          workflowStartedAtMs: null,
         };
       }
 
@@ -1716,6 +1879,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
                 message,
               )
             : state.workflowEvents,
+          workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
+          workflowStartedAtMs: null,
         };
       }
 
@@ -1732,6 +1897,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           busy: false,
           status: "error",
           statusText: message,
+          workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
+          workflowStartedAtMs: null,
         };
       }
 

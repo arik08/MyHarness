@@ -14,7 +14,8 @@ export function InlineQuestion() {
   const { state, dispatch } = useAppState();
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [choiceFreeformAnswer, setChoiceFreeformAnswer] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const payload = state.modal?.kind === "backend" ? state.modal.payload || {} : null;
   const assistantQuestion = useMemo(() => (
     !payload && !state.busy ? assistantFollowUpQuestion(state.messages, state.composer.draft) : null
@@ -26,7 +27,13 @@ export function InlineQuestion() {
   const isPermission = kind === "permission";
   const question = (assistantQuestion?.question || String(payload?.question || payload?.reason || payload?.message || "")).trim()
     || (isPermission ? "이 도구 실행을 허용할까요?" : "추가 정보가 필요합니다.");
+  const questionSteps = useMemo(() => splitBatchedQuestions(question), [question]);
+  const [questionStepAnswers, setQuestionStepAnswers] = useState<string[]>([]);
+  const [selectedBatchedChoice, setSelectedBatchedChoice] = useState("");
+  const batchedQuestion = questionSteps.length > 1;
+  const activeQuestion = questionSteps[0] || question;
   const questionProgress = useMemo(() => questionProgressLabel(question), [question]);
+  const batchedAnswersComplete = batchedQuestion && questionSteps.every((_, index) => questionStepAnswers[index]?.trim());
   const choices = useMemo(() => (
     isQuestion
       ? normalizeQuestionChoices(payload, question, assistantQuestion?.choices, {
@@ -34,24 +41,37 @@ export function InlineQuestion() {
       })
       : []
   ), [assistantQuestion, isQuestion, payload, question]);
+  const sharedChoiceQuestion = batchedQuestion && choices.length > 0;
+  const choiceAnsweredQuestionSteps = useMemo(
+    () => questionSteps.map((step, index) => isQuestionAnsweredBySharedChoices(step, index, questionSteps)),
+    [questionSteps],
+  );
+  const mixedBatchedChoiceQuestion = sharedChoiceQuestion
+    && choiceAnsweredQuestionSteps.some(Boolean)
+    && choiceAnsweredQuestionSteps.some((answeredByChoice) => !answeredByChoice);
+  const displayChoices = batchedQuestion && !sharedChoiceQuestion ? [] : choices;
+  const mixedBatchedAnswersComplete = mixedBatchedChoiceQuestion
+    && Boolean(selectedBatchedChoice.trim() || choiceFreeformAnswer.trim())
+    && questionSteps.every((_, index) => choiceAnsweredQuestionSteps[index] || questionStepAnswers[index]?.trim());
   const conciseQuestion = useMemo(() => {
-    const fromQuestion = choices.some((choice) => choice.source === "question")
-      && !choices.some((choice) => choice.source === "structured");
-    return fromQuestion ? stripQuestionChoiceLines(question, choices) : question;
-  }, [choices, question]);
+    const fromQuestion = displayChoices.some((choice) => choice.source === "question")
+      && !displayChoices.some((choice) => choice.source === "structured");
+    const displayQuestion = stripLeadingQuestionProgress(activeQuestion);
+    return fromQuestion ? stripQuestionChoiceLines(displayQuestion, displayChoices) : displayQuestion;
+  }, [activeQuestion, displayChoices]);
+
+  useLayoutEffect(() => {
+    setAnswer("");
+    setQuestionStepAnswers([]);
+    setSelectedBatchedChoice("");
+    setChoiceFreeformAnswer("");
+  }, [question, requestId]);
 
   useLayoutEffect(() => {
     if (isQuestion) {
       inputRef.current?.focus();
     }
   }, [isQuestion, requestId]);
-
-  useLayoutEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    input.style.height = "auto";
-    input.style.height = `${Math.min(70, Math.max(31, input.scrollHeight))}px`;
-  }, [answer]);
 
   if ((!payload && !assistantQuestion) || (!isQuestion && !isPermission)) {
     return null;
@@ -111,7 +131,44 @@ export function InlineQuestion() {
     void respond({ type: "question_response", request_id: requestId, answer: trimmed });
   }
 
-  function handleAnswerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+  function submitBatchedAnswers() {
+    if (!batchedAnswersComplete) return;
+    const combinedAnswer = formatBatchedQuestionAnswer(questionSteps, questionStepAnswers);
+    if (assistantQuestion) {
+      void sendAssistantFollowUp(combinedAnswer);
+      return;
+    }
+    void respond({ type: "question_response", request_id: requestId, answer: combinedAnswer });
+  }
+
+  function submitMixedBatchedAnswers() {
+    if (!mixedBatchedAnswersComplete) return;
+    const combinedAnswer = formatMixedBatchedQuestionAnswer(
+      questionSteps,
+      questionStepAnswers,
+      selectedBatchedChoice || choiceFreeformAnswer,
+      choiceAnsweredQuestionSteps,
+    );
+    if (assistantQuestion) {
+      void sendAssistantFollowUp(combinedAnswer);
+      return;
+    }
+    void respond({ type: "question_response", request_id: requestId, answer: combinedAnswer });
+  }
+
+  function submitSharedChoiceFreeform() {
+    submitAnswer(choiceFreeformAnswer);
+  }
+
+  function updateBatchedAnswer(index: number, value: string) {
+    setQuestionStepAnswers((current) => {
+      const next = [...current];
+      next[index] = value;
+      return next;
+    });
+  }
+
+  function handleAnswerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     event.stopPropagation();
     if (event.nativeEvent.isComposing) {
       return;
@@ -119,6 +176,39 @@ export function InlineQuestion() {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       submitAnswer(answer);
+    }
+  }
+
+  function handleBatchedAnswerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    event.stopPropagation();
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey && batchedAnswersComplete) {
+      event.preventDefault();
+      submitBatchedAnswers();
+    }
+  }
+
+  function handleMixedBatchedAnswerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    event.stopPropagation();
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey && mixedBatchedAnswersComplete) {
+      event.preventDefault();
+      submitMixedBatchedAnswers();
+    }
+  }
+
+  function handleSharedChoiceFreeformKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    event.stopPropagation();
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey && choiceFreeformAnswer.trim()) {
+      event.preventDefault();
+      submitSharedChoiceFreeform();
     }
   }
 
@@ -138,7 +228,7 @@ export function InlineQuestion() {
             disabled={submitting}
             onClick={() => void respond({ type: "permission_response", request_id: requestId, allowed: false })}
           >
-            <span className="inline-question-number">1.</span>
+            <span className="inline-question-number inline-question-choice-number">A1</span>
             <span className="inline-question-choice-copy">거부</span>
           </button>
           <button
@@ -147,7 +237,7 @@ export function InlineQuestion() {
             disabled={submitting}
             onClick={() => void respond({ type: "permission_response", request_id: requestId, allowed: true })}
           >
-            <span className="inline-question-number">2.</span>
+            <span className="inline-question-number inline-question-choice-number">A2</span>
             <span className="inline-question-choice-copy">허용</span>
           </button>
         </div>
@@ -159,44 +249,204 @@ export function InlineQuestion() {
     <section className="inline-question-card" role="group" aria-live="polite" data-request-id={requestId}>
       <div className="inline-question-header">
         <strong>
-          <span className="inline-question-label-copy">{isAssistantFollowUp ? `답변 선택${questionProgress}` : `질문${questionProgress}: ${conciseQuestion}`}</span>
+          <span className="inline-question-label-copy">
+            {batchedQuestion
+              ? `${isAssistantFollowUp ? "답변 입력" : "질문"} (${questionSteps.length}개)`
+              : isAssistantFollowUp ? `답변 선택${questionProgress}` : `질문${questionProgress}`}
+          </span>
         </strong>
         <small>{isAssistantFollowUp ? "마지막 질문에 바로 답변할 수 있습니다." : "에이전트가 답변을 기다리고 있습니다."}</small>
       </div>
-      {choices.length ? (
-        <div className="inline-question-choices">
-          {choices.map((choice, index) => (
-            <button
-              className="inline-question-choice"
-              type="button"
-              key={`${choice.value}-${index}`}
-              disabled={submitting}
-              onClick={() => submitAnswer(choice.value)}
-            >
-              <span className="inline-question-number">{index + 1}.</span>
-              <span className="inline-question-choice-copy">{choice.label}</span>
-              {choice.description ? <small className="inline-question-choice-description">{choice.description}</small> : null}
-            </button>
-          ))}
+      {batchedQuestion && mixedBatchedChoiceQuestion ? (
+        <div className="inline-question-mixed-set">
+          {questionSteps.map((step, index) => {
+            const label = stripLeadingQuestionProgress(step);
+            if (!choiceAnsweredQuestionSteps[index]) {
+              return (
+                <label className="inline-question-pair" key={`${step}-${index}`}>
+                  <span className="inline-question-number inline-question-step-number">Q{index + 1}</span>
+                  <span className="inline-question-pair-question">{label}</span>
+                  <input
+                    type="text"
+                    placeholder="답변 입력..."
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={questionStepAnswers[index] || ""}
+                    disabled={submitting}
+                    onChange={(event) => updateBatchedAnswer(index, event.currentTarget.value)}
+                    onKeyDown={handleMixedBatchedAnswerKeyDown}
+                  />
+                </label>
+              );
+            }
+            return (
+              <div className="inline-question-objective-block" key={`${step}-${index}`}>
+                <div className="inline-question-objective-question">
+                  <span className="inline-question-number inline-question-step-number">Q{index + 1}</span>
+                  <span>{label}</span>
+                </div>
+                <div className="inline-question-choices inline-question-shared-choices">
+                  {displayChoices.map((choice, choiceIndex) => (
+                    <button
+                      className={`inline-question-choice${selectedBatchedChoice === choice.value ? " selected" : ""}`}
+                      type="button"
+                      key={`${choice.value}-${choiceIndex}`}
+                      disabled={submitting}
+                      onClick={() => {
+                        setSelectedBatchedChoice(choice.value);
+                        setChoiceFreeformAnswer("");
+                      }}
+                    >
+                      <span className="inline-question-number inline-question-choice-number">A{choiceIndex + 1}</span>
+                      <span className="inline-question-choice-copy">{choice.label}</span>
+                      {choice.description ? <small className="inline-question-choice-description">{choice.description}</small> : null}
+                    </button>
+                  ))}
+                </div>
+                <label className="inline-question-choice-freeform">
+                  <span className="inline-question-number inline-question-choice-number">A{displayChoices.length + 1}</span>
+                  <input
+                    type="text"
+                    placeholder="기타 직접 입력..."
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={choiceFreeformAnswer}
+                    disabled={submitting}
+                    onChange={(event) => {
+                      setChoiceFreeformAnswer(event.currentTarget.value);
+                      setSelectedBatchedChoice("");
+                    }}
+                    onKeyDown={handleMixedBatchedAnswerKeyDown}
+                  />
+                </label>
+              </div>
+            );
+          })}
+          <button className="inline-question-submit inline-question-submit-batched" type="button" aria-label="질문별 답변 보내기" disabled={submitting || !mixedBatchedAnswersComplete} onClick={submitMixedBatchedAnswers}>
+            답변
+          </button>
         </div>
-      ) : null}
-      <div className="inline-question-form">
-        <span className="inline-question-number">{choices.length + 1}.</span>
-        <textarea
-          ref={inputRef}
-          rows={1}
-          placeholder="직접 답변 입력..."
-          autoComplete="off"
-          spellCheck={false}
-          value={answer}
-          disabled={submitting}
-          onChange={(event) => setAnswer(event.currentTarget.value)}
-          onKeyDown={handleAnswerKeyDown}
-        />
-        <button className="inline-question-submit" type="button" disabled={submitting || !answer.trim()} onClick={() => submitAnswer(answer)}>
-          답변
-        </button>
-      </div>
+      ) : batchedQuestion && sharedChoiceQuestion ? (
+        <div className="inline-question-shared-choice-set">
+          <div className="inline-question-pairs">
+            {questionSteps.map((step, index) => (
+              <label className="inline-question-pair" key={`${step}-${index}`}>
+                <span className="inline-question-number inline-question-step-number">Q{index + 1}</span>
+                <span className="inline-question-pair-question">{stripLeadingQuestionProgress(step)}</span>
+                <input
+                  type="text"
+                  placeholder="답변 입력..."
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={questionStepAnswers[index] || ""}
+                  disabled={submitting}
+                  onChange={(event) => updateBatchedAnswer(index, event.currentTarget.value)}
+                  onKeyDown={handleBatchedAnswerKeyDown}
+                />
+              </label>
+            ))}
+            <button className="inline-question-submit inline-question-submit-batched" type="button" aria-label="질문별 답변 보내기" disabled={submitting || !batchedAnswersComplete} onClick={submitBatchedAnswers}>
+              답변
+            </button>
+          </div>
+          <div className="inline-question-choices inline-question-shared-choices">
+            {displayChoices.map((choice, index) => (
+              <button
+                className="inline-question-choice"
+                type="button"
+                key={`${choice.value}-${index}`}
+                disabled={submitting}
+                onClick={() => submitAnswer(choice.value)}
+              >
+                <span className="inline-question-number inline-question-choice-number">A{index + 1}</span>
+                <span className="inline-question-choice-copy">{choice.label}</span>
+                {choice.description ? <small className="inline-question-choice-description">{choice.description}</small> : null}
+              </button>
+            ))}
+          </div>
+          <div className="inline-question-form inline-question-choice-freeform-row">
+            <span className="inline-question-number inline-question-choice-number">A{displayChoices.length + 1}</span>
+            <input
+              type="text"
+              placeholder="기타 직접 입력..."
+              autoComplete="off"
+              spellCheck={false}
+              value={choiceFreeformAnswer}
+              disabled={submitting}
+              onChange={(event) => setChoiceFreeformAnswer(event.currentTarget.value)}
+              onKeyDown={handleSharedChoiceFreeformKeyDown}
+            />
+            <button className="inline-question-submit" type="button" aria-label="직접 답변 보내기" disabled={submitting || !choiceFreeformAnswer.trim()} onClick={submitSharedChoiceFreeform}>
+              답변
+            </button>
+          </div>
+        </div>
+      ) : batchedQuestion ? (
+        <div className="inline-question-pairs">
+          {questionSteps.map((step, index) => (
+            <label className="inline-question-pair" key={`${step}-${index}`}>
+              <span className="inline-question-number inline-question-step-number">Q{index + 1}</span>
+              <span className="inline-question-pair-question">{stripLeadingQuestionProgress(step)}</span>
+              <input
+                type="text"
+                placeholder="답변 입력..."
+                autoComplete="off"
+                spellCheck={false}
+                value={questionStepAnswers[index] || ""}
+                disabled={submitting}
+                onChange={(event) => updateBatchedAnswer(index, event.currentTarget.value)}
+                onKeyDown={handleBatchedAnswerKeyDown}
+              />
+            </label>
+          ))}
+          <button className="inline-question-submit inline-question-submit-batched" type="button" aria-label="질문별 답변 보내기" disabled={submitting || !batchedAnswersComplete} onClick={submitBatchedAnswers}>
+            답변
+          </button>
+        </div>
+      ) : (
+        <>
+          {!isAssistantFollowUp ? (
+            <div className="inline-question-objective-question inline-question-single-question">
+              <span className="inline-question-number inline-question-step-number">Q1</span>
+              <span>{conciseQuestion}</span>
+            </div>
+          ) : null}
+          {displayChoices.length ? (
+            <div className="inline-question-choices">
+              {displayChoices.map((choice, index) => (
+                <button
+                  className="inline-question-choice"
+                  type="button"
+                  key={`${choice.value}-${index}`}
+                  disabled={submitting}
+                  onClick={() => submitAnswer(choice.value)}
+                >
+                  <span className="inline-question-number inline-question-choice-number">A{index + 1}</span>
+                  <span className="inline-question-choice-copy">{choice.label}</span>
+                  {choice.description ? <small className="inline-question-choice-description">{choice.description}</small> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="inline-question-form">
+            <span className="inline-question-number inline-question-choice-number">A{displayChoices.length + 1}</span>
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="직접 답변 입력..."
+              autoComplete="off"
+              spellCheck={false}
+              value={answer}
+              disabled={submitting}
+              onChange={(event) => setAnswer(event.currentTarget.value)}
+              onKeyDown={handleAnswerKeyDown}
+            />
+            <button className="inline-question-submit" type="button" disabled={submitting || !answer.trim()} onClick={() => submitAnswer(answer)}>
+              답변
+            </button>
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -242,7 +492,7 @@ function normalizeQuestionChoices(
 function normalizeQuestionChoice(item: unknown, source: QuestionChoice["source"]): QuestionChoice | null {
   if (typeof item === "string") {
     const value = item.trim();
-    return value ? { label: value, value, description: "", source } : null;
+    return value ? { label: cleanChoiceLabel(value), value, description: "", source } : null;
   }
   if (!item || typeof item !== "object") {
     return null;
@@ -250,8 +500,9 @@ function normalizeQuestionChoice(item: unknown, source: QuestionChoice["source"]
   const raw = item as Record<string, unknown>;
   const value = String(raw.value ?? raw.answer ?? raw.label ?? raw.title ?? "").trim();
   if (!value) return null;
+  const label = String(raw.label ?? raw.title ?? value).trim() || value;
   return {
-    label: String(raw.label ?? raw.title ?? value).trim() || value,
+    label: cleanChoiceLabel(label),
     value,
     description: String(raw.description ?? raw.detail ?? "").trim(),
     source,
@@ -265,7 +516,17 @@ function extractQuestionChoices(question: string): QuestionChoice[] {
     .map((value) => value.trim())
     .filter(Boolean)
     .slice(0, 6)
-    .map((value) => ({ label: value, value, description: "", source: "question" as const }));
+    .map((value) => {
+      const cleaned = cleanChoiceLabel(value);
+      return { label: cleaned, value: cleaned, description: "", source: "question" as const };
+    });
+}
+
+function cleanChoiceLabel(value: string) {
+  return String(value || "")
+    .trim()
+    .replace(/^\s*(?:(?:\d{1,2}|[A-Za-z]|[가-힣])[.)]\s+|\d{1,2}\s+(?=\S))/, "")
+    .trim();
 }
 
 function defaultQuestionChoices(question: string): QuestionChoice[] {
@@ -312,6 +573,10 @@ function escapeRegExp(value: string) {
 
 function questionProgressLabel(question: string) {
   const text = String(question || "").trim();
+  const steps = splitBatchedQuestions(text);
+  if (steps.length > 1) {
+    return ` (${steps.length}개)`;
+  }
   const explicit = text.match(/(?:^|\s)[(（]\s*(\d+)\s*[\/／]\s*(\d+)\s*[)）]/);
   if (explicit) {
     const current = Number.parseInt(explicit[1], 10);
@@ -326,9 +591,72 @@ function questionProgressLabel(question: string) {
   return total > 1 ? ` (1/${Math.min(total, 9)})` : "";
 }
 
+function splitBatchedQuestions(question: string) {
+  const text = String(question || "").trim();
+  if (!text) {
+    return [];
+  }
+  const explicitMarkers = [...text.matchAll(/[(（]\s*(\d+)\s*[\/／]\s*(\d+)\s*[)）]/g)]
+    .filter((match) => {
+      const after = text.slice((match.index || 0) + match[0].length).trimStart();
+      return !after.startsWith(":") && !after.startsWith("：");
+    });
+  if (explicitMarkers.length > 1) {
+    return explicitMarkers.map((match, index) => {
+      const start = match.index || 0;
+      const end = explicitMarkers[index + 1]?.index ?? text.length;
+      return text.slice(start, end).trim();
+    }).filter(Boolean);
+  }
+  const questionLines = text.split(/\r?\n/).map((line) => line.trim()).filter(isQuestionLikeLine);
+  return questionLines.length > 1 ? questionLines : [text];
+}
+
+function stripLeadingQuestionProgress(question: string) {
+  return String(question || "").replace(/^\s*[(（]\s*\d+\s*[\/／]\s*\d+\s*[)）]\s*/, "").trim();
+}
+
+function isSubjectiveQuestionStep(question: string) {
+  return /(?:^|\s)(?:주관식|서술형)\s*[:：]/.test(stripLeadingQuestionProgress(question));
+}
+
+function isObjectiveQuestionStep(question: string) {
+  return /(?:^|\s)(?:객관식|선택식|선택지)\s*[:：]/.test(stripLeadingQuestionProgress(question));
+}
+
+function isQuestionAnsweredBySharedChoices(question: string, index: number, questions: string[]) {
+  const label = stripLeadingQuestionProgress(question);
+  if (isSubjectiveQuestionStep(label)) {
+    return false;
+  }
+  if (isObjectiveQuestionStep(label)) {
+    return true;
+  }
+  if (index !== questions.length - 1) {
+    return false;
+  }
+  return /(?:골라주세요|선택해주세요|정해주세요|고르|선택|유형|형태|방식|옵션|choice|select|option)/i.test(label);
+}
+
+function formatBatchedQuestionAnswer(questions: string[], answers: string[]) {
+  return questions.map((question, index) => {
+    const label = stripLeadingQuestionProgress(question);
+    return `(${index + 1}/${questions.length}) ${label}\n답변: ${(answers[index] || "").trim()}`;
+  }).join("\n\n");
+}
+
+function formatMixedBatchedQuestionAnswer(questions: string[], answers: string[], selectedChoice: string, choiceAnsweredQuestions: boolean[]) {
+  return questions.map((question, index) => {
+    const label = stripLeadingQuestionProgress(question);
+    const answer = choiceAnsweredQuestions[index] ? selectedChoice.trim() : (answers[index] || "").trim();
+    return `(${index + 1}/${questions.length}) ${label}\n답변: ${answer}`;
+  }).join("\n\n");
+}
+
 function isQuestionLikeLine(line: string) {
   const value = line.replace(/^[(（]|[)）]$/g, "").trim();
-  return /[?？]\s*$/.test(value) || /(할까요|될까요|괜찮을까요|원하시나요|맞나요)\s*$/.test(value);
+  return /[?？]\s*$/.test(value)
+    || /(할까요|될까요|괜찮을까요|원하시나요|맞나요|해주세요|골라주세요|알려주세요|선택해주세요|말씀해주세요|정해주세요)[.!。]?\s*$/.test(value);
 }
 
 function assistantFollowUpQuestion(messages: Array<{ role: string; text: string; isComplete?: boolean; isError?: boolean }>, draft = "") {

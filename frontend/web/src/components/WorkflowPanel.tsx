@@ -27,11 +27,6 @@ function formatDuration(seconds: number) {
   return formatElapsed(seconds).replace(/\s*경과$/, "");
 }
 
-const workflowPreviewBodyLineSummaryThreshold = 10;
-const workflowPreviewBodyCharSummaryThreshold = 4000;
-const workflowPreviewCollapsedLines = 11;
-const workflowPreviewCollapsedChars = 1200;
-
 function estimateTextTokens(text: string) {
   const value = String(text || "");
   if (!value) {
@@ -65,26 +60,6 @@ function countWorkflowPreviewLines(text: string) {
 function formatWorkflowContentCount(text: string) {
   const lines = countWorkflowPreviewLines(text);
   return `${formatWorkflowTokenCount(estimateTextTokens(text))} (${lines.toLocaleString()}줄)`;
-}
-
-function workflowPreviewBodyDisplay(text: string, kind: WorkflowPreviewSource["kind"], expanded: boolean) {
-  const value = String(text || "");
-  const shouldCollapse = kind !== "diff"
-    && Boolean(value)
-    && (value.length > workflowPreviewBodyCharSummaryThreshold
-      || countWorkflowPreviewLines(value) >= workflowPreviewBodyLineSummaryThreshold);
-  if (
-    !shouldCollapse
-    || expanded
-  ) {
-    return { text: value, canCollapse: shouldCollapse };
-  }
-  const lines = value.replace(/\r\n/g, "\n").split("\n");
-  let preview = lines.slice(0, workflowPreviewCollapsedLines).join("\n").trimEnd();
-  if (preview.length > workflowPreviewCollapsedChars) {
-    preview = preview.slice(0, workflowPreviewCollapsedChars).trimEnd();
-  }
-  return { text: `${preview}...`, canCollapse: true };
 }
 
 function workflowPreviewFileName(path: string) {
@@ -301,10 +276,8 @@ function isWorkflowOutputTool(toolName: string) {
 
 function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source: WorkflowPreviewSource }) {
   const bodyRef = useRef<HTMLPreElement | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const done = event.status !== "running";
   const fileName = workflowPreviewFileName(source.path);
-  const bodyDisplay = workflowPreviewBodyDisplay(source.content, source.kind, expanded);
   const prefix = source.kind === "diff"
     ? done ? "수정 완료" : "수정 미리보기"
     : done ? "작성 완료" : "작성 중인 결과물";
@@ -323,10 +296,6 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
     body.scrollTop = body.scrollHeight;
   }, [event.status, source.content]);
 
-  useEffect(() => {
-    setExpanded(false);
-  }, [source.content, source.kind]);
-
   return (
     <div className="workflow-output-preview">
       <div className="workflow-output-title">
@@ -339,13 +308,7 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
             {line || " "}
           </span>
         ))
-        : bodyDisplay.text}</pre>
-      {bodyDisplay.canCollapse ? (
-        <button className="workflow-output-toggle" type="button" onClick={() => setExpanded((value) => !value)}>
-          {expanded ? "접기" : "더 보기"}
-          <span aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
-        </button>
-      ) : null}
+        : source.content}</pre>
     </div>
   );
 }
@@ -414,6 +377,59 @@ function WorkflowStep({ event, detail, animate }: { event: WorkflowEvent; detail
 
 function activeWorkflowCount(events: WorkflowEvent[]) {
   return events.filter((event) => event.status === "running" && event.role !== "purpose").length;
+}
+
+function completedChildCount(events: WorkflowEvent[], groupId?: string) {
+  if (!groupId) {
+    return 0;
+  }
+  return events.filter((event) => event.groupId === groupId && event.role !== "purpose" && event.status !== "running").length;
+}
+
+function workflowNarration(events: WorkflowEvent[]) {
+  const running = [...events].reverse().find((event) => event.status === "running");
+  const latestPurpose = [...events].reverse().find((event) => event.role === "purpose");
+  const current = running || latestPurpose;
+  if (!current) {
+    return "";
+  }
+
+  if (current.role === "final") {
+    return "이제 작업 결과를 정리하고 있습니다. 무엇을 바꿨고 어떻게 확인했는지 짧게 묶어드리겠습니다.";
+  }
+  if (current.role === "activity") {
+    return "도구 결과를 읽고 다음 단계를 판단하고 있습니다. 바로 마무리할 수 있는지, 추가 확인이 필요한지 가볍게 점검하는 중입니다.";
+  }
+  if (current.role === "planning") {
+    return "요청을 기준으로 필요한 맥락과 검증 기준을 정리하고 있습니다. 먼저 어디를 확인해야 할지 잡아보겠습니다.";
+  }
+
+  const purpose = current.role === "purpose" ? current.purpose : latestPurpose?.purpose;
+  const completedCount = completedChildCount(events, current.groupId || latestPurpose?.groupId);
+  const prefix = completedCount > 0 ? `방금 ${completedCount.toLocaleString()}개 결과를 확인했고, ` : "";
+
+  if (purpose === "info") {
+    return `${prefix}필요한 파일과 실행 결과를 훑으면서 판단 근거를 모으고 있습니다. 아직 변경은 적용하지 않고, 어디를 건드려야 하는지 확인하는 중입니다.`;
+  }
+  if (purpose === "verification") {
+    return `${prefix}변경 결과가 의도대로 동작하는지 확인하고 있습니다. 오류나 깨진 화면이 없는지 검증한 뒤 마무리하겠습니다.`;
+  }
+  return `${prefix}확인한 맥락을 바탕으로 실제 작업을 진행하고 있습니다. 범위가 벗어나지 않도록 관련 부분만 좁게 손보는 중입니다.`;
+}
+
+function WorkflowNarration({ events, active }: { events: WorkflowEvent[]; active: boolean }) {
+  if (!active) {
+    return null;
+  }
+  const narration = workflowNarration(events);
+  if (!narration) {
+    return null;
+  }
+  return (
+    <div className="workflow-narration" aria-live="polite">
+      <p>{narration}</p>
+    </div>
+  );
 }
 
 function isImmediateWorkflowEvent(event: WorkflowEvent) {
@@ -539,6 +555,7 @@ export function WorkflowPanel({ events: eventOverride, durationSeconds }: { even
   const visibleEvents = useStaggeredWorkflowEvents(events, animateActiveWorkflow);
   const totalDurationSeconds = durationSeconds ?? (!eventOverride ? state.workflowDurationSeconds : null);
   const [now, setNow] = useState(() => Date.now());
+  const [liveTotalDurationSeconds, setLiveTotalDurationSeconds] = useState<number | null>(null);
   const runningSinceRef = useRef<Record<string, number>>({});
 
   const runningCount = activeWorkflowCount(events);
@@ -561,6 +578,18 @@ export function WorkflowPanel({ events: eventOverride, durationSeconds }: { even
     return () => window.clearInterval(interval);
   }, [events]);
 
+  useEffect(() => {
+    if (!animateActiveWorkflow || totalDurationSeconds || state.workflowStartedAtMs === null) {
+      return undefined;
+    }
+    const updateDuration = () => {
+      setLiveTotalDurationSeconds(Math.max(0, Math.floor((Date.now() - state.workflowStartedAtMs!) / 1000)));
+    };
+    updateDuration();
+    const interval = window.setInterval(updateDuration, 1000);
+    return () => window.clearInterval(interval);
+  }, [animateActiveWorkflow, state.workflowStartedAtMs, totalDurationSeconds]);
+
   function eventDetail(event: WorkflowEvent) {
     const detail = compactDetail(event.detail);
     if (event.status !== "running") {
@@ -580,12 +609,12 @@ export function WorkflowPanel({ events: eventOverride, durationSeconds }: { even
   );
   const rows = useMemo(() => workflowRows(visibleEvents), [visibleEvents]);
   const hasOutputPreview = outputPreviewEvents.length > 0;
-  const countLabel = runningCount
-    ? `${runningCount}개 실행 중`
-    : [
-      `${events.length}개 기록`,
-      totalDurationSeconds ? `(${formatDuration(totalDurationSeconds)})` : "",
-    ].filter(Boolean).join(" ");
+  const displayedDurationSeconds = totalDurationSeconds ?? liveTotalDurationSeconds;
+  const countLabel = [
+    `${events.length}개 기록`,
+    displayedDurationSeconds !== null ? `(${formatDuration(displayedDurationSeconds)})` : "",
+    runningCount ? `· ${runningCount}개 실행 중` : "",
+  ].filter(Boolean).join(" ");
 
   if (!events.length) {
     return null;
@@ -593,6 +622,7 @@ export function WorkflowPanel({ events: eventOverride, durationSeconds }: { even
 
   return (
     <article className="message assistant workflow-message" aria-label="도구 진행 상황">
+      <WorkflowNarration events={events} active={animateActiveWorkflow || runningCount > 0} />
       <details className="workflow-card" open={!eventOverride && state.busy || runningCount > 0 || hasOutputPreview}>
         <summary>
           <span className="workflow-title">작업 진행</span>

@@ -8,7 +8,7 @@ type TooltipState = {
   target: HTMLElement;
   x: number;
   y: number;
-  placement: "top" | "bottom";
+  placement: "top" | "bottom" | "right";
 };
 
 function findTooltipTarget(target: EventTarget | null) {
@@ -29,6 +29,15 @@ function getTooltipState(target: HTMLElement): TooltipState | null {
     return null;
   }
   const rect = target.getBoundingClientRect();
+  if (target.dataset.tooltipPlacement === "right") {
+    return {
+      text,
+      target,
+      x: rect.right + gap,
+      y: rect.top + rect.height / 2,
+      placement: "right",
+    };
+  }
   const yBelow = rect.bottom + gap;
   const yAbove = rect.top - gap;
   const placement = yBelow + 36 <= window.innerHeight ? "bottom" : "top";
@@ -125,13 +134,20 @@ export function TooltipLayer() {
       return;
     }
     const rect = tooltipRef.current.getBoundingClientRect();
-    const nextX = Math.min(
-      Math.max(tooltip.x, edgePadding + rect.width / 2),
-      window.innerWidth - edgePadding - rect.width / 2,
-    );
-    const nextY = tooltip.placement === "top"
-      ? Math.max(edgePadding, tooltip.y - rect.height)
-      : Math.min(tooltip.y, window.innerHeight - edgePadding - rect.height);
+    const nextX = tooltip.placement === "right"
+      ? Math.min(Math.max(tooltip.x, edgePadding), window.innerWidth - edgePadding - rect.width)
+      : Math.min(
+        Math.max(tooltip.x, edgePadding + rect.width / 2),
+        window.innerWidth - edgePadding - rect.width / 2,
+      );
+    const nextY = tooltip.placement === "right"
+      ? Math.min(
+        Math.max(tooltip.y, edgePadding + rect.height / 2),
+        window.innerHeight - edgePadding - rect.height / 2,
+      )
+      : tooltip.placement === "top"
+        ? Math.max(edgePadding, tooltip.y - rect.height)
+        : Math.min(tooltip.y, window.innerHeight - edgePadding - rect.height);
     if (Math.abs(nextX - tooltip.x) > 0.5 || Math.abs(nextY - tooltip.y) > 0.5) {
       setTooltip({ ...tooltip, x: nextX, y: nextY });
     }
@@ -150,7 +166,11 @@ export function TooltipLayer() {
         left: tooltip.x,
         position: "fixed",
         top: tooltip.y,
-        transform: tooltip.placement === "top" ? "translateX(-50%)" : "translate(-50%, 0)",
+        transform: tooltip.placement === "right"
+          ? "translate(0, -50%)"
+          : tooltip.placement === "top"
+            ? "translateX(-50%)"
+            : "translate(-50%, 0)",
       }}
     >
       {tooltip.text}

@@ -7,6 +7,7 @@ import { sendBackendRequest, sendMessage } from "../api/messages";
 import type { HistoryItem, Workspace } from "../types/backend";
 import type { RuntimePickerOption } from "../types/ui";
 import type { ThemeId } from "../types/ui";
+import { isLiveOnlyHistoryItem } from "../utils/history";
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
   { id: "light", label: "Claude" },
@@ -541,6 +542,7 @@ export function Sidebar() {
           aria-label="프로젝트 선택"
           aria-expanded={workspaceDropdownOpen}
           data-tooltip="프로젝트 폴더 선택"
+          data-tooltip-placement="right"
           onClick={() => setWorkspaceDropdownOpen((value) => !value)}
         >
           <span className="sidebar-project-icon" aria-hidden="true">
@@ -583,7 +585,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <button className="new-chat" type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={() => void startFreshChat()}>
+      <button className="new-chat" type="button" aria-label="새 채팅" data-tooltip="새 채팅" data-tooltip-placement="right" onClick={() => void startFreshChat()}>
         <span aria-hidden="true" />
         새 채팅
       </button>
@@ -691,6 +693,7 @@ export function Sidebar() {
         aria-label="런타임 설정 열기"
         aria-expanded={state.runtimePicker.open}
         data-tooltip="Provider, 모델, 추론 강도"
+        data-tooltip-placement="right"
         onClick={() => void toggleRuntimePicker()}
       >
         <span className="profile-mark" aria-hidden="true">
@@ -821,10 +824,7 @@ function isActiveHistoryItem(item: HistoryItem, activeHistoryValue: string, sess
 }
 
 function isCurrentLiveHistoryItem(item: HistoryItem, sessionId: string | null) {
-  if (!sessionId || item.live !== true) {
-    return false;
-  }
-  return item.liveSessionId === sessionId || item.value === sessionId;
+  return isLiveOnlyHistoryItem(item, sessionId);
 }
 
 function RuntimePanel({ title, value, className = "", children }: { title: string; value: string; className?: string; children: ReactNode }) {

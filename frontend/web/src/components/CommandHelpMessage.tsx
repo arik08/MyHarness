@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import { useAppState } from "../state/app-state";
+import type { SkillItem } from "../types/backend";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 type CommandEntry = {
@@ -168,6 +169,36 @@ function formatHelpIntro(text: string) {
     .replace(/^자주 쓰는 기능:\s*$/gm, "**자주 쓰는 기능**");
 }
 
+function mergeSkillState(items: ToggleEntry[], skills: SkillItem[]) {
+  const byName = new Map(skills.map((skill) => [skill.name.toLowerCase(), skill]));
+  return items.map((item) => {
+    const snapshot = byName.get(item.name.toLowerCase());
+    if (!snapshot) return item;
+    return {
+      ...item,
+      enabled: snapshot.enabled !== false,
+      description: snapshot.description || item.description,
+      source: snapshot.source || item.source,
+    };
+  });
+}
+
+function optimisticSkillSnapshot(skills: SkillItem[], items: ToggleEntry[], name: string, enabled: boolean): SkillItem[] {
+  const source = skills.length
+    ? skills
+    : items.map((item) => ({
+      name: item.name,
+      description: item.description,
+      source: item.source,
+      enabled: item.enabled,
+    }));
+  return source.map((skill) => (
+    skill.name.toLowerCase() === name.toLowerCase()
+      ? { ...skill, enabled }
+      : skill
+  ));
+}
+
 export function CommandHelpMessage({ text }: { text: string }) {
   const { state, dispatch } = useAppState();
   const parsed = useMemo(() => {
@@ -183,6 +214,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
       hasPlugins: hasNamedCatalog(text, "Plugins:", "플러그인:"),
     };
   }, [text]);
+  const skillItems = useMemo(() => mergeSkillState(parsed.skills, state.skills), [parsed.skills, state.skills]);
 
   const describeCommand = (name: string, fallback: string) =>
     state.commands.find((command) => command.name === name)?.description || fallback || "명령어를 실행합니다";
@@ -205,6 +237,15 @@ export function CommandHelpMessage({ text }: { text: string }) {
     if (!state.sessionId) return;
     try {
       await sendBackendRequest(state.sessionId, state.clientId, { type: requestType, value: name, enabled: !enabled });
+      if (requestType === "set_skill_enabled") {
+        dispatch({
+          type: "backend_event",
+          event: {
+            type: "skills_snapshot",
+            skills: optimisticSkillSnapshot(state.skills, skillItems, name, !enabled),
+          },
+        });
+      }
     } catch (error) {
       dispatch({
         type: "open_modal",
@@ -223,7 +264,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
       {parsed.hasSkills ? (
         <ToggleCatalog
           label="Skills"
-          items={parsed.skills}
+          items={skillItems}
           emptyText="No custom skills available"
           onToggle={(item) => void toggleItem("set_skill_enabled", item.name, item.enabled)}
         />

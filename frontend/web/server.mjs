@@ -2885,6 +2885,76 @@ function liveSessionPayload(session) {
   };
 }
 
+const settingsAdminMessage = "Global settings can only be changed from the local MyHarness host";
+const settingsApiRoutes = {
+  "/api/settings/pgpt": {
+    read: () => readPgptSettings(),
+    write: (body) => savePgptSettings(body),
+    readError: "Could not read P-GPT settings",
+    writeError: "Could not save P-GPT settings",
+  },
+  "/api/settings/workspace-scope": {
+    read: (request) => readWorkspaceScopeSettings(request),
+    write: (body, request) => saveWorkspaceScopeSettings(body, request),
+    readError: "Could not read workspace scope settings",
+    writeError: "Could not save workspace scope settings",
+  },
+  "/api/settings/learned-skills": {
+    read: () => readLearnedSkillsSettings(),
+    write: (body) => saveLearnedSkillsSettings(body),
+    readError: "Could not read learned skill settings",
+    writeError: "Could not save learned skill settings",
+  },
+  "/api/settings/shell": {
+    read: () => readShellSettings(),
+    write: (body) => saveShellSettings(body),
+    readError: "Could not read shell settings",
+    writeError: "Could not save shell settings",
+  },
+  "/api/settings/yolo-mode": {
+    read: () => readYoloModeSettings(),
+    write: (body) => saveYoloModeSettings(body),
+    readError: "Could not read Yolo mode settings",
+    writeError: "Could not save Yolo mode settings",
+  },
+};
+
+async function writeApiJsonResult(response, action, fallbackMessage, useErrorStatus = false) {
+  try {
+    json(response, 200, await action());
+  } catch (error) {
+    json(response, useErrorStatus ? error?.status || 400 : 400, { error: error?.message || fallbackMessage });
+  }
+}
+
+async function handleSettingsApi(request, response, pathname) {
+  const settingsRoute = settingsApiRoutes[pathname];
+  if (settingsRoute && request.method === "GET") {
+    await writeApiJsonResult(response, () => settingsRoute.read(request), settingsRoute.readError);
+    return true;
+  }
+
+  if (settingsRoute && request.method === "POST") {
+    await writeApiJsonResult(response, async () => {
+      requireLocalAdminRequest(request, settingsAdminMessage);
+      const body = await readJson(request);
+      return settingsRoute.write(body, request);
+    }, settingsRoute.writeError, true);
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/dialog/folder") {
+    await writeApiJsonResult(response, async () => {
+      requireLocalAdminRequest(request, "Folder picker can only be opened from the local MyHarness host");
+      const body = await readJson(request);
+      return openFolderDialog(body.initialPath);
+    }, "Could not open folder picker", true);
+    return true;
+  }
+
+  return false;
+}
+
 async function handleApi(request, response, pathname) {
   const workspaceScope = workspaceScopeFromRequest(request);
   const clientAddress = normalizeClientAddress(forwardedAddressFromRequest(request));
@@ -3107,114 +3177,7 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
-  if (request.method === "GET" && pathname === "/api/settings/pgpt") {
-    try {
-      json(response, 200, await readPgptSettings());
-    } catch (error) {
-      json(response, 400, { error: error.message || "Could not read P-GPT settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/settings/pgpt") {
-    try {
-      requireLocalAdminRequest(request, "Global settings can only be changed from the local MyHarness host");
-      const body = await readJson(request);
-      json(response, 200, await savePgptSettings(body));
-    } catch (error) {
-      json(response, error.status || 400, { error: error.message || "Could not save P-GPT settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/settings/workspace-scope") {
-    try {
-      json(response, 200, await readWorkspaceScopeSettings(request));
-    } catch (error) {
-      json(response, 400, { error: error.message || "Could not read workspace scope settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/settings/workspace-scope") {
-    try {
-      requireLocalAdminRequest(request, "Global settings can only be changed from the local MyHarness host");
-      const body = await readJson(request);
-      json(response, 200, await saveWorkspaceScopeSettings(body, request));
-    } catch (error) {
-      json(response, error.status || 400, { error: error.message || "Could not save workspace scope settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/settings/learned-skills") {
-    try {
-      json(response, 200, await readLearnedSkillsSettings());
-    } catch (error) {
-      json(response, 400, { error: error.message || "Could not read learned skill settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/settings/learned-skills") {
-    try {
-      requireLocalAdminRequest(request, "Global settings can only be changed from the local MyHarness host");
-      const body = await readJson(request);
-      json(response, 200, await saveLearnedSkillsSettings(body));
-    } catch (error) {
-      json(response, error.status || 400, { error: error.message || "Could not save learned skill settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/settings/shell") {
-    try {
-      json(response, 200, await readShellSettings());
-    } catch (error) {
-      json(response, 400, { error: error.message || "Could not read shell settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/settings/shell") {
-    try {
-      requireLocalAdminRequest(request, "Global settings can only be changed from the local MyHarness host");
-      const body = await readJson(request);
-      json(response, 200, await saveShellSettings(body));
-    } catch (error) {
-      json(response, error.status || 400, { error: error.message || "Could not save shell settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "GET" && pathname === "/api/settings/yolo-mode") {
-    try {
-      json(response, 200, await readYoloModeSettings());
-    } catch (error) {
-      json(response, 400, { error: error.message || "Could not read Yolo mode settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/settings/yolo-mode") {
-    try {
-      requireLocalAdminRequest(request, "Global settings can only be changed from the local MyHarness host");
-      const body = await readJson(request);
-      json(response, 200, await saveYoloModeSettings(body));
-    } catch (error) {
-      json(response, error.status || 400, { error: error.message || "Could not save Yolo mode settings" });
-    }
-    return true;
-  }
-
-  if (request.method === "POST" && pathname === "/api/dialog/folder") {
-    try {
-      requireLocalAdminRequest(request, "Folder picker can only be opened from the local MyHarness host");
-      const body = await readJson(request);
-      json(response, 200, await openFolderDialog(body.initialPath));
-    } catch (error) {
-      json(response, error.status || 400, { error: error.message || "Could not open folder picker" });
-    }
+  if (await handleSettingsApi(request, response, pathname)) {
     return true;
   }
 

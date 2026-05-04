@@ -31,6 +31,32 @@ describe("ModalHost remote access helpers", () => {
   });
 });
 
+describe("ModalHost download settings", () => {
+  function renderDownloadSettingsModal() {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          modal: { kind: "settings" },
+        }}
+      >
+        <ModalHost />
+      </AppStateProvider>,
+    );
+  }
+
+  it("shows browser download first and selected by default", async () => {
+    renderDownloadSettingsModal();
+
+    await userEvent.click(screen.getByRole("button", { name: /파일 저장경로/ }));
+    const mode = screen.getByRole("combobox") as HTMLSelectElement;
+    const options = Array.from(mode.options).map((option) => option.textContent);
+
+    expect(options).toEqual(["브라우저 다운로드", "매번 저장 위치 선택", "지정 폴더에 자동 저장"]);
+    expect(mode.value).toBe("browser");
+  });
+});
+
 describe("ModalHost workspace deletion", () => {
   beforeEach(() => {
     vi.clearAllMocks();

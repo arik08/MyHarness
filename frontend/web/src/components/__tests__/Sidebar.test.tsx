@@ -71,6 +71,18 @@ describe("Sidebar", () => {
     expect(paths).not.toContain("M6 6l12 12");
   });
 
+  it("asks the shared tooltip layer to show sidebar row tooltips on the right", () => {
+    render(
+      <AppStateProvider initialState={initialAppState}>
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "프로젝트 선택" }).getAttribute("data-tooltip-placement")).toBe("right");
+    expect(screen.getByRole("button", { name: "새 채팅" }).getAttribute("data-tooltip-placement")).toBe("right");
+    expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
+  });
+
   it("shows the busy spinner in the delete slot while the active answer is running", () => {
     const { container } = render(
       <AppStateProvider
@@ -239,6 +251,32 @@ describe("Sidebar", () => {
 
     expect(screen.queryByRole("button", { name: /열려 있는 세션/ })).toBeNull();
     expect(screen.queryByText("열려 있는 세션")).toBeNull();
+  });
+
+  it("keeps the saved history row visible when its live backend session is current", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          activeHistoryId: "saved-current",
+          clientId: "client-1",
+          history: [{
+            value: "saved-current",
+            label: "5/3 10:00 2 msg",
+            description: "저장된 live 대화",
+            live: true,
+            liveSessionId: "web-current",
+            busy: false,
+          }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("저장된 live 대화")).toBeTruthy();
+    expect(document.querySelector(".history-item.active")).not.toBeNull();
   });
 
   it("opens a saved history item in a separate backend while the current answer is running", async () => {

@@ -343,7 +343,34 @@ test("streamed write_file arguments create workflow previews before tool start",
   assert.equal(previewBody.textContent, "hello world");
 });
 
-test("write_file workflow previews collapse long content", async () => {
+test("streamed write_file preview keeps appending when the tool name appears late", async () => {
+  installBrowserGlobals();
+  const { createMessages } = await import("../modules/messages.js");
+  const ctx = createContext();
+  const messages = createMessages(ctx);
+
+  messages.appendWorkflowInputDelta({
+    type: "tool_input_delta",
+    tool_call_index: 0,
+    arguments_delta: '{"path":"late-name-report.md","content":"hello',
+  });
+  messages.appendWorkflowInputDelta({
+    type: "tool_input_delta",
+    tool_call_index: 0,
+    tool_name: "write_file",
+    arguments_delta: ' world"}',
+  });
+  messages.finalizeWorkflowSummary();
+
+  const previewTitle = ctx.els.messages.querySelector(".workflow-output-title");
+  const previewBody = ctx.els.messages.querySelector(".workflow-output-body");
+  assert.ok(previewTitle);
+  assert.ok(previewBody);
+  assert.match(previewTitle.textContent, /작성 완료 - late-name-report\.md/);
+  assert.equal(previewBody.textContent, "hello world");
+});
+
+test("write_file workflow previews do not collapse long completed content", async () => {
   installBrowserGlobals();
   const { createMessages } = await import("../modules/messages.js");
   const ctx = createContext();
@@ -367,12 +394,43 @@ test("write_file workflow previews collapse long content", async () => {
   const previewBody = ctx.els.messages.querySelector(".workflow-output-body");
   const toggle = ctx.els.messages.querySelector(".workflow-output-toggle");
   assert.ok(previewBody);
-  assert.ok(toggle);
-  assert.notEqual(previewBody.textContent, longContent);
-  assert.match(previewBody.textContent, /첫 줄입니다/);
-  assert.match(previewBody.textContent, /긴 본문 10번째 줄입니다/);
-  assert.doesNotMatch(previewBody.textContent, /긴 본문 11번째 줄입니다/);
-  assert.equal(toggle.textContent, "더 보기");
+  assert.equal(previewBody.textContent, longContent);
+  assert.equal(toggle, null);
+});
+
+test("streaming write_file workflow previews do not collapse long content", async () => {
+  installBrowserGlobals();
+  const { createMessages } = await import("../modules/messages.js");
+  const ctx = createContext();
+  let messageScrollCalls = 0;
+  ctx.state.autoFollowMessages = true;
+  ctx.scrollMessagesToBottom = () => { messageScrollCalls += 1; };
+  const messages = createMessages(ctx);
+  const longContent = [
+    "<!doctype html>",
+    ...Array.from({ length: 24 }, (_, index) => `<section>작성 중 ${index + 1}</section>`),
+    "</html>",
+  ].join("\n");
+
+  messages.appendWorkflowInputDelta({
+    type: "tool_input_delta",
+    tool_call_index: 0,
+    tool_name: "write_file",
+    arguments_delta: JSON.stringify({
+      path: "internet-ai-future-report.html",
+      content: longContent,
+    }),
+  });
+
+  const previewTitle = ctx.els.messages.querySelector(".workflow-output-title");
+  const previewBody = ctx.els.messages.querySelector(".workflow-output-body");
+  const toggle = ctx.els.messages.querySelector(".workflow-output-toggle");
+  assert.ok(previewTitle);
+  assert.ok(previewBody);
+  assert.match(previewTitle.textContent, /작성 중인 결과물 - internet-ai-future-report\.html/);
+  assert.equal(previewBody.textContent, longContent);
+  assert.equal(toggle, null);
+  assert.equal(messageScrollCalls, 0);
 });
 
 test("streamed notebook_edit arguments create workflow previews from new_source", async () => {
@@ -401,6 +459,32 @@ test("streamed notebook_edit arguments create workflow previews from new_source"
   assert.ok(previewBody);
   assert.match(previewTitle.textContent, /작성 완료 - streamed\.ipynb/);
   assert.equal(previewBody.textContent, "print(1)");
+});
+
+test("unnamed streamed new_source arguments infer notebook edit previews", async () => {
+  installBrowserGlobals();
+  const { createMessages } = await import("../modules/messages.js");
+  const ctx = createContext();
+  const messages = createMessages(ctx);
+
+  messages.appendWorkflowInputDelta({
+    type: "tool_input_delta",
+    tool_call_index: 0,
+    arguments_delta: '{"path":"unnamed-streamed.ipynb","new_source":"print',
+  });
+  messages.appendWorkflowInputDelta({
+    type: "tool_input_delta",
+    tool_call_index: 0,
+    arguments_delta: '(2)"}',
+  });
+  messages.finalizeWorkflowSummary();
+
+  const previewTitle = ctx.els.messages.querySelector(".workflow-output-title");
+  const previewBody = ctx.els.messages.querySelector(".workflow-output-body");
+  assert.ok(previewTitle);
+  assert.ok(previewBody);
+  assert.match(previewTitle.textContent, /작성 완료 - unnamed-streamed\.ipynb/);
+  assert.equal(previewBody.textContent, "print(2)");
 });
 
 test("empty write_file content still creates a workflow preview", async () => {

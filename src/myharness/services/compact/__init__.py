@@ -227,6 +227,8 @@ def _is_prompt_too_long_error(exc: Exception) -> bool:
         needle in text
         for needle in (
             "prompt too long",
+            "context_length_exceeded",
+            "input exceeds",
             "context length",
             "maximum context",
             "context window",
@@ -269,15 +271,19 @@ def try_context_collapse(
     messages: list[ConversationMessage],
     *,
     preserve_recent: int,
+    include_preserved: bool = False,
 ) -> list[ConversationMessage] | None:
     """Deterministically shrink oversized text blocks before full compact."""
-    if len(messages) <= preserve_recent + 2:
+    if not include_preserved and len(messages) <= preserve_recent + 2:
         return None
 
     older, newer = _split_preserving_tool_pairs(messages, preserve_recent=preserve_recent)
     changed = False
     collapsed_older: list[ConversationMessage] = []
-    for message in older:
+    collapsed_newer: list[ConversationMessage] = []
+
+    def _collapse_message(message: ConversationMessage) -> ConversationMessage:
+        nonlocal changed
         new_blocks: list[ContentBlock] = []
         for block in message.content:
             if isinstance(block, TextBlock):
@@ -285,14 +291,33 @@ def try_context_collapse(
                 if collapsed != block.text:
                     changed = True
                 new_blocks.append(TextBlock(text=collapsed))
+            elif isinstance(block, ToolResultBlock):
+                collapsed = _collapse_text(block.content)
+                if collapsed != block.content:
+                    changed = True
+                new_blocks.append(
+                    ToolResultBlock(
+                        tool_use_id=block.tool_use_id,
+                        content=collapsed,
+                        is_error=block.is_error,
+                    )
+                )
             else:
                 new_blocks.append(block)
-        collapsed_older.append(ConversationMessage(role=message.role, content=new_blocks))
+        return ConversationMessage(role=message.role, content=new_blocks)
+
+    for message in older:
+        collapsed_older.append(_collapse_message(message))
+    if include_preserved:
+        for message in newer:
+            collapsed_newer.append(_collapse_message(message))
+    else:
+        collapsed_newer = newer
 
     if not changed:
         return None
 
-    result = [*collapsed_older, *newer]
+    result = [*collapsed_older, *collapsed_newer]
     if estimate_message_tokens(result) >= estimate_message_tokens(messages):
         return None
     return result
@@ -1469,7 +1494,9 @@ async def auto_compact_if_needed(
     )
 
     # Try microcompact first — may be enough
+    deterministic_compacted = False
     messages, tokens_freed = microcompact_messages(messages)
+    deterministic_compacted = tokens_freed > 0
     _record_compact_checkpoint(
         carryover_metadata,
         checkpoint="query_microcompact_end",
@@ -1488,8 +1515,13 @@ async def auto_compact_if_needed(
         log.info("Microcompact freed ~%d tokens, auto-compact no longer needed", tokens_freed)
         return messages, True
 
-    context_collapsed = try_context_collapse(messages, preserve_recent=preserve_recent)
+    context_collapsed = try_context_collapse(
+        messages,
+        preserve_recent=preserve_recent,
+        include_preserved=force,
+    )
     if context_collapsed is not None:
+        deterministic_compacted = True
         await _emit_progress(
             progress_callback,
             phase="context_collapse_start",
@@ -1589,6 +1621,20 @@ async def auto_compact_if_needed(
         state.consecutive_failures = 0
         return build_post_compact_messages(result), True
     except Exception as exc:
+        if force and deterministic_compacted:
+            state.compacted = True
+            state.turn_counter += 1
+            state.turn_id = uuid4().hex
+            state.consecutive_failures = 0
+            _record_compact_checkpoint(
+                carryover_metadata,
+                checkpoint=f"query_{trigger}_deterministic_fallback",
+                trigger=trigger,
+                message_count=len(messages),
+                token_count=estimate_message_tokens(messages),
+                details={"reason": str(exc)},
+            )
+            return messages, True
         state.consecutive_failures += 1
         _record_compact_checkpoint(
             carryover_metadata,
