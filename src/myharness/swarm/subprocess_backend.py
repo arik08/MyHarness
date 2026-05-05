@@ -61,8 +61,10 @@ class SubprocessBackend:
             plan_mode_required=config.plan_mode_required,
         )
         extra_env = build_inherited_env_vars()
+        extra_env["MYHARNESS_PARENT_TASK_ID"] = "{task_id}"
 
         command = config.command
+        prompt = config.prompt
         if command is None:
             teammate_cmd = get_teammate_command()
             if _is_python_executable(teammate_cmd):
@@ -70,11 +72,12 @@ class SubprocessBackend:
             else:
                 cmd_parts = [teammate_cmd, "--task-worker"] + flags
             command = _shell_command_from_parts(cmd_parts)
+            prompt = _task_worker_stdin_payload(config.prompt)
 
         manager = get_task_manager()
         try:
             record = await manager.create_agent_task(
-                prompt=config.prompt,
+                prompt=prompt,
                 description=f"Teammate: {agent_id}",
                 cwd=config.cwd,
                 task_type=config.task_type,
@@ -171,3 +174,11 @@ def _shell_command_from_parts(parts: list[str]) -> str:
 
 def _quote_powershell_arg(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _task_worker_stdin_payload(prompt: str) -> str:
+    return json.dumps(
+        {"text": prompt, "from": "coordinator"},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )

@@ -179,9 +179,34 @@ function isMarkdownTableDivider(line: string) {
   return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
+function isIncompleteWorkflowFence(text: string) {
+  const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
+  const lines = source.split("\n");
+  const firstLine = lines[0] || "";
+  const fence = firstLine.match(/^(`{3,}|~{3,})\s*([A-Za-z0-9_-]+)?/);
+  if (!fence) {
+    return false;
+  }
+  const marker = fence[1];
+  const closed = lines.slice(1).some((line) => {
+    const close = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    return Boolean(close && close[1][0] === marker[0] && close[1].length >= marker.length);
+  });
+  if (closed) {
+    return false;
+  }
+  const language = String(fence[2] || "").toLowerCase();
+  const body = lines.slice(1).join("\n");
+  const hasWorkflowNodes = /\[[^\]]+\]/.test(body) && (/->|=>|→|↔/.test(body) || (body.match(/\[[^\]]+\]/g) || []).length >= 2);
+  return language === "workflow" || hasWorkflowNodes;
+}
+
 function isStructuredLiveMarkdown(text: string) {
   const source = String(text || "").replace(/\r\n/g, "\n");
   const trimmed = source.trimStart();
+  if (isIncompleteWorkflowFence(trimmed)) {
+    return false;
+  }
   if (/^(`{3,}|~{3,})\s*(html?|[A-Za-z0-9_-]+)?/i.test(trimmed)) {
     return true;
   }

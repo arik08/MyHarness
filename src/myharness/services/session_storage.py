@@ -380,10 +380,23 @@ def _load_snapshot_file(path: Path) -> dict[str, Any] | None:
 
 def load_session_snapshot(cwd: str | Path) -> dict[str, Any] | None:
     """Load the most recent session snapshot for the project."""
-    path = get_project_session_dir(cwd) / "latest.json"
+    session_dir = get_project_session_dir(cwd)
+    path = session_dir / "latest.json"
     if not path.exists():
         return None
-    return _load_snapshot_file(path)
+    data = _load_snapshot_file(path)
+    if data is not None and not _is_hidden_worker_snapshot(data):
+        return data
+    session_paths = sorted(
+        session_dir.glob("session-*.json"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for session_path in session_paths:
+        fallback = _load_snapshot_file(session_path)
+        if fallback is not None and not _is_hidden_worker_snapshot(fallback):
+            return fallback
+    return None
 
 
 def _first_user_summary_from_snapshot(data: dict[str, Any]) -> str:
@@ -425,6 +438,23 @@ def _snapshot_list_item(
     }
 
 
+def _is_hidden_worker_snapshot(data: dict[str, Any]) -> bool:
+    metadata = data.get("tool_metadata")
+    if isinstance(metadata, dict):
+        if metadata.get("session_visibility") == "hidden" or metadata.get("session_kind") == "task_worker":
+            return True
+    first_user_summary = _first_user_summary_from_snapshot(data)
+    summary = strip_internal_message_text(data.get("summary", ""))
+    candidates = (first_user_summary, summary)
+    for text in candidates:
+        clean = " ".join(str(text or "").split())
+        if clean.startswith("You are a background teammate."):
+            return True
+        if clean.startswith("역할:") and ("담당" in clean[:48] or "주제는" in clean[:96]):
+            return True
+    return False
+
+
 def list_session_snapshots(cwd: str | Path, limit: int | None = 20) -> list[dict[str, Any]]:
     """List saved sessions for the project, newest first."""
     session_dir = get_project_session_dir(cwd)
@@ -441,6 +471,8 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = 20) -> list[dict
         data = _load_snapshot_file(path)
         if data is None:
             continue
+        if _is_hidden_worker_snapshot(data):
+            continue
         sid = str(data.get("session_id", path.stem.replace("session-", "")))
         seen_ids.add(sid)
         sessions.append(_snapshot_list_item(data, session_id=sid, path=path))
@@ -452,6 +484,8 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = 20) -> list[dict
     if latest_path.exists() and (limit is None or len(sessions) < limit):
         data = _load_snapshot_file(latest_path)
         if data is not None:
+            if _is_hidden_worker_snapshot(data):
+                return sessions if limit is None else sessions[:limit]
             sid = str(data.get("session_id", "latest"))
             if sid not in seen_ids:
                 sessions.append(
@@ -474,11 +508,16 @@ def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | Non
     # Try named session first
     path = session_dir / f"session-{session_id}.json"
     if path.exists():
-        return _load_snapshot_file(path)
+        data = _load_snapshot_file(path)
+        if data is not None and _is_hidden_worker_snapshot(data):
+            return None
+        return data
     # Fallback to latest.json if session_id matches
     latest = session_dir / "latest.json"
     if latest.exists():
         data = _load_snapshot_file(latest)
+        if data is not None and _is_hidden_worker_snapshot(data):
+            return None
         if data is not None and (data.get("session_id") == session_id or session_id == "latest"):
             return data
     return None

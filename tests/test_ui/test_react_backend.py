@@ -250,7 +250,8 @@ async def test_read_requests_queues_steering_line_while_busy(monkeypatch):
         and event.item.kind == "steering"
         for event in events
     )
-    assert any(event.type == "status" and "스티어링" in (event.message or "") for event in events)
+    assert any(event.type == "status" and event.message == "추가 요청을 반영하겠습니다." for event in events)
+    assert not any(event.type == "status" and "스티어링" in (event.message or "") for event in events)
     queued = await host._request_queue.get()
     assert queued.type == "shutdown"
     assert host._request_queue.empty()
@@ -357,6 +358,14 @@ def test_backend_host_builds_swarm_snapshot_from_agent_tasks(monkeypatch):
         status = "running"
         description = "Teammate: research@office"
         started_at = 1710000000.0
+        metadata = {
+            "agent_id": "research@office",
+            "agent_role": "조사",
+            "agent_description": "지역별 전략 용량 조사",
+            "progress": "40",
+            "status_note": "주요 기사 확인 중",
+        }
+        ended_at = None
 
     class _FakeTaskManager:
         def list_tasks(self):
@@ -374,14 +383,130 @@ def test_backend_host_builds_swarm_snapshot_from_agent_tasks(monkeypatch):
         {
             "id": "research@office",
             "name": "research",
-            "role": "research",
+            "role": "조사",
             "status": "running",
-            "task": "Teammate: research@office",
+            "task": "지역별 전략 용량 조사",
             "startedAt": 1710000000000,
-            "lastOutput": "line two",
+            "endedAt": None,
+            "lastOutput": "40% · 주요 기사 확인 중",
             "taskId": "a123",
         }
     ]
+
+
+def test_backend_host_includes_swarm_task_end_time(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    class _FakeTask:
+        id = "a123"
+        type = "local_agent"
+        status = "completed"
+        description = "조사 담당: 기사 출처 확인"
+        started_at = 1710000000.0
+        created_at = 1710000000.0
+        ended_at = 1710000031.0
+        metadata = {"agent_id": "research@office", "agent_role": "조사 담당"}
+
+    class _FakeTaskManager:
+        def list_tasks(self):
+            return [_FakeTask()]
+
+        def read_task_output(self, task_id, *, max_bytes=1200):
+            assert task_id == "a123"
+            return "출처 2개 확인"
+
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _FakeTaskManager())
+
+    snapshot = host._swarm_teammate_snapshots()
+
+    assert snapshot[0]["startedAt"] == 1710000000000
+    assert snapshot[0]["endedAt"] == 1710000031000
+
+
+@pytest.mark.asyncio
+async def test_backend_host_refreshes_swarm_status_while_workers_run(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = SimpleNamespace(engine=SimpleNamespace(tool_metadata={}))
+    events: list[BackendEvent] = []
+
+    class _FakeTask:
+        id = "a123"
+        type = "local_agent"
+        status = "running"
+        description = "조사 담당: 기사 출처 확인"
+        started_at = 1710000000.0
+        created_at = 1710000000.0
+        metadata = {"agent_id": "research@office", "agent_role": "조사 담당"}
+
+    task = _FakeTask()
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+        task.status = "completed"
+
+    class _FakeTaskManager:
+        def list_tasks(self):
+            return [task]
+
+        def read_task_output(self, task_id, *, max_bytes=1200):
+            assert task_id == "a123"
+            return "출처 2개 확인"
+
+    host._emit = _emit  # type: ignore[method-assign]
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _FakeTaskManager())
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_STATUS_INTERVAL_SECONDS", 0)
+
+    host._ensure_swarm_status_monitor()
+
+    assert host._swarm_status_monitor_task is not None
+    await asyncio.wait_for(host._swarm_status_monitor_task, timeout=1)
+    assert any(event.type == "swarm_status" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_backend_host_emits_swarm_status_on_task_update(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = SimpleNamespace(engine=SimpleNamespace(tool_metadata={}))
+    events: list[BackendEvent] = []
+    captured_listener = None
+
+    class _FakeTask:
+        id = "a123"
+        type = "local_agent"
+        status = "running"
+        description = "조사 담당: 기사 출처 확인"
+        started_at = 1710000000.0
+        created_at = 1710000000.0
+        metadata = {"agent_id": "research@office", "agent_role": "조사 담당"}
+
+    task = _FakeTask()
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    class _FakeTaskManager:
+        def register_update_listener(self, listener):
+            nonlocal captured_listener
+            captured_listener = listener
+            return lambda: None
+
+        def list_tasks(self):
+            return [task]
+
+        def read_task_output(self, task_id, *, max_bytes=1200):
+            assert task_id == "a123"
+            return "출처 2개 확인"
+
+    host._emit = _emit  # type: ignore[method-assign]
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _FakeTaskManager())
+
+    host._register_task_update_listener()
+
+    assert captured_listener is not None
+    captured_listener(task)
+    assert host._swarm_emit_task is not None
+    await asyncio.wait_for(host._swarm_emit_task, timeout=1)
+    assert any(event.type == "swarm_status" for event in events)
 
 
 @pytest.mark.asyncio
@@ -517,6 +642,64 @@ async def test_backend_host_enqueues_completed_async_agent_notification(monkeypa
     assert "worker result &lt;ready&gt;" in request.line
     assert metadata["async_agent_tasks"][0]["notification_sent"] is True
     assert any(event.type == "status" and "결과" in (event.message or "") for event in events)
+    assert any(event.type == "swarm_status" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_backend_host_waits_to_summarize_until_all_async_agents_finish(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    completed_entry = {
+        "agent_id": "research@office",
+        "task_id": "local_agent_done",
+        "description": "조사 담당",
+        "notification_sent": False,
+        "status": "completed",
+    }
+    running_entry = {
+        "agent_id": "review@office",
+        "task_id": "local_agent_running",
+        "description": "검토 담당",
+        "notification_sent": False,
+    }
+    metadata = {"async_agent_tasks": [completed_entry, running_entry]}
+    host._bundle = SimpleNamespace(engine=SimpleNamespace(tool_metadata=metadata))
+    events: list[BackendEvent] = []
+    calls = 0
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    async def _fake_wait(tool_metadata):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            assert tool_metadata is metadata
+            return [completed_entry]
+        return []
+
+    def _fake_format(completed):
+        if not completed:
+            return ""
+        assert completed == [completed_entry]
+        completed_entry["notification_sent"] = True
+        return "<task-notification><task-id>research@office</task-id></task-notification>"
+
+    monkeypatch.setattr("myharness.ui.backend_host.is_coordinator_mode", lambda: True)
+    monkeypatch.setattr("myharness.ui.backend_host.wait_for_completed_async_agent_entries", _fake_wait)
+    monkeypatch.setattr("myharness.ui.backend_host.format_completed_task_notifications", _fake_format)
+    host._emit = _emit  # type: ignore[method-assign]
+
+    host._ensure_async_agent_monitor()
+
+    assert host._async_agent_monitor_task is not None
+    await asyncio.wait_for(host._async_agent_monitor_task, timeout=1)
+
+    assert host._request_queue.empty()
+    assert metadata["async_agent_completion_payloads"] == [
+        "<task-notification><task-id>research@office</task-id></task-notification>"
+    ]
+    assert running_entry["notification_sent"] is False
+    assert any(event.type == "swarm_status" for event in events)
 
 
 @pytest.mark.asyncio
@@ -618,7 +801,12 @@ async def test_backend_host_steers_divided_work_to_swarm_agents(tmp_path, monkey
     assert len(steering_lines) == 1
     assert "`agent` tool" in steering_lines[0]
     assert "조사, 정리, and 검토" in steering_lines[0]
-    assert any(event.type == "status" and "AI 팀 분담" in (event.message or "") for event in events)
+    assert "workflow/DAG" in steering_lines[0]
+    assert "Do not spawn serial downstream roles prematurely" in steering_lines[0]
+    assert "at most 5 workers" in steering_lines[0]
+    assert "narrow non-overlapping scope" in steering_lines[0]
+    assert any(event.type == "status" and event.message == "역할을 나눠 진행하겠습니다." for event in events)
+    assert not any(event.type == "status" and "지시" in (event.message or "") for event in events)
 
 
 @pytest.mark.asyncio

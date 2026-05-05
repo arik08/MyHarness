@@ -131,12 +131,27 @@ class QueryContext:
     auto_skill_learning_enabled: bool = True
 
 
+INTERNAL_STEERING_PREFIX = "OH_INTERNAL_STEERING:"
+
+
+def format_internal_steering_update(text: str) -> str:
+    return f"{INTERNAL_STEERING_PREFIX}{text.strip()}"
+
+
 def _format_steering_prompt(text: str) -> str:
     return (
         "The user sent this steering update while you were already working. "
         "Treat it as the latest instruction, adjust course if it conflicts with earlier work, "
         "and avoid continuing work that the user has redirected.\n"
         "User steering update:\n"
+        f"{text.strip()}"
+    )
+
+
+def _format_internal_steering_prompt(text: str) -> str:
+    return (
+        "Internal coordination note for this turn. "
+        "Use it as execution guidance, but do not mention the note itself to the user.\n"
         f"{text.strip()}"
     )
 
@@ -152,10 +167,17 @@ async def _drain_steering_messages(
         for update in await context.steering_provider()
         if update and update.strip()
     ]
+    user_visible_count = 0
     for update in updates:
+        if update.startswith(INTERNAL_STEERING_PREFIX):
+            internal_update = update[len(INTERNAL_STEERING_PREFIX):].strip()
+            if internal_update:
+                messages.append(ConversationMessage.from_user_text(_format_internal_steering_prompt(internal_update)))
+            continue
         remember_user_goal(context.tool_metadata, update)
         messages.append(ConversationMessage.from_user_text(_format_steering_prompt(update)))
-    return len(updates)
+        user_visible_count += 1
+    return user_visible_count
 
 
 def _append_capped_unique(bucket: list[Any], value: Any, *, limit: int) -> None:
@@ -596,7 +618,7 @@ async def run_query(
         steering_count = await _drain_steering_messages(context, messages)
         if steering_count:
             yield StatusEvent(
-                message=f"스티어링 지시 {steering_count}개를 반영합니다."
+                message="추가 요청을 반영합니다."
             ), None
         # ---------------------------------------------------------------
 
@@ -680,7 +702,7 @@ async def run_query(
             steering_count = await _drain_steering_messages(context, messages)
             if steering_count:
                 yield StatusEvent(
-                    message=f"스티어링 지시 {steering_count}개를 반영합니다."
+                    message="추가 요청을 반영합니다."
                 ), None
                 continue
             if context.hook_executor is not None:
@@ -727,46 +749,54 @@ async def run_query(
                     index=index,
                 ), None
 
-            async def _run(tc):
-                return await _execute_tool_call(context, tc.name, tc.id, tc.input)
-
-            # Use return_exceptions=True so a single failing tool does not abandon
-            # its siblings as cancelled coroutines and leave the conversation with
-            # un-replied tool_use blocks (Anthropic's API rejects the next request
-            # on the session if any tool_use is missing a matching tool_result).
-            raw_results = await asyncio.gather(
-                *[_run(tc) for tc in tool_calls], return_exceptions=True
-            )
-            tool_results = []
-            for tc, result in zip(tool_calls, raw_results):
-                if isinstance(result, BaseException):
+            async def _run(index, tc):
+                try:
+                    result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
+                except Exception as exc:
                     log.exception(
                         "tool execution raised: name=%s id=%s",
                         tc.name,
                         tc.id,
-                        exc_info=result,
+                        exc_info=exc,
                     )
                     result = ToolResultBlock(
                         tool_use_id=tc.id,
-                        content=f"Tool {tc.name} failed: {type(result).__name__}: {result}",
+                        content=f"Tool {tc.name} failed: {type(exc).__name__}: {exc}",
                         is_error=True,
                     )
-                tool_results.append(result)
+                return index, tc, result
 
-            for index, (tc, result) in enumerate(zip(tool_calls, tool_results)):
-                yield ToolExecutionCompleted(
-                    tool_name=tc.name,
-                    output=result.content,
-                    is_error=result.is_error,
-                    tool_use_id=tc.id,
-                    index=index,
-                ), None
+            # Emit each completion as soon as that tool finishes so fast tools
+            # do not look stuck behind a slower sibling in the UI. Keep the
+            # final tool_result message in original tool_use order for providers.
+            tasks = [asyncio.create_task(_run(index, tc)) for index, tc in enumerate(tool_calls)]
+            tool_results: list[ToolResultBlock | None] = [None] * len(tool_calls)
+            try:
+                for completed_task in asyncio.as_completed(tasks):
+                    index, tc, result = await completed_task
+                    tool_results[index] = result
+                    yield ToolExecutionCompleted(
+                        tool_name=tc.name,
+                        output=result.content,
+                        is_error=result.is_error,
+                        tool_use_id=tc.id,
+                        index=index,
+                    ), None
+            finally:
+                pending = [task for task in tasks if not task.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+            if any(result is None for result in tool_results):
+                raise RuntimeError("parallel tool execution finished without all tool results")
+            tool_results = [result for result in tool_results if result is not None]
 
         messages.append(ConversationMessage(role="user", content=tool_results))
         steering_count = await _drain_steering_messages(context, messages)
         if steering_count:
             yield StatusEvent(
-                message=f"스티어링 지시 {steering_count}개를 반영합니다."
+                message="추가 요청을 반영합니다."
             ), None
 
     if context.max_turns is not None:
@@ -858,7 +888,7 @@ async def _execute_tool_call(
                 is_error=True,
             )
 
-    if not is_read_only and context.tool_metadata is not None:
+    if tool.requires_project_mutation_lock(parsed_input) and context.tool_metadata is not None:
         lock_token = context.tool_metadata.get("mutation_lock_token")
         if lock_token is None:
             owner = str(context.tool_metadata.get("session_id") or os.getpid())

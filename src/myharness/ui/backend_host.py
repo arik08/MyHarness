@@ -13,6 +13,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 from myharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, SupportsStreamingMessages
@@ -35,6 +36,7 @@ from myharness.engine.stream_events import (
     ToolInputDelta,
 )
 from myharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, sanitize_conversation_messages
+from myharness.engine.query import format_internal_steering_update
 from myharness.output_styles import load_output_styles
 from myharness.permissions.mutation_lock import release_mutation_lock
 from myharness.project_preferences import (
@@ -70,14 +72,32 @@ _PROTOCOL_PREFIX = "OHJSON:"
 _BUILT_IN_SKILL_SOURCES = {"bundled"}
 _TOOL_PROGRESS_FIRST_DELAY_SECONDS = 2.5
 _TOOL_PROGRESS_INTERVAL_SECONDS = 3.0
+_SWARM_STATUS_INTERVAL_SECONDS = 2.0
+_SWARM_TASK_TYPES = {"local_agent", "remote_agent", "in_process_teammate"}
 _SESSION_TITLE_SOURCE_PROMPT = "prompt"
 _SESSION_TITLE_SOURCE_CONVERSATION = "conversation"
 _SWARM_DELEGATION_HINT = (
     "The user explicitly asked to divide the work across roles or an AI team. "
-    "Use the `agent` tool now to start focused background workers before synthesizing the answer yourself. "
-    "For office/research tasks, spawn workers for roles such as 조사, 정리, and 검토 when they fit. "
+    "First sketch a lightweight workflow/DAG: identify which roles can run in parallel now, "
+    "which roles depend on earlier evidence, and where you will merge results. "
+    "Show that workflow in a fenced `workflow` block with bracketed nodes and arrows. "
+    "Use labels that fit the actual task, not a fixed 조사/정리/검토 template; e.g. "
+    "`[요건 파악] 범위 확인`, `[데이터 수집] 원천 수집 -> [정규화] 스키마 맞춤 -> [검증] 결과 확인`; "
+    "do not use an ASCII art code block for the workflow. "
+    "Use the `agent` tool now only for the current independent wave of focused background workers. "
+    "Do not spawn serial downstream roles prematurely: roles with unmet prerequisites wait until their inputs exist. "
+    "Optimize for speed: use at most 5 workers per wave, give each worker a narrow non-overlapping scope, "
+    "and ask for concise bullet findings rather than a full report. Prefer more workers only when they reduce wall-clock time. "
+    "For web/office research, tell each worker to check only the few most relevant sources needed for its role "
+    "and avoid duplicating the other workers' searches. "
+    "Tell each worker to report brief interim progress as it works, ideally with `task_update` status_note updates "
+    "or short progress lines, so the AI 팀 panel can stay fresh. "
+    "For office/research tasks, use role names such as 조사, 정리, and 검토 only when they fit the actual workflow, "
+    "and treat every label as a workflow node rather than a hard-coded stage. "
+    "Use worker descriptions with visible role labels, such as `조사 담당: 전력 용량 출처 확인`, "
+    "so the AI 팀 panel can show what each worker owns. "
     "Give each worker a self-contained prompt and set team to `office`. "
-    "After spawning workers, briefly tell the user which workers started. "
+    "After spawning workers, briefly tell the user the workflow shape and which workers started in the current wave. "
     "Do not present final research conclusions until worker results are available."
 )
 _RESTORABLE_TOOL_METADATA_DEFAULTS = {
@@ -131,6 +151,50 @@ def _swarm_delegation_hint_for_prompt(prompt: str) -> str | None:
     if explicit_team or role_split:
         return _SWARM_DELEGATION_HINT
     return None
+
+
+def _store_async_agent_completion_payload(metadata: dict[str, object], payload: str) -> None:
+    if not payload.strip():
+        return
+    bucket = metadata.setdefault("async_agent_completion_payloads", [])
+    if isinstance(bucket, list):
+        bucket.append(payload.strip())
+
+
+def _pop_async_agent_completion_payloads(metadata: dict[str, object]) -> str:
+    bucket = metadata.pop("async_agent_completion_payloads", [])
+    if not isinstance(bucket, list):
+        return ""
+    return "\n\n".join(str(item).strip() for item in bucket if str(item).strip())
+
+
+def _swarm_notifications_for_completed_agents(completed: list[dict[str, object]]) -> list[dict[str, object]]:
+    now_ms = int(time.time() * 1000)
+    notifications: list[dict[str, object]] = []
+    for index, entry in enumerate(completed):
+        task_id = str(entry.get("task_id") or entry.get("agent_id") or index).strip()
+        agent_id = str(entry.get("agent_id") or task_id or "작업자").strip()
+        description = str(entry.get("description") or agent_id).strip()
+        status = str(entry.get("status") or "").strip()
+        if status == "completed":
+            level = "info"
+            message = f"{description} 완료"
+        elif status == "killed":
+            level = "warning"
+            message = f"{description} 중단됨"
+        else:
+            level = "warning"
+            message = f"{description} 오류"
+        notifications.append(
+            {
+                "id": f"{task_id}:{status or 'done'}",
+                "from": agent_id,
+                "message": message,
+                "timestamp": now_ms,
+                "level": level,
+            }
+        )
+    return notifications
 
 
 def _truncate_progress_text(value: object, limit: int = 96) -> str:
@@ -213,6 +277,9 @@ class ReactBackendHost:
         self._last_tool_inputs: dict[str, dict] = {}
         self._history_events: list[dict[str, object]] = []
         self._async_agent_monitor_task: asyncio.Task[None] | None = None
+        self._swarm_status_monitor_task: asyncio.Task[None] | None = None
+        self._swarm_emit_task: asyncio.Task[None] | None = None
+        self._task_update_unregister: Callable[[], None] | None = None
 
     async def run(self) -> int:
         self._bundle = await build_runtime(
@@ -251,7 +318,9 @@ class ReactBackendHost:
         await self._emit(BackendEvent(type="active_session", value=self._bundle.session_id))
         await self._emit(BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[]))
         await self._emit(self._status_snapshot())
+        self._register_task_update_listener()
         self._ensure_async_agent_monitor()
+        self._ensure_swarm_status_monitor()
 
         reader = asyncio.create_task(self._read_requests())
         try:
@@ -388,6 +457,17 @@ class ReactBackendHost:
                 self._async_agent_monitor_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._async_agent_monitor_task
+            if self._swarm_status_monitor_task is not None:
+                self._swarm_status_monitor_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._swarm_status_monitor_task
+            if self._swarm_emit_task is not None:
+                self._swarm_emit_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._swarm_emit_task
+            if self._task_update_unregister is not None:
+                self._task_update_unregister()
+                self._task_update_unregister = None
             reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
@@ -405,6 +485,58 @@ class ReactBackendHost:
             return
         self._async_agent_monitor_task = asyncio.create_task(self._monitor_async_agents())
 
+    def _register_task_update_listener(self) -> None:
+        if self._task_update_unregister is not None:
+            return
+
+        def _on_task_update(task) -> None:
+            if getattr(task, "type", "") not in _SWARM_TASK_TYPES:
+                return
+            self._schedule_swarm_status_emit()
+
+        self._task_update_unregister = get_task_manager().register_update_listener(_on_task_update)
+
+    def _schedule_swarm_status_emit(self) -> None:
+        if self._bundle is None or not self._running:
+            return
+        if self._swarm_emit_task is not None and not self._swarm_emit_task.done():
+            return
+        self._swarm_emit_task = asyncio.create_task(self._emit_swarm_status_after_debounce())
+
+    async def _emit_swarm_status_after_debounce(self) -> None:
+        await asyncio.sleep(0.25)
+        await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
+        await self._emit(BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[]))
+        self._ensure_swarm_status_monitor()
+
+    def _ensure_swarm_status_monitor(self) -> None:
+        if self._bundle is None or not self._running:
+            return
+        if not self._has_running_swarm_teammates():
+            return
+        if self._swarm_status_monitor_task is not None and not self._swarm_status_monitor_task.done():
+            return
+        self._swarm_status_monitor_task = asyncio.create_task(self._monitor_swarm_status())
+
+    def _has_running_swarm_teammates(self) -> bool:
+        try:
+            tasks = get_task_manager().list_tasks()
+        except Exception:
+            return False
+        return any(task.type in _SWARM_TASK_TYPES and task.status == "running" for task in tasks)
+
+    async def _monitor_swarm_status(self) -> None:
+        while self._running:
+            if not self._has_running_swarm_teammates():
+                await self._emit(
+                    BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[])
+                )
+                return
+            await asyncio.sleep(_SWARM_STATUS_INTERVAL_SECONDS)
+            await self._emit(
+                BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[])
+            )
+
     async def _monitor_async_agents(self) -> None:
         assert self._bundle is not None
         metadata = self._bundle.engine.tool_metadata
@@ -415,14 +547,26 @@ class ReactBackendHost:
             notification_payload = format_completed_task_notifications(completed)
             if not notification_payload.strip():
                 return
-            await self._emit(BackendEvent(type="status", message="백그라운드 에이전트 결과를 가져왔습니다."))
-            await self._request_queue.put(
-                FrontendRequest(
-                    type="submit_line",
-                    line=notification_payload,
-                    suppress_user_transcript=True,
+            _store_async_agent_completion_payload(metadata, notification_payload)
+            notifications = _swarm_notifications_for_completed_agents(completed)
+            await self._emit(BackendEvent(type="status", message="AI 팀 작업자 결과를 반영했습니다."))
+            await self._emit(
+                BackendEvent(
+                    type="swarm_status",
+                    swarm_teammates=self._swarm_teammate_snapshots(),
+                    swarm_notifications=notifications,
                 )
             )
+            if pending_async_agent_entries(metadata):
+                continue
+            final_payload = _pop_async_agent_completion_payloads(metadata)
+            if not final_payload.strip():
+                return
+            await self._emit(BackendEvent(type="status", message="AI 팀 결과를 한 번에 취합합니다."))
+            await self._request_queue.put(
+                FrontendRequest(type="submit_line", line=final_payload, suppress_user_transcript=True)
+            )
+            return
 
     async def _cancel_current_request(self) -> None:
         task = self._active_request_task
@@ -438,7 +582,7 @@ class ReactBackendHost:
         await self._emit(
             BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=text, kind="steering"))
         )
-        await self._emit(BackendEvent(type="status", message="스티어링 지시를 대기열에 추가했습니다."))
+        await self._emit(BackendEvent(type="status", message="추가 요청을 반영하겠습니다."))
 
     async def _queue_line_after_current(self, line: str) -> None:
         text = line.strip()
@@ -558,8 +702,8 @@ class ReactBackendHost:
         if not image_blocks and isinstance(effective_prompt, str) and not is_internal_task_notification:
             swarm_hint = _swarm_delegation_hint_for_prompt(effective_line)
             if swarm_hint:
-                await self._steering_queue.put(swarm_hint)
-                await self._emit(BackendEvent(type="status", message="AI 팀 분담 지시를 반영합니다."))
+                await self._steering_queue.put(format_internal_steering_update(swarm_hint))
+                await self._emit(BackendEvent(type="status", message="역할을 나눠 진행하겠습니다."))
 
         async def _print_system(message: str) -> None:
             if quiet:
@@ -661,6 +805,7 @@ class ReactBackendHost:
                 )
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
                 await self._emit(BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[]))
+                self._ensure_swarm_status_monitor()
                 return
             if isinstance(event, ToolExecutionStarted):
                 self._last_tool_inputs[event.tool_name] = event.tool_input or {}
@@ -701,6 +846,7 @@ class ReactBackendHost:
                 )
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
                 await self._emit(BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[]))
+                self._ensure_swarm_status_monitor()
                 await self._emit(self._status_snapshot())
                 # Emit todo_update when TodoWrite tool runs
                 if event.tool_name in ("TodoWrite", "todo_write"):
@@ -714,6 +860,13 @@ class ReactBackendHost:
                 return
             if isinstance(event, ErrorEvent):
                 await self._emit(BackendEvent(type="error", message=event.message))
+                if not quiet:
+                    await self._emit(
+                        BackendEvent(
+                            type="transcript_item",
+                            item=TranscriptItem(role="system", text=event.message),
+                        )
+                    )
                 return
             if isinstance(event, StatusEvent):
                 await self._emit(BackendEvent(type="status", message=event.message))
@@ -749,6 +902,7 @@ class ReactBackendHost:
                 self._save_current_session_snapshot()
             await self._emit(self._status_snapshot())
             await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
+            self._ensure_swarm_status_monitor()
             if first_token == "/clear":
                 session_id = self._start_new_saved_session()
                 self._save_empty_session_snapshot("새 채팅")
@@ -1098,7 +1252,7 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
             await self._emit(BackendEvent(type="line_complete"))
             return True
-        quiet = command in {"provider", "model", "effort"}
+        quiet = command in {"model", "effort"}
         return await self._process_line(line, transcript_line=f"/{command}", quiet=quiet)
 
     def _build_select_command_line(self, command: str, value: str) -> str | None:
@@ -1314,25 +1468,37 @@ class ReactBackendHost:
             return snapshots
 
         for task in tasks:
-            if task.type not in {"local_agent", "remote_agent", "in_process_teammate"}:
+            if task.type not in _SWARM_TASK_TYPES:
                 continue
-            description = task.description or f"작업자 {task.id}"
-            agent_id = description.removeprefix("Teammate:").strip() or task.id
+            metadata = getattr(task, "metadata", {}) if isinstance(getattr(task, "metadata", {}), dict) else {}
+            description = str(metadata.get("agent_description") or task.description or f"작업자 {task.id}").strip()
+            agent_id = str(metadata.get("agent_id") or "").strip()
+            if not agent_id:
+                agent_id = (task.description or "").removeprefix("Teammate:").strip() or task.id
             name = agent_id.split("@", 1)[0] if "@" in agent_id else agent_id
+            role = str(metadata.get("agent_role") or name).strip() or name
             try:
                 output = manager.read_task_output(task.id, max_bytes=1200)
             except Exception:
                 output = ""
-            last_output = next((line.strip() for line in reversed(output.splitlines()) if line.strip()), "")
+            status_note = str(metadata.get("status_note") or "").strip()
+            progress = str(metadata.get("progress") or "").strip()
+            last_output = status_note or next((line.strip() for line in reversed(output.splitlines()) if line.strip()), "")
+            if progress and last_output:
+                last_output = f"{progress}% · {last_output}"
+            elif progress:
+                last_output = f"{progress}%"
             started_at = int((task.started_at or task.created_at or time.time()) * 1000)
+            ended_at = int(task.ended_at * 1000) if getattr(task, "ended_at", None) else None
             snapshots.append(
                 {
                     "id": agent_id,
                     "name": name,
-                    "role": name,
+                    "role": role,
                     "status": task.status,
                     "task": description,
                     "startedAt": started_at,
+                    "endedAt": ended_at,
                     "lastOutput": last_output,
                     "taskId": task.id,
                 }
@@ -1374,6 +1540,7 @@ class ReactBackendHost:
             return
         await self._emit(BackendEvent(type="status", message=f"작업자 {task.id}을 중단했습니다."))
         await self._emit(BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[]))
+        self._ensure_swarm_status_monitor()
 
     async def _handle_list_sessions(self) -> None:
         import time as _time

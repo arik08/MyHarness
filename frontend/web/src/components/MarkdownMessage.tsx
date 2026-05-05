@@ -366,6 +366,251 @@ function isHtmlPreviewCodeBlock(code: Element) {
   return language === "html" || language === "htm" || (!language && isLikelyStandaloneHtml(code.textContent || ""));
 }
 
+type WorkflowDiagramNode = {
+  id: string;
+  label: string;
+  title: string;
+  order: number;
+};
+
+type WorkflowDiagramStage = {
+  nodes: WorkflowDiagramNode[];
+};
+
+function workflowNodeId(label: string) {
+  return String(label || "").trim().replace(/\s+/g, " ");
+}
+
+function hasWorkflowConnector(value: string) {
+  return /->|=>|→|↔|├>|└>|[┐┘]/.test(value);
+}
+
+function cleanWorkflowTitle(value: string) {
+  return String(value || "")
+    .replace(/^[\s.:：\-–—|>→↔=┐┘├└]+/, "")
+    .replace(/\s*(?:->|=>|→|↔|[┐┘├└|>]).*$/, "")
+    .trim();
+}
+
+function parseWorkflowDiagram(source: string) {
+  const text = String(source || "").replace(/\r\n/g, "\n");
+  const nodesById = new Map<string, WorkflowDiagramNode>();
+  const nodesByLabel = new Map<string, WorkflowDiagramNode[]>();
+  const edges = new Map<string, Set<string>>();
+  const incoming = new Map<string, Set<string>>();
+  let order = 0;
+
+  function ensureNode(label: string, title = "") {
+    const labelKey = workflowNodeId(label);
+    const cleanTitle = cleanWorkflowTitle(title);
+    if (!labelKey) return null;
+    const labeledNodes = nodesByLabel.get(labelKey) || [];
+    if (cleanTitle) {
+      const sameTitle = labeledNodes.find((node) => node.title === cleanTitle);
+      if (sameTitle) {
+        return sameTitle;
+      }
+    } else if (labeledNodes.length) {
+      return labeledNodes[0];
+    }
+    const id = labeledNodes.length ? `${labelKey}#${labeledNodes.length + 1}` : labelKey;
+    const node = { id, label: labelKey, title: cleanTitle, order: order++ };
+    nodesById.set(id, node);
+    nodesByLabel.set(labelKey, [...labeledNodes, node]);
+    edges.set(id, new Set());
+    incoming.set(id, new Set());
+    return node;
+  }
+
+  function addEdge(from: string, to: string) {
+    if (!from || !to || from === to) return;
+    edges.get(from)?.add(to);
+    incoming.get(to)?.add(from);
+  }
+
+  let currentSources: WorkflowDiagramNode[] = [];
+  let branchLabel = "";
+  let branchNodes: WorkflowDiagramNode[] = [];
+
+  function flushBranchSources() {
+    if (branchNodes.length) {
+      currentSources = branchNodes;
+      branchNodes = [];
+      branchLabel = "";
+    }
+  }
+
+  for (const line of text.split("\n")) {
+    const matches = [...line.matchAll(/\[([^\]]+)\]/g)];
+    if (!matches.length) {
+      continue;
+    }
+    const parsedNodes = matches.map((match) => {
+      const label = match[1].trim();
+      const start = match.index || 0;
+      const titleStart = start + match[0].length;
+      const nextStart = matches[matches.indexOf(match) + 1]?.index ?? line.length;
+      return {
+        node: ensureNode(label, line.slice(titleStart, nextStart)),
+        start,
+        titleStart,
+      };
+    }).filter((item): item is { node: WorkflowDiagramNode; start: number; titleStart: number } => Boolean(item.node));
+    if (!parsedNodes.length) {
+      continue;
+    }
+    const leadingConnector = hasWorkflowConnector(line.slice(0, parsedNodes[0].start));
+    if (leadingConnector && parsedNodes.length === 1) {
+      const node = parsedNodes[0].node;
+      if (branchLabel && branchLabel !== node.label) {
+        flushBranchSources();
+      }
+      currentSources.forEach((source) => addEdge(source.id, node.id));
+      if (!branchLabel) {
+        branchLabel = node.label;
+      }
+      branchNodes.push(node);
+      continue;
+    }
+
+    flushBranchSources();
+    if (leadingConnector) {
+      currentSources.forEach((source) => addEdge(source.id, parsedNodes[0].node.id));
+    }
+    let previousNode: WorkflowDiagramNode | null = null;
+    let previousEnd = 0;
+    parsedNodes.forEach(({ node, start, titleStart }) => {
+      if (node && previousNode && hasWorkflowConnector(line.slice(previousEnd, start))) {
+        addEdge(previousNode.id, node.id);
+      }
+      previousNode = node;
+      previousEnd = titleStart;
+    });
+    currentSources = [parsedNodes[parsedNodes.length - 1].node];
+  }
+  flushBranchSources();
+
+  if (!nodesById.size) {
+    for (const line of text.split("\n")) {
+      const match = line.trim().match(/^(?:[-*]\s*)?(?:parallel|merge|then|stage|wave)?\s*:?\s*([가-힣A-Za-z]+(?:\s*\d+)?)\s*[:：-]\s*(.+)$/i);
+      if (!match) continue;
+      const label = match[1].trim();
+      const title = match[2].trim();
+      ensureNode(label, title);
+    }
+  }
+
+  const depthCache = new Map<string, number>();
+  function depthFor(id: string, visiting = new Set<string>()): number {
+    if (depthCache.has(id)) return depthCache.get(id) || 0;
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+    const parents = [...(incoming.get(id) || [])];
+    const depth = parents.length ? Math.max(...parents.map((parent) => depthFor(parent, visiting) + 1)) : 0;
+    visiting.delete(id);
+    depthCache.set(id, depth);
+    return depth;
+  }
+
+  const stages: WorkflowDiagramStage[] = [];
+  for (const node of nodesById.values()) {
+    const depth = depthFor(node.id);
+    if (!stages[depth]) {
+      stages[depth] = { nodes: [] };
+    }
+    stages[depth].nodes.push(node);
+  }
+  return stages
+    .filter((stage) => stage?.nodes.length)
+    .map((stage) => ({ nodes: [...stage.nodes].sort((a, b) => a.order - b.order) }));
+}
+
+function looksLikeWorkflowDiagram(source: string) {
+  const text = String(source || "");
+  const nodeCount = (text.match(/\[[^\]]+\]/g) || []).length;
+  return nodeCount >= 2 && (/[→↔]|->|=>|├|┐|┘/.test(text) || nodeCount >= 3);
+}
+
+function createWorkflowDiagram(source: string) {
+  const stages = parseWorkflowDiagram(source);
+  if (!stages.length) {
+    return null;
+  }
+  const diagram = document.createElement("section");
+  diagram.className = "assistant-workflow-diagram";
+  if (stages.length > 4) {
+    diagram.classList.add("many-stages");
+  }
+  diagram.setAttribute("aria-label", "워크플로우 다이어그램");
+  const header = document.createElement("div");
+  header.className = "assistant-workflow-diagram-header";
+  const title = document.createElement("strong");
+  title.textContent = "워크플로우";
+  const meta = document.createElement("span");
+  meta.textContent = `${stages.length}개 레이어`;
+  header.append(title, meta);
+  diagram.append(header);
+
+  const rail = document.createElement("div");
+  rail.className = "assistant-workflow-rail";
+  stages.forEach((stage, index) => {
+    const column = document.createElement("div");
+    column.className = "assistant-workflow-stage";
+    const stageTitle = document.createElement("div");
+    stageTitle.className = "assistant-workflow-stage-title";
+    const step = document.createElement("span");
+    step.textContent = String(index + 1);
+    const label = document.createElement("strong");
+    label.textContent = `${index + 1}단계`;
+    stageTitle.append(step, label);
+    column.append(stageTitle);
+    const list = document.createElement("div");
+    list.className = "assistant-workflow-node-list";
+    stage.nodes.forEach((node) => {
+      const item = document.createElement("div");
+      item.className = "assistant-workflow-node";
+      const nodeLabel = document.createElement("strong");
+      nodeLabel.textContent = node.label;
+      item.append(nodeLabel);
+      if (node.title) {
+        const nodeTitle = document.createElement("span");
+        nodeTitle.textContent = node.title;
+        item.append(nodeTitle);
+      }
+      list.append(item);
+    });
+    column.append(list);
+    rail.append(column);
+    if (index < stages.length - 1) {
+      const arrow = document.createElement("div");
+      arrow.className = "assistant-workflow-arrow";
+      arrow.textContent = "→";
+      rail.append(arrow);
+    }
+  });
+  diagram.append(rail);
+  return diagram;
+}
+
+function enhanceWorkflowDiagrams(root: HTMLElement | null) {
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll("pre").forEach((pre) => {
+    const code = pre.querySelector("code");
+    if (!code) return;
+    const source = code.textContent || "";
+    const language = codeBlockLanguage(code);
+    if (language !== "workflow" && !looksLikeWorkflowDiagram(source)) {
+      return;
+    }
+    const diagram = createWorkflowDiagram(source);
+    if (diagram) {
+      pre.replaceWith(diagram);
+    }
+  });
+}
+
 function htmlPreviewHeight(value: unknown) {
   const minHeight = 220;
   const maxHeight = Math.min(720, Math.max(420, Math.round(window.innerHeight * 0.72)));
@@ -629,6 +874,7 @@ export function MarkdownMessage({
 
   useLayoutEffect(() => {
     replaceHtmlPreviewPlaceholders(ref.current);
+    enhanceWorkflowDiagrams(ref.current);
     enhanceHtmlPreviews(ref.current);
     enhanceCodeBlocks(ref.current);
     enhancePromptTokens(ref.current);

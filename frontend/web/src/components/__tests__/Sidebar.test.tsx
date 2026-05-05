@@ -91,7 +91,7 @@ describe("Sidebar", () => {
     );
 
     expect(screen.getByRole("button", { name: "프로젝트 선택" }).getAttribute("data-tooltip-placement")).toBe("right");
-    expect(screen.getByRole("button", { name: "새 채팅" }).getAttribute("data-tooltip-placement")).toBe("right");
+    expect(screen.getByRole("button", { name: "New Chat" }).getAttribute("data-tooltip-placement")).toBe("right");
     expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
   });
 
@@ -473,7 +473,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "새 채팅" }));
+    await userEvent.click(screen.getByRole("button", { name: "New Chat" }));
 
     await waitFor(() => expect(startSession).toHaveBeenCalledWith({
       clientId: "client-1",
@@ -498,7 +498,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "새 채팅" }));
+    await userEvent.click(screen.getByRole("button", { name: "New Chat" }));
 
     expect(screen.getByTestId("message-count").textContent).toBe("0");
     expect(screen.getByTestId("pending-fresh-chat").textContent).toBe("yes");

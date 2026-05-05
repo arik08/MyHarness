@@ -281,6 +281,40 @@ describe("appReducer", () => {
     expect(next.messages[0].text).toBe("안녕?");
   });
 
+  it("keeps the optimistic user turn visible when a reconnect replay clears the transcript", () => {
+    const withOptimisticUser = appReducer({ ...initialAppState, sessionId: "session-live" }, {
+      type: "append_message",
+      message: { role: "user", text: "바로 보여야 하는 질문" },
+    });
+    const busy = appReducer(withOptimisticUser, { type: "set_busy", value: true });
+    const afterReplayClear = appReducer(busy, {
+      type: "backend_event",
+      event: { type: "clear_transcript" } as any,
+    });
+    const afterReplayUser = appReducer(afterReplayClear, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: "바로 보여야 하는 질문" } },
+    });
+
+    expect(afterReplayClear.messages).toHaveLength(1);
+    expect(afterReplayClear.messages[0].text).toBe("바로 보여야 하는 질문");
+    expect(afterReplayUser.messages).toHaveLength(1);
+  });
+
+  it("still clears immediately for the explicit clear command", () => {
+    const withClearCommand = appReducer({ ...initialAppState, sessionId: "session-live" }, {
+      type: "append_message",
+      message: { role: "user", text: "/clear" },
+    });
+    const busy = appReducer(withClearCommand, { type: "set_busy", value: true });
+    const cleared = appReducer(busy, {
+      type: "backend_event",
+      event: { type: "clear_transcript" } as any,
+    });
+
+    expect(cleared.messages).toHaveLength(0);
+  });
+
   it("shows a new live chat in history as soon as the user sends a message", () => {
     const next = appReducer({ ...initialAppState, sessionId: "session-live", chatTitle: "MyHarness" }, {
       type: "append_message",
@@ -784,6 +818,88 @@ describe("appReducer", () => {
     expect(restored.messages[1].isComplete).toBe(true);
   });
 
+  it("keeps completed history snapshots inert against later backend events", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        value: "saved-session",
+        history_events: [
+          { type: "user", text: "완료된 질문" },
+          { type: "assistant", text: "완료된 답변" },
+        ],
+      },
+    });
+
+    const withModal = appReducer(restored, {
+      type: "backend_event",
+      event: { type: "modal_request", modal: { kind: "question", question: "끼어들면 안 됨" } },
+    });
+    const withDelta = appReducer(withModal, {
+      type: "backend_event",
+      event: { type: "assistant_delta", value: "새로 끼어든 답변" },
+    });
+    const withComplete = appReducer(withDelta, {
+      type: "backend_event",
+      event: { type: "line_complete" },
+    });
+
+    expect(withComplete.messages.map((message) => message.text)).toEqual(["완료된 질문", "완료된 답변"]);
+    expect(withComplete.modal).toBeNull();
+    expect(withComplete.busy).toBe(false);
+    expect(withComplete.historyRefreshKey).toBe(restored.historyRefreshKey);
+  });
+
+  it("reactivates a completed history session when the user sends a local follow-up", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        value: "saved-session",
+        history_events: [
+          { type: "user", text: "완료된 질문" },
+          { type: "assistant", text: "완료된 답변" },
+        ],
+      },
+    });
+    const followUp = appReducer(restored, {
+      type: "append_message",
+      message: {
+        role: "log",
+        text: "!pwd",
+        toolName: "shell-shortcut",
+        terminal: { command: "pwd", status: "running" },
+      },
+    });
+    const withDelta = appReducer(followUp, {
+      type: "backend_event",
+      event: { type: "assistant_delta", value: "후속 응답" },
+    });
+
+    expect(followUp.historyReadOnly).toBe(false);
+    expect(withDelta.messages.map((message) => message.text)).toEqual(["완료된 질문", "완료된 답변", "!pwd", "후속 응답"]);
+  });
+
+  it("closes floating work surfaces when entering history restore", () => {
+    const restoring = appReducer(
+      {
+        ...initialAppState,
+        modal: { kind: "settings" },
+        artifactPanelOpen: true,
+        activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+        activeArtifactPayload: { kind: "html", content: "<p>report</p>" },
+        swarmPopupOpen: true,
+      },
+      { type: "begin_history_restore", sessionId: "saved-session" },
+    );
+
+    expect(restoring.modal).toBeNull();
+    expect(restoring.artifactPanelOpen).toBe(false);
+    expect(restoring.activeArtifact).toBeNull();
+    expect(restoring.activeArtifactPayload).toBeNull();
+    expect(restoring.swarmPopupOpen).toBe(false);
+  });
+
   it("tracks tool workflow lifecycle", () => {
     const started = appReducer(initialAppState, {
       type: "backend_event",
@@ -899,6 +1015,34 @@ describe("appReducer", () => {
     ]);
   });
 
+  it("keeps todo_write failures as failures in workflow detail", () => {
+    const started = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "todo_write",
+        tool_call_id: "call-todo",
+        tool_input: {},
+      } as any,
+    });
+    const completed = appReducer(started, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "todo_write",
+        tool_call_id: "call-todo",
+        output: "Invalid input for todo_write: Either item or todos must be provided",
+        is_error: true,
+      } as any,
+    });
+
+    const todoEvent = completed.workflowEvents.find((event) => event.toolName === "todo_write");
+    expect(todoEvent?.status).toBe("error");
+    expect(todoEvent?.detail).toContain("입력 형식 오류");
+    expect(todoEvent?.detail).not.toContain("todo_write");
+    expect(todoEvent?.detail).not.toContain("정리했습니다");
+  });
+
   it("treats blocked web research tool failures as warnings instead of failing the whole purpose group", () => {
     const startedSearch = appReducer(initialAppState, {
       type: "backend_event",
@@ -1007,6 +1151,56 @@ describe("appReducer", () => {
     expect(writeEvent?.status).toBe("running");
     expect(writeEvent?.toolInput?.path).toBe("immortal-ai-worm.html");
     expect(writeEvent?.toolInput?.content).toBe("<html><body><h1>Live</h1>");
+  });
+
+  it("does not open the artifact preview while an HTML file is being written", () => {
+    const next = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        arguments_delta: "{\"path\":\"outputs/office-ai-report.html\",\"content\":\"<!doctype html><html><body><h1>Live preview</h1>",
+      },
+    });
+
+    expect(next.artifactPanelOpen).toBe(false);
+    expect(next.activeArtifact).toBeNull();
+    expect(next.activeArtifactPayload).toBeNull();
+    expect(next.workflowEvents.find((event) => event.toolName === "write_file")?.toolInput?.content)
+      .toBe("<!doctype html><html><body><h1>Live preview</h1>");
+  });
+
+  it("updates an already open matching artifact preview while an HTML file is being written", () => {
+    const next = appReducer(
+      {
+        ...initialAppState,
+        artifactPanelOpen: true,
+        activeArtifact: { path: "outputs/office-ai-report.html", name: "office-ai-report.html", kind: "html" },
+        activeArtifactPayload: { path: "outputs/office-ai-report.html", name: "office-ai-report.html", kind: "html", content: "" },
+      },
+      {
+        type: "backend_event",
+        event: {
+          type: "tool_input_delta",
+          tool_name: "write_file",
+          tool_call_index: 0,
+          arguments_delta: "{\"path\":\"outputs/office-ai-report.html\",\"content\":\"<!doctype html><html><body><h1>Live preview</h1>",
+        },
+      },
+    );
+
+    expect(next.artifactPanelOpen).toBe(true);
+    expect(next.activeArtifact).toMatchObject({
+      path: "outputs/office-ai-report.html",
+      name: "office-ai-report.html",
+      kind: "html",
+    });
+    expect(next.activeArtifactPayload).toMatchObject({
+      path: "outputs/office-ai-report.html",
+      kind: "html",
+      content: "<!doctype html><html><body><h1>Live preview</h1>",
+    });
   });
 
   it("keeps the streamed write_file preview row when the tool starts and completes", () => {
@@ -1182,6 +1376,138 @@ describe("appReducer", () => {
     expect(notebookEvents).toHaveLength(1);
     expect(notebookEvents[0].toolInput?.new_source).toBe("print(42)");
     expect(started.workflowEvents.some((event) => event.toolName === "write_file")).toBe(false);
+  });
+
+  it("merges write_file deltas into an already started call when the delta lacks the call id", () => {
+    const started = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_call_id: "call-write",
+        tool_input: { path: "outputs/tailwind_design_system_필요성_보고서.html" },
+      } as any,
+    });
+    const streamed = appReducer(started, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        arguments_delta: "{\"path\":\"outputs/tailwind_design_system_필요성_보고서.html\",\"content\":\"<!doctype html>",
+      },
+    });
+
+    const writeEvents = streamed.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(writeEvents).toHaveLength(1);
+    expect(writeEvents[0]).toMatchObject({
+      status: "running",
+      toolCallId: "call-write",
+    });
+    expect(writeEvents[0].toolInput?.content).toBe("<!doctype html>");
+  });
+
+  it("merges write_file progress into the same path without replacing streamed content", () => {
+    const started = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_call_id: "call-write",
+        tool_input: { path: "outputs/tailwind_design_system_필요성_보고서.html" },
+      } as any,
+    });
+    const streamed = appReducer(started, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        arguments_delta: "{\"path\":\"outputs/tailwind_design_system_필요성_보고서.html\",\"content\":\"<!doctype html>",
+      },
+    });
+    const progressed = appReducer(streamed, {
+      type: "backend_event",
+      event: {
+        type: "tool_progress",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        tool_input: { path: "outputs/tailwind_design_system_필요성_보고서.html" },
+        message: "파일 작업 중... 21초 경과 · outputs/tailwind_design_system_필요성_보고서.html",
+      },
+    });
+
+    const writeEvents = progressed.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(writeEvents).toHaveLength(1);
+    expect(writeEvents[0].detail).toContain("파일 작업 중");
+    expect(writeEvents[0].toolInput?.content).toBe("<!doctype html>");
+  });
+
+  it("merges write_file progress into a started same-path call that has no index", () => {
+    const started = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_call_id: "call-write",
+        tool_input: {
+          path: "outputs/tailwind_design_system_필요성_보고서.html",
+          content: "<!doctype html>",
+        },
+      } as any,
+    });
+    const progressed = appReducer(started, {
+      type: "backend_event",
+      event: {
+        type: "tool_progress",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        tool_input: { path: "outputs/tailwind_design_system_필요성_보고서.html" },
+        message: "파일 작업 중... 21초 경과 · outputs/tailwind_design_system_필요성_보고서.html",
+      },
+    });
+
+    const writeEvents = progressed.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(writeEvents).toHaveLength(1);
+    expect(writeEvents[0].detail).toContain("파일 작업 중");
+    expect(writeEvents[0].toolInput?.content).toBe("<!doctype html>");
+  });
+
+  it("does not add a second running write_file step for the same path", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_call_id: "call-write-1",
+        tool_call_index: 0,
+        tool_input: {
+          path: "outputs/tailwind_design_system_필요성_보고서.html",
+          content: "<!doctype html>",
+        },
+      } as any,
+    });
+    const second = appReducer(first, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_call_id: "call-write-2",
+        tool_call_index: 1,
+        tool_input: {
+          path: "outputs/tailwind_design_system_필요성_보고서.html",
+          content: "<!doctype html><html>",
+        },
+      } as any,
+    });
+
+    const writeEvents = second.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(writeEvents).toHaveLength(1);
+    expect(writeEvents[0]).toMatchObject({
+      toolCallId: "call-write-2",
+      toolCallIndex: 1,
+    });
+    expect(writeEvents[0].toolInput?.content).toBe("<!doctype html><html>");
   });
 
   it("merges shell shortcut output into the optimistic terminal message", () => {

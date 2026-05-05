@@ -8,6 +8,7 @@ import os
 import shlex
 import sys
 import time
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -18,8 +19,10 @@ from myharness.tasks.types import TaskRecord, TaskStatus, TaskType
 from myharness.utils.shell import create_shell_subprocess
 
 log = logging.getLogger(__name__)
+TASK_PROGRESS_EVENT_PREFIX = "__MYHARNESS_TASK_UPDATE__"
 
 CompletionListener = Callable[[TaskRecord], Awaitable[None] | None]
+UpdateListener = Callable[[TaskRecord], Awaitable[None] | None]
 
 
 class BackgroundTaskManager:
@@ -31,8 +34,10 @@ class BackgroundTaskManager:
         self._waiters: dict[str, asyncio.Task[None]] = {}
         self._output_locks: dict[str, asyncio.Lock] = {}
         self._input_locks: dict[str, asyncio.Lock] = {}
+        self._control_buffers: dict[str, str] = {}
         self._generations: dict[str, int] = {}
         self._completion_listeners: dict[str, CompletionListener] = {}
+        self._update_listeners: dict[str, UpdateListener] = {}
 
     async def create_shell_task(
         self,
@@ -62,6 +67,11 @@ class BackgroundTaskManager:
         self._tasks[task_id] = record
         self._output_locks[task_id] = asyncio.Lock()
         self._input_locks[task_id] = asyncio.Lock()
+        record.env = {
+            key: value.replace("{task_id}", task_id).replace("{{TASK_ID}}", task_id)
+            for key, value in record.env.items()
+        }
+        await self._notify_update_listeners(record)
         try:
             await self._start_process(task_id)
         except OSError as exc:
@@ -100,11 +110,12 @@ class BackgroundTaskManager:
             task_type=task_type,
             env=env,
         )
-        updated = replace(record, prompt=prompt)
+        effective_prompt = prompt.replace("{task_id}", record.id).replace("{{TASK_ID}}", record.id)
+        updated = replace(record, prompt=effective_prompt)
         if task_type != "local_agent":
             updated.metadata["agent_mode"] = task_type
         self._tasks[record.id] = updated
-        await self.write_to_task(record.id, prompt)
+        await self.write_to_task(record.id, effective_prompt)
         return updated
 
     def get_task(self, task_id: str) -> TaskRecord | None:
@@ -138,7 +149,13 @@ class BackgroundTaskManager:
                 task.metadata["status_note"] = note
             else:
                 task.metadata.pop("status_note", None)
+        self._notify_update_listeners_nowait(task)
         return task
+
+    def notify_task_updated(self, task_id: str) -> None:
+        """Notify UI/coordinator listeners after external task metadata changes."""
+        task = self._require_task(task_id)
+        self._notify_update_listeners_nowait(task)
 
     async def stop_task(self, task_id: str) -> TaskRecord:
         """Terminate a running task."""
@@ -159,6 +176,7 @@ class BackgroundTaskManager:
 
         task.status = "killed"
         task.ended_at = time.time()
+        await self._notify_update_listeners(task)
         return task
 
     async def write_to_task(self, task_id: str, data: str) -> None:
@@ -206,6 +224,16 @@ class BackgroundTaskManager:
 
         return _unregister
 
+    def register_update_listener(self, listener: UpdateListener) -> Callable[[], None]:
+        """Register a callback fired whenever task status, metadata, or output changes."""
+        listener_id = uuid4().hex
+        self._update_listeners[listener_id] = listener
+
+        def _unregister() -> None:
+            self._update_listeners.pop(listener_id, None)
+
+        return _unregister
+
     async def _watch_process(
         self,
         task_id: str,
@@ -226,6 +254,7 @@ class BackgroundTaskManager:
         if task.status != "killed":
             task.status = "completed" if return_code == 0 else "failed"
         task.ended_at = time.time()
+        await self._notify_update_listeners(task)
         await self._notify_completion_listeners(task)
         self._processes.pop(task_id, None)
         self._waiters.pop(task_id, None)
@@ -236,10 +265,66 @@ class BackgroundTaskManager:
         while True:
             chunk = await process.stdout.read(4096)
             if not chunk:
+                trailing = self._pop_control_buffer(task_id)
+                if trailing:
+                    async with self._output_locks[task_id]:
+                        with self._tasks[task_id].output_file.open("ab") as handle:
+                            handle.write(trailing.encode("utf-8"))
                 return
+            visible_chunk = self._filter_control_output(task_id, chunk)
+            if not visible_chunk:
+                continue
             async with self._output_locks[task_id]:
                 with self._tasks[task_id].output_file.open("ab") as handle:
-                    handle.write(chunk)
+                    handle.write(visible_chunk)
+            await self._notify_update_listeners(self._tasks[task_id])
+
+    def _filter_control_output(self, task_id: str, chunk: bytes) -> bytes:
+        text = self._control_buffers.get(task_id, "") + chunk.decode("utf-8", errors="replace")
+        lines = text.splitlines(keepends=True)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            self._control_buffers[task_id] = lines.pop()
+        else:
+            self._control_buffers.pop(task_id, None)
+
+        visible: list[str] = []
+        for line in lines:
+            stripped = line.rstrip("\r\n")
+            if stripped.startswith(TASK_PROGRESS_EVENT_PREFIX):
+                self._apply_child_task_update(task_id, stripped[len(TASK_PROGRESS_EVENT_PREFIX):])
+            else:
+                visible.append(line)
+        return "".join(visible).encode("utf-8")
+
+    def _pop_control_buffer(self, task_id: str) -> str:
+        trailing = self._control_buffers.pop(task_id, "")
+        if trailing.startswith(TASK_PROGRESS_EVENT_PREFIX):
+            self._apply_child_task_update(task_id, trailing[len(TASK_PROGRESS_EVENT_PREFIX):])
+            return ""
+        return trailing
+
+    def _apply_child_task_update(self, task_id: str, payload: str) -> None:
+        task = self._tasks.get(task_id)
+        if task is None:
+            return
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            return
+        if str(data.get("task_id") or "") != task_id:
+            return
+        description = str(data.get("description") or "").strip()
+        if description:
+            task.description = description
+        progress = data.get("progress")
+        if progress is not None:
+            task.metadata["progress"] = str(progress)
+        status_note = str(data.get("status_note") or "").strip()
+        if status_note:
+            task.metadata["status_note"] = status_note
+        elif "status_note" in data:
+            task.metadata.pop("status_note", None)
+        self._notify_update_listeners_nowait(task)
 
     def _require_task(self, task_id: str) -> TaskRecord:
         task = self._tasks.get(task_id)
@@ -293,6 +378,7 @@ class BackgroundTaskManager:
         task.started_at = time.time()
         task.ended_at = None
         task.return_code = None
+        await self._notify_update_listeners(task)
         return await self._start_process(task.id)
 
     async def _notify_completion_listeners(self, task: TaskRecord) -> None:
@@ -304,6 +390,23 @@ class BackgroundTaskManager:
                     await maybe_awaitable
             except Exception:
                 log.exception("Task completion listener %s failed for task %s", listener_id, task.id)
+
+    async def _notify_update_listeners(self, task: TaskRecord) -> None:
+        snapshot = replace(task, metadata=dict(task.metadata))
+        for listener_id, listener in list(self._update_listeners.items()):
+            try:
+                maybe_awaitable = listener(snapshot)
+                if maybe_awaitable is not None:
+                    await maybe_awaitable
+            except Exception:
+                log.exception("Task update listener %s failed for task %s", listener_id, task.id)
+
+    def _notify_update_listeners_nowait(self, task: TaskRecord) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._notify_update_listeners(task))
 
     def close(self) -> None:
         """Best-effort cleanup for any tracked subprocesses and watcher tasks."""

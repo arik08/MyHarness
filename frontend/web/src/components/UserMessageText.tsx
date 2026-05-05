@@ -79,7 +79,8 @@ function shouldCollapseUserMessage(text: string) {
   if (!value) {
     return false;
   }
-  return value.length > 180 || value.split(/\r?\n/).length > 2;
+  const lineCount = value.split(/\r?\n/).length;
+  return value.length > 600 || lineCount > 8;
 }
 
 function previewText(text: string) {

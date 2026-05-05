@@ -385,6 +385,29 @@ describe("ArtifactPanel", () => {
     expect(code?.textContent).toContain("<h1>Hello</h1>");
   });
 
+  it("shows streaming HTML source instead of a blank frame while the style block is incomplete", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/live-report.html", name: "live-report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<!doctype html><html><head><style>.report{display:grid}",
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    expect(screen.queryByTitle("live-report.html")).toBeNull();
+    const code = document.querySelector(".artifact-source code.language-html");
+    expect(code?.textContent).toContain("<style>");
+    expect(code?.textContent).toContain(".report{display:grid}");
+  });
+
   it("selects the highlighted artifact source instead of the whole page on Ctrl+A", async () => {
     const source = "<!doctype html>\n<html><body><h1>Hello</h1></body></html>";
     vi.mocked(listProjectFiles).mockResolvedValueOnce({

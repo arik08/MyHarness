@@ -170,9 +170,32 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
     assert "Delegation And Subagents" in prompt
     assert 'subagent_type="worker"' in prompt
     assert "조사, 정리, 검토" in prompt
-    assert "spawn those workers first" in prompt
+    assert "workflow/DAG" in prompt
+    assert "Do not spawn serial downstream roles prematurely" in prompt
+    assert "use at most 5 workers" in prompt
+    assert "narrow non-overlapping scope" in prompt
     assert "/agents show TASK_ID" in prompt
     assert "Environment" in prompt
+
+
+def test_task_worker_prompt_skips_delegation_and_parent_task_queries(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    prompt = build_runtime_system_prompt(
+        Settings(),
+        cwd=repo,
+        latest_user_prompt="You are a background teammate. Your task id is a123. 조사해줘.",
+        task_worker=True,
+    )
+
+    assert "Background Worker Mode" in prompt
+    assert "Delegation And Subagents" not in prompt
+    assert "You are a **coordinator**." not in prompt
+    assert "Do not use task_get, task_list, or task_output" in prompt
+    assert "Use task_update only" in prompt
 
 
 def test_build_runtime_system_prompt_does_not_reinject_exported_secret_values(tmp_path: Path, monkeypatch):

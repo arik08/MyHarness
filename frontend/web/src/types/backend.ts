@@ -44,6 +44,8 @@ export type SwarmTeammateSnapshot = {
   task?: string;
   startedAt?: number | string | null;
   started_at?: number | string | null;
+  endedAt?: number | string | null;
+  ended_at?: number | string | null;
   lastOutput?: string;
   last_output?: string;
   taskId?: string;

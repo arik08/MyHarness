@@ -3,6 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageList } from "../MessageList";
 import { ArtifactPanel } from "../ArtifactPanel";
+import { MarkdownMessage } from "../MarkdownMessage";
+import { StreamingAssistantMessage } from "../StreamingAssistantMessage";
+import { messageBottomFollowEvent } from "../../hooks/useMessageAutoFollow";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 
@@ -192,12 +195,95 @@ describe("MessageList", () => {
     expect(document.querySelector(".react-message-text")?.textContent).toContain("당신은 누구입니까");
   });
 
+  it("renders workflow code fences as readable stage diagrams", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "워크플로우는 다음과 같습니다.",
+          "",
+          "```workflow",
+          "[요건 파악] 범위와 성공 기준 확인",
+          "[데이터 수집] 원천 파일 수집 -> [정규화] 스키마 맞춤",
+          "[API 점검] 엔드포인트 확인 -> [통합 테스트] 시나리오 실행",
+          "[정규화] -> [통합 테스트] -> [릴리스 판단] go/no-go 정리",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(document.querySelector(".assistant-workflow-diagram")).toBeTruthy();
+    expect(document.querySelector(".markdown-body pre")).toBeNull();
+    expect(screen.getByText("1단계")).toBeTruthy();
+    expect(screen.getByText("2단계")).toBeTruthy();
+    expect(screen.getByText("3단계")).toBeTruthy();
+    expect(screen.getByText("4단계")).toBeTruthy();
+    expect(screen.getByText("요건 파악")).toBeTruthy();
+    expect(screen.getByText("데이터 수집")).toBeTruthy();
+    expect(screen.getByText("API 점검")).toBeTruthy();
+    expect(screen.getByText("정규화")).toBeTruthy();
+    expect(screen.getByText("통합 테스트")).toBeTruthy();
+    expect(screen.getByText("릴리스 판단")).toBeTruthy();
+    expect(screen.getByText("go/no-go 정리")).toBeTruthy();
+    expect(screen.queryByText("병렬 조사")).toBeNull();
+  });
+
+  it("renders repeated labels and arrow-list workflow fences as generic DAG layers", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "```",
+          "[요건 범위화] 2025~2026 데이터센터 산업 + 오라클 포함",
+          "  -> [1차 병렬 증거 수집] 글로벌 수요·용량",
+          "  -> [1차 병렬 증거 수집] Oracle/OCI·CAPEX",
+          "  -> [1차 병렬 증거 수집] 전력·냉각·정책 병목",
+          "  -> [1차 병렬 증거 수집] 한국·APAC 현황",
+          "  -> [결과 병합] 중복 제거·수치 기준연도 정렬",
+          "  -> [정리] 핵심 현황/시사점 구조화",
+          "  -> [검토] 출처 신뢰도·수치·연도 확인",
+          "  -> [최종 보고] 요약 + 표 + 주요 근거",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(document.querySelector(".assistant-workflow-diagram")).toBeTruthy();
+    expect(document.querySelector(".assistant-workflow-diagram.many-stages")).toBeTruthy();
+    expect(document.querySelector(".markdown-body pre")).toBeNull();
+    expect(document.querySelectorAll(".assistant-workflow-stage")).toHaveLength(6);
+    expect(document.querySelectorAll(".assistant-workflow-node")).toHaveLength(9);
+    expect(screen.getAllByText("1차 병렬 증거 수집")).toHaveLength(4);
+    expect(screen.getByText("Oracle/OCI·CAPEX")).toBeTruthy();
+    expect(screen.getByText("요약 + 표 + 주요 근거")).toBeTruthy();
+  });
+
+  it("keeps an incomplete streaming workflow fence as plain live text instead of a flashing code block", () => {
+    render(
+      <StreamingAssistantMessage
+        active
+        settings={{ ...initialAppState.appSettings, streamStartBufferMs: 0, streamRevealDurationMs: 0 }}
+        message={{
+          id: "assistant-1",
+          role: "assistant",
+          text: [
+            "```",
+            "[요건 범위화] 2025~2026 데이터센터 산업 + 오라클 포함",
+            "  -> [1차 병렬 증거 수집] 글로벌 수요·용량",
+          ].join("\n")}
+        }
+      />,
+    );
+
+    expect(document.querySelector(".stream-live-text pre")).toBeNull();
+    expect(document.querySelector(".assistant-workflow-diagram")).toBeNull();
+    expect(screen.getByText(/요건 범위화/)).toBeTruthy();
+  });
+
   it("collapses long user messages and lets them expand again", async () => {
     const user = userEvent.setup();
     const longText = [
-      "첫 문단입니다. ".repeat(12),
-      "둘째 문단입니다. ".repeat(12),
-      "셋째 문단입니다. ".repeat(12),
+      "첫 문단입니다. ".repeat(30),
+      "둘째 문단입니다. ".repeat(30),
+      "셋째 문단입니다. ".repeat(30),
     ].join("\n\n");
     render(
       <AppStateProvider
@@ -221,6 +307,31 @@ describe("MessageList", () => {
     expect(document.querySelector(".user-expanded-message")).toBeTruthy();
     expect(screen.getByRole("button", { name: "접기" })).toBeTruthy();
     expect(document.querySelector(".user-expanded-message")?.textContent).toContain("셋째 문단입니다.");
+  });
+
+  it("keeps moderately sized multiline user messages expanded", () => {
+    const reportPrompt = [
+      "포스코 경영기획본부 임원에게 보고할거야.",
+      "LLM 이후 대화형 챗봇과 RAG 기반 응답, Harness 기반 AI Agent의 발전을 설명하고,",
+      "skill과 MCP의 중요성을 짧은 웹보고서로 정리해줘.",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "user-1", role: "user", text: reportPrompt },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".user-collapsed-message")).toBeNull();
+    expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
+    expect(document.body.textContent || "").toContain("Harness 기반 AI Agent");
   });
 
   it("does not render a bare @ shortcut marker as a file mention", () => {
@@ -590,10 +701,71 @@ describe("MessageList", () => {
     );
 
     const workflowText = document.querySelector(".workflow-message")?.textContent || "";
-    expect(workflowText).toContain("todo_write- [ ] 기존 HTML 구조 확인");
-    expect(workflowText).toContain("화면 점검");
+    expect(workflowText).toContain("작업 목록 정리할 일을 정리했습니다.");
+    expect(workflowText).not.toContain("todo_write");
     expect(workflowText).toContain("cmd{");
     expect(workflowText).toContain("\"command\"");
+  });
+
+  it("shows todo_write as a short user-facing checklist step", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [{ id: "user-1", role: "user", text: "보고서 작성해줘" }],
+          workflowAnchorMessageId: "user-1",
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "todo_write",
+              title: "todo_write",
+              detail: "TODO.md",
+              status: "running",
+              level: "child",
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const workflowText = document.querySelector(".workflow-message")?.textContent || "";
+    expect(workflowText).toContain("작업 목록 정리");
+    expect(workflowText).not.toContain("todo_write");
+    expect(workflowText).not.toContain("TODO.md");
+  });
+
+  it("does not describe failed todo_write steps as completed", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [{ id: "user-1", role: "user", text: "보고서 작성해줘" }],
+          workflowAnchorMessageId: "user-1",
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "todo_write",
+              title: "작업 목록 정리",
+              detail: "Invalid input for todo_write: Either item or todos must be provided",
+              status: "error",
+              level: "child",
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const workflowText = document.querySelector(".workflow-message")?.textContent || "";
+    expect(workflowText).toContain("작업 목록 정리");
+    expect(workflowText).toContain("오류");
+    expect(workflowText).toContain("할 일 정리에 실패했습니다.");
+    expect(workflowText).toContain("입력 형식 오류");
+    expect(workflowText).not.toContain("todo_write");
+    expect(workflowText).not.toContain("할 일을 정리했습니다.");
   });
 
   it("renders the total workflow duration beside the record count", () => {
@@ -974,6 +1146,53 @@ describe("MessageList", () => {
     expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
   });
 
+  it("renders one running write preview for duplicate same-path workflow events", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "outputs/tailwind_design_system_필요성_보고서.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/tailwind_design_system_필요성_보고서.html",
+                content: "<!doctype html>",
+              },
+            },
+            {
+              id: "workflow-2",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "파일 작업 중... 21초 경과 · outputs/tailwind_design_system_필요성_보고서.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/tailwind_design_system_필요성_보고서.html",
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelectorAll(".workflow-step.child")).toHaveLength(1);
+    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
+    expect(screen.getByText("작성 중인 결과물 - tailwind_design_system_필요성_보고서.html")).toBeTruthy();
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html>");
+  });
+
   it("renders edit previews as colored diff rows", () => {
     render(
       <AppStateProvider
@@ -1321,6 +1540,52 @@ describe("MessageList", () => {
     expect(frame.srcdoc).toContain("AI Worm");
   });
 
+  it("replaces artifact labels and multiline wrappers with only the artifact card", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact/resolve?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            path: "outputs/financial-office-ai-report.html",
+            name: "financial-office-ai-report.html",
+            kind: "html",
+            size: 18_022,
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "작성 완료했습니다.\n\n- 산출물:`\noutputs/financial-office-ai-report.html\n`\n",
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const card = await screen.findByRole("button", { name: "financial-office-ai-report.html 미리보기 열기" });
+    expect(card.closest(".assistant-artifact-inline")).toBeTruthy();
+    const assistantContent = document.querySelector(".assistant-artifact-content")?.textContent || "";
+    expect(assistantContent).toContain("작성 완료했습니다.");
+    expect(assistantContent).toContain("financial-office-ai-report.html");
+    expect(assistantContent).not.toContain("산출물:");
+    expect(assistantContent).not.toContain("`");
+  });
+
   it("renders shell shortcut input and output as one terminal block", () => {
     render(
       <AppStateProvider
@@ -1371,6 +1636,70 @@ describe("MessageList", () => {
     const messages = document.querySelector(".messages") as HTMLElement;
     await waitFor(() => expect(messages.scrollTop).toBe(240));
     expect(messages.dataset.lastScrollTop).toBe("240");
+  });
+
+  it("keeps completed history reading fixed when bottom-follow is requested", async () => {
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      localStorage.setItem("myharness:scrollPositions", JSON.stringify({ "session-old": 240 }));
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            sessionId: "session-live",
+            activeHistoryId: "session-old",
+          }}
+        >
+          <HistoryRestoreProbe />
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "restore" }));
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      scrollHeights.set(messages, 900);
+      clientHeights.set(messages, 300);
+      await waitFor(() => expect(messages.scrollTop).toBe(240));
+
+      await act(async () => {
+        window.dispatchEvent(new Event(messageBottomFollowEvent));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+
+      expect(messages.scrollTop).toBe(240);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
   });
 
   it("does not render assistant completion actions while an answer is still streaming", () => {

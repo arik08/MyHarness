@@ -55,9 +55,23 @@ function startedAtFor(teammate: SwarmTeammateSnapshot) {
   return null;
 }
 
-function formatElapsed(startedAt: number | null, now: number) {
+function endedAtFor(teammate: SwarmTeammateSnapshot) {
+  const value = teammate.endedAt ?? teammate.ended_at;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function isTerminalStatus(status: SwarmStatus) {
+  return status === "completed" || status === "failed" || status === "killed";
+}
+
+function formatElapsed(startedAt: number | null, endAt: number | null, now: number) {
   if (!startedAt) return "";
-  const elapsed = Math.max(1, Math.floor((now - startedAt) / 1000));
+  const elapsed = Math.max(1, Math.floor(((endAt ?? now) - startedAt) / 1000));
   if (elapsed < 60) return `${elapsed}초`;
   const minutes = Math.floor(elapsed / 60);
   const seconds = elapsed % 60;
@@ -83,6 +97,7 @@ export function SwarmButton() {
   const [style, setStyle] = useState<CSSProperties>({});
   const [now, setNow] = useState(() => Date.now());
   const teammates = state.swarmTeammates;
+  const popupOpen = state.swarmPopupOpen;
   const activeCount = teammates.filter((item) => normalizedStatus(item.status) === "running").length;
   const warningCount = teammates.filter((item) => ["failed", "killed"].includes(normalizedStatus(item.status))).length;
   const completedCount = teammates.filter((item) => normalizedStatus(item.status) === "completed").length;
@@ -100,7 +115,7 @@ export function SwarmButton() {
   }), [activeCount, completedCount, warningCount]);
 
   useLayoutEffect(() => {
-    if (!state.swarmPopupOpen) return;
+    if (!popupOpen) return;
     const update = () => setStyle(popupStyle(buttonRef.current));
     update();
     const frame = window.requestAnimationFrame(update);
@@ -111,10 +126,10 @@ export function SwarmButton() {
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [state.swarmPopupOpen, teammates.length]);
+  }, [popupOpen, teammates.length]);
 
   useEffect(() => {
-    if (!state.swarmPopupOpen) return;
+    if (!popupOpen) return;
     function handlePointerDown(event: PointerEvent) {
       const target = event.target instanceof Node ? event.target : null;
       if (target && (popupRef.current?.contains(target) || buttonRef.current?.contains(target))) {
@@ -133,18 +148,24 @@ export function SwarmButton() {
       document.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [dispatch, state.swarmPopupOpen]);
+  }, [dispatch, popupOpen]);
 
   useEffect(() => {
-    if (!state.swarmPopupOpen || !activeCount) return;
+    if (!popupOpen || !activeCount) return;
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
-  }, [activeCount, state.swarmPopupOpen]);
+  }, [activeCount, popupOpen]);
 
   async function requestTaskOutput(teammate: SwarmTeammateSnapshot) {
-    if (!state.sessionId) return;
     const taskId = taskIdFor(teammate);
-    if (!taskId) return;
+    if (!taskId) {
+      openTaskOutputFallback(teammate);
+      return;
+    }
+    if (!state.sessionId || state.historyReadOnly) {
+      openTaskOutputFallback(teammate);
+      return;
+    }
     try {
       await sendBackendRequest(state.sessionId, state.clientId, {
         type: "task_output",
@@ -154,6 +175,22 @@ export function SwarmButton() {
     } catch (error) {
       dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
     }
+  }
+
+  function openTaskOutputFallback(teammate: SwarmTeammateSnapshot) {
+    const taskId = taskIdFor(teammate);
+    dispatch({
+      type: "open_modal",
+      modal: {
+        kind: "backend",
+        payload: {
+          kind: "task_output",
+          task_id: taskId,
+          title: taskId ? `작업 결과 ${taskId}` : `${labelFor(teammate)} 결과`,
+          output: outputFor(teammate) || "(출력 없음)",
+        },
+      },
+    });
   }
 
   async function stopTask(teammate: SwarmTeammateSnapshot) {
@@ -170,7 +207,7 @@ export function SwarmButton() {
     }
   }
 
-  const popup = state.swarmPopupOpen ? (
+  const popup = popupOpen ? (
     <div
       ref={popupRef}
       className="swarm-popup-layer"
@@ -181,7 +218,7 @@ export function SwarmButton() {
       <div className="swarm-popup-header">
         <div>
           <strong>AI 팀</strong>
-          <small>사무 작업 진행 현황</small>
+          <small>작업 진행 현황</small>
         </div>
         <div className="swarm-popup-counts" aria-label="작업자 상태 요약">
           <span>{summary.running} 진행</span>
@@ -195,7 +232,7 @@ export function SwarmButton() {
           {teammates.map((teammate) => {
             const taskId = taskIdFor(teammate);
             const status = normalizedStatus(teammate.status);
-            const elapsed = formatElapsed(startedAtFor(teammate), now);
+            const elapsed = formatElapsed(startedAtFor(teammate), isTerminalStatus(status) ? endedAtFor(teammate) : null, now);
             const output = outputFor(teammate);
             return (
               <article className={`swarm-agent-card ${statusClass(status)}`} key={teammate.id || taskId || labelFor(teammate)}>
@@ -237,9 +274,9 @@ export function SwarmButton() {
         className={buttonClassName}
         type="button"
         aria-label="AI 팀 열기"
-        aria-expanded={state.swarmPopupOpen ? "true" : "false"}
+        aria-expanded={popupOpen ? "true" : "false"}
         data-tooltip="AI 팀"
-        onClick={() => dispatch({ type: "set_swarm_popup_open", value: !state.swarmPopupOpen })}
+        onClick={() => dispatch({ type: "set_swarm_popup_open", value: !popupOpen })}
       >
         <svg aria-hidden="true" viewBox="0 0 24 24">
           <path d="M8 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />

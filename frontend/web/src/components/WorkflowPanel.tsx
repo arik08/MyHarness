@@ -137,6 +137,46 @@ function workflowPreviewSource(event: WorkflowEvent) {
   return null;
 }
 
+function workflowOutputPathKey(path: string) {
+  return String(path || "").trim().replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
+}
+
+function workflowEventOutputPathKey(event: WorkflowEvent) {
+  return workflowOutputPathKey(workflowInputValue(event.toolInput || {}, ["file_path", "path"]).value);
+}
+
+function mergeWorkflowOutputEvents(previous: WorkflowEvent, next: WorkflowEvent) {
+  return {
+    ...previous,
+    ...next,
+    id: previous.id,
+    toolInput: previous.toolInput && next.toolInput
+      ? { ...previous.toolInput, ...next.toolInput }
+      : next.toolInput || previous.toolInput,
+  };
+}
+
+function dedupeRunningWorkflowOutputEvents(events: WorkflowEvent[]) {
+  const indexesByKey = new Map<string, number>();
+  const nextEvents: WorkflowEvent[] = [];
+  for (const event of events) {
+    const pathKey = event.status === "running" && isWorkflowOutputTool(event.toolName)
+      ? workflowEventOutputPathKey(event)
+      : "";
+    const key = pathKey ? `${event.toolName.toLowerCase()}:${pathKey}` : "";
+    if (key) {
+      const existingIndex = indexesByKey.get(key);
+      if (existingIndex !== undefined) {
+        nextEvents[existingIndex] = mergeWorkflowOutputEvents(nextEvents[existingIndex], event);
+        continue;
+      }
+      indexesByKey.set(key, nextEvents.length);
+    }
+    nextEvents.push(event);
+  }
+  return nextEvents;
+}
+
 type WorkflowPreviewSource = NonNullable<ReturnType<typeof workflowPreviewSource>>;
 type WorkflowRow =
   | { type: "event"; event: WorkflowEvent }
@@ -274,6 +314,31 @@ function isWorkflowOutputTool(toolName: string) {
   return lower !== "todo_write" && lower !== "todowrite" && (lower.includes("write") || lower.includes("edit"));
 }
 
+function isTodoWorkflowTool(toolName: string, title = "") {
+  const lowerToolName = toolName.toLowerCase();
+  const lowerTitle = title.toLowerCase();
+  return lowerToolName === "todo_write" || lowerToolName === "todowrite" || lowerTitle === "todo_write" || lowerTitle === "todowrite";
+}
+
+function todoWorkflowDetail(status: WorkflowEvent["status"], detail: string) {
+  const elapsed = detail.match(/(?:\d+분(?: \d+초)?|\d+초) 경과/)?.[0] || "";
+  if (status === "running") {
+    return ["할 일을 정리하고 있습니다.", elapsed].filter(Boolean).join(" · ");
+  }
+  if (status === "error") {
+    const reason = detail
+      .replace(/(?:\d+분(?: \d+초)?|\d+초) 경과/g, "")
+      .replace(/^Invalid input for (?:todo_write|TodoWrite):\s*/i, "입력 형식 오류: ")
+      .replace(/[·\s]+$/g, "")
+      .trim();
+    return ["할 일 정리에 실패했습니다.", reason].filter(Boolean).join(" · ");
+  }
+  if (status === "warning") {
+    return "할 일 정리를 확인해야 합니다.";
+  }
+  return "할 일을 정리했습니다.";
+}
+
 function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source: WorkflowPreviewSource }) {
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
@@ -363,8 +428,11 @@ function WorkflowStep({
   const showQuietParentDetail = quietDone && event.status === "done" && Boolean(detail) && event.level !== "child" && !event.toolName;
   const showNarration = Boolean(narration);
   const showStatusDetail = showNarration || showCompactToolDetail || showQuietParentDetail || !(quietDone && event.status === "done");
-  const title = event.title;
-  const visibleDetail = showCompactToolDetail ? compactToolDetail(rawDetail ?? detail) : detail;
+  const todoTool = isTodoWorkflowTool(event.toolName, event.title);
+  const title = todoTool ? "작업 목록 정리" : event.title;
+  const visibleDetail = todoTool
+    ? todoWorkflowDetail(event.status, detail)
+    : showCompactToolDetail ? compactToolDetail(rawDetail ?? detail) : detail;
 
   useLayoutEffect(() => {
     if (!animate) {
@@ -391,7 +459,7 @@ function WorkflowStep({
             {showNarration ? narration : showCompactToolDetail || showQuietParentDetail ? visibleDetail : (
               <>
                 {statusLabel(event.status)}
-                {detail ? ` · ${detail}` : ""}
+                {visibleDetail ? ` · ${visibleDetail}` : ""}
               </>
             )}
           </small>
@@ -605,8 +673,9 @@ export function WorkflowPanel({
   onVisibleProgressChange?: () => void;
 } = {}) {
   const { state } = useAppState();
-  const events = eventOverride || state.workflowEvents;
-  const animateActiveWorkflow = state.busy && !state.restoringHistory && events === state.workflowEvents;
+  const rawEvents = eventOverride || state.workflowEvents;
+  const events = useMemo(() => dedupeRunningWorkflowOutputEvents(rawEvents), [rawEvents]);
+  const animateActiveWorkflow = state.busy && !state.restoringHistory && !eventOverride;
   const visibleEvents = useStaggeredWorkflowEvents(events, animateActiveWorkflow);
   const totalDurationSeconds = durationSeconds ?? (!eventOverride ? state.workflowDurationSeconds : null);
   const [now, setNow] = useState(() => Date.now());

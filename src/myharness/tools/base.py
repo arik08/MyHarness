@@ -48,6 +48,10 @@ class BaseTool(ABC):
         del arguments
         return False
 
+    def requires_project_mutation_lock(self, arguments: BaseModel) -> bool:
+        """Return whether this invocation must hold the project mutation lock."""
+        return not self.is_read_only(arguments)
+
     def to_api_schema(self) -> dict[str, Any]:
         """Return the tool schema expected by the Anthropic Messages API."""
         return {

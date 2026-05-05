@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 $script:StopRequested = $false
 $script:CurrentServerProcess = $null
 $script:RestartCount = 0
+$script:KeyHandlingEnabled = $env:MYHARNESS_SERVER_KEY_HANDLING -ne "0"
 $script:LogDirectory = if ($env:MYHARNESS_LOGS_DIR) { $env:MYHARNESS_LOGS_DIR } else { Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) ".myharness\logs" }
 $script:LauncherLog = Join-Path $script:LogDirectory "myharness-web-launcher.log"
 
@@ -34,8 +35,11 @@ function Clear-ConsoleInputBuffer {
     $discarded = 0
 
     try {
-        while ([Console]::KeyAvailable) {
-            [Console]::ReadKey($true) | Out-Null
+        while ($true) {
+            $key = Read-LauncherKey
+            if ($null -eq $key) {
+                break
+            }
             $discarded += 1
         }
     }
@@ -44,6 +48,47 @@ function Clear-ConsoleInputBuffer {
     }
 
     return $discarded
+}
+
+function Read-LauncherKey {
+    try {
+        if ($Host.UI.RawUI.KeyAvailable) {
+            return $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        }
+    }
+    catch {
+        # Fall back below for hosts that do not expose RawUI.
+    }
+
+    try {
+        if ([Console]::KeyAvailable) {
+            return [Console]::ReadKey($true)
+        }
+    }
+    catch {
+        # Some hosts do not expose an interactive console. Key polling is best effort.
+    }
+
+    return $null
+}
+
+function Test-LauncherKey {
+    param(
+        $Key,
+        [Parameter(Mandatory = $true)][ConsoleKey]$ExpectedKey
+    )
+
+    if ($null -eq $Key) {
+        return $false
+    }
+    if ($Key.PSObject.Properties.Name -contains "Key") {
+        return $Key.Key -eq $ExpectedKey
+    }
+    if ($Key.PSObject.Properties.Name -contains "VirtualKeyCode") {
+        return $Key.VirtualKeyCode -eq [int]$ExpectedKey
+    }
+
+    return $false
 }
 
 function Stop-ProcessTree {
@@ -98,9 +143,9 @@ while (-not $script:StopRequested) {
             Start-Sleep -Milliseconds 150
 
             try {
-                if ([Console]::KeyAvailable) {
-                    $key = [Console]::ReadKey($true)
-                    if ($key.Key -eq [ConsoleKey]::R) {
+                if ($script:KeyHandlingEnabled) {
+                    $key = Read-LauncherKey
+                    if (Test-LauncherKey -Key $key -ExpectedKey R) {
                         $discardedKeys = Clear-ConsoleInputBuffer
                         Write-Host ""
                         Write-Host "[INFO] Restart requested. Stopping server..."
@@ -109,7 +154,7 @@ while (-not $script:StopRequested) {
                         Stop-ServerProcess -Process $process
                         break
                     }
-                    if ($key.Key -eq [ConsoleKey]::Q) {
+                    if (Test-LauncherKey -Key $key -ExpectedKey Q) {
                         $discardedKeys = Clear-ConsoleInputBuffer
                         Write-Host ""
                         Write-Host "[INFO] Stop requested. Stopping server..."

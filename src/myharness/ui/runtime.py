@@ -82,6 +82,7 @@ class RuntimeBundle:
     session_backend: SessionBackend = DEFAULT_SESSION_BACKEND
     extra_skill_dirs: tuple[str, ...] = ()
     extra_plugin_roots: tuple[str, ...] = ()
+    task_worker: bool = False
 
     def current_settings(self):
         """Return the effective settings for this session.
@@ -240,6 +241,7 @@ async def build_runtime(
     permission_mode: str | None = None,
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
+    task_worker: bool = False,
 ) -> RuntimeBundle:
     """Build the shared runtime for an MyHarness session."""
     settings_overrides: dict[str, Any] = {
@@ -268,7 +270,7 @@ async def build_runtime(
             resolved_api_client = MissingAuthClient(str(exc))
     mcp_manager = McpClientManager(load_mcp_server_configs(settings, plugins, cwd=cwd))
     await mcp_manager.connect_all()
-    tool_registry = create_default_tool_registry(mcp_manager)
+    tool_registry = create_default_tool_registry(mcp_manager, task_worker=task_worker)
     # Register plugin-provided tools
     for plugin in plugins:
         if plugin.enabled and plugin.tools:
@@ -320,6 +322,7 @@ async def build_runtime(
         latest_user_prompt=prompt,
         extra_skill_dirs=normalized_skill_dirs,
         extra_plugin_roots=normalized_plugin_roots,
+        task_worker=task_worker,
     )
     from uuid import uuid4
 
@@ -347,6 +350,9 @@ async def build_runtime(
     if isinstance(restore_tool_metadata, dict):
         for key, value in restore_tool_metadata.items():
             restored_metadata[key] = value
+    if task_worker:
+        restored_metadata["session_kind"] = "task_worker"
+        restored_metadata["session_visibility"] = "hidden"
 
     engine = QueryEngine(
         api_client=resolved_api_client,
@@ -415,6 +421,7 @@ async def build_runtime(
         session_backend=session_backend or DEFAULT_SESSION_BACKEND,
         extra_skill_dirs=normalized_skill_dirs,
         extra_plugin_roots=normalized_plugin_roots,
+        task_worker=task_worker,
     )
 
 
@@ -622,6 +629,7 @@ async def handle_line(
                 latest_user_prompt=submit_prompt,
                 extra_skill_dirs=bundle.extra_skill_dirs,
                 extra_plugin_roots=bundle.extra_plugin_roots,
+                task_worker=bundle.task_worker,
             )
             bundle.engine.set_system_prompt(system_prompt)
             try:
@@ -657,6 +665,7 @@ async def handle_line(
                 latest_user_prompt=_last_user_text(bundle.engine.messages),
                 extra_skill_dirs=bundle.extra_skill_dirs,
                 extra_plugin_roots=bundle.extra_plugin_roots,
+                task_worker=bundle.task_worker,
             )
             bundle.engine.set_system_prompt(system_prompt)
             turns = result.continue_turns if result.continue_turns is not None else bundle.engine.max_turns
@@ -692,6 +701,7 @@ async def handle_line(
         latest_user_prompt=line_text,
         extra_skill_dirs=bundle.extra_skill_dirs,
         extra_plugin_roots=bundle.extra_plugin_roots,
+        task_worker=bundle.task_worker,
     )
     bundle.engine.set_system_prompt(system_prompt)
     try:

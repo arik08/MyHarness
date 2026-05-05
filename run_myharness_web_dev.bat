@@ -29,6 +29,7 @@ echo.
 echo   This starts both the backend server and Vite HMR dev server.
 echo   Open http://127.0.0.1:5173 while developing.
 echo   Press Q or Ctrl+C in this window to stop both servers.
+echo   Press R in this window to restart both servers.
 echo.
 
 where node >nul 2>nul

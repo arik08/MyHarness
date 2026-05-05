@@ -101,6 +101,8 @@ const artifactPreviewMaxBytes = 8 * 1024 * 1024;
 const chatHtmlPreviewMaxBytes = 2 * 1024 * 1024;
 const chatHtmlPreviewTtlMs = 10 * 60 * 1000;
 const chatHtmlPreviews = new Map();
+const artifactAssetWorkspaceTtlMs = 30 * 60 * 1000;
+const artifactAssetWorkspaces = new Map();
 const artifactTypes = {
   ".html": { kind: "html", mime: "text/html; charset=utf-8", encoding: "text" },
   ".htm": { kind: "html", mime: "text/html; charset=utf-8", encoding: "text" },
@@ -398,6 +400,15 @@ function pruneChatHtmlPreviews() {
   }
 }
 
+function pruneArtifactAssetWorkspaces() {
+  const now = Date.now();
+  for (const [token, entry] of artifactAssetWorkspaces) {
+    if (!entry || entry.expiresAt <= now) {
+      artifactAssetWorkspaces.delete(token);
+    }
+  }
+}
+
 const chatHtmlPreviewAutosizeScript = `<script>
 (function () {
   function visibleElementHeight() {
@@ -610,7 +621,7 @@ async function readArtifactPreview(session, artifactPath) {
     size: info.size,
   };
   if (type.kind === "html") {
-    payload.assetBaseUrl = artifactAssetBaseUrl(rel);
+    payload.assetBaseUrl = artifactAssetBaseUrl(session, rel);
   }
   if (type.encoding === "binary") {
     return payload;
@@ -624,12 +635,33 @@ async function readArtifactPreview(session, artifactPath) {
   return payload;
 }
 
-function artifactAssetBaseUrl(artifactRel) {
+function artifactAssetBaseUrl(session, artifactRel) {
+  pruneArtifactAssetWorkspaces();
+  const token = crypto.randomUUID();
+  artifactAssetWorkspaces.set(token, {
+    workspacePath: session.workspace.path,
+    expiresAt: Date.now() + artifactAssetWorkspaceTtlMs,
+  });
   const normalized = String(artifactRel || "").replace(/\\/g, "/");
   const parts = normalized.split("/").filter(Boolean);
   parts.pop();
   const encodedDir = parts.map((part) => encodeURIComponent(part)).join("/");
-  return `/api/artifact/asset/${encodedDir ? `${encodedDir}/` : ""}`;
+  return `/api/artifact/asset/${encodeURIComponent(token)}/${encodedDir ? `${encodedDir}/` : ""}`;
+}
+
+function artifactAssetSessionFromToken(token) {
+  pruneArtifactAssetWorkspaces();
+  const entry = artifactAssetWorkspaces.get(token);
+  if (!entry?.workspacePath) {
+    return null;
+  }
+  entry.expiresAt = Date.now() + artifactAssetWorkspaceTtlMs;
+  return {
+    workspace: {
+      path: entry.workspacePath,
+      name: basename(entry.workspacePath),
+    },
+  };
 }
 
 async function readArtifactMetadata(session, artifactPath) {
@@ -3391,8 +3423,14 @@ async function handleApi(request, response, pathname) {
   if (request.method === "GET" && pathname.startsWith("/api/artifact/asset/")) {
     const params = new URL(request.url, `http://localhost:${port}`).searchParams;
     try {
-      const assetPath = decodeURIComponent(pathname.slice("/api/artifact/asset/".length));
-      const session = await workspaceSessionFromRequest(params, assetPath, workspaceScope);
+      const rawAssetPath = pathname.slice("/api/artifact/asset/".length);
+      const assetParts = rawAssetPath.split("/");
+      const maybeToken = decodeURIComponent(assetParts.shift() || "");
+      const tokenSession = artifactAssetSessionFromToken(maybeToken);
+      const assetPath = tokenSession
+        ? decodeURIComponent(assetParts.join("/"))
+        : decodeURIComponent(rawAssetPath);
+      const session = tokenSession || await workspaceSessionFromRequest(params, assetPath, workspaceScope);
       const payload = await artifactAssetTarget(session, assetPath);
       response.writeHead(200, {
         "Content-Type": payload.mime,

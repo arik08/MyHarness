@@ -229,22 +229,73 @@ function trimArtifactCandidateRange(value: string, start: number, end: number) {
   return { start: nextStart, end: nextEnd };
 }
 
-function expandFileLabelLine(value: string, start: number, end: number) {
+function lineRangeForPosition(value: string, start: number, end: number) {
   const lineStart = value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
   const nextNewline = value.indexOf("\n", end);
   const lineEnd = nextNewline >= 0 ? nextNewline : value.length;
+  return { lineStart, lineEnd, nextNewline };
+}
+
+function previousLineRange(value: string, lineStart: number) {
+  if (lineStart <= 0) {
+    return null;
+  }
+  const previousEnd = lineStart - 1;
+  const previousStart = value.lastIndexOf("\n", Math.max(0, previousEnd - 1)) + 1;
+  return { lineStart: previousStart, lineEnd: previousEnd };
+}
+
+function nextLineRange(value: string, lineEnd: number) {
+  if (lineEnd >= value.length || value[lineEnd] !== "\n") {
+    return null;
+  }
+  const nextStart = lineEnd + 1;
+  const nextNewline = value.indexOf("\n", nextStart);
+  return {
+    lineStart: nextStart,
+    lineEnd: nextNewline >= 0 ? nextNewline : value.length,
+    nextNewline,
+  };
+}
+
+function isArtifactLabelPrefix(value: string) {
+  return /^\s*(?:[-*+]\s*)?(?:[^:\n`"'()[\]]{0,40}\s+)?(?:파일|file|산출물|결과물|artifact|output)\s*:\s*["'`]*\s*$/i.test(value);
+}
+
+function isReferenceWrapperSuffix(value: string) {
+  return /^[\s"'`.,;:)\]]*$/.test(value);
+}
+
+function expandArtifactReferenceRange(value: string, start: number, end: number) {
+  const { lineStart, lineEnd, nextNewline } = lineRangeForPosition(value, start, end);
   const line = value.slice(lineStart, lineEnd);
   const localStart = start - lineStart;
   const localEnd = end - lineStart;
   const before = line.slice(0, localStart);
   const after = line.slice(localEnd);
-  const fileLabelOnly = /^\s*(?:[-*+]\s*)?(?:[^:\n`"'()[\]]{0,40}\s+)?(?:파일|file)\s*:\s*["'`]*\s*$/i.test(before) && /^[\s"'`.,;:)\]]*$/.test(after);
-  if (!fileLabelOnly) {
+  if (isArtifactLabelPrefix(before) && isReferenceWrapperSuffix(after)) {
+    return {
+      start: lineStart,
+      end: nextNewline >= 0 ? nextNewline + 1 : lineEnd,
+    };
+  }
+
+  if (before.trim() || after.trim()) {
     return { start, end };
   }
+
+  const previousLine = previousLineRange(value, lineStart);
+  if (!previousLine || !isArtifactLabelPrefix(value.slice(previousLine.lineStart, previousLine.lineEnd))) {
+    return { start, end };
+  }
+
+  const nextLine = nextLineRange(value, lineEnd);
+  const hasClosingWrapperLine = nextLine ? isReferenceWrapperSuffix(value.slice(nextLine.lineStart, nextLine.lineEnd)) : false;
   return {
-    start: lineStart,
-    end: nextNewline >= 0 ? nextNewline + 1 : lineEnd,
+    start: previousLine.lineStart,
+    end: hasClosingWrapperLine && nextLine
+      ? (nextLine.nextNewline >= 0 ? nextLine.nextNewline + 1 : nextLine.lineEnd)
+      : (nextNewline >= 0 ? nextNewline + 1 : lineEnd),
   };
 }
 
@@ -254,7 +305,7 @@ function artifactReferenceFromRange(value: string, start: number, end: number, r
   if (!path || !isKnownArtifactPath(path) || /^https?:\/\//i.test(path)) {
     return null;
   }
-  const expanded = expandFileLabelLine(value, replaceStart, replaceEnd);
+  const expanded = expandArtifactReferenceRange(value, replaceStart, replaceEnd);
   const kind = artifactKind(path);
   return {
     path,

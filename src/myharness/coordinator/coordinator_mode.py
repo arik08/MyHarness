@@ -180,10 +180,7 @@ _WORKER_TOOLS = [
     "grep",
     "web_fetch",
     "web_search",
-    "task_create",
-    "task_get",
-    "task_list",
-    "task_output",
+    "task_update",
     "skill",
 ]
 

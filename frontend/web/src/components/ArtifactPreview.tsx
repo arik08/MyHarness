@@ -75,6 +75,9 @@ function iframeRelativeAssetUrls(content: string, assetBaseUrl: string) {
     .replace(/\b(src|poster)\s*=\s*(["'])([^"']+)\2/gi, (_match, attr, quote, value) => {
       return `${attr}=${quote}${escapeAttribute(toAssetUrl(value))}${quote}`;
     })
+    .replace(/<link\b([^>]*?)\bhref\s*=\s*(["'])([^"']+)\2([^>]*)>/gi, (_match, before, quote, value, after) => {
+      return `<link${before}href=${quote}${escapeAttribute(toAssetUrl(value))}${quote}${after}>`;
+    })
     .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote, value) => {
       return `url(${quote}${escapeAttribute(toAssetUrl(value))}${quote})`;
     });
@@ -89,6 +92,24 @@ function isMarkdownArtifact(artifact: ArtifactSummary, payload: ArtifactPayload)
   const kind = String(payload.kind || artifact.kind || "").toLowerCase();
   const path = String(artifact.path || "").toLowerCase();
   return kind === "markdown" || path.endsWith(".md") || path.endsWith(".markdown");
+}
+
+function isIncompleteHtmlDocument(content: string) {
+  const lower = String(content || "").toLowerCase();
+  if (!lower) {
+    return false;
+  }
+  const lastStyleOpen = lower.lastIndexOf("<style");
+  const lastStyleClose = lower.lastIndexOf("</style>");
+  if (lastStyleOpen > lastStyleClose) {
+    return true;
+  }
+  const lastScriptOpen = lower.lastIndexOf("<script");
+  const lastScriptClose = lower.lastIndexOf("</script>");
+  if (lastScriptOpen > lastScriptClose) {
+    return true;
+  }
+  return lower.includes("<head") && !lower.includes("</head>") && !lower.includes("<body");
 }
 
 export function ArtifactPreview({
@@ -123,6 +144,9 @@ export function ArtifactPreview({
     );
   }
   if (kind === "html") {
+    if (isIncompleteHtmlDocument(draftContent || content)) {
+      return <HighlightedArtifactSource artifact={artifact} content={draftContent || content} />;
+    }
     const previewContent = iframeAssetBase(draftContent || content, String(payload.assetBaseUrl || ""));
     return <iframe className="artifact-frame artifact-html-frame" title={artifact.name} sandbox="allow-scripts" srcDoc={iframeBackBridge(previewContent)} />;
   }

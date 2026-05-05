@@ -36,7 +36,7 @@ from myharness.engine.messages import ToolResultBlock
 from myharness.hooks import HookExecutionContext, HookExecutor, HookEvent
 from myharness.hooks.loader import HookRegistry
 from myharness.hooks.schemas import PromptHookDefinition
-from myharness.engine.query import QueryContext, _execute_tool_call
+from myharness.engine.query import QueryContext, _execute_tool_call, format_internal_steering_update
 
 
 def _command_tool_name() -> str:
@@ -251,12 +251,66 @@ async def test_query_engine_applies_steering_after_current_answer(tmp_path: Path
 
     assistant_turns = [event for event in events if isinstance(event, AssistantTurnComplete)]
     assert [event.message.text for event in assistant_turns] == ["Long first draft.", "Short version."]
-    assert any(isinstance(event, StatusEvent) and "스티어링" in event.message for event in events)
+    assert any(isinstance(event, StatusEvent) and event.message == "추가 요청을 반영합니다." for event in events)
+    assert not any(isinstance(event, StatusEvent) and "스티어링" in event.message for event in events)
     assert len(api_client.requests) == 2
     steering_message = api_client.requests[1].messages[-1]
     assert steering_message.text == "make it shorter"
     assert steering_message.content[0].text.startswith("The user sent this steering update")
     assert engine.messages[-2].text == "make it shorter"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_applies_internal_steering_without_user_facing_status(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="First pass.")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="With coordination.")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    metadata: dict[str, object] = {}
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata=metadata,
+    )
+    drain_calls = 0
+
+    async def _steering_provider() -> list[str]:
+        nonlocal drain_calls
+        drain_calls += 1
+        if drain_calls == 1:
+            return [format_internal_steering_update("Use the agent tool for the current independent wave.")]
+        return []
+
+    events = [
+        event
+        async for event in engine.submit_message(
+            "데이터센터 산업 관련 25~26년 현황을 조사해줘, 오라클 포함해서. 조사, 정리, 검토를 나눠서 진행해줘.",
+            steering_provider=_steering_provider,
+        )
+    ]
+
+    assistant_turns = [event for event in events if isinstance(event, AssistantTurnComplete)]
+    assert [event.message.text for event in assistant_turns] == ["First pass."]
+    assert not any(isinstance(event, StatusEvent) and "스티어링" in event.message for event in events)
+    assert not any(isinstance(event, StatusEvent) and "추가 요청" in event.message for event in events)
+    internal_message = api_client.requests[0].messages[-1]
+    assert internal_message.content[0].text.startswith("Internal coordination note")
+    focus_state = engine.tool_metadata.get("task_focus_state")
+    assert isinstance(focus_state, dict)
+    assert "Use the agent tool" not in str(focus_state.get("recent_goals"))
 
 
 @pytest.mark.asyncio
@@ -1257,6 +1311,20 @@ class _OkTool(BaseTool):
         return ToolResult(output="ok")
 
 
+class _SlowTool(BaseTool):
+    name = "slow_tool"
+    description = "Returns after a short delay."
+    input_model = _OkInput
+
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        return True
+
+    async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+        del arguments, context
+        await asyncio.sleep(0.05)
+        return ToolResult(output="slow")
+
+
 class _BoomTool(BaseTool):
     name = "boom_tool"
     description = "Always raises."
@@ -1428,6 +1496,82 @@ async def test_query_engine_synthesizes_tool_result_when_parallel_tool_raises(tm
 
     assert isinstance(events[-1], AssistantTurnComplete)
     assert events[-1].message.text == "Recovered from the failure."
+
+
+@pytest.mark.asyncio
+async def test_query_engine_streams_parallel_tool_completion_as_each_finishes(tmp_path: Path):
+    registry = ToolRegistry()
+    registry.register(_OkTool())
+    registry.register(_SlowTool())
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(id="toolu_slow", name="slow_tool", input={}),
+                            ToolUseBlock(id="toolu_ok", name="ok_tool", input={}),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("run both")]
+    tool_events = [
+        event
+        for event in events
+        if isinstance(event, ToolExecutionStarted | ToolExecutionCompleted)
+    ]
+
+    assert [event.tool_name for event in tool_events[:3]] == ["slow_tool", "ok_tool", "ok_tool"]
+    assert isinstance(tool_events[2], ToolExecutionCompleted)
+    assert tool_events[2].tool_use_id == "toolu_ok"
+
+    user_tool_messages = [
+        msg for msg in engine.messages if msg.role == "user" and any(isinstance(block, ToolResultBlock) for block in msg.content)
+    ]
+    result_blocks = [block for block in user_tool_messages[0].content if isinstance(block, ToolResultBlock)]
+    assert [block.tool_use_id for block in result_blocks] == ["toolu_slow", "toolu_ok"]
+
+
+@pytest.mark.asyncio
+async def test_todo_write_session_checklist_does_not_wait_for_permission(tmp_path: Path):
+    async def fail_permission_prompt(tool_name: str, reason: str) -> bool:
+        raise AssertionError(f"permission prompt should not be called for {tool_name}: {reason}")
+
+    result = await _execute_tool_call(
+        QueryContext(
+            api_client=FakeApiClient([]),
+            tool_registry=create_default_tool_registry(),
+            permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT)),
+            cwd=tmp_path,
+            model="claude-test",
+            system_prompt="system",
+            max_tokens=1000,
+            permission_prompt=fail_permission_prompt,
+        ),
+        "todo_write",
+        "toolu_todo",
+        {"todos": [{"text": "inspect files", "checked": True}]},
+    )
+
+    assert result.is_error is False
+    assert result.content == "- [x] inspect files"
+    assert not (tmp_path / "TODO.md").exists()
 
 
 @pytest.mark.asyncio

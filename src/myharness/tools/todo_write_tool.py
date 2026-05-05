@@ -33,9 +33,9 @@ class TodoWriteToolInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def require_item_or_todos(self) -> "TodoWriteToolInput":
-        if not self.item and not self.todos:
-            raise ValueError("Either item or todos must be provided")
+    def default_progress_checklists_to_session_only(self) -> "TodoWriteToolInput":
+        if self.todos is not None and "persist" not in self.__pydantic_fields_set__:
+            self.persist = False
         return self
 
 
@@ -46,15 +46,31 @@ class TodoWriteTool(BaseTool):
     description = (
         "Add a new TODO item or update a markdown checklist. For session progress, update the "
         "full checklist immediately after each step completes instead of marking several steps "
-        "done only at the end."
+        "done only at the end. If there is no concrete checklist item yet, skip this tool; empty "
+        "calls are treated as no-ops."
     )
     input_model = TodoWriteToolInput
+
+    def is_read_only(self, arguments: TodoWriteToolInput) -> bool:
+        if not arguments.item and not arguments.todos:
+            return True
+        if arguments.item is not None and not arguments.item.strip():
+            return True
+        if arguments.todos is not None and not any(item.text.strip() for item in arguments.todos):
+            return True
+        return not arguments.persist
 
     async def execute(self, arguments: TodoWriteToolInput, context: ToolExecutionContext) -> ToolResult:
         path = Path(context.cwd) / arguments.path
 
         if arguments.todos is not None:
-            lines = [f"- [{'x' if item.checked else ' '}] {item.text}" for item in arguments.todos]
+            lines = [
+                f"- [{'x' if item.checked else ' '}] {item.text.strip()}"
+                for item in arguments.todos
+                if item.text.strip()
+            ]
+            if not lines:
+                return ToolResult(output="")
             markdown = "\n".join(lines)
             if not arguments.persist:
                 return ToolResult(output=markdown)
@@ -62,11 +78,13 @@ class TodoWriteTool(BaseTool):
             path.write_text(f"# TODO\n{markdown}\n", encoding="utf-8")
             return ToolResult(output=f"Updated {path}\n{markdown}")
 
-        assert arguments.item is not None
+        if not arguments.item or not arguments.item.strip():
+            return ToolResult(output="")
+        item = arguments.item.strip()
         existing = path.read_text(encoding="utf-8") if path.exists() else "# TODO\n"
 
-        unchecked_line = f"- [ ] {arguments.item}"
-        checked_line = f"- [x] {arguments.item}"
+        unchecked_line = f"- [ ] {item}"
+        checked_line = f"- [x] {item}"
         target_line = checked_line if arguments.checked else unchecked_line
 
         if unchecked_line in existing and arguments.checked:

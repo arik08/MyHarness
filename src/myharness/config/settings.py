@@ -803,6 +803,18 @@ class Settings(BaseModel):
         # Strip ANSI escape sequences from model name if present
         if "model" in updates and isinstance(updates["model"], str):
             updates["model"] = strip_ansi_escape_sequences(updates["model"])
+        if "api_format" in updates and "provider" not in updates and "active_profile" not in updates:
+            api_format = str(updates["api_format"])
+            if api_format == "openai":
+                updates["provider"] = "openai"
+            elif api_format == "anthropic":
+                updates["provider"] = "anthropic"
+            elif api_format == "copilot":
+                updates["provider"] = "copilot"
+        if "active_profile" not in updates and "base_url" not in updates and (
+            "api_format" in updates or "provider" in updates
+        ):
+            updates["base_url"] = None
         merged = self.model_copy(update=updates)
         if not updates:
             return merged
@@ -822,6 +834,16 @@ class Settings(BaseModel):
             return merged
         if profile_updates.issubset({"active_profile"}):
             return merged.materialize_active_profile()
+        if "active_profile" not in updates and profile_updates & {"api_format", "provider", "base_url"}:
+            profile_name, profile = _profile_from_flat_settings(merged)
+            profiles = merged.merged_profiles()
+            profiles[profile_name] = profile
+            return merged.model_copy(
+                update={
+                    "active_profile": profile_name,
+                    "profiles": profiles,
+                }
+            ).materialize_active_profile()
         return merged.sync_active_profile_from_flat_fields().materialize_active_profile()
 
 

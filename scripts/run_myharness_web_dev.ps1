@@ -56,16 +56,69 @@ function Stop-All {
     Stop-ChildProcess -Process $script:BackendProcess
 }
 
+function Read-LauncherKey {
+    try {
+        if ($Host.UI.RawUI.KeyAvailable) {
+            return $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        }
+    }
+    catch {
+        # Fall back below for hosts that do not expose RawUI.
+    }
+
+    try {
+        if ([Console]::KeyAvailable) {
+            return [Console]::ReadKey($true)
+        }
+    }
+    catch {
+        # Some hosts do not expose an interactive console. Key polling is best effort.
+    }
+
+    return $null
+}
+
+function Test-LauncherKey {
+    param(
+        $Key,
+        [Parameter(Mandatory = $true)][ConsoleKey]$ExpectedKey
+    )
+
+    if ($null -eq $Key) {
+        return $false
+    }
+    if ($Key.PSObject.Properties.Name -contains "Key") {
+        return $Key.Key -eq $ExpectedKey
+    }
+    if ($Key.PSObject.Properties.Name -contains "VirtualKeyCode") {
+        return $Key.VirtualKeyCode -eq [int]$ExpectedKey
+    }
+
+    return $false
+}
+
 function Start-BackendLauncher {
     Stop-ListeningPort -Port $backendPort -Label "backend"
     Write-Host "[INFO] Starting MyHarness backend launcher on http://localhost:$env:PORT ..."
-    return Start-Process -FilePath "powershell.exe" -ArgumentList @(
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) "scripts\run_myharness_web_server.ps1")
-    ) -NoNewWindow -PassThru
+    $previousKeyHandling = $env:MYHARNESS_SERVER_KEY_HANDLING
+    try {
+        $env:MYHARNESS_SERVER_KEY_HANDLING = "0"
+        return Start-Process -FilePath "powershell.exe" -ArgumentList @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) "scripts\run_myharness_web_server.ps1")
+        ) -NoNewWindow -PassThru
+    }
+    finally {
+        if ($null -eq $previousKeyHandling) {
+            Remove-Item Env:\MYHARNESS_SERVER_KEY_HANDLING -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:MYHARNESS_SERVER_KEY_HANDLING = $previousKeyHandling
+        }
+    }
 }
 
 function Start-ViteServer {
@@ -127,22 +180,20 @@ try {
         }
 
         try {
-            if ([Console]::KeyAvailable) {
-                $key = [Console]::ReadKey($true)
-                if ($key.Key -eq [ConsoleKey]::Q) {
-                    $script:StopRequested = $true
-                    Write-Host "[INFO] Stop requested. Stopping backend and Vite dev server..."
-                    Stop-All
-                    break
-                }
-                if ($key.Key -eq [ConsoleKey]::R) {
-                    Write-Host "[INFO] Restart requested. Restarting backend and Vite dev server..."
-                    Stop-All
-                    Start-Sleep -Seconds 2
-                    $script:BackendProcess = Start-BackendLauncher
-                    Start-Sleep -Seconds 2
-                    $script:ViteProcess = Start-ViteServer
-                }
+            $key = Read-LauncherKey
+            if (Test-LauncherKey -Key $key -ExpectedKey Q) {
+                $script:StopRequested = $true
+                Write-Host "[INFO] Stop requested. Stopping backend and Vite dev server..."
+                Stop-All
+                break
+            }
+            if (Test-LauncherKey -Key $key -ExpectedKey R) {
+                Write-Host "[INFO] Restart requested. Restarting backend and Vite dev server..."
+                Stop-All
+                Start-Sleep -Seconds 2
+                $script:BackendProcess = Start-BackendLauncher
+                Start-Sleep -Seconds 2
+                $script:ViteProcess = Start-ViteServer
             }
         }
         catch {

@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from myharness.coordinator.coordinator_mode import get_team_registry
+from myharness.tasks.manager import TASK_PROGRESS_EVENT_PREFIX
 from myharness.tasks import get_task_manager
+from myharness.tools import create_default_tool_registry
 from myharness.tools.agent_tool import AgentTool, AgentToolInput
 from myharness.tools.base import ToolExecutionContext
 from myharness.tools.task_create_tool import TaskCreateTool, TaskCreateToolInput
@@ -117,6 +119,87 @@ async def test_task_update_tool_updates_metadata(tmp_path: Path, monkeypatch):
     assert task.metadata["status_note"] == "waiting on verification"
 
 
+def test_task_update_tool_is_read_only_for_project_mutation_lock():
+    tool = TaskUpdateTool()
+
+    assert tool.is_read_only(TaskUpdateToolInput(task_id="a123", status_note="진행 중")) is True
+    assert tool.requires_project_mutation_lock(
+        TaskUpdateToolInput(task_id="a123", status_note="진행 중")
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_task_update_tool_emits_parent_progress_when_worker_cannot_see_task(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_PARENT_TASK_ID", "a-parent")
+
+    result = await TaskUpdateTool().execute(
+        TaskUpdateToolInput(
+            task_id="a-parent",
+            progress=75,
+            status_note="출처 검증 중",
+            description="조사 담당: 출처 검증",
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    captured = capsys.readouterr()
+    assert result.is_error is False
+    assert result.output == "Updated task a-parent"
+    assert captured.out.startswith(TASK_PROGRESS_EVENT_PREFIX)
+    assert '"task_id":"a-parent"' in captured.out
+    assert '"progress":75' in captured.out
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_rejects_empty_worker_prompt(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    result = await AgentTool().execute(
+        AgentToolInput(
+            description="빈 작업",
+            prompt="   ",
+            subagent_type="worker",
+            command='python -u -c "import sys; print(sys.stdin.readline().strip())"',
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is True
+    assert "prompt is required" in result.output
+    assert get_task_manager().list_tasks() == []
+
+
+def test_agent_tool_skips_project_mutation_lock_without_being_read_only():
+    tool = AgentTool()
+    args = AgentToolInput(description="조사 담당", prompt="자료 확인")
+
+    assert tool.is_read_only(args) is False
+    assert tool.requires_project_mutation_lock(args) is False
+
+
+def test_task_worker_registry_keeps_progress_tool_without_parent_task_queries():
+    registry = create_default_tool_registry(task_worker=True)
+
+    assert registry.get("task_update") is not None
+    for name in (
+        "task_create",
+        "task_get",
+        "task_list",
+        "task_stop",
+        "task_output",
+        "agent",
+        "send_message",
+        "team_create",
+        "team_delete",
+    ):
+        assert registry.get(name) is None
+
+
 @pytest.mark.asyncio
 async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
     tmp_path: Path, monkeypatch
@@ -173,6 +256,36 @@ async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
     )
     assert record.command == 'python -u -c "import sys; print(sys.stdin.readline().strip())"'
     assert record.type == "local_agent"
+    await _wait_for_terminal_task(task_id)
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_records_display_role_from_description(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    context = ToolExecutionContext(cwd=tmp_path)
+
+    result = await AgentTool().execute(
+        AgentToolInput(
+            description="조사 담당: 출처 확인",
+            prompt="hello",
+            subagent_type="worker",
+            team="office",
+            command='python -u -c "import sys; print(sys.stdin.readline().strip())"',
+        ),
+        context,
+    )
+
+    assert result.is_error is False
+    import re
+
+    match = re.search(r"task_id=(\S+?)[,)]", result.output)
+    assert match, result.output
+    task_id = match.group(1)
+    record = get_task_manager().get_task(task_id)
+    assert record is not None
+    assert record.metadata["agent_role"] == "조사 담당"
+    assert record.metadata["agent_description"] == "조사 담당: 출처 확인"
+    assert record.metadata["team"] == "office"
     await _wait_for_terminal_task(task_id)
 
 

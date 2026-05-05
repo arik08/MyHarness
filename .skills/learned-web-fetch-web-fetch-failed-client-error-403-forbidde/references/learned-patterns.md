@@ -117,3 +117,17 @@
 - Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://en.wikipedia.org/api/rest_v1/page/summary/Multiplayer_online_battle_arena'
 - Do next time: Start by applying the verified corrective path: Ran command python "C:/Users/user/Desktop/Documents/Python/MyHarness/.skills/visual-review/scripts/check_render.py" "outputs/전세계-PC게임-트렌드-보고서.html" --width 1440 --height 10 [{]
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence ac6242f270c7d563
+- Confidence: 0.85
+- Signature: `web-fetch-web-fetch-failed-client-error-403-forbidden-for-url-https-openai-com-i`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://openai.com/index/stargate-advances-with-partnership-with-oracle/'
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://r.jina.ai/http://r.jina.ai/http://https://www.iea.org/reports/energy-and-ai/energy-demand-from-ai
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence b14ed3a810d106a4
+- Confidence: 0.85
+- Signature: `web-fetch-web-fetch-failed-client-error-403-forbidden-for-url-https-www-cbre-com`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://www.cbre.com/press-releases/cbre-report-core-data-center-markets-across-the-globe-race-to-increase-supply-competitio
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.cnbc.com/2025/07/22/openai-oracle-stargate-texas.html
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

@@ -87,6 +87,7 @@ async def test_run_print_mode_passes_cwd_to_build_runtime(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_task_worker_reads_one_shot_json_line(monkeypatch):
     seen = []
+    runtime_kwargs = {}
 
     class _FakeStdin:
         def __init__(self):
@@ -98,6 +99,7 @@ async def test_run_task_worker_reads_one_shot_json_line(monkeypatch):
             return next(self._lines, "")
 
     async def _build_runtime(**kwargs):
+        runtime_kwargs.update(kwargs)
         return SimpleNamespace(
             cwd=kwargs.get("cwd"),
             engine=SimpleNamespace(),
@@ -138,6 +140,8 @@ async def test_run_task_worker_reads_one_shot_json_line(monkeypatch):
     await run_task_worker(cwd="/tmp/demo")
 
     assert seen == ["follow up from coordinator"]
+    assert runtime_kwargs["session_backend"].list_snapshots("/tmp/demo") == []
+    assert runtime_kwargs["task_worker"] is True
 
 
 @pytest.mark.asyncio

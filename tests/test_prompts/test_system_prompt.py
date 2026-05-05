@@ -139,6 +139,34 @@ def test_build_system_prompt_guides_chat_html_rendering_and_report_charts():
     assert "self-contained, compact, readable in a constrained iframe" in prompt
 
 
+def test_build_system_prompt_guides_interactive_3d_html_artifacts():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+
+    assert "3D model, character, object, or interactive 3D preview" in prompt
+    assert "single self-contained `outputs/*.html` artifact" in prompt
+    assert "Three.js via CDN is acceptable" in prompt
+    assert "procedural geometry, materials, lighting, and camera controls" in prompt
+    assert "Default controls: left-click drag rotates/orbits the scene, wheel zooms in or out, right-click drag pans the scene, and double-click resets the view" in prompt
+    assert "Do not add middle-click or keyboard controls by default" in prompt
+    assert "Avoid plain white or plain black backgrounds" in prompt
+    assert "low-contrast gradient or lit backdrop" in prompt
+
+
+def test_build_system_prompt_guides_high_fidelity_3d_html_artifacts():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+
+    assert "If the user asks for a polished, detailed, high-poly, or production-quality 3D HTML artifact" in prompt
+    assert "avoid a vector-icon-like result made from only a few boxes, cylinders, and spheres" in prompt
+    assert "rounded/beveled shells, chamfered edges, layered panels, joints, cables, screws, vents, lenses, LEDs" in prompt
+    assert "Use higher segment counts and smooth normals for curved parts" in prompt
+    assert "PBR-style materials, multiple lights, soft shadows, and subtle animation" in prompt
+    assert "If the requested fidelity is closer to a real model than procedural primitives can support" in prompt
+    assert ".glb/.gltf asset workflow" in prompt
+    assert "Do not present a simple low-poly proxy as high fidelity" in prompt
+
+
 def test_build_system_prompt_rejects_yellowed_report_palettes():
     env = _make_env()
     prompt = build_system_prompt(env=env)

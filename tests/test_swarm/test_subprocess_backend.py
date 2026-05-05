@@ -36,7 +36,7 @@ async def test_subprocess_backend_forwards_system_prompt_in_command(monkeypatch,
     config = TeammateSpawnConfig(
         name="reviewer",
         team="default",
-        prompt="Review the code changes.",
+        prompt="Review the code changes.\nInclude edge cases.",
         cwd=str(tmp_path),
         parent_session_id="sess-001",
         system_prompt="You are a careful code reviewer.",
@@ -49,7 +49,15 @@ async def test_subprocess_backend_forwards_system_prompt_in_command(monkeypatch,
     command = str(captured["command"])
     assert "--system-prompt" in command
     assert "You are a careful code reviewer." in command
-    assert captured["env"] == {"MYHARNESS_MODEL": "test-model"}
+    assert captured["env"] == {
+        "MYHARNESS_MODEL": "test-model",
+        "MYHARNESS_PARENT_TASK_ID": "{task_id}",
+    }
+    payload = __import__("json").loads(str(captured["prompt"]))
+    assert payload == {
+        "text": "Review the code changes.\nInclude edge cases.",
+        "from": "coordinator",
+    }
 
 
 @pytest.mark.asyncio

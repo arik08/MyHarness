@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from myharness.tasks.manager import TASK_PROGRESS_EVENT_PREFIX
 from myharness.tasks.manager import BackgroundTaskManager
 
 
@@ -45,6 +46,57 @@ async def test_create_shell_task_and_read_output(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_update_listener_fires_for_output_and_completion(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    manager = BackgroundTaskManager()
+    updates: list[tuple[str, str]] = []
+
+    def _listener(task):
+        updates.append((task.id, task.status))
+
+    manager.register_update_listener(_listener)
+    task = await manager.create_shell_task(
+        command=_python_stdout_command("hello task"),
+        description="hello",
+        cwd=tmp_path,
+    )
+
+    await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
+
+    assert (task.id, "running") in updates
+    assert (task.id, "completed") in updates
+
+
+@pytest.mark.asyncio
+async def test_child_task_update_control_line_updates_parent_metadata(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    manager = BackgroundTaskManager()
+
+    task = await manager.create_shell_task(
+        command=_python_stdout_command(""),
+        description="worker",
+        cwd=tmp_path,
+        task_type="local_agent",
+        env={"MYHARNESS_PARENT_TASK_ID": "{task_id}"},
+    )
+
+    await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
+    payload = (
+        f"{TASK_PROGRESS_EVENT_PREFIX}"
+        f'{{"task_id":"{task.id}","progress":35,"status_note":"checking sources"}}\n'
+        "visible result\n"
+    )
+    visible = manager._filter_control_output(task.id, payload.encode("utf-8"))  # type: ignore[attr-defined]
+    updated = manager.get_task(task.id)
+
+    assert updated is not None
+    assert updated.env["MYHARNESS_PARENT_TASK_ID"] == task.id
+    assert updated.metadata["progress"] == "35"
+    assert updated.metadata["status_note"] == "checking sources"
+    assert visible == b"visible result\n"
+
+
+@pytest.mark.asyncio
 async def test_create_agent_task_with_command_override_and_write(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     manager = BackgroundTaskManager()
@@ -58,6 +110,23 @@ async def test_create_agent_task_with_command_override_and_write(tmp_path: Path,
 
     await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
     assert "got:first" in manager.read_task_output(task.id)
+
+
+@pytest.mark.asyncio
+async def test_create_agent_task_expands_task_id_placeholder(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    manager = BackgroundTaskManager()
+
+    task = await manager.create_agent_task(
+        prompt="task={task_id}",
+        description="agent",
+        cwd=tmp_path,
+        command=_python_stdin_echo_command(),
+    )
+
+    await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
+    assert task.prompt == f"task={task.id}"
+    assert f"got:task={task.id}" in manager.read_task_output(task.id)
 
 
 @pytest.mark.asyncio

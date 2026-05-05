@@ -6,7 +6,6 @@ import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary, Attachment, CommandItem, SkillItem } from "../types/backend";
 import { InlineQuestion } from "./InlineQuestion";
-import { SwarmButton } from "./SwarmButton";
 import { TodoDock } from "./TodoDock";
 
 const longPastedTextLineThreshold = 10;
@@ -303,7 +302,17 @@ export function Composer() {
     const shellShortcut = line.trim().startsWith("!") && state.composer.attachments.length === 0;
     const attachments = state.composer.attachments;
     let targetSessionId = state.sessionId;
+    const userMessage = shellShortcut
+      ? {
+          role: "log" as const,
+          text: line,
+          toolName: "shell-shortcut",
+          terminal: { command: line.trim().slice(1).trim(), status: "running" as const },
+        }
+      : { role: "user" as const, text: line || "(이미지 첨부)" };
     dispatch({ type: "set_busy", value: true });
+    dispatch({ type: "append_message", message: userMessage, skipHistory: state.pendingFreshChat });
+    dispatch({ type: "clear_composer" });
 
     try {
       if (state.pendingFreshChat) {
@@ -321,18 +330,6 @@ export function Composer() {
           dispatch({ type: "set_workspace", workspace: session.workspace });
         }
       }
-      dispatch({
-        type: "append_message",
-        message: shellShortcut
-          ? {
-              role: "log",
-              text: line,
-              toolName: "shell-shortcut",
-              terminal: { command: line.trim().slice(1).trim(), status: "running" },
-            }
-          : { role: "user", text: line || "(이미지 첨부)" },
-      });
-      dispatch({ type: "clear_composer" });
       await sendMessage({
         sessionId: targetSessionId,
         clientId: state.clientId,
@@ -363,6 +360,14 @@ export function Composer() {
       });
       return;
     }
+    dispatch({
+      type: "append_message",
+      message: {
+        role: "user",
+        text: line,
+        kind: mode === "queue" ? "queued" : "steering",
+      },
+    });
     dispatch({ type: "clear_composer" });
     try {
       await sendMessage({
@@ -532,7 +537,6 @@ export function Composer() {
           <span>계획모드</span>
         </button>
         <TodoDock variant="composerButton" />
-        <SwarmButton />
         <button
           id="sendButton"
           className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}

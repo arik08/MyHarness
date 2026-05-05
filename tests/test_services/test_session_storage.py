@@ -48,6 +48,52 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
     assert snapshot["tool_metadata"]["recent_verified_work"] == ["Focused session storage test passed"]
 
 
+def test_worker_snapshots_are_hidden_from_history(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="역할: 조사 담당. 주제는 데이터센터 현황")])],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+    )
+
+    assert load_session_snapshot(project) is None
+    assert list_session_snapshots(project, limit=None) == []
+
+
+def test_hidden_latest_falls_back_to_visible_session(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="일반 보고서")])],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        session_id="visible",
+    )
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="역할: 조사 담당. 주제는 데이터센터 현황")])],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        session_id="worker",
+    )
+
+    snapshot = load_session_snapshot(project)
+
+    assert snapshot is not None
+    assert snapshot["session_id"] == "visible"
+    assert [item["session_id"] for item in list_session_snapshots(project, limit=None)] == ["visible"]
+
+
 def test_save_and_load_session_snapshot_keeps_history_events(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     project = tmp_path / "repo"

@@ -985,16 +985,18 @@ a:focus-visible {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 8px;
   width: calc(100% - 8px);
   min-height: 42px;
   margin: 2px 4px 12px;
-  padding: 0 10px;
+  padding: 0 11px;
   background: var(--new-chat);
   border-radius: 999px;
   border-color: var(--line);
   box-shadow: 0 1px 0 rgba(30, 28, 24, 0.04);
+  font-size: 14px;
   font-weight: 720;
+  line-height: 1.25;
   text-align: left;
 }
 
@@ -1029,37 +1031,30 @@ a:focus-visible {
 }
 
 .new-chat span {
-  position: relative;
   display: grid;
   place-items: center;
-  width: 20px;
+  width: 19px;
   height: 20px;
   flex: 0 0 auto;
-  background: var(--ink);
-  border-radius: 999px;
+  color: color-mix(in srgb, var(--ink) 72%, var(--muted) 28%);
 }
 
-.new-chat span::before,
-.new-chat span::after {
-  position: absolute;
-  width: 10px;
-  height: 2px;
-  background: var(--new-chat);
-  border-radius: 999px;
-  content: "";
-}
-
-.new-chat span::after {
-  transform: rotate(90deg);
+.new-chat span svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.9;
 }
 
 .new-chat:hover {
   background: var(--new-chat-hover);
 }
 
-.new-chat:hover span::before,
-.new-chat:hover span::after {
-  background: var(--new-chat-hover);
+.new-chat:hover span {
+  color: var(--ink);
 }
 
 .history-heading button:hover {
@@ -3660,6 +3655,29 @@ a:focus-visible {
   background: var(--danger);
 }
 
+.header-actions .swarm-command {
+  align-self: center;
+  grid-column: auto;
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 8px;
+}
+
+.header-actions .swarm-command:hover,
+.header-actions .swarm-command:focus-visible,
+.header-actions .swarm-command.active {
+  background: var(--sidebar-hover);
+  border-color: var(--line);
+}
+
+.header-actions .swarm-command.running::after {
+  right: 6px;
+  bottom: 6px;
+}
+
 .swarm-popup-layer {
   position: fixed;
   z-index: 85;
@@ -4741,6 +4759,134 @@ a:focus-visible {
   padding: 0;
 }
 
+.assistant-workflow-diagram {
+  min-width: 0;
+  margin: 0 0 14px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel-raised) 94%, var(--accent-soft) 6%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.assistant-workflow-diagram-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--ink);
+}
+
+.assistant-workflow-diagram-header strong {
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.assistant-workflow-diagram-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.assistant-workflow-rail {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 2px;
+}
+
+.assistant-workflow-stage {
+  min-width: 0;
+  flex: 1 0 180px;
+}
+
+.assistant-workflow-stage-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.assistant-workflow-stage-title span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  background: var(--accent);
+  border-radius: 999px;
+  color: var(--inverse-ink);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.assistant-workflow-node-list {
+  display: grid;
+  gap: 6px;
+}
+
+.assistant-workflow-node {
+  min-width: 0;
+  padding: 8px 9px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.assistant-workflow-node strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.assistant-workflow-node span {
+  display: block;
+  color: var(--muted);
+}
+
+.assistant-workflow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 20px;
+  min-height: 20px;
+  flex: 0 0 20px;
+  color: color-mix(in srgb, var(--muted) 78%, var(--accent) 22%);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.assistant-workflow-diagram.many-stages .assistant-workflow-rail {
+  flex-direction: column;
+  overflow-x: visible;
+}
+
+.assistant-workflow-diagram.many-stages .assistant-workflow-stage {
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.assistant-workflow-diagram.many-stages .assistant-workflow-node-list {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.assistant-workflow-diagram.many-stages .assistant-workflow-arrow {
+  align-self: flex-start;
+  transform: rotate(90deg);
+}
+
 .markdown-body .html-render-preview {
   min-width: 0;
   max-width: 100%;
@@ -5556,7 +5702,7 @@ a:focus-visible {
 
 .composer-box {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   column-gap: 8px;
   row-gap: 6px;
   align-items: center;
@@ -5694,7 +5840,7 @@ a:focus-visible {
 }
 
 .composer-box > #sendButton {
-  grid-column: 6;
+  grid-column: 5;
 }
 
 .composer-box > #sendButton.is-stop {
@@ -7263,6 +7409,25 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 
   .model-settings-detail {
     min-height: 220px;
+  }
+}
+
+@media (max-width: 760px) {
+  .assistant-workflow-rail {
+    flex-direction: column;
+    overflow-x: visible;
+  }
+
+  .assistant-workflow-stage {
+    width: 100%;
+    flex: 0 0 auto;
+  }
+
+  .assistant-workflow-arrow {
+    align-self: flex-start;
+    min-height: 12px;
+    padding: 0;
+    transform: rotate(90deg);
   }
 }
 

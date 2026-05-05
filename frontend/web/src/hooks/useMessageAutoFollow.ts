@@ -225,7 +225,7 @@ export function useMessageAutoFollow({
 
   useEffect(() => {
     const container = messagesRef.current;
-    if (!container || !autoFollowRef.current || state.restoringHistory) {
+    if (!container || !autoFollowRef.current || state.restoringHistory || state.historyReadOnly) {
       return;
     }
     container.style.setProperty("--stream-follow-lead", `${streamFollowLeadPx}px`);
@@ -235,7 +235,7 @@ export function useMessageAutoFollow({
       duration: state.appSettings.streamScrollDurationMs,
       continuous: shouldFollowGrowingTail,
     });
-  }, [state.messages.length, lastMessage?.text, lastMessage?.isComplete, activeWorkflowFollowSignature, state.appSettings.streamScrollDurationMs, streamFollowLeadPx, isLastAssistantStreaming, shouldFollowGrowingTail, state.restoringHistory]);
+  }, [state.messages.length, lastMessage?.text, lastMessage?.isComplete, activeWorkflowFollowSignature, state.appSettings.streamScrollDurationMs, streamFollowLeadPx, isLastAssistantStreaming, shouldFollowGrowingTail, state.restoringHistory, state.historyReadOnly]);
 
   useLayoutEffect(() => {
     const container = messagesRef.current;
@@ -261,6 +261,9 @@ export function useMessageAutoFollow({
 
   useEffect(() => {
     function handleMessageBottomFollow() {
+      if (state.restoringHistory || state.historyReadOnly) {
+        return;
+      }
       autoFollowRef.current = true;
       userScrollIntentUntilRef.current = 0;
       scrollMessagesToBottom({ smooth: false, duration: 0 });
@@ -298,7 +301,7 @@ export function useMessageAutoFollow({
       userScrollIntentUntilRef.current = Date.now() + 900;
     },
     handleVisibleTextChange() {
-      if (!autoFollowRef.current || state.restoringHistory) {
+      if (!autoFollowRef.current || state.restoringHistory || state.historyReadOnly) {
         return;
       }
       scrollMessagesToBottom({
@@ -308,7 +311,7 @@ export function useMessageAutoFollow({
       });
     },
     handleVisibleWorkflowProgressChange() {
-      if (!autoFollowRef.current || state.restoringHistory || !shouldFollowGrowingTail) {
+      if (!autoFollowRef.current || state.restoringHistory || state.historyReadOnly || !shouldFollowGrowingTail) {
         return;
       }
       scrollMessagesToBottom({

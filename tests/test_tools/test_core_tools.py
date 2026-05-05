@@ -311,6 +311,54 @@ async def test_todo_write_batch_can_be_session_only(tmp_path: Path):
     assert not (tmp_path / "TODO.md").exists()
 
 
+@pytest.mark.asyncio
+async def test_todo_write_batch_defaults_to_session_only(tmp_path: Path):
+    args = TodoWriteToolInput(
+        todos=[
+            {"text": "inspect files", "checked": True},
+            {"text": "patch code", "checked": False},
+        ],
+    )
+    result = await TodoWriteTool().execute(args, ToolExecutionContext(cwd=tmp_path))
+
+    assert args.persist is False
+    assert TodoWriteTool().is_read_only(args) is True
+    assert result.output == "- [x] inspect files\n- [ ] patch code"
+    assert not (tmp_path / "TODO.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_todo_write_empty_input_is_noop(tmp_path: Path):
+    tool = TodoWriteTool()
+    context = ToolExecutionContext(cwd=tmp_path)
+
+    empty = await tool.execute(TodoWriteToolInput(), context)
+    blank_item = await tool.execute(TodoWriteToolInput(item="   "), context)
+    blank_batch = await tool.execute(
+        TodoWriteToolInput(todos=[{"text": "   ", "checked": False}]),
+        context,
+    )
+
+    assert empty.is_error is False
+    assert blank_item.is_error is False
+    assert blank_batch.is_error is False
+    assert empty.output == ""
+    assert blank_item.output == ""
+    assert blank_batch.output == ""
+    assert not (tmp_path / "TODO.md").exists()
+
+
+def test_todo_write_read_only_classification_matches_persistence():
+    tool = TodoWriteTool()
+
+    assert tool.is_read_only(TodoWriteToolInput()) is True
+    assert tool.is_read_only(TodoWriteToolInput(item="   ")) is True
+    assert tool.is_read_only(TodoWriteToolInput(item="persist me")) is False
+    assert tool.is_read_only(TodoWriteToolInput(item="preview only", persist=False)) is True
+    assert tool.is_read_only(TodoWriteToolInput(todos=[{"text": "progress", "checked": False}])) is True
+    assert tool.is_read_only(TodoWriteToolInput(todos=[{"text": "persist", "checked": False}], persist=True)) is False
+
+
 def test_todo_write_schema_guides_incremental_progress_updates():
     schema = TodoWriteTool.input_model.model_json_schema()
     assert "immediately after each step completes" in TodoWriteTool.description

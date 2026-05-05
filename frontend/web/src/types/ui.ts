@@ -83,7 +83,9 @@ export type AppState = {
   historyRefreshKey: number;
   activeHistoryId: string | null;
   restoringHistory: boolean;
+  historyReadOnly: boolean;
   pendingFreshChat: boolean;
+  preserveMessagesOnNextClearTranscript: boolean;
   artifacts: ArtifactSummary[];
   artifactPanelOpen: boolean;
   activeArtifact: ArtifactSummary | null;

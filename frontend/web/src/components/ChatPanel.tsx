@@ -1,6 +1,7 @@
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import { StatusPill } from "./StatusPill";
+import { SwarmButton } from "./SwarmButton";
 import { useAppState } from "../state/app-state";
 import { sendBackendRequest } from "../api/messages";
 import { useRef, useState } from "react";
@@ -101,6 +102,7 @@ export function ChatPanel() {
         </div>
         <div className="header-actions">
           <StatusPill />
+          <SwarmButton />
           <button
             className="header-icon-button"
             type="button"

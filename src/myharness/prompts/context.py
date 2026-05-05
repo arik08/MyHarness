@@ -59,7 +59,19 @@ def _build_delegation_section() -> str:
             "Use it when the user explicitly asks for a subagent, background worker, or parallel investigation, "
             "or when the task clearly benefits from splitting off a focused worker.",
             "When the user asks to divide work by roles, says AI team/swarm, or names roles like 조사, 정리, 검토, "
-            "spawn those workers first instead of merely describing that you will divide the work.",
+            "first sketch a lightweight workflow/DAG before spawning workers.",
+            "When showing that workflow, use a fenced `workflow` block with bracketed nodes and arrows. "
+            "Use labels that fit the actual task, not a fixed 조사/정리/검토 template; for example "
+            "`[요건 파악] 범위 확인`, `[데이터 수집] 원천 수집 -> [정규화] 스키마 맞춤 -> [검증] 결과 확인`; "
+            "do not use raw ASCII art for the workflow.",
+            "Spawn only the current independent wave. Do not spawn serial downstream roles prematurely; "
+            "roles with unmet prerequisites wait until their inputs exist.",
+            "Keep delegated work fast: use at most 5 workers per wave, give each a narrow non-overlapping scope, "
+            "and ask for concise bullet findings instead of a full report. Prefer more workers only when they reduce wall-clock time.",
+            "Ask workers to publish brief interim progress with `task_update` status_note updates or short progress lines "
+            "so UI surfaces can show what each person is doing.",
+            "Give worker descriptions visible role labels, such as `조사 담당: 전력 용량 출처 확인`, "
+            "so the AI 팀 panel can show what each worker owns.",
             "",
             "Default pattern:",
             '- Spawn with `agent(description=..., prompt=..., subagent_type=\"worker\")`.',
@@ -73,6 +85,22 @@ def _build_delegation_section() -> str:
     )
 
 
+def _build_task_worker_section() -> str:
+    """Build guidance for stdin-driven background workers."""
+    return "\n".join(
+        [
+            "# Background Worker Mode",
+            "",
+            "You are running as a background worker spawned by a parent MyHarness session.",
+            "Treat the current user message as your complete assignment; you cannot see the parent chat.",
+            "Do not use task_get, task_list, or task_output to inspect your own task or recover context. "
+            "Those parent task records live in another process and are intentionally unavailable here.",
+            "Use task_update only for brief progress updates when the prompt gives you a task id.",
+            "Return concise findings or the requested change summary when finished.",
+        ]
+    )
+
+
 def build_runtime_system_prompt(
     settings: Settings,
     *,
@@ -80,14 +108,16 @@ def build_runtime_system_prompt(
     latest_user_prompt: str | None = None,
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
+    task_worker: bool = False,
 ) -> str:
     """Build the runtime system prompt with project instructions and memory."""
-    if is_coordinator_mode():
+    coordinator_mode = is_coordinator_mode() and not task_worker
+    if coordinator_mode:
         sections = [get_coordinator_system_prompt()]
     else:
         sections = [build_system_prompt(custom_prompt=settings.system_prompt, cwd=str(cwd))]
 
-    if not is_coordinator_mode() and settings.system_prompt is None:
+    if not coordinator_mode and settings.system_prompt is None:
         sections[0] = build_system_prompt(cwd=str(cwd))
 
     if settings.fast_mode:
@@ -108,10 +138,12 @@ def build_runtime_system_prompt(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    if skills_section and not is_coordinator_mode():
+    if skills_section and not coordinator_mode:
         sections.append(skills_section)
 
-    if not is_coordinator_mode():
+    if task_worker:
+        sections.append(_build_task_worker_section())
+    elif not coordinator_mode:
         sections.append(_build_delegation_section())
 
     project_instructions = load_project_instructions_prompt(cwd)

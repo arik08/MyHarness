@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 from myharness.coordinator.coordinator_mode import is_coordinator_mode
 from myharness.engine.query import MaxTurnsExceeded
@@ -20,6 +21,37 @@ from myharness.engine.stream_events import StreamEvent
 from myharness.ui.backend_host import run_backend_host
 from myharness.ui.react_launcher import launch_react_tui
 from myharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
+
+
+class _TaskWorkerSessionBackend:
+    """Session backend for background workers; deliberately does not persist chat history."""
+
+    def get_session_dir(self, cwd: str | Path) -> Path:
+        return Path(cwd).resolve() / ".myharness" / "sessions"
+
+    def save_snapshot(self, *, cwd, model, system_prompt, messages, usage, session_id=None, tool_metadata=None, history_events=None):
+        del model, system_prompt, messages, usage, session_id, tool_metadata, history_events
+        return self.get_session_dir(cwd) / "task-worker-discarded.json"
+
+    def load_latest(self, cwd: str | Path) -> dict | None:
+        del cwd
+        return None
+
+    def list_snapshots(self, cwd: str | Path, limit: int | None = 20) -> list[dict]:
+        del cwd, limit
+        return []
+
+    def load_by_id(self, cwd: str | Path, session_id: str) -> dict | None:
+        del cwd, session_id
+        return None
+
+    def delete_by_id(self, cwd: str | Path, session_id: str) -> bool:
+        del cwd, session_id
+        return False
+
+    def export_markdown(self, *, cwd: str | Path, messages) -> Path:
+        del messages
+        return self.get_session_dir(cwd) / "task-worker-discarded.md"
 
 
 def _decode_task_worker_line(raw: str) -> str:
@@ -227,6 +259,8 @@ async def run_task_worker(
         ask_user_prompt=_noop_ask,
         enforce_max_turns=max_turns is not None,
         permission_mode=permission_mode,
+        session_backend=_TaskWorkerSessionBackend(),
+        task_worker=True,
     )
     await start_runtime(bundle)
     try:

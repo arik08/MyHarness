@@ -45,10 +45,32 @@ from myharness.tools.web_fetch_tool import WebFetchTool
 from myharness.tools.web_search_tool import WebSearchTool
 
 
-def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
+def create_default_tool_registry(mcp_manager=None, *, task_worker: bool = False) -> ToolRegistry:
     """Return the default built-in tool registry."""
     registry = ToolRegistry()
     command_tool = CmdTool() if get_platform() == "windows" else BashTool()
+    task_tools = (
+        (TaskUpdateTool(),)
+        if task_worker
+        else (
+            TaskCreateTool(),
+            TaskGetTool(),
+            TaskListTool(),
+            TaskStopTool(),
+            TaskOutputTool(),
+            TaskUpdateTool(),
+        )
+    )
+    coordination_tools = (
+        ()
+        if task_worker
+        else (
+            AgentTool(),
+            SendMessageTool(),
+            TeamCreateTool(),
+            TeamDeleteTool(),
+        )
+    )
     for tool in (
         command_tool,
         AskUserQuestionTool(),
@@ -78,16 +100,8 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         CronDeleteTool(),
         CronToggleTool(),
         RemoteTriggerTool(),
-        TaskCreateTool(),
-        TaskGetTool(),
-        TaskListTool(),
-        TaskStopTool(),
-        TaskOutputTool(),
-        TaskUpdateTool(),
-        AgentTool(),
-        SendMessageTool(),
-        TeamCreateTool(),
-        TeamDeleteTool(),
+        *task_tools,
+        *coordination_tools,
     ):
         registry.register(tool)
     if mcp_manager is not None:

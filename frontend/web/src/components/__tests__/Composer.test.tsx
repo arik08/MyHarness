@@ -305,6 +305,30 @@ describe("Composer", () => {
     }));
   });
 
+  it("shows a steering message immediately while send is still in flight", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise(() => {}));
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          busy: true,
+          messages: [{ id: "assistant-1", role: "assistant", text: "작업 중", isComplete: false }],
+        }}
+      >
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("메세지를 입력하세요..."), "이 조건 바로 반영");
+    await user.keyboard("{Enter}");
+
+    expect(document.querySelector(".message-kind-steering")?.textContent).toContain("이 조건 바로 반영");
+  });
+
   it("jumps the message list to the bottom when Enter sends a draft after scrolling upward", async () => {
     const user = userEvent.setup();
     const scrollTopValues = new WeakMap<Element, number>();
@@ -463,6 +487,44 @@ describe("Composer", () => {
     }));
   });
 
+  it("shows a fresh-chat user message before the new backend session finishes starting", async () => {
+    const user = userEvent.setup();
+    let resolveStart!: (value: { sessionId: string }) => void;
+    vi.mocked(startSession).mockReturnValueOnce(new Promise((resolve) => {
+      resolveStart = resolve;
+    }));
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-old",
+          clientId: "client-1",
+          pendingFreshChat: true,
+          workspacePath: "C:/demo",
+        }}
+      >
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("메세지를 입력하세요..."), "새 질문");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(document.querySelector("article.message.user")?.textContent).toContain("새 질문");
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveStart({ sessionId: "session-new" });
+    });
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-new",
+      line: "새 질문",
+    })));
+  });
+
   it("does not flash the send button into stop state when toggling plan mode", async () => {
     const user = userEvent.setup();
     let resolvePlan!: (value: Record<string, unknown>) => void;
@@ -542,107 +604,15 @@ describe("Composer", () => {
     expect(screen.queryByRole("button", { name: "작업 목록 펼치기 1/2" })).toBeNull();
   });
 
-  it("shows the swarm button beside composer controls and opens an in-layer popup", async () => {
-    const user = userEvent.setup();
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          sessionId: "session-1",
-          clientId: "client-1",
-          swarmTeammates: [
-            {
-              id: "research@office",
-              name: "research",
-              role: "조사",
-              status: "running",
-              task: "경쟁사 자료 수집",
-              startedAt: Date.now() - 3000,
-              lastOutput: "보도자료 확인 중",
-              taskId: "a123",
-            },
-            {
-              id: "review@office",
-              name: "review",
-              role: "검토",
-              status: "failed",
-              task: "초안 오류 확인",
-              lastOutput: "권한 오류",
-              taskId: "a456",
-            },
-          ],
-        }}
-      >
-        <Composer />
-      </AppStateProvider>,
-    );
-
-    const button = screen.getByRole("button", { name: "AI 팀 열기" });
-    expect(button.closest(".composer-box")).toBeTruthy();
-    expect(button.getAttribute("data-tooltip")).toBe("AI 팀");
-    expect(button.textContent).toContain("2");
-
-    await user.click(button);
-
-    const popup = screen.getByRole("dialog", { name: "AI 팀" });
-    expect(popup.className).toContain("swarm-popup-layer");
-    expect(screen.getByText("경쟁사 자료 수집")).toBeTruthy();
-    expect(screen.getByText("권한 오류")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "a123 결과 보기" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "a123 중단" })).toBeTruthy();
-  });
-
-  it("renders an empty swarm popup state from the always-visible button", async () => {
-    const user = userEvent.setup();
+  it("does not render the AI team button inside the composer controls", () => {
     render(
       <AppStateProvider>
         <Composer />
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "AI 팀 열기" }));
-
-    expect(screen.getByRole("dialog", { name: "AI 팀" })).toBeTruthy();
-    expect(screen.getByText("아직 진행 중인 팀 작업이 없습니다.")).toBeTruthy();
-  });
-
-  it("sends swarm task output and stop requests from the popup", async () => {
-    const user = userEvent.setup();
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          sessionId: "session-1",
-          clientId: "client-1",
-          swarmTeammates: [
-            {
-              id: "research@office",
-              name: "research",
-              role: "조사",
-              status: "running",
-              task: "자료 수집",
-              taskId: "a123",
-            },
-          ],
-        }}
-      >
-        <Composer />
-      </AppStateProvider>,
-    );
-
-    await user.click(screen.getByRole("button", { name: "AI 팀 열기" }));
-    await user.click(screen.getByRole("button", { name: "a123 결과 보기" }));
-    await user.click(screen.getByRole("button", { name: "a123 중단" }));
-
-    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
-      type: "task_output",
-      task_id: "a123",
-      max_bytes: 12000,
-    });
-    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
-      type: "task_stop",
-      task_id: "a123",
-    });
+    expect(document.querySelector(".composer-box .swarm-command")).toBeNull();
+    expect(screen.queryByRole("button", { name: "AI 팀 열기" })).toBeNull();
   });
 
   it("does not show a dismiss button on the expanded todo checklist", () => {

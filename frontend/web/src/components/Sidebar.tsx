@@ -616,9 +616,15 @@ export function Sidebar() {
         </div>
       </div>
 
-      <button className="new-chat" type="button" aria-label="새 채팅" data-tooltip="새 채팅" data-tooltip-placement="right" onClick={() => void startFreshChat()}>
-        <span aria-hidden="true" />
-        새 채팅
+      <button className="new-chat" type="button" aria-label="New Chat" data-tooltip="New Chat" data-tooltip-placement="right" onClick={() => void startFreshChat()}>
+        <span aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 3H5.5A2.5 2.5 0 0 0 3 5.5v13A2.5 2.5 0 0 0 5.5 21h13A2.5 2.5 0 0 0 21 18.5V12" />
+            <path d="M14.5 5.5 18.5 9.5" />
+            <path d="M13 11 19.2 4.8a1.6 1.6 0 0 1 2.3 2.3L15.3 13.3 12 14Z" />
+          </svg>
+        </span>
+        New Chat
       </button>
 
       <section className="history-panel" aria-label="Chat History">

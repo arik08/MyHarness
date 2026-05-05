@@ -348,6 +348,56 @@ function withArtifactFrameBackBridge(content) {
   return `${value}${bridge}`;
 }
 
+function escapeArtifactAttribute(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
+function withArtifactAssetBase(content, assetBaseUrl) {
+  const baseUrl = String(assetBaseUrl || "").trim();
+  if (!baseUrl) {
+    return content;
+  }
+  const base = `<base href="${escapeArtifactAttribute(baseUrl)}">`;
+  const withUrls = rewriteArtifactRelativeAssetUrls(content, baseUrl);
+  if (/<base(?:\s[^>]*)?>/i.test(withUrls)) {
+    return withUrls;
+  }
+  if (/<head(?:\s[^>]*)?>/i.test(withUrls)) {
+    return withUrls.replace(/<head(?:\s[^>]*)?>/i, (match) => `${match}${base}`);
+  }
+  if (/<html(?:\s[^>]*)?>/i.test(withUrls)) {
+    return withUrls.replace(/<html(?:\s[^>]*)?>/i, (match) => `${match}<head>${base}</head>`);
+  }
+  return `${base}${withUrls}`;
+}
+
+function rewriteArtifactRelativeAssetUrls(content, assetBaseUrl) {
+  const toAssetUrl = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw || raw.startsWith("#") || /^(?:[a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(raw)) {
+      return value;
+    }
+    try {
+      return new URL(raw, `${window.location.origin}${assetBaseUrl}`).pathname;
+    } catch {
+      return `${assetBaseUrl}${raw}`;
+    }
+  };
+  return String(content || "")
+    .replace(/\b(src|poster)\s*=\s*(["'])([^"']+)\2/gi, (_match, attr, quote, value) => {
+      return `${attr}=${quote}${escapeArtifactAttribute(toAssetUrl(value))}${quote}`;
+    })
+    .replace(/<link\b([^>]*?)\bhref\s*=\s*(["'])([^"']+)\2([^>]*)>/gi, (_match, before, quote, value, after) => {
+      return `<link${before}href=${quote}${escapeArtifactAttribute(toAssetUrl(value))}${quote}${after}>`;
+    })
+    .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote, value) => {
+      return `url(${quote}${escapeArtifactAttribute(toAssetUrl(value))}${quote})`;
+    });
+}
+
 function normalizeArtifactPath(value) {
   return String(value || "")
     .trim()
@@ -732,7 +782,7 @@ function renderArtifactRenderedView(artifact, payload) {
       activeArtifactFrameWindow = iframe.contentWindow;
       postArtifactFrameResize(iframe);
     });
-    iframe.srcdoc = withArtifactFrameBackBridge(payload.content);
+    iframe.srcdoc = withArtifactFrameBackBridge(withArtifactAssetBase(payload.content, payload.assetBaseUrl));
     els.artifactViewer.append(iframe);
     observeArtifactFrameResize(iframe);
     return;
