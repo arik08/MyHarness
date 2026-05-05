@@ -7,6 +7,7 @@ from typing import Any
 
 _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
     "brainstorming": "창의적 작업, 기능 생성, 컴포넌트 구축, 기능 추가, 동작 수정처럼 구현 전에 의도와 요구사항, 설계를 먼저 탐색해야 할 때 사용합니다.",
+    "commit": "작업 내용을 깔끔하고 구조화된 git 커밋으로 정리해야 할 때 사용합니다.",
     "debug": "버그를 체계적으로 진단하고 수정할 때 사용합니다.",
     "design-md": "특정 회사나 제품의 스타일, 콘셉트, 시각 언어, 브랜드 느낌을 반영한 보고서, HTML 산출물, 대시보드, 페이지, UI, 시각 문서를 요청받았을 때 사용합니다.",
     "diagnose": "에이전트 실행이 실패했거나, 회귀가 생겼거나, 예상과 다른 결과가 나온 이유를 직감이 아니라 증거 기반으로 진단해야 할 때 사용합니다.",
@@ -14,6 +15,11 @@ _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
     "dot-skill": "인물이나 자료에 대한 원문을 재사용 가능한 AI 스킬로 바꾸기 위한 영어 우선 메타 스킬입니다.",
     "executing-plans": "검토 체크포인트가 포함된 작성된 구현 계획을 별도 세션에서 실행할 때 사용합니다.",
     "finishing-a-development-branch": "구현이 완료되고 모든 테스트가 통과한 뒤, 병합·PR·정리 등 개발 브랜치 통합 방식을 결정해야 할 때 사용합니다.",
+    "frontend-design": (
+        "고품질 프론트엔드 인터페이스를 만들어야 할 때 사용합니다. 웹 컴포넌트, 페이지, 산출물, 포스터, "
+        "애플리케이션, 랜딩 페이지, 대시보드, React 컴포넌트, HTML/CSS 레이아웃, 웹 UI 스타일링과 "
+        "시각 개선 작업에 사용합니다."
+    ),
     "insane-search": (
         "차단된 웹사이트를 자동으로 우회하기 위해 가능한 방법을 순차적으로 시도합니다. "
         "WebFetch가 402/403/차단 오류를 반환하거나 X/Twitter, Reddit, YouTube, GitHub, "
@@ -27,6 +33,11 @@ _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
         "웹페이지 캡처, HTML의 PNG/PDF 변환, 브라우저 렌더링 결과 점검, PPT용 스크린샷 생성, "
         "반응형 뷰포트 테스트, 시각적 HTML 파일의 실제 열림/내보내기 검증에 사용합니다."
     ),
+    "polish": (
+        "출시 전 MyHarness UI의 최종 다듬기와 QA가 필요할 때 사용합니다. 디자인 시스템 정합성, 간격, "
+        "밀도, 텍스트 잘림, 겹침, 반응형 동작, 상호작용 상태, 접근성, 콘솔 오류, 작은 프론트엔드 개선을 "
+        "점검합니다."
+    ),
     "receiving-code-review": "코드 리뷰 피드백을 받은 뒤 제안을 구현하기 전에 사용합니다. 특히 피드백이 불명확하거나 기술적으로 의심스러울 때 맹목적으로 따르지 않고 검증하는 데 사용합니다.",
     "requesting-code-review": "작업 완료, 주요 기능 구현, 병합 전 단계에서 요구사항 충족 여부를 확인하기 위해 코드 리뷰가 필요할 때 사용합니다.",
     "review": "버그, 보안 문제, 품질 이슈를 찾기 위해 코드를 검토할 때 사용합니다.",
@@ -37,11 +48,18 @@ _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
     ),
     "subagent-driven-development": "현재 세션에서 독립 작업이 포함된 구현 계획을 실행할 때 사용합니다.",
     "systematic-debugging": "버그, 테스트 실패, 예기치 않은 동작을 만났을 때 수정안을 제안하기 전에 사용합니다.",
+    "tailwind-design-system": "Tailwind CSS v4 기반 디자인 시스템을 만들거나 CSS-first 테마를 구성하거나, variant 기반 컴포넌트를 만들거나, Tailwind v3에서 v4로 마이그레이션할 때 사용합니다.",
     "test": "코드 테스트를 작성하고 실행할 때 사용합니다.",
     "test-driven-development": "기능이나 버그 수정을 구현하기 전, 구현 코드 작성 전에 사용합니다.",
     "ui-design-essence": (
         "페이지, 컴포넌트, 대시보드, 보고서, 프로토타입, 랜딩 페이지, HTML 프리뷰를 만들거나 개선할 때의 "
         "시각 UI 디자인 기준입니다. 시각적 위계, 스타일 방향, 디자인 토큰, 반응형/접근성/밀도/모션 점검에 사용합니다."
+    ),
+    "ui-ux-pro-max": (
+        "웹과 모바일 UI/UX 설계 지능이 필요할 때 사용합니다. 스타일, 색상 팔레트, 폰트 조합, 제품 유형, "
+        "UX 가이드라인, 차트 유형을 바탕으로 웹사이트, 랜딩 페이지, 대시보드, 관리자 화면, 이커머스, "
+        "SaaS, 포트폴리오, 블로그, 모바일 앱의 버튼, 모달, 내비게이션, 사이드바, 카드, 표, 폼, 차트 "
+        "등을 계획·구현·검토·개선할 때 사용합니다."
     ),
     "using-git-worktrees": "현재 작업공간과 분리된 기능 작업이 필요하거나 구현 계획을 실행하기 전에 안전한 git worktree를 만들 때 사용합니다.",
     "using-superpowers": "대화를 시작할 때 스킬을 찾고 사용하는 방식을 정하며, 답변이나 질문 전 관련 스킬을 먼저 불러와야 할 때 사용합니다.",
@@ -87,5 +105,8 @@ def translate_skill_description(name: str, description: str) -> str:
 
     if normalized_name in _KO_SKILL_DESCRIPTIONS_BY_NAME:
         return _KO_SKILL_DESCRIPTIONS_BY_NAME[normalized_name]
+
+    if normalized_name.startswith("learned-"):
+        return "MyHarness가 반복적으로 확인한 실패 또는 해결 패턴을 다시 만났을 때 참고하는 자동 학습 스킬입니다."
 
     return description

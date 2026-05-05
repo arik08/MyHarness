@@ -21,6 +21,10 @@ class TaskStopTool(BaseTool):
     description = "Stop a background task."
     input_model = TaskStopToolInput
 
+    def requires_project_mutation_lock(self, arguments: TaskStopToolInput) -> bool:
+        del arguments
+        return False
+
     async def execute(self, arguments: TaskStopToolInput, context: ToolExecutionContext) -> ToolResult:
         del context
         try:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import ctypes.wintypes
 import json
 import os
 import time
@@ -89,6 +91,12 @@ def _remove_stale_lock(path: Path) -> bool:
         age = time.time() - path.stat().st_mtime
     except FileNotFoundError:
         return False
+    if _lock_owner_is_dead(path):
+        try:
+            path.unlink()
+            return True
+        except OSError:
+            return False
     if age < LOCK_STALE_SECONDS:
         return False
     try:
@@ -96,3 +104,49 @@ def _remove_stale_lock(path: Path) -> bool:
         return True
     except OSError:
         return False
+
+
+def _lock_owner_is_dead(path: Path) -> bool:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
+    try:
+        pid = int(data.get("pid", 0))
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    return not _process_exists(pid)
+
+
+def _process_exists(pid: int) -> bool:
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        return _windows_process_exists(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def _windows_process_exists(pid: int) -> bool:
+    process_query_limited_information = 0x1000
+    still_active = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == 5
+    try:
+        exit_code = ctypes.wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return True
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)

@@ -128,6 +128,29 @@ def test_task_update_tool_is_read_only_for_project_mutation_lock():
     ) is False
 
 
+def test_coordination_tools_do_not_take_project_mutation_lock():
+    from myharness.tools.send_message_tool import SendMessageTool, SendMessageToolInput
+    from myharness.tools.task_stop_tool import TaskStopTool, TaskStopToolInput
+    from myharness.tools.team_delete_tool import TeamDeleteTool, TeamDeleteToolInput
+
+    assert TeamCreateTool().requires_project_mutation_lock(
+        TeamCreateToolInput(name="office")
+    ) is False
+    assert TeamDeleteTool().requires_project_mutation_lock(
+        TeamDeleteToolInput(name="office")
+    ) is False
+    assert SendMessageTool().requires_project_mutation_lock(
+        SendMessageToolInput(task_id="a123", message="ping")
+    ) is False
+    assert TaskStopTool().requires_project_mutation_lock(TaskStopToolInput(task_id="a123")) is False
+    assert TaskCreateTool().requires_project_mutation_lock(
+        TaskCreateToolInput(type="local_agent", description="agent", prompt="hi")
+    ) is False
+    assert TaskCreateTool().requires_project_mutation_lock(
+        TaskCreateToolInput(type="local_bash", description="bash", command="echo hi")
+    ) is True
+
+
 @pytest.mark.asyncio
 async def test_task_update_tool_emits_parent_progress_when_worker_cannot_see_task(
     tmp_path: Path,
@@ -180,6 +203,44 @@ def test_agent_tool_skips_project_mutation_lock_without_being_read_only():
 
     assert tool.is_read_only(args) is False
     assert tool.requires_project_mutation_lock(args) is False
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_treats_office_worker_as_lightweight_research_agent(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from myharness.swarm.registry import get_backend_registry
+    from myharness.swarm.types import SpawnResult
+
+    captured = {}
+
+    async def _fake_spawn(config):
+        captured["config"] = config
+        return SpawnResult(
+            task_id="a12345678",
+            agent_id=f"{config.name}@{config.team}",
+            backend_type="subprocess",
+        )
+
+    executor = get_backend_registry().get_executor("subprocess")
+    monkeypatch.setattr(executor, "spawn", _fake_spawn)
+
+    result = await AgentTool().execute(
+        AgentToolInput(
+            description="조사 담당: 데이터센터 시장",
+            prompt="핵심 출처만 빠르게 조사해줘.",
+            subagent_type="worker",
+            team="office",
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is False
+    config = captured["config"]
+    assert config.team == "office"
+    assert config.system_prompt is None
+    assert config.name.startswith("research-")
 
 
 def test_task_worker_registry_keeps_progress_tool_without_parent_task_queries():

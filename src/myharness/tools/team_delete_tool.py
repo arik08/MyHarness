@@ -21,6 +21,10 @@ class TeamDeleteTool(BaseTool):
     description = "Delete an in-memory team."
     input_model = TeamDeleteToolInput
 
+    def requires_project_mutation_lock(self, arguments: TeamDeleteToolInput) -> bool:
+        del arguments
+        return False
+
     async def execute(self, arguments: TeamDeleteToolInput, context: ToolExecutionContext) -> ToolResult:
         del context
         try:

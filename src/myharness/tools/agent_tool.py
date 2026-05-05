@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from hashlib import sha1
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +34,34 @@ def _display_role(description: str, subagent_type: str | None) -> str:
     if agent_type and agent_type.lower() not in _GENERIC_AGENT_TYPES:
         return agent_type
     return "작업자"
+
+
+def _should_use_agent_definition(team: str, subagent_type: str | None) -> bool:
+    agent_type = (subagent_type or "").strip()
+    if not agent_type:
+        return False
+    if team == "office" and agent_type.lower() in _GENERIC_AGENT_TYPES:
+        return False
+    return True
+
+
+def _agent_name_for_spawn(description: str, team: str, subagent_type: str | None) -> str:
+    agent_type = (subagent_type or "").strip()
+    if team != "office" or (agent_type and agent_type.lower() not in _GENERIC_AGENT_TYPES):
+        return agent_type or "agent"
+    role = _display_role(description, subagent_type)
+    digest = sha1(description.encode("utf-8")).hexdigest()[:6]
+    if "조사" in role:
+        prefix = "research"
+    elif "정리" in role:
+        prefix = "synthesis"
+    elif "검토" in role or "검증" in role:
+        prefix = "review"
+    elif "분석" in role:
+        prefix = "analysis"
+    else:
+        prefix = "office"
+    return f"{prefix}-{digest}"
 
 
 def _prompt_with_task_context(prompt: str) -> str:
@@ -87,14 +116,16 @@ class AgentTool(BaseTool):
                 is_error=True,
             )
 
-        # Look up agent definition if subagent_type is specified
+        # Look up agent definition if subagent_type is specified.  Office
+        # research often arrives as subagent_type="worker" from generic
+        # delegation guidance, but the built-in worker prompt is code-focused.
         agent_def = None
-        if arguments.subagent_type:
+        team = arguments.team or "default"
+        if _should_use_agent_definition(team, arguments.subagent_type):
             agent_def = get_agent_definition(arguments.subagent_type)
 
         # Resolve team and agent name for the swarm backend
-        team = arguments.team or "default"
-        agent_name = arguments.subagent_type or "agent"
+        agent_name = _agent_name_for_spawn(arguments.description, team, arguments.subagent_type)
 
         # Use subprocess backend so spawned agents are registered in
         # BackgroundTaskManager and are pollable by the task tools.

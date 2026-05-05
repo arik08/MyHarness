@@ -33,6 +33,10 @@ class SendMessageTool(BaseTool):
     description = "Send a follow-up message to a running local agent task."
     input_model = SendMessageToolInput
 
+    def requires_project_mutation_lock(self, arguments: SendMessageToolInput) -> bool:
+        del arguments
+        return False
+
     async def execute(self, arguments: SendMessageToolInput, context: ToolExecutionContext) -> ToolResult:
         del context
         # Swarm agents use agent_id format (name@team); legacy tasks use plain task IDs

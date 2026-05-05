@@ -22,6 +22,10 @@ class TeamCreateTool(BaseTool):
     description = "Create a lightweight in-memory team for agent tasks."
     input_model = TeamCreateToolInput
 
+    def requires_project_mutation_lock(self, arguments: TeamCreateToolInput) -> bool:
+        del arguments
+        return False
+
     async def execute(self, arguments: TeamCreateToolInput, context: ToolExecutionContext) -> ToolResult:
         del context
         try:

@@ -88,10 +88,10 @@ describe("CommandHelpMessage", () => {
     expect(screen.getByRole("option", { name: /\$review/ })).toBeTruthy();
   });
 
-  it("adds full skill descriptions to the shared tooltip layer", () => {
+  it("adds translated skill descriptions to the shared tooltip layer", () => {
     const helpText = [
       "사용 가능한 스킬:",
-      "- dispatching-parallel-agents [project] [활성]: 공유 상태나 순차 의존성이 없는 2개 이상의 독립 작업을 병렬로 처리합니다.",
+      "- frontend-design [project] [활성]: Create distinctive, production-grade frontend interfaces with high design quality.",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -103,9 +103,9 @@ describe("CommandHelpMessage", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByRole("button", { name: /dispatching-parallel-agents/ }).getAttribute("data-tooltip")).toBe(
-      "dispatching-parallel-agents\n공유 상태나 순차 의존성이 없는 2개 이상의 독립 작업을 병렬로 처리합니다.",
-    );
+    const tooltip = screen.getByRole("button", { name: /frontend-design/ }).getAttribute("data-tooltip") || "";
+    expect(tooltip).toContain("고품질 프론트엔드 인터페이스");
+    expect(tooltip).not.toContain("Create distinctive");
   });
 
   it("disables plugin-owned skills in the help view when their plugin is toggled off", async () => {

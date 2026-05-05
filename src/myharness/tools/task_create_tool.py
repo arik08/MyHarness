@@ -27,6 +27,9 @@ class TaskCreateTool(BaseTool):
     description = "Create a background shell or local-agent task."
     input_model = TaskCreateToolInput
 
+    def requires_project_mutation_lock(self, arguments: TaskCreateToolInput) -> bool:
+        return arguments.type == "local_bash"
+
     async def execute(self, arguments: TaskCreateToolInput, context: ToolExecutionContext) -> ToolResult:
         manager = get_task_manager()
         try:

@@ -96,7 +96,8 @@ _SWARM_DELEGATION_HINT = (
     "and treat every label as a workflow node rather than a hard-coded stage. "
     "Use worker descriptions with visible role labels, such as `조사 담당: 전력 용량 출처 확인`, "
     "so the AI 팀 panel can show what each worker owns. "
-    "Give each worker a self-contained prompt and set team to `office`. "
+    "Give each worker a self-contained prompt, set team to `office`, and omit `subagent_type` "
+    "for office/research workers unless a specific non-code agent definition applies. "
     "After spawning workers, briefly tell the user the workflow shape and which workers started in the current wave. "
     "Do not present final research conclusions until worker results are available."
 )

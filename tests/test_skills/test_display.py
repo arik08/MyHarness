@@ -22,3 +22,15 @@ def test_unmapped_skill_description_stays_original():
     description = "Use this brand-new imported workflow exactly as written."
 
     assert translate_skill_description("new-imported-skill", description) == description
+
+
+def test_program_skill_description_is_translated_by_name():
+    description = "Create clean, well-structured git commits."
+
+    assert translate_skill_description("commit", description) == "작업 내용을 깔끔하고 구조화된 git 커밋으로 정리해야 할 때 사용합니다."
+
+
+def test_learned_skill_description_uses_korean_fallback():
+    description = "Use when MyHarness sees this repeated verified failure pattern: web_search: No search results found."
+
+    assert translate_skill_description("learned-web-search-no-search-results-found", description).startswith("MyHarness가 반복적으로 확인한")

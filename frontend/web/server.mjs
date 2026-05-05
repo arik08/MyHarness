@@ -178,6 +178,10 @@ const projectFileListSkipPrefixes = [
 const shellCommandTimeoutMs = 60_000;
 const shellOutputMaxChars = 24_000;
 const tokenCountMaxChars = 200_000;
+const backendIdleClientCloseMs = Math.max(
+  10,
+  Number(process.env.MYHARNESS_BACKEND_IDLE_CLIENT_CLOSE_MS || 30 * 60 * 1000),
+);
 
 function errorPayload(error) {
   return {
@@ -2862,6 +2866,30 @@ function shutdownAllSessions(reason = "server shutdown") {
   }
 }
 
+function scheduleIdleClientClose(session, reason = "idle client disconnect") {
+  if (!session || session.shuttingDown || session.clients.size > 0 || session.busy) {
+    return;
+  }
+  if (session.clientCloseTimer) {
+    clearTimeout(session.clientCloseTimer);
+  }
+  session.clientCloseTimer = setTimeout(() => {
+    session.clientCloseTimer = null;
+    if (!session.shuttingDown && session.clients.size === 0 && !session.busy) {
+      shutdownSession(session, reason);
+    }
+  }, backendIdleClientCloseMs);
+  session.clientCloseTimer.unref?.();
+}
+
+function cancelIdleClientClose(session) {
+  if (!session?.clientCloseTimer) {
+    return;
+  }
+  clearTimeout(session.clientCloseTimer);
+  session.clientCloseTimer = null;
+}
+
 function getLanUrl() {
   for (const addresses of Object.values(networkInterfaces())) {
     for (const address of addresses || []) {
@@ -3006,9 +3034,11 @@ function updateSessionStateFromBackendEvent(session, event) {
     event.type === "assistant_complete"
   ) {
     session.busy = true;
+    cancelIdleClientClose(session);
   }
   if (event.type === "line_complete" || event.type === "error" || event.type === "shutdown") {
     session.busy = false;
+    scheduleIdleClientClose(session);
   }
 }
 
@@ -3361,10 +3391,7 @@ async function handleApi(request, response, pathname) {
       Connection: "keep-alive",
     });
     session.clients.add(response);
-    if (session.clientCloseTimer) {
-      clearTimeout(session.clientCloseTimer);
-      session.clientCloseTimer = null;
-    }
+    cancelIdleClientClose(session);
     const lastEventId = lastEventIdFromRequest(request, params);
     if (lastEventId && canReplayFromLastEventId(session.events, lastEventId)) {
       for (const entry of rawEventsAfterLastEventId(session.events, lastEventId)) {
@@ -3378,6 +3405,7 @@ async function handleApi(request, response, pathname) {
     }
     request.on("close", () => {
       session.clients.delete(response);
+      scheduleIdleClientClose(session);
     });
     return true;
   }

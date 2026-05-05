@@ -74,7 +74,8 @@ def _build_delegation_section() -> str:
             "so the AI 팀 panel can show what each worker owns.",
             "",
             "Default pattern:",
-            '- Spawn with `agent(description=..., prompt=..., subagent_type=\"worker\")`.',
+            '- For coding implementation, spawn with `agent(description=..., prompt=..., subagent_type=\"worker\")`.',
+            '- For office/research/analysis workers, set `team=\"office\"` and omit `subagent_type` unless a specific non-code agent definition applies.',
             "- Inspect running or recorded workers with `/agents`.",
             "- Inspect one worker in detail with `/agents show TASK_ID`.",
             "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
@@ -138,7 +139,7 @@ def build_runtime_system_prompt(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    if skills_section and not coordinator_mode:
+    if skills_section and not coordinator_mode and not task_worker:
         sections.append(skills_section)
 
     if task_worker:

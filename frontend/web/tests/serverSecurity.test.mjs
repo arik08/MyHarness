@@ -6,6 +6,8 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function openPort() {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const port = 20_000 + Math.floor(Math.random() * 20_000);
@@ -199,6 +201,40 @@ test("lists and reclaims live sessions from the same browser address", async (t)
   });
 
   assert.equal(shutdownResponse.status, 200);
+});
+
+test("shuts down idle backend sessions after the event stream closes", async (t) => {
+  const app = await startWebServer({
+    env: {
+      MYHARNESS_WORKSPACE_SCOPE: "ip",
+      MYHARNESS_BACKEND_IDLE_CLIENT_CLOSE_MS: "50",
+    },
+  });
+  t.after(() => app.stop());
+
+  const createdResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "client-idle" }),
+  });
+  const created = await createdResponse.json();
+  assert.equal(createdResponse.status, 200);
+
+  const controller = new AbortController();
+  const eventsResponse = await fetch(
+    `${app.baseUrl}/api/events?session=${created.sessionId}&clientId=client-idle`,
+    { signal: controller.signal },
+  );
+  assert.equal(eventsResponse.status, 200);
+  controller.abort();
+  await eventsResponse.body?.cancel().catch(() => {});
+  await sleep(200);
+
+  const liveResponse = await fetch(`${app.baseUrl}/api/live-sessions?clientId=client-idle`);
+  const live = await liveResponse.json();
+
+  assert.equal(liveResponse.status, 200);
+  assert.equal(live.sessions.some((session) => session.sessionId === created.sessionId), false);
 });
 
 test("defaults to shared workspaces when listening on LAN interfaces", async (t) => {
