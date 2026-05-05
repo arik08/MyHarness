@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { saveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ChatMessage } from "../types/ui";
@@ -40,7 +40,7 @@ async function copyTextToClipboard(text: string) {
   }
 }
 
-export function AssistantActions({ message }: { message: ChatMessage }) {
+export function AssistantActions({ message, children }: { message: ChatMessage; children?: ReactNode }) {
   const { state, dispatch } = useAppState();
   const [status, setStatus] = useState("");
   const [copying, setCopying] = useState(false);
@@ -123,6 +123,7 @@ export function AssistantActions({ message }: { message: ChatMessage }) {
         </svg>
       </button>
       <span className="assistant-action-status">{status}</span>
+      {children}
     </div>
   );
 }

@@ -290,6 +290,58 @@ function replaceHtmlFencesWithPreviewPlaceholders(markdown: string) {
   return output.join("\n");
 }
 
+function markdownTableCells(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) {
+    return [];
+  }
+  const withoutEdges = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  return withoutEdges.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableRow(line: string) {
+  const cells = markdownTableCells(line);
+  return cells.length >= 2 && cells.some(Boolean);
+}
+
+function isMarkdownTableDivider(line: string) {
+  const cells = markdownTableCells(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function deferTrailingMarkdownTable(markdown: string) {
+  const source = String(markdown || "").replace(/\r\n/g, "\n");
+  const lines = source.split("\n");
+  let tableStart = -1;
+  let tableEnd = -1;
+
+  for (let index = 1; index < lines.length; index += 1) {
+    if (!isMarkdownTableRow(lines[index - 1]) || !isMarkdownTableDivider(lines[index])) {
+      continue;
+    }
+    let cursor = index + 1;
+    while (cursor < lines.length && isMarkdownTableRow(lines[cursor])) {
+      cursor += 1;
+    }
+    tableStart = index - 1;
+    tableEnd = cursor;
+  }
+
+  if (tableStart < 0 || tableEnd < lines.length) {
+    return source;
+  }
+
+  const before = lines.slice(0, tableStart).join("\n").trimEnd();
+  const pendingTable = lines.slice(tableStart).join("\n").trimEnd();
+  if (!pendingTable) {
+    return source;
+  }
+  return [
+    before,
+    `<pre class="markdown-pending-table">${escapeHtml(pendingTable)}</pre>`,
+  ].filter(Boolean).join("\n\n");
+}
+
 function isHtmlPreviewCodeBlock(code: Element) {
   const language = codeBlockLanguage(code);
   return language === "html" || language === "htm" || (!language && isLikelyStandaloneHtml(code.textContent || ""));
@@ -539,13 +591,22 @@ function revealRenderedText(root: HTMLElement | null, revealFrom: number | null)
   }
 }
 
-export function MarkdownMessage({ text, revealFrom = null }: { text: string; revealFrom?: number | null }) {
+export function MarkdownMessage({
+  text,
+  revealFrom = null,
+  deferIncompleteTables = false,
+}: {
+  text: string;
+  revealFrom?: number | null;
+  deferIncompleteTables?: boolean;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
   const html = useMemo(() => {
-    const previewMarkdown = replaceHtmlFencesWithPreviewPlaceholders(text || "");
+    const tableSafeText = deferIncompleteTables ? deferTrailingMarkdownTable(text || "") : text || "";
+    const previewMarkdown = replaceHtmlFencesWithPreviewPlaceholders(tableSafeText);
     const rendered = marked.parse(previewMarkdown, { async: false }) as string;
     return enhanceRenderedCodeBlockHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered)));
-  }, [text]);
+  }, [deferIncompleteTables, text]);
 
   useLayoutEffect(() => {
     replaceHtmlPreviewPlaceholders(ref.current);

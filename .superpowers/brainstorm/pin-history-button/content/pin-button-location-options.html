@@ -1,0 +1,79 @@
+<h2>Chat History Pinned 버튼 위치 비교</h2>
+<p class="subtitle">현재 구조: 행 전체 클릭으로 열기, 우측 hover 삭제 아이콘, 진행 중일 때 같은 슬롯에 스피너가 표시됩니다.</p>
+
+<div class="cards">
+  <div class="card" data-choice="right-hover" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="width:250px;border:1px solid #d8d2c8;background:#fbfaf7;padding:10px;font-family:system-ui,sans-serif">
+        <div style="font-size:11px;color:#7d7468;margin-bottom:7px">Chat History</div>
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <div style="position:relative;padding:7px 58px 7px 9px;background:#eee8df;border-radius:8px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            중요한 리팩터링 기록
+            <span style="position:absolute;right:32px;top:50%;transform:translateY(-50%);color:#b58a18">☆</span>
+            <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#c2413a">⌫</span>
+          </div>
+          <div style="position:relative;padding:7px 58px 7px 9px;border-radius:8px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            어제 작업 대화
+            <span style="position:absolute;right:32px;top:50%;transform:translateY(-50%);color:#9d9488">☆</span>
+            <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#c2413a">⌫</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 우측 hover 액션에 별 추가</h3>
+      <p>삭제 아이콘 왼쪽에 핀/별 버튼을 같이 보여줍니다. 기능 발견성은 좋지만 제목 폭을 가장 많이 먹고, 삭제와 가까워 오클릭 부담이 있습니다.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="left-persistent" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="width:250px;border:1px solid #d8d2c8;background:#fbfaf7;padding:10px;font-family:system-ui,sans-serif">
+        <div style="font-size:11px;color:#7d7468;margin-bottom:7px">Pinned</div>
+        <div style="position:relative;padding:7px 34px 7px 26px;background:#eee8df;border-radius:8px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:#b58a18">★</span>
+          중요한 리팩터링 기록
+          <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#c2413a">⌫</span>
+        </div>
+        <div style="font-size:11px;color:#7d7468;margin:12px 0 7px">Recent</div>
+        <div style="position:relative;padding:7px 34px 7px 26px;border-radius:8px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:#b58a18">☆</span>
+          어제 작업 대화
+          <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#c2413a">⌫</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 좌측 별 고정 + 섹션 분리</h3>
+      <p>별 상태가 항상 보이고 Pinned/Recent 그룹이 명확합니다. 다만 모든 행에 좌측 아이콘 공간이 생겨 기존의 조용한 리스트 느낌은 조금 줄어듭니다.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="row-menu" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="width:250px;border:1px solid #d8d2c8;background:#fbfaf7;padding:10px;font-family:system-ui,sans-serif">
+        <div style="font-size:11px;color:#7d7468;margin-bottom:7px">Pinned</div>
+        <div style="position:relative;padding:7px 34px 7px 9px;background:#eee8df;border-radius:8px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          <span style="color:#b58a18;margin-right:5px">★</span>중요한 리팩터링 기록
+          <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#6f675d">⋯</span>
+        </div>
+        <div style="font-size:11px;color:#7d7468;margin:12px 0 7px">Recent</div>
+        <div style="position:relative;padding:7px 34px 7px 9px;border-radius:8px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          어제 작업 대화
+          <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#6f675d">⋯</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 우측 더보기 메뉴 안에 Pin</h3>
+      <p>리스트는 가장 깔끔하지만 핀 기능이 숨어 있습니다. 삭제도 메뉴로 들어가면 폭 문제는 해결되지만, 기존 삭제 한 번 클릭 흐름이 바뀝니다.</p>
+    </div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">추천 판단</div>
+  <div class="mockup-body">
+    <p><strong>제 추천은 B의 변형입니다.</strong> 이미 핀된 항목에는 좌측 ★를 항상 보여 주고, 일반 항목은 hover/focus 때만 좌측 ☆를 살짝 보여 주는 방식입니다. 우측 슬롯은 기존 삭제/스피너 전용으로 유지해서 좁은 사이드바에서도 충돌이 적습니다.</p>
+  </div>
+</div>

@@ -15,9 +15,13 @@ function easeInOutCubic(progress: number) {
 
 function readScrollPositions() {
   try {
-    return JSON.parse(sessionStorage.getItem(scrollStorageKey) || "{}") as Record<string, unknown>;
+    return JSON.parse(localStorage.getItem(scrollStorageKey) || sessionStorage.getItem(scrollStorageKey) || "{}") as Record<string, unknown>;
   } catch {
-    return {};
+    try {
+      return JSON.parse(sessionStorage.getItem(scrollStorageKey) || "{}") as Record<string, unknown>;
+    } catch {
+      return {};
+    }
   }
 }
 
@@ -28,9 +32,14 @@ function saveScrollPosition(sessionId: string | null | undefined, scrollTop: num
   const positions = readScrollPositions();
   positions[sessionId] = scrollTop;
   try {
-    sessionStorage.setItem(scrollStorageKey, JSON.stringify(positions));
+    localStorage.setItem(scrollStorageKey, JSON.stringify(positions));
   } catch {
-    // Embedded or private browsing contexts can block sessionStorage.
+    // Embedded or private browsing contexts can block localStorage.
+    try {
+      sessionStorage.setItem(scrollStorageKey, JSON.stringify(positions));
+    } catch {
+      // Embedded or private browsing contexts can block all web storage.
+    }
   }
 }
 
@@ -183,7 +192,7 @@ export function useMessageAutoFollow({
       return;
     }
     container.classList.add("streaming-follow");
-    scrollMessagesToBottom({ smooth: true, duration: state.appSettings.streamScrollDurationMs, continuous: isLastAssistantStreaming });
+    scrollMessagesToBottom({ smooth: true, duration: state.appSettings.streamScrollDurationMs, continuous: shouldFollowGrowingTail });
   }
 
   function updateAutoFollowFromScroll(container = messagesRef.current) {
@@ -220,7 +229,7 @@ export function useMessageAutoFollow({
     scrollMessagesToBottom({
       smooth: true,
       duration: state.appSettings.streamScrollDurationMs,
-      continuous: isLastAssistantStreaming,
+      continuous: shouldFollowGrowingTail,
     });
   }, [state.messages.length, lastMessage?.text, lastMessage?.isComplete, activeWorkflowFollowSignature, state.appSettings.streamScrollDurationMs, state.appSettings.streamFollowLeadPx, isLastAssistantStreaming, shouldFollowGrowingTail, state.restoringHistory]);
 
@@ -273,6 +282,16 @@ export function useMessageAutoFollow({
     },
     handleVisibleTextChange() {
       if (!autoFollowRef.current || state.restoringHistory) {
+        return;
+      }
+      scrollMessagesToBottom({
+        smooth: true,
+        duration: state.appSettings.streamScrollDurationMs,
+        continuous: true,
+      });
+    },
+    handleVisibleWorkflowProgressChange() {
+      if (!autoFollowRef.current || state.restoringHistory || !shouldFollowGrowingTail) {
         return;
       }
       scrollMessagesToBottom({

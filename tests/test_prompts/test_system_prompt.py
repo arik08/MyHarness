@@ -149,6 +149,17 @@ def test_build_system_prompt_rejects_yellowed_report_palettes():
     assert "any appropriate non-yellowed palette" in prompt
 
 
+def test_build_system_prompt_includes_default_report_chart_palette():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+
+    assert "Default report chart palette" in prompt
+    assert "#3288bd, #66c2a5, #e6f598, #d53e4f" in prompt
+    assert "#9e0142, #f46d43, #fdae61, #fee08b, #abdda4, #5e4fa2" in prompt
+    assert "first choices are not mandatory" in prompt
+    assert "avoid dull default chart palettes" in prompt
+
+
 def test_build_system_prompt_prefers_existing_files_and_batched_edits():
     env = _make_env()
     prompt = build_system_prompt(env=env)
@@ -166,7 +177,8 @@ def test_build_system_prompt_prefers_existing_files_and_batched_edits():
     assert "required app/framework/hosting entrypoint would otherwise break" in prompt
     assert "place it under `outputs/`" in prompt
     assert "prefer a concise readable Korean filename" in prompt
-    assert "outputs/인터넷-문화-변천사-보고서.html" in prompt
+    assert "using underscores between words instead of hyphens" in prompt
+    assert "outputs/인터넷_문화_변천사_보고서.html" in prompt
     assert "English snake/kebab-style names are fine" in prompt
     assert "keep files that reference each other in the same subfolder" in prompt
     assert "If both editing and creating are plausible" in prompt

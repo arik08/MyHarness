@@ -16,3 +16,12 @@ export function deleteHistory(sessionId: string, workspacePath: string, workspac
 export function updateHistoryTitle(sessionId: string, title: string, workspacePath: string, workspaceName: string) {
   return postJson<{ ok: true; title: string }>("/api/history/title", { sessionId, title, workspacePath, workspaceName });
 }
+
+export function toggleHistoryPin(sessionId: string, pinned: boolean, workspacePath: string, workspaceName: string) {
+  return postJson<{ ok: true; pinned: boolean; sessionId: string }>("/api/history/pin", {
+    sessionId,
+    pinned,
+    workspacePath,
+    workspaceName,
+  });
+}

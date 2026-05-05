@@ -63,17 +63,26 @@ export type AppAction =
 
 function loadClientSessionId() {
   try {
-    return sessionStorage.getItem(clientSessionKey) || "";
+    return localStorage.getItem(clientSessionKey) || sessionStorage.getItem(clientSessionKey) || "";
   } catch {
-    return "";
+    try {
+      return sessionStorage.getItem(clientSessionKey) || "";
+    } catch {
+      return "";
+    }
   }
 }
 
 function saveClientSessionId(value: string) {
   try {
+    localStorage.setItem(clientSessionKey, value);
     sessionStorage.setItem(clientSessionKey, value);
   } catch {
-    // Embedded/private contexts may block sessionStorage.
+    try {
+      sessionStorage.setItem(clientSessionKey, value);
+    } catch {
+      // Embedded/private contexts may block web storage.
+    }
   }
 }
 

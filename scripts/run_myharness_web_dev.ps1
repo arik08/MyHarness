@@ -43,7 +43,7 @@ function Start-BackendLauncher {
 
 function Start-ViteServer {
     Write-Host "[INFO] Starting Vite React dev server on http://127.0.0.1:5173 ..."
-    return Start-Process -FilePath "cmd.exe" -ArgumentList @("/d", "/c", "npm run dev") -NoNewWindow -PassThru
+    return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "127.0.0.1") -NoNewWindow -PassThru
 }
 
 [Console]::add_CancelKeyPress({

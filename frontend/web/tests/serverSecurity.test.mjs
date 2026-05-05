@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -80,6 +80,7 @@ async function startWebServer({ host = "127.0.0.1", env = {} } = {}) {
 
   return {
     baseUrl,
+    configDir,
     port,
     output,
     async stop() {
@@ -110,6 +111,94 @@ test("rejects shell command requests without an owned active session", async (t)
 
   assert.equal(response.status, 403);
   assert.match(payload.error, /active session/i);
+});
+
+test("pins history snapshots and lists pinned chats first", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  t.after(() => app.stop());
+
+  const workspaceName = `PinTest${Date.now().toString(36)}`;
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: workspaceName }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  const workspace = workspacePayload.workspace;
+  assert.equal(workspaceResponse.status, 200);
+  assert.ok(workspace?.path);
+
+  const sessionDir = join(workspace.path, ".myharness", "sessions");
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(
+    join(sessionDir, "session-newer.json"),
+    JSON.stringify({
+      session_id: "newer",
+      created_at: 200,
+      summary: "최신 대화",
+      messages: [],
+      message_count: 1,
+    }),
+  );
+  await writeFile(
+    join(sessionDir, "session-older.json"),
+    JSON.stringify({
+      session_id: "older",
+      created_at: 100,
+      summary: "고정할 대화",
+      messages: [],
+      message_count: 1,
+    }),
+  );
+
+  const pinResponse = await fetch(`${app.baseUrl}/api/history/pin`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: "older", pinned: true, workspacePath: workspace.path, workspaceName: workspace.name }),
+  });
+  const pinPayload = await pinResponse.json();
+  assert.equal(pinResponse.status, 200);
+  assert.equal(pinPayload.pinned, true);
+
+  const historyResponse = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspace.path)}`);
+  const historyPayload = await historyResponse.json();
+
+  assert.equal(historyResponse.status, 200);
+  assert.deepEqual(historyPayload.options.map((item) => item.value), ["older", "newer"]);
+  assert.equal(historyPayload.options[0].pinned, true);
+});
+
+test("lists and reclaims live sessions from the same browser address", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "ip" },
+  });
+  t.after(() => app.stop());
+
+  const createdResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "client-old" }),
+  });
+  const created = await createdResponse.json();
+
+  assert.equal(createdResponse.status, 200);
+  assert.ok(created.sessionId);
+
+  const liveResponse = await fetch(`${app.baseUrl}/api/live-sessions?clientId=client-new`);
+  const live = await liveResponse.json();
+
+  assert.equal(liveResponse.status, 200);
+  assert.equal(live.sessions.some((session) => session.sessionId === created.sessionId), true);
+
+  const shutdownResponse = await fetch(`${app.baseUrl}/api/shutdown`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: created.sessionId, clientId: "client-new" }),
+  });
+
+  assert.equal(shutdownResponse.status, 200);
 });
 
 test("defaults to shared workspaces when listening on LAN interfaces", async (t) => {

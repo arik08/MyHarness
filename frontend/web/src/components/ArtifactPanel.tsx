@@ -30,12 +30,13 @@ const projectFileCategories = [
   ["other", "기타"],
 ];
 const projectFileCategoryValues = new Set(projectFileCategories.map(([value]) => value));
+type ArtifactPanelHistoryView = "list" | "detail" | "fullscreen";
 
 function isArtifactHistoryState(value: unknown) {
   return Boolean(value && typeof value === "object" && (value as Record<string, unknown>)[artifactHistoryMarker] === true);
 }
 
-function artifactHistoryState(view: "list" | "detail", artifact?: ArtifactSummary | null) {
+function artifactHistoryState(view: ArtifactPanelHistoryView, artifact?: ArtifactSummary | null) {
   return {
     [artifactHistoryMarker]: true,
     view,
@@ -161,6 +162,7 @@ export function ArtifactPanel() {
       if (isArtifactHistoryState(history.state)) {
         history.replaceState(artifactHistoryState("list"), "", window.location.href);
       }
+      setFullscreen(false);
       dispatch({ type: "open_artifact_list" });
       return;
     }
@@ -174,7 +176,16 @@ export function ArtifactPanel() {
     if (requestHistoryBack()) {
       return;
     }
+    setFullscreen(false);
     dispatch({ type: "open_artifact_list" });
+  }
+
+  function toggleFullscreen() {
+    if (fullscreen && isArtifactHistoryState(history.state) && history.state.view === "fullscreen") {
+      requestHistoryBack();
+      return;
+    }
+    setFullscreen((value) => !value);
   }
 
   useEffect(() => {
@@ -187,7 +198,9 @@ export function ArtifactPanel() {
     if (!state.artifactPanelOpen) {
       return;
     }
-    const view = state.activeArtifact ? "detail" : "list";
+    const view: ArtifactPanelHistoryView = state.activeArtifact
+      ? fullscreen ? "fullscreen" : "detail"
+      : "list";
     const nextState = artifactHistoryState(view, state.activeArtifact);
     if (skipNextHistoryPushRef.current) {
       skipNextHistoryPushRef.current = false;
@@ -196,17 +209,18 @@ export function ArtifactPanel() {
     if (!sameArtifactHistoryState(nextState)) {
       history.pushState(nextState, "", window.location.href);
     }
-  }, [state.activeArtifact, state.artifactPanelOpen]);
+  }, [fullscreen, state.activeArtifact, state.artifactPanelOpen]);
 
   useEffect(() => {
     function handlePopState(event: PopStateEvent) {
       if (isArtifactHistoryState(event.state)) {
         skipNextHistoryPushRef.current = true;
         if (event.state.view === "list") {
+          setFullscreen(false);
           dispatch({ type: "open_artifact_list" });
           return;
         }
-        if (event.state.view === "detail" && event.state.path) {
+        if ((event.state.view === "detail" || event.state.view === "fullscreen") && event.state.path) {
           const artifact = state.artifacts.find((item) => item.path === event.state.path) || {
             path: String(event.state.path),
             name: String(event.state.name || event.state.path),
@@ -214,11 +228,13 @@ export function ArtifactPanel() {
             label: String(event.state.label || event.state.kind || "파일"),
             size: Number(event.state.size || 0),
           };
+          setFullscreen(event.state.view === "fullscreen");
           void openArtifact(artifact);
           return;
         }
       }
       if (state.artifactPanelOpen) {
+        setFullscreen(false);
         dispatch({ type: "close_artifact" });
       }
     }
@@ -440,7 +456,7 @@ export function ArtifactPanel() {
               <ArtifactAction label={copyLabel === "복사됨" ? "복사됨" : "원문 복사"} icon="copy" onClick={() => void copyActiveArtifact()} disabled={!payload || (!canSave && !payload.content && !payload.dataUrl)} active={copyLabel === "복사됨"} />
             </>
           ) : null}
-          <ArtifactAction label={fullscreen ? "미리보기 축소" : "미리보기 확대"} icon={fullscreen ? "restore" : "fullscreen"} onClick={() => setFullscreen((value) => !value)} />
+          <ArtifactAction label={fullscreen ? "미리보기 축소" : "미리보기 확대"} icon={fullscreen ? "restore" : "fullscreen"} onClick={toggleFullscreen} />
           <ArtifactAction label="닫기" icon="close" onClick={closePanel} />
         </div>
       </div>

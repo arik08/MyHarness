@@ -600,6 +600,9 @@ async function readArtifactPreview(session, artifactPath) {
     mime: type.mime,
     size: info.size,
   };
+  if (type.kind === "html") {
+    payload.assetBaseUrl = artifactAssetBaseUrl(rel);
+  }
   if (type.encoding === "binary") {
     return payload;
   }
@@ -610,6 +613,14 @@ async function readArtifactPreview(session, artifactPath) {
     payload.content = body.toString("utf8");
   }
   return payload;
+}
+
+function artifactAssetBaseUrl(artifactRel) {
+  const normalized = String(artifactRel || "").replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  parts.pop();
+  const encodedDir = parts.map((part) => encodeURIComponent(part)).join("/");
+  return `/api/artifact/asset/${encodedDir ? `${encodedDir}/` : ""}`;
 }
 
 async function readArtifactMetadata(session, artifactPath) {
@@ -631,6 +642,22 @@ async function readArtifactMetadata(session, artifactPath) {
     size: info.size,
     mtimeMs: info.mtimeMs,
     birthtimeMs: info.birthtimeMs,
+  };
+}
+
+async function artifactAssetTarget(session, assetPath) {
+  const { target, rel } = workspaceRelativeTarget(session.workspace.path, assetPath);
+  const info = await stat(target);
+  if (!info.isFile()) {
+    throw new Error("Artifact asset is not a file");
+  }
+  const ext = extname(target).toLowerCase();
+  const type = artifactTypes[ext] || { mime: "application/octet-stream" };
+  return {
+    target,
+    rel,
+    mime: type.mime || "application/octet-stream",
+    size: info.size,
   };
 }
 
@@ -674,9 +701,31 @@ function assertClientOwnsSession(session, clientId) {
   }
 }
 
-function sessionFromIdForClient(sessionId, clientId) {
+function canReclaimSessionFromAddress(session, clientAddress) {
+  const expected = normalizeClientAddress(session?.clientAddress || "");
+  const actual = normalizeClientAddress(clientAddress || "");
+  return Boolean(expected && actual && expected === actual);
+}
+
+function reclaimSessionForClient(session, clientId, clientAddress) {
+  const actual = String(clientId || "").trim();
+  if (!session || !actual || session.clientId === actual || !canReclaimSessionFromAddress(session, clientAddress)) {
+    return session;
+  }
+  writeRuntimeLog("backend_session_reclaimed", {
+    session_id: session.id,
+    previous_client_id: session.clientId || "",
+    client_id: actual,
+    client_address: normalizeClientAddress(clientAddress || ""),
+  });
+  session.clientId = actual;
+  return session;
+}
+
+function sessionFromIdForClient(sessionId, clientId, clientAddress = "") {
   const session = sessions.get(sessionId);
   if (session) {
+    reclaimSessionForClient(session, clientId, clientAddress);
     assertClientOwnsSession(session, clientId);
   }
   return session;
@@ -1743,6 +1792,7 @@ async function readSessionListItem(path) {
     label: `${labelDate}  ${messageCount}msg  ${summary}`,
     description: summary,
     createdAt,
+    pinned: data.pinned === true,
   };
 }
 
@@ -1785,11 +1835,18 @@ async function listWorkspaceHistory(workspace, options = {}) {
     // latest.json is optional.
   }
 
-  const sorted = items.sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0));
+  const sorted = sortHistoryItems(items);
   if (options.includeCreatedAt) {
     return sorted;
   }
   return sorted.map(({ createdAt, ...item }) => item);
+}
+
+function sortHistoryItems(items) {
+  return items.sort((left, right) => {
+    const byPinned = Number(right.pinned === true) - Number(left.pinned === true);
+    return byPinned || (right.createdAt || 0) - (left.createdAt || 0);
+  });
 }
 
 async function listAllWorkspaceHistory(scope = defaultWorkspaceScope()) {
@@ -1805,7 +1862,10 @@ async function listAllWorkspaceHistory(scope = defaultWorkspaceScope()) {
   }));
   return grouped
     .flat()
-    .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
+    .sort((left, right) => {
+      const byPinned = Number(right.pinned === true) - Number(left.pinned === true);
+      return byPinned || (right.createdAt || 0) - (left.createdAt || 0);
+    })
     .map(({ createdAt, ...item }) => item);
 }
 
@@ -2077,6 +2137,31 @@ async function updateWorkspaceHistoryTitle(workspace, sessionId, title) {
     session_title: cleanTitle,
     session_title_user_edited: true,
   };
+  await writeJsonFile(target, payload);
+
+  const latestPath = join(sessionDir, "latest.json");
+  try {
+    const latest = JSON.parse(await readFile(latestPath, "utf8"));
+    if (String(latest.session_id || "") === cleanId) {
+      await writeJsonFile(latestPath, payload);
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
+      throw error;
+    }
+  }
+  return payload;
+}
+
+async function updateWorkspaceHistoryPin(workspace, sessionId, pinned) {
+  const cleanId = String(sessionId || "").trim();
+  if (!cleanId) {
+    throw new Error("Session id is required");
+  }
+  const sessionDir = sessionDirectoryForWorkspace(workspace);
+  const target = join(sessionDir, `session-${cleanId}.json`);
+  const payload = JSON.parse(await readFile(target, "utf8"));
+  payload.pinned = pinned === true;
   await writeJsonFile(target, payload);
 
   const latestPath = join(sessionDir, "latest.json");
@@ -3091,6 +3176,23 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
+  if (request.method === "POST" && pathname === "/api/history/pin") {
+    try {
+      const body = await readJson(request);
+      const workspace = workspaceFromHistoryRequest(body, workspaceScope);
+      const snapshot = await updateWorkspaceHistoryPin(workspace, body.sessionId, body.pinned === true);
+      json(response, 200, {
+        ok: true,
+        workspace,
+        sessionId: snapshot.session_id || body.sessionId,
+        pinned: snapshot.pinned === true,
+      });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not update history pin" });
+    }
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/session") {
     try {
       const options = await readJson(request);
@@ -3155,8 +3257,13 @@ async function handleApi(request, response, pathname) {
     const clientId = searchParams.get("clientId") || "";
     const workspacePath = searchParams.get("workspacePath") || "";
     const liveSessions = [...sessions.values()]
-      .filter((session) => session.clientId && session.clientId === clientId && !session.shuttingDown)
+      .filter((session) => (
+        !session.shuttingDown
+        && session.clientId
+        && (session.clientId === clientId || canReclaimSessionFromAddress(session, clientAddress))
+      ))
       .filter((session) => !workspacePath || session.workspace?.path === workspacePath)
+      .map((session) => reclaimSessionForClient(session, clientId, clientAddress))
       .map(liveSessionPayload)
       .sort((left, right) => left.createdAt - right.createdAt);
     json(response, 200, { sessions: liveSessions });
@@ -3186,7 +3293,7 @@ async function handleApi(request, response, pathname) {
     const id = params.get("session");
     let session;
     try {
-      session = sessionFromIdForClient(id, params.get("clientId"));
+      session = sessionFromIdForClient(id, params.get("clientId"), clientAddress);
     } catch (error) {
       json(response, error.status || 403, { error: error.message || "Forbidden session" });
       return true;
@@ -3248,6 +3355,24 @@ async function handleApi(request, response, pathname) {
       json(response, 200, payload);
     } catch (error) {
       json(response, error.status || 404, { error: error.message || "Artifact not found" });
+    }
+    return true;
+  }
+
+  if (request.method === "GET" && pathname.startsWith("/api/artifact/asset/")) {
+    const params = new URL(request.url, `http://localhost:${port}`).searchParams;
+    try {
+      const assetPath = decodeURIComponent(pathname.slice("/api/artifact/asset/".length));
+      const session = await workspaceSessionFromRequest(params, assetPath, workspaceScope);
+      const payload = await artifactAssetTarget(session, assetPath);
+      response.writeHead(200, {
+        "Content-Type": payload.mime,
+        "Content-Length": String(payload.size),
+        "Cache-Control": "no-store",
+      });
+      createReadStream(payload.target).pipe(response);
+    } catch (error) {
+      json(response, error.status || 404, { error: error.message || "Artifact asset not found" });
     }
     return true;
   }

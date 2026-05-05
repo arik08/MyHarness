@@ -87,6 +87,7 @@ export type HistoryItem = {
   live?: boolean;
   liveSessionId?: string;
   busy?: boolean;
+  pinned?: boolean;
 };
 
 export type ArtifactSummary = {

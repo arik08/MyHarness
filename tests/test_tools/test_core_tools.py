@@ -90,6 +90,7 @@ def test_file_write_tool_description_guides_human_artifact_filenames():
 
     assert "human-facing HTML, Markdown, PDF, DOCX, XLSX, and PPTX artifacts" in description
     assert "Korean filenames" in description
+    assert "underscores between words" in description
     assert "PY, JS, JSON, or CSV" in description
 
 

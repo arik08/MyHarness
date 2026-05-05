@@ -283,6 +283,14 @@ def save_session_snapshot(
     """Persist a session snapshot. Saves both by ID and as latest."""
     session_dir = get_project_session_dir(cwd)
     sid = session_id or uuid4().hex[:12]
+    session_path = session_dir / f"session-{sid}.json"
+    existing_pinned = False
+    if session_path.exists():
+        try:
+            existing = json.loads(session_path.read_text(encoding="utf-8"))
+            existing_pinned = bool(existing.get("pinned"))
+        except (OSError, json.JSONDecodeError):
+            existing_pinned = False
     now = time.time()
     messages = sanitize_conversation_messages(messages)
     metadata_title = _session_title_from_metadata(tool_metadata)
@@ -312,6 +320,7 @@ def save_session_snapshot(
         "created_at": now,
         "summary": summary,
         "message_count": len(messages),
+        "pinned": existing_pinned,
     }
     data = json.dumps(payload, indent=2) + "\n"
 
@@ -320,7 +329,6 @@ def save_session_snapshot(
     atomic_write_text(latest_path, data)
 
     # Save by session ID
-    session_path = session_dir / f"session-{sid}.json"
     atomic_write_text(session_path, data)
 
     return latest_path

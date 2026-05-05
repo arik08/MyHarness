@@ -1160,15 +1160,18 @@ a:focus-visible {
 }
 
 .history-open,
-.history-delete {
+.history-more,
+.history-delete,
+.history-pin {
   border: 0;
   background: transparent;
   color: inherit;
 }
 
 .history-open {
+  position: relative;
   min-width: 0;
-  padding: 5px 4px;
+  padding: 5px 34px 5px 4px;
   text-align: left;
 }
 
@@ -1192,6 +1195,20 @@ a:focus-visible {
   display: none;
 }
 
+.history-item.pinned .history-open {
+  padding-left: 22px;
+}
+
+.history-pin-indicator {
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  color: #8f7252;
+  font-size: 12px;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
 .history-busy-spinner {
   position: absolute;
   top: 50%;
@@ -1212,7 +1229,9 @@ a:focus-visible {
   opacity: 0.95;
 }
 
-.history-delete {
+.history-more,
+.history-delete,
+.history-pin {
   display: grid;
   position: absolute;
   top: 50%;
@@ -1233,14 +1252,39 @@ a:focus-visible {
     opacity 0.15s ease;
 }
 
-.history-item:hover .history-delete,
-.history-delete:focus-visible {
+.history-more {
+  color: var(--muted);
+  opacity: 0;
+}
+
+.history-item:hover .history-more,
+.history-more:focus-visible,
+.history-item.actions-open .history-delete,
+.history-delete:focus-visible,
+.history-pin:focus-visible {
   opacity: 1;
 }
 
-.history-item.busy .history-delete {
+.history-pin {
+  right: 29px;
+  color: #8f7252;
+  opacity: 1;
+}
+
+.history-item.actions-open .history-delete,
+.history-item.actions-open .history-pin {
+  animation: historyActionReveal 0.14s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.history-item.busy .history-more,
+.history-item.busy .history-delete,
+.history-item.busy .history-pin {
   opacity: 0;
   pointer-events: none;
+}
+
+.history-more:hover {
+  color: var(--ink);
 }
 
 .history-delete:hover {
@@ -1248,7 +1292,16 @@ a:focus-visible {
   color: #b42318;
 }
 
-.history-delete svg {
+.history-pin:hover {
+  color: #6f563c;
+}
+
+.history-more span {
+  transform: translateY(-2px);
+}
+
+.history-delete svg,
+.history-pin svg {
   width: 17px;
   height: 17px;
   fill: none;
@@ -1256,6 +1309,21 @@ a:focus-visible {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.9;
+}
+
+.history-pin svg {
+  fill: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+@keyframes historyActionReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
 }
 
 .history-title-editor {
@@ -2407,7 +2475,7 @@ a:focus-visible {
 
 @keyframes revealStreamSentence {
   from {
-    opacity: 0.08;
+    opacity: 1;
     -webkit-mask-position: 100% 0;
     mask-position: 100% 0;
   }
@@ -3332,16 +3400,17 @@ a:focus-visible {
 }
 
 .workflow-narration {
-  margin: 0 0 10px;
+  margin: -1px 0 6px 43px;
+  padding: 0;
   color: var(--ink);
 }
 
 .workflow-narration p {
   margin: 0;
   color: color-mix(in srgb, var(--ink) 92%, var(--muted));
-  font-size: 15px;
-  font-weight: 690;
-  line-height: 1.72;
+  font-size: 12.5px;
+  font-weight: 610;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
@@ -3648,7 +3717,7 @@ a:focus-visible {
 .workflow-step {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 9px;
   min-width: 0;
   min-height: 28px;
@@ -3696,6 +3765,7 @@ a:focus-visible {
   width: 7px;
   height: 7px;
   flex: 0 0 auto;
+  margin-top: 6px;
   background: var(--line-strong);
   border-radius: 50%;
 }
@@ -3720,16 +3790,19 @@ a:focus-visible {
 .workflow-step.child .workflow-dot {
   width: 5px;
   height: 5px;
+  margin-top: 6px;
   opacity: 0.9;
 }
 
 .workflow-step[data-workflow-role="purpose"] .workflow-dot {
   width: 6px;
   height: 6px;
+  margin-top: 6px;
 }
 
 .workflow-copy {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: baseline;
   gap: 10px;
   min-width: 0;
@@ -3755,9 +3828,15 @@ a:focus-visible {
 
 .workflow-copy small {
   min-width: 0;
-  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.workflow-copy small.workflow-tool-detail {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3773,32 +3852,35 @@ a:focus-visible {
 }
 
 .answer-web-sources {
-  margin-top: 12px;
+  position: relative;
+  margin-left: auto;
   color: var(--ink);
+  line-height: 1;
 }
 
 .answer-web-sources summary {
   display: flex;
-  width: 100%;
-  min-height: 36px;
+  width: max-content;
+  max-width: min(100%, 360px);
+  min-height: 30px;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 10px 0 12px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-raised) 96%, white 4%), color-mix(in srgb, var(--panel-raised) 92%, var(--accent-soft) 8%));
-  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 0 8px 0 9px;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 8px;
-  color: var(--ink);
+  color: color-mix(in srgb, var(--accent) 70%, var(--muted));
   cursor: pointer;
   list-style: none;
-  box-shadow: 0 1px 0 color-mix(in srgb, white 68%, transparent) inset;
-  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: background 0.16s ease, color 0.16s ease;
 }
 
 .answer-web-sources summary:hover,
 .answer-web-sources summary:focus-visible {
-  background: color-mix(in srgb, var(--panel-raised) 86%, var(--accent-soft) 14%);
-  border-color: color-mix(in srgb, var(--line-strong) 74%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+  border-color: transparent;
+  color: color-mix(in srgb, var(--accent) 88%, var(--ink));
 }
 
 .answer-web-sources summary::-webkit-details-marker {
@@ -3822,24 +3904,42 @@ a:focus-visible {
 }
 
 .answer-web-sources-title {
-  color: var(--ink);
-  font-size: 12.5px;
+  color: inherit;
+  font-size: 12px;
   font-weight: 760;
   letter-spacing: 0;
 }
 
 .answer-web-sources summary small {
-  margin-left: auto;
+  min-width: 0;
   flex: 0 0 auto;
-  color: color-mix(in srgb, var(--accent) 62%, var(--muted));
+  color: inherit;
   font-size: 11px;
   font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workflow-web-source-body {
   display: grid;
   gap: 10px;
-  padding: 10px 2px 0;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 35;
+  width: min(520px, calc(100vw - 42px));
+  max-height: min(54vh, 420px);
+  padding: 10px;
+  overflow: auto;
+  background: var(--panel-raised);
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--shadow) 18%, transparent);
+}
+
+.answer-web-sources:not([open]) .workflow-web-source-body {
+  display: none;
 }
 
 .workflow-web-query-group {
@@ -4331,6 +4431,13 @@ a:focus-visible {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.markdown-body pre.markdown-pending-table {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
 }
 
 .markdown-body pre code {
@@ -5645,9 +5752,17 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   gap: 3px;
   width: 100%;
   min-width: 0;
-  padding: 8px 9px;
+  padding: 8px 36px 8px 9px;
   border-radius: 8px;
   color: var(--ink);
+}
+
+[data-react-webui="true"] .history-item.pinned .history-open {
+  padding-left: 25px;
+}
+
+[data-react-webui="true"] .history-pin-indicator {
+  left: 9px;
 }
 
 [data-react-webui="true"] .history-open:hover {

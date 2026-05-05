@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "../Sidebar";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { deleteHistory } from "../../api/history";
+import { deleteHistory, toggleHistoryPin } from "../../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../../api/session";
 import { sendBackendRequest } from "../../api/messages";
 import type { Workspace } from "../../types/backend";
@@ -18,6 +18,7 @@ vi.mock("../../api/session", () => ({
 
 vi.mock("../../api/history", () => ({
   deleteHistory: vi.fn(),
+  toggleHistoryPin: vi.fn(),
   updateHistoryTitle: vi.fn(),
 }));
 
@@ -47,10 +48,11 @@ describe("Sidebar", () => {
     vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [] });
     vi.mocked(startSession).mockResolvedValue({ sessionId: "session-restored" });
     vi.mocked(shutdownSession).mockResolvedValue({ ok: true });
+    vi.mocked(toggleHistoryPin).mockResolvedValue({ ok: true, pinned: true, sessionId: "session-old" });
     vi.mocked(sendBackendRequest).mockResolvedValue({ ok: true });
   });
 
-  it("uses a trash action for deleting history items", () => {
+  it("uses one right-side action slot that expands from more to delete and pin", async () => {
     render(
       <AppStateProvider
         initialState={{
@@ -63,10 +65,20 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
+    const moreButton = screen.getByRole("button", { name: "이전 대화 작업 더보기" });
+
+    expect(moreButton.getAttribute("data-tooltip")).toBe("작업 더보기");
+    expect(screen.queryByRole("button", { name: "이전 대화 삭제" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "이전 대화 상단 고정" })).toBeNull();
+
+    await userEvent.click(moreButton);
+
     const deleteButton = screen.getByRole("button", { name: "이전 대화 삭제" });
+    const pinButton = screen.getByRole("button", { name: "이전 대화 상단 고정" });
     const paths = Array.from(deleteButton.querySelectorAll("path")).map((path) => path.getAttribute("d"));
 
     expect(deleteButton.getAttribute("data-tooltip")).toBe("기록 삭제");
+    expect(pinButton.getAttribute("data-tooltip")).toBe("상단 고정");
     expect(paths).toContain("M4 7h16");
     expect(paths).not.toContain("M6 6l12 12");
   });
@@ -99,11 +111,11 @@ describe("Sidebar", () => {
 
     const item = container.querySelector(".history-item");
     const spinner = container.querySelector(".history-busy-spinner");
-    const deleteButton = screen.getByRole("button", { name: "진행 중인 대화 삭제" });
+    const actionButton = screen.queryByRole("button", { name: "진행 중인 대화 작업 더보기" });
 
     expect(item?.classList.contains("busy")).toBe(true);
     expect(spinner).not.toBeNull();
-    expect(deleteButton.hasAttribute("disabled")).toBe(true);
+    expect(actionButton).toBeNull();
   });
 
   it("adds a busy live history row when the active saved session is not in the loaded history yet", () => {
@@ -123,10 +135,10 @@ describe("Sidebar", () => {
     );
 
     const busyItem = container.querySelector(".history-item.busy");
-    const deleteButton = screen.getByRole("button", { name: "첫 요청 처리 삭제" });
+    const actionButton = screen.queryByRole("button", { name: "첫 요청 처리 작업 더보기" });
 
     expect(busyItem?.textContent).toContain("첫 요청 처리");
-    expect(deleteButton.hasAttribute("disabled")).toBe(true);
+    expect(actionButton).toBeNull();
   });
 
   it("shows compact chat history titles that fit the sidebar", () => {
@@ -173,6 +185,50 @@ describe("Sidebar", () => {
     expect(document.querySelector(".history-list")?.getAttribute("aria-busy")).toBe("true");
   });
 
+  it("renders pinned history items before recent items", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          history: [
+            { value: "session-new", label: "5/4 10:00 2 msg", description: "최신 대화" },
+            { value: "session-pin", label: "5/3 10:00 2 msg", description: "고정 대화", pinned: true },
+          ],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const titles = Array.from(document.querySelectorAll(".history-title")).map((node) => node.textContent);
+
+    expect(titles).toEqual(["고정 대화", "최신 대화"]);
+  });
+
+  it("pins a history item from the expanded right-side action", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 상단 고정" }));
+
+    await waitFor(() => expect(toggleHistoryPin).toHaveBeenCalledWith("session-old", true, "C:/demo", "Default"));
+    expect(screen.getByText("★")).toBeTruthy();
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+  });
+
   it("deletes a saved history item from its own workspace", async () => {
     render(
       <AppStateProvider
@@ -194,6 +250,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 삭제" }));
 
     await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith("session-old", "C:/other", "Other"));
@@ -221,6 +278,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "열려 있는 세션 작업 더보기" }));
     await userEvent.click(screen.getByRole("button", { name: "열려 있는 세션 삭제" }));
 
     await waitFor(() => expect(shutdownSession).toHaveBeenCalledWith("web-live-idle", "client-1"));
@@ -385,7 +443,7 @@ describe("Sidebar", () => {
     );
 
     expect(document.querySelector(".history-item.busy")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "진행 중인 응답 삭제" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "진행 중인 응답 작업 더보기" })).toBeNull();
 
     await userEvent.click(screen.getAllByRole("button", { name: /진행 중인 응답/ })[0]);
 

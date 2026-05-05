@@ -129,6 +129,66 @@ describe("ArtifactPanel", () => {
     await waitFor(() => expect(screen.queryByText("report.html")).toBeNull());
   });
 
+  it("treats fullscreen preview as its own back-navigation step", async () => {
+    vi.mocked(listProjectFiles).mockResolvedValue({
+      scope: "default",
+      files: [
+        {
+          path: "outputs/report.html",
+          name: "report.html",
+          kind: "html",
+          size: 42,
+        },
+      ],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          artifacts: [
+            {
+              path: "outputs/report.html",
+              name: "report.html",
+              kind: "html",
+              size: 42,
+            },
+          ],
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "report.html 열기" }));
+    await screen.findByTitle("report.html");
+
+    await userEvent.click(screen.getByRole("button", { name: "미리보기 확대" }));
+    await waitFor(() => expect(history.state).toMatchObject({
+      myharnessArtifactPanel: true,
+      view: "fullscreen",
+      path: "outputs/report.html",
+    }));
+    expect(document.querySelector(".artifact-panel")?.classList.contains("fullscreen")).toBe(true);
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate", {
+        state: {
+          myharnessArtifactPanel: true,
+          view: "detail",
+          path: "outputs/report.html",
+          name: "report.html",
+          kind: "html",
+        },
+      }));
+    });
+
+    await screen.findByTitle("report.html");
+    await waitFor(() => expect(document.querySelector(".artifact-panel")?.classList.contains("fullscreen")).toBe(false));
+    expect(screen.queryByRole("button", { name: "report.html 열기" })).toBeNull();
+  });
+
   it("uses the close button as detail-to-list, then list-to-closed", async () => {
     const backSpy = vi.spyOn(history, "back");
     vi.mocked(listProjectFiles).mockResolvedValue({
@@ -286,6 +346,7 @@ describe("ArtifactPanel", () => {
     });
     vi.mocked(readArtifact).mockResolvedValueOnce({
       kind: "html",
+      assetBaseUrl: "/api/artifact/asset/outputs/",
       content: "<!doctype html>\n<html><body><h1>Hello</h1></body></html>",
     });
 
@@ -309,7 +370,9 @@ describe("ArtifactPanel", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "report.html 열기" }));
-    expect((await screen.findByTitle("report.html")).classList.contains("artifact-html-frame")).toBe(true);
+    const frame = await screen.findByTitle("report.html");
+    expect(frame.classList.contains("artifact-html-frame")).toBe(true);
+    expect(frame.getAttribute("srcdoc")).toContain('<base href="/api/artifact/asset/outputs/">');
     expect(screen.queryByRole("button", { name: "목록으로" })).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "원문보기" }));

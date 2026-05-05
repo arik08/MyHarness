@@ -32,6 +32,53 @@ function iframeBackBridge(content: string) {
   return `${content}${bridge}`;
 }
 
+function escapeAttribute(value: string) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
+function iframeAssetBase(content: string, assetBaseUrl: string) {
+  const baseUrl = String(assetBaseUrl || "").trim();
+  if (!baseUrl) {
+    return content;
+  }
+  const withAssetUrls = iframeRelativeAssetUrls(content, baseUrl);
+  const base = `<base href="${escapeAttribute(baseUrl)}">`;
+  if (/<base(?:\s[^>]*)?>/i.test(withAssetUrls)) {
+    return withAssetUrls;
+  }
+  if (/<head(?:\s[^>]*)?>/i.test(withAssetUrls)) {
+    return withAssetUrls.replace(/<head(?:\s[^>]*)?>/i, (match) => `${match}${base}`);
+  }
+  if (/<html(?:\s[^>]*)?>/i.test(withAssetUrls)) {
+    return withAssetUrls.replace(/<html(?:\s[^>]*)?>/i, (match) => `${match}<head>${base}</head>`);
+  }
+  return `${base}${withAssetUrls}`;
+}
+
+function iframeRelativeAssetUrls(content: string, assetBaseUrl: string) {
+  const toAssetUrl = (value: string) => {
+    const raw = String(value || "").trim();
+    if (!raw || raw.startsWith("#") || /^(?:[a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(raw)) {
+      return value;
+    }
+    try {
+      return new URL(raw, `${globalThis.location?.origin || "http://localhost"}${assetBaseUrl}`).pathname;
+    } catch {
+      return `${assetBaseUrl}${raw}`;
+    }
+  };
+  return content
+    .replace(/\b(src|poster)\s*=\s*(["'])([^"']+)\2/gi, (_match, attr, quote, value) => {
+      return `${attr}=${quote}${escapeAttribute(toAssetUrl(value))}${quote}`;
+    })
+    .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote, value) => {
+      return `url(${quote}${escapeAttribute(toAssetUrl(value))}${quote})`;
+    });
+}
+
 export function isEditablePayload(artifact: ArtifactSummary, payload: ArtifactPayload) {
   const kind = String(payload.kind || artifact.kind || "");
   return kind === "html" || kind === "text" || kind === "markdown" || kind === "json";
@@ -75,7 +122,8 @@ export function ArtifactPreview({
     );
   }
   if (kind === "html") {
-    return <iframe className="artifact-frame artifact-html-frame" title={artifact.name} sandbox="allow-scripts" srcDoc={iframeBackBridge(draftContent || content)} />;
+    const previewContent = iframeAssetBase(draftContent || content, String(payload.assetBaseUrl || ""));
+    return <iframe className="artifact-frame artifact-html-frame" title={artifact.name} sandbox="allow-scripts" srcDoc={iframeBackBridge(previewContent)} />;
   }
   if (kind === "image") {
     return <img className="artifact-image" src={dataUrl} alt={artifact.name} />;

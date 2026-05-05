@@ -64,6 +64,7 @@ export function MessageList() {
     handleWheel,
     handlePointerIntent,
     handleVisibleTextChange,
+    handleVisibleWorkflowProgressChange,
   } = useMessageAutoFollow({
     state,
     dispatch,
@@ -94,7 +95,7 @@ export function MessageList() {
           <h2>무엇을 도와드릴까요?</h2>
           <p>업무에 필요한 조사, 정리, 코드 작업을 도와드릴 준비가 되어 있습니다.</p>
         </div>
-        <WorkflowPanel />
+        <WorkflowPanel onVisibleProgressChange={handleVisibleWorkflowProgressChange} />
       </section>
     );
   }
@@ -138,9 +139,10 @@ export function MessageList() {
                       active={isLastAssistantStreaming && message.id === lastMessage?.id}
                       onVisibleTextChange={handleVisibleTextChange}
                     />
-                    <AssistantActions message={message} />
+                    <AssistantActions message={message}>
+                      <WebInvestigationSources sources={answerWebSources.sources} queries={answerWebSources.queries} />
+                    </AssistantActions>
                     <AssistantArtifactCards message={message} />
-                    <WebInvestigationSources sources={answerWebSources.sources} queries={answerWebSources.queries} />
                   </>
                 ) : message.terminal ? (
                   <TerminalCommandMessage message={message} />
@@ -153,6 +155,7 @@ export function MessageList() {
               <WorkflowPanel
                 events={workflowEvents}
                 durationSeconds={workflowDurationForMessageId(state, message.id)}
+                onVisibleProgressChange={handleVisibleWorkflowProgressChange}
               />
             ) : null}
           </Fragment>

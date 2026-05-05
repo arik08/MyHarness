@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import { useAppState } from "../state/app-state";
-import { deleteHistory, updateHistoryTitle } from "../api/history";
+import { deleteHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import type { HistoryItem, Workspace } from "../types/backend";
@@ -29,6 +29,7 @@ export function Sidebar() {
   const [editingHistoryId, setEditingHistoryId] = useState("");
   const [editingHistoryTitle, setEditingHistoryTitle] = useState("");
   const [deletingHistoryId, setDeletingHistoryId] = useState("");
+  const [expandedHistoryActionId, setExpandedHistoryActionId] = useState("");
   const [runtimePickerGeometry, setRuntimePickerGeometry] = useState<RuntimePickerGeometry>({
     left: null,
     top: null,
@@ -103,6 +104,7 @@ export function Sidebar() {
     if (!state.sessionId) {
       return;
     }
+    setExpandedHistoryActionId("");
     window.dispatchEvent(new Event("myharness:saveMessageScroll"));
     dispatch({ type: "begin_history_restore", sessionId });
     dispatch({ type: "clear_messages" });
@@ -181,6 +183,7 @@ export function Sidebar() {
   async function removeHistory(item: HistoryItem) {
     const sessionId = item.value;
     if (!sessionId) return;
+    setExpandedHistoryActionId("");
     setDeletingHistoryId(sessionId);
     try {
       if (item.live && item.liveSessionId) {
@@ -201,6 +204,33 @@ export function Sidebar() {
       });
     } finally {
       setDeletingHistoryId("");
+    }
+  }
+
+  async function pinHistory(item: HistoryItem) {
+    const sessionId = item.value;
+    if (!sessionId || isLiveOnlyHistoryItem(item)) return;
+    const nextPinned = item.pinned !== true;
+    const workspace = item.workspace || null;
+    setExpandedHistoryActionId("");
+    try {
+      const data = await toggleHistoryPin(
+        sessionId,
+        nextPinned,
+        workspace?.path || state.workspacePath,
+        workspace?.name || state.workspaceName,
+      );
+      dispatch({
+        type: "set_history",
+        history: state.history.map((historyItem) =>
+          historyItem.value === sessionId ? { ...historyItem, pinned: data.pinned } : historyItem,
+        ),
+      });
+    } catch (error) {
+      dispatch({
+        type: "open_modal",
+        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+      });
     }
   }
 
@@ -465,6 +495,7 @@ export function Sidebar() {
         ...visibleHistory,
       ]
     : visibleHistory;
+  const sortedRenderedHistory = sortPinnedHistory(renderedHistory);
 
   return (
     <aside
@@ -600,8 +631,8 @@ export function Sidebar() {
         <div className="history-list" aria-busy={state.historyLoading ? "true" : "false"}>
           {state.historyLoading && !renderedHistory.length ? (
             <p className="empty">대화 내역을 불러오는 중...</p>
-          ) : renderedHistory.length ? (
-            renderedHistory.slice(0, 20).map((item) => {
+          ) : sortedRenderedHistory.length ? (
+            sortedRenderedHistory.slice(0, 20).map((item) => {
               const label = item.description || item.label;
               const displayLabel = formatHistoryTitle(label);
               const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
@@ -609,9 +640,11 @@ export function Sidebar() {
               const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
               const isBusy = (isActive && state.busy) || (item.live === true && item.busy === true);
               const isDeleting = deletingHistoryId === item.value;
+              const actionsExpanded = expandedHistoryActionId === item.value;
+              const canPin = !isLiveOnlyHistoryItem(item);
               return (
                 <div
-                  className={`history-item${isActive ? " active" : ""}${isBusy ? " busy" : ""}${isDeleting ? " deleting" : ""}`}
+                  className={`history-item${isActive ? " active" : ""}${isBusy ? " busy" : ""}${isDeleting ? " deleting" : ""}${item.pinned ? " pinned" : ""}${actionsExpanded ? " actions-open" : ""}`}
                   key={item.value}
                 >
                   {editing ? (
@@ -643,27 +676,65 @@ export function Sidebar() {
                       onClick={() => void openHistory(item.value, label)}
                       onDoubleClick={() => startHistoryRename(item.value, label)}
                     >
+                      {item.pinned ? <span className="history-pin-indicator" aria-hidden="true">★</span> : null}
                       <span className="history-title">{displayLabel}</span>
                       {detailLabel ? <small>{detailLabel}</small> : null}
                     </button>
                   )}
                   <span className="history-busy-spinner" aria-hidden="true" />
-                  <button
-                    className="history-delete"
-                    type="button"
-                    aria-label={`${label} 삭제`}
-                    data-tooltip="기록 삭제"
-                    disabled={isBusy || isDeleting}
-                    onClick={() => void removeHistory(item)}
-                  >
-                    <svg aria-hidden="true" viewBox="0 0 24 24">
-                      <path d="M10 11v6" />
-                      <path d="M14 11v6" />
-                      <path d="M4 7h16" />
-                      <path d="M6 7l1 14h10l1-14" />
-                      <path d="M9 7V4h6v3" />
-                    </svg>
-                  </button>
+                  {!isBusy && !isDeleting ? (
+                    actionsExpanded ? (
+                      <>
+                        <button
+                          className="history-delete"
+                          type="button"
+                          aria-label={`${label} 삭제`}
+                          data-tooltip="기록 삭제"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void removeHistory(item);
+                          }}
+                        >
+                          <svg aria-hidden="true" viewBox="0 0 24 24">
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                            <path d="M4 7h16" />
+                            <path d="M6 7l1 14h10l1-14" />
+                            <path d="M9 7V4h6v3" />
+                          </svg>
+                        </button>
+                        {canPin ? (
+                          <button
+                            className="history-pin"
+                            type="button"
+                            aria-label={`${label} ${item.pinned ? "고정 해제" : "상단 고정"}`}
+                            data-tooltip={item.pinned ? "고정 해제" : "상단 고정"}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void pinHistory(item);
+                            }}
+                          >
+                            <svg aria-hidden="true" viewBox="0 0 24 24">
+                              <path d="M12 3.7l2.5 5.05 5.58.82-4.04 3.93.95 5.55L12 16.43l-4.99 2.62.95-5.55-4.04-3.93 5.58-.82Z" />
+                            </svg>
+                          </button>
+                        ) : null}
+                      </>
+                    ) : (
+                      <button
+                        className="history-more"
+                        type="button"
+                        aria-label={`${label} 작업 더보기`}
+                        data-tooltip="작업 더보기"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setExpandedHistoryActionId(item.value);
+                        }}
+                      >
+                        <span aria-hidden="true">···</span>
+                      </button>
+                    )
+                  ) : null}
                 </div>
               );
             })
@@ -722,6 +793,10 @@ function compactHistoryTitle(title: string) {
     return normalized;
   }
   return `${normalized.slice(0, historyTitleMaxLength).trimEnd()}...`;
+}
+
+function sortPinnedHistory(items: HistoryItem[]) {
+  return [...items].sort((left, right) => Number(right.pinned === true) - Number(left.pinned === true));
 }
 
 function RuntimePicker({

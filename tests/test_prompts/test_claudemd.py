@@ -100,7 +100,7 @@ def test_build_runtime_system_prompt_guides_artifact_filenames(tmp_path: Path, m
 
     prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="make a tetris html")
 
-    assert "Prefer concise Korean filenames for Korean-facing HTML, Markdown, PDF, DOCX, XLSX, and PPTX artifacts" in prompt
+    assert "Prefer concise Korean filenames with underscores between words for Korean-facing HTML, Markdown, PDF, DOCX, XLSX, and PPTX artifacts" in prompt
     assert "English snake/kebab-style filenames for code, scripts, configs, and data" in prompt
     assert "Avoid `index.html` for newly created artifacts whenever possible" in prompt
     assert "Use `index.html` only when the user explicitly asks" in prompt

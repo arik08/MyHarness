@@ -148,6 +148,7 @@ export type ArtifactPayload = {
   size?: number;
   content?: string;
   dataUrl?: string;
+  assetBaseUrl?: string;
 };
 
 export type ModalState =

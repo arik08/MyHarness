@@ -85,9 +85,9 @@ function Stop-ServerProcess {
 })
 
 while (-not $script:StopRequested) {
-    Write-Host "[INFO] Starting npm start..."
+    Write-Host "[INFO] Starting node server.mjs..."
     Write-LauncherLog "server_starting" @{ restart_count = $script:RestartCount }
-    $process = Start-Process -FilePath "cmd.exe" -ArgumentList @("/d", "/c", "npm start") -NoNewWindow -PassThru
+    $process = Start-Process -FilePath "node.exe" -ArgumentList @("server.mjs") -NoNewWindow -PassThru
     $script:CurrentServerProcess = $process
     Write-LauncherLog "server_started" @{ child_pid = $process.Id; restart_count = $script:RestartCount }
     $restartRequested = $false
