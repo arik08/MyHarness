@@ -217,6 +217,24 @@ export function ModalHost() {
     if (kind === "question" || kind === "permission") {
       return null;
     }
+    if (kind === "task_output") {
+      const title = String(payload.title || (payload.task_id ? `작업 결과 ${payload.task_id}` : "작업 결과"));
+      const output = String(payload.output || "(출력 없음)");
+      return (
+        <div className="modal-backdrop" data-modal-kind="task-output" onClick={(event) => handleBackdropClick(event, close)}>
+          <div className="modal-card task-output-card" role="dialog" aria-modal="true" aria-label={title}>
+            <button className="modal-close" type="button" aria-label="닫기" onClick={close}>
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M6 6l12 12" />
+                <path d="M18 6L6 18" />
+              </svg>
+            </button>
+            <h2>{title}</h2>
+            <pre className="task-output-log">{output}</pre>
+          </div>
+        </div>
+      );
+    }
     const requestId = String(payload.request_id || "");
     const question = String(payload.question || payload.reason || payload.message || "");
     const choices = Array.isArray(payload.choices)

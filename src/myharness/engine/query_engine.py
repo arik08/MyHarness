@@ -8,7 +8,12 @@ from typing import AsyncIterator
 from myharness.api.client import SupportsStreamingMessages
 from myharness.engine.cost_tracker import CostTracker
 from myharness.coordinator.coordinator_mode import get_coordinator_user_context
-from myharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock
+from myharness.engine.messages import (
+    ConversationMessage,
+    TextBlock,
+    ToolResultBlock,
+    sanitize_conversation_messages,
+)
 from myharness.engine.query import AskUserPrompt, PermissionPrompt, QueryContext, SteeringProvider, remember_user_goal, run_query
 from myharness.engine.stream_events import AssistantTurnComplete, StreamEvent
 from myharness.hooks import HookEvent, HookExecutor
@@ -139,7 +144,7 @@ class QueryEngine:
 
     def load_messages(self, messages: list[ConversationMessage]) -> None:
         """Replace the in-memory conversation history."""
-        self._messages = list(messages)
+        self._messages = sanitize_conversation_messages(list(messages))
 
     def has_pending_continuation(self) -> bool:
         """Return True when the conversation ends with tool results awaiting a follow-up model turn."""
@@ -168,6 +173,7 @@ class QueryEngine:
             if isinstance(prompt, ConversationMessage)
             else ConversationMessage.from_user_text(prompt)
         )
+        self._messages = sanitize_conversation_messages(self._messages)
         if user_message.text.strip():
             remember_user_goal(self._tool_metadata, user_message.text)
         self._messages.append(user_message)
@@ -202,12 +208,20 @@ class QueryEngine:
         coordinator_context = self._build_coordinator_context_message()
         if coordinator_context is not None:
             query_messages.append(coordinator_context)
-        async for event, usage in run_query(context, query_messages):
-            if isinstance(event, AssistantTurnComplete):
-                self._messages = list(query_messages)
-            if usage is not None:
-                self._cost_tracker.add(usage)
-            yield event
+        try:
+            async for event, usage in run_query(context, query_messages):
+                if isinstance(event, AssistantTurnComplete):
+                    self._messages = sanitize_conversation_messages(
+                        [message for message in query_messages if message is not coordinator_context]
+                    )
+                if usage is not None:
+                    self._cost_tracker.add(usage)
+                yield event
+        except BaseException:
+            self._messages = sanitize_conversation_messages(
+                [message for message in query_messages if message is not coordinator_context]
+            )
+            raise
 
     async def continue_pending(
         self,
@@ -216,6 +230,7 @@ class QueryEngine:
         steering_provider: SteeringProvider | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Continue an interrupted tool loop without appending a new user message."""
+        self._messages = sanitize_conversation_messages(self._messages)
         context = QueryContext(
             api_client=self._api_client,
             tool_registry=self._tool_registry,

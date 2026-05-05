@@ -19,7 +19,14 @@ from myharness.api.client import (
 )
 from myharness.api.errors import AuthenticationFailure, MyHarnessApiError, RateLimitFailure, RequestFailure
 from myharness.api.usage import UsageSnapshot
-from myharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from myharness.engine.messages import (
+    ConversationMessage,
+    ImageBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    sanitize_conversation_messages,
+)
 
 DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 JWT_CLAIM_PATH = "https://api.openai.com/auth"
@@ -259,12 +266,13 @@ class CodexApiClient:
             raise self._translate_error(last_error) from last_error
 
     async def _stream_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
+        safe_messages = sanitize_conversation_messages(request.messages)
         body: dict[str, Any] = {
             "model": request.model,
             "store": False,
             "stream": True,
             "instructions": request.system_prompt or "You are MyHarness.",
-            "input": _convert_messages_to_codex(request.messages),
+            "input": _convert_messages_to_codex(safe_messages),
             "text": {"verbosity": "medium"},
             "include": ["reasoning.encrypted_content"],
             "tool_choice": "auto",

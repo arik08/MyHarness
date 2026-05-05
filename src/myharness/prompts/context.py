@@ -58,6 +58,8 @@ def _build_delegation_section() -> str:
             "MyHarness can delegate background work with the `agent` tool.",
             "Use it when the user explicitly asks for a subagent, background worker, or parallel investigation, "
             "or when the task clearly benefits from splitting off a focused worker.",
+            "When the user asks to divide work by roles, says AI team/swarm, or names roles like 조사, 정리, 검토, "
+            "spawn those workers first instead of merely describing that you will divide the work.",
             "",
             "Default pattern:",
             '- Spawn with `agent(description=..., prompt=..., subagent_type=\"worker\")`.',

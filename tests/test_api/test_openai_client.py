@@ -324,6 +324,33 @@ def test_openai_client_retries_sdk_timeout_errors():
 
 class TestStreamMessageTokenParams:
     @pytest.mark.asyncio
+    async def test_stream_drops_dangling_tool_call_before_provider_request(self):
+        client = OpenAICompatibleClient(api_key="test-key")
+        fake_sdk = _FakeOpenAIClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-4o",
+            messages=[
+                ConversationMessage.from_user_text("Run a tool"),
+                ConversationMessage(
+                    role="assistant",
+                    content=[ToolUseBlock(id="call_missing", name="missing_tool", input={})],
+                ),
+                ConversationMessage.from_user_text("New prompt"),
+            ],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        assert events
+        assert fake_sdk.chat.completions.last_kwargs is not None
+        assert fake_sdk.chat.completions.last_kwargs["messages"] == [
+            {"role": "user", "content": "Run a tool"},
+            {"role": "user", "content": "New prompt"},
+        ]
+
+    @pytest.mark.asyncio
     async def test_gpt5_stream_uses_max_completion_tokens(self):
         client = OpenAICompatibleClient(api_key="test-key")
         fake_sdk = _FakeOpenAIClient()

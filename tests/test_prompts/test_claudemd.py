@@ -169,6 +169,8 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
     assert "You are a **coordinator**." not in prompt
     assert "Delegation And Subagents" in prompt
     assert 'subagent_type="worker"' in prompt
+    assert "조사, 정리, 검토" in prompt
+    assert "spawn those workers first" in prompt
     assert "/agents show TASK_ID" in prompt
     assert "Environment" in prompt
 

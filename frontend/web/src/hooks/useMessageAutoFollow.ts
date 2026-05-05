@@ -7,6 +7,7 @@ const nearBottomPx = 96;
 const streamingRejoinBottomPx = 260;
 const scrollStorageKey = "myharness:scrollPositions";
 const maxStreamFollowLeadPx = 220;
+export const messageBottomFollowEvent = "myharness:followMessageBottom";
 
 function easeInOutCubic(progress: number) {
   return progress < 0.5
@@ -256,6 +257,19 @@ export function useMessageAutoFollow({
     }
     window.addEventListener("myharness:saveMessageScroll", handleSaveMessageScroll);
     return () => window.removeEventListener("myharness:saveMessageScroll", handleSaveMessageScroll);
+  });
+
+  useEffect(() => {
+    function handleMessageBottomFollow() {
+      autoFollowRef.current = true;
+      userScrollIntentUntilRef.current = 0;
+      scrollMessagesToBottom({ smooth: false, duration: 0 });
+      window.requestAnimationFrame(() => {
+        scrollMessagesToBottom({ smooth: false, duration: 0 });
+      });
+    }
+    window.addEventListener(messageBottomFollowEvent, handleMessageBottomFollow);
+    return () => window.removeEventListener(messageBottomFollowEvent, handleMessageBottomFollow);
   });
 
   useEffect(() => () => {

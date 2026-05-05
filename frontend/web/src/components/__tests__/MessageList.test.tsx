@@ -192,6 +192,37 @@ describe("MessageList", () => {
     expect(document.querySelector(".react-message-text")?.textContent).toContain("당신은 누구입니까");
   });
 
+  it("collapses long user messages and lets them expand again", async () => {
+    const user = userEvent.setup();
+    const longText = [
+      "첫 문단입니다. ".repeat(12),
+      "둘째 문단입니다. ".repeat(12),
+      "셋째 문단입니다. ".repeat(12),
+    ].join("\n\n");
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "user-1", role: "user", text: longText },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".user-collapsed-message")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "더 보기" })).toBeTruthy();
+    expect(document.querySelector(".user-message-preview")?.textContent).not.toContain("\n");
+
+    await user.click(screen.getByRole("button", { name: "더 보기" }));
+
+    expect(document.querySelector(".user-expanded-message")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "접기" })).toBeTruthy();
+    expect(document.querySelector(".user-expanded-message")?.textContent).toContain("셋째 문단입니다.");
+  });
+
   it("does not render a bare @ shortcut marker as a file mention", () => {
     render(
       <AppStateProvider
@@ -1263,7 +1294,7 @@ describe("MessageList", () => {
             {
               id: "assistant-1",
               role: "assistant",
-              text: "완료했습니다.\n\n파일: `outputs/super-ai-worm-game.html`\n\n포함 내용입니다.",
+              text: "완료했습니다.\n\n- 보고서 파일: `outputs/super-ai-worm-game.html`\n\n포함 내용입니다.",
               isComplete: true,
             },
           ],
@@ -1278,6 +1309,7 @@ describe("MessageList", () => {
     expect(card.closest(".assistant-artifact-inline")).toBeTruthy();
     expect(document.body.textContent || "").not.toContain("파일: outputs/super-ai-worm-game.html");
     expect(document.body.textContent || "").not.toContain("파일: `");
+    expect(document.body.textContent || "").not.toContain("보고서 파일:");
     const assistantContent = document.querySelector(".assistant-artifact-content")?.textContent || "";
     expect(assistantContent.indexOf("완료했습니다.")).toBeLessThan(assistantContent.indexOf("super-ai-worm-game.html"));
     expect(assistantContent.indexOf("super-ai-worm-game.html")).toBeLessThan(assistantContent.indexOf("포함 내용입니다."));

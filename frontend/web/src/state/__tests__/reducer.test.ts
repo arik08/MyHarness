@@ -52,6 +52,53 @@ describe("appReducer", () => {
     expect(next.workspaceName).toBe("Default");
   });
 
+  it("stores swarm status snapshots from backend events", () => {
+    const next = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "swarm_status",
+        swarm_teammates: [
+          {
+            id: "research@office",
+            name: "research",
+            role: "조사",
+            status: "running",
+            task: "계약서 조항 확인",
+            startedAt: 1710000000000,
+            lastOutput: "제3조 검토 중",
+            taskId: "a123",
+          },
+        ],
+        swarm_notifications: [
+          {
+            id: "n1",
+            from: "검토",
+            message: "위험 조항 1건 발견",
+            timestamp: 1710000001000,
+            level: "warning",
+          },
+        ],
+      },
+    });
+
+    expect(next.swarmTeammates).toHaveLength(1);
+    expect(next.swarmTeammates[0].role).toBe("조사");
+    expect(next.swarmNotifications).toHaveLength(1);
+    expect(next.swarmNotifications[0].level).toBe("warning");
+  });
+
+  it("closes the swarm popup when the backend session changes", () => {
+    const next = appReducer(
+      {
+        ...initialAppState,
+        swarmPopupOpen: true,
+      },
+      { type: "session_started", sessionId: "session-2" },
+    );
+
+    expect(next.swarmPopupOpen).toBe(false);
+  });
+
   it("appends assistant deltas to the active assistant message", () => {
     const first = appReducer(initialAppState, {
       type: "backend_event",

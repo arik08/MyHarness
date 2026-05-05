@@ -300,6 +300,91 @@ async def test_read_requests_queues_line_after_busy_turn(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_emits_task_output_modal(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    class _FakeTaskManager:
+        def read_task_output(self, task_id, *, max_bytes=12000):
+            assert task_id == "a123"
+            assert max_bytes == 12000
+            return "worker output"
+
+    host._emit = _emit  # type: ignore[method-assign]
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _FakeTaskManager())
+
+    await host._handle_task_output("a123", 12000)
+
+    assert events[-1].type == "modal_request"
+    assert events[-1].modal["kind"] == "task_output"
+    assert events[-1].modal["output"] == "worker output"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_stops_task_and_emits_swarm_refresh(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    class _FakeTask:
+        id = "a123"
+
+    class _FakeTaskManager:
+        async def stop_task(self, task_id):
+            assert task_id == "a123"
+            return _FakeTask()
+
+    host._emit = _emit  # type: ignore[method-assign]
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _FakeTaskManager())
+
+    await host._handle_task_stop("a123")
+
+    assert any(event.type == "status" and event.message == "작업자 a123을 중단했습니다." for event in events)
+    assert events[-1].type == "swarm_status"
+
+
+def test_backend_host_builds_swarm_snapshot_from_agent_tasks(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    class _FakeTask:
+        id = "a123"
+        type = "local_agent"
+        status = "running"
+        description = "Teammate: research@office"
+        started_at = 1710000000.0
+
+    class _FakeTaskManager:
+        def list_tasks(self):
+            return [_FakeTask()]
+
+        def read_task_output(self, task_id, *, max_bytes=1200):
+            assert task_id == "a123"
+            return "line one\nline two"
+
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _FakeTaskManager())
+
+    snapshot = host._swarm_teammate_snapshots()
+
+    assert snapshot == [
+        {
+            "id": "research@office",
+            "name": "research",
+            "role": "research",
+            "status": "running",
+            "task": "Teammate: research@office",
+            "startedAt": 1710000000000,
+            "lastOutput": "line two",
+            "taskId": "a123",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_promote_next_queued_line_submits_after_current_turn():
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     events: list[BackendEvent] = []
@@ -497,6 +582,43 @@ async def test_backend_host_refines_initial_title_once_from_early_conversation(t
     assert host._bundle.engine.tool_metadata["session_title_source"] == "conversation"
     assert len(client.requests) == 3
     assert "Create a short chat history title" in client.requests[1].messages[0].text
+
+
+@pytest.mark.asyncio
+async def test_backend_host_steers_divided_work_to_swarm_agents(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("시작했습니다.")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("시작했습니다."))
+    events: list[BackendEvent] = []
+    steering_lines: list[str] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output, steering_provider):
+        del bundle, line, print_system, clear_output
+        steering_lines.extend(await steering_provider())
+        await render_event(AssistantTextDelta(text="시작했습니다."))
+        return True
+
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line(
+            "포스코 온라인 기사 현황을 조사, 정리, 검토로 나눠서 진행해줘"
+        )
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert len(steering_lines) == 1
+    assert "`agent` tool" in steering_lines[0]
+    assert "조사, 정리, and 검토" in steering_lines[0]
+    assert any(event.type == "status" and "AI 팀 분담" in (event.message or "") for event in events)
 
 
 @pytest.mark.asyncio

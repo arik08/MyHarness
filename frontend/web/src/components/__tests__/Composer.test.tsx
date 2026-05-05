@@ -305,6 +305,73 @@ describe("Composer", () => {
     }));
   });
 
+  it("jumps the message list to the bottom when Enter sends a draft after scrolling upward", async () => {
+    const user = userEvent.setup();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("messages") ? 900 : originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("messages") ? 120 : originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            sessionId: "session-1",
+            clientId: "client-1",
+            messages: [
+              { id: "user-old", role: "user", text: "이전 질문" },
+              { id: "assistant-old", role: "assistant", text: "이전 답변", isComplete: true },
+            ],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 0,
+            },
+          }}
+        >
+          <MessageList />
+          <Composer />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      messages.scrollTop = 180;
+      messages.dataset.lastScrollTop = "520";
+      fireEvent.wheel(messages, { deltaY: -120 });
+
+      await user.type(screen.getByPlaceholderText("메세지를 입력하세요..."), "새 질문");
+      await user.keyboard("{Enter}");
+
+      await waitFor(() => expect(messages.scrollTop).toBe(900));
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
   it("clicks the send button as steering while a response is running and the draft has text", async () => {
     const user = userEvent.setup();
     render(
@@ -473,6 +540,109 @@ describe("Composer", () => {
 
     expect(document.querySelector(".todo-checklist-dock")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "작업 목록 펼치기 1/2" })).toBeNull();
+  });
+
+  it("shows the swarm button beside composer controls and opens an in-layer popup", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          swarmTeammates: [
+            {
+              id: "research@office",
+              name: "research",
+              role: "조사",
+              status: "running",
+              task: "경쟁사 자료 수집",
+              startedAt: Date.now() - 3000,
+              lastOutput: "보도자료 확인 중",
+              taskId: "a123",
+            },
+            {
+              id: "review@office",
+              name: "review",
+              role: "검토",
+              status: "failed",
+              task: "초안 오류 확인",
+              lastOutput: "권한 오류",
+              taskId: "a456",
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const button = screen.getByRole("button", { name: "AI 팀 열기" });
+    expect(button.closest(".composer-box")).toBeTruthy();
+    expect(button.getAttribute("data-tooltip")).toBe("AI 팀");
+    expect(button.textContent).toContain("2");
+
+    await user.click(button);
+
+    const popup = screen.getByRole("dialog", { name: "AI 팀" });
+    expect(popup.className).toContain("swarm-popup-layer");
+    expect(screen.getByText("경쟁사 자료 수집")).toBeTruthy();
+    expect(screen.getByText("권한 오류")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "a123 결과 보기" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "a123 중단" })).toBeTruthy();
+  });
+
+  it("renders an empty swarm popup state from the always-visible button", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "AI 팀 열기" }));
+
+    expect(screen.getByRole("dialog", { name: "AI 팀" })).toBeTruthy();
+    expect(screen.getByText("아직 진행 중인 팀 작업이 없습니다.")).toBeTruthy();
+  });
+
+  it("sends swarm task output and stop requests from the popup", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          swarmTeammates: [
+            {
+              id: "research@office",
+              name: "research",
+              role: "조사",
+              status: "running",
+              task: "자료 수집",
+              taskId: "a123",
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "AI 팀 열기" }));
+    await user.click(screen.getByRole("button", { name: "a123 결과 보기" }));
+    await user.click(screen.getByRole("button", { name: "a123 중단" }));
+
+    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+      type: "task_output",
+      task_id: "a123",
+      max_bytes: 12000,
+    });
+    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+      type: "task_stop",
+      task_id: "a123",
+    });
   });
 
   it("does not show a dismiss button on the expanded todo checklist", () => {

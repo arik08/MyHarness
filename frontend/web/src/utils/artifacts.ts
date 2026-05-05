@@ -238,7 +238,7 @@ function expandFileLabelLine(value: string, start: number, end: number) {
   const localEnd = end - lineStart;
   const before = line.slice(0, localStart);
   const after = line.slice(localEnd);
-  const fileLabelOnly = /^\s*(?:[-*+]\s*)?(?:파일|file)\s*:\s*["'`]*\s*$/i.test(before) && /^[\s"'`.,;:)\]]*$/.test(after);
+  const fileLabelOnly = /^\s*(?:[-*+]\s*)?(?:[^:\n`"'()[\]]{0,40}\s+)?(?:파일|file)\s*:\s*["'`]*\s*$/i.test(before) && /^[\s"'`.,;:)\]]*$/.test(after);
   if (!fileLabelOnly) {
     return { start, end };
   }

@@ -39,12 +39,16 @@ class FrontendRequest(BaseModel):
         "update_session_title",
         "select_command",
         "apply_select_command",
+        "task_output",
+        "task_stop",
         "cancel_current",
         "shutdown",
     ]
     line: str | None = None
     command: str | None = None
     value: str | None = None
+    task_id: str | None = None
+    max_bytes: int | None = None
     enabled: bool | None = None
     request_id: str | None = None
     allowed: bool | None = None

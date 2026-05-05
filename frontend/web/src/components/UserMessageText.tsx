@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 function promptTokenKind(rawToken: string) {
@@ -35,7 +36,7 @@ function promptTokenLabel(rawToken: string) {
   return normalized || token;
 }
 
-export function UserMessageText({ text }: { text: string }) {
+function renderPromptParts(text: string) {
   const value = String(text || "");
   const tokenPattern = /(^|\s)(\$"[^"]+"|\$'[^']+'|\$[^\s]+|@[A-Za-z0-9_][A-Za-z0-9_.\\/-]*)/gi;
   const parts: ReactNode[] = [];
@@ -70,6 +71,45 @@ export function UserMessageText({ text }: { text: string }) {
     cursor = tokenStart + rawToken.length;
   }
   pushText(value.slice(cursor), `text-${cursor}`);
+  return parts.length ? parts : value;
+}
 
-  return <p className="react-message-text prompt-line">{parts.length ? parts : value}</p>;
+function shouldCollapseUserMessage(text: string) {
+  const value = String(text || "").trim();
+  if (!value) {
+    return false;
+  }
+  return value.length > 180 || value.split(/\r?\n/).length > 2;
+}
+
+function previewText(text: string) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+export function UserMessageText({ text }: { text: string }) {
+  const value = String(text || "");
+  const [expanded, setExpanded] = useState(false);
+  const collapsible = shouldCollapseUserMessage(value);
+
+  if (collapsible) {
+    return (
+      <div className={expanded ? "user-expanded-message" : "user-collapsed-message"} data-raw-text={value}>
+        {expanded ? (
+          <p className="react-message-text prompt-line">{renderPromptParts(value)}</p>
+        ) : (
+          <span className="user-message-preview prompt-line">{renderPromptParts(previewText(value))}</span>
+        )}
+        <button
+          type="button"
+          className="user-message-toggle"
+          aria-expanded={expanded ? "true" : "false"}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? "접기" : "더 보기"}
+        </button>
+      </div>
+    );
+  }
+
+  return <p className="react-message-text prompt-line">{renderPromptParts(value)}</p>;
 }

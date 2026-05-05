@@ -57,6 +57,33 @@ describe("ModalHost download settings", () => {
   });
 });
 
+describe("ModalHost task output", () => {
+  it("renders task output backend modals as read-only logs", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "task_output",
+              title: "작업 결과 a123",
+              task_id: "a123",
+              output: "line one\nline two",
+            },
+          },
+        }}
+      >
+        <ModalHost />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByRole("dialog", { name: "작업 결과 a123" })).toBeTruthy();
+    expect(document.querySelector(".task-output-log")?.textContent).toBe("line one\nline two");
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+});
+
 describe("ModalHost workspace deletion", () => {
   beforeEach(() => {
     vi.clearAllMocks();

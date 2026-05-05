@@ -227,6 +227,43 @@ async def test_codex_client_streams_text(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_codex_client_drops_dangling_tool_call_before_provider_request(monkeypatch):
+    sink: dict[str, Any] = {}
+    response = _FakeStreamResponse(
+        lines=[
+            'data: {"type":"response.output_text.delta","delta":"ok"}',
+            "",
+            'data: {"type":"response.completed","response":{"status":"completed"}}',
+            "",
+        ]
+    )
+    monkeypatch.setattr(
+        "myharness.api.codex_client.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(response, sink),
+    )
+
+    client = CodexApiClient(_fake_codex_token())
+    request = ApiMessageRequest(
+        model="gpt-5.5",
+        messages=[
+            ConversationMessage.from_user_text("Run a tool"),
+            ConversationMessage(
+                role="assistant",
+                content=[ToolUseBlock(id="call_missing", name="missing_tool", input={})],
+            ),
+            ConversationMessage.from_user_text("New prompt"),
+        ],
+    )
+    events = [event async for event in client.stream_message(request)]
+
+    assert events
+    assert sink["json"]["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "Run a tool"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "New prompt"}]},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_codex_client_uses_configurable_timeout(monkeypatch):
     sink: dict[str, Any] = {}
     captured: dict[str, Any] = {}

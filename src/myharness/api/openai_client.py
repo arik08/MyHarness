@@ -33,6 +33,7 @@ from myharness.engine.messages import (
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
+    sanitize_conversation_messages,
 )
 
 log = logging.getLogger(__name__)
@@ -276,7 +277,8 @@ class OpenAICompatibleClient:
 
     async def _stream_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Single attempt: stream an OpenAI chat completion."""
-        openai_messages = _convert_messages_to_openai(request.messages, request.system_prompt)
+        safe_messages = sanitize_conversation_messages(request.messages)
+        openai_messages = _convert_messages_to_openai(safe_messages, request.system_prompt)
         openai_tools = _convert_tools_to_openai(request.tools) if request.tools else None
 
         params: dict[str, Any] = {

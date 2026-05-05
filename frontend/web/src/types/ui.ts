@@ -1,4 +1,4 @@
-import type { ArtifactSummary, Attachment, CommandItem, HistoryItem, SkillItem, TranscriptItem, Workspace, WorkspaceScope } from "./backend";
+import type { ArtifactSummary, Attachment, CommandItem, HistoryItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, TranscriptItem, Workspace, WorkspaceScope } from "./backend";
 
 export type StatusKind =
   | "connecting"
@@ -102,6 +102,9 @@ export type AppState = {
   workflowInputBuffers: Record<string, string>;
   todoMarkdown: string;
   todoCollapsed: boolean;
+  swarmTeammates: SwarmTeammateSnapshot[];
+  swarmNotifications: SwarmNotificationSnapshot[];
+  swarmPopupOpen: boolean;
   workflowEvents: WorkflowEvent[];
   workflowDurationSeconds: number | null;
   workflowStartedAtMs: number | null;

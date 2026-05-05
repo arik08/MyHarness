@@ -1,4 +1,4 @@
-import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, Workspace, WorkspaceScope } from "../types/backend";
+import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, ModalState, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { isLiveOnlyHistoryItem } from "../utils/history";
 
@@ -58,6 +58,7 @@ export type AppAction =
   | { type: "select_runtime_effort"; value: string }
   | { type: "toggle_todo_collapsed" }
   | { type: "dismiss_todo" }
+  | { type: "set_swarm_popup_open"; value: boolean }
   | { type: "clear_workflow" }
   | { type: "clear_messages" };
 
@@ -227,6 +228,9 @@ export const initialAppState: AppState = {
   workflowInputBuffers: {},
   todoMarkdown: "",
   todoCollapsed: false,
+  swarmTeammates: [],
+  swarmNotifications: [],
+  swarmPopupOpen: false,
   workflowEvents: [],
   workflowDurationSeconds: null,
   workflowStartedAtMs: null,
@@ -597,6 +601,48 @@ function workflowDraftFromBuffer(toolName: string, buffer: string): { toolName: 
 
 function recordOrNull(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function swarmText(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function swarmNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeSwarmTeammate(value: SwarmTeammateSnapshot, index: number): SwarmTeammateSnapshot {
+  const record = recordOrNull(value) || {};
+  const taskId = swarmText(record.taskId) || swarmText(record.task_id);
+  const id = swarmText(record.id) || swarmText(record.agent_id) || taskId || `swarm-agent-${index + 1}`;
+  return {
+    id,
+    name: swarmText(record.name) || id,
+    role: swarmText(record.role) || swarmText(record.name) || "작업자",
+    status: swarmText(record.status) || "idle",
+    task: swarmText(record.task),
+    startedAt: swarmNumber(record.startedAt ?? record.started_at),
+    lastOutput: swarmText(record.lastOutput) || swarmText(record.last_output),
+    taskId,
+  };
+}
+
+function normalizeSwarmNotification(value: SwarmNotificationSnapshot, index: number): SwarmNotificationSnapshot {
+  const record = recordOrNull(value) || {};
+  return {
+    id: swarmText(record.id) || `swarm-note-${index + 1}`,
+    from: swarmText(record.from) || "AI 팀",
+    message: swarmText(record.message),
+    timestamp: swarmNumber(record.timestamp) ?? Date.now(),
+    level: swarmText(record.level) || "info",
+  };
 }
 
 function backendToolCallId(event: BackendEvent) {
@@ -1067,6 +1113,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         clientId: action.clientId || state.clientId,
         modal: backendModalForSession(backendModalsBySessionId, action.sessionId),
         backendModalsBySessionId,
+        swarmPopupOpen: false,
         history: removeLiveHistoryRowsForSession(state.history, action.sessionId),
         pendingFreshChat: false,
         status: "ready",
@@ -1120,8 +1167,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         artifactRefreshKey: state.artifactRefreshKey + 1,
         modal: backendModalForSession(backendModalsBySessionId, action.sessionId),
         backendModalsBySessionId,
+        swarmPopupOpen: false,
         todoMarkdown: "",
         todoCollapsed: false,
+        swarmTeammates: [],
+        swarmNotifications: [],
         workflowEvents: [],
         workflowDurationSeconds: null,
         workflowStartedAtMs: null,
@@ -1256,6 +1306,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         activeArtifactPayload: null,
         todoMarkdown: "",
         todoCollapsed: false,
+        swarmTeammates: [],
+        swarmNotifications: [],
+        swarmPopupOpen: false,
         workflowEvents: [],
         workflowDurationSeconds: null,
         workflowStartedAtMs: null,
@@ -1347,6 +1400,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "close_runtime_picker":
       return { ...state, runtimePicker: { ...state.runtimePicker, open: false, loading: false, error: "" } };
+
+    case "set_swarm_popup_open":
+      return { ...state, swarmPopupOpen: action.value };
 
     case "set_runtime_picker_error":
       return { ...state, runtimePicker: { ...state.runtimePicker, open: true, loading: false, error: action.message } };
@@ -1882,6 +1938,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state,
           todoMarkdown,
           todoCollapsed: todoMarkdown.trim() ? state.todoCollapsed : false,
+        };
+      }
+
+      if (event.type === "swarm_status") {
+        const teammates = Array.isArray(event.swarm_teammates)
+          ? event.swarm_teammates.map(normalizeSwarmTeammate)
+          : state.swarmTeammates;
+        const notifications = Array.isArray(event.swarm_notifications)
+          ? [...state.swarmNotifications, ...event.swarm_notifications.map(normalizeSwarmNotification)].slice(-20)
+          : state.swarmNotifications;
+        return {
+          ...state,
+          swarmTeammates: teammates,
+          swarmNotifications: notifications,
+          swarmPopupOpen: state.swarmPopupOpen,
         };
       }
 

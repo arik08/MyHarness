@@ -1270,6 +1270,100 @@ class _BoomTool(BaseTool):
         raise RuntimeError("boom")
 
 
+class _NeverTool(BaseTool):
+    name = "never_tool"
+    description = "Waits forever until cancelled."
+    input_model = _OkInput
+
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        return True
+
+    async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+        del arguments, context
+        await asyncio.Event().wait()
+        return ToolResult(output="unreachable")
+
+
+@pytest.mark.asyncio
+async def test_query_engine_sanitizes_dangling_tool_use_before_next_submit(tmp_path: Path):
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="Recovered.")],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            )
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+    engine.load_messages([
+        ConversationMessage.from_user_text("run a tool"),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="call_missing", name="missing_tool", input={})],
+        ),
+    ])
+
+    events = [event async for event in engine.submit_message("please continue")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    sent_messages = api_client.requests[0].messages
+    assert not any(message.tool_uses for message in sent_messages)
+    assert [message.text for message in sent_messages if message.role == "user"] == [
+        "run a tool",
+        "please continue",
+    ]
+    assert not any(message.tool_uses for message in engine.messages)
+
+
+@pytest.mark.asyncio
+async def test_query_engine_cleans_dangling_tool_use_when_cancelled_mid_tool(tmp_path: Path):
+    registry = ToolRegistry()
+    registry.register(_NeverTool())
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[ToolUseBlock(id="call_never", name="never_tool", input={})],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+    started = asyncio.Event()
+
+    async def _consume() -> None:
+        async for event in engine.submit_message("run never"):
+            if isinstance(event, ToolExecutionStarted):
+                started.set()
+
+    task = asyncio.create_task(_consume())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert [message.text for message in engine.messages if message.role == "user"] == ["run never"]
+    assert not any(message.tool_uses for message in engine.messages)
+
+
 @pytest.mark.asyncio
 async def test_query_engine_synthesizes_tool_result_when_parallel_tool_raises(tmp_path: Path):
     """Parallel tool calls must each yield a tool_result even when one tool raises.

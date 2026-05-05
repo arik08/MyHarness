@@ -159,3 +159,10 @@
 - Lesson: A repeated failure was observed and later verified as resolved: web_search: No search results found.
 - Do next time: Start by applying the verified corrective path: Fetched remote content from https://newsroom.posco.com/kr/포스코홀딩스-수요-산업-부진·불확실성-가중에도/
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence dd955d83b1fb7d89
+- Confidence: 0.95
+- Signature: `web-search-no-search-results-found`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search: No search results found.
+- Do next time: Start by applying the verified corrective path: Inspected file C:\Users\[USER]\Desktop\Documents\Python\MyHarness\.skills\learned-web-search-no-search-results-found\references\learned-patterns.md (lines 1-200)
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

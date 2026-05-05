@@ -35,6 +35,29 @@ export type TranscriptItem = {
   is_error?: boolean | null;
 };
 
+export type SwarmTeammateSnapshot = {
+  id?: string;
+  agent_id?: string;
+  name?: string;
+  role?: string;
+  status?: "running" | "idle" | "completed" | "failed" | "killed" | "done" | "error" | string;
+  task?: string;
+  startedAt?: number | string | null;
+  started_at?: number | string | null;
+  lastOutput?: string;
+  last_output?: string;
+  taskId?: string;
+  task_id?: string;
+};
+
+export type SwarmNotificationSnapshot = {
+  id?: string;
+  from?: string;
+  message?: string;
+  timestamp?: number | string | null;
+  level?: "info" | "warning" | "error" | string;
+};
+
 export type BackendEvent =
   | { type: "ready"; state?: BackendStateSnapshot; commands?: unknown[]; skills?: unknown[]; tasks?: unknown[] }
   | { type: "state_snapshot"; state?: BackendStateSnapshot }
@@ -51,6 +74,7 @@ export type BackendEvent =
   | { type: "modal_request"; modal?: Record<string, unknown> | null }
   | { type: "select_request"; modal?: Record<string, unknown> | null; select_options?: Array<Record<string, unknown>> | null; message?: string | null }
   | { type: "todo_update"; todo_markdown?: string | null }
+  | { type: "swarm_status"; swarm_teammates?: SwarmTeammateSnapshot[] | null; swarm_notifications?: SwarmNotificationSnapshot[] | null }
   | { type: "plan_mode_change"; plan_mode?: string | null }
   | { type: "active_session"; value?: string | null }
   | { type: "history_snapshot"; value?: string | null; message?: string | null; history_events?: Array<Record<string, unknown>> | null; compact_metadata?: Record<string, unknown> | null }

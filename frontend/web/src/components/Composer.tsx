@@ -2,9 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, FormEvent, KeyboardEvent } from "react";
 import { cancelMessage, sendMessage } from "../api/messages";
 import { startSession } from "../api/session";
+import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary, Attachment, CommandItem, SkillItem } from "../types/backend";
 import { InlineQuestion } from "./InlineQuestion";
+import { SwarmButton } from "./SwarmButton";
 import { TodoDock } from "./TodoDock";
 
 const longPastedTextLineThreshold = 10;
@@ -244,6 +246,10 @@ export function Composer() {
     setCursorOffset(input.selectionStart ?? input.value.length);
   }
 
+  function requestMessageBottomFollow() {
+    window.dispatchEvent(new Event(messageBottomFollowEvent));
+  }
+
   async function cancelCurrent() {
     if (!state.sessionId) return;
     try {
@@ -402,8 +408,14 @@ export function Composer() {
     if (event.key === "Enter" && event.ctrlKey && !event.shiftKey) {
       event.preventDefault();
       if (state.busy) {
+        if (hasPayload) {
+          requestMessageBottomFollow();
+        }
         void sendBusyLine("queue");
         return;
+      }
+      if (hasPayload) {
+        requestMessageBottomFollow();
       }
       event.currentTarget.form?.requestSubmit();
       return;
@@ -415,8 +427,14 @@ export function Composer() {
         return;
       }
       if (state.busy) {
+        if (hasPayload) {
+          requestMessageBottomFollow();
+        }
         void sendBusyLine("steer");
         return;
+      }
+      if (hasPayload) {
+        requestMessageBottomFollow();
       }
       event.currentTarget.form?.requestSubmit();
     }
@@ -514,6 +532,7 @@ export function Composer() {
           <span>계획모드</span>
         </button>
         <TodoDock variant="composerButton" />
+        <SwarmButton />
         <button
           id="sendButton"
           className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}
