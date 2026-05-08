@@ -2338,6 +2338,17 @@ a:focus-visible {
   width: 100%;
 }
 
+.assistant-markdown-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.assistant-markdown-flow > :is(.react-markdown, .stream-live-text) {
+  min-width: 0;
+}
+
 .assistant-actions {
   display: flex;
   align-items: center;
@@ -4692,6 +4703,8 @@ a:focus-visible {
   margin-bottom: 0;
 }
 
+.markdown-body h1,
+.markdown-body h2,
 .markdown-body h3,
 .markdown-body h4,
 .markdown-body h5 {
@@ -4700,6 +4713,19 @@ a:focus-visible {
   font-weight: 720;
   letter-spacing: 0;
   line-height: 1.35;
+}
+
+.markdown-body h1,
+.markdown-body h2 {
+  margin-top: 22px;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.markdown-body .mermaid-chart + :is(h1, h2, h3, h4, h5, h6),
+.markdown-body .table-wrap + :is(h1, h2, h3, h4, h5, h6),
+.markdown-body table + :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 24px;
 }
 
 .markdown-body ul,
@@ -4898,11 +4924,12 @@ a:focus-visible {
 }
 
 .markdown-body .mermaid-chart {
+  position: relative;
   min-width: 0;
   max-width: 100%;
   overflow: auto;
-  margin: 0 0 13px;
-  padding: 10px;
+  margin: 16px 0 20px;
+  padding: 36px 10px 10px;
   background: color-mix(in srgb, var(--panel-raised) 96%, var(--accent-soft) 4%);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -4928,6 +4955,183 @@ a:focus-visible {
   border-color: color-mix(in srgb, var(--warning) 28%, var(--line));
   font-size: 13px;
   line-height: 1.4;
+}
+
+.mermaid-expand-button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-raised) 94%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mermaid-expand-button:hover,
+.mermaid-expand-button:focus-visible {
+  color: var(--ink);
+  background: var(--sidebar-hover);
+  border-color: var(--line-strong);
+}
+
+.mermaid-expand-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mermaid-zoom-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(19, 18, 16, 0.58);
+}
+
+.mermaid-zoom-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, calc(100vw - 40px));
+  height: min(820px, calc(100vh - 40px));
+  min-height: 360px;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-strong);
+}
+
+.mermaid-zoom-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 10px 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mermaid-zoom-title {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.mermaid-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mermaid-zoom-value {
+  min-width: 44px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+}
+
+.mermaid-zoom-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 9px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mermaid-zoom-control:hover,
+.mermaid-zoom-control:focus-visible {
+  background: var(--sidebar-hover);
+  border-color: var(--line-strong);
+}
+
+.mermaid-zoom-close {
+  min-width: 28px;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.mermaid-zoom-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px),
+    color-mix(in srgb, var(--panel-raised) 94%, var(--accent-soft) 6%);
+  background-size: 28px 28px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.mermaid-zoom-viewport.dragging {
+  cursor: grabbing;
+}
+
+.mermaid-zoom-canvas {
+  position: absolute;
+  top: 28px;
+  left: 28px;
+  min-width: max-content;
+  min-height: max-content;
+  padding: 18px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transform-origin: 0 0;
+  box-shadow: var(--shadow-soft);
+  will-change: transform;
+}
+
+.mermaid-zoom-canvas svg {
+  display: block;
+  max-width: none !important;
+  width: auto;
+  height: auto;
+}
+
+.mermaid-zoom-canvas.mermaid-loading,
+.mermaid-zoom-canvas.mermaid-error {
+  min-width: 260px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.mermaid-zoom-canvas.mermaid-error {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 28%, var(--line));
 }
 
 .html-render-frame {
@@ -5019,7 +5223,14 @@ a:focus-visible {
   max-width: 100%;
   box-sizing: border-box;
   overflow-x: auto;
+  margin: 16px 0 20px;
   scrollbar-gutter: stable;
+}
+
+.markdown-body .mermaid-chart:first-child,
+.markdown-body .table-wrap:first-child,
+.markdown-body > table:first-child {
+  margin-top: 0;
 }
 
 .messages.hidden {
@@ -5029,16 +5240,21 @@ a:focus-visible {
 .markdown-body table {
   width: 100%;
   min-width: 100%;
+  margin: 16px 0 20px;
   border-collapse: collapse;
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.6;
   table-layout: fixed;
+}
+
+.markdown-body .table-wrap > table {
+  margin: 0;
 }
 
 .markdown-body th,
 .markdown-body td {
   min-width: 88px;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border: 1px solid var(--line);
   overflow-wrap: anywhere;
   text-align: left;
@@ -6319,6 +6535,21 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 
 [data-react-webui="true"] .react-markdown > :last-child {
   margin-bottom: 0;
+}
+
+[data-react-webui="true"] .assistant-markdown-flow
+  > :is(.react-markdown, .stream-live-text)
+  + :is(.react-markdown, .stream-live-text) {
+  margin-top: 13px;
+}
+
+[data-react-webui="true"] .assistant-markdown-flow
+  > :is(.react-markdown, .stream-live-text):has(
+    > :is(.mermaid-chart, .table-wrap, table):last-child,
+    > .react-markdown > :is(.mermaid-chart, .table-wrap, table):last-child
+  )
+  + :is(.react-markdown, .stream-live-text) {
+  margin-top: 20px;
 }
 
 [data-react-webui="true"] .react-runtime-picker {

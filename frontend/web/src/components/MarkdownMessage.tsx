@@ -9,6 +9,7 @@ const mermaidSourceCache = new Map<string, string>();
 let mermaidRenderId = 0;
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
 let markdownEnhancementObserver: MutationObserver | null = null;
+let activeMermaidZoomViewer: HTMLElement | null = null;
 
 function sanitizeRenderedHtml(html: string) {
   const template = document.createElement("template");
@@ -243,7 +244,18 @@ function htmlPreviewPlaceholder(id: string) {
 }
 
 function mermaidPreviewPlaceholder(id: string, source: string) {
-  return `<div class="mermaid-render-placeholder" data-mermaid-preview-id="${escapeHtml(id)}" data-mermaid-source="${escapeHtml(source)}"></div>`;
+  return `<div class="mermaid-render-placeholder" data-mermaid-preview-id="${escapeHtml(id)}" data-mermaid-source-encoded="${escapeHtml(encodeURIComponent(source))}"></div>`;
+}
+
+function decodeMermaidPlaceholderSource(value: string) {
+  if (!value) {
+    return "";
+  }
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return "";
+  }
 }
 
 function isMermaidFenceInfo(info: string) {
@@ -828,17 +840,266 @@ async function loadMermaid() {
   return mermaid;
 }
 
+async function renderMermaidSvg(source: string) {
+  const mermaid = await loadMermaid();
+  const id = `mermaid-chart-${++mermaidRenderId}`;
+  const result = await mermaid.render(id, source);
+  return {
+    svg: sanitizeRenderedHtml(result.svg),
+    bindFunctions: result.bindFunctions,
+  };
+}
+
+function mermaidZoomButtonIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M8 3H3v5"></path>
+      <path d="M3 3l7 7"></path>
+      <path d="M16 3h5v5"></path>
+      <path d="m21 3-7 7"></path>
+      <path d="M8 21H3v-5"></path>
+      <path d="m3 21 7-7"></path>
+      <path d="M16 21h5v-5"></path>
+      <path d="m21 21-7-7"></path>
+    </svg>
+  `;
+}
+
+function closeMermaidZoomViewer() {
+  activeMermaidZoomViewer?.dispatchEvent(new CustomEvent("mermaid-viewer-close"));
+}
+
+function createMermaidZoomControl(label: string, text: string, onClick: () => void) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "mermaid-zoom-control";
+  button.setAttribute("aria-label", label);
+  button.dataset.tooltip = label;
+  button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function openMermaidZoomViewer(source: string) {
+  if (!source.trim()) {
+    return;
+  }
+  closeMermaidZoomViewer();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "mermaid-zoom-backdrop";
+  backdrop.setAttribute("role", "presentation");
+
+  const dialog = document.createElement("div");
+  dialog.className = "mermaid-zoom-dialog";
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-label", "Mermaid 다이어그램 확대 보기");
+
+  const title = document.createElement("strong");
+  title.className = "mermaid-zoom-title";
+  title.textContent = "Mermaid";
+
+  const zoomValue = document.createElement("span");
+  zoomValue.className = "mermaid-zoom-value";
+  zoomValue.textContent = "100%";
+
+  const controls = document.createElement("div");
+  controls.className = "mermaid-zoom-controls";
+
+  const viewport = document.createElement("div");
+  viewport.className = "mermaid-zoom-viewport";
+
+  const canvas = document.createElement("div");
+  canvas.className = "mermaid-zoom-canvas mermaid-loading";
+  canvas.textContent = "다이어그램 렌더링 중...";
+  viewport.append(canvas);
+
+  let scale = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+  let dragging = false;
+  let dragPointerId = -1;
+  let lastX = 0;
+  let lastY = 0;
+
+  const updateTransform = () => {
+    canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+    zoomValue.textContent = `${Math.round(scale * 100)}%`;
+  };
+
+  const zoomAt = (nextScale: number, clientX?: number, clientY?: number) => {
+    const clampedScale = Math.min(4, Math.max(0.25, nextScale));
+    const rect = viewport.getBoundingClientRect();
+    const centerX = typeof clientX === "number" ? clientX - rect.left : rect.width / 2;
+    const centerY = typeof clientY === "number" ? clientY - rect.top : rect.height / 2;
+    const diagramX = (centerX - offsetX) / scale;
+    const diagramY = (centerY - offsetY) / scale;
+    scale = clampedScale;
+    offsetX = centerX - diagramX * scale;
+    offsetY = centerY - diagramY * scale;
+    updateTransform();
+  };
+
+  const resetView = () => {
+    scale = 1;
+    offsetX = 0;
+    offsetY = 0;
+    updateTransform();
+  };
+
+  const closeButton = createMermaidZoomControl("닫기", "×", closeMermaidZoomViewer);
+  closeButton.classList.add("mermaid-zoom-close");
+  controls.append(
+    createMermaidZoomControl("축소", "-", () => zoomAt(scale / 1.2)),
+    zoomValue,
+    createMermaidZoomControl("확대", "+", () => zoomAt(scale * 1.2)),
+    createMermaidZoomControl("이동 초기화", "Reset", resetView),
+    closeButton,
+  );
+
+  const header = document.createElement("div");
+  header.className = "mermaid-zoom-header";
+  header.append(title, controls);
+  dialog.append(header, viewport);
+  backdrop.append(dialog);
+
+  const onClose = () => {
+    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    viewport.removeEventListener("wheel", onWheel);
+    backdrop.remove();
+    if (activeMermaidZoomViewer === backdrop) {
+      activeMermaidZoomViewer = null;
+    }
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      closeMermaidZoomViewer();
+    }
+  };
+  const onWheel = (event: WheelEvent) => {
+    event.preventDefault();
+    zoomAt(scale * (event.deltaY < 0 ? 1.1 : 0.9), event.clientX, event.clientY);
+  };
+  const pointerEventId = (event: PointerEvent) => Number.isFinite(event.pointerId) ? event.pointerId : 1;
+  const onPointerMove = (event: PointerEvent) => {
+    if (!dragging || pointerEventId(event) !== dragPointerId) {
+      return;
+    }
+    const clientX = Number.isFinite(event.clientX) ? event.clientX : lastX;
+    const clientY = Number.isFinite(event.clientY) ? event.clientY : lastY;
+    offsetX += clientX - lastX;
+    offsetY += clientY - lastY;
+    lastX = clientX;
+    lastY = clientY;
+    updateTransform();
+  };
+  const onPointerUp = (event: PointerEvent) => {
+    if (pointerEventId(event) !== dragPointerId) {
+      return;
+    }
+    dragging = false;
+    dragPointerId = -1;
+    viewport.classList.remove("dragging");
+  };
+
+  backdrop.addEventListener("mermaid-viewer-close", onClose, { once: true });
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) {
+      closeMermaidZoomViewer();
+    }
+  });
+  viewport.addEventListener("wheel", onWheel, { passive: false });
+  viewport.addEventListener("pointerdown", (event) => {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return;
+    }
+    dragging = true;
+    dragPointerId = pointerEventId(event);
+    lastX = Number.isFinite(event.clientX) ? event.clientX : 0;
+    lastY = Number.isFinite(event.clientY) ? event.clientY : 0;
+    viewport.classList.add("dragging");
+    viewport.setPointerCapture?.(event.pointerId);
+  });
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+
+  activeMermaidZoomViewer = backdrop;
+  document.body.append(backdrop);
+  closeButton.focus();
+  updateTransform();
+
+  void renderMermaidSvg(source)
+    .then((result) => {
+      if (!canvas.isConnected) {
+        return;
+      }
+      canvas.classList.remove("mermaid-loading");
+      canvas.innerHTML = result.svg;
+      fitMermaidZoomSvg(canvas);
+      result.bindFunctions?.(canvas);
+      resetView();
+    })
+    .catch(() => {
+      if (!canvas.isConnected) {
+        return;
+      }
+      canvas.classList.remove("mermaid-loading");
+      canvas.classList.add("mermaid-error");
+      canvas.textContent = "Mermaid 다이어그램을 렌더링하지 못했습니다.";
+    });
+}
+
+function ensureMermaidZoomButton(chart: HTMLDivElement, source: string) {
+  if (chart.querySelector(".mermaid-expand-button") || !source.trim()) {
+    return;
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "mermaid-expand-button";
+  button.setAttribute("aria-label", "Mermaid 다이어그램 크게 보기");
+  button.dataset.tooltip = "크게 보기";
+  button.innerHTML = mermaidZoomButtonIcon();
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openMermaidZoomViewer(source);
+  });
+  chart.prepend(button);
+}
+
+function fitMermaidZoomSvg(canvas: HTMLElement) {
+  const svg = canvas.querySelector<SVGSVGElement>("svg");
+  if (!svg) {
+    return;
+  }
+  const viewBox = svg.getAttribute("viewBox") || "";
+  const parts = viewBox.split(/[\s,]+/).map((part) => Number(part));
+  const width = Number(svg.getAttribute("width"));
+  const height = Number(svg.getAttribute("height"));
+  const viewBoxWidth = parts.length >= 4 && Number.isFinite(parts[2]) ? parts[2] : width;
+  const viewBoxHeight = parts.length >= 4 && Number.isFinite(parts[3]) ? parts[3] : height;
+  if (Number.isFinite(viewBoxWidth) && viewBoxWidth > 0) {
+    svg.style.width = `${Math.ceil(viewBoxWidth)}px`;
+  }
+  if (Number.isFinite(viewBoxHeight) && viewBoxHeight > 0) {
+    svg.style.height = `${Math.ceil(viewBoxHeight)}px`;
+  }
+}
+
 async function renderMermaidChart(chart: HTMLDivElement, source: string) {
   try {
-    const mermaid = await loadMermaid();
-    const id = `mermaid-chart-${++mermaidRenderId}`;
-    const result = await mermaid.render(id, source);
+    const result = await renderMermaidSvg(source);
     if (!chart.isConnected) {
       return;
     }
     chart.classList.remove("mermaid-loading");
-    chart.innerHTML = sanitizeRenderedHtml(result.svg);
+    chart.innerHTML = result.svg;
     result.bindFunctions?.(chart);
+    ensureMermaidZoomButton(chart, source);
   } catch {
     if (!chart.isConnected) {
       return;
@@ -868,7 +1129,8 @@ function replaceMermaidPreviewPlaceholders(root: HTMLElement | null) {
   }
   root.querySelectorAll<HTMLElement>("[data-mermaid-preview-id]").forEach((placeholder) => {
     const id = placeholder.dataset.mermaidPreviewId || "";
-    const source = mermaidSourceCache.get(id) || placeholder.dataset.mermaidSource || "";
+    const encodedSource = placeholder.dataset.mermaidSourceEncoded || "";
+    const source = mermaidSourceCache.get(id) || decodeMermaidPlaceholderSource(encodedSource);
     if (!source.trim()) {
       placeholder.remove();
       return;
@@ -890,7 +1152,8 @@ function enhanceMarkdownRoot(root: HTMLElement | null, revealFrom: number | null
 }
 
 function markdownRootForNode(node: Node | null) {
-  const element = node instanceof HTMLElement ? node : node?.parentElement;
+  const HtmlElement = globalThis.window?.HTMLElement;
+  const element = HtmlElement && node instanceof HtmlElement ? node : node?.parentElement;
   if (!element) {
     return null;
   }

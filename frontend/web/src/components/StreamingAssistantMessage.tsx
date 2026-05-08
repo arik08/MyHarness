@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { AppSettings, ChatMessage } from "../types/ui";
 import { MarkdownMessage } from "./MarkdownMessage";
+
+const StableMarkdownMessage = memo(MarkdownMessage);
 
 function useStreamingText(
   targetText: string,
@@ -14,6 +16,10 @@ function useStreamingText(
   const visibleTextRef = useRef(visibleText);
   const pendingTextRef = useRef("");
   const flushTimerRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const frameFallbackTimerRef = useRef<number | null>(null);
+  const lastFrameAtRef = useRef<number | null>(null);
+  const revealBudgetRef = useRef(0);
   const displayStartedRef = useRef(false);
 
   useEffect(() => {
@@ -27,45 +33,120 @@ function useStreamingText(
     }
   }
 
-  function streamingRevealCount(pendingChars: string[], flushAll = false) {
-    if (flushAll) {
+  function clearFrameFallbackTimer() {
+    if (frameFallbackTimerRef.current !== null) {
+      window.clearTimeout(frameFallbackTimerRef.current);
+      frameFallbackTimerRef.current = null;
+    }
+  }
+
+  function clearAnimationFrame() {
+    clearFrameFallbackTimer();
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    lastFrameAtRef.current = null;
+    revealBudgetRef.current = 0;
+  }
+
+  function resetRevealLoop() {
+    clearFlushTimer();
+    clearAnimationFrame();
+    pendingTextRef.current = "";
+    displayStartedRef.current = false;
+  }
+
+  function streamingRevealRate(pendingLength: number) {
+    const duration = Math.max(120, Math.min(2000, revealDurationMs));
+    const baseCharsPerMs = Math.max(0.08, Math.min(0.22, 90 / duration));
+    const backlogBoost = 1 + Math.min(2.4, pendingLength / 520);
+    return baseCharsPerMs * backlogBoost;
+  }
+
+  function smoothRevealCount(pendingText: string, desiredCount: number) {
+    const pendingChars = Array.from(pendingText);
+    if (!pendingChars.length) {
+      return 0;
+    }
+    const maxFrameChars = Math.max(3, Math.min(18, 4 + Math.floor(pendingChars.length / 90)));
+    const limit = Math.min(pendingChars.length, Math.max(1, Math.min(maxFrameChars, desiredCount)));
+    if (pendingChars.length <= limit) {
       return pendingChars.length;
     }
-    if (pendingChars.length <= 4) {
-      return pendingChars.length;
+    const lookahead = Math.min(pendingChars.length, limit + 3);
+    let bestBoundary = 0;
+    for (let index = 1; index <= lookahead; index += 1) {
+      if (/[\s,.;:!?)]/u.test(pendingChars[index - 1] || "")) {
+        bestBoundary = index;
+      }
     }
-    const text = pendingChars.join("");
-    const sentenceMatch = text.match(/^.{18,}?[.!?。！？…]\s*/u);
-    if (sentenceMatch && sentenceMatch[0].length <= 12) {
-      return sentenceMatch[0].length;
-    }
-    const lineBreakIndex = text.slice(3).search(/\n/);
-    if (lineBreakIndex >= 0) {
-      return Math.min(12, 3 + lineBreakIndex + 1);
-    }
-    return Math.min(
-      pendingChars.length,
-      Math.max(3, Math.min(12, Math.ceil(pendingChars.length / 2))),
-    );
+    return bestBoundary || limit;
   }
 
   function scheduleFlush() {
-    if (flushTimerRef.current !== null) {
+    if (
+      flushTimerRef.current !== null ||
+      animationFrameRef.current !== null ||
+      frameFallbackTimerRef.current !== null
+    ) {
       return;
     }
-    const revealDelay = Math.max(44, Math.min(96, Math.max(0, revealDurationMs) * 0.16));
-    const delay = displayStartedRef.current ? revealDelay : Math.max(0, Math.min(2000, startBufferMs));
-    flushTimerRef.current = window.setTimeout(flushStreamingText, delay);
+    if (displayStartedRef.current) {
+      scheduleRevealFrame();
+      return;
+    }
+    const delay = Math.max(0, Math.min(2000, startBufferMs));
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null;
+      scheduleRevealFrame();
+    }, delay);
   }
 
-  function flushStreamingText() {
-    flushTimerRef.current = null;
-    const pendingChars = Array.from(pendingTextRef.current);
-    if (!pendingChars.length) {
+  function scheduleRevealFrame() {
+    if (animationFrameRef.current !== null || frameFallbackTimerRef.current !== null) {
+      return;
+    }
+    animationFrameRef.current = window.requestAnimationFrame((timestamp) => {
+      animationFrameRef.current = null;
+      clearFrameFallbackTimer();
+      flushStreamingText(timestamp);
+    });
+    frameFallbackTimerRef.current = window.setTimeout(() => {
+      frameFallbackTimerRef.current = null;
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      flushStreamingText(performance.now());
+    }, 34);
+  }
+
+  function flushStreamingText(timestamp = performance.now()) {
+    animationFrameRef.current = null;
+    clearFrameFallbackTimer();
+    const pendingText = pendingTextRef.current;
+    if (!pendingText) {
+      lastFrameAtRef.current = null;
+      revealBudgetRef.current = 0;
       return;
     }
     displayStartedRef.current = true;
-    const revealCount = streamingRevealCount(pendingChars);
+    const elapsedMs =
+      lastFrameAtRef.current === null ? 16 : Math.max(8, Math.min(64, timestamp - lastFrameAtRef.current));
+    lastFrameAtRef.current = timestamp;
+    revealBudgetRef.current += elapsedMs * streamingRevealRate(Array.from(pendingText).length);
+    if (revealBudgetRef.current < 1) {
+      scheduleFlush();
+      return;
+    }
+    const pendingChars = Array.from(pendingText);
+    const revealCount = smoothRevealCount(pendingText, Math.floor(revealBudgetRef.current));
+    if (revealCount <= 0) {
+      scheduleFlush();
+      return;
+    }
+    revealBudgetRef.current = Math.max(0, revealBudgetRef.current - revealCount);
     const nextText = pendingChars.slice(0, revealCount).join("");
     pendingTextRef.current = pendingChars.slice(revealCount).join("");
     setRevealFrom(visibleTextRef.current.length);
@@ -73,21 +154,40 @@ function useStreamingText(
     setVisibleText(visibleTextRef.current);
     if (pendingTextRef.current) {
       scheduleFlush();
+    } else {
+      lastFrameAtRef.current = null;
+      revealBudgetRef.current = 0;
     }
   }
 
   useEffect(() => () => {
     clearFlushTimer();
+    clearAnimationFrame();
   }, []);
 
   useEffect(() => {
     if (!visuallyStreaming) {
-      clearFlushTimer();
-      pendingTextRef.current = "";
-      displayStartedRef.current = false;
-      visibleTextRef.current = targetText;
+      const visibleText = visibleTextRef.current;
+      const queuedText = `${visibleText}${pendingTextRef.current}`;
+      if (queuedText === targetText) {
+        if (pendingTextRef.current) {
+          scheduleFlush();
+        } else {
+          setRevealFrom(null);
+        }
+        return;
+      }
+      if (targetText.startsWith(visibleText) && visibleText !== targetText) {
+        pendingTextRef.current = targetText.slice(visibleText.length);
+        scheduleFlush();
+        return;
+      }
+      resetRevealLoop();
+      if (visibleTextRef.current !== targetText) {
+        visibleTextRef.current = targetText;
+        setVisibleText(targetText);
+      }
       setRevealFrom(null);
-      setVisibleText(targetText);
       return;
     }
 
@@ -109,9 +209,7 @@ function useStreamingText(
       return;
     }
 
-    clearFlushTimer();
-    pendingTextRef.current = "";
-    displayStartedRef.current = false;
+    resetRevealLoop();
     visibleTextRef.current = targetText;
     setRevealFrom(null);
     setVisibleText(targetText);
@@ -120,6 +218,7 @@ function useStreamingText(
   return {
     visibleText,
     revealFrom,
+    revealing: visuallyStreaming || visibleText !== targetText || Boolean(pendingTextRef.current),
   };
 }
 
@@ -159,6 +258,57 @@ function splitStreamingMarkdown(text: string) {
     prefix: source.slice(0, stableBoundary).trimEnd(),
     liveTail: source.slice(stableBoundary),
   };
+}
+
+function splitStableMarkdownChunks(text: string) {
+  const source = String(text || "").replace(/\r\n/g, "\n");
+  const chunks: string[] = [];
+  const lines = source.split("\n");
+  let current: string[] = [];
+  let inFence = false;
+  let fenceMarker = "";
+
+  const pushCurrent = () => {
+    const chunk = current.join("\n").trimEnd();
+    if (chunk.trim()) {
+      chunks.push(chunk);
+    }
+    current = [];
+  };
+
+  for (const line of lines) {
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      const marker = fence[1];
+      current.push(line);
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker;
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false;
+        pushCurrent();
+      }
+      continue;
+    }
+
+    if (!inFence && line.trim() === "") {
+      pushCurrent();
+      continue;
+    }
+
+    current.push(line);
+  }
+
+  pushCurrent();
+  return chunks;
+}
+
+function stableChunkHash(text: string) {
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function markdownTableCells(line: string) {
@@ -202,10 +352,30 @@ function isIncompleteWorkflowFence(text: string) {
   return language === "workflow" || hasWorkflowNodes || (!language && hasWorkflowNodeSyntax);
 }
 
+function isIncompleteMermaidFence(text: string) {
+  const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
+  const lines = source.split("\n");
+  const firstLine = lines[0] || "";
+  const fence = firstLine.match(/^(`{3,}|~{3,})\s*([A-Za-z0-9_-]+)?/);
+  if (!fence) {
+    return false;
+  }
+  const language = String(fence[2] || "").toLowerCase();
+  if (language !== "mermaid" && language !== "mmd") {
+    return false;
+  }
+  const marker = fence[1];
+  const closed = lines.slice(1).some((line) => {
+    const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+    return Boolean(close && close[1][0] === marker[0] && close[1].length >= marker.length);
+  });
+  return !closed;
+}
+
 function isStructuredLiveMarkdown(text: string) {
   const source = String(text || "").replace(/\r\n/g, "\n");
   const trimmed = source.trimStart();
-  if (isIncompleteWorkflowFence(trimmed)) {
+  if (isIncompleteWorkflowFence(trimmed) || isIncompleteMermaidFence(trimmed)) {
     return false;
   }
   if (/^(`{3,}|~{3,})\s*(html?|[A-Za-z0-9_-]+)?/i.test(trimmed)) {
@@ -235,20 +405,44 @@ function StreamingPlainText({ text, revealFrom }: { text: string; revealFrom: nu
 function StreamingMarkdownMessage({
   text,
   revealFrom,
+  complete = false,
 }: {
   text: string;
   revealFrom: number | null;
+  complete?: boolean;
 }) {
-  const { prefix, liveTail } = useMemo(() => splitStreamingMarkdown(text), [text]);
+  const { prefix, liveTail } = useMemo(() => {
+    if (complete) {
+      return { prefix: String(text || "").replace(/\r\n/g, "\n").trimEnd(), liveTail: "" };
+    }
+    return splitStreamingMarkdown(text);
+  }, [complete, text]);
+  const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
   const renderLiveTailAsMarkdown = isStructuredLiveMarkdown(liveTail);
-  const prefixRevealFrom = revealFrom !== null && revealFrom < prefix.length ? revealFrom : null;
+  let chunkCursor = 0;
   const liveTailRevealFrom = revealFrom !== null ? Math.max(0, revealFrom - prefix.length) : null;
+  const chunkOccurrences = new Map<string, number>();
 
   return (
-    <>
-      {prefix ? (
-        <MarkdownMessage text={prefix} revealFrom={prefixRevealFrom} deferIncompleteTables />
-      ) : null}
+    <div className="assistant-markdown-flow">
+      {prefixChunks.map((chunk) => {
+        const chunkStart = prefix.indexOf(chunk, chunkCursor);
+        chunkCursor = chunkStart >= 0 ? chunkStart + chunk.length : chunkCursor + chunk.length;
+        const chunkHash = stableChunkHash(chunk);
+        const chunkOccurrence = chunkOccurrences.get(chunkHash) || 0;
+        chunkOccurrences.set(chunkHash, chunkOccurrence + 1);
+        const chunkRevealFrom =
+          revealFrom !== null && chunkStart >= 0 && revealFrom >= chunkStart && revealFrom < chunkStart + chunk.length
+            ? revealFrom - chunkStart
+            : null;
+        return (
+          <StableMarkdownMessage
+            key={`${chunkHash}:${chunkOccurrence}`}
+            text={chunk}
+            revealFrom={chunkRevealFrom}
+          />
+        );
+      })}
       {liveTail && renderLiveTailAsMarkdown ? (
         <div className="stream-live-text">
           <MarkdownMessage text={liveTail} revealFrom={liveTailRevealFrom} deferIncompleteTables />
@@ -258,7 +452,7 @@ function StreamingMarkdownMessage({
           <StreamingPlainText text={liveTail} revealFrom={liveTailRevealFrom} />
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -274,7 +468,7 @@ export function StreamingAssistantMessage({
   onVisibleTextChange?: () => void;
 }) {
   const visuallyStreaming = active && !message.isComplete;
-  const { visibleText, revealFrom } = useStreamingText(
+  const { visibleText, revealFrom, revealing } = useStreamingText(
     message.text,
     visuallyStreaming,
     settings.streamStartBufferMs,
@@ -286,18 +480,18 @@ export function StreamingAssistantMessage({
   }) as CSSProperties, [settings.streamRevealDurationMs, settings.streamRevealWipePercent]);
 
   useEffect(() => {
-    if (visuallyStreaming && visibleText) {
+    if (revealing && visibleText) {
       onVisibleTextChange?.();
     }
-  }, [visuallyStreaming, onVisibleTextChange, visibleText]);
+  }, [revealing, onVisibleTextChange, visibleText]);
 
   return (
-    <div className={visuallyStreaming ? "react-streaming-text streaming-text" : undefined} style={style}>
-      {visuallyStreaming ? (
-        <StreamingMarkdownMessage text={visibleText} revealFrom={revealFrom} />
-      ) : (
-        <MarkdownMessage text={message.text} />
-      )}
+    <div className={revealing ? "react-streaming-text streaming-text" : undefined} style={style}>
+      <StreamingMarkdownMessage
+        text={revealing ? visibleText : message.text}
+        revealFrom={revealing ? revealFrom : null}
+        complete={!revealing}
+      />
     </div>
   );
 }

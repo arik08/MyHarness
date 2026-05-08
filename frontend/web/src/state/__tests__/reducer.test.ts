@@ -214,6 +214,38 @@ describe("appReducer", () => {
     ]);
   });
 
+  it("starts a fresh assistant message when a new answer streams after a completed answer", () => {
+    const completed = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "이전 답변" },
+    });
+    const streaming = appReducer(completed, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "새 답변" },
+    });
+
+    expect(streaming.messages.map((message) => [message.role, message.text, message.isComplete])).toEqual([
+      ["assistant", "이전 답변", true],
+      ["assistant", "새 답변", undefined],
+    ]);
+  });
+
+  it("treats replayed assistant transcript items as complete before later deltas arrive", () => {
+    const replayed = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "assistant", text: "리플레이된 답변" } },
+    });
+    const streaming = appReducer(replayed, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "새 스트리밍" },
+    });
+
+    expect(streaming.messages.map((message) => [message.role, message.text, message.isComplete])).toEqual([
+      ["assistant", "리플레이된 답변", true],
+      ["assistant", "새 스트리밍", undefined],
+    ]);
+  });
+
   it("ignores duplicate regular backend user transcript because the composer already rendered it", () => {
     const withOptimisticUser = appReducer(initialAppState, {
       type: "append_message",

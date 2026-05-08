@@ -1961,6 +1961,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             kind: item.kind || undefined,
             toolName: item.tool_name || undefined,
             isError: item.is_error === true,
+            isComplete: item.role === "assistant" ? true : undefined,
           }),
         };
       }
@@ -1968,7 +1969,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (event.type === "assistant_delta") {
         const value = String(event.message ?? event.value ?? "");
         const last = state.messages[state.messages.length - 1];
-        const shouldAppendToLastAssistant = last?.role === "assistant" && last.isComplete !== false;
+        const shouldAppendToLastAssistant = last?.role === "assistant" && last.isComplete === undefined;
         const characterCount = (shouldAppendToLastAssistant ? last.text.length : 0) + value.length;
         const workflowEvents = startFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), characterCount);
         if (shouldAppendToLastAssistant) {

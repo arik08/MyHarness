@@ -268,7 +268,7 @@ function isReferenceWrapperSuffix(value: string) {
 
 function isReferenceWrapperLine(value: string) {
   const trimmed = String(value || "").trim();
-  return Boolean(trimmed) && /^["'`]+$/.test(trimmed);
+  return Boolean(trimmed) && /^["'`]{1,2}$/.test(trimmed);
 }
 
 function expandArtifactReferenceRange(value: string, start: number, end: number) {
@@ -285,7 +285,7 @@ function expandArtifactReferenceRange(value: string, start: number, end: number)
     };
   }
 
-  if (before.trim() || after.trim()) {
+  if ((before.trim() || after.trim()) && !(isReferenceWrapperSuffix(before) && isReferenceWrapperSuffix(after))) {
     return { start, end };
   }
 
@@ -295,13 +295,13 @@ function expandArtifactReferenceRange(value: string, start: number, end: number)
       return { start, end };
     }
     const labelLine = previousLineRange(value, previousLine.lineStart);
-    if (!labelLine || !isArtifactLabelPrefix(value.slice(labelLine.lineStart, labelLine.lineEnd))) {
-      return { start, end };
-    }
     const nextLine = nextLineRange(value, lineEnd);
     const hasClosingWrapperLine = nextLine ? isReferenceWrapperLine(value.slice(nextLine.lineStart, nextLine.lineEnd)) : false;
+    const labelLineLooksLikeArtifactPrefix = labelLine
+      ? isArtifactLabelPrefix(value.slice(labelLine.lineStart, labelLine.lineEnd))
+      : false;
     return {
-      start: labelLine.lineStart,
+      start: labelLineLooksLikeArtifactPrefix && labelLine ? labelLine.lineStart : previousLine.lineStart,
       end: hasClosingWrapperLine && nextLine
         ? (nextLine.nextNewline >= 0 ? nextLine.nextNewline + 1 : nextLine.lineEnd)
         : (nextNewline >= 0 ? nextNewline + 1 : lineEnd),

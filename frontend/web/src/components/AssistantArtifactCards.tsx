@@ -24,6 +24,27 @@ function artifactKey(path: string) {
   return normalizeArtifactPath(path).toLowerCase();
 }
 
+function hasMermaidFence(text: string) {
+  return /^ {0,3}(`{3,}|~{3,})\s*(?:mermaid|mmd)\b/im.test(String(text || ""));
+}
+
+function removeArtifactReferenceRanges(text: string, references: Array<{ start: number; end: number }>) {
+  if (!references.length) {
+    return text;
+  }
+  let cursor = 0;
+  const output: string[] = [];
+  for (const reference of [...references].sort((left, right) => left.start - right.start)) {
+    if (reference.start < cursor) {
+      continue;
+    }
+    output.push(text.slice(cursor, reference.start));
+    cursor = reference.end;
+  }
+  output.push(text.slice(cursor));
+  return output.join("").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function useMessageArtifacts(message: ChatMessage) {
   const { state, dispatch } = useAppState();
   const [artifacts, setArtifacts] = useState<ResolvedArtifact[]>([]);
@@ -175,21 +196,26 @@ export function AssistantArtifactContent({
   active: boolean;
   onVisibleTextChange?: () => void;
 }) {
-  const { artifactBySourcePath, loadingPath, openArtifact } = useMessageArtifacts(message);
-  const parts = useMemo(() => {
+  const { artifactBySourcePath, artifacts, loadingPath, openArtifact } = useMessageArtifacts(message);
+  const resolvedReferences = useMemo(() => {
     if (!message.isComplete || !artifactBySourcePath.size) {
       return [];
     }
-    const references = collectArtifactReferences(message.text)
+    return collectArtifactReferences(message.text)
       .map((reference) => ({
         reference,
         artifact: artifactBySourcePath.get(artifactKey(reference.path)),
       }))
       .filter((item): item is { reference: ReturnType<typeof collectArtifactReferences>[number]; artifact: ResolvedArtifact } => Boolean(item.artifact))
       .sort((left, right) => left.reference.start - right.reference.start);
+  }, [artifactBySourcePath, message.isComplete, message.text]);
+  const parts = useMemo(() => {
+    if (!resolvedReferences.length || hasMermaidFence(message.text)) {
+      return [];
+    }
     const nextParts: Array<{ type: "markdown"; text: string } | { type: "artifact"; artifact: ArtifactSummary }> = [];
     let cursor = 0;
-    for (const { reference, artifact } of references) {
+    for (const { reference, artifact } of resolvedReferences) {
       if (reference.start < cursor) {
         continue;
       }
@@ -205,16 +231,30 @@ export function AssistantArtifactContent({
       nextParts.push({ type: "markdown", text: after });
     }
     return nextParts;
-  }, [artifactBySourcePath, message.isComplete, message.text]);
+  }, [message.text, resolvedReferences]);
+  const mermaidArtifactText = useMemo(() => (
+    message.isComplete && resolvedReferences.length && hasMermaidFence(message.text)
+      ? removeArtifactReferenceRanges(message.text, resolvedReferences.map((item) => item.reference))
+      : message.text
+  ), [message.isComplete, message.text, resolvedReferences]);
 
   if (!parts.length) {
     return (
-      <StreamingAssistantMessage
-        message={message}
-        settings={settings}
-        active={active}
-        onVisibleTextChange={onVisibleTextChange}
-      />
+      <div className={resolvedReferences.length && hasMermaidFence(message.text) ? "assistant-artifact-content" : undefined}>
+        <StreamingAssistantMessage
+          message={mermaidArtifactText === message.text ? message : { ...message, text: mermaidArtifactText }}
+          settings={settings}
+          active={active}
+          onVisibleTextChange={onVisibleTextChange}
+        />
+        {resolvedReferences.length && hasMermaidFence(message.text) ? (
+          <div className="artifact-cards" aria-label="답변 산출물">
+            {artifacts.map((artifact) => (
+              <ArtifactCard key={artifact.path} artifact={artifact} loadingPath={loadingPath} onOpen={(nextArtifact) => void openArtifact(nextArtifact)} />
+            ))}
+          </div>
+        ) : null}
+      </div>
     );
   }
 

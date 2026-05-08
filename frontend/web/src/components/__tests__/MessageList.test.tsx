@@ -9,6 +9,15 @@ import { messageBottomFollowEvent } from "../../hooks/useMessageAutoFollow";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async (id: string, source: string) => ({
+      svg: `<svg data-render-id="${id}" role="img"><text>${source.includes("Ready") ? "Ready" : "chart"}</text></svg>`,
+    })),
+  },
+}));
+
 function HistoryRestoreProbe() {
   const { dispatch } = useAppState();
   return (
@@ -1831,6 +1840,133 @@ describe("MessageList", () => {
     expect(assistantContent).not.toContain("`");
   });
 
+  it("removes standalone backtick wrapper lines around root artifact cards", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact/resolve?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            path: "포스코_자금그룹_채권업무_프로세스_보고서.html",
+            name: "포스코_자금그룹_채권업무_프로세스_보고서.html",
+            kind: "html",
+            size: 15_462,
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "완료했습니다. HTML 보고서를 아래 경로에 작성했습니다.\n`\n포스코_자금그룹_채권업무_프로세스_보고서.html\n`",
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const card = await screen.findByRole("button", { name: "포스코_자금그룹_채권업무_프로세스_보고서.html 미리보기 열기" });
+    expect(card.closest(".assistant-artifact-inline")).toBeTruthy();
+    const assistantContent = document.querySelector(".assistant-artifact-content")?.textContent || "";
+    expect(assistantContent).toContain("완료했습니다. HTML 보고서를 아래 경로에 작성했습니다.");
+    expect(assistantContent).toContain("포스코_자금그룹_채권업무_프로세스_보고서.html");
+    expect(assistantContent).not.toContain("`");
+  });
+
+  it("keeps an early completed mermaid chart mounted after artifact cards resolve", async () => {
+    const artifactFetch = { resolve: null as ((value: Response) => void) | null };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact/resolve?")) {
+        return await new Promise<Response>((resolve) => {
+          artifactFetch.resolve = resolve;
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const firstMermaid = [
+      "```mermaid",
+      "flowchart LR",
+      "  Start --> Ready",
+      "```",
+    ].join("\n");
+    const secondMermaid = [
+      "```mermaid",
+      "sequenceDiagram",
+      "  User->>Agent: Later",
+      "```",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: [
+                "완료 결과입니다.",
+                "",
+                firstMermaid,
+                "",
+                "산출물:",
+                "`outputs/report.html`",
+                "",
+                secondMermaid,
+              ].join("\n"),
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const firstChart = await waitFor(() => {
+      const node = document.querySelector(".mermaid-chart");
+      expect(node?.querySelector(":scope > svg")).toBeTruthy();
+      return node;
+    });
+    const firstSvg = firstChart?.querySelector(":scope > svg");
+    const resolveFetch = artifactFetch.resolve;
+    expect(resolveFetch).toBeTruthy();
+
+    resolveFetch!({
+      ok: true,
+      json: async () => ({
+        path: "outputs/report.html",
+        name: "report.html",
+        kind: "html",
+        size: 1024,
+      }),
+    } as Response);
+
+    const card = await screen.findByRole("button", { name: "report.html 미리보기 열기" });
+    expect(card.closest(".artifact-cards")).toBeTruthy();
+    expect(document.querySelectorAll(".mermaid-chart > svg")).toHaveLength(2);
+    expect(document.querySelector(".mermaid-chart")).toBe(firstChart);
+    expect(document.querySelector(".mermaid-chart > svg")).toBe(firstSvg);
+    expect(document.body.textContent || "").not.toContain("outputs/report.html");
+    expect(document.body.textContent || "").not.toContain("`");
+  });
+
   it("renders shell shortcut input and output as one terminal block", () => {
     render(
       <AppStateProvider
@@ -1985,6 +2121,27 @@ describe("MessageList", () => {
     expect(document.body.textContent || "").toContain("스트리밍 답변입니다.");
   });
 
+  it("keeps a completed assistant answer visible while a new answer streams below it", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          messages: [
+            { id: "assistant-1", role: "assistant", text: "이전 답변입니다.", isComplete: true },
+            { id: "assistant-2", role: "assistant", text: "새 답변 작성 중입니다." },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.body.textContent || "").toContain("이전 답변입니다.");
+    expect(document.body.textContent || "").toContain("새 답변 작성 중입니다.");
+    expect(document.querySelectorAll("article.message.assistant")).toHaveLength(2);
+  });
+
   it("renders stable streaming markdown while updating the live tail in place", () => {
     vi.useFakeTimers();
     render(
@@ -2010,15 +2167,20 @@ describe("MessageList", () => {
     });
 
     const firstParagraph = document.querySelector(".stream-live-text p");
-    expect(firstParagraph?.textContent).toBe("스트리밍 답변");
-    expect(document.querySelector(".stream-reveal-sentence")?.textContent).toBe("리밍 답변");
+    expect(firstParagraph?.textContent).toBe("스트");
 
     act(() => {
-      vi.advanceTimersByTime(80);
+      vi.advanceTimersByTime(16);
     });
+    const firstFrameText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(firstFrameText.startsWith("스트")).toBe(true);
+    expect(firstFrameText.length).toBeGreaterThan("스트".length);
+    expect(firstFrameText).not.toBe("스트리밍 답변입니다.");
 
+    act(() => {
+      vi.advanceTimersByTime(160);
+    });
     expect(document.body.textContent || "").toContain("스트리밍 답변입니다.");
-    expect(document.querySelector(".stream-reveal-sentence")?.textContent).toBe("입니다.");
   });
 
   it("uses the reveal duration setting to pace horizontal streaming updates", () => {
@@ -2048,17 +2210,66 @@ describe("MessageList", () => {
     act(() => {
       vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs);
     });
-    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변");
-
-    act(() => {
-      vi.advanceTimersByTime(80);
-    });
-    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변");
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트");
 
     act(() => {
       vi.advanceTimersByTime(16);
     });
+    const firstFrameText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(firstFrameText.startsWith("스트")).toBe(true);
+    expect(firstFrameText.length).toBeGreaterThan("스트".length);
+    expect(firstFrameText).not.toBe("스트리밍 답변입니다.");
+
+    act(() => {
+      vi.advanceTimersByTime(160);
+    });
     expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변입니다.");
+  });
+
+  it("continues revealing the completion tail instead of snapping to the final answer", () => {
+    vi.useFakeTimers();
+    const settings = {
+      ...initialAppState.appSettings,
+      streamStartBufferMs: 0,
+      streamRevealDurationMs: 600,
+    };
+    const initialText = "Alpha beta";
+    const finalText = "Alpha beta gamma delta epsilon zeta";
+    const { rerender } = render(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: initialText }}
+        settings={settings}
+        active
+      />,
+    );
+
+    expect(document.body.textContent || "").toContain(initialText);
+
+    rerender(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: finalText, isComplete: true }}
+        settings={settings}
+        active={false}
+      />,
+    );
+
+    expect(document.body.textContent || "").toContain(initialText);
+    expect(document.body.textContent || "").not.toContain(finalText);
+    expect(document.querySelector(".react-streaming-text")).toBeTruthy();
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    const firstFrameText = document.body.textContent || "";
+    expect(firstFrameText.length).toBeGreaterThan(initialText.length);
+    expect(firstFrameText).not.toContain(finalText);
+
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+
+    expect(document.body.textContent || "").toContain(finalText);
+    expect(document.querySelector(".react-streaming-text")).toBeNull();
   });
 
   it("applies the follow lead setting while streaming", () => {
@@ -2209,6 +2420,78 @@ describe("MessageList", () => {
     expect(document.querySelector(".markdown-pending-table")).toBeTruthy();
     expect(document.querySelector(".markdown-body table")).toBeNull();
     expect(document.body.textContent || "").toContain("| 항목 | 값 |");
+  });
+
+  it("keeps an already rendered streaming table mounted while later content streams", () => {
+    vi.useFakeTimers();
+    const tableMarkdown = [
+      "| 항목 | 값 |",
+      "| --- | --- |",
+      "| A | 1 |",
+      "",
+      "",
+    ].join("\n");
+    const { rerender } = render(
+      <StreamingAssistantMessage
+        active
+        settings={{ ...initialAppState.appSettings, streamStartBufferMs: 0, streamRevealDurationMs: 0 }}
+        message={{ id: "assistant-1", role: "assistant", text: tableMarkdown }}
+      />,
+    );
+
+    const table = document.querySelector(".markdown-body table");
+    expect(table).toBeTruthy();
+
+    rerender(
+      <StreamingAssistantMessage
+        active
+        settings={{ ...initialAppState.appSettings, streamStartBufferMs: 0, streamRevealDurationMs: 0 }}
+        message={{ id: "assistant-1", role: "assistant", text: `${tableMarkdown}\n다음 문장 작성 중` }}
+      />,
+    );
+
+    const flow = document.querySelector(".assistant-markdown-flow");
+    expect(flow).toBeTruthy();
+    expect(flow?.contains(table)).toBe(true);
+    expect(document.querySelector(".markdown-body table")).toBe(table);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(document.querySelector(".markdown-body table")).toBe(table);
+    expect(document.body.textContent || "").toContain("다음 문장 작성 중");
+  });
+
+  it("keeps a rendered streaming table mounted when the answer completes", () => {
+    const tableMarkdown = [
+      "| 항목 | 값 |",
+      "| --- | --- |",
+      "| A | 1 |",
+      "",
+      "완료 문장",
+    ].join("\n");
+    const { rerender } = render(
+      <StreamingAssistantMessage
+        active
+        settings={{ ...initialAppState.appSettings, streamStartBufferMs: 0, streamRevealDurationMs: 0 }}
+        message={{ id: "assistant-1", role: "assistant", text: tableMarkdown }}
+      />,
+    );
+
+    const table = document.querySelector(".markdown-body table");
+    expect(table).toBeTruthy();
+
+    rerender(
+      <StreamingAssistantMessage
+        active={false}
+        settings={{ ...initialAppState.appSettings, streamStartBufferMs: 0, streamRevealDurationMs: 0 }}
+        message={{ id: "assistant-1", role: "assistant", text: tableMarkdown, isComplete: true }}
+      />,
+    );
+
+    expect(document.querySelector(".markdown-body table")).toBe(table);
+    expect(document.body.textContent || "").toContain("완료 문장");
   });
 
   it("renders a completed answer immediately even when it finished before the buffer flushed", () => {
