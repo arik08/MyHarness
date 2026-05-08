@@ -84,7 +84,7 @@ def _format_skills_management_text(skills) -> str:
         return "사용 가능한 스킬:\n(사용자 스킬이 없습니다)"
     lines = ["사용 가능한 스킬:"]
     for skill in skills:
-        status = "활성" if skill.enabled else "비활성"
+        status = "enabled" if skill.enabled else "disabled"
         source = f" [{skill.source}]"
         lines.append(f"- {skill.name}{source} [{status}]: {display_skill_description(skill)}")
     return "\n".join(lines)
@@ -97,7 +97,7 @@ def _format_mcp_management_text(settings, plugins, cwd: str | Path) -> str:
     disabled = set(settings.disabled_mcp_servers or set())
     lines = ["MCP 서버:"]
     for name, config in sorted(servers.items()):
-        status = "비활성" if name in disabled else "활성"
+        status = "disabled" if name in disabled else "enabled"
         transport = getattr(config, "type", "알 수 없음")
         lines.append(f"- {name} [{status}] ({transport})")
     return "\n".join(lines)
@@ -108,7 +108,7 @@ def _format_plugins_management_text(plugins) -> str:
         return "플러그인:\n(발견된 플러그인이 없습니다)"
     lines = ["플러그인:"]
     for plugin in sorted(plugins, key=lambda item: item.manifest.name):
-        status = "활성" if plugin.enabled else "비활성"
+        status = "enabled" if plugin.enabled else "disabled"
         description = f": {plugin.manifest.description}" if plugin.manifest.description else ""
         lines.append(f"- {plugin.manifest.name} [{status}]{description}")
     return "\n".join(lines)
@@ -365,7 +365,12 @@ def create_default_command_registry(
 
     async def _help_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
-        plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+        plugins = load_plugins(
+            settings,
+            context.cwd,
+            extra_roots=context.extra_plugin_roots,
+            include_program_plugins=True,
+        )
         skill_registry = load_skill_registry(
             context.cwd,
             extra_skill_dirs=context.extra_skill_dirs,
@@ -841,7 +846,12 @@ def create_default_command_registry(
 
     async def _reload_plugins_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
-        plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+        plugins = load_plugins(
+            settings,
+            context.cwd,
+            extra_roots=context.extra_plugin_roots,
+            include_program_plugins=True,
+        )
         skill_registry = load_skill_registry(
             context.cwd,
             extra_skill_dirs=context.extra_skill_dirs,
@@ -1244,7 +1254,12 @@ def create_default_command_registry(
     async def _mcp_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         tokens = args.split()
-        plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+        plugins = load_plugins(
+            settings,
+            context.cwd,
+            extra_roots=context.extra_plugin_roots,
+            include_program_plugins=True,
+        )
         servers = load_mcp_server_configs(settings, plugins, cwd=context.cwd, include_disabled=True)
         if not tokens or tokens[0] == "list":
             return CommandResult(message=_format_mcp_management_text(settings, plugins, context.cwd))
@@ -1320,7 +1335,12 @@ def create_default_command_registry(
         settings = load_settings()
         tokens = args.split()
         if not tokens or tokens[0] == "list":
-            plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+            plugins = load_plugins(
+                settings,
+                context.cwd,
+                extra_roots=context.extra_plugin_roots,
+                include_program_plugins=True,
+            )
             return CommandResult(message=_format_plugins_management_text(plugins))
         if tokens[0] == "enable" and len(tokens) == 2:
             settings.enabled_plugins[tokens[1]] = True
@@ -1331,7 +1351,12 @@ def create_default_command_registry(
             save_settings(settings)
             return CommandResult(message=f"Disabled plugin '{tokens[1]}'. Restart session to reload.")
         if tokens[0] == "toggle" and len(tokens) == 2:
-            plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+            plugins = load_plugins(
+                settings,
+                context.cwd,
+                extra_roots=context.extra_plugin_roots,
+                include_program_plugins=True,
+            )
             known_plugins = {plugin.manifest.name: plugin for plugin in plugins}
             current = known_plugins.get(tokens[1])
             if current is None:
@@ -1349,7 +1374,12 @@ def create_default_command_registry(
             if uninstall_plugin(tokens[1]):
                 return CommandResult(message=f"Uninstalled plugin '{tokens[1]}'")
             return CommandResult(message=f"Plugin '{tokens[1]}' not found")
-        plugins = load_plugins(settings, context.cwd, extra_roots=context.extra_plugin_roots)
+        plugins = load_plugins(
+            settings,
+            context.cwd,
+            extra_roots=context.extra_plugin_roots,
+            include_program_plugins=True,
+        )
         if plugins:
             return CommandResult(message=_format_plugins_management_text(plugins))
         return CommandResult(message="Usage: /plugin [list|enable NAME|disable NAME|toggle NAME|install PATH|uninstall NAME]")

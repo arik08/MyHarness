@@ -68,6 +68,17 @@ class TestSettings:
         assert s.model != updated.model
         assert s is not updated
 
+    def test_merge_cli_overrides_keeps_selected_profile_provider_with_model(self):
+        s = Settings()
+        updated = s.merge_cli_overrides(active_profile="codex", model="gpt-5.4")
+
+        profile_name, profile = updated.resolve_profile()
+        assert profile_name == "codex"
+        assert profile.provider == "openai_codex"
+        assert updated.provider == "openai_codex"
+        assert updated.model == "gpt-5.4"
+        assert profile.last_model == "gpt-5.4"
+
     def test_resolve_auth_prefers_env_over_flat_api_key_for_openai(self, monkeypatch):
         """When api_format=openai, resolve_auth() should use OPENAI_API_KEY
         from the environment rather than the flat api_key field which may

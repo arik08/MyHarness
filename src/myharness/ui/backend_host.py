@@ -60,7 +60,7 @@ from myharness.ui.async_agents import (
     wait_for_completed_async_agent_entries,
 )
 from myharness.ui.protocol import BackendEvent, FrontendRequest, PluginSnapshot, SkillSnapshot, TranscriptItem
-from myharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
+from myharness.ui.runtime import build_runtime, close_runtime, handle_line, refresh_runtime_client, start_runtime
 from myharness.services.session_backend import SessionBackend
 
 log = logging.getLogger(__name__)
@@ -675,7 +675,8 @@ class ReactBackendHost:
             name = str(getattr(item, "name", "") or "")
             if media_type.startswith("image/") and data:
                 image_blocks.append(ImageBlock(media_type=media_type, data=data, source_path=name))
-        effective_line = self._line_with_forced_skill(line) if not image_blocks else line
+        is_shell_shortcut = not image_blocks and line.lstrip().startswith("!")
+        effective_line = line if image_blocks or is_shell_shortcut else self._line_with_forced_skill(line)
         effective_prompt: str | ConversationMessage = effective_line
         if image_blocks:
             content = []
@@ -700,7 +701,7 @@ class ReactBackendHost:
             await self._emit(
                 BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=transcript_text))
             )
-        if not image_blocks and isinstance(effective_prompt, str) and not is_internal_task_notification:
+        if not image_blocks and not is_shell_shortcut and isinstance(effective_prompt, str) and not is_internal_task_notification:
             swarm_hint = _swarm_delegation_hint_for_prompt(effective_line)
             if swarm_hint:
                 await self._steering_queue.put(format_internal_steering_update(swarm_hint))
@@ -1248,6 +1249,9 @@ class ReactBackendHost:
         if command == "resume":
             await self._restore_history_snapshot(selected)
             return True
+        if command in {"provider", "model", "effort"}:
+            await self._apply_runtime_choice(command, selected)
+            return True
         line = self._build_select_command_line(command, selected)
         if line is None:
             await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
@@ -1282,6 +1286,77 @@ class ReactBackendHost:
         if command == "model":
             return f"/model {value}"
         return None
+
+    async def _apply_runtime_choice(self, command: str, selected: str) -> None:
+        assert self._bundle is not None
+        if not selected:
+            await self._emit(BackendEvent(type="error", message=f"Missing {command} value"))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        settings = self._bundle.current_settings()
+        active_profile_name, active_profile = settings.resolve_profile()
+        message = ""
+        refresh_client = False
+
+        if command == "provider":
+            profiles = AuthManager(settings).list_profiles()
+            if selected not in profiles:
+                await self._emit(BackendEvent(type="error", message=f"Unknown provider profile: {selected}"))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            self._bundle.settings_overrides["active_profile"] = selected
+            self._bundle.settings_overrides.pop("model", None)
+            profile = profiles[selected]
+            message = f"Switched provider profile to {selected} ({profile.label})."
+            refresh_client = True
+        elif command == "model":
+            if active_profile.allowed_models and selected.lower() != "default" and selected not in active_profile.allowed_models:
+                allowed = ", ".join(active_profile.allowed_models)
+                await self._emit(
+                    BackendEvent(
+                        type="error",
+                        message=f"Model '{selected}' is not allowed for profile '{active_profile_name}'. Allowed models: {allowed}",
+                    )
+                )
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            if selected.lower() == "default":
+                self._bundle.settings_overrides.pop("model", None)
+                message = "Model reset to default."
+            else:
+                self._bundle.settings_overrides["model"] = selected
+                message = f"Model set to {selected}."
+            refresh_client = True
+        else:
+            if selected not in {"auto", "none", "low", "medium", "high", "xhigh", "max"}:
+                await self._emit(BackendEvent(type="error", message="Usage: /effort [show|auto|low|medium|high|xhigh|max]"))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            stored_value = "none" if selected == "auto" else selected
+            self._bundle.settings_overrides["effort"] = stored_value
+            message = f"Reasoning effort set to {stored_value}."
+
+        if refresh_client:
+            refresh_runtime_client(self._bundle)
+        updated = self._bundle.current_settings()
+        self._bundle.engine.set_reasoning_effort(updated.effort)
+        self._bundle.engine.set_system_prompt(
+            build_runtime_system_prompt(
+                updated,
+                cwd=self._bundle.cwd,
+                latest_user_prompt=None,
+                extra_skill_dirs=self._bundle.extra_skill_dirs,
+                extra_plugin_roots=self._bundle.extra_plugin_roots,
+            )
+        )
+        if not refresh_client:
+            self._bundle.app_state.set(effort=updated.effort)
+        await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=f"/{command}")))
+        if command == "provider":
+            await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=message)))
+        await self._emit(self._status_snapshot())
+        await self._emit(BackendEvent(type="line_complete", quiet=command in {"model", "effort"}))
 
     async def _restore_history_snapshot(self, session_id: str) -> None:
         assert self._bundle is not None
@@ -2054,7 +2129,7 @@ class ReactBackendHost:
                 )
             return
 
-        if event.type in {"tool_started", "tool_progress", "tool_completed"}:
+        if event.type in {"tool_input_delta", "tool_started", "tool_progress", "tool_completed"}:
             payload = {
                 "type": event.type,
                 "tool_name": event.tool_name or "",
@@ -2063,6 +2138,20 @@ class ReactBackendHost:
                 payload["tool_call_id"] = event.tool_call_id
             if event.tool_call_index is not None:
                 payload["tool_call_index"] = event.tool_call_index
+            if event.type == "tool_input_delta":
+                payload["arguments_delta"] = event.arguments_delta or ""
+                previous = self._history_events[-1] if self._history_events else None
+                if (
+                    previous
+                    and previous.get("type") == "tool_input_delta"
+                    and previous.get("tool_name") == payload["tool_name"]
+                    and previous.get("tool_call_id") == payload.get("tool_call_id")
+                    and previous.get("tool_call_index") == payload.get("tool_call_index")
+                ):
+                    previous["arguments_delta"] = f"{previous.get('arguments_delta') or ''}{payload['arguments_delta']}"
+                else:
+                    self._append_history_event(payload)
+                return
             if event.tool_input:
                 payload["tool_input"] = event.tool_input
             if event.type == "tool_progress" and event.message:
@@ -2071,6 +2160,22 @@ class ReactBackendHost:
                 payload["output"] = event.output or ""
                 payload["is_error"] = bool(event.is_error)
             self._append_history_event(payload)
+            return
+
+        if event.type == "swarm_status":
+            teammates = event.swarm_teammates if isinstance(event.swarm_teammates, list) else []
+            notifications = event.swarm_notifications if isinstance(event.swarm_notifications, list) else []
+            if not teammates and not notifications:
+                return
+            payload = {
+                "type": "swarm_status",
+                "swarm_teammates": teammates,
+                "swarm_notifications": notifications,
+            }
+            if self._history_events and self._history_events[-1].get("type") == "swarm_status":
+                self._history_events[-1] = payload
+            else:
+                self._append_history_event(payload)
 
     async def _emit(self, event: BackendEvent) -> None:
         log.debug("emit event: type=%s tool=%s", event.type, getattr(event, "tool_name", None))

@@ -803,6 +803,17 @@ class Settings(BaseModel):
         # Strip ANSI escape sequences from model name if present
         if "model" in updates and isinstance(updates["model"], str):
             updates["model"] = strip_ansi_escape_sequences(updates["model"])
+        profile_model_override = False
+        if "active_profile" in updates and "model" in updates:
+            profile_name = str(updates["active_profile"] or "").strip()
+            model_name = str(updates["model"] or "").strip()
+            profiles = self.merged_profiles()
+            profile = profiles.get(profile_name)
+            if profile is not None and model_name:
+                profiles[profile_name] = profile.model_copy(update={"last_model": model_name})
+                updates["profiles"] = profiles
+                updates.pop("model", None)
+                profile_model_override = True
         if "api_format" in updates and "provider" not in updates and "active_profile" not in updates:
             api_format = str(updates["api_format"])
             if api_format == "openai":
@@ -818,6 +829,8 @@ class Settings(BaseModel):
         merged = self.model_copy(update=updates)
         if not updates:
             return merged
+        if profile_model_override:
+            return merged.materialize_active_profile()
         profile_keys = {
             "model",
             "base_url",

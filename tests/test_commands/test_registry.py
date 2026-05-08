@@ -346,7 +346,7 @@ async def test_memory_show_reads_normal_entries_with_md_fallback(tmp_path: Path,
 
 
 @pytest.mark.asyncio
-async def test_model_command_persists(tmp_path: Path, monkeypatch):
+async def test_model_command_rejects_disallowed_profile_model(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
     command, args = registry.lookup("/model opus")
@@ -354,9 +354,10 @@ async def test_model_command_persists(tmp_path: Path, monkeypatch):
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
+    assert "not allowed" in result.message
     assert "opus" in result.message
-    assert load_settings().resolve_profile()[1].last_model == "opus"
-    assert load_settings().model == "claude-opus-4-6"
+    assert load_settings().resolve_profile()[1].last_model is None
+    assert load_settings().model == "gpt-5.5"
 
 
 @pytest.mark.asyncio

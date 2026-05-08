@@ -32,6 +32,7 @@ function Probe() {
 describe("useBackendSession", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     sessionStorage.clear();
     vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [] });
     vi.mocked(startSession).mockResolvedValue({ sessionId: "new-session" });
@@ -114,5 +115,46 @@ describe("useBackendSession", () => {
     await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("new-session"));
     expect(listLiveSessions).toHaveBeenCalledWith({ clientId: "client-1" });
     expect(startSession).toHaveBeenCalledWith({ clientId: "client-1" });
+  });
+
+  it("passes client runtime preferences into a new backend session", async () => {
+    localStorage.setItem("myharness:runtimePreferences", JSON.stringify({
+      activeProfile: "codex",
+      model: "gpt-5.4",
+      effort: "high",
+    }));
+
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}>
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("new-session"));
+    expect(startSession).toHaveBeenCalledWith({
+      clientId: "client-1",
+      activeProfile: "codex",
+      model: "gpt-5.4",
+      effort: "high",
+    });
+  });
+
+  it("does not share a pending backend start across different clients", async () => {
+    vi.mocked(startSession).mockReturnValue(new Promise(() => {}));
+
+    render(
+      <>
+        <AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}>
+          <Probe />
+        </AppStateProvider>
+        <AppStateProvider initialState={{ ...initialAppState, clientId: "client-2" }}>
+          <Probe />
+        </AppStateProvider>
+      </>,
+    );
+
+    await waitFor(() => expect(startSession).toHaveBeenCalledTimes(2));
+    expect(startSession).toHaveBeenCalledWith({ clientId: "client-1" });
+    expect(startSession).toHaveBeenCalledWith({ clientId: "client-2" });
   });
 });

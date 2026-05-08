@@ -45,7 +45,12 @@ def load_skill_registry(
     if cwd is not None:
         from myharness.plugins.loader import load_plugins
 
-        for plugin in load_plugins(resolved_settings, cwd, extra_roots=extra_plugin_roots):
+        for plugin in load_plugins(
+            resolved_settings,
+            cwd,
+            extra_roots=extra_plugin_roots,
+            include_program_plugins=True,
+        ):
             if not plugin.enabled:
                 continue
             loaded.extend(plugin.skills)

@@ -347,7 +347,15 @@ describe("ArtifactPanel", () => {
     vi.mocked(readArtifact).mockResolvedValueOnce({
       kind: "html",
       assetBaseUrl: "/api/artifact/asset/outputs/",
-      content: "<!doctype html>\n<html><body><h1>Hello</h1></body></html>",
+      content: [
+        "<!doctype html>",
+        "<html><head>",
+        "<style>.hero{background-image:url('../shared/bg.jpg')}</style>",
+        "</head><body>",
+        "<h1>Hello</h1>",
+        "<img src=\"./images/chart.jpg\" alt=\"chart\">",
+        "</body></html>",
+      ].join("\n"),
     });
 
     render(
@@ -373,6 +381,8 @@ describe("ArtifactPanel", () => {
     const frame = await screen.findByTitle("report.html");
     expect(frame.classList.contains("artifact-html-frame")).toBe(true);
     expect(frame.getAttribute("srcdoc")).toContain('<base href="/api/artifact/asset/outputs/">');
+    expect(frame.getAttribute("srcdoc")).toContain('src="/api/artifact/asset/outputs/images/chart.jpg"');
+    expect(frame.getAttribute("srcdoc")).toContain("url('/api/artifact/asset/shared/bg.jpg')");
     expect(screen.queryByRole("button", { name: "목록으로" })).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "원문보기" }));

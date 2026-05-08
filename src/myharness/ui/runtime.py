@@ -102,6 +102,7 @@ class RuntimeBundle:
             self.current_settings(),
             self.cwd,
             extra_roots=self.extra_plugin_roots,
+            include_program_plugins=True,
         )
 
     def hook_summary(self) -> str:
@@ -260,7 +261,12 @@ async def build_runtime(
     settings = apply_project_preferences_to_settings(settings, cwd)
     normalized_skill_dirs = tuple(str(Path(path).expanduser().resolve()) for path in (extra_skill_dirs or ()))
     normalized_plugin_roots = tuple(str(Path(path).expanduser().resolve()) for path in (extra_plugin_roots or ()))
-    plugins = load_plugins(settings, cwd, extra_roots=normalized_plugin_roots)
+    plugins = load_plugins(
+        settings,
+        cwd,
+        extra_roots=normalized_plugin_roots,
+        include_program_plugins=True,
+    )
     if api_client:
         resolved_api_client = api_client
     else:
@@ -521,6 +527,7 @@ def sync_app_state(bundle: RuntimeBundle) -> None:
     if bundle.enforce_max_turns:
         bundle.engine.set_max_turns(settings.max_turns)
     provider = detect_provider(settings)
+    active_profile_name, active_profile = settings.resolve_profile()
     permission_mode = _active_runtime_permission_mode(bundle, settings)
     bundle.app_state.set(
         model=settings.model,
@@ -528,6 +535,8 @@ def sync_app_state(bundle: RuntimeBundle) -> None:
         theme=settings.theme,
         cwd=bundle.cwd,
         provider=provider.name,
+        active_profile=active_profile_name,
+        provider_label=active_profile.label,
         auth_status=auth_status(settings),
         base_url=settings.base_url or "",
         vim_enabled=settings.vim_mode,
@@ -590,8 +599,9 @@ async def handle_line(
         getattr(block, "type", "") == "image" for block in line.content
     )
 
-    if not has_attachments and line_text.startswith("!"):
-        await _run_shell_shortcut(bundle, line_text[1:].strip(), print_system, render_event)
+    shell_line = line_text.lstrip()
+    if not has_attachments and shell_line.startswith("!"):
+        await _run_shell_shortcut(bundle, shell_line[1:].strip(), print_system, render_event)
         sync_app_state(bundle)
         return True
 

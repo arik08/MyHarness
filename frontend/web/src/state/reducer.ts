@@ -1700,10 +1700,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         let workflowAnchorMessageId: string | null = null;
         const workflowEventsByMessageId: Record<string, WorkflowEvent[]> = {};
         const workflowDurationSecondsByMessageId: Record<string, number> = {};
+        let restoredSwarmTeammates = state.swarmTeammates;
+        let restoredSwarmNotifications = state.swarmNotifications;
+        let workflowInputBuffers: Record<string, string> = {};
         const historyEvents = (Array.isArray(historyEvent.history_events) ? historyEvent.history_events : [])
           .map((item) => (item && typeof item === "object" ? item as Record<string, unknown> : {}));
         for (const [index, record] of historyEvents.entries()) {
           const type = String(record.type || "");
+          if (type === "swarm_status") {
+            restoredSwarmTeammates = Array.isArray(record.swarm_teammates)
+              ? record.swarm_teammates.map((item, teammateIndex) => normalizeSwarmTeammate(item as SwarmTeammateSnapshot, teammateIndex))
+              : restoredSwarmTeammates;
+            restoredSwarmNotifications = Array.isArray(record.swarm_notifications)
+              ? record.swarm_notifications.map((item, notificationIndex) => normalizeSwarmNotification(item as SwarmNotificationSnapshot, notificationIndex)).slice(-20)
+              : restoredSwarmNotifications;
+            continue;
+          }
           if (type === "user") {
             if (workflowAnchorMessageId && workflowEvents.length) {
               workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
@@ -1712,6 +1724,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             messages.push(message);
             workflowAnchorMessageId = message.id;
             workflowEvents = initialWorkflowEvents();
+            workflowInputBuffers = {};
             continue;
           }
           if (type === "assistant") {
@@ -1729,7 +1742,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             const rawToolCallIndex = Number(record.tool_call_index);
             const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
             const purpose = ensurePurposeEvent(completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()), toolName);
-            workflowEvents = appendWorkflowEvent(purpose.events, {
+            workflowEvents = updateLatestWorkflowEvent(purpose.events, toolName, {
+              detail,
+              status: "running",
+              toolCallId,
+              toolCallIndex,
+              toolInput,
+            }, { toolCallId, toolCallIndex }) || appendWorkflowEvent(purpose.events, {
               toolName,
               title: workflowTitle(toolName),
               detail,
@@ -1740,6 +1759,56 @@ export function appReducer(state: AppState, action: AppAction): AppState {
               toolCallIndex,
               toolInput,
             });
+            workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
+            continue;
+          }
+          if (type === "tool_input_delta") {
+            const toolName = String(record.tool_name || "");
+            const rawToolCallIndex = Number(record.tool_call_index);
+            const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+            const delta = String(record.arguments_delta || "");
+            if (!delta) {
+              continue;
+            }
+            const deltaEvent = {
+              type: "tool_input_delta",
+              tool_name: toolName,
+              tool_call_index: toolCallIndex,
+              arguments_delta: delta,
+            } as Extract<BackendEvent, { type: "tool_input_delta" }>;
+            const key = workflowInputBufferKey(deltaEvent);
+            const current = workflowInputBuffers[key] || "";
+            const nextBuffer = current && /^\s*\{/.test(delta) && /\}\s*$/.test(current) ? delta : `${current}${delta}`;
+            workflowInputBuffers = { ...workflowInputBuffers, [key]: nextBuffer };
+            const draft = workflowDraftFromBuffer(toolName, nextBuffer);
+            if (!draft) {
+              continue;
+            }
+            const { toolName: workflowToolName, toolInput } = draft;
+            const detail = workflowDetailFromInput(toolInput) || "작성 내용 수신 중";
+            let nextEvents = updateLatestWorkflowEvent(workflowEvents, workflowToolName, {
+              detail,
+              status: "running",
+              toolCallIndex,
+              toolInput,
+            }, { toolCallIndex });
+            if (!nextEvents) {
+              const purpose = ensurePurposeEvent(
+                completePlanning(removeWorkflowEventsByRole(workflowEvents.length ? workflowEvents : initialWorkflowEvents(), "activity")),
+                workflowToolName,
+              );
+              nextEvents = appendWorkflowEvent(purpose.events, {
+                toolName: workflowToolName,
+                title: workflowTitle(workflowToolName),
+                detail,
+                status: "running",
+                level: "child",
+                groupId: purpose.groupId,
+                toolCallIndex,
+                toolInput,
+              });
+            }
+            workflowEvents = refreshPurposeEvents(nextEvents);
             continue;
           }
           if (type === "tool_completed") {
@@ -1784,6 +1853,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
               });
             }
             workflowEvents = refreshPurposeEvents(nextEvents);
+            workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
           }
         }
         if (workflowAnchorMessageId && workflowEvents.length) {
@@ -1804,6 +1874,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           workflowEvents,
           workflowDurationSeconds: workflowAnchorMessageId ? workflowDurationSecondsByMessageId[workflowAnchorMessageId] ?? null : null,
           workflowStartedAtMs: null,
+          swarmTeammates: restoredSwarmTeammates,
+          swarmNotifications: restoredSwarmNotifications,
           restoringHistory: true,
           historyReadOnly: true,
           pendingFreshChat: false,

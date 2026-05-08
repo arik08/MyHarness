@@ -5,6 +5,7 @@ import { startSession } from "../api/session";
 import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary, Attachment, CommandItem, SkillItem } from "../types/backend";
+import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { InlineQuestion } from "./InlineQuestion";
 import { TodoDock } from "./TodoDock";
 
@@ -275,6 +276,8 @@ export function Composer() {
         type: "backend_event",
         event: { type: "error", message: error instanceof Error ? error.message : String(error) },
       });
+    } finally {
+      submittingRef.current = false;
     }
   }
 
@@ -319,6 +322,7 @@ export function Composer() {
         const session = await startSession({
           clientId: state.clientId,
           cwd: state.workspacePath || undefined,
+          ...runtimePreferencesFromState(state),
         });
         targetSessionId = session.sessionId;
         dispatch({

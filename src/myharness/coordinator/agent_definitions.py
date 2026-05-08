@@ -933,7 +933,7 @@ def get_all_agent_definitions() -> list[AgentDefinition]:
         import os  # noqa: PLC0415
 
         cwd = os.getcwd()
-        for plugin in load_plugins(settings, cwd):
+        for plugin in load_plugins(settings, cwd, include_program_plugins=True):
             if not plugin.enabled:
                 continue
             for agent_def in getattr(plugin, "agents", []):

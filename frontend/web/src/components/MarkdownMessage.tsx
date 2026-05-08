@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { MouseEvent } from "react";
 import { marked } from "marked";
 import hljs from "highlight.js/lib/common";
@@ -8,6 +8,7 @@ const htmlPreviewSourceCache = new Map<string, string>();
 const mermaidSourceCache = new Map<string, string>();
 let mermaidRenderId = 0;
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
+let markdownEnhancementObserver: MutationObserver | null = null;
 
 function sanitizeRenderedHtml(html: string) {
   const template = document.createElement("template");
@@ -151,7 +152,7 @@ function enhancePromptTokens(root: HTMLElement | null) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      if (!parent || parent.closest("pre, code, .prompt-token, .code-copy")) {
+      if (!parent || parent.closest("pre, code, .prompt-token, .code-copy, .mermaid-chart, .html-render-preview, .assistant-workflow-diagram")) {
         return NodeFilter.FILTER_REJECT;
       }
       return promptTokenPattern().test(node.nodeValue || "") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
@@ -241,8 +242,8 @@ function htmlPreviewPlaceholder(id: string) {
   return `<div class="html-render-preview-placeholder" data-html-preview-id="${escapeHtml(id)}"></div>`;
 }
 
-function mermaidPreviewPlaceholder(id: string) {
-  return `<div class="mermaid-render-placeholder" data-mermaid-preview-id="${escapeHtml(id)}"></div>`;
+function mermaidPreviewPlaceholder(id: string, source: string) {
+  return `<div class="mermaid-render-placeholder" data-mermaid-preview-id="${escapeHtml(id)}" data-mermaid-source="${escapeHtml(source)}"></div>`;
 }
 
 function isMermaidFenceInfo(info: string) {
@@ -358,7 +359,7 @@ function replaceMermaidFencesWithPreviewPlaceholders(markdown: string) {
     if (closed && mermaidSource.trim()) {
       const id = `mermaid-preview-${mermaidSourceCache.size + 1}-${Math.random().toString(16).slice(2)}`;
       mermaidSourceCache.set(id, mermaidSource);
-      output.push(mermaidPreviewPlaceholder(id));
+      output.push(mermaidPreviewPlaceholder(id, mermaidSource));
       index = cursor + 1;
       continue;
     }
@@ -867,7 +868,7 @@ function replaceMermaidPreviewPlaceholders(root: HTMLElement | null) {
   }
   root.querySelectorAll<HTMLElement>("[data-mermaid-preview-id]").forEach((placeholder) => {
     const id = placeholder.dataset.mermaidPreviewId || "";
-    const source = mermaidSourceCache.get(id) || "";
+    const source = mermaidSourceCache.get(id) || placeholder.dataset.mermaidSource || "";
     if (!source.trim()) {
       placeholder.remove();
       return;
@@ -875,6 +876,63 @@ function replaceMermaidPreviewPlaceholders(root: HTMLElement | null) {
     placeholder.replaceWith(createMermaidChart(source));
     mermaidSourceCache.delete(id);
   });
+}
+
+function enhanceMarkdownRoot(root: HTMLElement | null, revealFrom: number | null) {
+  replaceMermaidPreviewPlaceholders(root);
+  replaceHtmlPreviewPlaceholders(root);
+  enhanceWorkflowDiagrams(root);
+  enhanceMermaidCharts(root);
+  enhanceHtmlPreviews(root);
+  enhanceCodeBlocks(root);
+  enhancePromptTokens(root);
+  revealRenderedText(root, revealFrom);
+}
+
+function markdownRootForNode(node: Node | null) {
+  const element = node instanceof HTMLElement ? node : node?.parentElement;
+  if (!element) {
+    return null;
+  }
+  return element.classList.contains("markdown-body")
+    ? element
+    : element.closest<HTMLElement>(".markdown-body");
+}
+
+function enhanceMarkdownRootsFromMutations(mutations: MutationRecord[]) {
+  const roots = new Set<HTMLElement>();
+  for (const mutation of mutations) {
+    const targetRoot = markdownRootForNode(mutation.target);
+    if (targetRoot) {
+      roots.add(targetRoot);
+    }
+    mutation.addedNodes.forEach((node) => {
+      const root = markdownRootForNode(node);
+      if (root) {
+        roots.add(root);
+      }
+    });
+  }
+  roots.forEach((root) => enhanceMarkdownRoot(root, null));
+}
+
+function ensureMarkdownEnhancementObserver() {
+  if (typeof document === "undefined" || typeof MutationObserver === "undefined" || markdownEnhancementObserver) {
+    return;
+  }
+  const start = () => {
+    if (!document.body || markdownEnhancementObserver) {
+      return;
+    }
+    markdownEnhancementObserver = new MutationObserver(enhanceMarkdownRootsFromMutations);
+    markdownEnhancementObserver.observe(document.body, { childList: true, subtree: true });
+    document.querySelectorAll<HTMLElement>(".markdown-body").forEach((root) => enhanceMarkdownRoot(root, null));
+  };
+  if (document.body) {
+    start();
+  } else {
+    window.addEventListener("DOMContentLoaded", start, { once: true });
+  }
 }
 
 function replaceHtmlPreviewPlaceholders(root: HTMLElement | null) {
@@ -1028,7 +1086,9 @@ function revealRenderedText(root: HTMLElement | null, revealFrom: number | null)
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      return parent?.closest(".code-copy") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      return parent?.closest(".code-copy, .mermaid-chart, .html-render-preview, .assistant-workflow-diagram")
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT;
     },
   });
   const replacements: Array<{ node: Text; chars: string[]; localStart: number }> = [];
@@ -1079,20 +1139,26 @@ export function MarkdownMessage({
     return enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered))));
   }, [deferIncompleteTables, text]);
 
+  const setRootRef = useCallback((node: HTMLDivElement | null) => {
+    ref.current = node;
+    if (!node) {
+      return;
+    }
+    ensureMarkdownEnhancementObserver();
+    enhanceMarkdownRoot(node, revealFrom);
+    window.requestAnimationFrame(() => enhanceMarkdownRoot(node, revealFrom));
+  }, [html, revealFrom]);
+
   useLayoutEffect(() => {
-    replaceMermaidPreviewPlaceholders(ref.current);
-    replaceHtmlPreviewPlaceholders(ref.current);
-    enhanceWorkflowDiagrams(ref.current);
-    enhanceMermaidCharts(ref.current);
-    enhanceHtmlPreviews(ref.current);
-    enhanceCodeBlocks(ref.current);
-    enhancePromptTokens(ref.current);
-    revealRenderedText(ref.current, revealFrom);
+    ensureMarkdownEnhancementObserver();
+    enhanceMarkdownRoot(ref.current, revealFrom);
+    const frame = window.requestAnimationFrame(() => enhanceMarkdownRoot(ref.current, revealFrom));
+    return () => window.cancelAnimationFrame(frame);
   }, [html, revealFrom]);
 
   return (
     <div
-      ref={ref}
+      ref={setRootRef}
       className="markdown-body react-markdown"
       onClick={(event) => void handleCodeCopyClick(event)}
       dangerouslySetInnerHTML={{ __html: html || "<p></p>" }}

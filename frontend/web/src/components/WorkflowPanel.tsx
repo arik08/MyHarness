@@ -178,6 +178,7 @@ function dedupeRunningWorkflowOutputEvents(events: WorkflowEvent[]) {
 }
 
 type WorkflowPreviewSource = NonNullable<ReturnType<typeof workflowPreviewSource>>;
+type WorkflowPreviewEvent = { event: WorkflowEvent; source: WorkflowPreviewSource };
 type WorkflowRow =
   | { type: "event"; event: WorkflowEvent }
   | { type: "group"; parent: WorkflowEvent; children: WorkflowEvent[] };
@@ -630,6 +631,48 @@ function useStaggeredWorkflowEvents(events: WorkflowEvent[], enabled: boolean) {
   return enabled ? visibleStaggeredWorkflowEvents(events, visibleCount) : events;
 }
 
+function workflowPreviewDedupeKey(event: WorkflowEvent, source: WorkflowPreviewSource) {
+  const pathKey = workflowOutputPathKey(source.path);
+  if (!pathKey) {
+    return "";
+  }
+  const toolKey = event.toolName.toLowerCase().includes("edit") || source.kind === "diff" ? "edit" : "write";
+  return `${toolKey}:${pathKey}`;
+}
+
+function chooseWorkflowPreviewEvent(previous: WorkflowPreviewEvent, next: WorkflowPreviewEvent) {
+  if (next.event.status !== previous.event.status) {
+    if (next.event.status !== "running") {
+      return next;
+    }
+    if (previous.event.status === "running") {
+      return next;
+    }
+    return previous;
+  }
+  return next;
+}
+
+function dedupeWorkflowOutputPreviews(items: WorkflowPreviewEvent[]) {
+  const indexesByKey = new Map<string, number>();
+  const nextItems: WorkflowPreviewEvent[] = [];
+  for (const item of items) {
+    const key = workflowPreviewDedupeKey(item.event, item.source);
+    if (!key) {
+      nextItems.push(item);
+      continue;
+    }
+    const existingIndex = indexesByKey.get(key);
+    if (existingIndex !== undefined) {
+      nextItems[existingIndex] = chooseWorkflowPreviewEvent(nextItems[existingIndex], item);
+      continue;
+    }
+    indexesByKey.set(key, nextItems.length);
+    nextItems.push(item);
+  }
+  return nextItems;
+}
+
 export function WebInvestigationSources({ sources, queries }: { sources: WebInvestigationSource[]; queries: string[] }) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
   useEffect(() => {
@@ -760,10 +803,12 @@ export function WorkflowPanel({
   }
 
   const outputPreviewEvents = useMemo(
-    () => visibleEvents
-      .map((event) => ({ event, source: isWorkflowOutputTool(event.toolName) ? workflowPreviewSource(event) : null }))
-      .filter((item): item is { event: WorkflowEvent; source: WorkflowPreviewSource } => Boolean(item.source)),
-    [visibleEvents],
+    () => dedupeWorkflowOutputPreviews(
+      events
+        .map((event) => ({ event, source: isWorkflowOutputTool(event.toolName) ? workflowPreviewSource(event) : null }))
+        .filter((item): item is WorkflowPreviewEvent => Boolean(item.source)),
+    ),
+    [events],
   );
   const rows = useMemo(() => workflowRows(visibleEvents), [visibleEvents]);
   const narrationByEventId = useMemo(() => {

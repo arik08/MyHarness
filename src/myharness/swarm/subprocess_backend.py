@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -54,19 +55,24 @@ class SubprocessBackend:
         """
         agent_id = f"{config.name}@{config.team}"
 
-        flags = build_inherited_cli_flags(
+        current_module = sys.modules.get(__name__)
+        build_flags = getattr(current_module, "build_inherited_cli_flags", build_inherited_cli_flags)
+        build_env = getattr(current_module, "build_inherited_env_vars", build_inherited_env_vars)
+        teammate_command = getattr(current_module, "get_teammate_command", get_teammate_command)
+
+        flags = build_flags(
             model=config.model,
             system_prompt=config.system_prompt,
             system_prompt_mode=config.system_prompt_mode,
             plan_mode_required=config.plan_mode_required,
         )
-        extra_env = build_inherited_env_vars()
+        extra_env = build_env()
         extra_env["MYHARNESS_PARENT_TASK_ID"] = "{task_id}"
 
         command = config.command
         prompt = config.prompt
         if command is None:
-            teammate_cmd = get_teammate_command()
+            teammate_cmd = teammate_command()
             if _is_python_executable(teammate_cmd):
                 cmd_parts = [teammate_cmd, "-m", "myharness", "--task-worker"] + flags
             else:

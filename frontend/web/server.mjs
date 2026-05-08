@@ -2954,6 +2954,14 @@ async function createBackendSession(options = {}) {
   if (options.model) {
     args.push("--model", options.model);
   }
+  const activeProfile = String(options.activeProfile || options.active_profile || "").trim();
+  if (activeProfile) {
+    args.push("--active-profile", activeProfile);
+  }
+  const effort = String(options.effort || "").trim();
+  if (effort) {
+    args.push("--effort", effort);
+  }
   if (options.systemPrompt) {
     args.push("--system-prompt", String(options.systemPrompt));
   }
@@ -3330,6 +3338,9 @@ async function handleApi(request, response, pathname) {
         clientId: oldSession?.clientId || String(body.clientId || "").trim(),
         clientAddress: oldSession?.clientAddress || clientAddress,
         cwd: body.cwd || oldSession?.workspace?.path,
+        activeProfile: body.activeProfile || body.active_profile,
+        model: body.model,
+        effort: body.effort,
         systemPrompt: body.systemPrompt,
         workspaceScope,
       };

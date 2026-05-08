@@ -1120,6 +1120,57 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-card")?.hasAttribute("open")).toBe(true);
   });
 
+  it("shows output previews immediately even when workflow steps are still staggered", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-plan",
+              toolName: "",
+              title: "작업 계획",
+              detail: "계획 중",
+              status: "done",
+              level: "parent",
+              role: "planning",
+            },
+            {
+              id: "workflow-read",
+              toolName: "read_file",
+              title: "read_file",
+              detail: "context.md",
+              status: "done",
+              level: "child",
+            },
+            {
+              id: "workflow-write",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "outputs/live.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/live.html",
+                content: "<!doctype html><html><body><h1>Live</h1></body></html>",
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("<h1>Live</h1>");
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("live.html");
+  });
+
   it("does not collapse long completed write tool content in the workflow output preview body", () => {
     const longContent = [
       "첫 줄입니다.",
@@ -1247,6 +1298,97 @@ describe("MessageList", () => {
     expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
     expect(screen.getByText("작성 중인 결과물 - tailwind_design_system_필요성_보고서.html")).toBeTruthy();
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html>");
+  });
+
+  it("renders one write preview when a stale running event follows the completed same-path event", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-done",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "outputs/live.html",
+              status: "done",
+              level: "child",
+              toolInput: {
+                path: "outputs/live.html",
+                content: "<!doctype html><h1>Done</h1>",
+              },
+            },
+            {
+              id: "workflow-stale-progress",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "파일 작업 중... outputs/live.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/live.html",
+                content: "<!doctype html><h1>Stale</h1>",
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html><h1>Done</h1>");
+  });
+
+  it("renders one write preview when a duplicate completed same-path event follows a running event", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-running",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "outputs/live.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/live.html",
+                content: "<!doctype html><h1>Running</h1>",
+              },
+            },
+            {
+              id: "workflow-done",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "Wrote outputs/live.html",
+              status: "done",
+              level: "child",
+              toolInput: {
+                path: "outputs/live.html",
+                content: "<!doctype html><h1>Done</h1>",
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html><h1>Done</h1>");
   });
 
   it("renders edit previews as colored diff rows", () => {

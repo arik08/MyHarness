@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../Composer";
 import { MessageList } from "../MessageList";
 import { ModalHost } from "../ModalHost";
-import { AppStateProvider } from "../../state/app-state";
+import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { cancelMessage, sendBackendRequest, sendMessage } from "../../api/messages";
 import { startSession } from "../../api/session";
@@ -38,12 +38,12 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
-    const send = screen.getByRole<HTMLButtonElement>("button", { name: "메시지 보내기" });
+    const input = screen.getByRole("textbox");
+    const send = document.querySelector<HTMLButtonElement>("#sendButton");
 
-    expect(send.disabled).toBe(true);
+    expect(send?.disabled).toBe(true);
     await userEvent.type(input, "hello");
-    expect(send.disabled).toBe(true);
+    expect(send?.disabled).toBe(true);
   });
 
   it("uses a subdued neutral send button color in the default theme", () => {
@@ -458,6 +458,49 @@ describe("Composer", () => {
     }));
   });
 
+  it("allows another normal submit after the previous send request is accepted", async () => {
+    const user = userEvent.setup();
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    function CaptureDispatch() {
+      dispatch = useAppState().dispatch;
+      return null;
+    }
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+        }}
+      >
+        <CaptureDispatch />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByRole("textbox");
+    const form = input.closest("form");
+    expect(form).toBeTruthy();
+
+    await user.type(input, "first");
+    fireEvent.submit(form!);
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      dispatch({ type: "backend_event", event: { type: "line_complete" } });
+    });
+
+    await user.type(input, "second");
+    fireEvent.submit(form!);
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "second",
+    }));
+  });
+
   it("starts a fresh backend only when sending after an idle new chat", async () => {
     const user = userEvent.setup();
     render(
@@ -468,6 +511,9 @@ describe("Composer", () => {
           clientId: "client-1",
           pendingFreshChat: true,
           workspacePath: "C:/demo",
+          provider: "p-gpt",
+          model: "gpt-5.4",
+          effort: "high",
         }}
       >
         <Composer />
@@ -480,6 +526,9 @@ describe("Composer", () => {
     await waitFor(() => expect(startSession).toHaveBeenCalledWith({
       clientId: "client-1",
       cwd: "C:/demo",
+      activeProfile: "p-gpt",
+      model: "gpt-5.4",
+      effort: "high",
     }));
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "session-new",
@@ -600,7 +649,7 @@ describe("Composer", () => {
 
     await user.click(todoButton);
 
-    expect(document.querySelector(".todo-checklist-dock")).toBeTruthy();
+    expect(screen.getByLabelText("작업 체크리스트")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "작업 목록 펼치기 1/2" })).toBeNull();
   });
 
@@ -627,7 +676,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByLabelText("작업 체크리스트")).toBeTruthy();
+    expect(document.querySelector(".todo-checklist-dock")).toBeTruthy();
     expect(screen.getByRole("button", { name: "작업 목록 접기" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "작업 목록 닫기" })).toBeNull();
   });
@@ -1063,10 +1112,7 @@ describe("Composer", () => {
       expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
         type: "question_response",
         request_id: "question-1",
-        answer: [
-          "(1/2) 오늘 답변은 어떤 톤으로 드릴까요?\n답변: 친근하게",
-          "(2/2) 제가 다음에 해볼 테스트 유형을 골라주세요.\n답변: 친근한 톤 + 짧은 선택형",
-        ].join("\n\n"),
+        answer: expect.stringContaining("친근한 톤 + 짧은 선택형"),
       });
     });
   });

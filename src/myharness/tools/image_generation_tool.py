@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import os
 from datetime import datetime
@@ -88,9 +89,10 @@ class ImageGenerationTool(BaseTool):
             if not allowed:
                 return ToolResult(output=f"Sandbox: {reason}", is_error=True)
 
-        api_key = _resolve_api_key()
+        current_module = importlib.import_module(__name__)
+        api_key = current_module._resolve_api_key()
         if not api_key:
-            if not _is_codex_provider_context(context):
+            if not current_module._is_codex_provider_context(context):
                 return ToolResult(
                     output=(
                         "generate_image failed: no OpenAI API key found for the active provider. "
@@ -99,9 +101,9 @@ class ImageGenerationTool(BaseTool):
                     ),
                     is_error=True,
                 )
-            return await _generate_with_codex_oauth(arguments, path, context)
+            return await current_module._generate_with_codex_oauth(arguments, path, context)
 
-        return await _generate_with_images_api(
+        return await current_module._generate_with_images_api(
             arguments,
             path,
             api_key=api_key,

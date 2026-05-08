@@ -8,6 +8,7 @@ import type { HistoryItem, Workspace } from "../types/backend";
 import type { RuntimePickerOption } from "../types/ui";
 import type { ThemeId } from "../types/ui";
 import { isLiveOnlyHistoryItem } from "../utils/history";
+import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/runtimePreferences";
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
   { id: "light", label: "Claude" },
@@ -48,6 +49,7 @@ export function Sidebar() {
         const session = await startSession({
           clientId: state.clientId,
           cwd: nextWorkspace?.path || undefined,
+          ...runtimePreferencesFromState(state),
         });
         dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
         return;
@@ -56,6 +58,7 @@ export function Sidebar() {
         sessionId: state.sessionId,
         clientId: state.clientId,
         cwd: nextWorkspace?.path || undefined,
+        ...runtimePreferencesFromState(state),
       });
       dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
     } catch (error) {
@@ -73,6 +76,7 @@ export function Sidebar() {
         const session = await startSession({
           clientId: state.clientId,
           cwd: nextWorkspace?.path || undefined,
+          ...runtimePreferencesFromState(state),
         });
         dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
         return;
@@ -81,6 +85,7 @@ export function Sidebar() {
         sessionId: state.sessionId,
         clientId: state.clientId,
         cwd: nextWorkspace?.path || undefined,
+        ...runtimePreferencesFromState(state),
       });
       dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
     } catch (error) {
@@ -154,6 +159,7 @@ export function Sidebar() {
         const session = await startSession({
           clientId: state.clientId,
           cwd: state.workspacePath || undefined,
+          ...runtimePreferencesFromState(state),
         });
         targetSessionId = session.sessionId;
         dispatch({
@@ -333,6 +339,7 @@ export function Sidebar() {
     } else {
       dispatch({ type: "select_runtime_effort", value: option.value });
     }
+    rememberRuntimeChoice(command, option);
     try {
       await sendBackendRequest(state.sessionId, state.clientId, {
         type: "apply_select_command",

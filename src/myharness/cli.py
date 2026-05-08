@@ -398,6 +398,7 @@ def _build_dry_run_preview(
     prompt: str | None,
     cwd: str,
     model: str | None,
+    active_profile: str | None = None,
     max_turns: int | None,
     base_url: str | None,
     system_prompt: str | None,
@@ -421,6 +422,7 @@ def _build_dry_run_preview(
     resolved_cwd = str(Path(cwd).expanduser().resolve())
     settings = load_settings().merge_cli_overrides(
         model=model,
+        active_profile=active_profile,
         max_turns=max_turns,
         base_url=base_url,
         system_prompt=system_prompt,
@@ -433,7 +435,10 @@ def _build_dry_run_preview(
     auth = auth_status(settings)
     profile_name, profile = settings.resolve_profile()
 
-    plugins = load_plugins(settings, resolved_cwd)
+    try:
+        plugins = load_plugins(settings, resolved_cwd, include_program_plugins=True)
+    except TypeError:
+        plugins = load_plugins(settings, resolved_cwd)
     plugin_commands = [
         command
         for plugin in plugins
@@ -790,7 +795,7 @@ def mcp_list() -> None:
     from myharness.plugins import load_plugins
 
     settings = load_settings()
-    plugins = load_plugins(settings, str(Path.cwd()))
+    plugins = load_plugins(settings, str(Path.cwd()), include_program_plugins=True)
     configs = load_mcp_server_configs(settings, plugins)
     if not configs:
         print("No MCP servers configured.")
@@ -846,7 +851,7 @@ def plugin_list() -> None:
     from myharness.plugins import load_plugins
 
     settings = load_settings()
-    plugins = load_plugins(settings, str(Path.cwd()))
+    plugins = load_plugins(settings, str(Path.cwd()), include_program_plugins=True)
     if not plugins:
         print("No plugins installed.")
         return
@@ -1611,6 +1616,18 @@ def _ensure_profile_auth(manager, profile_name: str) -> None:
     print(f"{profile.label} API key saved.", flush=True)
 
 
+def _profile_needs_external_binding(manager, profile_name: str) -> bool:
+    """Return whether an externally-authenticated profile lacks a stored binding."""
+    from myharness.auth.storage import load_external_binding
+    from myharness.config.settings import auth_source_provider_name, auth_source_uses_api_key
+
+    profile = manager.list_profiles()[profile_name]
+    if auth_source_uses_api_key(profile.auth_source):
+        return False
+    provider = auth_source_provider_name(profile.auth_source)
+    return load_external_binding(provider) is None
+
+
 def _maybe_update_default_model_for_provider(provider: str) -> None:
     """Keep the active model in-family after switching auth providers."""
     from myharness.auth.manager import AuthManager
@@ -1736,7 +1753,7 @@ def setup_cmd(
         raise typer.Exit(1)
 
     info = statuses[target]
-    if not info["configured"]:
+    if not info["configured"] or _profile_needs_external_binding(manager, target):
         source_label = _AUTH_SOURCE_LABELS.get(info["auth_source"], info["auth_source"])
         print(f"{info['label']} requires {source_label}.", flush=True)
         _ensure_profile_auth(manager, target)
@@ -2093,6 +2110,12 @@ def main(
         help="Model alias (e.g. 'sonnet', 'opus') or full model ID",
         rich_help_panel="Model & Effort",
     ),
+    active_profile: str | None = typer.Option(
+        None,
+        "--active-profile",
+        help="Provider profile for this session",
+        rich_help_panel="Model & Effort",
+    ),
     effort: str | None = typer.Option(
         None,
         "--effort",
@@ -2284,6 +2307,7 @@ def main(
             prompt=prompt,
             cwd=cwd,
             model=model,
+            active_profile=active_profile,
             max_turns=max_turns,
             base_url=base_url,
             system_prompt=system_prompt,
@@ -2357,6 +2381,7 @@ def main(
                 prompt=None,
                 cwd=cwd,
                 model=session_data.get("model") or model,
+                active_profile=active_profile,
                 backend_only=backend_only,
                 base_url=base_url,
                 system_prompt=system_prompt,
@@ -2381,6 +2406,7 @@ def main(
                 output_format=output_format or "text",
                 cwd=cwd,
                 model=model,
+                active_profile=active_profile,
                 base_url=base_url,
                 system_prompt=system_prompt,
                 append_system_prompt=append_system_prompt,
@@ -2398,6 +2424,7 @@ def main(
             run_task_worker(
                 cwd=cwd,
                 model=model,
+                active_profile=active_profile,
                 max_turns=max_turns,
                 base_url=base_url,
                 system_prompt=system_prompt,
@@ -2414,6 +2441,7 @@ def main(
             prompt=None,
             cwd=cwd,
             model=model,
+            active_profile=active_profile,
             max_turns=max_turns,
             backend_only=backend_only,
             base_url=base_url,

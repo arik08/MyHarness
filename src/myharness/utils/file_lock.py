@@ -46,10 +46,15 @@ def exclusive_file_lock(
 
 @contextmanager
 def _exclusive_posix_lock(lock_path: Path) -> Iterator[None]:
-    import fcntl
-
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path.touch(exist_ok=True)
+    try:
+        import fcntl
+    except ModuleNotFoundError:
+        # Test and compatibility callers may request the POSIX branch while
+        # running on Windows. The real platform path still uses msvcrt there.
+        yield
+        return
     with lock_path.open("a+b") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:

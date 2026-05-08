@@ -58,4 +58,24 @@ describe("MarkdownMessage Mermaid rendering", () => {
     expect(screen.getByRole("heading", { name: "처리 흐름" })).toBeTruthy();
     expect(screen.getByText("Ready")).toBeTruthy();
   });
+
+  it("keeps rendered mermaid svg intact when reveal effects rerun", async () => {
+    const text = [
+      "```mermaid",
+      "flowchart LR",
+      "  Start --> Ready",
+      "```",
+      "",
+      "Done",
+    ].join("\n");
+    const { rerender } = render(<MarkdownMessage text={text} revealFrom={null} />);
+
+    await waitFor(() => expect(document.querySelector(".mermaid-chart svg")).toBeTruthy());
+    rerender(<MarkdownMessage text={text} revealFrom={0} />);
+
+    await waitFor(() => expect(document.querySelector(".mermaid-chart svg")).toBeTruthy());
+    expect(document.querySelector(".mermaid-chart .stream-reveal-sentence")).toBeNull();
+    expect(document.querySelector(".mermaid-render-placeholder")).toBeNull();
+    expect(screen.getByText("Ready")).toBeTruthy();
+  });
 });

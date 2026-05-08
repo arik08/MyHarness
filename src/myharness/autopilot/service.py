@@ -183,7 +183,8 @@ def _parse_verification_entry(entry: object) -> _VerificationCommand:
             ),
         )
     try:
-        argv = shlex.split(raw)
+        token_source = raw.replace("\\", "/") if os.name == "nt" else raw
+        argv = shlex.split(token_source)
     except ValueError as exc:
         return _VerificationCommand(
             raw=raw,

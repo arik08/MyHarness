@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from myharness.sandbox.path_validator import validate_sandbox_path
 
@@ -51,7 +54,12 @@ def test_symlink_escape_blocked(tmp_path):
     secret.write_text("sensitive")
 
     link = cwd / "link.txt"
-    link.symlink_to(secret)
+    try:
+        link.symlink_to(secret)
+    except OSError as exc:
+        if os.name == "nt":
+            pytest.skip(f"symlink creation requires Windows developer mode or privileges: {exc}")
+        raise
 
     allowed, reason = validate_sandbox_path(link, cwd)
     assert allowed is False

@@ -133,6 +133,8 @@ class QueryEngine:
 
     def _build_coordinator_context_message(self) -> ConversationMessage | None:
         """Build a synthetic user message carrying coordinator runtime context."""
+        if "You are a **coordinator**." not in self._system_prompt:
+            return None
         context = get_coordinator_user_context()
         worker_tools_context = context.get("workerToolsContext")
         if not worker_tools_context:

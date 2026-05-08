@@ -86,9 +86,17 @@ def _find_manifest(plugin_dir: Path) -> Path | None:
     return None
 
 
-def discover_plugin_paths(cwd: str | Path, extra_roots: Iterable[str | Path] | None = None) -> list[Path]:
+def discover_plugin_paths(
+    cwd: str | Path,
+    extra_roots: Iterable[str | Path] | None = None,
+    *,
+    include_program_plugins: bool = False,
+) -> list[Path]:
     """Find plugin directories from user and project locations."""
-    roots = [*get_program_plugins_dirs(), get_user_plugins_dir(), get_project_plugins_dir(cwd)]
+    roots = []
+    if include_program_plugins:
+        roots.extend(get_program_plugins_dirs())
+    roots.extend([get_user_plugins_dir(), get_project_plugins_dir(cwd)])
     if extra_roots:
         for root in extra_roots:
             path = Path(root).expanduser().resolve()
@@ -110,9 +118,14 @@ def discover_plugin_paths_for_settings(
     settings,
     cwd: str | Path,
     extra_roots: Iterable[str | Path] | None = None,
+    *,
+    include_program_plugins: bool = False,
 ) -> list[Path]:
     """Find plugin directories that are permitted by the active settings."""
-    roots = [*get_program_plugins_dirs(), get_user_plugins_dir()]
+    roots = []
+    if include_program_plugins:
+        roots.extend(get_program_plugins_dirs())
+    roots.append(get_user_plugins_dir())
     if getattr(settings, "allow_project_plugins", False):
         roots.append(get_project_plugins_dir(cwd))
     if extra_roots:
@@ -132,7 +145,13 @@ def discover_plugin_paths_for_settings(
     return paths
 
 
-def load_plugins(settings, cwd: str | Path, extra_roots: Iterable[str | Path] | None = None) -> list[LoadedPlugin]:
+def load_plugins(
+    settings,
+    cwd: str | Path,
+    extra_roots: Iterable[str | Path] | None = None,
+    *,
+    include_program_plugins: bool = False,
+) -> list[LoadedPlugin]:
     """Load plugins from disk."""
     project_plugins_dir = get_project_plugins_dir(cwd)
     if not getattr(settings, "allow_project_plugins", False) and any(
@@ -144,7 +163,12 @@ def load_plugins(settings, cwd: str | Path, extra_roots: Iterable[str | Path] | 
             project_plugins_dir,
         )
     plugins: list[LoadedPlugin] = []
-    for path in discover_plugin_paths_for_settings(settings, cwd, extra_roots=extra_roots):
+    for path in discover_plugin_paths_for_settings(
+        settings,
+        cwd,
+        extra_roots=extra_roots,
+        include_program_plugins=include_program_plugins,
+    ):
         plugin = load_plugin(path, settings.enabled_plugins)
         if plugin is not None:
             plugins.append(plugin)

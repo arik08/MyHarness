@@ -21,7 +21,7 @@ from myharness.engine.stream_events import (
 from myharness.engine.messages import ConversationMessage, TextBlock
 from myharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
 from myharness.ui.protocol import BackendEvent
-from myharness.ui.runtime import build_runtime, close_runtime, start_runtime
+from myharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 
 
 class StaticApiClient:
@@ -153,6 +153,148 @@ def test_backend_host_records_history_events_for_snapshot_replay():
         },
         {"type": "assistant", "text": "완료했습니다.", "has_tool_uses": False},
     ]
+
+
+def test_backend_host_records_tool_input_deltas_for_snapshot_replay():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    host._record_history_event(BackendEvent(type="transcript_item", item={"role": "user", "text": "HTML"}))
+    host._record_history_event(
+        BackendEvent(
+            type="tool_input_delta",
+            tool_name="write_file",
+            tool_call_index=0,
+            arguments_delta='{"path":"outputs/live.html","content":"<h1>',
+        )
+    )
+    host._record_history_event(
+        BackendEvent(
+            type="tool_input_delta",
+            tool_name="write_file",
+            tool_call_index=0,
+            arguments_delta="Live</h1>",
+        )
+    )
+
+    assert host._history_events == [
+        {"type": "user", "text": "HTML"},
+        {
+            "type": "tool_input_delta",
+            "tool_name": "write_file",
+            "tool_call_index": 0,
+            "arguments_delta": '{"path":"outputs/live.html","content":"<h1>Live</h1>',
+        },
+    ]
+
+
+def test_backend_host_records_swarm_status_for_snapshot_replay():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    host._record_history_event(
+        BackendEvent(
+            type="swarm_status",
+            swarm_teammates=[
+                {
+                    "id": "agent-1",
+                    "name": "Research",
+                    "role": "research",
+                    "status": "running",
+                    "task": "Collect sources",
+                    "lastOutput": "2 sources checked",
+                }
+            ],
+            swarm_notifications=[{"id": "note-1", "from": "Research", "message": "Started", "timestamp": 123}],
+        )
+    )
+
+    assert host._history_events == [
+        {
+            "type": "swarm_status",
+            "swarm_teammates": [
+                {
+                    "id": "agent-1",
+                    "name": "Research",
+                    "role": "research",
+                    "status": "running",
+                    "task": "Collect sources",
+                    "lastOutput": "2 sources checked",
+                }
+            ],
+            "swarm_notifications": [{"id": "note-1", "from": "Research", "message": "Started", "timestamp": 123}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_bang_prefix_runs_shell_shortcut_without_llm(tmp_path, monkeypatch):
+    calls: dict[str, object] = {"api": 0, "commands": 0}
+    rendered: list[object] = []
+
+    class FakeInput:
+        def __init__(self, command: str) -> None:
+            self.command = command
+
+    class FakeTool:
+        name = "cmd"
+        input_model = FakeInput
+
+        async def execute(self, model, context):
+            del context
+            calls["command"] = model.command
+            return SimpleNamespace(output="ok", is_error=False)
+
+    class FakeRegistry:
+        def get(self, name: str):
+            return FakeTool() if name == "cmd" else None
+
+    class FakeCommands:
+        def lookup(self, line: str):
+            calls["commands"] = int(calls["commands"]) + 1
+            return None
+
+    async def _stream_message(_request):
+        calls["api"] = int(calls["api"]) + 1
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="should not run")]),
+            usage=UsageSnapshot(input_tokens=0, output_tokens=0),
+            stop_reason=None,
+        )
+
+    bundle = SimpleNamespace(
+        external_api_client=True,
+        tool_registry=FakeRegistry(),
+        cwd=tmp_path,
+        hook_executor=None,
+        commands=FakeCommands(),
+        api_client=SimpleNamespace(stream_message=_stream_message),
+        engine=SimpleNamespace(messages=[], tool_metadata={}),
+        app_state=SimpleNamespace(get=lambda: SimpleNamespace()),
+    )
+    monkeypatch.setattr("myharness.ui.runtime.sync_app_state", lambda _bundle: None)
+
+    async def _print_system(_message):
+        return None
+
+    async def _render_event(event):
+        rendered.append(event)
+
+    async def _clear_output():
+        return None
+
+    should_continue = await handle_line(
+        bundle,
+        "  !pip pandas",
+        print_system=_print_system,
+        render_event=_render_event,
+        clear_output=_clear_output,
+    )
+
+    assert should_continue is True
+    assert calls["command"] == "pip pandas"
+    assert calls["api"] == 0
+    assert calls["commands"] == 0
+    assert any(isinstance(event, ToolExecutionStarted) for event in rendered)
+    assert any(isinstance(event, ToolExecutionCompleted) for event in rendered)
 
 
 @pytest.mark.asyncio

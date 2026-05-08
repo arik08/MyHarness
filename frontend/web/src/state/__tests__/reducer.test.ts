@@ -803,6 +803,53 @@ describe("appReducer", () => {
     expect(shellEvent?.output).toBe("passed");
   });
 
+  it("restores swarm status from history snapshots", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "AI team으로 조사해줘" },
+          {
+            type: "swarm_status",
+            swarm_teammates: [
+              {
+                id: "agent-1",
+                name: "Research",
+                role: "research",
+                status: "running",
+                task: "Collect sources",
+                lastOutput: "2 sources checked",
+              },
+            ],
+            swarm_notifications: [{ id: "note-1", from: "Research", message: "Started", timestamp: 123 }],
+          },
+          { type: "assistant", text: "진행 중입니다." },
+        ],
+      },
+    });
+
+    expect(restored.swarmTeammates).toEqual([
+      {
+        id: "agent-1",
+        name: "Research",
+        role: "research",
+        status: "running",
+        task: "Collect sources",
+        startedAt: null,
+        endedAt: null,
+        lastOutput: "2 sources checked",
+        taskId: "",
+      },
+    ]);
+    expect(restored.swarmNotifications[0]).toMatchObject({
+      id: "note-1",
+      from: "Research",
+      message: "Started",
+      timestamp: 123,
+    });
+  });
+
   it("marks final assistant turns complete when restoring history", () => {
     const restored = appReducer(initialAppState, {
       type: "backend_event",
@@ -816,6 +863,64 @@ describe("appReducer", () => {
     });
 
     expect(restored.messages[1].isComplete).toBe(true);
+  });
+
+  it("restores streamed write previews from history tool input deltas", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "HTML 파일 만들어줘" },
+          {
+            type: "tool_input_delta",
+            tool_name: "write_file",
+            tool_call_index: 0,
+            arguments_delta: "{\"path\":\"outputs/live.html\",\"content\":\"<h1>",
+          },
+          {
+            type: "tool_input_delta",
+            tool_name: "write_file",
+            tool_call_index: 0,
+            arguments_delta: "Live</h1>",
+          },
+        ],
+      },
+    });
+
+    const writeEvents = restored.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(writeEvents).toHaveLength(1);
+    expect(writeEvents[0].status).toBe("running");
+    expect(writeEvents[0].toolInput?.path).toBe("outputs/live.html");
+    expect(writeEvents[0].toolInput?.content).toBe("<h1>Live</h1>");
+  });
+
+  it("does not duplicate restored streamed previews when the matching tool start is replayed", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "HTML 파일 만들어줘" },
+          {
+            type: "tool_input_delta",
+            tool_name: "write_file",
+            tool_call_index: 0,
+            arguments_delta: "{\"path\":\"outputs/live.html\",\"content\":\"<h1>Live</h1>",
+          },
+          {
+            type: "tool_started",
+            tool_name: "write_file",
+            tool_call_index: 0,
+            tool_input: { path: "outputs/live.html", content: "<h1>Live</h1>" },
+          },
+        ],
+      },
+    });
+
+    const writeEvents = restored.workflowEvents.filter((event) => event.toolName === "write_file");
+    expect(writeEvents).toHaveLength(1);
+    expect(writeEvents[0].toolInput?.content).toBe("<h1>Live</h1>");
   });
 
   it("keeps completed history snapshots inert against later backend events", () => {

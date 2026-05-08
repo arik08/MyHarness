@@ -146,7 +146,13 @@ def _format_provider_profile_label(info: dict[str, object]) -> str:
 
 def _prompt_provider_profile(workspace: str | Path) -> str:
     settings = load_settings()
-    statuses = AuthManager(settings).get_profile_statuses()
+    raw_statuses = AuthManager(settings).get_profile_statuses()
+    preferred_order = ["claude-api", "openai-compatible", "copilot", "codex", "p-gpt"]
+    statuses = {
+        name: raw_statuses[name]
+        for name in [*preferred_order, *raw_statuses]
+        if name in raw_statuses
+    }
     default_value = load_gateway_config(workspace).provider_profile
     hints = {
         "claude-api": ("Claude / Kimi / GLM / MiniMax", "fg:#7aa2f7"),

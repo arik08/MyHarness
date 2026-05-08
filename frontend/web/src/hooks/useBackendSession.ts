@@ -3,15 +3,23 @@ import { openBackendEvents } from "../api/events";
 import { listLiveSessions, startSession } from "../api/session";
 import { useAppState } from "../state/app-state";
 import type { SessionResponse } from "../types/backend";
+import { loadRuntimePreferences } from "../utils/runtimePreferences";
 
 const activeBackendSessionKey = "myharness:activeBackendSessionId";
-let pendingSessionStart: Promise<SessionResponse> | null = null;
+const pendingSessionStarts = new Map<string, Promise<SessionResponse>>();
 
 function startSharedSession(clientId: string) {
-  pendingSessionStart ||= startSession({ clientId }).finally(() => {
-    pendingSessionStart = null;
-  });
-  return pendingSessionStart;
+  const preferences = loadRuntimePreferences();
+  const payload = { clientId, ...preferences };
+  const key = JSON.stringify(payload);
+  let pending = pendingSessionStarts.get(key);
+  if (!pending) {
+    pending = startSession(payload).finally(() => {
+      pendingSessionStarts.delete(key);
+    });
+    pendingSessionStarts.set(key, pending);
+  }
+  return pending;
 }
 
 function loadActiveBackendSessionId() {

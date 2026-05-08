@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from hashlib import sha1
 
@@ -10,7 +11,6 @@ from pydantic import BaseModel, Field
 from myharness.coordinator.agent_definitions import get_agent_definition
 from myharness.coordinator.coordinator_mode import get_team_registry
 from myharness.hooks import HookEvent
-from myharness.swarm.registry import get_backend_registry
 from myharness.swarm.types import TeammateSpawnConfig
 from myharness.tasks import get_task_manager
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
@@ -131,7 +131,8 @@ class AgentTool(BaseTool):
         # BackgroundTaskManager and are pollable by the task tools.
         # in_process tasks return asyncio-internal IDs that task tools
         # cannot query, and subprocess is always available on all platforms.
-        registry = get_backend_registry()
+        registry_module = importlib.import_module("myharness.swarm.registry")
+        registry = registry_module.get_backend_registry()
         executor = registry.get_executor("subprocess")
         worker_prompt = (
             _prompt_with_task_context(delegated_prompt)
