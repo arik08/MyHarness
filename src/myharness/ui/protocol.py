@@ -249,6 +249,7 @@ class BackendEvent(BaseModel):
 def _state_payload(state: AppState) -> dict[str, Any]:
     return {
         "model": state.model,
+        "subagent_model": state.subagent_model,
         "cwd": state.cwd,
         "provider": state.provider,
         "active_profile": state.active_profile,

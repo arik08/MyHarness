@@ -56,6 +56,7 @@ export type AppAction =
   | { type: "close_runtime_picker" }
   | { type: "set_runtime_picker_error"; message: string }
   | { type: "select_runtime_provider"; value: string }
+  | { type: "select_runtime_agent_scope"; value: "main" | "sub" }
   | { type: "select_runtime_model"; value: string }
   | { type: "select_runtime_effort"; value: string }
   | { type: "toggle_todo_collapsed" }
@@ -131,6 +132,10 @@ function saveAppSettings(settings: AppSettings) {
   }
 }
 
+function isSlashCommandMessage(text: string) {
+  return /^\/\S*/.test(String(text || "").trim());
+}
+
 function initialThemeId(): ThemeId {
   const value = loadLocalStorageValue("myharness:theme");
   return value === "posco" || value === "dark" || value === "mono" || value === "mono-orange" ? value : "light";
@@ -193,6 +198,7 @@ export const initialAppState: AppState = {
   provider: "-",
   providerLabel: "-",
   model: "-",
+  subagentModel: "-",
   effort: "-",
   permissionMode: "-",
   chatTitle: "MyHarness",
@@ -248,6 +254,7 @@ export const initialAppState: AppState = {
     models: [],
     efforts: [],
     selectedProvider: "",
+    agentScope: "main",
     modelOpen: false,
     effortOpen: false,
   },
@@ -756,6 +763,9 @@ function normalizeSwarmTeammate(value: SwarmTeammateSnapshot, index: number): Sw
     id,
     name: swarmText(record.name) || id,
     role: swarmText(record.role) || swarmText(record.name) || "작업자",
+    model: swarmText(record.model),
+    modelSource: swarmText(record.modelSource) || swarmText(record.model_source),
+    prompt: swarmText(record.prompt),
     status: swarmText(record.status) || "idle",
     task: swarmText(record.task),
     startedAt: swarmNumber(record.startedAt ?? record.started_at),
@@ -1154,6 +1164,7 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
     provider,
     providerLabel,
     model: String(snapshot.model || state.model),
+    subagentModel: String(snapshot.subagent_model || state.subagentModel),
     effort: String(snapshot.effort || state.effort),
     permissionMode: String(snapshot.permission_mode || state.permissionMode),
     workspaceName: String(snapshot.workspace?.name || state.workspaceName),
@@ -1182,7 +1193,12 @@ function activeRuntimeOptions(options: Array<{ value: string; label: string; des
   return options.map((option, index) => ({ ...option, active: index === fallbackIndex }));
 }
 
+function runtimeModelValueForScope(state: AppState, scope = state.runtimePicker.agentScope) {
+  return scope === "sub" ? state.subagentModel : state.model;
+}
+
 function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string, unknown>) {
+  const subagentModel = String(runtimeOptions.subagent_model || state.subagentModel || "").trim() || state.subagentModel;
   const providers = activeRuntimeOptions(
     (Array.isArray(runtimeOptions.providers) ? runtimeOptions.providers : [])
       .map((option) => normalizeRuntimeOption(option as Record<string, unknown>))
@@ -1198,7 +1214,7 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
       (Array.isArray(options) ? options : [])
         .map((option) => normalizeRuntimeOption(option as Record<string, unknown>))
         .filter((option): option is NonNullable<typeof option> => Boolean(option)),
-      state.model,
+      state.runtimePicker.agentScope === "sub" ? subagentModel : state.model,
     ),
   ]));
   const selectedProvider = providers.find((option) => option.active)?.value || state.provider || providers[0]?.value || "";
@@ -1219,6 +1235,7 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
     models,
     efforts,
     selectedProvider,
+    agentScope: state.runtimePicker.agentScope || "main",
     modelOpen: false,
     effortOpen: false,
   };
@@ -1307,6 +1324,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "append_message":
       if (action.message.role === "user" && action.message.kind !== "steering" && action.message.kind !== "queued") {
         const message = createMessage(action.message);
+        if (isSlashCommandMessage(action.message.text)) {
+          return {
+            ...state,
+            historyReadOnly: false,
+            preserveMessagesOnNextClearTranscript: !/^\/clear(?:\s|$)/i.test(action.message.text.trim()),
+            messages: [...state.messages, message],
+          };
+        }
         const shouldPreserveOnClear = !/^\/clear(?:\s|$)/i.test(action.message.text.trim());
         return {
           ...state,
@@ -1616,6 +1641,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "select_runtime_provider": {
       const models = state.runtimePicker.modelsByProvider[action.value] || [];
+      const modelValue = runtimeModelValueForScope(state);
       return {
         ...state,
         provider: action.value,
@@ -1624,7 +1650,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.runtimePicker,
           providers: state.runtimePicker.providers.map((option) => ({ ...option, active: option.value === action.value })),
           selectedProvider: action.value,
-          models: activeRuntimeOptions(models, state.model),
+          models: activeRuntimeOptions(models, modelValue),
+          modelOpen: true,
+          effortOpen: false,
+        },
+      };
+    }
+
+    case "select_runtime_agent_scope": {
+      const models = state.runtimePicker.modelsByProvider[state.runtimePicker.selectedProvider] || state.runtimePicker.models;
+      return {
+        ...state,
+        runtimePicker: {
+          ...state.runtimePicker,
+          agentScope: action.value,
+          models: activeRuntimeOptions(models, action.value === "sub" ? state.subagentModel : state.model),
           modelOpen: true,
           effortOpen: false,
         },
@@ -1634,11 +1674,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "select_runtime_model":
       return {
         ...state,
-        model: action.value,
+        ...(state.runtimePicker.agentScope === "sub" ? { subagentModel: action.value } : { model: action.value }),
         runtimePicker: {
           ...state.runtimePicker,
           models: state.runtimePicker.models.map((option) => ({ ...option, active: option.value === action.value })),
-          effortOpen: true,
+          effortOpen: state.runtimePicker.agentScope !== "sub",
         },
       };
 
@@ -1693,6 +1733,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
 
       if (event.type === "clear_transcript") {
+        if (state.restoringHistory) {
+          return {
+            ...state,
+            preserveMessagesOnNextClearTranscript: false,
+          };
+        }
         if (state.preserveMessagesOnNextClearTranscript && state.busy && state.messages.length > 0) {
           return {
             ...state,
@@ -1963,6 +2009,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             toolName: item.tool_name || undefined,
             isError: item.is_error === true,
           });
+          if (isSlashCommandMessage(text)) {
+            return {
+              ...state,
+              messages: [...state.messages, message],
+            };
+          }
           return {
             ...state,
             messages: [...state.messages, message],
@@ -2355,11 +2407,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         return {
           ...state,
           messages: appendErrorMessage(state.messages, message),
-          workflowEvents: finishFinalAnswerStep(
-            state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(),
-            "error",
-            message || "응답을 마무리하지 못했습니다.",
-          ),
+          workflowEvents: state.workflowEvents.length
+            ? finishFinalAnswerStep(
+                state.workflowEvents,
+                "error",
+                message || "응답을 마무리하지 못했습니다.",
+              )
+            : state.workflowEvents,
           busy: false,
           status: "error",
           statusText: message,

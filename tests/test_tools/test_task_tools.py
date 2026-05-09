@@ -233,7 +233,10 @@ async def test_agent_tool_treats_office_worker_as_lightweight_research_agent(
             subagent_type="worker",
             team="office",
         ),
-        ToolExecutionContext(cwd=tmp_path),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={"runtime_model": "gpt-5.5", "subagent_model": "gpt-5.4-mini"},
+        ),
     )
 
     assert result.is_error is False
@@ -241,6 +244,46 @@ async def test_agent_tool_treats_office_worker_as_lightweight_research_agent(
     assert config.team == "office"
     assert config.system_prompt is None
     assert config.name.startswith("research-")
+    assert config.model == "gpt-5.4-mini"
+    assert "short content summary" in config.prompt
+    assert "sources the main agent should read directly" in config.prompt
+    assert result.metadata["model"] == "gpt-5.4-mini"
+    assert result.metadata["model_source"] == "subagent"
+    assert result.metadata["prompt"] == "핵심 출처만 빠르게 조사해줘."
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_routes_review_roles_to_stronger_gpt_model(tmp_path: Path, monkeypatch):
+    from myharness.swarm.registry import get_backend_registry
+    from myharness.swarm.types import SpawnResult
+
+    captured = {}
+
+    async def _fake_spawn(config):
+        captured["config"] = config
+        return SpawnResult(
+            task_id="a12345678",
+            agent_id=f"{config.name}@{config.team}",
+            backend_type="subprocess",
+        )
+
+    executor = get_backend_registry().get_executor("subprocess")
+    monkeypatch.setattr(executor, "spawn", _fake_spawn)
+
+    result = await AgentTool().execute(
+        AgentToolInput(
+            description="검토 담당: 보안 리스크 확인",
+            prompt="누락된 리스크와 근거 오류만 검토해줘.",
+            subagent_type="worker",
+            team="office",
+        ),
+        ToolExecutionContext(cwd=tmp_path, metadata={"runtime_model": "gpt-5.5"}),
+    )
+
+    assert result.is_error is False
+    assert captured["config"].model is None
+    assert result.metadata["model"] == "inherit (gpt-5.5)"
+    assert result.metadata["model_source"] == "main"
 
 
 def test_task_worker_registry_keeps_progress_tool_without_parent_task_queries():
@@ -323,7 +366,10 @@ async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
 @pytest.mark.asyncio
 async def test_agent_tool_records_display_role_from_description(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    context = ToolExecutionContext(cwd=tmp_path)
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={"runtime_model": "gpt-5.5", "subagent_model": "gpt-5.4-mini"},
+    )
 
     result = await AgentTool().execute(
         AgentToolInput(
@@ -346,6 +392,9 @@ async def test_agent_tool_records_display_role_from_description(tmp_path: Path, 
     assert record is not None
     assert record.metadata["agent_role"] == "조사 담당"
     assert record.metadata["agent_description"] == "조사 담당: 출처 확인"
+    assert record.metadata["agent_model"] == "gpt-5.4-mini"
+    assert record.metadata["agent_model_source"] == "subagent"
+    assert record.metadata["agent_prompt"] == "hello"
     assert record.metadata["team"] == "office"
     await _wait_for_terminal_task(task_id)
 

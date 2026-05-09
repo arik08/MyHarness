@@ -41,8 +41,21 @@ function taskFor(teammate: SwarmTeammateSnapshot) {
   return String(teammate.task || "맡은 작업을 정리하는 중입니다.").trim();
 }
 
+function modelFor(teammate: SwarmTeammateSnapshot) {
+  return String(teammate.model || "").trim();
+}
+
+function promptFor(teammate: SwarmTeammateSnapshot) {
+  return String(teammate.prompt || "").trim();
+}
+
 function outputFor(teammate: SwarmTeammateSnapshot) {
   return String(teammate.lastOutput || teammate.last_output || "").trim();
+}
+
+function displayOutputFor(teammate: SwarmTeammateSnapshot, status: SwarmStatus) {
+  const output = outputFor(teammate);
+  return isTerminalStatus(status) ? output.replace(/^\d{1,3}%\s*·\s*/, "").trim() : output;
 }
 
 function startedAtFor(teammate: SwarmTeammateSnapshot) {
@@ -233,7 +246,9 @@ export function SwarmButton() {
             const taskId = taskIdFor(teammate);
             const status = normalizedStatus(teammate.status);
             const elapsed = formatElapsed(startedAtFor(teammate), isTerminalStatus(status) ? endedAtFor(teammate) : null, now);
-            const output = outputFor(teammate);
+            const model = modelFor(teammate);
+            const prompt = promptFor(teammate);
+            const output = displayOutputFor(teammate, status);
             return (
               <article className={`swarm-agent-card ${statusClass(status)}`} key={teammate.id || taskId || labelFor(teammate)}>
                 <div className="swarm-agent-main">
@@ -244,6 +259,15 @@ export function SwarmButton() {
                   {elapsed ? <small>{elapsed}</small> : null}
                 </div>
                 <p>{taskFor(teammate)}</p>
+                {model || prompt ? (
+                  <details className="swarm-agent-details">
+                    <summary>
+                      {model ? <span>모델 {model}</span> : null}
+                      {prompt ? <span>프롬프트</span> : null}
+                    </summary>
+                    {prompt ? <pre>{prompt}</pre> : null}
+                  </details>
+                ) : null}
                 {output ? <code>{output}</code> : null}
                 {taskId ? (
                   <div className="swarm-agent-actions">

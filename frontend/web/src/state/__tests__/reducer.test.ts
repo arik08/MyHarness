@@ -739,6 +739,61 @@ describe("appReducer", () => {
     expect(next.workflowEvents.find((event) => event.toolName === "skill")?.status).toBe("done");
   });
 
+  it("does not start workflow progress for slash command messages", () => {
+    const next = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "/provider" },
+    });
+
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].text).toBe("/provider");
+    expect(next.workflowEvents).toHaveLength(0);
+    expect(next.workflowAnchorMessageId).toBeNull();
+    expect(next.workflowStartedAtMs).toBeNull();
+  });
+
+  it("treats slashes in the middle of a sentence as a normal LLM request", () => {
+    const next = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "이 요청에서는 /provider 값을 설명해줘" },
+    });
+
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].text).toBe("이 요청에서는 /provider 값을 설명해줘");
+    expect(next.workflowEvents.map((event) => event.title)).toEqual([
+      "요청 이해",
+      "작업 계획 수립",
+    ]);
+    expect(next.workflowAnchorMessageId).not.toBeNull();
+    expect(next.workflowStartedAtMs).not.toBeNull();
+  });
+
+  it("does not start workflow progress for slash command transcripts from the backend", () => {
+    const next = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "transcript_item",
+        item: { role: "user", text: "/model" },
+      },
+    });
+
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].text).toBe("/model");
+    expect(next.workflowEvents).toHaveLength(0);
+    expect(next.workflowAnchorMessageId).toBeNull();
+    expect(next.workflowStartedAtMs).toBeNull();
+  });
+
+  it("does not synthesize workflow progress for command errors without an active workflow", () => {
+    const next = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "error", message: "Unknown select command: subagent_model" },
+    });
+
+    expect(next.messages[0].text).toBe("Unknown select command: subagent_model");
+    expect(next.workflowEvents).toHaveLength(0);
+  });
+
   it("stores todo markdown from backend updates", () => {
     const next = appReducer(initialAppState, {
       type: "backend_event",
@@ -835,6 +890,36 @@ describe("appReducer", () => {
     expect(shellEvent?.output).toBe("passed");
   });
 
+  it("keeps the current messages through the restore clear event until the history snapshot arrives", () => {
+    const restoring = {
+      ...initialAppState,
+      restoringHistory: true,
+      busy: true,
+      messages: [{ id: "current-message", role: "user" as const, text: "현재 화면 질문" }],
+    };
+
+    const afterClear = appReducer(restoring, {
+      type: "backend_event",
+      event: { type: "clear_transcript" },
+    });
+
+    expect(afterClear.messages).toEqual(restoring.messages);
+
+    const restored = appReducer(afterClear, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        value: "saved-session",
+        history_events: [
+          { type: "user", text: "저장된 질문" },
+          { type: "assistant", text: "저장된 답변" },
+        ],
+      },
+    });
+
+    expect(restored.messages.map((message) => message.text)).toEqual(["저장된 질문", "저장된 답변"]);
+  });
+
   it("restores swarm status from history snapshots", () => {
     const restored = appReducer(initialAppState, {
       type: "backend_event",
@@ -872,6 +957,9 @@ describe("appReducer", () => {
         endedAt: null,
         lastOutput: "2 sources checked",
         taskId: "",
+        model: "",
+        modelSource: "",
+        prompt: "",
       },
     ]);
     expect(restored.swarmNotifications[0]).toMatchObject({

@@ -65,6 +65,7 @@ export type AppState = {
   provider: string;
   providerLabel: string;
   model: string;
+  subagentModel: string;
   effort: string;
   permissionMode: string;
   chatTitle: string;
@@ -142,6 +143,7 @@ export type RuntimePickerState = {
   models: RuntimePickerOption[];
   efforts: RuntimePickerOption[];
   selectedProvider: string;
+  agentScope: "main" | "sub";
   modelOpen: boolean;
   effortOpen: boolean;
 };

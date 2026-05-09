@@ -56,6 +56,7 @@ def _make_context(tmp_path: Path) -> CommandContext:
         app_state=AppStateStore(
             AppState(
                 model="claude-test",
+                subagent_model="gpt-5.4-mini",
                 permission_mode="default",
                 theme="default",
                 keybindings={},

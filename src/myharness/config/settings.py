@@ -211,6 +211,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             api_format="openai",
             auth_source="codex_subscription",
             default_model="gpt-5.5",
+            allowed_models=["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
         ),
         "openai-compatible": ProviderProfile(
             label="OpenAI-Compatible API",
@@ -488,6 +489,7 @@ class Settings(BaseModel):
     # API configuration
     api_key: str = ""
     model: str = "claude-sonnet-4-6"
+    subagent_model: str = "gpt-5.4-mini"
     max_tokens: int = 16384
     base_url: str | None = None
     timeout: float = 180.0

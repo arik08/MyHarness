@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 from hashlib import sha1
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -19,8 +20,33 @@ logger = logging.getLogger(__name__)
 
 _GENERIC_AGENT_TYPES = {"agent", "worker", "general-purpose", "default"}
 _ROLE_KEYWORDS = ("조사", "정리", "검토", "분석", "수집", "작성", "요약", "검증", "기획")
-
-
+_REVIEW_ROLE_KEYWORDS = (
+    "검토",
+    "검증",
+    "분석",
+    "리뷰",
+    "위험",
+    "영향",
+    "review",
+    "verify",
+    "validate",
+    "analysis",
+    "risk",
+)
+_CODING_ROLE_KEYWORDS = (
+    "구현",
+    "수정",
+    "코드",
+    "테스트",
+    "리팩터",
+    "버그",
+    "implement",
+    "code",
+    "test",
+    "fix",
+    "debug",
+    "refactor",
+)
 def _display_role(description: str, subagent_type: str | None) -> str:
     text = " ".join(description.split())
     if text:
@@ -69,16 +95,76 @@ def _prompt_with_task_context(prompt: str) -> str:
         "You are a background teammate. Your task id is {task_id}. "
         "If you make meaningful progress, call `task_update` with that task id, "
         "a short Korean status_note, and progress when useful. "
-        "Keep interim progress brief.\n\n"
+        "Keep interim progress brief. If this is source or web research, do not write "
+        "the final report yourself. Return concise source cards with each source's key "
+        "facts, short content summary, and relevance. Clearly mark the 3-5 sources the "
+        "main agent should read directly, with why each source is worth reading and any "
+        "uncertainty.\n\n"
         f"{prompt}"
     )
+
+
+def _runtime_model_from_context(context: ToolExecutionContext) -> str | None:
+    value = context.metadata.get("runtime_model") or context.metadata.get("model")
+    if isinstance(value, str):
+        return value.strip() or None
+    return None
+
+
+def _subagent_model_from_context(context: ToolExecutionContext) -> str | None:
+    value = context.metadata.get("subagent_model")
+    if isinstance(value, str):
+        return value.strip() or None
+    return None
+
+
+def _role_uses_main_model(description: str, prompt: str, subagent_type: str | None) -> bool:
+    text = " ".join(
+        part.lower()
+        for part in (description, prompt[:800], subagent_type or "")
+        if part
+    )
+    if any(keyword in text for keyword in _CODING_ROLE_KEYWORDS):
+        return True
+    if any(keyword in text for keyword in _REVIEW_ROLE_KEYWORDS):
+        return True
+    return False
+
+
+def _resolve_agent_model(
+    arguments: "AgentToolInput",
+    agent_def: Any,
+    context: ToolExecutionContext,
+) -> tuple[str | None, str, str]:
+    explicit_model = (arguments.model or "").strip()
+    if explicit_model:
+        return explicit_model, explicit_model, "explicit"
+    definition_model = (getattr(agent_def, "model", None) or "").strip() if agent_def else ""
+    if definition_model:
+        return definition_model, definition_model, "definition"
+    runtime_model = _runtime_model_from_context(context)
+    if _role_uses_main_model(arguments.description, arguments.prompt, arguments.subagent_type):
+        if runtime_model:
+            return None, f"inherit ({runtime_model})", "main"
+        return None, "inherit", "main"
+    subagent_model = _subagent_model_from_context(context)
+    if subagent_model:
+        return subagent_model, subagent_model, "subagent"
+    if runtime_model:
+        return None, f"inherit ({runtime_model})", "inherit"
+    return None, "inherit", "inherit"
 
 
 class AgentToolInput(BaseModel):
     """Arguments for local agent spawning."""
 
-    description: str = Field(description="Short description of the delegated work")
-    prompt: str = Field(description="Full prompt for the local agent")
+    description: str = Field(description="Short role and task description for delegated work")
+    prompt: str = Field(
+        description=(
+            "Short, self-contained worker prompt. Give only the role, goal, needed inputs, "
+            "constraints, and output format; do not pass the full conversation unless required."
+        )
+    )
     subagent_type: str | None = Field(
         default=None,
         description="Agent type for definition lookup (e.g. 'general-purpose', 'Explore', 'worker')",
@@ -96,7 +182,11 @@ class AgentTool(BaseTool):
     """Spawn a local agent subprocess."""
 
     name = "agent"
-    description = "Spawn a local background agent task."
+    description = (
+        "Spawn a local background agent task with a narrow role-focused prompt. "
+        "For large source or web research, use workers to shortlist evidence and direct-read "
+        "recommendations; the main agent should read the strongest sources and synthesize."
+    )
     input_model = AgentToolInput
 
     def requires_project_mutation_lock(self, arguments: BaseModel) -> bool:
@@ -123,6 +213,7 @@ class AgentTool(BaseTool):
         team = arguments.team or "default"
         if _should_use_agent_definition(team, arguments.subagent_type):
             agent_def = get_agent_definition(arguments.subagent_type)
+        agent_model, model_label, model_source = _resolve_agent_model(arguments, agent_def, context)
 
         # Resolve team and agent name for the swarm backend
         agent_name = _agent_name_for_spawn(arguments.description, team, arguments.subagent_type)
@@ -146,7 +237,7 @@ class AgentTool(BaseTool):
             prompt=worker_prompt,
             cwd=str(context.cwd),
             parent_session_id="main",
-            model=arguments.model or (agent_def.model if agent_def else None),
+            model=agent_model,
             command=arguments.command,
             system_prompt=agent_def.system_prompt if agent_def else None,
             permissions=agent_def.permissions if agent_def else [],
@@ -176,6 +267,9 @@ class AgentTool(BaseTool):
             task_record.metadata["agent_id"] = result.agent_id
             task_record.metadata["agent_role"] = _display_role(arguments.description, arguments.subagent_type)
             task_record.metadata["agent_description"] = arguments.description
+            task_record.metadata["agent_model"] = model_label
+            task_record.metadata["agent_model_source"] = model_source
+            task_record.metadata["agent_prompt"] = delegated_prompt
             task_record.metadata["team"] = team
             manager.notify_task_updated(result.task_id)
 
@@ -200,6 +294,8 @@ class AgentTool(BaseTool):
                         "return_code": task_record.return_code,
                         "description": arguments.description,
                         "subagent_type": arguments.subagent_type or "agent",
+                        "model": model_label,
+                        "model_source": model_source,
                         "team": team,
                         "mode": arguments.mode,
                     },
@@ -220,5 +316,8 @@ class AgentTool(BaseTool):
                 "task_id": result.task_id,
                 "backend_type": result.backend_type,
                 "description": arguments.description,
+                "model": model_label,
+                "model_source": model_source,
+                "prompt": delegated_prompt,
             },
         )

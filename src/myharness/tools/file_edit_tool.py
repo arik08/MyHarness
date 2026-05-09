@@ -7,6 +7,10 @@ from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from myharness.tools.mermaid_preflight import (
+    format_mermaid_preflight_errors,
+    mermaid_preflight_errors,
+)
 from myharness.tools.path_display import display_tool_path
 
 
@@ -100,6 +104,13 @@ class FileEditTool(BaseTool):
             else:
                 applied_count += 1
                 updated = updated.replace(edit.old_str, edit.new_str, 1)
+
+        mermaid_errors = mermaid_preflight_errors(path, updated)
+        if mermaid_errors:
+            return ToolResult(
+                output=format_mermaid_preflight_errors(path, mermaid_errors, action="updated"),
+                is_error=True,
+            )
 
         path.write_text(updated, encoding="utf-8")
         return ToolResult(

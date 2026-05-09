@@ -111,7 +111,10 @@ def test_build_system_prompt_discourages_repeated_clarification_rounds():
 
     assert "Clarifying-question budget" in prompt
     assert "state your assumption and proceed" in prompt
-    assert "batch the necessary choices into one message" in prompt
+    assert "use the `ask_user_question` tool" in prompt
+    assert "explicit question event instead of inferring from assistant text" in prompt
+    assert "structured `choices` JSON array" in prompt
+    assert "Batch the necessary choices into one question" in prompt
     assert "at most two clarification rounds" in prompt
     assert 'Do not ask "should I proceed?"' in prompt
     assert "After the user answers a clarification question" in prompt
@@ -141,6 +144,9 @@ def test_build_system_prompt_guides_chat_html_rendering_and_report_charts():
     assert "HTML report or 리포트" in prompt
     assert "add charts or graphs" in prompt
     assert "prefer ECharts via CDN" in prompt
+    assert "actively consider restrained semantic icons" in prompt
+    assert "Lucide or inline SVG" in prompt
+    assert "do not force icons into every card or paragraph" in prompt
     assert "business-style HTML reports, dashboards, and charts" in prompt
     assert "Avoid oversized border-radius" in prompt
     assert "usually around 4-8px radius" in prompt

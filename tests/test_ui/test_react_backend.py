@@ -504,6 +504,9 @@ def test_backend_host_builds_swarm_snapshot_from_agent_tasks(monkeypatch):
             "agent_id": "research@office",
             "agent_role": "조사",
             "agent_description": "지역별 전략 용량 조사",
+            "agent_model": "gpt-5.4-mini",
+            "agent_model_source": "role",
+            "agent_prompt": "역할: 조사 담당\n목표: 지역별 전략 용량만 확인",
             "progress": "40",
             "status_note": "주요 기사 확인 중",
         }
@@ -528,6 +531,9 @@ def test_backend_host_builds_swarm_snapshot_from_agent_tasks(monkeypatch):
             "role": "조사",
             "status": "running",
             "task": "지역별 전략 용량 조사",
+            "model": "gpt-5.4-mini",
+            "modelSource": "role",
+            "prompt": "역할: 조사 담당\n목표: 지역별 전략 용량만 확인",
             "startedAt": 1710000000000,
             "endedAt": None,
             "lastOutput": "40% · 주요 기사 확인 중",
@@ -547,7 +553,12 @@ def test_backend_host_includes_swarm_task_end_time(monkeypatch):
         started_at = 1710000000.0
         created_at = 1710000000.0
         ended_at = 1710000031.0
-        metadata = {"agent_id": "research@office", "agent_role": "조사 담당"}
+        metadata = {
+            "agent_id": "research@office",
+            "agent_role": "조사 담당",
+            "progress": "40",
+            "status_note": "기사 출처 확인 완료",
+        }
 
     class _FakeTaskManager:
         def list_tasks(self):
@@ -563,6 +574,7 @@ def test_backend_host_includes_swarm_task_end_time(monkeypatch):
 
     assert snapshot[0]["startedAt"] == 1710000000000
     assert snapshot[0]["endedAt"] == 1710000031000
+    assert snapshot[0]["lastOutput"] == "기사 출처 확인 완료"
 
 
 @pytest.mark.asyncio
@@ -1615,6 +1627,8 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:2] == ["gpt-5.5", "gpt-5.4"]
     assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Strongest coding and reasoning"
     assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == ["gpt-5.5", "gpt-5.4"]
+    assert "gpt-5.4-mini" in [option["value"] for option in runtime_options["models_by_provider"]["codex"]]
+    assert runtime_options["subagent_model"] == "gpt-5.4-mini"
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
     none_option = next(option for option in runtime_options["efforts"] if option["value"] == "none")
     assert none_option["label"] == "None"
@@ -1668,6 +1682,35 @@ async def test_backend_host_apply_provider_select_command_shows_single_segment_t
     assert should_continue is True
     user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
     assert user_event.item.text == "/provider"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_apply_subagent_model_select_command_updates_tool_metadata(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._apply_select_command("subagent_model", "gpt-5.4-nano")
+        state = host._bundle.app_state.get()
+        metadata_model = host._bundle.engine.tool_metadata["subagent_model"]
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert state.subagent_model == "gpt-5.4-nano"
+    assert metadata_model == "gpt-5.4-nano"
+    user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
+    assert user_event.item.text == "/subagent_model"
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-export type IconName = "source" | "preview" | "copy" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star";
+export type IconName = "source" | "preview" | "copy" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star" | "chevron-up" | "chevron-down";
 
 export function Icon({ name }: { name: IconName }) {
   if (name === "source") {
@@ -152,6 +152,20 @@ export function Icon({ name }: { name: IconName }) {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24">
         <path d="M12 3.7l2.5 5.05 5.58.82-4.04 3.93.95 5.55L12 16.43l-4.99 2.62.95-5.55-4.04-3.93 5.58-.82Z" />
+      </svg>
+    );
+  }
+  if (name === "chevron-up") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="m18 15-6-6-6 6" />
+      </svg>
+    );
+  }
+  if (name === "chevron-down") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
       </svg>
     );
   }

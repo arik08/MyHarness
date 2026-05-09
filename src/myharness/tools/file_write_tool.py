@@ -7,6 +7,10 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from myharness.tools.mermaid_preflight import (
+    format_mermaid_preflight_errors,
+    mermaid_preflight_errors,
+)
 from myharness.tools.path_display import display_tool_path
 
 
@@ -51,6 +55,12 @@ class FileWriteTool(BaseTool):
 
         if arguments.create_directories:
             path.parent.mkdir(parents=True, exist_ok=True)
+        mermaid_errors = mermaid_preflight_errors(path, arguments.content)
+        if mermaid_errors:
+            return ToolResult(
+                output=format_mermaid_preflight_errors(path, mermaid_errors, action="written"),
+                is_error=True,
+            )
         path.write_text(arguments.content, encoding="utf-8")
         return ToolResult(output=f"Wrote {display_tool_path(path, context.cwd)}")
 

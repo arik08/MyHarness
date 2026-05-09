@@ -240,6 +240,7 @@ class BackendHostConfig:
     """Configuration for one backend host session."""
 
     model: str | None = None
+    subagent_model: str | None = None
     max_turns: int | None = None
     base_url: str | None = None
     system_prompt: str | None = None
@@ -285,6 +286,7 @@ class ReactBackendHost:
     async def run(self) -> int:
         self._bundle = await build_runtime(
             model=self._config.model,
+            subagent_model=self._config.subagent_model,
             max_turns=self._config.max_turns,
             base_url=self._config.base_url,
             system_prompt=self._config.system_prompt,
@@ -1280,7 +1282,7 @@ class ReactBackendHost:
         if command == "resume":
             await self._restore_history_snapshot(selected)
             return True
-        if command in {"provider", "model", "effort"}:
+        if command in {"provider", "model", "subagent_model", "effort"}:
             await self._apply_runtime_choice(command, selected)
             return True
         line = self._build_select_command_line(command, selected)
@@ -1288,7 +1290,7 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
             await self._emit(BackendEvent(type="line_complete"))
             return True
-        quiet = command in {"model", "effort"}
+        quiet = command in {"model", "subagent_model", "effort"}
         return await self._process_line(line, transcript_line=f"/{command}", quiet=quiet)
 
     def _build_select_command_line(self, command: str, value: str) -> str | None:
@@ -1341,7 +1343,7 @@ class ReactBackendHost:
             profile = profiles[selected]
             message = f"Switched provider profile to {selected} ({profile.label})."
             refresh_client = True
-        elif command == "model":
+        elif command in {"model", "subagent_model"}:
             if active_profile.allowed_models and selected.lower() != "default" and selected not in active_profile.allowed_models:
                 allowed = ", ".join(active_profile.allowed_models)
                 await self._emit(
@@ -1352,13 +1354,15 @@ class ReactBackendHost:
                 )
                 await self._emit(BackendEvent(type="line_complete"))
                 return
+            target_key = "model" if command == "model" else "subagent_model"
+            target_label = "Model" if command == "model" else "Sub agent model"
             if selected.lower() == "default":
-                self._bundle.settings_overrides.pop("model", None)
-                message = "Model reset to default."
+                self._bundle.settings_overrides.pop(target_key, None)
+                message = f"{target_label} reset to default."
             else:
-                self._bundle.settings_overrides["model"] = selected
-                message = f"Model set to {selected}."
-            refresh_client = True
+                self._bundle.settings_overrides[target_key] = selected
+                message = f"{target_label} set to {selected}."
+            refresh_client = command == "model"
         else:
             if selected not in {"auto", "none", "low", "medium", "high", "xhigh", "max"}:
                 await self._emit(BackendEvent(type="error", message="Usage: /effort [show|auto|low|medium|high|xhigh|max]"))
@@ -1371,6 +1375,8 @@ class ReactBackendHost:
         if refresh_client:
             refresh_runtime_client(self._bundle)
         updated = self._bundle.current_settings()
+        self._bundle.engine.tool_metadata["runtime_model"] = updated.model
+        self._bundle.engine.tool_metadata["subagent_model"] = updated.subagent_model
         self._bundle.engine.set_reasoning_effort(updated.effort)
         self._bundle.engine.set_system_prompt(
             build_runtime_system_prompt(
@@ -1382,12 +1388,12 @@ class ReactBackendHost:
             )
         )
         if not refresh_client:
-            self._bundle.app_state.set(effort=updated.effort)
+            self._bundle.app_state.set(effort=updated.effort, subagent_model=updated.subagent_model)
         await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=f"/{command}")))
         if command == "provider":
             await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=message)))
         await self._emit(self._status_snapshot())
-        await self._emit(BackendEvent(type="line_complete", quiet=command in {"model", "effort"}))
+        await self._emit(BackendEvent(type="line_complete", quiet=command in {"model", "subagent_model", "effort"}))
 
     async def _restore_history_snapshot(self, session_id: str) -> None:
         assert self._bundle is not None
@@ -1592,9 +1598,11 @@ class ReactBackendHost:
             status_note = str(metadata.get("status_note") or "").strip()
             progress = str(metadata.get("progress") or "").strip()
             last_output = status_note or next((line.strip() for line in reversed(output.splitlines()) if line.strip()), "")
-            if progress and last_output:
+            task_status = str(task.status or "").strip().lower()
+            show_progress = progress and task_status not in {"completed", "failed", "killed", "done", "error"}
+            if show_progress and last_output:
                 last_output = f"{progress}% · {last_output}"
-            elif progress:
+            elif show_progress:
                 last_output = f"{progress}%"
             started_at = int((task.started_at or task.created_at or time.time()) * 1000)
             ended_at = int(task.ended_at * 1000) if getattr(task, "ended_at", None) else None
@@ -1605,6 +1613,9 @@ class ReactBackendHost:
                     "role": role,
                     "status": task.status,
                     "task": description,
+                    "model": str(metadata.get("agent_model") or "").strip(),
+                    "modelSource": str(metadata.get("agent_model_source") or "").strip(),
+                    "prompt": str(metadata.get("agent_prompt") or "").strip(),
                     "startedAt": started_at,
                     "endedAt": ended_at,
                     "lastOutput": last_output,
@@ -1765,6 +1776,7 @@ class ReactBackendHost:
                         "runtime_options": {
                             "providers": provider_options,
                             "models_by_provider": model_options_by_provider,
+                            "subagent_model": settings.subagent_model,
                             "efforts": self._effort_select_options(settings),
                         },
                     },
@@ -2017,6 +2029,8 @@ class ReactBackendHost:
                 [
                     ("gpt-5.5", "OpenAI flagship"),
                     ("gpt-5.4", "Previous GPT-5.4"),
+                    ("gpt-5.4-mini", self._model_option_description(provider_name, "gpt-5.4-mini")),
+                    ("gpt-5.4-nano", self._model_option_description(provider_name, "gpt-5.4-nano")),
                     ("gpt-5", "General GPT-5"),
                     ("gpt-4.1", "Stable GPT-4.1"),
                     ("o4-mini", "Fast reasoning"),
@@ -2225,6 +2239,7 @@ class ReactBackendHost:
 async def run_backend_host(
     *,
     model: str | None = None,
+    subagent_model: str | None = None,
     max_turns: int | None = None,
     base_url: str | None = None,
     system_prompt: str | None = None,
@@ -2248,6 +2263,7 @@ async def run_backend_host(
     host = ReactBackendHost(
         BackendHostConfig(
             model=model,
+            subagent_model=subagent_model,
             max_turns=max_turns,
             base_url=base_url,
             system_prompt=system_prompt,

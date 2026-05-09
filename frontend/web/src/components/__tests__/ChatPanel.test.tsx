@@ -84,6 +84,8 @@ describe("ChatPanel", () => {
               id: "worker@office",
               name: "worker",
               role: "조사",
+              model: "gpt-5.4-mini",
+              prompt: "역할: 조사 담당\n목표: 산업 현황만 확인",
               status: "running",
               task: "데이터센터 산업 현황 조사",
               startedAt: Date.now() - 5000,
@@ -108,6 +110,9 @@ describe("ChatPanel", () => {
     expect(screen.queryByText("사무 작업 진행 현황")).toBeNull();
     expect(screen.getByText("조사")).toBeTruthy();
     expect(screen.getByText("데이터센터 산업 현황 조사")).toBeTruthy();
+    expect(screen.getByText("모델 gpt-5.4-mini")).toBeTruthy();
+    await userEvent.click(screen.getByText("프롬프트"));
+    expect(screen.getByText(/목표: 산업 현황만 확인/)).toBeTruthy();
   });
 
   it("sends swarm task output and stop requests from the header popup", async () => {
@@ -207,5 +212,33 @@ describe("ChatPanel", () => {
 
     expect(screen.getByText("완료")).toBeTruthy();
     expect(screen.getByText("31초")).toBeTruthy();
+  });
+
+  it("hides stale progress percentages on completed AI team cards", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          swarmTeammates: [
+            {
+              id: "research@office",
+              name: "research",
+              role: "조사",
+              status: "completed",
+              task: "자료 수집",
+              taskId: "a123",
+              lastOutput: "50% · 조사 결과 정리 완료",
+            },
+          ],
+        }}
+      >
+        <ChatPanel />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "AI 팀 열기" }));
+
+    expect(screen.getByText("조사 결과 정리 완료")).toBeTruthy();
+    expect(screen.queryByText(/50%/)).toBeNull();
   });
 });

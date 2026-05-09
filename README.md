@@ -65,12 +65,6 @@ React/Vite/TypeScript 기반 Web UI가 기본 루트 화면입니다.
 http://localhost:4173/
 ```
 
-기존 DOM 기반 UI는 임시 fallback으로 아래 주소에 보존되어 있습니다.
-
-```text
-http://localhost:4173/legacy
-```
-
 ## Provider 설정
 
 초기 사용자에게 가장 중요한 설정 파일은 프로젝트 안의 아래 파일입니다.

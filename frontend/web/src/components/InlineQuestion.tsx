@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
-import { sendBackendRequest, sendMessage } from "../api/messages";
+import { sendBackendRequest } from "../api/messages";
 import { useAppState } from "../state/app-state";
 
 type QuestionChoice = {
@@ -17,15 +17,11 @@ export function InlineQuestion() {
   const [choiceFreeformAnswer, setChoiceFreeformAnswer] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const payload = state.modal?.kind === "backend" ? state.modal.payload || {} : null;
-  const assistantQuestion = useMemo(() => (
-    !payload && !state.busy ? assistantFollowUpQuestion(state.messages, state.composer.draft) : null
-  ), [payload, state.busy, state.composer.draft, state.messages]);
   const kind = String(payload?.kind || "");
   const requestId = String(payload?.request_id || "");
-  const isAssistantFollowUp = Boolean(assistantQuestion);
-  const isQuestion = kind === "question" || Boolean(assistantQuestion);
+  const isQuestion = kind === "question";
   const isPermission = kind === "permission";
-  const question = (assistantQuestion?.question || String(payload?.question || payload?.reason || payload?.message || "")).trim()
+  const question = String(payload?.question || payload?.reason || payload?.message || "").trim()
     || (isPermission ? "이 도구 실행을 허용할까요?" : "추가 정보가 필요합니다.");
   const questionSteps = useMemo(() => splitBatchedQuestions(question), [question]);
   const [questionStepAnswers, setQuestionStepAnswers] = useState<string[]>([]);
@@ -36,11 +32,9 @@ export function InlineQuestion() {
   const batchedAnswersComplete = batchedQuestion && questionSteps.every((_, index) => questionStepAnswers[index]?.trim());
   const choices = useMemo(() => (
     isQuestion
-      ? normalizeQuestionChoices(payload, question, assistantQuestion?.choices, {
-        allowDefaultChoices: !assistantQuestion || !isAlternativeQuestion(question),
-      })
+      ? normalizeQuestionChoices(payload, question)
       : []
-  ), [assistantQuestion, isQuestion, payload, question]);
+  ), [isQuestion, payload, question]);
   const sharedChoiceQuestion = batchedQuestion && choices.length > 0;
   const choiceAnsweredQuestionSteps = useMemo(
     () => questionSteps.map((step, index) => isQuestionAnsweredBySharedChoices(step, index, questionSteps)),
@@ -73,7 +67,7 @@ export function InlineQuestion() {
     }
   }, [isQuestion, requestId]);
 
-  if ((!payload && !assistantQuestion) || (!isQuestion && !isPermission)) {
+  if (!payload || (!isQuestion && !isPermission)) {
     return null;
   }
 
@@ -94,50 +88,15 @@ export function InlineQuestion() {
     }
   }
 
-  async function sendAssistantFollowUp(value: string) {
-    const trimmed = value.trim();
-    if (!state.sessionId || !trimmed || submitting) return;
-    setSubmitting(true);
-    dispatch({ type: "append_message", message: { role: "user", text: trimmed } });
-    dispatch({ type: "set_busy", value: true });
-    dispatch({ type: "clear_composer" });
-    try {
-      await sendMessage({
-        sessionId: state.sessionId,
-        clientId: state.clientId,
-        line: trimmed,
-        attachments: [],
-        suppressUserTranscript: false,
-        systemPrompt: state.systemPrompt.trim() || undefined,
-      });
-      setAnswer("");
-    } catch (error) {
-      dispatch({
-        type: "backend_event",
-        event: { type: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   function submitAnswer(value: string) {
     const trimmed = value.trim();
     if (!trimmed) return;
-    if (assistantQuestion) {
-      void sendAssistantFollowUp(trimmed);
-      return;
-    }
     void respond({ type: "question_response", request_id: requestId, answer: trimmed });
   }
 
   function submitBatchedAnswers() {
     if (!batchedAnswersComplete) return;
     const combinedAnswer = formatBatchedQuestionAnswer(questionSteps, questionStepAnswers);
-    if (assistantQuestion) {
-      void sendAssistantFollowUp(combinedAnswer);
-      return;
-    }
     void respond({ type: "question_response", request_id: requestId, answer: combinedAnswer });
   }
 
@@ -149,10 +108,6 @@ export function InlineQuestion() {
       selectedBatchedChoice || choiceFreeformAnswer,
       choiceAnsweredQuestionSteps,
     );
-    if (assistantQuestion) {
-      void sendAssistantFollowUp(combinedAnswer);
-      return;
-    }
     void respond({ type: "question_response", request_id: requestId, answer: combinedAnswer });
   }
 
@@ -251,11 +206,11 @@ export function InlineQuestion() {
         <strong>
           <span className="inline-question-label-copy">
             {batchedQuestion
-              ? `${isAssistantFollowUp ? "답변 입력" : "질문"} (${questionSteps.length}개)`
-              : isAssistantFollowUp ? `답변 선택${questionProgress}` : `질문${questionProgress}`}
+              ? `질문 (${questionSteps.length}개)`
+              : `질문${questionProgress}`}
           </span>
         </strong>
-        <small>{isAssistantFollowUp ? "마지막 질문에 바로 답변할 수 있습니다." : "에이전트가 답변을 기다리고 있습니다."}</small>
+        <small>에이전트가 답변을 기다리고 있습니다.</small>
       </div>
       {batchedQuestion && mixedBatchedChoiceQuestion ? (
         <div className="inline-question-mixed-set">
@@ -405,12 +360,10 @@ export function InlineQuestion() {
         </div>
       ) : (
         <>
-          {!isAssistantFollowUp ? (
-            <div className="inline-question-objective-question inline-question-single-question">
-              <span className="inline-question-number inline-question-step-number">Q1</span>
-              <span>{conciseQuestion}</span>
-            </div>
-          ) : null}
+          <div className="inline-question-objective-question inline-question-single-question">
+            <span className="inline-question-number inline-question-step-number">Q1</span>
+            <span>{conciseQuestion}</span>
+          </div>
           {displayChoices.length ? (
             <div className="inline-question-choices">
               {displayChoices.map((choice, index) => (
@@ -657,33 +610,6 @@ function isQuestionLikeLine(line: string) {
   const value = line.replace(/^[(（]|[)）]$/g, "").trim();
   return /[?？]\s*$/.test(value)
     || /(할까요|될까요|괜찮을까요|원하시나요|맞나요|해주세요|골라주세요|알려주세요|선택해주세요|말씀해주세요|정해주세요)[.!。]?\s*$/.test(value);
-}
-
-function assistantFollowUpQuestion(messages: Array<{ role: string; text: string; isComplete?: boolean; isError?: boolean }>, draft = "") {
-  if (draft.trim()) {
-    return null;
-  }
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== "assistant" || !last.isComplete || last.isError) {
-    return null;
-  }
-  const text = String(last.text || "").trim();
-  if (!text || text.length > 4000) {
-    return null;
-  }
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const trailingLines = lines.slice(-3);
-  const batchedQuestions = trailingLines.filter(isFollowUpQuestionLine);
-  const question = batchedQuestions.length > 1
-    ? batchedQuestions.join("\n")
-    : [...trailingLines].reverse().find(isFollowUpQuestionLine) || "";
-  if (!question) {
-    return null;
-  }
-  return {
-    question,
-    choices: isAlternativeQuestion(question) ? [] : defaultQuestionChoices(question),
-  };
 }
 
 function isFollowUpQuestionLine(line: string) {

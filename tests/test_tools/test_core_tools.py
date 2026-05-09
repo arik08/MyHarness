@@ -85,6 +85,61 @@ async def test_file_write_result_hides_local_path_before_playground(tmp_path: Pa
     assert str(tmp_path) not in write_result.output
 
 
+@pytest.mark.asyncio
+async def test_file_write_blocks_invalid_mermaid_before_writing(tmp_path: Path, monkeypatch):
+    from myharness.tools import mermaid_preflight
+
+    def fake_preflight(diagrams):
+        return [
+            mermaid_preflight.MermaidPreflightError(
+                diagrams[0],
+                "Parse error on line 2",
+            )
+        ]
+
+    monkeypatch.setattr(mermaid_preflight, "_run_mermaid_preflight", fake_preflight)
+    context = ToolExecutionContext(cwd=tmp_path)
+    content = "```mermaid\ngraph TD\nA--B\n```\n"
+
+    write_result = await FileWriteTool().execute(
+        FileWriteToolInput(path="outputs/flow.md", content=content),
+        context,
+    )
+
+    assert write_result.is_error is True
+    assert "Mermaid preflight failed" in write_result.output
+    assert "was not written" in write_result.output
+    assert not (tmp_path / "outputs" / "flow.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_file_edit_blocks_invalid_mermaid_before_updating(tmp_path: Path, monkeypatch):
+    from myharness.tools import mermaid_preflight
+
+    def fake_preflight(diagrams):
+        return [
+            mermaid_preflight.MermaidPreflightError(
+                diagrams[0],
+                "Parse error on line 3",
+            )
+        ]
+
+    monkeypatch.setattr(mermaid_preflight, "_run_mermaid_preflight", fake_preflight)
+    target = tmp_path / "flow.html"
+    original = '<div class="mermaid">graph TD\nA-->B</div>\n'
+    target.write_text(original, encoding="utf-8")
+
+    edit_result = await FileEditTool().execute(
+        FileEditToolInput(path="flow.html", old_str="A-->B", new_str="A--B"),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert edit_result.is_error is True
+    assert "Mermaid preflight failed" in edit_result.output
+    assert "was not updated" in edit_result.output
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_file_write_tool_description_guides_human_artifact_filenames():
     description = FileWriteTool.description
 

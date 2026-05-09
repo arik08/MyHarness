@@ -38,6 +38,7 @@ function ChatStateProbe() {
   return (
     <>
       <output data-testid="message-count">{state.messages.length}</output>
+      <output data-testid="message-texts">{state.messages.map((message) => message.text).join("|")}</output>
       <output data-testid="pending-fresh-chat">{state.pendingFreshChat ? "yes" : "no"}</output>
     </>
   );
@@ -102,6 +103,51 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "프로젝트 선택" }).getAttribute("data-tooltip-placement")).toBe("right");
     expect(screen.getByRole("button", { name: "New Chat" }).getAttribute("data-tooltip-placement")).toBe("right");
     expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
+  });
+
+  it("sends subagent_model when the runtime picker is scoped to Sub", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          clientId: "client-1",
+          provider: "codex",
+          providerLabel: "Codex Subscription",
+          model: "gpt-5.5",
+          subagentModel: "gpt-5.4-mini",
+          runtimePicker: {
+            ...initialAppState.runtimePicker,
+            open: true,
+            loading: false,
+            selectedProvider: "codex",
+            modelOpen: true,
+            providers: [{ value: "codex", label: "Codex Subscription", active: true }],
+            modelsByProvider: {
+              codex: [
+                { value: "gpt-5.5", label: "gpt-5.5", active: true },
+                { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
+              ],
+            },
+            models: [
+              { value: "gpt-5.5", label: "gpt-5.5", active: true },
+              { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
+            ],
+          },
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Sub" }));
+    await userEvent.click(screen.getByRole("button", { name: /gpt-5\.4-nano/ }));
+
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
+      type: "apply_select_command",
+      command: "subagent_model",
+      value: "gpt-5.4-nano",
+    }));
   });
 
   it("shows the busy spinner in the delete slot while the active answer is running", () => {
@@ -419,6 +465,36 @@ describe("Sidebar", () => {
       command: "resume",
       value: "session-old",
     });
+  });
+
+  it("keeps the current chat visible while a saved history item is restoring", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          clientId: "client-1",
+          busy: false,
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          messages: [{ id: "message-current", role: "user", text: "현재 화면 질문" }],
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        }}
+      >
+        <Sidebar />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
+      type: "apply_select_command",
+      command: "resume",
+      value: "session-old",
+    }));
+    expect(screen.getByTestId("message-count").textContent).toBe("1");
+    expect(screen.getByTestId("message-texts").textContent).toBe("현재 화면 질문");
   });
 
   it("restores a live saved session snapshot when the current session is idle", async () => {

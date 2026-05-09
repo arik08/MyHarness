@@ -1,7 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
 import type { AppSettings, ChatMessage } from "../types/ui";
-import { MarkdownMessage } from "./MarkdownMessage";
+import { isStandaloneHtmlDocument, MarkdownMessage } from "./MarkdownMessage";
 
 const StableMarkdownMessage = memo(MarkdownMessage);
 
@@ -10,9 +9,9 @@ function useStreamingText(
   visuallyStreaming: boolean,
   startBufferMs: number,
   revealDurationMs: number,
+  revealWipePercent: number,
 ) {
   const [visibleText, setVisibleText] = useState(targetText);
-  const [revealFrom, setRevealFrom] = useState<number | null>(null);
   const visibleTextRef = useRef(visibleText);
   const pendingTextRef = useRef("");
   const flushTimerRef = useRef<number | null>(null);
@@ -21,6 +20,9 @@ function useStreamingText(
   const lastFrameAtRef = useRef<number | null>(null);
   const revealBudgetRef = useRef(0);
   const displayStartedRef = useRef(false);
+  const startBufferMsRef = useRef(startBufferMs);
+  const revealDurationMsRef = useRef(revealDurationMs);
+  const revealWipePercentRef = useRef(revealWipePercent);
 
   useEffect(() => {
     visibleTextRef.current = visibleText;
@@ -57,10 +59,23 @@ function useStreamingText(
     displayStartedRef.current = false;
   }
 
+  function normalizedStartBufferMs() {
+    return Math.max(0, Math.min(2000, startBufferMsRef.current));
+  }
+
+  function normalizedRevealDurationMs() {
+    return Math.max(0, Math.min(2000, revealDurationMsRef.current));
+  }
+
+  function normalizedRevealWipePercent() {
+    return Math.max(100, Math.min(400, revealWipePercentRef.current));
+  }
+
   function streamingRevealRate(pendingLength: number) {
-    const duration = Math.max(120, Math.min(2000, revealDurationMs));
-    const baseCharsPerMs = Math.max(0.08, Math.min(0.22, 90 / duration));
-    const backlogBoost = 1 + Math.min(2.4, pendingLength / 520);
+    const duration = Math.max(80, normalizedRevealDurationMs());
+    const wipeRatio = normalizedRevealWipePercent() / 180;
+    const baseCharsPerMs = Math.max(0.04, Math.min(0.72, (96 / duration) * Math.max(0.75, Math.min(1.45, wipeRatio))));
+    const backlogBoost = 1 + Math.min(2.4, pendingLength / 560);
     return baseCharsPerMs * backlogBoost;
   }
 
@@ -69,19 +84,20 @@ function useStreamingText(
     if (!pendingChars.length) {
       return 0;
     }
-    const maxFrameChars = Math.max(3, Math.min(18, 4 + Math.floor(pendingChars.length / 90)));
+    const wipeRatio = normalizedRevealWipePercent() / 180;
+    const maxFrameChars = Math.round(Math.max(4, Math.min(30, (5 + Math.floor(pendingChars.length / 85)) * Math.max(0.75, Math.min(1.55, wipeRatio)))));
     const limit = Math.min(pendingChars.length, Math.max(1, Math.min(maxFrameChars, desiredCount)));
     if (pendingChars.length <= limit) {
       return pendingChars.length;
     }
-    const lookahead = Math.min(pendingChars.length, limit + 3);
+    const lookahead = Math.min(pendingChars.length, limit + 4);
     let bestBoundary = 0;
-    for (let index = 1; index <= lookahead; index += 1) {
-      if (/[\s,.;:!?)]/u.test(pendingChars[index - 1] || "")) {
+    for (let index = Math.max(2, limit); index <= lookahead; index += 1) {
+      if (/[\s,.;:!?。！？…)]/u.test(pendingChars[index - 1] || "")) {
         bestBoundary = index;
       }
     }
-    return bestBoundary || limit;
+    return bestBoundary || Math.min(pendingChars.length, Math.max(limit, Math.min(maxFrameChars, desiredCount + 1)));
   }
 
   function scheduleFlush() {
@@ -96,7 +112,7 @@ function useStreamingText(
       scheduleRevealFrame();
       return;
     }
-    const delay = Math.max(0, Math.min(2000, startBufferMs));
+    const delay = normalizedStartBufferMs();
     flushTimerRef.current = window.setTimeout(() => {
       flushTimerRef.current = null;
       scheduleRevealFrame();
@@ -105,6 +121,10 @@ function useStreamingText(
 
   function scheduleRevealFrame() {
     if (animationFrameRef.current !== null || frameFallbackTimerRef.current !== null) {
+      return;
+    }
+    if (normalizedRevealDurationMs() <= 0) {
+      flushAllPendingText();
       return;
     }
     animationFrameRef.current = window.requestAnimationFrame((timestamp) => {
@@ -120,6 +140,20 @@ function useStreamingText(
       }
       flushStreamingText(performance.now());
     }, 34);
+  }
+
+  function flushAllPendingText() {
+    clearAnimationFrame();
+    clearFlushTimer();
+    if (!pendingTextRef.current) {
+      return;
+    }
+    displayStartedRef.current = true;
+    visibleTextRef.current = `${visibleTextRef.current}${pendingTextRef.current}`;
+    pendingTextRef.current = "";
+    revealBudgetRef.current = 0;
+    lastFrameAtRef.current = null;
+    setVisibleText(visibleTextRef.current);
   }
 
   function flushStreamingText(timestamp = performance.now()) {
@@ -149,7 +183,6 @@ function useStreamingText(
     revealBudgetRef.current = Math.max(0, revealBudgetRef.current - revealCount);
     const nextText = pendingChars.slice(0, revealCount).join("");
     pendingTextRef.current = pendingChars.slice(revealCount).join("");
-    setRevealFrom(visibleTextRef.current.length);
     visibleTextRef.current = `${visibleTextRef.current}${nextText}`;
     setVisibleText(visibleTextRef.current);
     if (pendingTextRef.current) {
@@ -166,14 +199,24 @@ function useStreamingText(
   }, []);
 
   useEffect(() => {
+    startBufferMsRef.current = startBufferMs;
+    revealDurationMsRef.current = revealDurationMs;
+    revealWipePercentRef.current = revealWipePercent;
+    if (!pendingTextRef.current) {
+      return;
+    }
+    clearFlushTimer();
+    clearAnimationFrame();
+    scheduleFlush();
+  }, [startBufferMs, revealDurationMs, revealWipePercent]);
+
+  useEffect(() => {
     if (!visuallyStreaming) {
       const visibleText = visibleTextRef.current;
       const queuedText = `${visibleText}${pendingTextRef.current}`;
       if (queuedText === targetText) {
         if (pendingTextRef.current) {
           scheduleFlush();
-        } else {
-          setRevealFrom(null);
         }
         return;
       }
@@ -187,7 +230,6 @@ function useStreamingText(
         visibleTextRef.current = targetText;
         setVisibleText(targetText);
       }
-      setRevealFrom(null);
       return;
     }
 
@@ -211,9 +253,8 @@ function useStreamingText(
 
     resetRevealLoop();
     visibleTextRef.current = targetText;
-    setRevealFrom(null);
     setVisibleText(targetText);
-  }, [targetText, visuallyStreaming, startBufferMs, revealDurationMs]);
+  }, [targetText, visuallyStreaming, startBufferMs, revealDurationMs, revealWipePercent]);
 
   const snapCompletedReplacement = !visuallyStreaming
     && visibleText !== targetText
@@ -221,7 +262,6 @@ function useStreamingText(
 
   return {
     visibleText: snapCompletedReplacement ? targetText : visibleText,
-    revealFrom,
     revealing: !snapCompletedReplacement && (visuallyStreaming || visibleText !== targetText || Boolean(pendingTextRef.current)),
   };
 }
@@ -266,6 +306,9 @@ function splitStreamingMarkdown(text: string) {
 
 function splitStableMarkdownChunks(text: string) {
   const source = String(text || "").replace(/\r\n/g, "\n");
+  if (isStandaloneHtmlDocument(source)) {
+    return [source.trimEnd()];
+  }
   const chunks: string[] = [];
   const lines = source.split("\n");
   let current: string[] = [];
@@ -394,25 +437,15 @@ function isStructuredLiveMarkdown(text: string) {
   return false;
 }
 
-function StreamingPlainText({ text, revealFrom }: { text: string; revealFrom: number | null }) {
-  if (revealFrom === null || revealFrom < 0 || revealFrom >= text.length) {
-    return <p>{text}</p>;
-  }
-  return (
-    <p>
-      {text.slice(0, revealFrom)}
-      <span className="stream-reveal-sentence">{text.slice(revealFrom)}</span>
-    </p>
-  );
+function StreamingPlainText({ text }: { text: string }) {
+  return <p>{text}</p>;
 }
 
 function StreamingMarkdownMessage({
   text,
-  revealFrom,
   complete = false,
 }: {
   text: string;
-  revealFrom: number | null;
   complete?: boolean;
 }) {
   const { prefix, liveTail } = useMemo(() => {
@@ -424,7 +457,6 @@ function StreamingMarkdownMessage({
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
   const renderLiveTailAsMarkdown = isStructuredLiveMarkdown(liveTail);
   let chunkCursor = 0;
-  const liveTailRevealFrom = revealFrom !== null ? Math.max(0, revealFrom - prefix.length) : null;
   const chunkOccurrences = new Map<string, number>();
 
   return (
@@ -435,25 +467,20 @@ function StreamingMarkdownMessage({
         const chunkHash = stableChunkHash(chunk);
         const chunkOccurrence = chunkOccurrences.get(chunkHash) || 0;
         chunkOccurrences.set(chunkHash, chunkOccurrence + 1);
-        const chunkRevealFrom =
-          revealFrom !== null && chunkStart >= 0 && revealFrom >= chunkStart && revealFrom < chunkStart + chunk.length
-            ? revealFrom - chunkStart
-            : null;
         return (
           <StableMarkdownMessage
             key={`${chunkHash}:${chunkOccurrence}`}
             text={chunk}
-            revealFrom={chunkRevealFrom}
           />
         );
       })}
       {liveTail && renderLiveTailAsMarkdown ? (
         <div className="stream-live-text">
-          <MarkdownMessage text={liveTail} revealFrom={liveTailRevealFrom} deferIncompleteTables />
+          <MarkdownMessage text={liveTail} deferIncompleteTables />
         </div>
       ) : liveTail ? (
         <div className="markdown-body react-markdown stream-live-text">
-          <StreamingPlainText text={liveTail} revealFrom={liveTailRevealFrom} />
+          <StreamingPlainText text={liveTail} />
         </div>
       ) : null}
     </div>
@@ -472,16 +499,13 @@ export function StreamingAssistantMessage({
   onVisibleTextChange?: () => void;
 }) {
   const visuallyStreaming = active && !message.isComplete;
-  const { visibleText, revealFrom, revealing } = useStreamingText(
+  const { visibleText, revealing } = useStreamingText(
     message.text,
     visuallyStreaming,
     settings.streamStartBufferMs,
     settings.streamRevealDurationMs,
+    settings.streamRevealWipePercent,
   );
-  const style = useMemo(() => ({
-    "--stream-reveal-duration": `${Math.max(0, Math.min(2000, settings.streamRevealDurationMs))}ms`,
-    "--stream-reveal-wipe": `${Math.max(100, Math.min(400, settings.streamRevealWipePercent))}%`,
-  }) as CSSProperties, [settings.streamRevealDurationMs, settings.streamRevealWipePercent]);
 
   useEffect(() => {
     if (revealing && visibleText) {
@@ -490,10 +514,9 @@ export function StreamingAssistantMessage({
   }, [revealing, onVisibleTextChange, visibleText]);
 
   return (
-    <div className={revealing ? "react-streaming-text streaming-text" : undefined} style={style}>
+    <div className={revealing ? "react-streaming-text streaming-text" : undefined}>
       <StreamingMarkdownMessage
         text={revealing ? visibleText : message.text}
-        revealFrom={revealing ? revealFrom : null}
         complete={!revealing}
       />
     </div>

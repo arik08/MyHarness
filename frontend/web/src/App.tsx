@@ -5,6 +5,7 @@ import { useBackendSession } from "./hooks/useBackendSession";
 import { useWorkspaceData } from "./hooks/useWorkspaceData";
 import { AppStateProvider } from "./state/app-state";
 import { useAppState } from "./state/app-state";
+import { runtimePreferencesFromState } from "./utils/runtimePreferences";
 
 function AppContent() {
   const { state, dispatch } = useAppState();
@@ -20,6 +21,7 @@ function AppContent() {
         sessionId: state.sessionId,
         clientId: state.clientId,
         cwd: state.workspacePath || undefined,
+        ...runtimePreferencesFromState(state),
       }).then((session) => {
         dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace });
       }).catch((error: unknown) => {

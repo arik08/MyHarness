@@ -626,6 +626,36 @@ class TestPgptOpenAICompatibleProvider:
         assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
         assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
 
+    def test_codex_subscription_default_profile_includes_lightweight_gpt54_models(self):
+        from myharness.config.settings import default_provider_profiles
+
+        profile = default_provider_profiles()["codex"]
+
+        assert profile.label == "Codex Subscription"
+        assert profile.provider == "openai_codex"
+        assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+
+    def test_codex_saved_builtin_profile_receives_new_allowed_models(self):
+        from myharness.config.settings import ProviderProfile
+
+        settings = Settings(
+            profiles={
+                "codex": ProviderProfile(
+                    label="Codex Subscription",
+                    provider="openai_codex",
+                    api_format="openai",
+                    auth_source="codex_subscription",
+                    default_model="gpt-5.4",
+                    last_model="gpt-5.4",
+                    allowed_models=["gpt-5.4"],
+                )
+            }
+        )
+
+        profile = settings.merged_profiles()["codex"]
+
+        assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+
     def test_pgpt_saved_builtin_profile_receives_new_allowed_models(self):
         from myharness.config.settings import ProviderProfile
 

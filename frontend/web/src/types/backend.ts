@@ -20,6 +20,7 @@ export type BackendStateSnapshot = {
   provider?: string;
   provider_label?: string;
   model?: string;
+  subagent_model?: string;
   effort?: string;
   permission_mode?: string;
   cwd?: string;
@@ -40,6 +41,10 @@ export type SwarmTeammateSnapshot = {
   agent_id?: string;
   name?: string;
   role?: string;
+  model?: string;
+  modelSource?: string;
+  model_source?: string;
+  prompt?: string;
   status?: "running" | "idle" | "completed" | "failed" | "killed" | "done" | "error" | string;
   task?: string;
   startedAt?: number | string | null;

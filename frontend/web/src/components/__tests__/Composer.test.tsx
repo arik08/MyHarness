@@ -811,8 +811,7 @@ describe("Composer", () => {
     }
   });
 
-  it("turns completed assistant confirmation questions into inline quick replies without repeating the question", async () => {
-    const user = userEvent.setup();
+  it("does not infer inline replies from completed assistant confirmation text", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -834,25 +833,11 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const card = document.querySelector(".inline-question-card");
-    const composerBox = document.querySelector(".composer-box");
-    expect(card).toBeTruthy();
-    expect(card?.nextElementSibling).toBe(composerBox);
-    expect(screen.getByText("답변 선택")).toBeTruthy();
-    expect(screen.getByText("이 방향으로 바로 진행해도 될까요?")).toBeTruthy();
-    expect(screen.queryByText("질문: 이 방향으로 바로 진행해도 될까요?")).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /네, 진행해주세요/ }));
-
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: "session-1",
-      clientId: "client-1",
-      line: "네, 진행해주세요",
-      suppressUserTranscript: false,
-    }));
+    expect(document.querySelector(".inline-question-card")).toBeNull();
+    expect(screen.queryByText("답변 선택")).toBeNull();
   });
 
-  it("turns completed assistant open-ended clarification questions into inline replies", () => {
+  it("does not infer inline replies from completed assistant clarification text", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -874,15 +859,68 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const card = document.querySelector(".inline-question-card");
-    expect(card).toBeTruthy();
-    expect(screen.getByText("답변 선택")).toBeTruthy();
-    expect(screen.getByText("보고서의 대상 독자는 누구인가요?")).toBeTruthy();
-    expect(screen.queryByText("질문: 보고서의 대상 독자는 누구인가요?")).toBeNull();
-    expect(screen.getByPlaceholderText("직접 답변 입력...")).toBeTruthy();
+    expect(document.querySelector(".inline-question-card")).toBeNull();
+    expect(screen.queryByText("답변 선택")).toBeNull();
   });
 
-  it("shows progress for batched assistant clarification questions", () => {
+  it("does not turn generic greeting assistance prompts into inline replies", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "안녕하세요! 무엇을 도와드릴까요?",
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".inline-question-card")).toBeNull();
+    expect(screen.queryByText("답변 선택")).toBeNull();
+  });
+
+  it.each([
+    "추가로 궁금한 점이 있으신가요?",
+    "더 도와드릴 일이 있을까요?",
+    "이 설명에서 헷갈리는 부분이 있나요?",
+    "이 부분이 왜 중요할까요?",
+  ])("does not infer inline replies from generic assistant questions: %s", (text) => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text,
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".inline-question-card")).toBeNull();
+    expect(screen.queryByText("답변 선택")).toBeNull();
+  });
+
+  it("does not infer inline replies from batched assistant clarification text", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -908,9 +946,8 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("답변 입력 (3개)")).toBeTruthy();
-    expect(document.body.textContent || "").toContain("(1/3) 보고서의 대상 독자는 누구인가요?");
-    expect(screen.getAllByPlaceholderText("답변 입력...")).toHaveLength(3);
+    expect(document.querySelector(".inline-question-card")).toBeNull();
+    expect(screen.queryByText("답변 입력 (3개)")).toBeNull();
   });
 
   it("shows progress for batched backend clarification questions", () => {
@@ -1289,7 +1326,7 @@ describe("Composer", () => {
     expect(screen.queryByText(/질문:/)).toBeNull();
   });
 
-  it("does not attach generic quick replies to assistant alternative questions", () => {
+  it("does not infer inline replies from assistant alternative questions", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -1310,9 +1347,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    expect(document.querySelector(".inline-question-card")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /네, 진행해주세요/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /아니요/ })).toBeNull();
-    expect(screen.getByPlaceholderText("직접 답변 입력...")).toBeTruthy();
+    expect(document.querySelector(".inline-question-card")).toBeNull();
+    expect(screen.queryByText("답변 선택")).toBeNull();
   });
 });

@@ -57,7 +57,6 @@ const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
 let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.MYHARNESS_WORKSPACE_SCOPE);
 let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
-const webUiMode = String(process.env.MYHARNESS_WEB_UI || "react").trim().toLowerCase();
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
 let server = null;
@@ -302,20 +301,8 @@ function isPageVisitPath(pathname) {
   return pathname === "/" || pathname === "/index.html";
 }
 
-function isReactPreviewPath(pathname) {
-  return pathname === "/react" || pathname === "/react/";
-}
-
 function hasBuiltReactUi() {
   return existsSync(join(webDistRoot, "index.html"));
-}
-
-function shouldServeReactRoot(pathname) {
-  return webUiMode !== "legacy" && hasBuiltReactUi() && (pathname === "/" || pathname === "/index.html");
-}
-
-function isLegacyUiPath(pathname) {
-  return pathname === "/legacy" || pathname === "/legacy/" || pathname === "/legacy-index.html";
 }
 
 function workspaceScopeFromRequest(request) {
@@ -339,14 +326,10 @@ function resolvePath(url) {
   const pathname = decodeURIComponent(new URL(url, `http://localhost:${port}`).pathname);
   const relativePath = pathname.replace(/^\/+/, "");
   const filePath =
-    isReactPreviewPath(pathname)
-      ? (existsSync(join(webDistRoot, "react.html")) ? join(webDistRoot, "react.html") : join(root, "legacy-index.html"))
-      : shouldServeReactRoot(pathname)
-        ? (existsSync(join(webDistRoot, "index.html")) ? join(webDistRoot, "index.html") : join(root, "index.html"))
+    pathname === "/" || pathname === "/index.html"
+      ? (hasBuiltReactUi() ? join(webDistRoot, "index.html") : join(root, "index.html"))
       : pathname.startsWith("/web-assets/")
         ? join(webDistRoot, relativePath)
-        : isLegacyUiPath(pathname) || pathname === "/"
-      ? join(root, "legacy-index.html")
       : pathname === "/vendor/marked/marked.esm.js"
         ? join(vendorRoot, "marked/lib/marked.esm.js")
         : pathname === "/vendor/highlight/highlight.min.js"
@@ -3606,6 +3589,10 @@ async function createBackendSession(options = {}) {
   if (options.model) {
     args.push("--model", options.model);
   }
+  const subagentModel = String(options.subagentModel || options.subagent_model || "").trim();
+  if (subagentModel) {
+    args.push("--subagent-model", subagentModel);
+  }
   const activeProfile = String(options.activeProfile || options.active_profile || "").trim();
   if (activeProfile) {
     args.push("--active-profile", activeProfile);
@@ -3992,6 +3979,7 @@ async function handleApi(request, response, pathname) {
         cwd: body.cwd || oldSession?.workspace?.path,
         activeProfile: body.activeProfile || body.active_profile,
         model: body.model,
+        subagentModel: body.subagentModel || body.subagent_model,
         effort: body.effort,
         systemPrompt: body.systemPrompt,
         workspaceScope,

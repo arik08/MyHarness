@@ -261,6 +261,7 @@ export function ArtifactPanel() {
   const [aiEditTargetPath, setAiEditTargetPath] = useState("");
   const [aiEditProgressStartedAt, setAiEditProgressStartedAt] = useState<number | null>(null);
   const [aiEditProgressNow, setAiEditProgressNow] = useState(() => Date.now());
+  const [aiEditOverlayCollapsed, setAiEditOverlayCollapsed] = useState(false);
   const [versionMenuOpen, setVersionMenuOpen] = useState(false);
   const skipNextHistoryPushRef = useRef(false);
   const titleRenameInputRef = useRef<HTMLInputElement | null>(null);
@@ -349,6 +350,7 @@ export function ArtifactPanel() {
     setSubmittingAiEdit(false);
     setAiEditStatus("");
     setAiEditProgressStartedAt(null);
+    setAiEditOverlayCollapsed(false);
     setVersionMenuOpen(false);
   }, [aiEditTargetPath, state.activeArtifact?.path]);
 
@@ -606,6 +608,8 @@ export function ArtifactPanel() {
   const aiEditWaitingText = state.workflowEvents.length
     ? ""
     : `AI 자동편집 요청 처리 중 · ${formatAiEditElapsed(aiEditElapsedSeconds)} · 응답 또는 도구 시작을 기다리고 있습니다.`;
+  const aiEditCollapsedText = aiEditStatus
+    || (showAiEditProgress ? (aiEditWaitingText || "AI 자동편집 진행 과정을 숨긴 상태입니다.") : `수정 의견 ${aiEditComments.length}개`);
 
   async function refreshProjectFiles(nextScope = fileScope) {
     try {
@@ -761,6 +765,7 @@ export function ArtifactPanel() {
       return;
     }
     setSubmittingAiEdit(true);
+    setAiEditOverlayCollapsed(false);
     setAiEditProgressStartedAt(Date.now());
     setAiEditProgressNow(Date.now());
     setAiEditStatus("AI 자동편집 요청을 중앙 채팅으로 전달 중입니다.");
@@ -1059,51 +1064,90 @@ export function ArtifactPanel() {
         </div>
       </div>
       {active && canEditHtmlPreview && (aiEditComments.length > 0 || aiEditStatus) ? (
-        <div className={`artifact-ai-comments${showAiEditProgress ? " with-progress" : ""}`} aria-label="AI 수정 의견">
-          {aiEditStatus ? <p className="artifact-ai-status">{aiEditStatus}</p> : null}
-          {aiEditComments.map((comment, index) => (
-            <div
-              className="artifact-ai-comment"
-              key={comment.id}
-              aria-label={`AI 수정 의견 ${index + 1}: ${comment.instruction}`}
-              data-tooltip={`${index + 1}. ${comment.instruction}`}
-            >
-              <span className="artifact-ai-comment-index">{index + 1}</span>
-              <span className="artifact-ai-comment-instruction">{truncateAiInstruction(comment.instruction)}</span>
+        <div className={`artifact-ai-comments${showAiEditProgress ? " with-progress" : ""}${aiEditOverlayCollapsed ? " collapsed" : ""}`} aria-label="AI 수정 의견">
+          {aiEditOverlayCollapsed ? (
+            <>
+              <span className="artifact-ai-comment-index">{aiEditComments.length || 1}</span>
               <button
+                className="artifact-ai-collapsed-summary"
                 type="button"
-                aria-label={`AI 수정 의견 ${index + 1} 삭제`}
-                data-tooltip="삭제"
-                onClick={() => {
-                  setAiEditComments((items) => items.filter((item) => item.id !== comment.id));
-                  setAiEditStatus("");
-                }}
+                aria-label={`AI 수정 패널 요약: ${aiEditCollapsedText}`}
+                data-tooltip="다시 펼치기"
+                onClick={() => setAiEditOverlayCollapsed(false)}
               >
-                <Icon name="close" />
+                {aiEditCollapsedText}
               </button>
-            </div>
-          ))}
-          <button
-            className="artifact-ai-submit"
-            type="button"
-            onClick={() => void submitAiEdit()}
-            disabled={aiEditComments.length === 0 || submittingAiEdit || state.busy}
-            aria-label={submittingAiEdit ? "AI 자동편집 요청 중" : "AI 자동편집"}
-          >
-            <Icon name="ai" />
-            <span>{submittingAiEdit ? "요청 중" : "AI 자동편집"}</span>
-          </button>
-          {showAiEditProgress ? (
-            <div className="artifact-ai-progress" aria-label="AI 자동편집 진행 과정">
-              <WorkflowPanel events={state.workflowEvents} durationSeconds={state.workflowDurationSeconds} />
-              {!state.workflowEvents.length ? (
-                <p className="artifact-ai-progress-empty" role="status" aria-live="polite">
-                  <span className="artifact-ai-progress-pulse" aria-hidden="true" />
-                  <span>{aiEditWaitingText}</span>
-                </p>
+              <button
+                className="artifact-ai-toggle"
+                type="button"
+                aria-label="AI 수정 패널 다시 펼치기"
+                aria-expanded="false"
+                data-tooltip="다시 펼치기"
+                onClick={() => setAiEditOverlayCollapsed(false)}
+              >
+                <Icon name="chevron-down" />
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="artifact-ai-comments-header">
+                {aiEditStatus ? <p className="artifact-ai-status">{aiEditStatus}</p> : <p className="artifact-ai-status">{`수정 의견 ${aiEditComments.length}개`}</p>}
+                <button
+                  className="artifact-ai-toggle"
+                  type="button"
+                  aria-label="AI 수정 패널 접기"
+                  aria-expanded="true"
+                  data-tooltip="접기"
+                  onClick={() => setAiEditOverlayCollapsed(true)}
+                >
+                  <Icon name="chevron-up" />
+                </button>
+              </div>
+              {aiEditComments.map((comment, index) => (
+                <div
+                  className="artifact-ai-comment"
+                  key={comment.id}
+                  aria-label={`AI 수정 의견 ${index + 1}: ${comment.instruction}`}
+                  data-tooltip={`${index + 1}. ${comment.instruction}`}
+                >
+                  <span className="artifact-ai-comment-index">{index + 1}</span>
+                  <span className="artifact-ai-comment-instruction">{truncateAiInstruction(comment.instruction)}</span>
+                  <button
+                    type="button"
+                    aria-label={`AI 수정 의견 ${index + 1} 삭제`}
+                    data-tooltip="삭제"
+                    onClick={() => {
+                      setAiEditComments((items) => items.filter((item) => item.id !== comment.id));
+                      setAiEditStatus("");
+                    }}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
+              ))}
+              <button
+                className="artifact-ai-submit"
+                type="button"
+                onClick={() => void submitAiEdit()}
+                disabled={aiEditComments.length === 0 || submittingAiEdit || state.busy}
+                aria-label={submittingAiEdit ? "AI 자동편집 요청 중" : "AI 자동편집"}
+              >
+                <Icon name="ai" />
+                <span>{submittingAiEdit ? "요청 중" : "AI 자동편집"}</span>
+              </button>
+              {showAiEditProgress ? (
+                <div className="artifact-ai-progress" aria-label="AI 자동편집 진행 과정">
+                  <WorkflowPanel events={state.workflowEvents} durationSeconds={state.workflowDurationSeconds} />
+                  {!state.workflowEvents.length ? (
+                    <p className="artifact-ai-progress-empty" role="status" aria-live="polite">
+                      <span className="artifact-ai-progress-pulse" aria-hidden="true" />
+                      <span>{aiEditWaitingText}</span>
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
-            </div>
-          ) : null}
+            </>
+          )}
         </div>
       ) : null}
       <div className="artifact-viewer" key={active ? "detail" : "list"}>
@@ -1414,11 +1458,28 @@ function ProjectFileItem({
     }
   }
 
+  const pinButton = (
+    <button
+      className={`project-file-pin${pinned ? " active" : ""}`}
+      type="button"
+      aria-label={`${artifact.name} ${pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}`}
+      aria-pressed={pinned ? "true" : "false"}
+      data-tooltip={pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+      onClick={(event) => {
+        event.stopPropagation();
+        onTogglePinned(artifact);
+      }}
+    >
+      <Icon name="star" />
+    </button>
+  );
+
   return (
     <div className={`project-file-item${deleteReady ? " delete-ready" : ""}${deleting ? " deleting" : ""}`}>
-      {editingName ? (
-        <div className="project-file-open project-file-open-editing">
-          <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
+      <div className={`project-file-main${pinned ? " project-file-main-pinned" : ""}${editingName ? " project-file-main-editing" : ""}`}>
+        <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
+        {pinned ? pinButton : null}
+        {editingName ? (
           <span className="artifact-card-copy project-file-inline-rename">
             <input
               ref={nameInputRef}
@@ -1440,29 +1501,16 @@ function ProjectFileItem({
             />
             {renameError ? <small>{renameError}</small> : null}
           </span>
-        </div>
-      ) : (
-        <button className="project-file-open" type="button" aria-label={`${artifact.name || artifact.path} 열기`} data-tooltip={artifact.name || artifact.path} onClick={() => void onOpen(artifact)}>
-          <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
-          <span className="artifact-card-copy">
-            <strong>{artifact.name || artifact.path}</strong>
-          </span>
-        </button>
-      )}
-      <span className="project-file-actions">
-        <button
-          className={`project-file-pin${pinned ? " active" : ""}`}
-          type="button"
-          aria-label={`${artifact.name} ${pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}`}
-          aria-pressed={pinned ? "true" : "false"}
-          data-tooltip={pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}
-          onClick={(event) => {
-            event.stopPropagation();
-            onTogglePinned(artifact);
-          }}
-        >
-          <Icon name="star" />
-        </button>
+        ) : (
+          <button className="project-file-open" type="button" aria-label={`${artifact.name || artifact.path} 열기`} data-tooltip={artifact.name || artifact.path} onClick={() => void onOpen(artifact)}>
+            <span className="artifact-card-copy">
+              <strong>{artifact.name || artifact.path}</strong>
+            </span>
+          </button>
+        )}
+      </div>
+      <span className={`project-file-actions${pinned ? "" : " project-file-actions-with-pin"}`}>
+        {pinned ? null : pinButton}
         <button
           className="project-file-rename"
           type="button"

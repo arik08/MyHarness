@@ -4,6 +4,7 @@ import { restartSession } from "../api/session";
 import { createWorkspace, deleteWorkspace } from "../api/workspaces";
 import { useAppState } from "../state/app-state";
 import type { Workspace } from "../types/backend";
+import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { SettingsModal } from "./SettingsModal";
 
 export { isLocalBrowserHostname } from "../utils/settingsLabels";
@@ -36,6 +37,7 @@ export function ModalHost() {
       sessionId: state.sessionId,
       clientId: state.clientId,
       cwd: workspace.path,
+      ...runtimePreferencesFromState(state),
     });
     localStorage.setItem("myharness:workspaceName", workspace.name);
     dispatch({ type: "set_workspace", workspace: session.workspace || workspace });

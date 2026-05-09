@@ -225,6 +225,7 @@ async def build_runtime(
     prompt: str | None = None,
     cwd: str | None = None,
     model: str | None = None,
+    subagent_model: str | None = None,
     max_turns: int | None = None,
     base_url: str | None = None,
     system_prompt: str | None = None,
@@ -247,6 +248,7 @@ async def build_runtime(
     """Build the shared runtime for an MyHarness session."""
     settings_overrides: dict[str, Any] = {
         "model": model,
+        "subagent_model": subagent_model,
         "max_turns": max_turns,
         "base_url": base_url,
         "system_prompt": system_prompt,
@@ -290,6 +292,7 @@ async def build_runtime(
             # Show the effective runtime model (after CLI/env/profile merges),
             # not profile.last_model which may be stale.
             model=settings.model,
+            subagent_model=settings.subagent_model,
             permission_mode=settings.permission.mode.value,
             theme=settings.theme,
             cwd=cwd,
@@ -388,6 +391,7 @@ async def build_runtime(
             "active_profile": settings.active_profile,
             "provider": settings.provider,
             "runtime_model": settings.model,
+            "subagent_model": settings.subagent_model,
             **restored_metadata,
         },
     )
@@ -531,6 +535,7 @@ def sync_app_state(bundle: RuntimeBundle) -> None:
     permission_mode = _active_runtime_permission_mode(bundle, settings)
     bundle.app_state.set(
         model=settings.model,
+        subagent_model=settings.subagent_model,
         permission_mode=permission_mode,
         theme=settings.theme,
         cwd=bundle.cwd,

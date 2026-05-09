@@ -236,6 +236,71 @@ describe("MessageList", () => {
     expect(screen.queryByText("병렬 조사")).toBeNull();
   });
 
+  it("keeps Korean tilde ranges literal instead of rendering strikethrough", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "아래는 최근 0~3개월, 대략 2026년 1~5월 공개 자료 기준입니다.",
+          "AI 답변에서는 ~~취소선~~ 문법도 그대로 보입니다.",
+        ].join("\n")}
+      />,
+    );
+
+    expect(document.querySelector(".markdown-body del")).toBeNull();
+    expect(document.querySelector(".markdown-body")?.textContent).toContain("0~3개월, 대략 2026년 1~5월");
+    expect(document.querySelector(".markdown-body")?.textContent).toContain("~~취소선~~");
+  });
+
+  it("renders display and inline LaTeX math without touching code fences", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "복잡한 수식:",
+          "",
+          "$$\\Gamma(z)=\\int_0^\\infty t^{z-1}e^{-t}\\,dt$$",
+          "",
+          "본문에서는 \\(e^{i\\pi}+1=0\\) 입니다.",
+          "",
+          "```",
+          "$$not rendered$$",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(document.querySelector(".markdown-body .katex-display")).toBeTruthy();
+    expect(document.querySelectorAll(".markdown-body .katex").length).toBeGreaterThanOrEqual(2);
+    expect(document.querySelector(".markdown-body")?.textContent).toContain("Γ");
+    expect(document.querySelector(".markdown-body")?.textContent).not.toContain("\\int_0^\\infty");
+    expect(document.querySelector(".markdown-body pre code")?.textContent).toContain("$$not rendered$$");
+    expect(document.querySelector(".markdown-body pre .katex")).toBeNull();
+  });
+
+  it("renders single-dollar and bare LaTeX formula blocks", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "단일 달러 인라인 $e^x$ 확인",
+          "",
+          "\\operatorname{tr}\\left( A^{-1}\\frac{\\partial^2 A}{\\partial x_i\\partial x_j}\\right)",
+          "",
+          "\\begin{bmatrix} a_{11} & a_{12} \\\\ a_{21} & a_{22} \\end{bmatrix}",
+        ].join("\n")}
+      />,
+    );
+
+    expect(document.querySelectorAll(".markdown-body .katex-display")).toHaveLength(2);
+    expect(document.querySelectorAll(".markdown-body .katex").length).toBeGreaterThanOrEqual(3);
+    expect(document.querySelector(".markdown-body")?.textContent).toContain("tr");
+    const visibleMathText = Array.from(document.querySelectorAll(".markdown-body .katex-html"))
+      .map((element) => element.textContent || "")
+      .join("\n");
+    expect(document.querySelector(".markdown-body")?.textContent).not.toContain("\\operatorname");
+    expect(document.querySelector(".markdown-body")?.textContent).not.toContain("\\begin{bmatrix}");
+    expect(visibleMathText).not.toContain("\\operatorname");
+    expect(visibleMathText).not.toContain("\\begin{bmatrix}");
+  });
+
   it("renders repeated labels and arrow-list workflow fences as generic DAG layers", () => {
     render(
       <MarkdownMessage
@@ -988,6 +1053,53 @@ describe("MessageList", () => {
     expect(frame.src).toContain("/api/html-preview/test-preview");
     expect(document.querySelector(".html-render-preview")).toBeTruthy();
     expect(document.querySelector("pre code.language-html")).toBeNull();
+  });
+
+  it("renders standalone assistant html documents as chat previews", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ url: "/api/html-preview/raw-document" }),
+    } as Response);
+    const rawHtml = [
+      "<!doctype html>",
+      "<html lang=\"ko\">",
+      "<head><script src=\"https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js\"></script></head>",
+      "<body>",
+      "<h1>포스코홀딩스 2026년 1분기 실적 심층 분석</h1>",
+      "",
+      "<div id=\"surpriseChart\"></div>",
+      "<script>document.getElementById('surpriseChart').textContent='chart ready'</script>",
+      "</body>",
+      "</html>",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: rawHtml,
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("HTML preview") as HTMLIFrameElement;
+    expect(frame).toBeTruthy();
+    expect(frame.src).toContain("/api/html-preview/raw-document");
+    expect(document.querySelector(".html-render-preview")).toBeTruthy();
+    expect(document.querySelector("pre code.language-html")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("/api/html-preview", expect.objectContaining({
+      method: "POST",
+      body: expect.stringContaining("chart ready"),
+    }));
   });
 
   it("keeps streaming html blocks as a stable preview placeholder instead of flashing code", () => {
@@ -2226,15 +2338,16 @@ describe("MessageList", () => {
     });
 
     const firstParagraph = document.querySelector(".stream-live-text p");
-    expect(firstParagraph?.textContent).toBe("스트");
+    const firstVisibleText = firstParagraph?.textContent || "";
+    expect(firstVisibleText.startsWith("스트")).toBe(true);
+    expect(firstVisibleText).not.toBe("스트리밍 답변입니다.");
 
     act(() => {
       vi.advanceTimersByTime(16);
     });
     const firstFrameText = document.querySelector(".stream-live-text p")?.textContent || "";
     expect(firstFrameText.startsWith("스트")).toBe(true);
-    expect(firstFrameText.length).toBeGreaterThan("스트".length);
-    expect(firstFrameText).not.toBe("스트리밍 답변입니다.");
+    expect(firstFrameText.length).toBeGreaterThan(firstVisibleText.length);
 
     act(() => {
       vi.advanceTimersByTime(160);
@@ -2269,20 +2382,94 @@ describe("MessageList", () => {
     act(() => {
       vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs);
     });
-    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트");
+    const firstVisibleText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(firstVisibleText.startsWith("스트")).toBe(true);
+    expect(firstVisibleText).not.toBe("스트리밍 답변입니다.");
 
     act(() => {
       vi.advanceTimersByTime(16);
     });
     const firstFrameText = document.querySelector(".stream-live-text p")?.textContent || "";
     expect(firstFrameText.startsWith("스트")).toBe(true);
-    expect(firstFrameText.length).toBeGreaterThan("스트".length);
-    expect(firstFrameText).not.toBe("스트리밍 답변입니다.");
+    expect(firstFrameText.length).toBeGreaterThan(firstVisibleText.length);
 
     act(() => {
       vi.advanceTimersByTime(160);
     });
     expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변입니다.");
+  });
+
+  it("uses zero reveal duration as an instant reveal after the configured buffer", () => {
+    vi.useFakeTimers();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamStartBufferMs: 120,
+            streamRevealDurationMs: 0,
+          },
+        }}
+      >
+        <StreamingDeltaProbe />
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    act(() => {
+      screen.getByText("delta one").click();
+    });
+    act(() => {
+      screen.getByText("delta two").click();
+    });
+
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트");
+
+    act(() => {
+      vi.advanceTimersByTime(119);
+    });
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트");
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변입니다.");
+  });
+
+  it("keeps streaming text reveal on the single React pacing path", () => {
+    vi.useFakeTimers();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamStartBufferMs: 0,
+            streamRevealDurationMs: 600,
+            streamRevealWipePercent: 400,
+          },
+        }}
+      >
+        <StreamingDeltaProbe />
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    act(() => {
+      screen.getByText("delta one").click();
+    });
+    act(() => {
+      screen.getByText("delta two").click();
+    });
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect(document.querySelector(".react-streaming-text")).toBeTruthy();
+    expect(document.querySelector(".stream-reveal-sentence")).toBeNull();
   });
 
   it("continues revealing the completion tail instead of snapping to the final answer", () => {
@@ -2353,6 +2540,72 @@ describe("MessageList", () => {
     const messages = document.querySelector(".messages") as HTMLElement;
     expect(messages.classList.contains("streaming-follow")).toBe(true);
     expect(messages.style.getPropertyValue("--stream-follow-lead")).toBe("120px");
+  });
+
+  it("uses the follow lead setting as extra near-bottom rejoin room while streaming", () => {
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            busy: true,
+            messages: [
+              { id: "assistant-1", role: "assistant", text: "스트리밍 중", isComplete: false },
+            ],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 0,
+              streamFollowLeadPx: 120,
+            },
+          }}
+        >
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      clientHeights.set(messages, 200);
+      scrollHeights.set(messages, 1000);
+      messages.scrollTop = 480;
+      messages.dataset.lastScrollTop = "480";
+
+      fireEvent.scroll(messages);
+
+      expect(messages.scrollTop).toBe(1000);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
   });
 
   it("keeps completed streaming blocks rendered as markdown before the answer completes", () => {

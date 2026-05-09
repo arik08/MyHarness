@@ -10,6 +10,7 @@ export const artifactFrameBackMessage = "myharness:artifact-panel-back";
 export const artifactHtmlEditMessage = "myharness:artifact-html-edit";
 export const artifactAiSelectionMessage = "myharness:artifact-ai-selection";
 export const artifactFrameScrollMessage = "myharness:artifact-frame-scroll";
+export const artifactHtmlEditModeMessage = "myharness:artifact-html-edit-mode";
 
 function iframeMermaidZoomBridge(content: string) {
   const value = String(content || "");
@@ -530,21 +531,12 @@ function iframeScrollBridge(content: string, artifactPath: string, restoreScroll
 }
 
 function iframeEditorAssetBase(content: string, assetBaseUrl: string) {
-  const baseUrl = String(assetBaseUrl || "").trim();
-  if (!baseUrl) {
-    return content;
+  const hadBase = /<base(?:\s[^>]*)?>/i.test(content);
+  const withAssetBase = iframeAssetBase(content, assetBaseUrl);
+  if (hadBase) {
+    return withAssetBase;
   }
-  const base = `<base data-myharness-editor-base="true" href="${escapeAttribute(baseUrl)}">`;
-  if (/<base(?:\s[^>]*)?>/i.test(content)) {
-    return content;
-  }
-  if (/<head(?:\s[^>]*)?>/i.test(content)) {
-    return content.replace(/<head(?:\s[^>]*)?>/i, (match) => `${match}${base}`);
-  }
-  if (/<html(?:\s[^>]*)?>/i.test(content)) {
-    return content.replace(/<html(?:\s[^>]*)?>/i, (match) => `${match}<head>${base}</head>`);
-  }
-  return `${base}${content}`;
+  return withAssetBase.replace(/<base\b/i, '<base data-myharness-editor-base="true"');
 }
 
 function iframeHtmlEditorBridge(content: string, artifactPath: string) {
@@ -565,6 +557,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
 <script data-myharness-editor-script="true">
 (() => {
   const messageType = ${JSON.stringify(artifactHtmlEditMessage)};
+  const modeMessageType = ${JSON.stringify(artifactHtmlEditModeMessage)};
   const artifactPath = ${JSON.stringify(artifactPath)};
   const fullDocument = ${JSON.stringify(isFullDocument)};
   const excludedSelector = "script,style,noscript,svg,canvas,iframe,input,textarea,select,option,button";
@@ -575,6 +568,8 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   let activeEditable = null;
   let pointerStart = null;
   let pointerMoved = false;
+  let editorEnabled = false;
+  let editableTargetsMarked = false;
 
   const normalizeEditableLineBreaks = (root) => {
     root.querySelectorAll(editableText).forEach((node) => {
@@ -718,6 +713,8 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   };
 
   const markEditableTextTargets = () => {
+    if (editableTargetsMarked) return;
+    editableTargetsMarked = true;
     let index = 0;
     document.body.querySelectorAll("*").forEach((element) => {
       if (!isPlainTextElement(element)) return;
@@ -745,7 +742,37 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
     });
   };
 
+  const clearEditableTextTargets = () => {
+    deactivateEditable();
+    document.querySelectorAll("[data-myharness-edit-wrapper]").forEach((node) => {
+      const fragment = document.createDocumentFragment();
+      while (node.firstChild) fragment.appendChild(node.firstChild);
+      node.replaceWith(fragment);
+    });
+    document.querySelectorAll(editableText).forEach((node) => {
+      node.removeAttribute("data-myharness-editable-text");
+      node.removeAttribute("data-myharness-edit-target");
+      node.removeAttribute("data-myharness-text-index");
+      node.removeAttribute("contenteditable");
+      node.removeAttribute("spellcheck");
+      node.removeAttribute("tabindex");
+    });
+    editableTargetsMarked = false;
+  };
+
+  const setEditorEnabled = (value) => {
+    const enabled = Boolean(value);
+    if (editorEnabled === enabled) return;
+    editorEnabled = enabled;
+    if (editorEnabled) {
+      markEditableTextTargets();
+    } else {
+      clearEditableTextTargets();
+    }
+  };
+
   document.addEventListener("beforeinput", (event) => {
+    if (!editorEnabled) return;
     if (!targetEditable(event.target)) return;
     if (/^(format|insertOrderedList|insertUnorderedList|insertHorizontalRule)$/i.test(event.inputType || "")) {
       event.preventDefault();
@@ -753,6 +780,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   }, true);
 
   document.addEventListener("paste", (event) => {
+    if (!editorEnabled) return;
     if (!targetEditable(event.target)) return;
     event.preventDefault();
     document.execCommand("insertText", false, event.clipboardData?.getData("text/plain") || "");
@@ -760,14 +788,17 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   }, true);
 
   document.addEventListener("drop", (event) => {
+    if (!editorEnabled) return;
     if (targetEditable(event.target)) event.preventDefault();
   }, true);
 
   document.addEventListener("input", (event) => {
+    if (!editorEnabled) return;
     if (targetEditable(event.target)) sendDraft();
   }, true);
 
   document.addEventListener("keydown", (event) => {
+    if (!editorEnabled) return;
     if (!targetEditable(event.target) || event.key !== "Enter" || event.shiftKey || event.isComposing) return;
     event.preventDefault();
     event.stopPropagation();
@@ -775,6 +806,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   }, true);
 
   document.addEventListener("pointerdown", (event) => {
+    if (!editorEnabled) return;
     if (event.button !== 0) return;
     const editable = targetEditable(event.target);
     if (!editable) return;
@@ -786,6 +818,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   }, true);
 
   document.addEventListener("pointermove", (event) => {
+    if (!editorEnabled) return;
     if (!pointerStart || event.buttons !== 1) return;
     if (Math.abs(event.clientX - pointerStart.x) > 5 || Math.abs(event.clientY - pointerStart.y) > 5) {
       pointerMoved = true;
@@ -793,6 +826,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   }, true);
 
   document.addEventListener("pointerup", () => {
+    if (!editorEnabled) return;
     window.setTimeout(() => {
       pointerStart = null;
       pointerMoved = false;
@@ -800,6 +834,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   }, true);
 
   document.addEventListener("click", (event) => {
+    if (!editorEnabled) return;
     const editable = targetEditable(event.target);
     if (!editable || pointerMoved) return;
     event.preventDefault();
@@ -807,6 +842,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   }, true);
 
   document.addEventListener("focusout", (event) => {
+    if (!editorEnabled) return;
     const editable = targetEditable(event.target);
     if (!editable || editable !== activeEditable) return;
     window.setTimeout(() => {
@@ -816,7 +852,10 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
     }, 0);
   }, true);
 
-  markEditableTextTargets();
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== modeMessageType || event.data.path !== artifactPath) return;
+    setEditorEnabled(event.data.edit);
+  });
 })();
 </script>`;
   if (/<\/body\s*>/i.test(content)) {
@@ -1001,6 +1040,7 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
 <script data-myharness-ai-script="true">
 (() => {
   const messageType = ${JSON.stringify(artifactAiSelectionMessage)};
+  const modeMessageType = ${JSON.stringify(artifactHtmlEditModeMessage)};
   const artifactPath = ${JSON.stringify(artifactPath)};
   const comments = ${JSON.stringify(comments.map((comment, index) => ({
     id: comment.id,
@@ -1014,6 +1054,8 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
   const excludedSelector = "script,style,noscript,svg,canvas,iframe,input,textarea,select,option,button";
   const pendingHighlightName = "myharness-ai-pending-selection";
   let activePopover = null;
+  let aiSelectionEnabled = false;
+  let commentsRendered = false;
 
   const removePopover = () => {
     activePopover?.remove();
@@ -1037,6 +1079,21 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
   const clearUi = () => {
     removePopover();
     clearPendingHighlight();
+  };
+
+  const clearCommentAnnotations = () => {
+    document.querySelectorAll(".myharness-ai-comment-anchor").forEach((anchor) => anchor.remove());
+    document.querySelectorAll(".myharness-ai-comment-highlight").forEach((highlight) => {
+      const parent = highlight.parentNode;
+      if (!parent) {
+        highlight.remove();
+        return;
+      }
+      while (highlight.firstChild) parent.insertBefore(highlight.firstChild, highlight);
+      parent.removeChild(highlight);
+      parent.normalize?.();
+    });
+    commentsRendered = false;
   };
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -1123,6 +1180,16 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
       anchor.setAttribute("aria-label", "AI 수정 의견 " + comment.index + " 위치");
       document.body.appendChild(anchor);
     });
+  };
+
+  const renderComments = () => {
+    if (commentsRendered) return;
+    wrapCommentRanges();
+    renderCommentAnchors();
+    positionCommentAnchors();
+    window.setTimeout(positionCommentAnchors, 0);
+    window.setTimeout(positionCommentAnchors, 160);
+    commentsRendered = true;
   };
 
   const positionCommentAnchors = () => {
@@ -1345,6 +1412,7 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
   };
 
   document.addEventListener("contextmenu", (event) => {
+    if (!aiSelectionEnabled) return;
     if (event.target?.closest?.(".myharness-ai-comment-popover")) return;
     const openedSelection = openSelectionPopover({ x: event.clientX, y: event.clientY });
     if (!openedSelection) {
@@ -1356,24 +1424,38 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
   }, true);
 
   document.addEventListener("pointerdown", (event) => {
+    if (!aiSelectionEnabled) return;
     if (event.button !== 0 || event.target?.closest?.(".myharness-ai-comment-popover")) return;
     clearUi();
   }, true);
 
   document.addEventListener("keydown", (event) => {
+    if (!aiSelectionEnabled) return;
     if (event.key === "Escape") clearUi();
   }, true);
 
-  window.addEventListener("scroll", clearUi, true);
-  window.addEventListener("resize", clearUi);
-  window.addEventListener("resize", positionCommentAnchors);
-  window.addEventListener("load", positionCommentAnchors, { once: true });
-
-  wrapCommentRanges();
-  renderCommentAnchors();
-  positionCommentAnchors();
-  window.setTimeout(positionCommentAnchors, 0);
-  window.setTimeout(positionCommentAnchors, 160);
+  window.addEventListener("scroll", () => {
+    if (aiSelectionEnabled) clearUi();
+  }, true);
+  window.addEventListener("resize", () => {
+    if (aiSelectionEnabled) clearUi();
+  });
+  window.addEventListener("resize", () => {
+    if (commentsRendered) positionCommentAnchors();
+  });
+  window.addEventListener("load", () => {
+    if (commentsRendered) positionCommentAnchors();
+  }, { once: true });
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== modeMessageType || event.data.path !== artifactPath) return;
+    aiSelectionEnabled = Boolean(event.data.ai);
+    if (aiSelectionEnabled) {
+      renderComments();
+    } else {
+      clearUi();
+      clearCommentAnnotations();
+    }
+  });
 })();
 </script>`;
   if (/<\/body\s*>/i.test(content)) {
@@ -1460,6 +1542,8 @@ export function ArtifactPreview({
   const content = String(payload.content || "");
   const dataUrl = String(payload.dataUrl || "");
   const htmlEditFrameRef = useRef<{ key: string; srcDoc: string } | null>(null);
+  const htmlFrameElementRef = useRef<HTMLIFrameElement | null>(null);
+  const htmlEditSessionContentRef = useRef<string | null>(null);
   const htmlScrollPositionsRef = useRef(new Map<string, { x: number; y: number }>());
   useEffect(() => {
     function handleFrameScrollMessage(event: MessageEvent) {
@@ -1479,6 +1563,22 @@ export function ArtifactPreview({
     window.addEventListener("message", handleFrameScrollMessage);
     return () => window.removeEventListener("message", handleFrameScrollMessage);
   }, [artifact.path]);
+  useEffect(() => {
+    if (kind !== "html" || sourceMode) return undefined;
+    const frame = htmlFrameElementRef.current;
+    if (!frame) return undefined;
+    const postMode = () => {
+      frame.contentWindow?.postMessage({
+        type: artifactHtmlEditModeMessage,
+        path: artifact.path,
+        edit: Boolean(htmlEditMode),
+        ai: Boolean(aiSelectionEnabled),
+      }, "*");
+    };
+    postMode();
+    frame.addEventListener("load", postMode);
+    return () => frame.removeEventListener("load", postMode);
+  }, [aiSelectionEnabled, artifact.path, htmlEditMode, kind, sourceMode]);
   if (sourceMode && content && (kind === "html" || isSourceCodeArtifact(artifact))) {
     return <HighlightedArtifactSource artifact={artifact} content={draftContent || content} />;
   }
@@ -1497,31 +1597,26 @@ export function ArtifactPreview({
       return <HighlightedArtifactSource artifact={artifact} content={draftContent || content} />;
     }
     const assetBaseUrl = String(payload.assetBaseUrl || "");
-    let previewContent = iframeAssetBase(draftContent || content, assetBaseUrl);
-    if (htmlEditMode) {
-      const aiCommentKey = aiSelectionEnabled
-        ? JSON.stringify(aiEditComments.map((comment) => [comment.id, comment.start, comment.end, comment.instruction]))
-        : "";
-      const editFrameKey = `${artifact.path}\u0000${assetBaseUrl}\u0000${content}\u0000${aiCommentKey}`;
-      if (htmlEditFrameRef.current?.key !== editFrameKey) {
-        const editableContent = iframeHtmlEditorBridge(iframeEditorAssetBase(draftContent || content, assetBaseUrl), artifact.path);
-        htmlEditFrameRef.current = {
-          key: editFrameKey,
-          srcDoc: aiSelectionEnabled
-            ? iframeHtmlAiSelectionBridge(editableContent, artifact.path, aiEditComments)
-            : editableContent,
-        };
-      }
-      previewContent = htmlEditFrameRef.current.srcDoc;
-    } else {
-      htmlEditFrameRef.current = null;
-      if (aiSelectionEnabled) {
-        previewContent = iframeHtmlAiSelectionBridge(previewContent, artifact.path, aiEditComments);
-      }
+    const frameBaseContent = draftContent || content;
+    if (htmlEditMode && htmlEditSessionContentRef.current === null) {
+      htmlEditSessionContentRef.current = frameBaseContent;
+    } else if (!htmlEditMode) {
+      htmlEditSessionContentRef.current = null;
     }
+    const frameContent = htmlEditSessionContentRef.current || frameBaseContent;
+    const aiCommentKey = JSON.stringify(aiEditComments.map((comment) => [comment.id, comment.start, comment.end, comment.instruction]));
+    const editFrameKey = `${artifact.path}\u0000${assetBaseUrl}\u0000${frameContent}\u0000${aiCommentKey}`;
+    if (htmlEditFrameRef.current?.key !== editFrameKey) {
+      const editableContent = iframeHtmlEditorBridge(iframeEditorAssetBase(frameContent, assetBaseUrl), artifact.path);
+      htmlEditFrameRef.current = {
+        key: editFrameKey,
+        srcDoc: iframeHtmlAiSelectionBridge(editableContent, artifact.path, aiEditComments),
+      };
+    }
+    const previewContent = htmlEditFrameRef.current.srcDoc;
     const restoredScroll = htmlScrollPositionsRef.current.get(artifact.path);
     const bridgedContent = iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(previewContent), artifact.path, restoredScroll));
-    return <iframe className="artifact-frame artifact-html-frame" title={artifact.name} sandbox="allow-scripts" srcDoc={bridgedContent} />;
+    return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={artifact.name} sandbox="allow-scripts" srcDoc={bridgedContent} />;
   }
   if (kind === "image") {
     return <img className="artifact-image" src={dataUrl} alt={artifact.name} />;

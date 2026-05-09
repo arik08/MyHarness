@@ -10,6 +10,7 @@ class AppState:
     """Shared mutable UI/session state."""
 
     model: str
+    subagent_model: str
     permission_mode: str
     theme: str
     plan_previous_permission_mode: str = ""

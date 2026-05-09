@@ -112,12 +112,7 @@ export function Sidebar() {
     setExpandedHistoryActionId("");
     window.dispatchEvent(new Event("myharness:saveMessageScroll"));
     dispatch({ type: "begin_history_restore", sessionId });
-    dispatch({ type: "clear_messages" });
     dispatch({ type: "set_busy", value: true });
-    dispatch({
-      type: "backend_event",
-      event: { type: "transcript_item", item: { role: "system", text: `히스토리 복원 중: ${label}` } },
-    });
     try {
       let targetSessionId = state.sessionId;
       const liveSessions = await listLiveSessions({
@@ -133,7 +128,6 @@ export function Sidebar() {
           sessionId: liveSession.sessionId,
           clientId: state.clientId,
         });
-        dispatch({ type: "clear_messages" });
         if (liveSession.workspace) {
           dispatch({ type: "set_workspace", workspace: liveSession.workspace });
         }
@@ -332,6 +326,7 @@ export function Sidebar() {
 
   async function applyRuntimeChoice(command: "provider" | "model" | "effort", option: RuntimePickerOption) {
     if (!state.sessionId || state.busy) return;
+    const backendCommand = command === "model" && state.runtimePicker.agentScope === "sub" ? "subagent_model" : command;
     if (command === "provider") {
       dispatch({ type: "select_runtime_provider", value: option.value });
     } else if (command === "model") {
@@ -339,11 +334,11 @@ export function Sidebar() {
     } else {
       dispatch({ type: "select_runtime_effort", value: option.value });
     }
-    rememberRuntimeChoice(command, option);
+    rememberRuntimeChoice(backendCommand, option);
     try {
       await sendBackendRequest(state.sessionId, state.clientId, {
         type: "apply_select_command",
-        command,
+        command: backendCommand,
         value: option.value,
       });
     } catch (error) {
@@ -763,9 +758,11 @@ export function Sidebar() {
           picker={state.runtimePicker}
           providerLabel={state.providerLabel || state.provider}
           model={state.model}
+          subagentModel={state.subagentModel}
           effort={state.effort}
           busy={state.busy}
           geometry={runtimePickerGeometry}
+          onScopeChange={(scope) => dispatch({ type: "select_runtime_agent_scope", value: scope })}
           onApply={applyRuntimeChoice}
         />
       ) : null}
@@ -817,18 +814,22 @@ function RuntimePicker({
   picker,
   providerLabel,
   model,
+  subagentModel,
   effort,
   busy,
   geometry,
+  onScopeChange,
   onApply,
 }: {
   refNode: RefObject<HTMLDivElement | null>;
   picker: ReturnType<typeof useAppState>["state"]["runtimePicker"];
   providerLabel: string;
   model: string;
+  subagentModel: string;
   effort: string;
   busy: boolean;
   geometry: RuntimePickerGeometry;
+  onScopeChange: (scope: "main" | "sub") => void;
   onApply: (command: "provider" | "model" | "effort", option: RuntimePickerOption) => Promise<void>;
 }) {
   const style: RuntimePickerStyle = {};
@@ -845,7 +846,35 @@ function RuntimePicker({
 
   return (
     <div className="runtime-picker-layer react-runtime-picker" data-runtime-picker="true" ref={refNode} style={style}>
-      <RuntimePanel title="Provider" value={providerLabel} className="runtime-picker-provider-panel">
+      <RuntimePanel
+        title="Provider"
+        value={providerLabel}
+        className="runtime-picker-provider-panel"
+        headerAction={(
+          <div className="runtime-agent-scope" role="tablist" aria-label="모델 선택 대상">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={picker.agentScope === "main"}
+              className={picker.agentScope === "main" ? "active" : ""}
+              disabled={busy}
+              onClick={() => onScopeChange("main")}
+            >
+              Main
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={picker.agentScope === "sub"}
+              className={picker.agentScope === "sub" ? "active" : ""}
+              disabled={busy}
+              onClick={() => onScopeChange("sub")}
+            >
+              Sub
+            </button>
+          </div>
+        )}
+      >
         {picker.error ? <p className="runtime-picker-empty">{picker.error}</p> : null}
         {!picker.error && picker.loading ? <p className="runtime-picker-empty">불러오는 중...</p> : null}
         {!picker.error && !picker.loading && picker.providers.map((option) => (
@@ -860,7 +889,7 @@ function RuntimePicker({
         ))}
       </RuntimePanel>
       {picker.modelOpen ? (
-        <RuntimePanel title="모델" value={model} className="runtime-picker-model-panel">
+        <RuntimePanel title="모델" value={picker.agentScope === "sub" ? subagentModel : model} className="runtime-picker-model-panel">
           {picker.models.length ? picker.models.map((option) => (
             <RuntimeOption
               key={option.value}
@@ -873,7 +902,7 @@ function RuntimePicker({
           )) : <p className="runtime-picker-empty">선택 가능한 모델이 없습니다.</p>}
         </RuntimePanel>
       ) : null}
-      {picker.effortOpen ? (
+      {picker.effortOpen && picker.agentScope !== "sub" ? (
         <RuntimePanel title="추론 노력" value={effort || "-"} className="runtime-picker-effort-panel">
           {picker.efforts.length ? picker.efforts.map((option) => (
             <RuntimeOption
@@ -915,12 +944,27 @@ function isCurrentLiveHistoryItem(item: HistoryItem, sessionId: string | null) {
   return isLiveOnlyHistoryItem(item, sessionId);
 }
 
-function RuntimePanel({ title, value, className = "", children }: { title: string; value: string; className?: string; children: ReactNode }) {
+function RuntimePanel({
+  title,
+  value,
+  className = "",
+  headerAction = null,
+  children,
+}: {
+  title: string;
+  value: string;
+  className?: string;
+  headerAction?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className={`runtime-picker-panel ${className}`.trim()} aria-label={`${title} 선택`}>
       <div className="runtime-picker-header">
-        <strong>{title}</strong>
-        <small>{value || "-"}</small>
+        <div>
+          <strong>{title}</strong>
+          <small>{value || "-"}</small>
+        </div>
+        {headerAction}
       </div>
       <div className="runtime-picker-list">{children}</div>
     </section>

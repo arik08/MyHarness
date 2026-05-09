@@ -19,6 +19,7 @@ import {
 } from "../api/settings";
 import { useAppState } from "../state/app-state";
 import type { AppSettings } from "../types/ui";
+import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import {
   downloadModeLabel,
   formatNumber,
@@ -426,6 +427,7 @@ function RestartSessionSettings({ onBack, onClose }: { onBack: () => void; onClo
         sessionId: state.sessionId,
         clientId: state.clientId,
         cwd: state.workspacePath,
+        ...runtimePreferencesFromState(state),
         systemPrompt: state.systemPrompt.trim() || undefined,
       });
       dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace });

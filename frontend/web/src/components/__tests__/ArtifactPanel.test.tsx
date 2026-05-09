@@ -406,7 +406,7 @@ describe("ArtifactPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "report.html 열기" }));
     const frame = await screen.findByTitle("report.html");
     expect(frame.classList.contains("artifact-html-frame")).toBe(true);
-    expect(frame.getAttribute("srcdoc")).toContain('<base href="/api/artifact/asset/outputs/">');
+    expect(frame.getAttribute("srcdoc")).toContain('<base data-myharness-editor-base="true" href="/api/artifact/asset/outputs/">');
     expect(frame.getAttribute("srcdoc")).toContain('src="/api/artifact/asset/outputs/images/chart.jpg"');
     expect(frame.getAttribute("srcdoc")).toContain("url('/api/artifact/asset/shared/bg.jpg')");
     expect(screen.queryByRole("button", { name: "목록으로" })).toBeNull();
@@ -476,11 +476,13 @@ describe("ArtifactPanel", () => {
     );
 
     const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
-    expect(frame.srcdoc).not.toContain("myharness-editable-text");
-    expect(frame.srcdoc).not.toContain("myharness-ai-comment-popover");
+    const initialSrcdoc = frame.srcdoc;
+    expect(initialSrcdoc).toContain("const setEditorEnabled");
+    expect(initialSrcdoc).toContain("const modeMessageType");
 
     await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
 
+    expect(frame.srcdoc).toBe(initialSrcdoc);
     expect(frame.srcdoc).toContain("myharness-editable-text");
     expect(frame.srcdoc).toContain("const activateEditable");
     expect(frame.srcdoc).toContain("contentEditable = \"plaintext-only\"");
@@ -557,10 +559,11 @@ describe("ArtifactPanel", () => {
     );
 
     const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
-    expect(frame.srcdoc).not.toContain("myharness-ai-comment-popover");
+    const initialSrcdoc = frame.srcdoc;
 
     await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
 
+    expect(frame.srcdoc).toBe(initialSrcdoc);
     expect(frame.srcdoc).toContain("myharness-ai-comment-popover");
     expect(frame.srcdoc).toContain("submit.type = \"button\"");
     expect(frame.srcdoc).toContain("submit.addEventListener(\"click\", submitComment)");
@@ -1029,6 +1032,15 @@ describe("ArtifactPanel", () => {
     expect(document.querySelector(".artifact-ai-progress-empty")?.textContent).toContain("초 경과");
     expect(document.querySelector(".artifact-ai-progress .workflow-output-preview")?.textContent || "").not.toContain("Old headline");
 
+    await userEvent.click(screen.getByRole("button", { name: "AI 수정 패널 접기" }));
+    expect(document.querySelector(".artifact-ai-comments.collapsed")).toBeTruthy();
+    expect(document.querySelector(".artifact-ai-progress")).toBeNull();
+    expect(screen.getByRole("button", { name: "report.html 파일명 수정" })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "AI 수정 패널 다시 펼치기" }));
+    expect(document.querySelector(".artifact-ai-comments.collapsed")).toBeNull();
+    expect(document.querySelector(".artifact-ai-progress")).toBeTruthy();
+
     act(() => {
       sendBackendEvent?.({
         type: "tool_started",
@@ -1379,6 +1391,8 @@ describe("ArtifactPanel", () => {
 
     await screen.findByText("report.html");
     const actions = document.querySelector(".project-file-actions");
+    const main = document.querySelector(".project-file-main");
+    expect(main?.children[1]?.getAttribute("aria-label")).toBe("report.html 열기");
     expect(actions?.children[0]?.getAttribute("aria-label")).toBe("report.html 즐겨찾기 추가");
     expect(actions?.children[1]?.getAttribute("aria-label")).toBe("report.html 파일명 수정");
     expect(actions?.children[2]?.getAttribute("aria-label")).toBe("report.html 삭제");
@@ -1433,6 +1447,7 @@ describe("ArtifactPanel", () => {
     const pinnedSection = document.querySelector(".project-file-section-pinned");
     expect(pinnedSection?.querySelector(".project-file-section-title")?.textContent).toBe("Pinned");
     expect(pinnedSection?.querySelector(".project-file-item strong")?.textContent).toBe("report.html");
+    expect(pinnedSection?.querySelector(".project-file-main")?.classList.contains("project-file-main-pinned")).toBe(true);
     expect([...document.querySelectorAll(".project-file-item strong")].filter((node) => node.textContent === "report.html")).toHaveLength(2);
     expect(localStorage.getItem("myharness:projectFilePins:C%3A%2Frepo")).toContain("outputs/report.html");
 

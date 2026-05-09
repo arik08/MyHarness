@@ -1,7 +1,27 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { MouseEvent } from "react";
-import { marked } from "marked";
+import { Marked } from "marked";
+import type { Tokens } from "marked";
 import hljs from "highlight.js/lib/common";
+import katex from "katex";
+
+const chatMarkdown = new Marked({
+  extensions: [{
+    name: "plainTilde",
+    level: "inline",
+    start(src) {
+      const index = src.indexOf("~");
+      return index >= 0 ? index : undefined;
+    },
+    tokenizer(src) {
+      const match = src.match(/^~+/);
+      if (!match) {
+        return undefined;
+      }
+      return { type: "text", raw: match[0], text: match[0] } satisfies Tokens.Text;
+    },
+  }],
+});
 
 const htmlPreviewUrlCache = new Map<string, string>();
 const htmlPreviewSourceCache = new Map<string, string>();
@@ -36,6 +56,12 @@ function codeBlockLanguage(code: Element) {
 
 function normalizeHtmlPreviewSource(value: string) {
   return String(value || "").replace(/\r\n/g, "\n").trimEnd();
+}
+
+export function isStandaloneHtmlDocument(value: string) {
+  const source = normalizeHtmlPreviewSource(value).trim();
+  return /^(?:<!doctype\s+html\b[^>]*>\s*)?<html(?:\s|>)/i.test(source)
+    && /<\/html\s*>\s*$/i.test(source);
 }
 
 function mermaidDiagramLineIndex(lines: string[]) {
@@ -250,6 +276,213 @@ function escapeHtml(value: string) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function isEscaped(source: string, index: number) {
+  let slashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
+}
+
+function findUnescaped(source: string, delimiter: string, from: number) {
+  let cursor = from;
+  while (cursor < source.length) {
+    const index = source.indexOf(delimiter, cursor);
+    if (index < 0) {
+      return -1;
+    }
+    if (!isEscaped(source, index)) {
+      return index;
+    }
+    cursor = index + delimiter.length;
+  }
+  return -1;
+}
+
+function renderMathHtml(source: string, displayMode: boolean) {
+  const math = source.trim();
+  if (!math) {
+    return displayMode ? "$$$$" : "\\(\\)";
+  }
+  try {
+    return katex.renderToString(math, {
+      displayMode,
+      output: "html",
+      strict: false,
+      throwOnError: false,
+      trust: false,
+    });
+  } catch {
+    return escapeHtml(displayMode ? `$$${source}$$` : `\\(${source}\\)`);
+  }
+}
+
+function hasLatexCommand(source: string) {
+  return /\\[A-Za-z]+(?:\s|\b|(?=[_{(]))/.test(source);
+}
+
+function looksLikeMathSource(source: string) {
+  const text = source.trim();
+  if (!text) {
+    return false;
+  }
+  if (hasLatexCommand(text)) {
+    return true;
+  }
+  return /[_^=<>]|\\[{}]|[∫∑∏√∞≤≥≠≈]/.test(text) && /[A-Za-z0-9)]/.test(text);
+}
+
+function looksLikeBareLatexBlock(source: string) {
+  const text = source.trim();
+  if (!text || text.length > 5000) {
+    return false;
+  }
+  if (/^(?:#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\|)/.test(text)) {
+    return false;
+  }
+  if (/<\/?[A-Za-z][\s\S]*>/.test(text)) {
+    return false;
+  }
+  if (/[\u3131-\u318e\uac00-\ud7a3]/.test(text)) {
+    return false;
+  }
+
+  const commandCount = (text.match(/\\[A-Za-z]+/g) || []).length;
+  const structureCount = (text.match(/[{}_^=]|\\[()[\]]|[∫∑∏√∞≤≥≠≈]/g) || []).length;
+  const startsLikeFormula = /^\\(?:begin|operatorname|frac|lim|int|sum|prod|det|sqrt|left|right|partial|nabla|mathbb|mathbf|mathrm|text|sin|cos|tan|log|exp)\b/.test(text);
+  return commandCount >= 2 || (commandCount >= 1 && structureCount >= 2) || startsLikeFormula;
+}
+
+function hasExplicitMathDelimiter(source: string) {
+  return /(^|[^\\])(?:\$\$|\$|\\\(|\\\[)/.test(source);
+}
+
+function renderBareLatexBlocks(source: string) {
+  const parts = String(source || "").split(/(\n\s*\n+)/);
+  return parts.map((part) => {
+    if (/^\n\s*\n+$/.test(part)) {
+      return part;
+    }
+    if (hasExplicitMathDelimiter(part)) {
+      return renderMathInTextSegment(part);
+    }
+    return looksLikeBareLatexBlock(part) ? renderMathHtml(part, true) : renderMathInTextSegment(part);
+  }).join("");
+}
+
+function renderMathInTextSegment(source: string) {
+  let output = "";
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    if (source.startsWith("$$", cursor) && !isEscaped(source, cursor)) {
+      const close = findUnescaped(source, "$$", cursor + 2);
+      if (close >= 0) {
+        output += renderMathHtml(source.slice(cursor + 2, close), true);
+        cursor = close + 2;
+        continue;
+      }
+    }
+
+    if (source.startsWith("\\[", cursor) && !isEscaped(source, cursor)) {
+      const close = findUnescaped(source, "\\]", cursor + 2);
+      if (close >= 0) {
+        output += renderMathHtml(source.slice(cursor + 2, close), true);
+        cursor = close + 2;
+        continue;
+      }
+    }
+
+    if (source.startsWith("\\(", cursor) && !isEscaped(source, cursor)) {
+      const close = findUnescaped(source, "\\)", cursor + 2);
+      if (close >= 0) {
+        output += renderMathHtml(source.slice(cursor + 2, close), false);
+        cursor = close + 2;
+        continue;
+      }
+    }
+
+    if (source[cursor] === "$" && source[cursor + 1] !== "$" && !isEscaped(source, cursor)) {
+      const close = findUnescaped(source, "$", cursor + 1);
+      if (close >= 0 && source[close + 1] !== "$") {
+        const math = source.slice(cursor + 1, close);
+        if (looksLikeMathSource(math)) {
+          output += renderMathHtml(math, false);
+          cursor = close + 1;
+          continue;
+        }
+      }
+    }
+
+    output += source[cursor];
+    cursor += 1;
+  }
+
+  return output;
+}
+
+function renderMathInMarkdown(markdown: string) {
+  const source = String(markdown || "").replace(/\r\n/g, "\n");
+  const output: string[] = [];
+  let textBuffer = "";
+  let fenceBuffer = "";
+  let inFence = false;
+  let fenceMarker = "";
+
+  const flushText = () => {
+    if (!textBuffer) {
+      return;
+    }
+    output.push(renderBareLatexBlocks(textBuffer));
+    textBuffer = "";
+  };
+
+  const flushFence = () => {
+    if (!fenceBuffer) {
+      return;
+    }
+    output.push(fenceBuffer);
+    fenceBuffer = "";
+  };
+
+  for (const match of source.matchAll(/[^\n]*(?:\n|$)/g)) {
+    const rawLine = match[0];
+    if (!rawLine) {
+      break;
+    }
+    const lineText = rawLine.endsWith("\n") ? rawLine.slice(0, -1) : rawLine;
+    const fence = lineText.match(/^ {0,3}(`{3,}|~{3,})/);
+
+    if (fence) {
+      const marker = fence[1];
+      if (!inFence) {
+        flushText();
+        inFence = true;
+        fenceMarker = marker;
+        fenceBuffer += rawLine;
+        continue;
+      }
+      fenceBuffer += rawLine;
+      if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false;
+        fenceMarker = "";
+        flushFence();
+      }
+      continue;
+    }
+
+    if (inFence) {
+      fenceBuffer += rawLine;
+    } else {
+      textBuffer += rawLine;
+    }
+  }
+
+  flushText();
+  flushFence();
+  return output.join("");
 }
 
 function applyMermaidLabelReplacements(svg: string, replacements: Array<[string, string]>) {
@@ -554,6 +787,16 @@ function replaceHtmlFencesWithPreviewPlaceholders(markdown: string) {
   }
 
   return output.join("\n");
+}
+
+function replaceStandaloneHtmlWithPreviewPlaceholder(markdown: string) {
+  const source = normalizeHtmlPreviewSource(markdown);
+  if (!isStandaloneHtmlDocument(source)) {
+    return markdown;
+  }
+  const id = `html-preview-${htmlPreviewSourceCache.size + 1}-${Math.random().toString(16).slice(2)}`;
+  htmlPreviewSourceCache.set(id, source);
+  return htmlPreviewPlaceholder(id);
 }
 
 function replaceMermaidFencesWithPreviewPlaceholders(markdown: string) {
@@ -1659,8 +1902,10 @@ export function MarkdownMessage({
   const html = useMemo(() => {
     const tableSafeText = deferIncompleteTables ? deferTrailingMarkdownTable(text || "") : text || "";
     const mermaidMarkdown = replaceMermaidFencesWithPreviewPlaceholders(tableSafeText);
-    const previewMarkdown = replaceHtmlFencesWithPreviewPlaceholders(mermaidMarkdown);
-    const rendered = marked.parse(previewMarkdown, { async: false }) as string;
+    const previewMarkdown = replaceStandaloneHtmlWithPreviewPlaceholder(
+      replaceHtmlFencesWithPreviewPlaceholders(mermaidMarkdown),
+    );
+    const rendered = chatMarkdown.parse(renderMathInMarkdown(previewMarkdown), { async: false }) as string;
     return enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered))));
   }, [deferIncompleteTables, text]);
 
