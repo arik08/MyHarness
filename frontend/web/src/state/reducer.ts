@@ -432,7 +432,7 @@ function compactToolStatus(toolName: string, fallback = "처리 중") {
   if (lower.includes("grep")) return "텍스트 검색 중";
   if (lower.includes("glob")) return "파일 목록 확인 중";
   if (lower.includes("read")) return "파일 읽는 중";
-  if (lower.includes("write") || lower.includes("edit") || lower.includes("notebook")) return "파일 작업 중";
+  if (lower.includes("write") || lower.includes("edit") || lower.includes("notebook") || lower.includes("patch")) return "파일 작업 중";
   return fallback;
 }
 
@@ -590,7 +590,7 @@ function firstPartialJsonStringField(source: string, keys: string[]) {
 
 function isWorkflowOutputTool(toolName: string) {
   const lower = toolName.toLowerCase();
-  return lower.includes("write") || lower.includes("edit");
+  return lower.includes("write") || lower.includes("edit") || lower.includes("patch");
 }
 
 function workflowStringInput(input: Record<string, unknown> | null | undefined, keys: string[]) {
@@ -651,8 +651,17 @@ function applyLiveArtifactPreview(state: AppState, preview: ReturnType<typeof li
 }
 
 function workflowOutputInputPath(input?: Record<string, unknown> | null) {
-  const path = workflowStringInput(input, ["path", "file_path"]).value;
+  const patch = workflowStringInput(input, ["patch", "diff"]).value;
+  const path = workflowStringInput(input, ["path", "file_path"]).value || workflowPatchPath(patch);
   return normalizeArtifactPath(path).toLowerCase();
+}
+
+function workflowPatchPath(patch: string) {
+  const value = String(patch || "");
+  const match = value.match(/^\*\*\* (?:Add|Update|Delete) File:\s+(.+)$/m)
+    || value.match(/^\+\+\+\s+(?:b\/)?(.+)$/m)
+    || value.match(/^---\s+(?:a\/)?(.+)$/m);
+  return match?.[1]?.trim() || "";
 }
 
 function workflowInputBufferIndex(event: Extract<BackendEvent, { type: "tool_input_delta" }>) {
@@ -676,9 +685,11 @@ function workflowDraftFromBuffer(toolName: string, buffer: string): { toolName: 
   const newField = firstPartialJsonStringField(buffer, ["new_str", "new_string"]);
   const newSourceField = firstPartialJsonStringField(buffer, ["new_source"]);
   const contentField = firstPartialJsonStringField(buffer, ["content", "new_string"]);
+  const patchField = firstPartialJsonStringField(buffer, ["patch", "diff"]);
   let inferredToolName = isWorkflowOutputTool(toolName) ? toolName : "";
   if (!inferredToolName && !toolName.trim()) {
-    if (newSourceField.found) inferredToolName = "notebook_edit";
+    if (patchField.found) inferredToolName = "apply_patch";
+    else if (newSourceField.found) inferredToolName = "notebook_edit";
     else if (oldField.found || newField.found) inferredToolName = "edit_file";
     else if (contentField.found) inferredToolName = "write_file";
   }
@@ -689,6 +700,16 @@ function workflowDraftFromBuffer(toolName: string, buffer: string): { toolName: 
   const input: Record<string, unknown> = {};
   if (path.found) {
     input.path = path.value;
+  }
+  if (inferredToolName.toLowerCase().includes("patch") && patchField.found) {
+    input.patch = patchField.value;
+    if (!input.path) {
+      const patchPath = workflowPatchPath(patchField.value);
+      if (patchPath) {
+        input.path = patchPath;
+      }
+    }
+    return { toolName: inferredToolName, toolInput: input };
   }
   if (inferredToolName.toLowerCase().includes("edit") && (oldField.found || newField.found)) {
     input.old_str = oldField.value;
@@ -2036,7 +2057,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const messages = command
           ? updateLatestTerminalMessage(state.messages, command, { command, status: "running" }) || state.messages
           : state.messages;
-        const livePreview = liveHtmlArtifactPreview(toolName, toolInput);
         const startedWorkflowEvents = updateLatestWorkflowEvent(purpose.events, toolName, {
           detail,
           status: "running",
@@ -2062,7 +2082,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           statusText: label,
           workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
           workflowEvents: startedWorkflowEvents,
-          ...applyLiveArtifactPreview(state, livePreview),
         };
       }
 
@@ -2084,7 +2103,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
         const { toolName: workflowToolName, toolInput } = draft;
         const detail = workflowDetailFromInput(toolInput) || "작성 내용 수신 중";
-        const livePreview = liveHtmlArtifactPreview(workflowToolName, toolInput);
         let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, workflowToolName, {
           detail,
           status: "running",
@@ -2114,7 +2132,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           workflowEvents: refreshPurposeEvents(workflowEvents),
           status: "processing",
           statusText: compactToolStatus(workflowToolName, `${workflowTitle(workflowToolName)} 중`),
-          ...applyLiveArtifactPreview(state, livePreview),
         };
       }
 

@@ -135,12 +135,28 @@ function formatWorkflowEditPreview(input = {}) {
     .join("\n");
 }
 
+function workflowPatchPreview(input = {}) {
+  return workflowInputValue(input, ["patch", "diff"]).value;
+}
+
+function workflowPatchPath(patch) {
+  const value = String(patch || "");
+  const match = value.match(/^\*\*\* (?:Add|Update|Delete) File:\s+(.+)$/m)
+    || value.match(/^\+\+\+\s+(?:b\/)?(.+)$/m)
+    || value.match(/^---\s+(?:a\/)?(.+)$/m);
+  return match?.[1]?.trim() || "";
+}
+
 function workflowPreviewSource(toolName, input = {}) {
   const lower = String(toolName || "").toLowerCase();
-  if (lower.includes("edit")) {
+  if (lower.includes("edit") || lower.includes("patch")) {
     const diff = formatWorkflowEditPreview(input);
     if (diff) {
       return { kind: "diff", content: diff, found: true };
+    }
+    const patch = workflowPatchPreview(input);
+    if (patch) {
+      return { kind: "diff", content: patch, found: true };
     }
   }
   const content = workflowInputValue(input, ["content", "new_string", "new_source"]);
@@ -236,7 +252,7 @@ function updateWorkflowPreviewLineCount(preview, text = preview?.body?.textConte
   if (preview.kind === "diff") {
     const changedLines = value
       .split(/\r?\n/)
-      .filter((line) => line.startsWith("++ ") || line.startsWith("-- "))
+      .filter((line) => line.startsWith("++ ") || line.startsWith("-- ") || /^\+(?!\+\+|\s*$)/.test(line) || /^-(?!--|\s*$)/.test(line))
       .length;
     parts.count.textContent = `${changedLines.toLocaleString()}줄 변경`;
     return;
@@ -279,11 +295,11 @@ function renderWorkflowPreviewBody(preview, text) {
   for (const line of String(text || "").split(/\r?\n/)) {
     const row = document.createElement("span");
     row.className = "workflow-diff-line";
-    if (line.startsWith("++ ")) {
+    if (line.startsWith("++ ") || /^\+(?!\+\+|\s*$)/.test(line)) {
       row.classList.add("added");
-    } else if (line.startsWith("-- ")) {
+    } else if (line.startsWith("-- ") || /^-(?!--|\s*$)/.test(line)) {
       row.classList.add("removed");
-    } else if (line.startsWith("@@")) {
+    } else if (line.startsWith("@@") || line.startsWith("*** ")) {
       row.classList.add("hunk");
     }
     row.textContent = line || " ";
@@ -311,7 +327,8 @@ function setWorkflowPreviewTarget(preview, content, options = {}) {
 }
 
 function workflowPreviewKey(toolName, input = {}, fallbackKey = "") {
-  const path = String(input?.file_path || input?.path || "").trim();
+  const patch = workflowPatchPreview(input);
+  const path = String(input?.file_path || input?.path || workflowPatchPath(patch)).trim();
   if (path) {
     return `path:${path}`;
   }
@@ -323,7 +340,7 @@ function isWorkflowOutputTool(toolName) {
   if (lower === "todo_write" || lower === "todowrite") {
     return false;
   }
-  return lower.includes("write") || lower.includes("edit");
+  return lower.includes("write") || lower.includes("edit") || lower.includes("patch");
 }
 
 function createWorkflowPreviewNode(path = "") {
@@ -909,7 +926,7 @@ function shouldCollapseUserMessage(text) {
   if (!value) {
     return false;
   }
-  return value.length > 180 || value.split(/\r?\n/).length > 2;
+  return value.split(/\r?\n/).length > 20;
 }
 
 function renderCollapsedUserMessage(content, text, expanded = false) {
@@ -940,7 +957,7 @@ function renderCollapsedUserMessage(content, text, expanded = false) {
 
   const preview = document.createElement("span");
   preview.className = "user-message-preview";
-  const previewText = value.replace(/\s+/g, " ").trim();
+  const previewText = value.replace(/\r\n/g, "\n").split("\n").slice(0, 20).join("\n").trim();
   const promptContent = createPromptTokenContent(previewText);
   if (promptContent) {
     preview.append(...promptContent.childNodes);
@@ -1691,7 +1708,7 @@ function startWorkflowOutputPreview(toolName, input = {}) {
     return;
   }
   ensureWorkflowPanel();
-  const path = String(input?.file_path || input?.path || "").trim();
+  const path = String(input?.file_path || input?.path || workflowPatchPath(workflowPatchPreview(input))).trim();
   const preview = ensureWorkflowPreview(workflowPreviewKey(toolName, input), path);
   if (!preview) {
     return;
@@ -1824,16 +1841,18 @@ function workflowDraftFromBuffer(toolName, buffer) {
   const newField = firstPartialJsonStringField(buffer, ["new_str", "new_string"]);
   const newSourceField = firstPartialJsonStringField(buffer, ["new_source"]);
   const contentField = firstPartialJsonStringField(buffer, ["content", "new_string"]);
+  const patchField = firstPartialJsonStringField(buffer, ["patch", "diff"]);
   let inferredToolName = isWorkflowOutputTool(toolName) ? toolName : "";
   if (!inferredToolName && !String(toolName || "").trim()) {
-    if (newSourceField.found) inferredToolName = "notebook_edit";
+    if (patchField.found) inferredToolName = "apply_patch";
+    else if (newSourceField.found) inferredToolName = "notebook_edit";
     else if (oldField.found || newField.found) inferredToolName = "edit_file";
     else if (contentField.found) inferredToolName = "write_file";
   }
   if (!isWorkflowOutputTool(inferredToolName)) {
     return null;
   }
-  const path = extractPartialJsonStringValue(buffer, "file_path") || extractPartialJsonStringValue(buffer, "path");
+  const path = extractPartialJsonStringValue(buffer, "file_path") || extractPartialJsonStringValue(buffer, "path") || workflowPatchPath(patchField.value);
   const isDiff = inferredToolName.toLowerCase().includes("edit") && (oldField.found || newField.found);
   if (isDiff) {
     return {
@@ -1841,6 +1860,14 @@ function workflowDraftFromBuffer(toolName, buffer) {
       path,
       kind: "diff",
       content: formatWorkflowEditBlock(oldField.value, newField.value),
+    };
+  }
+  if (inferredToolName.toLowerCase().includes("patch") && patchField.found) {
+    return {
+      toolName: inferredToolName,
+      path,
+      kind: "diff",
+      content: patchField.value,
     };
   }
   const content = newSourceField.found ? newSourceField.value : contentField.value;

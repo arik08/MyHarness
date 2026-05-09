@@ -310,11 +310,7 @@ describe("MessageList", () => {
 
   it("collapses long user messages and lets them expand again", async () => {
     const user = userEvent.setup();
-    const longText = [
-      "첫 문단입니다. ".repeat(30),
-      "둘째 문단입니다. ".repeat(30),
-      "셋째 문단입니다. ".repeat(30),
-    ].join("\n\n");
+    const longText = Array.from({ length: 21 }, (_, index) => `${index + 1}번째 줄입니다.`).join("\n");
     render(
       <AppStateProvider
         initialState={{
@@ -330,13 +326,35 @@ describe("MessageList", () => {
 
     expect(document.querySelector(".user-collapsed-message")).toBeTruthy();
     expect(screen.getByRole("button", { name: "더 보기" })).toBeTruthy();
-    expect(document.querySelector(".user-message-preview")?.textContent).not.toContain("\n");
+    expect(document.querySelector(".user-message-preview")?.textContent).toContain("20번째 줄입니다.");
+    expect(document.querySelector(".user-message-preview")?.textContent).not.toContain("21번째 줄입니다.");
 
     await user.click(screen.getByRole("button", { name: "더 보기" }));
 
     expect(document.querySelector(".user-expanded-message")).toBeTruthy();
     expect(screen.getByRole("button", { name: "접기" })).toBeTruthy();
-    expect(document.querySelector(".user-expanded-message")?.textContent).toContain("셋째 문단입니다.");
+    expect(document.querySelector(".user-expanded-message")?.textContent).toContain("21번째 줄입니다.");
+  });
+
+  it("keeps completed assistant messages fully visible even after twenty lines", () => {
+    const longText = Array.from({ length: 21 }, (_, index) => `${index + 1}번째 응답 줄입니다.`).join("\n");
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "assistant-1", role: "assistant", text: longText, isComplete: true },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".assistant-collapsed-message")).toBeNull();
+    expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
+    expect(document.body.textContent || "").toContain("20번째 응답 줄입니다.");
+    expect(document.body.textContent || "").toContain("21번째 응답 줄입니다.");
   });
 
   it("keeps moderately sized multiline user messages expanded", () => {
@@ -1435,6 +1453,47 @@ describe("MessageList", () => {
     expect(screen.queryByText("6줄 변경")).toBeNull();
     expect(screen.getByText("-- <div>5x</div>").className).toContain("removed");
     expect(screen.getByText("++ <div>3x</div>").className).toContain("added");
+    expect(document.querySelectorAll(".workflow-diff-line")).toHaveLength(6);
+  });
+
+  it("renders apply_patch previews as colored diff rows", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "패치 적용해줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "apply_patch",
+              title: "파일 수정",
+              detail: "outputs/report.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                patch: [
+                  "*** Begin Patch",
+                  "*** Update File: outputs/report.html",
+                  "@@",
+                  "-<h1>Old</h1>",
+                  "+<h1>New</h1>",
+                  "*** End Patch",
+                ].join("\n"),
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("report.html");
+    expect(screen.getByText("-<h1>Old</h1>").className).toContain("removed");
+    expect(screen.getByText("+<h1>New</h1>").className).toContain("added");
     expect(document.querySelectorAll(".workflow-diff-line")).toHaveLength(6);
   });
 
@@ -2810,6 +2869,20 @@ describe("MessageList", () => {
       const deltas = samples.slice(1).map((value, index) => value - samples[index]);
       const accelerations = deltas.slice(1).map((value, index) => value - deltas[index]);
       expect(Math.max(...accelerations)).toBeLessThan(5);
+
+      const settledFrom = samples.length;
+      for (let now = 80; now <= 1600; now += 16) {
+        const frame = animationFrames.shift();
+        expect(frame).toBeTruthy();
+        act(() => frame?.(now));
+        samples.push(messages.scrollTop);
+      }
+
+      const settleDeltas = samples.slice(1).map((value, index) => value - samples[index]).slice(settledFrom - 1);
+      const hasPartialSlowdown = settleDeltas.some((delta, index) => index > 0 && delta > 0 && delta < settleDeltas[index - 1]);
+      expect(hasPartialSlowdown).toBe(true);
+      expect(messages.scrollTop).toBe(1200);
+      expect(settleDeltas[settleDeltas.length - 1]).toBe(0);
     } finally {
       window.requestAnimationFrame = originalRequestAnimationFrame;
       window.cancelAnimationFrame = originalCancelAnimationFrame;

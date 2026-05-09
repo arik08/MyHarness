@@ -52,6 +52,7 @@ configurePoscoCertificate();
 const sharedWorkspaceScopeName = "shared";
 const defaultWorkspaceName = "Default";
 const projectPreferencesRel = join(".myharness", "preferences.json");
+const artifactAliasesRel = join(".myharness", "artifact-aliases.json");
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
 let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.MYHARNESS_WORKSPACE_SCOPE);
@@ -98,6 +99,7 @@ const types = {
   ".ttf": "font/ttf",
 };
 const artifactPreviewMaxBytes = 8 * 1024 * 1024;
+const artifactAiEditMaxBytes = 2 * 1024 * 1024;
 const chatHtmlPreviewMaxBytes = 2 * 1024 * 1024;
 const chatHtmlPreviewTtlMs = 10 * 60 * 1000;
 const chatHtmlPreviews = new Map();
@@ -603,14 +605,96 @@ function workspaceRelativeTarget(workspacePath, candidate) {
   return { target, rel: rel.replace(/\\/g, "/") };
 }
 
+function artifactAliasPath(workspacePath) {
+  return join(workspacePath, artifactAliasesRel);
+}
+
+function normalizeArtifactAliasPath(value) {
+  return normalizeProjectFilePath(value);
+}
+
+function normalizeArtifactAliasMap(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const aliases = source.aliases && typeof source.aliases === "object" ? source.aliases : source;
+  const normalized = {};
+  for (const [from, to] of Object.entries(aliases)) {
+    const sourcePath = normalizeArtifactAliasPath(from);
+    const targetPath = normalizeArtifactAliasPath(to);
+    if (sourcePath && targetPath && sourcePath !== targetPath) {
+      normalized[sourcePath] = targetPath;
+    }
+  }
+  return normalized;
+}
+
+async function readArtifactAliases(workspacePath) {
+  return normalizeArtifactAliasMap(await readJsonFileIfExists(artifactAliasPath(workspacePath)));
+}
+
+async function writeArtifactAliases(workspacePath, aliases) {
+  await writeJsonFile(artifactAliasPath(workspacePath), {
+    version: 1,
+    aliases: normalizeArtifactAliasMap(aliases),
+  });
+}
+
+async function updateArtifactRenameAlias(session, oldRel, newRel) {
+  const workspacePath = session.workspace.path;
+  const aliases = await readArtifactAliases(workspacePath);
+  const oldPath = normalizeArtifactAliasPath(oldRel);
+  const newPath = normalizeArtifactAliasPath(newRel);
+  for (const [from, to] of Object.entries(aliases)) {
+    if (normalizeArtifactAliasPath(to) === oldPath) {
+      aliases[from] = newPath;
+    }
+  }
+  if (oldPath !== newPath) {
+    aliases[oldPath] = newPath;
+  }
+  delete aliases[newPath];
+  await writeArtifactAliases(workspacePath, aliases);
+}
+
+async function resolveArtifactTarget(session, artifactPath) {
+  const initial = workspaceRelativeTarget(session.workspace.path, artifactPath);
+  try {
+    const info = await stat(initial.target);
+    return { ...initial, info, aliasFrom: null };
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const aliases = await readArtifactAliases(session.workspace.path);
+  let rel = normalizeArtifactAliasPath(initial.rel);
+  const visited = new Set([rel]);
+  for (let depth = 0; depth < 8; depth += 1) {
+    const nextRel = aliases[rel];
+    if (!nextRel || visited.has(nextRel)) {
+      break;
+    }
+    visited.add(nextRel);
+    const next = workspaceRelativeTarget(session.workspace.path, nextRel);
+    try {
+      const info = await stat(next.target);
+      return { ...next, info, aliasFrom: initial.rel };
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    rel = next.rel;
+  }
+  throw Object.assign(new Error("Artifact not found"), { code: "ENOENT" });
+}
+
 async function readArtifactPreview(session, artifactPath) {
-  const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
+  const { target, rel, info } = await resolveArtifactTarget(session, artifactPath);
   const ext = extname(target).toLowerCase();
   const type = artifactTypes[ext];
   if (!type) {
     throw new Error("Unsupported artifact type");
   }
-  const info = await stat(target);
   if (!info.isFile()) {
     throw new Error("Artifact is not a file");
   }
@@ -621,6 +705,7 @@ async function readArtifactPreview(session, artifactPath) {
     path: rel,
     name: rel.split(/[\\/]/).pop() || rel,
     kind: type.kind,
+    workspace: session.workspace,
     mime: type.mime,
     size: info.size,
   };
@@ -669,13 +754,12 @@ function artifactAssetSessionFromToken(token) {
 }
 
 async function readArtifactMetadata(session, artifactPath) {
-  const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
+  const { target, rel, info } = await resolveArtifactTarget(session, artifactPath);
   const ext = extname(target).toLowerCase();
   const type = artifactTypes[ext];
   if (!type) {
     throw new Error("Unsupported artifact type");
   }
-  const info = await stat(target);
   if (!info.isFile()) {
     throw new Error("Artifact is not a file");
   }
@@ -683,6 +767,7 @@ async function readArtifactMetadata(session, artifactPath) {
     path: rel,
     name: rel.split(/[\\/]/).pop() || rel,
     kind: type.kind,
+    workspace: session.workspace,
     mime: type.mime,
     size: info.size,
     mtimeMs: info.mtimeMs,
@@ -707,8 +792,7 @@ async function artifactAssetTarget(session, assetPath) {
 }
 
 async function artifactDownloadTarget(session, artifactPath) {
-  const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
-  const info = await stat(target);
+  const { target, rel, info } = await resolveArtifactTarget(session, artifactPath);
   if (!info.isFile()) {
     throw new Error("Artifact is not a file");
   }
@@ -720,7 +804,271 @@ async function artifactDownloadTarget(session, artifactPath) {
     name: rel.split(/[\\/]/).pop() || "download",
     mime: type.mime || "application/octet-stream",
     size: info.size,
+    ext,
   };
+}
+
+function withDownloadedMermaidZoomBridge(content) {
+  const value = String(content || "");
+  if (!/\bmermaid\b/i.test(value) || /data-myharness-mermaid-zoom-script/i.test(value)) {
+    return value;
+  }
+  const bridge = `
+<style data-myharness-mermaid-zoom-style="true">
+.myharness-mermaid-zoom-host{position:relative!important}
+.myharness-mermaid-expand-button{position:absolute;top:10px;right:10px;z-index:50;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid rgba(17,24,39,.16);border-radius:6px;background:rgba(255,255,255,.94);color:#17212f;box-shadow:0 8px 22px rgba(15,23,42,.14);cursor:pointer}
+.myharness-mermaid-expand-button:hover,.myharness-mermaid-expand-button:focus-visible{border-color:rgba(37,99,235,.48);color:#1d4ed8;outline:none}
+.myharness-mermaid-expand-button svg,.myharness-mermaid-zoom-control svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.myharness-mermaid-zoom-backdrop{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;background:rgba(248,250,252,.98);color:#17212f}
+.myharness-mermaid-zoom-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid rgba(17,24,39,.12);background:#fff;font:13px/1.4 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.myharness-mermaid-zoom-title{font-weight:700}
+.myharness-mermaid-zoom-controls{display:flex;align-items:center;gap:6px}
+.myharness-mermaid-zoom-value{min-width:48px;text-align:center;color:#5d6877}
+.myharness-mermaid-zoom-control{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:28px;border:1px solid rgba(17,24,39,.14);border-radius:6px;background:#fff;color:#17212f;font:700 13px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}
+.myharness-mermaid-zoom-control:hover,.myharness-mermaid-zoom-control:focus-visible{border-color:rgba(37,99,235,.48);color:#1d4ed8;outline:none}
+.myharness-mermaid-zoom-control[data-tooltip]::after{position:absolute;top:calc(100% + 7px);left:50%;z-index:10000;max-width:220px;padding:5px 7px;border-radius:6px;background:rgba(17,24,39,.94);color:#fff;content:attr(data-tooltip);font:12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;opacity:0;pointer-events:none;transform:translate(-50%,2px);transition:opacity 120ms ease,transform 120ms ease;white-space:nowrap}
+.myharness-mermaid-zoom-control:hover::after,.myharness-mermaid-zoom-control:focus-visible::after{opacity:1;transform:translate(-50%,0)}
+.myharness-mermaid-zoom-viewport{flex:1;overflow:hidden;display:grid;place-items:center;cursor:grab}
+.myharness-mermaid-zoom-viewport.dragging{cursor:grabbing}
+.myharness-mermaid-zoom-canvas{transform-origin:0 0;transition:transform 120ms ease}
+.myharness-mermaid-zoom-canvas svg{display:block;max-width:none;height:auto}
+</style>
+<script data-myharness-mermaid-zoom-script="true">
+(() => {
+  const attachedAttribute = "data-myharness-mermaid-zoom-attached";
+  let activeViewer = null;
+  const icon = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 3H3v5"></path><path d="M3 3l7 7"></path><path d="M16 3h5v5"></path><path d="m21 3-7 7"></path><path d="M8 21H3v-5"></path><path d="m3 21 7-7"></path><path d="M16 21h5v-5"></path><path d="m21 21-7-7"></path></svg>';
+  const controlIcons = {
+    close: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
+    fit: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 9V5h4"></path><path d="M19 9V5h-4"></path><path d="M5 15v4h4"></path><path d="M19 15v4h-4"></path><path d="M12 8v8"></path><path d="M8 12h8"></path></svg>',
+    reset: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7v5h5"></path><path d="M5.7 12A7 7 0 0 1 17 6.5"></path><path d="M18.3 12A7 7 0 0 1 7 17.5"></path></svg>',
+    zoomIn: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>',
+    zoomOut: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14"></path></svg>'
+  };
+  const classText = (element) => {
+    const raw = element?.className;
+    if (typeof raw === "string") return raw;
+    return String(raw?.baseVal || "");
+  };
+  const hasMermaidClass = (element) => /(^|\\s)mermaid(?:-|\\s|$)/i.test(classText(element));
+  const findHost = (svg) => {
+    let fallback = svg.closest?.(".mermaid, .mermaid-chart") || svg.parentElement;
+    for (let node = svg.parentElement; node && node !== document.body; node = node.parentElement) {
+      if (hasMermaidClass(node)) fallback = node;
+      const style = getComputedStyle(node);
+      const overflow = [style.overflow, style.overflowX, style.overflowY].join(" ");
+      if (/(auto|scroll)/i.test(overflow) && (node.scrollWidth > node.clientWidth + 8 || node.scrollHeight > node.clientHeight + 8)) return node;
+    }
+    return fallback;
+  };
+  const control = (label, tooltip, iconName, onClick) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "myharness-mermaid-zoom-control";
+    button.setAttribute("aria-label", label);
+    button.dataset.tooltip = tooltip;
+    button.innerHTML = controlIcons[iconName] || "";
+    button.addEventListener("click", onClick);
+    return button;
+  };
+  let viewport = null;
+  let canvas = null;
+  let zoomValue = null;
+  let zoom = 1;
+  let fitScale = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+  let dragging = false;
+  let pointerId = -1;
+  let lastX = 0;
+  let lastY = 0;
+  const updateTransform = () => {
+    if (!canvas || !zoomValue) return;
+    canvas.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + (fitScale * zoom) + ")";
+    zoomValue.textContent = Math.round(zoom * 100) + "%";
+  };
+  const closeViewer = () => {
+    if (!activeViewer) return;
+    activeViewer.remove();
+    activeViewer = null;
+    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+  };
+  const onKeyDown = (event) => {
+    if (event.key === "Escape") closeViewer();
+  };
+  const svgNaturalSize = () => {
+    const svg = canvas?.querySelector("svg");
+    if (!svg) return { width: 0, height: 0 };
+    const viewBox = String(svg.getAttribute("viewBox") || "");
+    const parts = viewBox.split(/[\\s,]+/).map((part) => Number(part));
+    const attrNumber = (name) => {
+      const raw = String(svg.getAttribute(name) || "");
+      const parsed = Number.parseFloat(raw);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return {
+      width: parts.length >= 4 && Number.isFinite(parts[2]) && parts[2] > 0 ? parts[2] : attrNumber("width"),
+      height: parts.length >= 4 && Number.isFinite(parts[3]) && parts[3] > 0 ? parts[3] : attrNumber("height"),
+    };
+  };
+  const normalizeSvgSize = () => {
+    const svg = canvas?.querySelector("svg");
+    const size = svgNaturalSize();
+    if (!svg || !size.width || !size.height) return size;
+    svg.style.width = Math.ceil(size.width) + "px";
+    svg.style.height = Math.ceil(size.height) + "px";
+    svg.style.maxWidth = "none";
+    return size;
+  };
+  const fitView = () => {
+    if (!viewport || !canvas) return;
+    const size = normalizeSvgSize();
+    const rect = viewport.getBoundingClientRect();
+    const width = size.width || canvas.scrollWidth || 1;
+    const height = size.height || canvas.scrollHeight || 1;
+    const padding = 56;
+    fitScale = Math.min(4, Math.max(0.05, Math.min(Math.max(1, rect.width - padding) / width, Math.max(1, rect.height - padding) / height)));
+    zoom = 1;
+    offsetX = (rect.width - width * fitScale) / 2;
+    offsetY = (rect.height - height * fitScale) / 2;
+    updateTransform();
+  };
+  const zoomAt = (nextZoom, clientX, clientY) => {
+    if (!viewport) return;
+    const clampedZoom = Math.min(4, Math.max(0.25, nextZoom));
+    const rect = viewport.getBoundingClientRect();
+    const centerX = Number.isFinite(clientX) ? clientX - rect.left : rect.width / 2;
+    const centerY = Number.isFinite(clientY) ? clientY - rect.top : rect.height / 2;
+    const currentScale = fitScale * zoom;
+    const nextScale = fitScale * clampedZoom;
+    const diagramX = (centerX - offsetX) / currentScale;
+    const diagramY = (centerY - offsetY) / currentScale;
+    zoom = clampedZoom;
+    offsetX = centerX - diagramX * nextScale;
+    offsetY = centerY - diagramY * nextScale;
+    updateTransform();
+  };
+  const onPointerMove = (event) => {
+    if (!dragging || event.pointerId !== pointerId) return;
+    event.preventDefault();
+    offsetX += event.clientX - lastX;
+    offsetY += event.clientY - lastY;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    updateTransform();
+  };
+  const onPointerUp = (event) => {
+    if (event.pointerId !== pointerId) return;
+    dragging = false;
+    pointerId = -1;
+    viewport?.classList.remove("dragging");
+  };
+  const openViewer = (svg) => {
+    closeViewer();
+    const backdrop = document.createElement("div");
+    backdrop.className = "myharness-mermaid-zoom-backdrop";
+    backdrop.setAttribute("role", "dialog");
+    backdrop.setAttribute("aria-modal", "true");
+    backdrop.setAttribute("aria-label", "Mermaid 다이어그램 확대 보기");
+    const header = document.createElement("div");
+    header.className = "myharness-mermaid-zoom-header";
+    const title = document.createElement("strong");
+    title.className = "myharness-mermaid-zoom-title";
+    title.textContent = "Mermaid";
+    const controls = document.createElement("div");
+    controls.className = "myharness-mermaid-zoom-controls";
+    zoomValue = document.createElement("span");
+    zoomValue.className = "myharness-mermaid-zoom-value";
+    zoomValue.textContent = "100%";
+    controls.append(
+      control("축소", "축소", "zoomOut", () => zoomAt(zoom / 1.2)),
+      zoomValue,
+      control("확대", "확대", "zoomIn", () => zoomAt(zoom * 1.2)),
+      control("화면에 맞춤", "Fit", "fit", fitView),
+      control("이동 초기화", "Reset", "reset", fitView),
+      control("닫기", "닫기", "close", closeViewer)
+    );
+    header.append(title, controls);
+    viewport = document.createElement("div");
+    viewport.className = "myharness-mermaid-zoom-viewport";
+    canvas = document.createElement("div");
+    canvas.className = "myharness-mermaid-zoom-canvas";
+    canvas.append(svg.cloneNode(true));
+    viewport.append(canvas);
+    backdrop.append(header, viewport);
+    document.body.append(backdrop);
+    viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      zoomAt(zoom * (event.deltaY < 0 ? 1.1 : 0.9), event.clientX, event.clientY);
+    }, { passive: false });
+    viewport.addEventListener("pointerdown", (event) => {
+      if (typeof event.button === "number" && event.button !== 0) return;
+      event.preventDefault();
+      dragging = true;
+      pointerId = event.pointerId;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      viewport.classList.add("dragging");
+      viewport.setPointerCapture?.(event.pointerId);
+    });
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) closeViewer();
+    });
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    activeViewer = backdrop;
+    requestAnimationFrame(fitView);
+  };
+  const attachButton = (svg) => {
+    if (!svg || svg.closest(".myharness-mermaid-zoom-backdrop")) return;
+    const host = findHost(svg);
+    if (!host || host.hasAttribute(attachedAttribute)) return;
+    host.setAttribute(attachedAttribute, "true");
+    host.classList.add("myharness-mermaid-zoom-host");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "myharness-mermaid-expand-button";
+    button.setAttribute("aria-label", "Mermaid 다이어그램 크게 보기");
+    button.innerHTML = icon;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openViewer(svg);
+    });
+    host.prepend(button);
+  };
+  const enhance = () => {
+    document.querySelectorAll(".mermaid svg, .mermaid-chart svg, svg[id^='mermaid-']").forEach(attachButton);
+  };
+  const schedule = () => requestAnimationFrame(() => {
+    enhance();
+    setTimeout(enhance, 120);
+    setTimeout(enhance, 500);
+  });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", schedule, { once: true });
+  } else {
+    schedule();
+  }
+  window.addEventListener("load", schedule);
+  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>`;
+  if (/<\/body\s*>/i.test(value)) {
+    return value.replace(/<\/body\s*>/i, `${bridge}</body>`);
+  }
+  return `${value}${bridge}`;
+}
+
+async function readDownloadableArtifactBody(target, ext) {
+  if (ext !== ".html" && ext !== ".htm") {
+    return null;
+  }
+  const content = await readFile(target, "utf8");
+  return Buffer.from(withDownloadedMermaidZoomBridge(content), "utf8");
 }
 
 function asciiHeaderFilename(name) {
@@ -820,6 +1168,17 @@ async function workspaceSessionFromRequest(params, artifactPath = "", scope = de
   return { workspace };
 }
 
+async function workspaceTargetSessionFromRequest(params, artifactPath = "", scope = defaultWorkspaceScope()) {
+  if (params.get("workspacePath") || params.get("workspaceName")) {
+    const workspace = workspaceFromHistoryRequest({
+      workspacePath: params.get("workspacePath"),
+      workspaceName: params.get("workspaceName"),
+    }, scope);
+    return { workspace };
+  }
+  return workspaceSessionFromRequest(params, artifactPath, scope);
+}
+
 async function deleteArtifactFile(session, artifactPath) {
   const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
   const info = await stat(target);
@@ -847,11 +1206,16 @@ async function copyArtifactToFolder(session, artifactPath, folderPath) {
   await mkdir(directory, { recursive: true });
   const name = rel.split(/[\\/]/).pop() || basename(target) || "download";
   const destination = join(directory, name);
-  await copyFile(target, destination);
+  const body = await readDownloadableArtifactBody(target, extname(target).toLowerCase());
+  if (body) {
+    await writeFile(destination, body);
+  } else {
+    await copyFile(target, destination);
+  }
   return {
     path: destination,
     name,
-    size: info.size,
+    size: body?.length || info.size,
   };
 }
 
@@ -975,6 +1339,293 @@ async function saveArtifactFile(session, artifactPath, content) {
   await writeFile(target, String(content || ""), "utf8");
   invalidateProjectFileCache(session.workspace.path);
   return readArtifactMetadata(session, rel);
+}
+
+async function overwriteHtmlArtifactFile(session, artifactPath, content) {
+  const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
+  const ext = extname(target).toLowerCase();
+  if (ext !== ".html" && ext !== ".htm") {
+    throw new Error("Only HTML artifacts can be overwritten from preview edit");
+  }
+  try {
+    const info = await stat(target);
+    if (!info.isFile()) {
+      throw new Error("Artifact is not a file");
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const value = String(content || "");
+  if (Buffer.byteLength(value, "utf8") > artifactPreviewMaxBytes) {
+    throw new Error("Artifact is too large to save");
+  }
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, value, "utf8");
+  invalidateProjectFileCache(session.workspace.path);
+  return {
+    artifact: await readArtifactMetadata(session, rel),
+    payload: await readArtifactPreview(session, rel),
+  };
+}
+
+function validateArtifactFileName(value) {
+  const name = String(value || "").trim();
+  if (!name) {
+    throw new Error("File name is required");
+  }
+  if (name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
+    throw new Error("File name must not include folders");
+  }
+  if (/[<>:"|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name)) {
+    throw new Error("File name contains invalid Windows path characters");
+  }
+  if (!artifactTypes[extname(name).toLowerCase()]) {
+    throw new Error("Unsupported artifact type");
+  }
+  return name;
+}
+
+async function renameArtifactFile(session, artifactPath, nextName) {
+  const source = await resolveArtifactTarget(session, artifactPath);
+  if (!source.info.isFile()) {
+    throw new Error("Artifact is not a file");
+  }
+  const fileName = validateArtifactFileName(nextName);
+  const sourceDir = dirname(source.rel);
+  const destinationRel = normalizeProjectFilePath(sourceDir === "." ? fileName : join(sourceDir, fileName));
+  if (!destinationRel || destinationRel === "." || normalizeProjectFilePath(source.rel) === destinationRel) {
+    throw new Error("New file name must be different");
+  }
+  const sourceExt = extname(source.rel).toLowerCase();
+  const destinationExt = extname(destinationRel).toLowerCase();
+  if (sourceExt !== destinationExt) {
+    throw new Error("File extension cannot be changed");
+  }
+  const { target: destinationTarget } = workspaceRelativeTarget(session.workspace.path, destinationRel);
+  try {
+    await stat(destinationTarget);
+    throw new Error("A file with that name already exists");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await mkdir(dirname(destinationTarget), { recursive: true });
+  await rename(source.target, destinationTarget);
+  await updateArtifactRenameAlias(session, source.rel, destinationRel);
+  invalidateProjectFileCache(session.workspace.path);
+  return {
+    artifact: await readArtifactMetadata(session, destinationRel),
+    payload: await readArtifactPreview(session, destinationRel),
+  };
+}
+
+function normalizeAiEditComments(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const instruction = String(item.instruction || item.comment || "").trim();
+      if (!instruction) return null;
+      const requestedDocumentScope = item.scope === "document" || item.global === true;
+      const text = String(item.text || "").trim();
+      const start = Number(item.start);
+      const end = Number(item.end);
+      const hasRangeFields = Object.prototype.hasOwnProperty.call(item, "start") || Object.prototype.hasOwnProperty.call(item, "end");
+      const hasValidRange = Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start;
+      const scope = requestedDocumentScope || (!text && !hasRangeFields) ? "document" : "selection";
+      if (scope !== "document" && (!text || !hasValidRange)) {
+        return null;
+      }
+      return {
+        index: index + 1,
+        scope,
+        instruction,
+        text: (scope === "document" ? "전체 문서" : text).slice(0, 2000),
+        html: scope === "document" ? "" : String(item.html || "").slice(0, 6000),
+        start: scope === "document" ? 0 : start,
+        end: scope === "document" ? 0 : end,
+        before: scope === "document" ? "" : String(item.before || "").slice(-500),
+        after: scope === "document" ? "" : String(item.after || "").slice(0, 500),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function nextArtifactVersionRel(session, artifactPath) {
+  const source = await resolveArtifactTarget(session, artifactPath);
+  if (!source.info.isFile()) {
+    throw new Error("Artifact is not a file");
+  }
+  const ext = extname(source.rel).toLowerCase();
+  if (ext !== ".html" && ext !== ".htm") {
+    throw new Error("AI edit currently supports HTML reports only");
+  }
+  const dir = dirname(source.rel);
+  const originalName = basename(source.rel, ext);
+  const baseName = originalName.replace(/[\s_]+(?:ver\.|v)\d+$/i, "");
+  for (let index = 1; index < 1000; index += 1) {
+    const fileName = `${baseName}_v${index}${ext}`;
+    const candidateRel = normalizeProjectFilePath(dir === "." ? fileName : join(dir, fileName));
+    const { target } = workspaceRelativeTarget(session.workspace.path, candidateRel);
+    const legacyFileName = `${baseName} v${index}${ext}`;
+    const legacyRel = normalizeProjectFilePath(dir === "." ? legacyFileName : join(dir, legacyFileName));
+    const { target: legacyTarget } = workspaceRelativeTarget(session.workspace.path, legacyRel);
+    try {
+      await stat(target);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        try {
+          await stat(legacyTarget);
+        } catch (legacyError) {
+          if (legacyError?.code === "ENOENT") {
+            return candidateRel;
+          }
+          throw legacyError;
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("Could not find an available version file name");
+}
+
+function compactAiEditTranscriptText(value, maxLength = 140) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function buildAiArtifactEditTranscript({ sourceRel, targetRel, comments }) {
+  const commentLines = comments.map((comment) => {
+    const request = compactAiEditTranscriptText(comment.instruction);
+    const selected = compactAiEditTranscriptText(comment.text, 80);
+    return `${comment.index}. ${request}${comment.scope === "document" ? " (전체 문서)" : selected ? ` (${selected})` : ""}`;
+  });
+  return [
+    "AI 편집 요청",
+    `- 원본 문서: ${sourceRel}`,
+    `- 새 버전: ${targetRel}`,
+    `- 수정 의견: ${comments.length}개`,
+    "",
+    ...commentLines,
+  ].join("\n").trim();
+}
+
+function buildAiArtifactEditPrompt({ sourceRel, targetRel, sourceContent, comments }) {
+  const commentLines = comments.map((comment) => {
+    const scopedLines = comment.scope === "document"
+      ? [
+          "- Scope: entire document",
+          `- User edit request: ${JSON.stringify(comment.instruction)}`,
+        ]
+      : [
+          `- Scope: selected range`,
+          `- Text offsets: ${comment.start}-${comment.end}`,
+          `- Selected text: ${JSON.stringify(comment.text)}`,
+          comment.html ? `- Selected HTML: ${JSON.stringify(comment.html)}` : "",
+          `- User edit request: ${JSON.stringify(comment.instruction)}`,
+          `- Before context: ${JSON.stringify(comment.before)}`,
+          `- After context: ${JSON.stringify(comment.after)}`,
+        ];
+    return [`## Comment ${comment.index}`, ...scopedLines].filter(Boolean).join("\n");
+  }).join("\n\n");
+
+  return [
+    "우측 HTML preview에서 사용자가 남긴 선택 영역 또는 문서 전체 AI 수정 의견입니다.",
+    "",
+    "작업 지시",
+    `- 원본 파일: ${sourceRel}`,
+    `- 새 버전 파일: ${targetRel}`,
+    "- 아래 원본 HTML 문서와 수정 의견만 편집 컨텍스트로 사용하세요. 이전 대화 전체 맥락에 의존하지 마세요.",
+    "- 원본 파일은 수정하지 마세요.",
+    "- 반드시 같은 디렉터리에 새 버전 파일을 저장하세요.",
+    "- Scope가 entire document인 의견은 문서 전체 방향의 수정 요청으로 처리하세요.",
+    "- Scope가 selected range인 의견은 선택 영역과 주변 문맥을 중심으로 수정하되, 문체/단어/구조 통일이 필요하면 관련된 앞뒤 문맥도 함께 조정할 수 있습니다.",
+    "- 실제 변경은 가능하면 edit_file 또는 apply_patch로 수행해 중앙 작업 진행 영역에 편집 작업과 diff 미리보기가 보이게 하세요. 불가피한 경우가 아니면 불투명한 셸 스크립트나 전체 파일 재작성만으로 처리하지 마세요.",
+    "- 최종 답변에는 저장한 새 버전 파일 경로와 핵심 변경 요약만 간단히 알려주세요.",
+    "",
+    "## Source HTML document",
+    `<document path=${JSON.stringify(sourceRel)}>`,
+    sourceContent,
+    "</document>",
+    "",
+    "## Edit requests",
+    commentLines,
+  ].join("\n");
+
+  return [
+    "우측 HTML preview에서 사용자가 선택한 영역별 AI 수정 의견입니다.",
+    "",
+    "작업 지시:",
+    `- 원본 파일: ${sourceRel}`,
+    `- 새 버전 파일: ${targetRel}`,
+    "- 원본 파일은 덮어쓰지 마세요.",
+    "- 반드시 같은 폴더의 새 버전 파일에 저장하세요.",
+    "- 선택 영역과 주변 문맥을 중심으로 수정하세요.",
+    "- 기본적으로 선택된 영역을 수정하되, 문체/용어/구조 통일성이 필요하면 전후 문맥의 관련 부분도 함께 조정할 수 있습니다.",
+    "- 토큰과 속도를 아끼기 위해 전체 HTML을 새로 작성하지 말고, 파일을 읽은 뒤 필요한 부분만 부분 수정(diff/edit 방식)하세요.",
+    "- 저장 후 최종 답변에는 새 버전 파일 경로만 명확히 알려주세요.",
+    "",
+    commentLines,
+  ].join("\n");
+}
+
+async function submitAiArtifactEdit(session, artifactPath, comments) {
+  const source = await resolveArtifactTarget(session, artifactPath);
+  const normalizedComments = normalizeAiEditComments(comments);
+  if (normalizedComments.length === 0) {
+    throw new Error("At least one AI edit comment is required");
+  }
+  if (source.info.size > artifactAiEditMaxBytes) {
+    const error = new Error("Artifact is too large for AI edit");
+    error.status = 413;
+    throw error;
+  }
+  const targetRel = await nextArtifactVersionRel(session, source.rel);
+  const sourceContent = await readFile(source.target, "utf8");
+  const prompt = buildAiArtifactEditPrompt({
+    sourceRel: source.rel,
+    targetRel,
+    sourceContent,
+    comments: normalizedComments,
+  });
+  const transcriptLine = buildAiArtifactEditTranscript({
+    sourceRel: source.rel,
+    targetRel,
+    comments: normalizedComments,
+  });
+  if (session.busy) {
+    const error = new Error("The current AI session is busy");
+    error.status = 409;
+    throw error;
+  }
+  if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
+    const error = new Error("Concurrent response limit reached");
+    error.status = 429;
+    throw error;
+  }
+  session.busy = true;
+  const ok = sendBackend(session, {
+    type: "submit_line",
+    line: prompt,
+    attachments: [],
+    transcript_line: transcriptLine,
+    suppress_user_transcript: false,
+    isolated_context: true,
+  });
+  if (!ok) {
+    session.busy = false;
+    const error = new Error("Could not submit AI edit request");
+    error.status = 409;
+    throw error;
+  }
+  return { ok: true, sourcePath: source.rel, targetPath: targetRel };
 }
 
 function projectFileCacheKey(workspacePath, scope = "default") {
@@ -1220,6 +1871,7 @@ async function organizeRootProjectFiles(session, paths = []) {
     const { target: destinationTarget } = workspaceRelativeTarget(session.workspace.path, destinationRel);
     await mkdir(dirname(destinationTarget), { recursive: true });
     await rename(target, destinationTarget);
+    await updateArtifactRenameAlias(session, rel, destinationRel);
     existingPaths.delete(normalizeProjectFilePath(rel));
     existingPaths.add(destinationRel);
     moved.push(await readArtifactMetadata(session, destinationRel));
@@ -3455,10 +4107,7 @@ async function handleApi(request, response, pathname) {
   if (request.method === "GET" && pathname === "/api/artifact") {
     const params = new URL(request.url, `http://localhost:${port}`).searchParams;
     try {
-      const sessionId = params.get("session");
-      const session = sessionId
-        ? sessionFromIdForClient(sessionId, params.get("clientId"))
-        : await workspaceSessionFromRequest(params, params.get("path"), workspaceScope);
+      const session = await workspaceTargetSessionFromRequest(params, params.get("path"), workspaceScope);
       if (!session) {
         json(response, 404, { error: "Unknown session" });
         return true;
@@ -3474,10 +4123,7 @@ async function handleApi(request, response, pathname) {
   if (request.method === "GET" && pathname === "/api/artifact/resolve") {
     const params = new URL(request.url, `http://localhost:${port}`).searchParams;
     try {
-      const sessionId = params.get("session");
-      const session = sessionId
-        ? sessionFromIdForClient(sessionId, params.get("clientId"))
-        : await workspaceSessionFromRequest(params, params.get("path"), workspaceScope);
+      const session = await workspaceTargetSessionFromRequest(params, params.get("path"), workspaceScope);
       if (!session) {
         json(response, 404, { error: "Unknown session" });
         return true;
@@ -3486,6 +4132,70 @@ async function handleApi(request, response, pathname) {
       json(response, 200, payload);
     } catch (error) {
       json(response, error.status || 404, { error: error.message || "Artifact not found" });
+    }
+    return true;
+  }
+
+  if (request.method === "PUT" && pathname === "/api/artifact") {
+    try {
+      const body = await readJson(request);
+      const params = new URLSearchParams();
+      if (body.clientId) params.set("clientId", body.clientId);
+      if (body.session) params.set("session", body.session);
+      if (body.workspacePath) params.set("workspacePath", body.workspacePath);
+      if (body.workspaceName) params.set("workspaceName", body.workspaceName);
+      const session = await workspaceTargetSessionFromRequest(params, body.path, workspaceScope);
+      if (!session) {
+        json(response, 404, { error: "Unknown session" });
+        return true;
+      }
+      const payload = await overwriteHtmlArtifactFile(session, body.path, body.content);
+      json(response, 200, payload);
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not overwrite artifact" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/artifact/rename") {
+    try {
+      const body = await readJson(request);
+      const params = new URLSearchParams();
+      if (body.session) params.set("session", body.session);
+      if (body.clientId) params.set("clientId", body.clientId);
+      if (body.workspacePath) params.set("workspacePath", body.workspacePath);
+      if (body.workspaceName) params.set("workspaceName", body.workspaceName);
+      const session = await workspaceTargetSessionFromRequest(params, body.path, workspaceScope);
+      if (!session) {
+        json(response, 404, { error: "Unknown session" });
+        return true;
+      }
+      const payload = await renameArtifactFile(session, body.path, body.name);
+      json(response, 200, payload);
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not rename artifact" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/artifact/ai-edit") {
+    try {
+      const body = await readJson(request);
+      const params = new URLSearchParams();
+      if (body.session) params.set("session", body.session);
+      if (body.clientId) params.set("clientId", body.clientId);
+      if (body.workspacePath) params.set("workspacePath", body.workspacePath);
+      if (body.workspaceName) params.set("workspaceName", body.workspaceName);
+      const session = sessionFromIdForClient(body.session, body.clientId)
+        || await workspaceTargetSessionFromRequest(params, body.path, workspaceScope);
+      if (!session?.process) {
+        json(response, 404, { error: "Unknown session" });
+        return true;
+      }
+      const payload = await submitAiArtifactEdit(session, body.path, body.comments);
+      json(response, 200, payload);
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not submit AI edit" });
     }
     return true;
   }
@@ -3500,7 +4210,7 @@ async function handleApi(request, response, pathname) {
       const assetPath = tokenSession
         ? decodeURIComponent(assetParts.join("/"))
         : decodeURIComponent(rawAssetPath);
-      const session = tokenSession || await workspaceSessionFromRequest(params, assetPath, workspaceScope);
+      const session = tokenSession || await workspaceTargetSessionFromRequest(params, assetPath, workspaceScope);
       const payload = await artifactAssetTarget(session, assetPath);
       response.writeHead(200, {
         "Content-Type": payload.mime,
@@ -3518,19 +4228,24 @@ async function handleApi(request, response, pathname) {
     const params = new URL(request.url, `http://localhost:${port}`).searchParams;
     try {
       const artifactPath = params.get("path");
-      const session = await workspaceSessionFromRequest(params, artifactPath, workspaceScope);
+      const session = await workspaceTargetSessionFromRequest(params, artifactPath, workspaceScope);
       const payload = await artifactDownloadTarget(session, artifactPath);
       const encodedName = encodeURIComponent(payload.name).replace(/[!'()*]/g, (char) =>
         `%${char.charCodeAt(0).toString(16).toUpperCase()}`
       );
       const fallbackName = asciiHeaderFilename(payload.name);
+      const body = await readDownloadableArtifactBody(payload.target, payload.ext);
       response.writeHead(200, {
         "Content-Type": payload.mime,
-        "Content-Length": String(payload.size),
+        "Content-Length": String(body?.length || payload.size),
         "Content-Disposition": `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
         "Cache-Control": "no-store",
       });
-      createReadStream(payload.target).pipe(response);
+      if (body) {
+        response.end(body);
+      } else {
+        createReadStream(payload.target).pipe(response);
+      }
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not download artifact" });
     }
@@ -3545,7 +4260,7 @@ async function handleApi(request, response, pathname) {
       if (body.clientId) params.set("clientId", body.clientId);
       if (body.workspacePath) params.set("workspacePath", body.workspacePath);
       if (body.workspaceName) params.set("workspaceName", body.workspaceName);
-      const session = await workspaceSessionFromRequest(params, body.path, workspaceScope);
+      const session = await workspaceTargetSessionFromRequest(params, body.path, workspaceScope);
       const saved = await copyArtifactToFolder(session, body.path, body.folderPath);
       json(response, 200, { saved });
     } catch (error) {
@@ -3562,7 +4277,7 @@ async function handleApi(request, response, pathname) {
       if (body.clientId) params.set("clientId", body.clientId);
       if (body.workspacePath) params.set("workspacePath", body.workspacePath);
       if (body.workspaceName) params.set("workspaceName", body.workspaceName);
-      const session = await workspaceSessionFromRequest(params, body.path, workspaceScope);
+      const session = await workspaceTargetSessionFromRequest(params, body.path, workspaceScope);
       const deleted = await deleteArtifactFile(session, body.path);
       json(response, 200, { deleted });
     } catch (error) {
@@ -3608,7 +4323,7 @@ async function handleApi(request, response, pathname) {
   if (request.method === "GET" && pathname === "/api/project-files") {
     const params = new URL(request.url, `http://localhost:${port}`).searchParams;
     try {
-      const session = await workspaceSessionFromRequest(params, "", workspaceScope);
+      const session = await workspaceTargetSessionFromRequest(params, "", workspaceScope);
       const scope = params.get("scope") === "all" ? "all" : "default";
       const force = params.get("force") === "true" || params.get("force") === "1";
       json(response, 200, {
@@ -3630,7 +4345,7 @@ async function handleApi(request, response, pathname) {
       if (body.clientId) params.set("clientId", body.clientId);
       if (body.workspacePath) params.set("workspacePath", body.workspacePath);
       if (body.workspaceName) params.set("workspaceName", body.workspaceName);
-      const session = await workspaceSessionFromRequest(params, "", workspaceScope);
+      const session = await workspaceTargetSessionFromRequest(params, "", workspaceScope);
       const files = await organizeRootProjectFiles(session, body.paths);
       json(response, 200, { workspace: session.workspace, files });
     } catch (error) {

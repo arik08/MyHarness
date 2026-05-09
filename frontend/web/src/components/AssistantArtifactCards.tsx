@@ -82,6 +82,7 @@ function useMessageArtifacts(message: ChatMessage) {
               path: payload.path || artifact.path,
               name: payload.name || artifact.name,
               kind: payload.kind || artifact.kind,
+              workspace: payload.workspace || artifact.workspace,
               label: payload.label || artifactLabelForPath(payload.path || artifact.path, payload.kind || artifact.kind),
             };
           } catch {
@@ -112,11 +113,11 @@ function useMessageArtifacts(message: ChatMessage) {
       const payload = await readArtifact({
         sessionId: state.sessionId || undefined,
         clientId: state.clientId,
-        workspacePath: state.workspacePath,
-        workspaceName: state.workspaceName,
+        workspacePath: artifact.workspace?.path || state.workspacePath,
+        workspaceName: artifact.workspace?.name || state.workspaceName,
         path: artifact.path,
       });
-      dispatch({ type: "set_artifact_payload", payload });
+      dispatch({ type: "open_artifact", artifact: { ...artifact, workspace: payload.workspace || artifact.workspace }, payload });
     } catch (error) {
       dispatch({
         type: "open_modal",

@@ -80,11 +80,11 @@ function shouldCollapseUserMessage(text: string) {
     return false;
   }
   const lineCount = value.split(/\r?\n/).length;
-  return value.length > 600 || lineCount > 8;
+  return lineCount > 20;
 }
 
 function previewText(text: string) {
-  return String(text || "").replace(/\s+/g, " ").trim();
+  return String(text || "").replace(/\r\n/g, "\n").split("\n").slice(0, 20).join("\n").trim();
 }
 
 export function UserMessageText({ text }: { text: string }) {
@@ -98,7 +98,7 @@ export function UserMessageText({ text }: { text: string }) {
         {expanded ? (
           <p className="react-message-text prompt-line">{renderPromptParts(value)}</p>
         ) : (
-          <span className="user-message-preview prompt-line">{renderPromptParts(previewText(value))}</span>
+          <p className="user-message-preview prompt-line">{renderPromptParts(previewText(value))}</p>
         )}
         <button
           type="button"

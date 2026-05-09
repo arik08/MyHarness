@@ -150,11 +150,27 @@ export type ArtifactPayload = {
   path?: string;
   name?: string;
   kind?: string;
+  workspace?: Workspace;
   mime?: string;
   size?: number;
   content?: string;
   dataUrl?: string;
   assetBaseUrl?: string;
+};
+
+export type ArtifactAiEditSelection = {
+  text: string;
+  start: number;
+  end: number;
+  before: string;
+  after: string;
+  html?: string;
+  scope?: "selection" | "document";
+};
+
+export type ArtifactAiEditComment = ArtifactAiEditSelection & {
+  id: string;
+  instruction: string;
 };
 
 export type ModalState =

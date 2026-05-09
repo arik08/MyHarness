@@ -38,12 +38,237 @@ function normalizeHtmlPreviewSource(value: string) {
   return String(value || "").replace(/\r\n/g, "\n").trimEnd();
 }
 
+function mermaidDiagramLineIndex(lines: string[]) {
+  let inDirective = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (inDirective) {
+      if (trimmed.endsWith("%%")) {
+        inDirective = false;
+      }
+      continue;
+    }
+    if (/^%%\{/.test(trimmed)) {
+      inDirective = !trimmed.endsWith("%%");
+      continue;
+    }
+    if (/^%%/.test(trimmed)) {
+      continue;
+    }
+    return index;
+  }
+  return -1;
+}
+
+function firstMermaidLine(source: string) {
+  const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
+  const index = mermaidDiagramLineIndex(lines);
+  return index >= 0 ? lines[index].trim() : "";
+}
+
+function mermaidDiagramKind(source: string) {
+  const first = firstMermaidLine(source);
+  return first.match(/^([A-Za-z][\w-]*)/)?.[1] || "";
+}
+
+function quoteMermaidValue(value: string) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed || /^["'].*["']$/.test(trimmed)) {
+    return trimmed;
+  }
+  return `"${trimmed.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function quoteMermaidDoubleString(value: string) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed || /^".*"$/.test(trimmed) || /^"`[\s\S]*`"$/.test(trimmed)) {
+    return trimmed;
+  }
+  return `"${trimmed.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function csvCells(line: string) {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"' && line[index + 1] === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function formatSankeyCsvCell(value: string) {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+function needsSankeyToken(value: string) {
+  return /[^\x20-\x7e]/.test(value);
+}
+
+function normalizeRequirementEnum(key: string, value: string) {
+  const lower = value.trim().toLowerCase();
+  const risk: Record<string, string> = { low: "Low", medium: "Medium", high: "High" };
+  const method: Record<string, string> = {
+    analysis: "Analysis",
+    inspection: "Inspection",
+    test: "Test",
+    demonstration: "Demonstration",
+  };
+  return key.toLowerCase() === "risk" ? risk[lower] || value.trim() : method[lower] || value.trim();
+}
+
+function normalizeRequirementDiagramSource(source: string) {
+  return source.split("\n").map((line) => {
+    const field = line.match(/^(\s*)(id|text|docref|type|risk|verifymethod):\s*(.*?)\s*$/i);
+    if (!field) {
+      return line;
+    }
+    const [, indent, rawKey, rawValue] = field;
+    const key = rawKey.toLowerCase();
+    if (key === "risk" || key === "verifymethod") {
+      return `${indent}${rawKey}: ${normalizeRequirementEnum(key, rawValue)}`;
+    }
+    return `${indent}${rawKey}: ${quoteMermaidValue(rawValue)}`;
+  }).join("\n");
+}
+
+function normalizeQuadrantChartSource(source: string) {
+  return source.split("\n").map((line) => {
+    const axis = line.match(/^(\s*[xy]-axis\s+)(.+?)(\s*--+>\s*)(.+?)\s*$/i);
+    if (axis) {
+      return `${axis[1]}${quoteMermaidDoubleString(axis[2])}${axis[3]}${quoteMermaidDoubleString(axis[4])}`;
+    }
+    const quadrant = line.match(/^(\s*quadrant-[1-4]\s+)(.+?)\s*$/i);
+    if (quadrant) {
+      return `${quadrant[1]}${quoteMermaidDoubleString(quadrant[2])}`;
+    }
+    const point = line.match(/^(\s*)(.+?)(\s*:\s*\[\s*(?:1|0(?:\.\d+)?)\s*,\s*(?:1|0(?:\.\d+)?)\s*\].*)$/);
+    if (point && !/^(?:title|accTitle|accDescr|classDef)\b/i.test(point[2].trim())) {
+      return `${point[1]}${quoteMermaidDoubleString(point[2])}${point[3]}`;
+    }
+    return line;
+  }).join("\n");
+}
+
+function normalizeFlowchartSource(source: string) {
+  return source.split("\n").map((line) => {
+    const classDefEnd = line.match(/^(\s*classDef\s+)end(\b.*)$/i);
+    if (classDefEnd) {
+      return `${classDefEnd[1]}mh_end${classDefEnd[2]}`;
+    }
+    const classEnd = line.match(/^(\s*class\s+.+?\s+)end(\s*)$/i);
+    if (classEnd) {
+      return `${classEnd[1]}mh_end${classEnd[2]}`;
+    }
+    return line;
+  }).join("\n");
+}
+
+type NormalizedMermaidSource = {
+  source: string;
+  labelReplacements: Array<[string, string]>;
+};
+
+function normalizeSankeySource(source: string): NormalizedMermaidSource {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const diagramIndex = mermaidDiagramLineIndex(lines);
+  const labelToToken = new Map<string, string>();
+  const tokenFor = (label: string) => {
+    if (!needsSankeyToken(label)) {
+      return label;
+    }
+    let token = labelToToken.get(label);
+    if (!token) {
+      token = `mh_sankey_node_${labelToToken.size + 1}`;
+      labelToToken.set(label, token);
+    }
+    return token;
+  };
+  const normalizedLines = lines.map((line, index) => {
+    if (index === diagramIndex) {
+      return line.replace(/^(\s*)sankey-beta\b/i, "$1sankey");
+    }
+    if (diagramIndex >= 0 && index < diagramIndex) {
+      return line;
+    }
+    const cells = csvCells(line.trim());
+    if (cells.length !== 3 || !cells[0] || !cells[1]) {
+      return line;
+    }
+    return [
+      formatSankeyCsvCell(tokenFor(cells[0])),
+      formatSankeyCsvCell(tokenFor(cells[1])),
+      cells[2],
+    ].join(",");
+  });
+  return {
+    source: normalizedLines.join("\n"),
+    labelReplacements: [...labelToToken.entries()].map(([label, token]) => [token, label]),
+  };
+}
+
+function normalizeMermaidSource(source: string) {
+  const normalized = normalizeHtmlPreviewSource(source);
+  const kind = mermaidDiagramKind(normalized).toLowerCase();
+  if (kind === "sankey" || kind === "sankey-beta") {
+    return normalizeSankeySource(normalized);
+  }
+  if (kind === "quadrantchart") {
+    return { source: normalizeQuadrantChartSource(normalized), labelReplacements: [] };
+  }
+  if (kind === "requirementdiagram") {
+    return { source: normalizeRequirementDiagramSource(normalized), labelReplacements: [] };
+  }
+  if (kind === "flowchart" || kind === "graph") {
+    return { source: normalizeFlowchartSource(normalized), labelReplacements: [] };
+  }
+  return { source: normalized, labelReplacements: [] };
+}
+
 function escapeHtml(value: string) {
   return String(value || "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function applyMermaidLabelReplacements(svg: string, replacements: Array<[string, string]>) {
+  if (!replacements.length) {
+    return svg;
+  }
+  const template = document.createElement("template");
+  template.innerHTML = svg;
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    let value = node.nodeValue || "";
+    for (const [token, label] of replacements) {
+      value = value.split(token).join(label);
+    }
+    node.nodeValue = value;
+    node = walker.nextNode();
+  }
+  return template.innerHTML;
 }
 
 function promptTokenKind(rawToken: string) {
@@ -843,9 +1068,10 @@ async function loadMermaid() {
 async function renderMermaidSvg(source: string) {
   const mermaid = await loadMermaid();
   const id = `mermaid-chart-${++mermaidRenderId}`;
-  const result = await mermaid.render(id, source);
+  const normalized = normalizeMermaidSource(source);
+  const result = await mermaid.render(id, normalized.source);
   return {
-    svg: sanitizeRenderedHtml(result.svg),
+    svg: applyMermaidLabelReplacements(sanitizeRenderedHtml(result.svg), normalized.labelReplacements),
     bindFunctions: result.bindFunctions,
   };
 }
@@ -869,13 +1095,22 @@ function closeMermaidZoomViewer() {
   activeMermaidZoomViewer?.dispatchEvent(new CustomEvent("mermaid-viewer-close"));
 }
 
-function createMermaidZoomControl(label: string, text: string, onClick: () => void) {
+const mermaidZoomControlIcons = {
+  close: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
+  reset: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7v5h5"></path><path d="M5.7 12A7 7 0 0 1 17 6.5"></path><path d="M18.3 12A7 7 0 0 1 7 17.5"></path></svg>',
+  zoomIn: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>',
+  zoomOut: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14"></path></svg>',
+};
+
+type MermaidZoomControlIcon = keyof typeof mermaidZoomControlIcons;
+
+function createMermaidZoomControl(label: string, tooltip: string, icon: MermaidZoomControlIcon, onClick: () => void) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "mermaid-zoom-control";
   button.setAttribute("aria-label", label);
-  button.dataset.tooltip = label;
-  button.textContent = text;
+  button.dataset.tooltip = tooltip;
+  button.innerHTML = mermaidZoomControlIcons[icon];
   button.addEventListener("click", onClick);
   return button;
 }
@@ -915,7 +1150,8 @@ function openMermaidZoomViewer(source: string) {
   canvas.textContent = "다이어그램 렌더링 중...";
   viewport.append(canvas);
 
-  let scale = 1;
+  let zoom = 1;
+  let fitScale = 1;
   let offsetX = 0;
   let offsetY = 0;
   let dragging = false;
@@ -924,37 +1160,60 @@ function openMermaidZoomViewer(source: string) {
   let lastY = 0;
 
   const updateTransform = () => {
-    canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
-    zoomValue.textContent = `${Math.round(scale * 100)}%`;
+    canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${fitScale * zoom})`;
+    zoomValue.textContent = `${Math.round(zoom * 100)}%`;
   };
 
-  const zoomAt = (nextScale: number, clientX?: number, clientY?: number) => {
-    const clampedScale = Math.min(4, Math.max(0.25, nextScale));
+  const canvasSize = () => {
+    const svg = canvas.querySelector<SVGSVGElement>("svg");
+    const viewBoxParts = (svg?.getAttribute("viewBox") || "").split(/[\s,]+/).map((part) => Number(part));
+    const attrNumber = (name: "width" | "height") => {
+      const value = Number.parseFloat(svg?.getAttribute(name) || "");
+      return Number.isFinite(value) ? value : 0;
+    };
+    return {
+      width: (viewBoxParts.length >= 4 && Number.isFinite(viewBoxParts[2]) ? viewBoxParts[2] : attrNumber("width")) || canvas.scrollWidth || 1,
+      height: (viewBoxParts.length >= 4 && Number.isFinite(viewBoxParts[3]) ? viewBoxParts[3] : attrNumber("height")) || canvas.scrollHeight || 1,
+    };
+  };
+
+  const fitView = () => {
+    const rect = viewport.getBoundingClientRect();
+    const size = canvasSize();
+    const padding = 56;
+    const availableWidth = Math.max(1, rect.width - padding);
+    const availableHeight = Math.max(1, rect.height - padding);
+    fitScale = Math.min(4, Math.max(0.05, Math.min(availableWidth / size.width, availableHeight / size.height)));
+    zoom = 1;
+    offsetX = (rect.width - size.width * fitScale) / 2;
+    offsetY = (rect.height - size.height * fitScale) / 2;
+    updateTransform();
+  };
+
+  const zoomAt = (nextZoom: number, clientX?: number, clientY?: number) => {
+    const clampedZoom = Math.min(4, Math.max(0.25, nextZoom));
     const rect = viewport.getBoundingClientRect();
     const centerX = typeof clientX === "number" ? clientX - rect.left : rect.width / 2;
     const centerY = typeof clientY === "number" ? clientY - rect.top : rect.height / 2;
-    const diagramX = (centerX - offsetX) / scale;
-    const diagramY = (centerY - offsetY) / scale;
-    scale = clampedScale;
-    offsetX = centerX - diagramX * scale;
-    offsetY = centerY - diagramY * scale;
+    const currentScale = fitScale * zoom;
+    const nextScale = fitScale * clampedZoom;
+    const diagramX = (centerX - offsetX) / currentScale;
+    const diagramY = (centerY - offsetY) / currentScale;
+    zoom = clampedZoom;
+    offsetX = centerX - diagramX * nextScale;
+    offsetY = centerY - diagramY * nextScale;
     updateTransform();
   };
 
-  const resetView = () => {
-    scale = 1;
-    offsetX = 0;
-    offsetY = 0;
-    updateTransform();
-  };
+  const resetView = fitView;
 
-  const closeButton = createMermaidZoomControl("닫기", "×", closeMermaidZoomViewer);
+  const closeButton = createMermaidZoomControl("닫기", "닫기", "close", closeMermaidZoomViewer);
   closeButton.classList.add("mermaid-zoom-close");
   controls.append(
-    createMermaidZoomControl("축소", "-", () => zoomAt(scale / 1.2)),
+    createMermaidZoomControl("축소", "축소", "zoomOut", () => zoomAt(zoom / 1.2)),
     zoomValue,
-    createMermaidZoomControl("확대", "+", () => zoomAt(scale * 1.2)),
-    createMermaidZoomControl("이동 초기화", "Reset", resetView),
+    createMermaidZoomControl("확대", "확대", "zoomIn", () => zoomAt(zoom * 1.2)),
+    createMermaidZoomControl("이동 초기화", "Reset", "reset", resetView),
     closeButton,
   );
 
@@ -981,13 +1240,14 @@ function openMermaidZoomViewer(source: string) {
   };
   const onWheel = (event: WheelEvent) => {
     event.preventDefault();
-    zoomAt(scale * (event.deltaY < 0 ? 1.1 : 0.9), event.clientX, event.clientY);
+    zoomAt(zoom * (event.deltaY < 0 ? 1.1 : 0.9), event.clientX, event.clientY);
   };
   const pointerEventId = (event: PointerEvent) => Number.isFinite(event.pointerId) ? event.pointerId : 1;
   const onPointerMove = (event: PointerEvent) => {
     if (!dragging || pointerEventId(event) !== dragPointerId) {
       return;
     }
+    event.preventDefault();
     const clientX = Number.isFinite(event.clientX) ? event.clientX : lastX;
     const clientY = Number.isFinite(event.clientY) ? event.clientY : lastY;
     offsetX += clientX - lastX;
@@ -1016,6 +1276,8 @@ function openMermaidZoomViewer(source: string) {
     if (typeof event.button === "number" && event.button !== 0) {
       return;
     }
+    event.preventDefault();
+    window.getSelection()?.removeAllRanges();
     dragging = true;
     dragPointerId = pointerEventId(event);
     lastX = Number.isFinite(event.clientX) ? event.clientX : 0;
@@ -1041,7 +1303,7 @@ function openMermaidZoomViewer(source: string) {
       canvas.innerHTML = result.svg;
       fitMermaidZoomSvg(canvas);
       result.bindFunctions?.(canvas);
-      resetView();
+      fitView();
     })
     .catch(() => {
       if (!canvas.isConnected) {

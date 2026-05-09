@@ -1,26 +1,52 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+﻿import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactPanel, clampArtifactPanelWidth } from "../ArtifactPanel";
+import { artifactAiSelectionMessage, artifactHtmlEditMessage } from "../ArtifactPreview";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { deleteArtifact, listProjectFiles, organizeProjectFiles, readArtifact } from "../../api/artifacts";
+import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../../api/artifacts";
+import type { BackendEvent } from "../../types/backend";
 
 vi.mock("../../api/artifacts", () => ({
+  aiEditArtifact: vi.fn(async () => ({ ok: true, sourcePath: "outputs/report.html", targetPath: "outputs/report_v1.html" })),
   deleteArtifact: vi.fn(async () => ({ deleted: true })),
   listProjectFiles: vi.fn(async () => ({ scope: "default", files: [] })),
   organizeProjectFiles: vi.fn(async () => ({ files: [] })),
+  overwriteArtifact: vi.fn(async () => ({
+    artifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 44 },
+    payload: { kind: "html", content: "<html><body>Changed</body></html>" },
+  })),
+  renameArtifact: vi.fn(async () => ({
+    artifact: { path: "outputs/renamed-report.html", name: "renamed-report.html", kind: "html", size: 44 },
+    payload: { kind: "html", content: "<html><body>Preview</body></html>" },
+  })),
   readArtifact: vi.fn(async () => ({ kind: "html", content: "<html><body>Preview</body></html>" })),
 }));
 
 describe("ArtifactPanel", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.mocked(aiEditArtifact).mockResolvedValue({ ok: true, sourcePath: "outputs/report.html", targetPath: "outputs/report_v1.html" });
     vi.mocked(deleteArtifact).mockResolvedValue({ deleted: true });
     vi.mocked(listProjectFiles).mockResolvedValue({ scope: "default", files: [] });
     vi.mocked(organizeProjectFiles).mockResolvedValue({ files: [] });
+    vi.mocked(overwriteArtifact).mockResolvedValue({
+      artifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 44 },
+      payload: { kind: "html", content: "<html><body>Changed</body></html>" },
+    });
+    vi.mocked(renameArtifact).mockResolvedValue({
+      artifact: { path: "outputs/renamed-report.html", name: "renamed-report.html", kind: "html", size: 44 },
+      payload: { kind: "html", content: "<html><body>Preview</body></html>" },
+    });
     localStorage.removeItem("myharness:projectFileFilter");
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith("myharness:projectFilePins:")) {
+        localStorage.removeItem(key);
+      }
+    }
     history.replaceState(null, "", window.location.href);
   });
 
@@ -325,7 +351,7 @@ describe("ArtifactPanel", () => {
     expect(await screen.findByRole("heading", { name: "분석 결과" })).toBeTruthy();
     expect(screen.queryByLabelText("report.md 원문")).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "원문보기" }));
+    await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
 
     const source = await screen.findByLabelText("report.md 원문");
     expect(source).toBeInstanceOf(HTMLTextAreaElement);
@@ -385,7 +411,7 @@ describe("ArtifactPanel", () => {
     expect(frame.getAttribute("srcdoc")).toContain("url('/api/artifact/asset/shared/bg.jpg')");
     expect(screen.queryByRole("button", { name: "목록으로" })).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "원문보기" }));
+    await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
 
     expect(screen.queryByLabelText("report.html 원문")).toBeNull();
     const code = document.querySelector(".artifact-source code.language-html");
@@ -393,6 +419,773 @@ describe("ArtifactPanel", () => {
     expect(code?.querySelector(".hljs-tag")?.textContent).toContain("<html>");
     expect(code?.textContent).toContain("<!doctype html>");
     expect(code?.textContent).toContain("<h1>Hello</h1>");
+  });
+
+  it("shows direct edit actions only for HTML artifacts", () => {
+    const { unmount } = render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: { kind: "html", content: "<html><body>Preview</body></html>" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    let actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    expect(actions).toHaveLength(8);
+    expect(actions[0].getAttribute("data-tooltip")).toBe("본문 수정");
+    expect(actions[1].getAttribute("data-tooltip")).toBe("수정사항 반영");
+    expect(actions[1].disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "AI 자동편집" })).toBeNull();
+
+    unmount();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/report.md", name: "report.md", kind: "markdown" },
+          activeArtifactPayload: { kind: "markdown", content: "# Preview" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    expect(actions).toHaveLength(5);
+    expect(actions.some((button) => button.getAttribute("data-tooltip")?.includes("편집"))).toBe(false);
+  });
+
+  it("injects direct text editing and AI comments while body edit mode is active", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: { kind: "html", content: "<html><body><h1>Headline</h1><p>Body</p></body></html>" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+    expect(frame.srcdoc).not.toContain("myharness-editable-text");
+    expect(frame.srcdoc).not.toContain("myharness-ai-comment-popover");
+
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+
+    expect(frame.srcdoc).toContain("myharness-editable-text");
+    expect(frame.srcdoc).toContain("const activateEditable");
+    expect(frame.srcdoc).toContain("contentEditable = \"plaintext-only\"");
+    expect(frame.srcdoc).toContain("parent.postMessage({ type: messageType");
+    expect(frame.srcdoc).toContain("const commitActiveEditable");
+    expect(frame.srcdoc).toContain('event.key !== "Enter" || event.shiftKey || event.isComposing');
+    expect(frame.srcdoc).toContain("commitActiveEditable();");
+    expect(frame.srcdoc).toContain("if (editable !== activeEditable)");
+    expect(frame.srcdoc).toContain("const normalizeEditableLineBreaks");
+    expect(frame.srcdoc).toContain('root.createElement("br")');
+    expect(frame.srcdoc).toContain("myharness-ai-comment-popover");
+    expect(frame.srcdoc).toContain('document.addEventListener("contextmenu"');
+    expect(frame.srcdoc).toContain("const documentPayload");
+    expect(frame.srcdoc).toContain("전체 수정 요청...");
+    expect(frame.srcdoc).toContain("myharness:artifact-frame-scroll");
+    expect(frame.srcdoc).toContain("window.scrollTo(restoreScroll.x, restoreScroll.y)");
+    expect(frame.srcdoc).toContain("::selection");
+    expect(frame.srcdoc).toContain("::highlight(myharness-ai-pending-selection)");
+    expect(frame.srcdoc).toContain("rgba(245, 158, 11, 0.34)");
+    expect(frame.srcdoc).toContain("myharness-ai-pending-highlight");
+    expect(frame.srcdoc).toContain("const showPendingHighlight");
+    expect(frame.srcdoc).not.toContain("hasDirectSelectableText");
+    expect(frame.srcdoc).not.toContain("myharness-ai-drag-box");
+  });
+
+  it("injects a Mermaid expand control into HTML artifact previews", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: [
+              "<html><body>",
+              "<div class=\"mermaid-panel\"><div class=\"mermaid\">flowchart LR",
+              "A --> B",
+              "</div></div>",
+              "<script src=\"https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js\"></script>",
+              "</body></html>",
+            ].join("\n"),
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+    expect(frame.srcdoc).toContain("data-myharness-mermaid-zoom-style");
+    expect(frame.srcdoc).toContain("data-myharness-mermaid-zoom-script");
+    expect(frame.srcdoc).toContain("myharness-mermaid-expand-button");
+    expect(frame.srcdoc).toContain("Mermaid 다이어그램 크게 보기");
+    expect(frame.srcdoc).toContain("Mermaid 다이어그램 확대 보기");
+    expect(frame.srcdoc).not.toContain("화면에 맞춤");
+    expect(frame.srcdoc).not.toContain('control("화면에 맞춤", "Fit", "fit", fitView)');
+    expect(frame.srcdoc).toContain('control("이동 초기화", "Reset", "reset", resetView)');
+    expect(frame.srcdoc).toContain("controlIcons");
+  });
+
+  it("injects the inline comment picker through the unified body edit mode", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: { kind: "html", content: "<html><body><h1>Headline</h1><p>Body</p></body></html>" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+    expect(frame.srcdoc).not.toContain("myharness-ai-comment-popover");
+
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+
+    expect(frame.srcdoc).toContain("myharness-ai-comment-popover");
+    expect(frame.srcdoc).toContain("submit.type = \"button\"");
+    expect(frame.srcdoc).toContain("submit.addEventListener(\"click\", submitComment)");
+    expect(frame.srcdoc).toContain('event.key === "Enter" && !event.shiftKey');
+    expect(frame.srcdoc).toContain("if ((node.nodeValue || \"\").trim())");
+    expect(frame.srcdoc).toContain("const html = htmlFromRange(range)");
+    expect(frame.srcdoc).toContain("showPendingHighlight(range.cloneRange())");
+    expect(frame.srcdoc).toContain("openSelectionPopover({ x: event.clientX, y: event.clientY })");
+    expect(frame.srcdoc).toContain("showPopover(documentPayload()");
+    expect(frame.srcdoc).toContain("const safeLeft = clamp(point.x + 8");
+    expect(frame.srcdoc).toContain("clearPendingHighlight()");
+    expect(frame.srcdoc).toContain("window.CSS.highlights.set(pendingHighlightName");
+    expect(frame.srcdoc).toContain('document.addEventListener("contextmenu"');
+    expect(frame.srcdoc).not.toContain('document.addEventListener("mouseup"');
+    expect(frame.srcdoc).toContain("myharness-ai-comment-anchor");
+    expect(frame.srcdoc).toContain("syncFormShape");
+    expect(frame.srcdoc).toContain("myharness-ai-comment-multiline");
+    expect(frame.srcdoc).not.toContain("myharness-ai-comment-mic");
+    expect(frame.srcdoc).toContain("댓글 추가");
+    expect(frame.srcdoc).toContain("취소");
+    expect(frame.srcdoc).toContain("myharness-ai-comment-submit");
+  });
+
+  it("saves edited HTML preview drafts back to the current artifact path", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          artifacts: [{ path: "outputs/report.html", name: "report.html", kind: "html", size: 42 }],
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 42 },
+          activeArtifactPayload: { kind: "html", content: "<html><body>Preview</body></html>" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    await userEvent.click(actions[0]);
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactHtmlEditMessage,
+          path: "outputs/report.html",
+          html: "<html><body>Changed</body></html>",
+        },
+      }));
+    });
+
+    await waitFor(() => expect(actions[1].disabled).toBe(false));
+
+    await userEvent.click(actions[1]);
+
+    await waitFor(() => expect(overwriteArtifact).toHaveBeenCalledWith({
+      path: "outputs/report.html",
+      content: "<html><body>Changed</body></html>",
+      clientId: "client-a",
+      workspacePath: "C:/repo",
+      workspaceName: "repo",
+    }));
+    await waitFor(() => expect(actions[1].disabled).toBe(true));
+    await waitFor(() => expect(actions[2].disabled).toBe(true));
+  });
+
+  it("saves restored history artifacts through their resolved workspace", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/current",
+          workspaceName: "current",
+          activeArtifact: {
+            path: "outputs/history-report.html",
+            name: "history-report.html",
+            kind: "html",
+            workspace: { path: "C:/history", name: "history" },
+          },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body>History</body></html>",
+            workspace: { path: "C:/history", name: "history" },
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    await userEvent.click(actions[0]);
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactHtmlEditMessage,
+          path: "outputs/history-report.html",
+          html: "<html><body>History Changed</body></html>",
+        },
+      }));
+    });
+
+    await waitFor(() => expect(actions[1].disabled).toBe(false));
+    await userEvent.click(actions[1]);
+
+    await waitFor(() => expect(overwriteArtifact).toHaveBeenCalledWith({
+      path: "outputs/history-report.html",
+      content: "<html><body>History Changed</body></html>",
+      clientId: "client-a",
+      workspacePath: "C:/history",
+      workspaceName: "history",
+    }));
+  });
+
+  it("adds preview selection comments and submits them for AI editing", async () => {
+    let sendBackendEvent: ((event: BackendEvent) => void) | null = null;
+    function BackendEventProbe() {
+      const { dispatch } = useAppState();
+      sendBackendEvent = (event: BackendEvent) => dispatch({ type: "backend_event", event, sessionId: "session-a" });
+      return null;
+    }
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: {
+            path: "outputs/report.html",
+            name: "report.html",
+            kind: "html",
+            workspace: { path: "C:/repo", name: "repo" },
+          },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+            workspace: { path: "C:/repo", name: "repo" },
+          },
+        }}
+      >
+        <BackendEventProbe />
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "Old headline",
+            html: "<h1>Old headline</h1>",
+            start: 0,
+            end: 12,
+            before: "",
+            after: "Old body",
+            instruction: "Make headline clearer",
+          },
+        },
+      }));
+    });
+
+    const commentChip = document.querySelector(".artifact-ai-comment") as HTMLElement | null;
+    expect(commentChip).toBeTruthy();
+    expect(commentChip?.getAttribute("data-tooltip")).toBe("1. Make headline clearer");
+    expect(commentChip?.querySelector(".artifact-ai-comment-index")?.textContent).toBe("1");
+    expect(commentChip?.querySelector(".artifact-ai-comment-text")).toBeNull();
+    expect(commentChip?.querySelector(".artifact-ai-comment-instruction")?.textContent).toBe("Make hea...");
+    expect(screen.queryByRole("dialog", { name: "AI 수정 의견 작성" })).toBeNull();
+    await waitFor(() => expect(frame.srcdoc).toContain("myharness-ai-comment-anchor"));
+    expect(frame.srcdoc).toContain('anchor.dataset.tooltip = comment.instruction || ""');
+    expect(frame.srcdoc).toContain('data-tooltip-align="left"');
+    expect(frame.srcdoc).toContain('data-tooltip-align="right"');
+    expect(frame.srcdoc).toContain("anchor.dataset.tooltipAlign = \"left\"");
+    expect(frame.srcdoc).toContain("delete anchor.dataset.tooltipAlign");
+    expect(frame.srcdoc).toContain("document.body.appendChild(anchor)");
+    expect(frame.srcdoc).toContain("positionCommentAnchors();");
+    expect(frame.srcdoc).toContain('anchor.setAttribute("aria-label", "AI 수정 의견 " + comment.index + " 위치")');
+
+    await userEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
+
+    await waitFor(() => expect(aiEditArtifact).toHaveBeenCalledWith({
+      path: "outputs/report.html",
+      sessionId: "session-a",
+      clientId: "client-a",
+      workspacePath: "C:/repo",
+      workspaceName: "repo",
+      comments: [
+        expect.objectContaining({
+          text: "Old headline",
+          start: 0,
+          end: 12,
+          before: "",
+          after: "Old body",
+          html: "<h1>Old headline</h1>",
+          instruction: "Make headline clearer",
+        }),
+      ],
+    }));
+    expect(screen.getByText("AI 자동편집 진행 중: outputs/report_v1.html")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "report.html 파일명 수정" })).toBeTruthy();
+    expect(screen.getByTitle("report.html")).toBeTruthy();
+    act(() => {
+      sendBackendEvent?.({
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        arguments_delta: JSON.stringify({
+          path: "outputs/report_v1.html",
+          content: "<html><body><h1>Half written</h1></body></html>",
+        }),
+      } as BackendEvent);
+    });
+    expect(screen.getByTitle("report.html")).toBeTruthy();
+    expect(screen.queryByTitle("report_v1.html")).toBeNull();
+    expect(document.querySelector(".artifact-ai-progress")).toBeTruthy();
+
+    act(() => {
+      sendBackendEvent?.({
+        type: "tool_completed",
+        tool_name: "write_file",
+        output: "Wrote outputs/report_v1.html",
+      } as BackendEvent);
+    });
+    await waitFor(() => expect(readArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      path: "outputs/report_v1.html",
+      sessionId: "session-a",
+      clientId: "client-a",
+      workspacePath: "C:/repo",
+      workspaceName: "repo",
+    })));
+    expect(await screen.findByRole("button", { name: "report_v1.html 파일명 수정" })).toBeTruthy();
+
+    act(() => {
+      sendBackendEvent?.({ type: "line_complete" } as BackendEvent);
+    });
+    expect(await screen.findByRole("button", { name: "report_v1.html 파일명 수정" })).toBeTruthy();
+  });
+
+  it("adds a document-wide AI edit comment from the preview", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "전체 문서",
+            html: "",
+            start: 0,
+            end: 0,
+            before: "",
+            after: "",
+            scope: "document",
+            instruction: "전반적으로 임원 보고서 톤으로 정리해줘",
+          },
+        },
+      }));
+    });
+
+    const commentChip = document.querySelector(".artifact-ai-comment") as HTMLElement | null;
+    expect(commentChip?.getAttribute("data-tooltip")).toBe("1. 전반적으로 임원 보고서 톤으로 정리해줘");
+    expect(commentChip?.querySelector(".artifact-ai-comment-instruction")?.textContent).toBe("전반적으로 임원...");
+    await userEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
+
+    await waitFor(() => expect(aiEditArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      path: "outputs/report.html",
+      comments: [
+        expect.objectContaining({
+          text: "전체 문서",
+          start: 0,
+          end: 0,
+          scope: "document",
+          instruction: "전반적으로 임원 보고서 톤으로 정리해줘",
+        }),
+      ],
+    })));
+  });
+
+  it("numbers multiple AI edit comments and sends them together", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "Old headline",
+            html: "<h1>Old headline</h1>",
+            start: 0,
+            end: 12,
+            before: "",
+            after: "Old body",
+            instruction: "Shorten the headline",
+          },
+        },
+      }));
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "Old body",
+            html: "<p>Old body</p>",
+            start: 12,
+            end: 20,
+            before: "Old headline",
+            after: "",
+          },
+        },
+      }));
+    });
+
+    expect(await screen.findByRole("dialog", { name: "AI 수정 의견 작성" })).toBeTruthy();
+    await userEvent.type(screen.getByLabelText("수정 의견"), "Make the body more specific");
+    await userEvent.click(screen.getByRole("button", { name: "추가" }));
+
+    expect([...document.querySelectorAll(".artifact-ai-comment-index")].map((item) => item.textContent)).toEqual(["1", "2"]);
+    const commentChips = [...document.querySelectorAll(".artifact-ai-comment")] as HTMLElement[];
+    expect(commentChips.map((item) => item.getAttribute("data-tooltip"))).toEqual([
+      "1. Shorten the headline",
+      "2. Make the body more specific",
+    ]);
+    expect(document.querySelector(".artifact-ai-comment-text")).toBeNull();
+    expect([...document.querySelectorAll(".artifact-ai-comment-instruction")].map((item) => item.textContent)).toEqual([
+      "Shorten...",
+      "Make the...",
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
+
+    await waitFor(() => expect(aiEditArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      path: "outputs/report.html",
+      comments: [
+        expect.objectContaining({
+          text: "Old headline",
+          instruction: "Shorten the headline",
+        }),
+        expect.objectContaining({
+          text: "Old body",
+          instruction: "Make the body more specific",
+        }),
+      ],
+    })));
+  });
+
+  it("shows AI edit workflow progress inside the comment overlay", async () => {
+    let sendBackendEvent: ((event: BackendEvent) => void) | null = null;
+    function BackendEventProbe() {
+      const { dispatch } = useAppState();
+      sendBackendEvent = (event: BackendEvent) => dispatch({ type: "backend_event", event, sessionId: "session-a" });
+      return null;
+    }
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          workflowEvents: [
+            {
+              id: "workflow-edit",
+              toolName: "edit_file",
+              title: "파일 수정",
+              detail: "outputs/report.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/report.html",
+                old_str: "Old headline",
+                new_str: "New headline",
+              },
+            },
+          ],
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+          },
+        }}
+      >
+        <ArtifactPanel />
+        <BackendEventProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "Old headline",
+            html: "<h1>Old headline</h1>",
+            start: 0,
+            end: 12,
+            before: "",
+            after: "Old body",
+            instruction: "Make it clearer",
+          },
+        },
+      }));
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
+
+    expect(document.querySelector(".artifact-ai-progress-empty")?.textContent).toContain("AI 자동편집");
+    expect(document.querySelector(".artifact-ai-progress-empty")?.textContent).toContain("초 경과");
+    expect(document.querySelector(".artifact-ai-progress .workflow-output-preview")?.textContent || "").not.toContain("Old headline");
+
+    act(() => {
+      sendBackendEvent?.({
+        type: "tool_started",
+        tool_name: "edit_file",
+        tool_call_index: 0,
+        tool_input: {
+          path: "outputs/report.html",
+          old_str: "Old headline",
+          new_str: "New headline",
+        },
+      });
+    });
+
+    await waitFor(() => expect(document.querySelector(".artifact-ai-progress .workflow-message")).toBeTruthy());
+    expect(document.querySelector(".artifact-ai-progress .workflow-output-preview")?.textContent || "").toContain("report.html");
+    expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("Old headline");
+    expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("New headline");
+  });
+
+  it("renames the active preview title on double click and Enter", async () => {
+    vi.mocked(renameArtifact).mockResolvedValueOnce({
+      artifact: {
+        path: "outputs/renamed-history-report.html",
+        name: "renamed-history-report.html",
+        kind: "html",
+        size: 45,
+        workspace: { path: "C:/history", name: "history" },
+      },
+      payload: { kind: "html", content: "<html><body>Renamed</body></html>", workspace: { path: "C:/history", name: "history" } },
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/current",
+          workspaceName: "current",
+          artifacts: [
+            {
+              path: "outputs/history-report.html",
+              name: "history-report.html",
+              kind: "html",
+              size: 42,
+              workspace: { path: "C:/history", name: "history" },
+            },
+          ],
+          activeArtifact: {
+            path: "outputs/history-report.html",
+            name: "history-report.html",
+            kind: "html",
+            workspace: { path: "C:/history", name: "history" },
+          },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body>History</body></html>",
+            workspace: { path: "C:/history", name: "history" },
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await userEvent.dblClick(screen.getByRole("button", { name: "history-report.html 파일명 수정" }));
+    const input = document.querySelector(".artifact-title-rename-input") as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, "renamed-history-report.html{Enter}");
+
+    await waitFor(() => expect(renameArtifact).toHaveBeenCalledWith({
+      path: "outputs/history-report.html",
+      name: "renamed-history-report.html",
+      sessionId: "session-a",
+      clientId: "client-a",
+      workspacePath: "C:/history",
+      workspaceName: "history",
+    }));
+    expect(await screen.findByRole("button", { name: "renamed-history-report.html 파일명 수정" })).toBeTruthy();
+  });
+
+  it("switches artifact versions from the title menu", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          artifacts: [
+            { path: "outputs/report.html", name: "report.html", kind: "html", size: 40 },
+            { path: "outputs/report_v1.html", name: "report_v1.html", kind: "html", size: 41 },
+            { path: "outputs/report_v2.html", name: "report_v2.html", kind: "html", size: 42 },
+          ],
+          activeArtifact: { path: "outputs/report_v1.html", name: "report_v1.html", kind: "html" },
+          activeArtifactPayload: { kind: "html", content: "<html><body>Version 1</body></html>" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const trigger = document.querySelector(".artifact-version-trigger") as HTMLButtonElement;
+    expect(trigger.textContent).toBe("v1");
+    await userEvent.click(trigger);
+
+    const options = [...document.querySelectorAll(".artifact-version-option")];
+    expect(options.map((item) => item.querySelector("span")?.textContent)).toEqual(["\uC6D0\uBCF8", "v1", "v2"]);
+    await userEvent.click(screen.getByRole("menuitem", { name: /v2/ }));
+
+    await waitFor(() => expect(readArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      path: "outputs/report_v2.html",
+      sessionId: "session-a",
+      clientId: "client-a",
+      workspacePath: "C:/repo",
+      workspaceName: "repo",
+    })));
+    expect(await screen.findByTitle("report_v2.html")).toBeTruthy();
+  });
+
+  it("restores the loaded HTML when direct edit is canceled", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: { kind: "html", content: "<html><body>Preview</body></html>" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    let actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    await userEvent.click(actions[0]);
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactHtmlEditMessage,
+          path: "outputs/report.html",
+          html: "<html><body>Changed</body></html>",
+        },
+      }));
+    });
+
+    await waitFor(() => expect(actions[2].disabled).toBe(false));
+    await userEvent.click(actions[2]);
+
+    actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    expect(actions[2].disabled).toBe(true);
+    await userEvent.click(actions[3]);
+    expect(document.querySelector(".artifact-source code")?.textContent).toContain("Preview");
+    expect(document.querySelector(".artifact-source code")?.textContent).not.toContain("Changed");
   });
 
   it("shows streaming HTML source instead of a blank frame while the style block is incomplete", () => {
@@ -451,14 +1244,14 @@ describe("ArtifactPanel", () => {
           ],
         }}
       >
-        <p>페이지의 다른 텍스트</p>
+        <p>Different focus text</p>
         <ArtifactPanel />
       </AppStateProvider>,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "report.html 열기" }));
     await screen.findByTitle("report.html");
-    await userEvent.click(screen.getByRole("button", { name: "원문보기" }));
+    await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
 
     const event = new KeyboardEvent("keydown", {
       key: "a",
@@ -542,7 +1335,7 @@ describe("ArtifactPanel", () => {
     );
 
     expect(screen.getByText("이 파일 형식은 미리보기 대신 다운로드로 열 수 있습니다.")).toBeTruthy();
-    const download = screen.getByRole("link", { name: "namuwiki-history-report.pptx 다운로드" });
+    const download = document.querySelector(".artifact-file-download") as HTMLAnchorElement;
     expect(download).toBeTruthy();
     expect(download.getAttribute("download")).toBe("namuwiki-history-report.pptx");
     expect(decodeURIComponent(download.getAttribute("href") || "")).toContain("path=outputs/namuwiki-history-report.pptx");
@@ -586,9 +1379,11 @@ describe("ArtifactPanel", () => {
 
     await screen.findByText("report.html");
     const actions = document.querySelector(".project-file-actions");
-    expect(actions?.children[0]?.getAttribute("aria-label")).toBe("report.html 삭제");
-    expect(actions?.children[1]?.textContent).toBe("42 B");
-    expect(actions?.children[2]?.getAttribute("aria-label")).toBe("report.html 다운로드");
+    expect(actions?.children[0]?.getAttribute("aria-label")).toBe("report.html 즐겨찾기 추가");
+    expect(actions?.children[1]?.getAttribute("aria-label")).toBe("report.html 파일명 수정");
+    expect(actions?.children[2]?.getAttribute("aria-label")).toBe("report.html 삭제");
+    expect(actions?.children[3]?.textContent).toBe("42 B");
+    expect(actions?.children[4]?.getAttribute("aria-label")).toBe("report.html 다운로드");
 
     await userEvent.click(screen.getByRole("button", { name: "report.html 삭제" }));
     expect(deleteArtifact).not.toHaveBeenCalled();
@@ -604,6 +1399,110 @@ describe("ArtifactPanel", () => {
       workspaceName: "repo",
     }));
     await waitFor(() => expect(screen.queryByText("report.html")).toBeNull());
+  });
+
+  it("pins project files into a virtual Pinned section without removing the original row", async () => {
+    vi.mocked(listProjectFiles).mockResolvedValueOnce({
+      scope: "default",
+      files: [
+        { path: "outputs/report.html", name: "report.html", kind: "html", size: 42 },
+        { path: "outputs/notes.md", name: "notes.md", kind: "markdown", size: 30 },
+      ],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          artifacts: [
+            { path: "outputs/report.html", name: "report.html", kind: "html", size: 42 },
+            { path: "outputs/notes.md", name: "notes.md", kind: "markdown", size: 30 },
+          ],
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await screen.findByText("report.html");
+    await userEvent.click(screen.getByRole("button", { name: "report.html 즐겨찾기 추가" }));
+
+    const pinnedSection = document.querySelector(".project-file-section-pinned");
+    expect(pinnedSection?.querySelector(".project-file-section-title")?.textContent).toBe("Pinned");
+    expect(pinnedSection?.querySelector(".project-file-item strong")?.textContent).toBe("report.html");
+    expect([...document.querySelectorAll(".project-file-item strong")].filter((node) => node.textContent === "report.html")).toHaveLength(2);
+    expect(localStorage.getItem("myharness:projectFilePins:C%3A%2Frepo")).toContain("outputs/report.html");
+
+    await userEvent.click(screen.getAllByRole("button", { name: "report.html 즐겨찾기 해제" })[0]);
+    expect(document.querySelector(".project-file-section-pinned")).toBeNull();
+  });
+
+  it("renames a project file from the list without losing its workspace", async () => {
+    vi.mocked(listProjectFiles).mockResolvedValueOnce({
+      scope: "default",
+      files: [
+        {
+          path: "outputs/history-report.html",
+          name: "history-report.html",
+          kind: "html",
+          size: 42,
+          workspace: { path: "C:/history", name: "history" },
+        },
+      ],
+    });
+    vi.mocked(renameArtifact).mockResolvedValueOnce({
+      artifact: {
+        path: "outputs/renamed-history-report.html",
+        name: "renamed-history-report.html",
+        kind: "html",
+        size: 45,
+        workspace: { path: "C:/history", name: "history" },
+      },
+      payload: { kind: "html", content: "<html></html>", workspace: { path: "C:/history", name: "history" } },
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/current",
+          workspaceName: "current",
+          artifacts: [
+            {
+              path: "outputs/history-report.html",
+              name: "history-report.html",
+              kind: "html",
+              size: 42,
+              workspace: { path: "C:/history", name: "history" },
+            },
+          ],
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "history-report.html 파일명 수정" }));
+    expect(screen.queryByRole("dialog", { name: "파일명 수정" })).toBeNull();
+    const input = document.querySelector(".project-file-inline-rename input") as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, "renamed-history-report.html{Enter}");
+
+    await waitFor(() => expect(renameArtifact).toHaveBeenCalledWith({
+      path: "outputs/history-report.html",
+      name: "renamed-history-report.html",
+      sessionId: "session-a",
+      clientId: "client-a",
+      workspacePath: "C:/history",
+      workspaceName: "history",
+    }));
+    expect(await screen.findByText("renamed-history-report.html")).toBeTruthy();
   });
 
   it("shows extension-specific colored badges for project files", async () => {

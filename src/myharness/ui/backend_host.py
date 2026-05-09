@@ -433,8 +433,10 @@ class ReactBackendHost:
                     self._active_request_task = asyncio.create_task(
                         self._process_line(
                             line,
+                            transcript_line=request.transcript_line,
                             attachments=request.attachments,
                             emit_user_transcript=not request.suppress_user_transcript,
+                            isolated_context=request.isolated_context,
                         )
                     )
                     should_continue = await self._active_request_task
@@ -665,6 +667,7 @@ class ReactBackendHost:
         attachments=None,
         quiet: bool = False,
         emit_user_transcript: bool = True,
+        isolated_context: bool = False,
     ) -> bool:
         assert self._bundle is not None
         attachments = attachments or []
@@ -879,6 +882,12 @@ class ReactBackendHost:
 
         first_token = (line.strip().split(maxsplit=1) or [""])[0].lower()
         started_at = time.monotonic()
+        original_messages = self._bundle.engine.messages if isolated_context else None
+        original_conversation_state = (
+            copy.deepcopy(self._bundle.engine.tool_metadata.get("conversation_state"))
+            if isolated_context
+            else None
+        )
         try:
             if (
                 first_token != "/clear"
@@ -894,11 +903,33 @@ class ReactBackendHost:
             }
             if "steering_provider" in inspect.signature(handle_line).parameters:
                 handle_line_kwargs["steering_provider"] = self._drain_steering_lines
-            should_continue = await handle_line(
-                self._bundle,
-                effective_prompt,
-                **handle_line_kwargs,
-            )
+            if original_messages is not None:
+                self._bundle.engine.clear()
+            try:
+                should_continue = await handle_line(
+                    self._bundle,
+                    effective_prompt,
+                    **handle_line_kwargs,
+                )
+            except BaseException:
+                if original_messages is not None:
+                    self._bundle.engine.load_messages(original_messages)
+                    if original_conversation_state is None:
+                        self._bundle.engine.tool_metadata.pop("conversation_state", None)
+                    else:
+                        self._bundle.engine.tool_metadata["conversation_state"] = original_conversation_state
+                raise
+            if original_messages is not None:
+                isolated_messages = self._bundle.engine.messages
+                visible_messages = []
+                if transcript_text.strip():
+                    visible_messages.append(ConversationMessage.from_user_text(transcript_text))
+                visible_messages.extend(message for message in isolated_messages if message.role != "user")
+                self._bundle.engine.load_messages([*original_messages, *visible_messages])
+                if original_conversation_state is None:
+                    self._bundle.engine.tool_metadata.pop("conversation_state", None)
+                else:
+                    self._bundle.engine.tool_metadata["conversation_state"] = original_conversation_state
             self._bundle.engine.tool_metadata["workflow_duration_seconds"] = max(1, round(time.monotonic() - started_at))
             if first_token != "/clear" and not quiet:
                 self._save_current_session_snapshot()

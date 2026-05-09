@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { deleteArtifact, listProjectFiles, organizeProjectFiles, readArtifact } from "../api/artifacts";
+import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary } from "../types/backend";
+import type { ArtifactAiEditComment, ArtifactAiEditSelection, WorkflowEvent } from "../types/ui";
 import {
   artifactCategory,
   artifactExtension,
   artifactIcon,
-  artifactKindLabel,
   formatBytes,
   isRootProjectFileCandidatePath,
   normalizeProjectFilePath,
 } from "../utils/artifacts";
 import { Icon, type IconName } from "./ArtifactIcons";
-import { ArtifactPreview, artifactFrameBackMessage, isEditablePayload } from "./ArtifactPreview";
+import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload } from "./ArtifactPreview";
+import { WorkflowPanel } from "./WorkflowPanel";
 
 const artifactHistoryMarker = "myharnessArtifactPanel";
 const artifactPanelMinWidth = 320;
@@ -30,6 +31,7 @@ const projectFileCategories = [
   ["other", "기타"],
 ];
 const projectFileCategoryValues = new Set(projectFileCategories.map(([value]) => value));
+const projectFilePinnedKeyPrefix = "myharness:projectFilePins";
 type ArtifactPanelHistoryView = "list" | "detail" | "fullscreen";
 
 function isArtifactHistoryState(value: unknown) {
@@ -61,11 +63,6 @@ export function clampArtifactPanelWidth(value: number, options: { windowWidth: n
   return Math.min(Math.max(value, artifactPanelMinWidth), maxWidth);
 }
 
-function artifactLabel(artifact: ArtifactSummary) {
-  if (["html", "image", "pdf", "text"].includes(artifact.kind)) return artifactKindLabel(artifact.kind);
-  return artifact.label || artifact.kind || "파일";
-}
-
 function artifactTypeBadge(artifact: ArtifactSummary) {
   const ext = artifactExtension(artifact.path || artifact.name);
   const category = artifactCategory(artifact);
@@ -78,6 +75,45 @@ function artifactTypeBadge(artifact: ArtifactSummary) {
   if (["png", "gif", "jpg", "jpeg", "webp", "svg"].includes(ext)) return { label: ext.toUpperCase(), tone: "image" };
   if (ext === "zip") return { label: "ZIP", tone: "archive" };
   return { label: artifactIcon(artifact.kind), tone: category };
+}
+
+function truncateAiInstruction(value: string, maxLength = 8) {
+  const text = String(value || "").trim();
+  const chars = Array.from(text);
+  return chars.length > maxLength ? `${chars.slice(0, maxLength).join("").trimEnd()}...` : text;
+}
+
+function formatAiEditElapsed(seconds: number) {
+  if (seconds < 60) return `${seconds}초 경과`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder ? `${minutes}분 ${remainder}초 경과` : `${minutes}분 경과`;
+}
+
+function workflowEventReferencesArtifact(event: WorkflowEvent, artifactPath: string) {
+  const targetPath = normalizeProjectFilePath(artifactPath);
+  if (!targetPath || event.status === "running") return false;
+  const input = event.toolInput || {};
+  const candidates = [
+    input.path,
+    input.file_path,
+    input.target_path,
+    input.targetPath,
+    input.destination,
+    input.dest,
+    input.output_path,
+    input.outputPath,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && normalizeProjectFilePath(value) === targetPath) {
+      return true;
+    }
+  }
+  const haystack = [input.patch, input.diff, event.output]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.replace(/\\/g, "/"))
+    .join("\n");
+  return Boolean(haystack && haystack.includes(targetPath));
 }
 
 function projectFileDirectory(path: string) {
@@ -95,11 +131,70 @@ function groupedArtifacts(artifacts: ArtifactSummary[]) {
   return [...groups.entries()];
 }
 
+function projectFilePinnedStorageKey(workspacePath: string, workspaceName: string) {
+  const workspaceId = normalizeProjectFilePath(workspacePath || workspaceName || "default");
+  return `${projectFilePinnedKeyPrefix}:${encodeURIComponent(workspaceId)}`;
+}
+
+function readPinnedProjectFiles(storageKey: string) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || "[]");
+    if (!Array.isArray(parsed)) return new Set<string>();
+    return new Set(parsed.map((value) => normalizeProjectFilePath(String(value))).filter(Boolean));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function writePinnedProjectFiles(storageKey: string, paths: Set<string>) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify([...paths]));
+  } catch {
+    // Pinning is a local UI convenience; storage failures should not block file work.
+  }
+}
+
+type ArtifactVersionInfo = {
+  baseName: string;
+  directory: string;
+  ext: string;
+  key: string;
+  label: string;
+  version: number;
+};
+
+function artifactVersionInfo(artifact: ArtifactSummary): ArtifactVersionInfo {
+  const path = normalizeProjectFilePath(artifact.path || artifact.name);
+  const slashIndex = path.lastIndexOf("/");
+  const directory = slashIndex >= 0 ? path.slice(0, slashIndex) : "";
+  const fileName = slashIndex >= 0 ? path.slice(slashIndex + 1) : path;
+  const ext = artifactExtension(fileName);
+  const stem = ext ? fileName.slice(0, -(ext.length + 1)) : fileName;
+  const versionMatch = stem.match(/^(.*?)(?:[\s_]+(?:ver\.|v)(\d+))$/i);
+  const version = versionMatch ? Number(versionMatch[2]) : 0;
+  const baseName = (versionMatch ? versionMatch[1] : stem).trimEnd();
+  return {
+    baseName,
+    directory,
+    ext,
+    key: `${directory}\u0000${baseName.toLowerCase()}\u0000${ext.toLowerCase()}`,
+    label: version > 0 ? `v${version}` : "원본",
+    version: Number.isFinite(version) ? version : 0,
+  };
+}
+
+function artifactFileName(path: string) {
+  const normalized = normalizeProjectFilePath(path);
+  return normalized.split("/").filter(Boolean).pop() || normalized || "artifact";
+}
+
 function downloadUrl(artifact: ArtifactSummary, state: ReturnType<typeof useAppState>["state"]) {
   const query = new URLSearchParams({ clientId: state.clientId, path: artifact.path });
   if (state.sessionId) query.set("session", state.sessionId);
-  if (state.workspacePath) query.set("workspacePath", state.workspacePath);
-  if (state.workspaceName) query.set("workspaceName", state.workspaceName);
+  const workspacePath = artifact.workspace?.path || state.workspacePath;
+  const workspaceName = artifact.workspace?.name || state.workspaceName;
+  if (workspacePath) query.set("workspacePath", workspacePath);
+  if (workspaceName) query.set("workspaceName", workspaceName);
   return `/api/artifact/download?${query.toString()}`;
 }
 
@@ -131,6 +226,15 @@ function ArtifactAction({
     </button>
   );
 }
+
+function ArtifactDownloadAction({ artifact, url }: { artifact: ArtifactSummary; url: string }) {
+  return (
+    <a className="artifact-action" href={url} download={artifact.name} aria-label={`${artifact.name} 다운로드`} data-tooltip="다운로드">
+      <Icon name="download" />
+    </a>
+  );
+}
+
 export function ArtifactPanel() {
   const { state, dispatch } = useAppState();
   const [loadingPath, setLoadingPath] = useState("");
@@ -141,12 +245,54 @@ export function ArtifactPanel() {
   const [draftContent, setDraftContent] = useState("");
   const [copyLabel, setCopyLabel] = useState("복사");
   const [sourceMode, setSourceMode] = useState(false);
+  const [htmlEditMode, setHtmlEditMode] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [pendingDeletePath, setPendingDeletePath] = useState("");
   const [deletingPath, setDeletingPath] = useState("");
   const [organizeCandidates, setOrganizeCandidates] = useState<ArtifactSummary[] | null>(null);
+  const [titleRenameEditing, setTitleRenameEditing] = useState(false);
+  const [titleRenameValue, setTitleRenameValue] = useState("");
+  const [titleRenameSaving, setTitleRenameSaving] = useState(false);
+  const [aiEditComments, setAiEditComments] = useState<ArtifactAiEditComment[]>([]);
+  const [pendingAiSelection, setPendingAiSelection] = useState<ArtifactAiEditSelection | null>(null);
+  const [submittingAiEdit, setSubmittingAiEdit] = useState(false);
+  const [aiEditStatus, setAiEditStatus] = useState("");
+  const [aiEditTargetPath, setAiEditTargetPath] = useState("");
+  const [aiEditProgressStartedAt, setAiEditProgressStartedAt] = useState<number | null>(null);
+  const [aiEditProgressNow, setAiEditProgressNow] = useState(() => Date.now());
+  const [versionMenuOpen, setVersionMenuOpen] = useState(false);
   const skipNextHistoryPushRef = useRef(false);
+  const titleRenameInputRef = useRef<HTMLInputElement | null>(null);
+  const titleRenameCommittingRef = useRef(false);
+  const versionMenuRef = useRef<HTMLDivElement | null>(null);
+  const lastArtifactRefreshKeyRef = useRef(state.artifactRefreshKey);
+  const projectFilePinnedStorage = useMemo(
+    () => projectFilePinnedStorageKey(state.workspacePath, state.workspaceName),
+    [state.workspaceName, state.workspacePath],
+  );
+  const [pinnedProjectFiles, setPinnedProjectFiles] = useState<Set<string>>(() => new Set());
   const visibleArtifacts = useMemo(() => sortedArtifacts(state.artifacts, fileFilter, fileSort), [fileFilter, fileSort, state.artifacts]);
+  const activeVersionInfo = state.activeArtifact ? artifactVersionInfo(state.activeArtifact) : null;
+  const activeVersionArtifacts = useMemo(() => {
+    if (!state.activeArtifact || !activeVersionInfo) return [];
+    const entries = new Map<string, { artifact: ArtifactSummary; info: ArtifactVersionInfo }>();
+    for (const artifact of [...state.artifacts, state.activeArtifact]) {
+      const info = artifactVersionInfo(artifact);
+      if (info.key !== activeVersionInfo.key) continue;
+      entries.set(normalizeProjectFilePath(artifact.path), { artifact, info });
+    }
+    return [...entries.values()].sort((left, right) => {
+      return left.info.version - right.info.version
+        || left.artifact.path.localeCompare(right.artifact.path, "ko");
+    });
+  }, [activeVersionInfo?.key, state.activeArtifact, state.artifacts]);
+  const showVersionSwitcher = Boolean(state.activeArtifact && activeVersionArtifacts.length > 1);
+  const showAiEditProgress = Boolean(aiEditStatus || submittingAiEdit || (state.busy && aiEditComments.length > 0));
+  const aiEditTargetReady = Boolean(
+    aiEditTargetPath
+      && state.workflowEvents.some((event) => workflowEventReferencesArtifact(event, aiEditTargetPath)),
+  );
 
   function requestHistoryBack() {
     if (!state.artifactPanelOpen || !isArtifactHistoryState(history.state)) {
@@ -187,6 +333,68 @@ export function ArtifactPanel() {
     }
     setFullscreen((value) => !value);
   }
+
+  useEffect(() => {
+    if (aiEditTargetPath) {
+      setVersionMenuOpen(false);
+      return;
+    }
+    setHtmlEditMode(false);
+    setSavingDraft(false);
+    setTitleRenameEditing(false);
+    setTitleRenameSaving(false);
+    setTitleRenameValue("");
+    setAiEditComments([]);
+    setPendingAiSelection(null);
+    setSubmittingAiEdit(false);
+    setAiEditStatus("");
+    setAiEditProgressStartedAt(null);
+    setVersionMenuOpen(false);
+  }, [aiEditTargetPath, state.activeArtifact?.path]);
+
+  useEffect(() => {
+    setPinnedProjectFiles(readPinnedProjectFiles(projectFilePinnedStorage));
+  }, [projectFilePinnedStorage]);
+
+  useEffect(() => {
+    if (!showAiEditProgress) {
+      setAiEditProgressStartedAt(null);
+      return undefined;
+    }
+    const startedAt = aiEditProgressStartedAt ?? Date.now();
+    if (aiEditProgressStartedAt === null) {
+      setAiEditProgressStartedAt(startedAt);
+    }
+    setAiEditProgressNow(Date.now());
+    const timer = window.setInterval(() => setAiEditProgressNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [aiEditProgressStartedAt, showAiEditProgress]);
+
+  useEffect(() => {
+    if (!versionMenuOpen) return;
+    function handlePointerDown(event: globalThis.PointerEvent) {
+      const target = event.target instanceof Node ? event.target : null;
+      if (target && versionMenuRef.current?.contains(target)) return;
+      setVersionMenuOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setVersionMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [versionMenuOpen]);
+
+  useEffect(() => {
+    if (!titleRenameEditing) return;
+    window.setTimeout(() => {
+      titleRenameInputRef.current?.focus();
+      titleRenameInputRef.current?.select();
+    }, 0);
+  }, [titleRenameEditing]);
 
   useEffect(() => {
     setDraftContent(String(state.activeArtifactPayload?.content || ""));
@@ -239,19 +447,63 @@ export function ArtifactPanel() {
       }
     }
 
-    function handleFrameBackMessage(event: MessageEvent) {
+    function handleFrameMessage(event: MessageEvent) {
       if (event.data?.type === artifactFrameBackMessage) {
         window.setTimeout(() => requestHistoryBack(), 180);
+      }
+      if (
+        event.data?.type === artifactHtmlEditMessage
+        && event.data.path === state.activeArtifact?.path
+        && typeof event.data.html === "string"
+      ) {
+        setDraftContent(event.data.html);
+      }
+      if (
+        event.data?.type === artifactAiSelectionMessage
+        && event.data.path === state.activeArtifact?.path
+        && event.data.selection
+      ) {
+        const selection = event.data.selection as Partial<ArtifactAiEditSelection>;
+        const instruction = typeof (selection as { instruction?: unknown }).instruction === "string"
+          ? String((selection as { instruction?: string }).instruction)
+          : "";
+        if (
+          typeof selection.text === "string"
+          && typeof selection.start === "number"
+          && typeof selection.end === "number"
+          && selection.text.trim()
+        ) {
+          setPendingAiSelection({
+            text: selection.text,
+            start: selection.start,
+            end: selection.end,
+            before: typeof selection.before === "string" ? selection.before : "",
+            after: typeof selection.after === "string" ? selection.after : "",
+            html: typeof selection.html === "string" ? selection.html : "",
+            scope: selection.scope === "document" ? "document" : "selection",
+          });
+          if (instruction.trim()) {
+            addAiEditComment({
+              text: selection.text,
+              start: selection.start,
+              end: selection.end,
+              before: typeof selection.before === "string" ? selection.before : "",
+              after: typeof selection.after === "string" ? selection.after : "",
+              html: typeof selection.html === "string" ? selection.html : "",
+              scope: selection.scope === "document" ? "document" : "selection",
+            }, instruction);
+          }
+        }
       }
     }
 
     window.addEventListener("popstate", handlePopState);
-    window.addEventListener("message", handleFrameBackMessage);
+    window.addEventListener("message", handleFrameMessage);
     return () => {
       window.removeEventListener("popstate", handlePopState);
-      window.removeEventListener("message", handleFrameBackMessage);
+      window.removeEventListener("message", handleFrameMessage);
     };
-  }, [dispatch, state.artifacts, state.artifactPanelOpen]);
+  }, [dispatch, state.activeArtifact?.path, state.artifacts, state.artifactPanelOpen]);
 
   useEffect(() => {
     if (!state.artifactPanelOpen || state.activeArtifact) {
@@ -267,6 +519,26 @@ export function ArtifactPanel() {
     state.workspacePath,
   ]);
 
+  useEffect(() => {
+    if (lastArtifactRefreshKeyRef.current === state.artifactRefreshKey) {
+      return;
+    }
+    lastArtifactRefreshKeyRef.current = state.artifactRefreshKey;
+    if (!state.artifactPanelOpen || !state.activeArtifact || aiEditTargetPath) {
+      return;
+    }
+    void openArtifact(state.activeArtifact);
+  }, [
+    aiEditTargetPath,
+    state.activeArtifact?.path,
+    state.artifactPanelOpen,
+    state.artifactRefreshKey,
+    state.clientId,
+    state.sessionId,
+    state.workspaceName,
+    state.workspacePath,
+  ]);
+
   async function openArtifact(artifact: ArtifactSummary) {
     dispatch({ type: "open_artifact", artifact });
     setLoadingPath(artifact.path);
@@ -274,11 +546,11 @@ export function ArtifactPanel() {
       const payload = await readArtifact({
         sessionId: state.sessionId || undefined,
         clientId: state.clientId,
-        workspacePath: state.workspacePath,
-        workspaceName: state.workspaceName,
+        workspacePath: artifact.workspace?.path || state.workspacePath,
+        workspaceName: artifact.workspace?.name || state.workspaceName,
         path: artifact.path,
       });
-      dispatch({ type: "set_artifact_payload", payload });
+      dispatch({ type: "open_artifact", artifact: { ...artifact, workspace: payload.workspace || artifact.workspace }, payload });
     } catch (error) {
       dispatch({
         type: "open_modal",
@@ -289,6 +561,28 @@ export function ArtifactPanel() {
     }
   }
 
+  useEffect(() => {
+    if (!aiEditTargetPath || (state.busy && !aiEditTargetReady)) {
+      return;
+    }
+    const fallbackArtifact = state.activeArtifact
+      ? {
+          ...state.activeArtifact,
+          path: aiEditTargetPath,
+          name: artifactFileName(aiEditTargetPath),
+        }
+      : null;
+    const targetArtifact = state.artifacts.find((artifact) => artifact.path === aiEditTargetPath) || fallbackArtifact;
+    if (!targetArtifact) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setAiEditTargetPath("");
+      void openArtifact(targetArtifact);
+    }, state.busy ? 0 : 120);
+    return () => window.clearTimeout(timer);
+  }, [aiEditTargetPath, aiEditTargetReady, state.activeArtifact, state.artifacts, state.busy]);
+
   if (!state.artifactPanelOpen) {
     return null;
   }
@@ -297,6 +591,21 @@ export function ArtifactPanel() {
   const payload = state.activeArtifactPayload;
   const canSave = Boolean(active && payload && isEditablePayload(active, payload));
   const canShowSource = Boolean(active && payload?.content);
+  const activeExt = artifactExtension(active?.path || active?.name || "");
+  const canEditHtmlPreview = Boolean(
+    active
+      && payload?.content
+      && (String(payload.kind || active.kind || "").toLowerCase() === "html" || activeExt === "html" || activeExt === "htm"),
+  );
+  const originalContent = String(payload?.content || "");
+  const draftDirty = canEditHtmlPreview && draftContent !== originalContent;
+  const panelTitle = active ? `${active.name}${draftDirty ? " (편집됨)" : ""}` : "프로젝트 파일";
+  const aiEditElapsedSeconds = aiEditProgressStartedAt === null
+    ? 0
+    : Math.max(0, Math.floor((aiEditProgressNow - aiEditProgressStartedAt) / 1000));
+  const aiEditWaitingText = state.workflowEvents.length
+    ? ""
+    : `AI 자동편집 요청 처리 중 · ${formatAiEditElapsed(aiEditElapsedSeconds)} · 응답 또는 도구 시작을 기다리고 있습니다.`;
 
   async function refreshProjectFiles(nextScope = fileScope) {
     try {
@@ -394,6 +703,189 @@ export function ArtifactPanel() {
     }
   }
 
+  async function saveHtmlDraft() {
+    if (!active || !payload || !canEditHtmlPreview || !draftDirty) return;
+    setSavingDraft(true);
+    try {
+      const saved = await overwriteArtifact({
+        path: active.path,
+        content: draftContent,
+        clientId: state.clientId,
+        workspacePath: active.workspace?.path || payload.workspace?.path || state.workspacePath,
+        workspaceName: active.workspace?.name || payload.workspace?.name || state.workspaceName,
+      });
+      const nextArtifact = { ...active, ...saved.artifact };
+      dispatch({
+        type: "set_artifacts",
+        artifacts: state.artifacts.map((item) => item.path === active.path ? nextArtifact : item),
+      });
+      dispatch({ type: "open_artifact", artifact: nextArtifact, payload: saved.payload });
+      setDraftContent(String(saved.payload.content || draftContent));
+    } catch (error) {
+      setAiEditStatus("");
+      dispatch({
+        type: "open_modal",
+        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+      });
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  function cancelHtmlDraft() {
+    setDraftContent(originalContent);
+    setHtmlEditMode(false);
+  }
+
+  function addAiEditComment(selection: ArtifactAiEditSelection, instruction: string) {
+    const text = instruction.trim();
+    if (!text) return;
+    setAiEditComments((items) => [
+      ...items,
+      {
+        ...selection,
+        id: crypto.randomUUID?.() || `${Date.now()}-${items.length}`,
+        instruction: text,
+      },
+    ]);
+    setPendingAiSelection(null);
+  }
+
+  async function submitAiEdit() {
+    if (!active || aiEditComments.length === 0 || submittingAiEdit) return;
+    if (!state.sessionId) {
+      dispatch({
+        type: "open_modal",
+        modal: { kind: "error", message: "AI 자동편집을 실행하려면 활성 세션이 필요합니다." },
+      });
+      return;
+    }
+    setSubmittingAiEdit(true);
+    setAiEditProgressStartedAt(Date.now());
+    setAiEditProgressNow(Date.now());
+    setAiEditStatus("AI 자동편집 요청을 중앙 채팅으로 전달 중입니다.");
+    dispatch({ type: "clear_workflow" });
+    try {
+      const response = await aiEditArtifact({
+        path: active.path,
+        comments: aiEditComments,
+        sessionId: state.sessionId,
+        clientId: state.clientId,
+        workspacePath: active.workspace?.path || payload?.workspace?.path || state.workspacePath,
+        workspaceName: active.workspace?.name || payload?.workspace?.name || state.workspaceName,
+      });
+      const targetArtifact: ArtifactSummary = {
+        ...active,
+        path: response.targetPath,
+        name: artifactFileName(response.targetPath),
+        kind: active.kind || "html",
+        workspace: active.workspace || payload?.workspace,
+      };
+      const nextArtifacts = [
+        targetArtifact,
+        ...state.artifacts.filter((artifact) => artifact.path !== response.targetPath),
+      ];
+      setAiEditTargetPath(response.targetPath);
+      dispatch({ type: "set_artifacts", artifacts: nextArtifacts });
+      setVersionMenuOpen(false);
+      dispatch({ type: "set_busy", value: true });
+      setAiEditStatus(`AI 자동편집 진행 중: ${response.targetPath}`);
+    } catch (error) {
+      dispatch({
+        type: "open_modal",
+        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+      });
+    } finally {
+      setSubmittingAiEdit(false);
+    }
+  }
+
+  async function submitRenameArtifact(artifact: ArtifactSummary, name: string) {
+    const saved = await renameArtifact({
+      path: artifact.path,
+      name,
+      sessionId: state.sessionId || undefined,
+      clientId: state.clientId,
+      workspacePath: artifact.workspace?.path || state.workspacePath,
+      workspaceName: artifact.workspace?.name || state.workspaceName,
+    });
+    const nextArtifact = { ...artifact, ...saved.artifact };
+    const replaced = state.artifacts.some((item) => item.path === artifact.path);
+    dispatch({
+      type: "set_artifacts",
+      artifacts: replaced
+        ? state.artifacts.map((item) => item.path === artifact.path ? nextArtifact : item)
+        : [nextArtifact, ...state.artifacts],
+    });
+    if (state.activeArtifact?.path === artifact.path) {
+      dispatch({ type: "open_artifact", artifact: nextArtifact, payload: saved.payload });
+      setDraftContent(String(saved.payload.content || ""));
+    }
+    const previousPath = normalizeProjectFilePath(artifact.path);
+    const nextPath = normalizeProjectFilePath(saved.artifact.path);
+    if (previousPath && nextPath && previousPath !== nextPath) {
+      setPinnedProjectFiles((current) => {
+        if (!current.has(previousPath)) return current;
+        const next = new Set(current);
+        next.delete(previousPath);
+        next.add(nextPath);
+        writePinnedProjectFiles(projectFilePinnedStorage, next);
+        return next;
+      });
+    }
+  }
+
+  function toggleProjectFilePinned(artifact: ArtifactSummary) {
+    const path = normalizeProjectFilePath(artifact.path);
+    if (!path) return;
+    setPinnedProjectFiles((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      writePinnedProjectFiles(projectFilePinnedStorage, next);
+      return next;
+    });
+  }
+
+  function beginTitleRename() {
+    if (!active || titleRenameSaving) return;
+    setTitleRenameValue(active.name);
+    setTitleRenameEditing(true);
+  }
+
+  function cancelTitleRename() {
+    setTitleRenameEditing(false);
+    setTitleRenameValue("");
+    titleRenameCommittingRef.current = false;
+  }
+
+  async function commitTitleRename() {
+    if (!active || titleRenameCommittingRef.current) return;
+    const nextName = titleRenameValue.trim();
+    if (!nextName || nextName === active.name) {
+      cancelTitleRename();
+      return;
+    }
+    titleRenameCommittingRef.current = true;
+    setTitleRenameSaving(true);
+    try {
+      await submitRenameArtifact(active, nextName);
+      setTitleRenameEditing(false);
+      setTitleRenameValue("");
+    } catch (error) {
+      dispatch({
+        type: "open_modal",
+        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+      });
+    } finally {
+      titleRenameCommittingRef.current = false;
+      setTitleRenameSaving(false);
+    }
+  }
+
   async function deleteProjectFile(artifact: ArtifactSummary) {
     if (pendingDeletePath !== artifact.path) {
       setPendingDeletePath(artifact.path);
@@ -405,10 +897,18 @@ export function ArtifactPanel() {
         path: artifact.path,
         sessionId: state.sessionId || undefined,
         clientId: state.clientId,
-        workspacePath: state.workspacePath,
-        workspaceName: state.workspaceName,
+        workspacePath: artifact.workspace?.path || state.workspacePath,
+        workspaceName: artifact.workspace?.name || state.workspaceName,
       });
       setPendingDeletePath("");
+      setPinnedProjectFiles((current) => {
+        const path = normalizeProjectFilePath(artifact.path);
+        if (!current.has(path)) return current;
+        const next = new Set(current);
+        next.delete(path);
+        writePinnedProjectFiles(projectFilePinnedStorage, next);
+        return next;
+      });
       dispatch({ type: "set_artifacts", artifacts: state.artifacts.filter((item) => item.path !== artifact.path) });
       if (state.activeArtifact?.path === artifact.path) {
         dispatch({ type: "open_artifact_list" });
@@ -440,26 +940,172 @@ export function ArtifactPanel() {
       <button className="artifact-resize-handle" type="button" aria-label="패널 너비 조절" onPointerDown={beginResize} />
       <div className="artifact-panel-header">
         <div className="artifact-panel-title">
-          <strong>{active?.name || "프로젝트 파일"}</strong>
-          <small>{active ? `${artifactLabel(active)} · ${active.path}` : `${state.artifacts.length}개 파일`}</small>
+          <div className="artifact-title-row">
+            {active && showVersionSwitcher ? (
+              <div className="artifact-version-switcher" ref={versionMenuRef}>
+                <button
+                  className="artifact-version-trigger"
+                  type="button"
+                  aria-label="버전 선택"
+                  aria-expanded={versionMenuOpen ? "true" : "false"}
+                  data-tooltip="버전 선택"
+                  onClick={() => setVersionMenuOpen((value) => !value)}
+                >
+                  {activeVersionInfo?.label || "v"}
+                </button>
+                {versionMenuOpen ? (
+                  <div className="artifact-version-menu" role="menu" aria-label="산출물 버전">
+                    {activeVersionArtifacts.map(({ artifact, info }) => {
+                      const selected = artifact.path === active.path;
+                      return (
+                        <button
+                          className={`artifact-version-option${selected ? " active" : ""}`}
+                          type="button"
+                          role="menuitem"
+                          key={artifact.path}
+                          disabled={selected}
+                          onClick={() => {
+                            setVersionMenuOpen(false);
+                            void openArtifact(artifact);
+                          }}
+                        >
+                          <span>{info.label}</span>
+                          <small>{artifact.name || artifactFileName(artifact.path)}</small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {active && titleRenameEditing ? (
+              <input
+                ref={titleRenameInputRef}
+                className="artifact-title-rename-input"
+                aria-label="파일명"
+                value={titleRenameValue}
+                disabled={titleRenameSaving}
+                onChange={(event) => setTitleRenameValue(event.currentTarget.value)}
+                onBlur={() => void commitTitleRename()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void commitTitleRename();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelTitleRename();
+                  }
+                }}
+              />
+            ) : active ? (
+              <button
+                className="artifact-title-rename-trigger"
+                type="button"
+                onDoubleClick={beginTitleRename}
+                aria-label={`${active.name} 파일명 수정`}
+                data-tooltip="더블클릭으로 파일명 수정"
+              >
+                <strong>{panelTitle}</strong>
+              </button>
+            ) : (
+              <strong>{panelTitle}</strong>
+            )}
+          </div>
+          {!active ? <small>{`${state.artifacts.length}개 파일`}</small> : null}
         </div>
         <div className="artifact-panel-actions">
           {active ? (
             <>
+              {canEditHtmlPreview ? (
+                <>
+                  <ArtifactAction
+                    label="본문 수정"
+                    icon="edit"
+                    onClick={() => {
+                      setSourceMode(false);
+                      setHtmlEditMode((value) => !value);
+                    }}
+                    active={htmlEditMode}
+                  />
+                  <ArtifactAction
+                    label={savingDraft ? "반영 중" : "수정사항 반영"}
+                    icon="save"
+                    onClick={() => void saveHtmlDraft()}
+                    disabled={!draftDirty || savingDraft}
+                  />
+                  <ArtifactAction
+                    label="편집 취소"
+                    icon="undo"
+                    onClick={cancelHtmlDraft}
+                    disabled={!draftDirty || savingDraft}
+                    danger={draftDirty}
+                  />
+                </>
+              ) : null}
               <ArtifactAction
-                label={sourceMode ? "미리보기" : "원문보기"}
+                label={sourceMode ? "미리보기" : "소스코드 확인"}
                 icon={sourceMode ? "preview" : "source"}
                 onClick={() => setSourceMode((value) => !value)}
                 disabled={!canShowSource}
                 active={sourceMode}
               />
-              <ArtifactAction label={copyLabel === "복사됨" ? "복사됨" : "원문 복사"} icon="copy" onClick={() => void copyActiveArtifact()} disabled={!payload || (!canSave && !payload.content && !payload.dataUrl)} active={copyLabel === "복사됨"} />
+              <ArtifactAction label={copyLabel === "복사됨" ? "복사됨" : "소스코드 복사"} icon="copy" onClick={() => void copyActiveArtifact()} disabled={!payload || (!canSave && !payload.content && !payload.dataUrl)} active={copyLabel === "복사됨"} />
             </>
           ) : null}
           <ArtifactAction label={fullscreen ? "미리보기 축소" : "미리보기 확대"} icon={fullscreen ? "restore" : "fullscreen"} onClick={toggleFullscreen} />
+          {active ? <ArtifactDownloadAction artifact={active} url={downloadUrl(active, state)} /> : null}
           <ArtifactAction label="닫기" icon="close" onClick={closePanel} />
         </div>
       </div>
+      {active && canEditHtmlPreview && (aiEditComments.length > 0 || aiEditStatus) ? (
+        <div className={`artifact-ai-comments${showAiEditProgress ? " with-progress" : ""}`} aria-label="AI 수정 의견">
+          {aiEditStatus ? <p className="artifact-ai-status">{aiEditStatus}</p> : null}
+          {aiEditComments.map((comment, index) => (
+            <div
+              className="artifact-ai-comment"
+              key={comment.id}
+              aria-label={`AI 수정 의견 ${index + 1}: ${comment.instruction}`}
+              data-tooltip={`${index + 1}. ${comment.instruction}`}
+            >
+              <span className="artifact-ai-comment-index">{index + 1}</span>
+              <span className="artifact-ai-comment-instruction">{truncateAiInstruction(comment.instruction)}</span>
+              <button
+                type="button"
+                aria-label={`AI 수정 의견 ${index + 1} 삭제`}
+                data-tooltip="삭제"
+                onClick={() => {
+                  setAiEditComments((items) => items.filter((item) => item.id !== comment.id));
+                  setAiEditStatus("");
+                }}
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          ))}
+          <button
+            className="artifact-ai-submit"
+            type="button"
+            onClick={() => void submitAiEdit()}
+            disabled={aiEditComments.length === 0 || submittingAiEdit || state.busy}
+            aria-label={submittingAiEdit ? "AI 자동편집 요청 중" : "AI 자동편집"}
+          >
+            <Icon name="ai" />
+            <span>{submittingAiEdit ? "요청 중" : "AI 자동편집"}</span>
+          </button>
+          {showAiEditProgress ? (
+            <div className="artifact-ai-progress" aria-label="AI 자동편집 진행 과정">
+              <WorkflowPanel events={state.workflowEvents} durationSeconds={state.workflowDurationSeconds} />
+              {!state.workflowEvents.length ? (
+                <p className="artifact-ai-progress-empty" role="status" aria-live="polite">
+                  <span className="artifact-ai-progress-pulse" aria-hidden="true" />
+                  <span>{aiEditWaitingText}</span>
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div className="artifact-viewer" key={active ? "detail" : "list"}>
         {!active ? (
           <ArtifactList
@@ -475,10 +1121,13 @@ export function ArtifactPanel() {
             onRefresh={() => void refreshProjectFiles(fileScope)}
             onOpen={openArtifact}
             onDelete={deleteProjectFile}
+            onTogglePinned={toggleProjectFilePinned}
+            onRename={submitRenameArtifact}
             onOrganize={setOrganizeCandidates}
             allArtifacts={state.artifacts}
             getDownloadUrl={(artifact) => downloadUrl(artifact, state)}
             collapsedDirs={collapsedDirs}
+            pinnedPaths={pinnedProjectFiles}
             pendingDeletePath={pendingDeletePath}
             deletingPath={deletingPath}
             onToggleDirectory={(directory) => setCollapsedDirs((current) => {
@@ -495,6 +1144,9 @@ export function ArtifactPanel() {
             draftContent={draftContent}
             sourceMode={sourceMode}
             downloadUrl={downloadUrl(active, state)}
+            htmlEditMode={htmlEditMode}
+            aiSelectionEnabled={canEditHtmlPreview && htmlEditMode}
+            aiEditComments={aiEditComments}
             onDraftContentChange={setDraftContent}
           />
         ) : (
@@ -506,6 +1158,13 @@ export function ArtifactPanel() {
           candidates={organizeCandidates}
           onClose={() => setOrganizeCandidates(null)}
           onSubmit={organizeRootFiles}
+        />
+      ) : null}
+      {pendingAiSelection ? (
+        <AiEditCommentModal
+          selection={pendingAiSelection}
+          onClose={() => setPendingAiSelection(null)}
+          onSubmit={(instruction) => addAiEditComment(pendingAiSelection, instruction)}
         />
       ) : null}
     </aside>
@@ -544,9 +1203,12 @@ function ArtifactList({
   onRefresh,
   onOpen,
   onDelete,
+  onTogglePinned,
+  onRename,
   onOrganize,
   getDownloadUrl,
   collapsedDirs,
+  pinnedPaths,
   pendingDeletePath,
   deletingPath,
   onToggleDirectory,
@@ -564,15 +1226,19 @@ function ArtifactList({
   onRefresh: () => void;
   onOpen: (artifact: ArtifactSummary) => void;
   onDelete: (artifact: ArtifactSummary) => void;
+  onTogglePinned: (artifact: ArtifactSummary) => void;
+  onRename: (artifact: ArtifactSummary, name: string) => Promise<void>;
   onOrganize: (artifacts: ArtifactSummary[]) => void;
   getDownloadUrl: (artifact: ArtifactSummary) => string;
   collapsedDirs: Set<string>;
+  pinnedPaths: Set<string>;
   pendingDeletePath: string;
   deletingPath: string;
   onToggleDirectory: (directory: string) => void;
 }) {
   const categories = projectFileCategories;
   const organizeCandidates = allArtifacts.filter(isRootOrganizeCandidate);
+  const pinnedArtifacts = artifacts.filter((artifact) => pinnedPaths.has(normalizeProjectFilePath(artifact.path)));
 
   if (!artifacts.length) {
     return (
@@ -611,6 +1277,32 @@ function ArtifactList({
         onRefresh={onRefresh}
       />
       <div className="project-file-list">
+        {pinnedArtifacts.length ? (
+          <section className="project-file-section project-file-section-pinned">
+            <div className="project-file-section-header project-file-section-header-static">
+              <span className="project-file-section-caret" aria-hidden="true">★</span>
+              <span className="project-file-section-title">Pinned</span>
+              <small>{pinnedArtifacts.length}개</small>
+            </div>
+            <div className="project-file-section-body">
+              {pinnedArtifacts.map((artifact) => (
+                <ProjectFileItem
+                  artifact={artifact}
+                  deleting={deletingPath === artifact.path}
+                  deleteReady={pendingDeletePath === artifact.path}
+                  downloadUrl={getDownloadUrl(artifact)}
+                  key={`pinned-${artifact.path}`}
+                  loading={loadingPath === artifact.path}
+                  pinned={pinnedPaths.has(normalizeProjectFilePath(artifact.path))}
+                  onDelete={onDelete}
+                  onOpen={onOpen}
+                  onRename={onRename}
+                  onTogglePinned={onTogglePinned}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
         {groups.map(([directory, groupArtifacts]) => (
           <section className={`project-file-section${collapsedDirs.has(directory) ? " collapsed" : ""}`} key={directory}>
             <button className="project-file-section-header" type="button" aria-expanded={collapsedDirs.has(directory) ? "false" : "true"} onClick={() => onToggleDirectory(directory)}>
@@ -628,8 +1320,11 @@ function ArtifactList({
                     downloadUrl={getDownloadUrl(artifact)}
                     key={artifact.path}
                     loading={loadingPath === artifact.path}
+                    pinned={pinnedPaths.has(normalizeProjectFilePath(artifact.path))}
                     onDelete={onDelete}
                     onOpen={onOpen}
+                    onRename={onRename}
+                    onTogglePinned={onTogglePinned}
                   />
                 ))}
               </div>
@@ -647,27 +1342,140 @@ function ProjectFileItem({
   deleting,
   downloadUrl,
   loading,
+  pinned,
   onDelete,
   onOpen,
+  onRename,
+  onTogglePinned,
 }: {
   artifact: ArtifactSummary;
   deleteReady: boolean;
   deleting: boolean;
   downloadUrl: string;
   loading: boolean;
+  pinned: boolean;
   onDelete: (artifact: ArtifactSummary) => void;
   onOpen: (artifact: ArtifactSummary) => void;
+  onRename: (artifact: ArtifactSummary, name: string) => Promise<void>;
+  onTogglePinned: (artifact: ArtifactSummary) => void;
 }) {
   const badge = artifactTypeBadge(artifact);
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState(artifact.name || artifact.path.split(/[\\/]/).pop() || "");
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [renameError, setRenameError] = useState("");
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!editingName) {
+      setNameValue(artifact.name || artifact.path.split(/[\\/]/).pop() || "");
+      setRenameError("");
+      return;
+    }
+    window.setTimeout(() => {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    }, 0);
+  }, [artifact.name, artifact.path, editingName]);
+
+  function beginRename() {
+    setNameValue(artifact.name || artifact.path.split(/[\\/]/).pop() || "");
+    setRenameError("");
+    setEditingName(true);
+  }
+
+  function cancelRename() {
+    setEditingName(false);
+    setNameValue(artifact.name || artifact.path.split(/[\\/]/).pop() || "");
+    setRenameError("");
+  }
+
+  async function commitRename() {
+    if (renameSaving) return;
+    const nextName = nameValue.trim();
+    const currentName = artifact.name || artifact.path.split(/[\\/]/).pop() || "";
+    if (!nextName) {
+      setRenameError("파일명을 입력하세요.");
+      return;
+    }
+    if (nextName === currentName) {
+      cancelRename();
+      return;
+    }
+    setRenameSaving(true);
+    setRenameError("");
+    try {
+      await onRename(artifact, nextName);
+      setEditingName(false);
+    } catch (error) {
+      setRenameError(`파일명 수정 실패: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setRenameSaving(false);
+    }
+  }
+
   return (
     <div className={`project-file-item${deleteReady ? " delete-ready" : ""}${deleting ? " deleting" : ""}`}>
-      <button className="project-file-open" type="button" aria-label={`${artifact.name || artifact.path} 열기`} data-tooltip={artifact.name || artifact.path} onClick={() => void onOpen(artifact)}>
-        <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
-        <span className="artifact-card-copy">
-          <strong>{artifact.name || artifact.path}</strong>
-        </span>
-      </button>
+      {editingName ? (
+        <div className="project-file-open project-file-open-editing">
+          <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
+          <span className="artifact-card-copy project-file-inline-rename">
+            <input
+              ref={nameInputRef}
+              aria-label={`${artifact.name || artifact.path} 새 파일명`}
+              value={nameValue}
+              disabled={renameSaving}
+              onBlur={() => void commitRename()}
+              onChange={(event) => setNameValue(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void commitRename();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelRename();
+                }
+              }}
+            />
+            {renameError ? <small>{renameError}</small> : null}
+          </span>
+        </div>
+      ) : (
+        <button className="project-file-open" type="button" aria-label={`${artifact.name || artifact.path} 열기`} data-tooltip={artifact.name || artifact.path} onClick={() => void onOpen(artifact)}>
+          <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
+          <span className="artifact-card-copy">
+            <strong>{artifact.name || artifact.path}</strong>
+          </span>
+        </button>
+      )}
       <span className="project-file-actions">
+        <button
+          className={`project-file-pin${pinned ? " active" : ""}`}
+          type="button"
+          aria-label={`${artifact.name} ${pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}`}
+          aria-pressed={pinned ? "true" : "false"}
+          data-tooltip={pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+          onClick={(event) => {
+            event.stopPropagation();
+            onTogglePinned(artifact);
+          }}
+        >
+          <Icon name="star" />
+        </button>
+        <button
+          className="project-file-rename"
+          type="button"
+          aria-label={`${artifact.name} 파일명 수정`}
+          data-tooltip="파일명 수정"
+          disabled={renameSaving}
+          onClick={(event) => {
+            event.stopPropagation();
+            beginRename();
+          }}
+        >
+          <Icon name="rename" />
+        </button>
         <button
           className="project-file-delete"
           type="button"
@@ -735,6 +1543,49 @@ function ProjectFileToolbar({
         <button className="project-file-toolbar-button" type="button" disabled={!organizeCandidates.length} onClick={() => onOrganize(organizeCandidates)}>정리</button>
         <button className="project-file-toolbar-button" type="button" onClick={onToggleScope}>{scope === "all" ? "outputs만" : "전체 보기"}</button>
         <button className="project-file-toolbar-button" type="button" onClick={onRefresh}>새로고침</button>
+      </div>
+    </div>
+  );
+}
+
+function AiEditCommentModal({
+  selection,
+  onClose,
+  onSubmit,
+}: {
+  selection: ArtifactAiEditSelection;
+  onClose: () => void;
+  onSubmit: (instruction: string) => void;
+}) {
+  const [instruction, setInstruction] = useState("");
+  const canSubmit = instruction.trim().length > 0;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card artifact-ai-comment-card" role="dialog" aria-modal="true" aria-label="AI 수정 의견 작성" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <h2>AI 수정 의견</h2>
+          <button className="modal-close" type="button" onClick={onClose} aria-label="닫기">×</button>
+        </div>
+        <blockquote className="artifact-ai-selection-preview">{selection.text}</blockquote>
+        <label className="artifact-ai-comment-field">
+          <span>수정 의견</span>
+          <textarea
+            autoFocus
+            value={instruction}
+            onChange={(event) => setInstruction(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canSubmit) {
+                event.preventDefault();
+                onSubmit(instruction);
+              }
+            }}
+            placeholder="이 영역을 어떻게 바꿀지 입력하세요."
+          />
+        </label>
+        <div className="modal-actions">
+          <button type="button" onClick={onClose}>취소</button>
+          <button type="button" onClick={() => onSubmit(instruction)} disabled={!canSubmit}>추가</button>
+        </div>
       </div>
     </div>
   );

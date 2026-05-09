@@ -10,6 +10,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 ## Default output
 
 - Prefer one self-contained `.html` file with inline CSS and JS.
+- When the user asks for research, investigation, comparison, analysis, source review, or a similar information-gathering task followed by "write/create a report" and does not specify a format, treat the deliverable as an HTML web report. Explicit format requests such as PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, or slides override this default.
 - Use a short purpose-specific kebab-case filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it.
 - Keep dependencies minimal. Use no CDN when CSS/SVG is enough; use CDN libraries when they materially improve the result.
 - Make the artifact readable in a constrained iframe and in a normal browser window.
@@ -45,14 +46,18 @@ quarterly trends, sources, or a report:
 - Avoid oversized radii, pill-heavy cards, excessive gradients, and bloated padding unless requested.
 - Prefer 4–8px radius for panels/cards/buttons.
 - Use exact tables for exact values; use charts for trends, comparisons, proportions, timelines, or distributions.
+- Use restrained semantic icons for section markers, KPIs, risks, recommendations, and action items when they improve scanning. Keep icons small, consistent, and businesslike; avoid childish, toy-like, emoji-heavy, or purely decorative icon use.
+- Prefer this default color palette for charts, categorical accents, heat scales, and report highlights unless the user provides a brand palette or the artifact clearly needs another scheme: `#3288bd`, `#66c2a5`, `#e6f598`, `#d53e4f`, `#9e0142`, `#f46d43`, `#fdae61`, `#fee08b`, `#abdda4`, `#5e4fa2`. Use a few colors intentionally; avoid turning every section into a rainbow.
+- For Mermaid process maps and dense diagrams, use semantic color groups so the reader can scan the system at a glance: blue for standards/requests/reports, teal for operations/market/planning, orange for investment/CAPEX/strategic decisions, red for risk/issues, and purple for governance/approval. Prefer pale fills with crisp colored borders and readable dark text; use stronger fills only for start/end, warnings, or key status nodes. In flowcharts, add `classDef` styles and assign classes by meaning instead of leaving all nodes the same color.
 - Use accessible contrast and semantic HTML.
 
 ## Library choices
 
 - **ECharts**: multi-chart business dashboards/reports.
 - **Chart.js**: simple common charts.
+- **Lucide or similar icon sets**: restrained semantic icons for reports, dashboards, and visual summaries.
 - **SVG/CSS**: small bespoke charts, diagrams, cards, timelines.
-- **Mermaid**: maintainable flowcharts/architecture diagrams.
+- **Mermaid**: maintainable diagrams in the Mermaid.js family, not only flowcharts. In MyHarness chat or Markdown artifact previews, prefer fenced `mermaid` blocks for compact diagrams such as `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, `journey`, `gitGraph`, `timeline`, `mindmap`, `quadrantChart`, and `sankey`. Choose the type that fits the content instead of defaulting to flowchart. Use `quadrantChart` freely for 2x2 prioritization/positioning and use `sankey` for flow/allocation diagrams; MyHarness normalizes old `sankey-beta`, handles leading `%%{init}%%` directives before those normalizations, quotes non-ASCII `quadrantChart` labels, and preserves non-ASCII `sankey` labels through internal Mermaid-safe node ids. Avoid Mermaid keyword-like flowchart class names such as `end`; use names like `finish` or `done`. If a requirement diagram is the right choice, quote user-defined `id`/`text` values and use canonical enum casing so MyHarness can render it reliably. In standalone HTML artifacts, include Mermaid via CDN only when the artifact needs those diagram types.
 - **Reveal.js**: full HTML slide decks.
 - **Three.js/D3/Leaflet**: only when 3D, advanced data visualization, or maps are central.
 

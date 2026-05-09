@@ -738,6 +738,52 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_uses_transcript_line_for_visible_user_message(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = SequencedApiClient(["done"])
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    host._bundle.engine.load_messages([
+        ConversationMessage.from_user_text("previous chat context should stay isolated")
+    ])
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line(
+            "hidden full prompt with document body",
+            transcript_line="visible AI edit summary",
+            isolated_context=True,
+        )
+    finally:
+        await close_runtime(host._bundle)
+
+    user_events = [
+        event for event in events
+        if event.type == "transcript_item" and event.item and event.item.role == "user"
+    ]
+    assert should_continue is True
+    assert user_events
+    assert user_events[0].item.text == "visible AI edit summary"
+    assert "hidden full prompt" not in user_events[0].item.text
+    assert client.requests
+    sent_text = "\n".join(message.text for message in client.requests[0].messages)
+    assert "hidden full prompt with document body" in sent_text
+    assert "previous chat context should stay isolated" not in sent_text
+    stored_text = "\n".join(message.text for message in host._bundle.engine.messages)
+    assert "previous chat context should stay isolated" in stored_text
+    assert "visible AI edit summary" in stored_text
+    assert "hidden full prompt with document body" not in stored_text
+
+
+@pytest.mark.asyncio
 async def test_backend_host_enqueues_completed_async_agent_notification(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     metadata = {

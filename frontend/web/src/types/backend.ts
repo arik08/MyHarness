@@ -120,6 +120,7 @@ export type ArtifactSummary = {
   path: string;
   name: string;
   kind: string;
+  workspace?: Workspace;
   category?: string;
   label?: string;
   mime?: string;

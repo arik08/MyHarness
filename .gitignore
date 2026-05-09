@@ -35,6 +35,7 @@ tests/test_api/PGPT_OpenAI_Compatible.py
 Playground/
 react_tui_smoke.txt
 .playwright-mcp/
+.code-review-graph/
 
 # Local UI/browser check artifacts
 .tmp-chrome-check/

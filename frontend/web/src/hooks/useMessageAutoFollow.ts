@@ -162,8 +162,20 @@ export function useMessageAutoFollow({
         followVelocity += boundedAcceleration * dt;
         const maxVelocity = Math.max(420, Math.min(4600, liveContainer.clientHeight * (4.6 + leadRatio * 1.1) + Math.abs(distance) * (4.8 + leadRatio)));
         followVelocity = Math.max(0, Math.min(maxVelocity, followVelocity));
+        const snapDistance = Math.max(8, Math.min(18, liveContainer.clientHeight * 0.06));
+        const glideVelocity = Math.max(140, Math.min(260, liveContainer.clientHeight * (0.85 + leadRatio * 0.2)));
+        if (distance > snapDistance && followVelocity > glideVelocity * 0.45) {
+          followVelocity = Math.max(glideVelocity, followVelocity);
+        }
         const nextTop = liveContainer.scrollTop + followVelocity * dt;
         liveContainer.scrollTop = Math.max(liveContainer.scrollTop, Math.min(rawTarget, nextTop));
+        const remaining = rawTarget - liveContainer.scrollTop;
+        const snapThreshold = Math.max(3, Math.min(8, followVelocity * dt * 1.35));
+        if (remaining > 0 && remaining <= snapThreshold) {
+          liveContainer.scrollTop = rawTarget;
+          bufferedTarget = rawTarget;
+          followVelocity = 0;
+        }
         liveContainer.dataset.lastScrollTop = String(liveContainer.scrollTop);
         if (autoFollowRef.current && tailFollowActiveRef.current) {
           animationFrameRef.current = window.requestAnimationFrame(step);

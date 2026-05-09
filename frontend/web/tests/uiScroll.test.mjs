@@ -221,4 +221,20 @@ test("continuous streaming follow eases into sudden target growth", async () => 
   const deltas = samples.slice(1).map((value, index) => value - samples[index]);
   const accelerations = deltas.slice(1).map((value, index) => value - deltas[index]);
   assert.ok(Math.max(...accelerations) < 5, `expected bounded acceleration after target jump, got deltas ${deltas.join(", ")}`);
+
+  const settledFrom = samples.length;
+  for (let now = 80; now <= 1600; now += 16) {
+    const frame = animationFrames.shift();
+    assert.equal(typeof frame, "function");
+    frame(now);
+    samples.push(messages.scrollTop);
+  }
+
+  const settleDeltas = samples.slice(1).map((value, index) => value - samples[index]).slice(settledFrom - 1);
+  assert.ok(
+    settleDeltas.some((delta, index) => index > 0 && delta > 0 && delta < settleDeltas[index - 1]),
+    `expected partial slowdown before stop, got deltas ${settleDeltas.join(", ")}`,
+  );
+  assert.equal(messages.scrollTop, 1200);
+  assert.equal(settleDeltas[settleDeltas.length - 1], 0);
 });

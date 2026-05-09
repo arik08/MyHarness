@@ -9,7 +9,7 @@ import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { InlineQuestion } from "./InlineQuestion";
 import { TodoDock } from "./TodoDock";
 
-const longPastedTextLineThreshold = 10;
+const longPastedTextLineThreshold = 20;
 const maxImageBytes = 10 * 1024 * 1024;
 
 type Suggestion =
@@ -461,7 +461,7 @@ export function Composer() {
       }
     }
     const text = event.clipboardData.getData("text/plain");
-    if (text && text.split(/\r?\n/).length >= longPastedTextLineThreshold) {
+    if (text && text.split(/\r?\n/).length > longPastedTextLineThreshold) {
       event.preventDefault();
       dispatch({ type: "add_pasted_text", text });
     }

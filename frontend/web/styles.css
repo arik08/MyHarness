@@ -1706,12 +1706,18 @@ a:focus-visible {
   padding: 18px;
 }
 
+.artifact-panel.fullscreen .artifact-viewer:has(.artifact-html-frame) {
+  padding: 0;
+}
+
 .artifact-panel.fullscreen .artifact-frame {
   min-height: calc(100dvh - 95px);
 }
 
 .artifact-panel-header {
   display: flex;
+  position: relative;
+  z-index: 30;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1720,6 +1726,7 @@ a:focus-visible {
   background: var(--panel-glass);
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(14px);
+  overflow: visible;
 }
 
 .artifact-panel-title {
@@ -1727,6 +1734,95 @@ a:focus-visible {
   flex: 1 1 auto;
   min-width: 0;
   gap: 2px;
+  overflow: visible;
+}
+
+.artifact-title-row {
+  display: flex;
+  position: relative;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: visible;
+}
+
+.artifact-version-switcher {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.artifact-version-trigger {
+  height: 24px;
+  min-width: 34px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.artifact-version-trigger:hover,
+.artifact-version-trigger:focus-visible,
+.artifact-version-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--ink);
+  outline: none;
+}
+
+.artifact-version-menu {
+  display: grid;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 80;
+  gap: 2px;
+  min-width: 172px;
+  max-width: 260px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+}
+
+.artifact-version-option {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.artifact-version-option:hover:not(:disabled),
+.artifact-version-option:focus-visible:not(:disabled),
+.artifact-version-option.active {
+  background: var(--sidebar-hover);
+  outline: none;
+}
+
+.artifact-version-option span {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.artifact-version-option small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .artifact-panel-header strong {
@@ -1736,6 +1832,48 @@ a:focus-visible {
   font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.artifact-title-rename-trigger {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: text;
+  text-align: left;
+}
+
+.artifact-title-rename-trigger:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.artifact-title-rename-trigger strong {
+  display: block;
+}
+
+.artifact-title-rename-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 56%, var(--line));
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 720;
+  outline: none;
+}
+
+.artifact-title-rename-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .artifact-panel-header small {
@@ -1749,6 +1887,220 @@ a:focus-visible {
 
 .artifact-panel-header small.error {
   color: var(--danger);
+}
+
+.artifact-ai-comments {
+  display: flex;
+  position: absolute;
+  top: 66px;
+  right: 10px;
+  left: 10px;
+  z-index: 8;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 42px;
+  max-height: 78px;
+  padding: 7px 12px;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.1);
+  color: #172033;
+}
+
+.artifact-ai-comments.with-progress {
+  align-items: flex-start;
+  max-height: min(58vh, 520px);
+}
+
+.artifact-ai-status {
+  flex: 1 0 100%;
+  margin: 0 0 1px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.artifact-ai-comment {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: min(320px, 100%);
+  min-height: 28px;
+  padding: 3px 4px 3px 5px;
+  background: #fff7d6;
+  border: 1px solid #f4cf65;
+  border-radius: 6px;
+  box-shadow: 0 1px 0 rgba(120, 84, 0, 0.08);
+}
+
+.artifact-ai-comment-index {
+  flex: 0 0 21px;
+  display: inline-grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  min-width: 21px;
+  max-width: 21px;
+  box-sizing: border-box;
+  background: #e8f2ff;
+  border-radius: 999px;
+  color: #0b5cad;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.artifact-ai-comment-instruction {
+  min-width: 0;
+  overflow: hidden;
+  color: #4f3900;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-ai-comment button {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #64748b;
+}
+
+.artifact-ai-comment button:hover,
+.artifact-ai-comment button:focus-visible {
+  background: #eef5ff;
+  border-color: #bfdbfe;
+  color: #0f4c81;
+}
+
+.artifact-ai-comment button svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.artifact-ai-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  margin-left: auto;
+  padding: 0 9px;
+  background: #0f6ecd;
+  border: 1px solid #0b5cad;
+  border-radius: 999px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.artifact-ai-submit:hover:not(:disabled),
+.artifact-ai-submit:focus-visible:not(:disabled) {
+  background: #0b5cad;
+  border-color: #094e95;
+}
+
+.artifact-ai-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
+}
+
+.artifact-ai-submit svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.artifact-ai-progress {
+  flex: 1 0 100%;
+  min-width: 0;
+  max-height: min(46vh, 420px);
+  overflow: auto;
+}
+
+.artifact-ai-progress .workflow-message {
+  margin: 0;
+  max-width: none;
+}
+
+.artifact-ai-progress .workflow-card {
+  border-color: #d8e0ea;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: none;
+}
+
+.artifact-ai-progress .workflow-card summary {
+  min-height: 30px;
+  padding: 6px 9px;
+}
+
+.artifact-ai-progress .workflow-body {
+  padding: 7px 9px 9px;
+}
+
+.artifact-ai-progress .workflow-output-body {
+  max-height: 180px;
+}
+
+.artifact-ai-progress-empty {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 8px 9px;
+  border: 1px solid #d8e0ea;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.artifact-ai-progress-pulse {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #0f6ecd;
+  box-shadow: 0 0 0 0 rgba(15, 110, 205, 0.28);
+  animation: artifactAiProgressPulse 1.25s ease-out infinite;
+}
+
+@keyframes artifactAiProgressPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(15, 110, 205, 0.3);
+    opacity: 1;
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(15, 110, 205, 0);
+    opacity: 0.72;
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(15, 110, 205, 0);
+    opacity: 1;
+  }
 }
 
 .artifact-panel-actions {
@@ -1774,14 +2126,29 @@ a:focus-visible {
   border: 1px solid transparent;
   border-radius: 8px;
   color: var(--muted);
+  cursor: pointer;
+  text-decoration: none;
 }
 
 .artifact-action:hover:not(:disabled),
-.artifact-action.copied,
-.artifact-action.active {
+.artifact-action.copied {
   background: var(--sidebar-hover);
   border-color: var(--line);
   color: var(--ink);
+}
+
+.artifact-action.active {
+  background: color-mix(in srgb, #2563eb 16%, transparent);
+  border-color: color-mix(in srgb, #2563eb 54%, var(--line));
+  color: #2563eb;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #2563eb 18%, transparent);
+}
+
+.artifact-action.active:hover:not(:disabled),
+.artifact-action.active:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, #2563eb 20%, transparent);
+  border-color: color-mix(in srgb, #2563eb 64%, var(--line));
+  color: #1d4ed8;
 }
 
 .artifact-action.danger {
@@ -2537,8 +2904,9 @@ a:focus-visible {
 }
 
 .user-collapsed-message {
-  display: flex;
-  align-items: center;
+  display: grid;
+  align-items: start;
+  justify-items: start;
   min-width: 0;
   gap: 8px;
 }
@@ -2546,26 +2914,44 @@ a:focus-visible {
 .user-message-preview {
   display: block;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin: 0;
 }
 
 .user-message-toggle {
-  flex: 0 0 auto;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-height: 24px;
-  padding: 0 8px;
-  background: color-mix(in srgb, var(--panel) 72%, transparent);
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
 
+.user-message-toggle::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+}
+
+.user-message-toggle[aria-expanded="true"]::after {
+  transform: rotate(225deg) translateY(1px);
+}
+
 .user-message-toggle:hover {
   color: var(--ink);
-  border-color: var(--line-strong);
+}
+
+.user-message-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .user-expanded-message {
@@ -3143,6 +3529,21 @@ a:focus-visible {
   transform: rotate(0deg);
 }
 
+.project-file-section-header-static {
+  cursor: default;
+}
+
+.project-file-section-header-static:hover,
+.project-file-section-header-static:focus-visible {
+  color: var(--ink);
+}
+
+.project-file-section-pinned .project-file-section-caret {
+  color: #d97706;
+  font-size: 13px;
+  transform: none;
+}
+
 .project-file-section-title {
   min-width: 0;
   overflow: hidden;
@@ -3238,6 +3639,47 @@ a:focus-visible {
   transform: translateY(0);
 }
 
+.project-file-open-editing {
+  cursor: text;
+}
+
+.project-file-open-editing::after {
+  content: none;
+}
+
+.project-file-inline-rename {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.project-file-inline-rename input {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  padding: 0 3px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 1.2;
+  outline: none;
+}
+
+.project-file-inline-rename input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.project-file-inline-rename small {
+  color: var(--danger, #c2410c);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
 .project-file-actions {
   display: inline-flex;
   align-items: center;
@@ -3255,7 +3697,9 @@ a:focus-visible {
 }
 
 .project-file-download,
-.project-file-delete {
+.project-file-delete,
+.project-file-pin,
+.project-file-rename {
   display: inline-grid;
   position: relative;
   place-items: center;
@@ -3271,7 +3715,9 @@ a:focus-visible {
   text-decoration: none;
 }
 
-.project-file-delete {
+.project-file-delete,
+.project-file-pin,
+.project-file-rename {
   width: 0;
   flex-basis: 0;
   overflow: hidden;
@@ -3284,7 +3730,12 @@ a:focus-visible {
 }
 
 .project-file-item:hover .project-file-delete,
+.project-file-item:hover .project-file-pin,
+.project-file-item:hover .project-file-rename,
 .project-file-item:focus-within .project-file-delete,
+.project-file-item:focus-within .project-file-pin,
+.project-file-item:focus-within .project-file-rename,
+.project-file-pin.active,
 .project-file-item.delete-ready .project-file-delete,
 .project-file-item.deleting .project-file-delete {
   width: 28px;
@@ -3302,10 +3753,18 @@ a:focus-visible {
 .project-file-download:hover,
 .project-file-download:focus-visible,
 .project-file-delete:hover,
-.project-file-delete:focus-visible {
+.project-file-delete:focus-visible,
+.project-file-pin:hover,
+.project-file-pin:focus-visible,
+.project-file-rename:hover,
+.project-file-rename:focus-visible {
   background: var(--panel-raised);
   border-color: var(--line);
   color: var(--ink);
+}
+
+.project-file-pin.active {
+  color: #d97706;
 }
 
 .project-file-delete:hover,
@@ -3322,7 +3781,9 @@ a:focus-visible {
 }
 
 .project-file-download svg,
-.project-file-delete svg {
+.project-file-delete svg,
+.project-file-pin svg,
+.project-file-rename svg {
   width: 17px;
   height: 17px;
   fill: none;
@@ -3332,8 +3793,15 @@ a:focus-visible {
   stroke-width: 2;
 }
 
+.project-file-pin.active svg {
+  fill: currentColor;
+  stroke-width: 1.6;
+}
+
 .project-file-download::after,
-.project-file-delete::after {
+.project-file-delete::after,
+.project-file-pin::after,
+.project-file-rename::after {
   position: absolute;
   top: 50%;
   right: calc(100% + 8px);
@@ -3360,13 +3828,55 @@ a:focus-visible {
 .project-file-download:hover::after,
 .project-file-download:focus-visible::after,
 .project-file-delete:hover::after,
-.project-file-delete:focus-visible::after {
+.project-file-delete:focus-visible::after,
+.project-file-pin:hover::after,
+.project-file-pin:focus-visible::after,
+.project-file-rename:hover::after,
+.project-file-rename:focus-visible::after {
   opacity: 1;
   transform: translate(0, -50%);
 }
 
 .project-file-organize-card {
   width: min(560px, calc(100vw - 32px));
+}
+
+.artifact-ai-comment-card {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.artifact-ai-selection-preview {
+  max-height: 130px;
+  margin: 8px 0 12px;
+  padding: 9px 10px;
+  overflow: auto;
+  background: color-mix(in srgb, #f59e0b 10%, var(--panel-raised));
+  border: 1px solid color-mix(in srgb, #f59e0b 28%, var(--line));
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.artifact-ai-comment-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.artifact-ai-comment-field textarea {
+  width: 100%;
+  min-height: 104px;
+  min-width: 0;
+  padding: 9px 10px;
+  resize: vertical;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
 }
 
 .project-file-organize-list {
@@ -4943,6 +5453,61 @@ a:focus-visible {
   margin: 0 auto;
 }
 
+.markdown-body .mermaid-chart svg .node,
+.mermaid-zoom-canvas svg .node {
+  --mermaid-node-fill: color-mix(in srgb, var(--accent-soft) 54%, var(--panel-raised) 46%);
+  --mermaid-node-stroke: color-mix(in srgb, var(--accent) 62%, var(--line-strong) 38%);
+}
+
+.markdown-body .mermaid-chart svg .node:is(.success, .ok, .done, .complete, .completed, .pass, .passed),
+.mermaid-zoom-canvas svg .node:is(.success, .ok, .done, .complete, .completed, .pass, .passed) {
+  --mermaid-node-stroke: color-mix(in srgb, var(--success) 76%, var(--line-strong) 24%);
+}
+
+.markdown-body .mermaid-chart svg .node:is(.warning, .warn, .risk, .caution, .pending, .review),
+.mermaid-zoom-canvas svg .node:is(.warning, .warn, .risk, .caution, .pending, .review) {
+  --mermaid-node-stroke: color-mix(in srgb, var(--warning) 78%, var(--line-strong) 22%);
+}
+
+.markdown-body .mermaid-chart svg .node:is(.danger, .error, .fail, .failed, .blocker, .blocked),
+.mermaid-zoom-canvas svg .node:is(.danger, .error, .fail, .failed, .blocker, .blocked) {
+  --mermaid-node-stroke: color-mix(in srgb, var(--danger) 78%, var(--line-strong) 22%);
+}
+
+.markdown-body .mermaid-chart svg .node:is(.info, .note, .primary, .accent),
+.mermaid-zoom-canvas svg .node:is(.info, .note, .primary, .accent) {
+  --mermaid-node-stroke: color-mix(in srgb, var(--accent) 82%, var(--line-strong) 18%);
+}
+
+.markdown-body .mermaid-chart svg :is(.node rect, .node circle, .node ellipse, .node polygon, .node path),
+.mermaid-zoom-canvas svg :is(.node rect, .node circle, .node ellipse, .node polygon, .node path) {
+  fill: var(--mermaid-node-fill) !important;
+  stroke: var(--mermaid-node-stroke) !important;
+}
+
+.markdown-body .mermaid-chart svg :is(.cluster rect, .cluster polygon, .cluster path),
+.mermaid-zoom-canvas svg :is(.cluster rect, .cluster polygon, .cluster path) {
+  fill: color-mix(in srgb, var(--panel) 78%, var(--accent-soft) 22%) !important;
+  stroke: color-mix(in srgb, var(--line) 72%, var(--accent) 28%) !important;
+}
+
+.markdown-body .mermaid-chart svg :is(.label, .nodeLabel, .edgeLabel, .cluster-label, text, tspan),
+.mermaid-zoom-canvas svg :is(.label, .nodeLabel, .edgeLabel, .cluster-label, text, tspan) {
+  color: var(--ink) !important;
+  fill: var(--ink) !important;
+}
+
+.markdown-body .mermaid-chart svg :is(.edgePath .path, .flowchart-link),
+.mermaid-zoom-canvas svg :is(.edgePath .path, .flowchart-link) {
+  stroke: var(--accent) !important;
+}
+
+.markdown-body .mermaid-chart svg marker :is(path, polygon),
+.mermaid-zoom-canvas svg marker :is(path, polygon) {
+  fill: var(--accent) !important;
+  stroke: var(--accent) !important;
+}
+
 .mermaid-chart-status {
   color: var(--muted);
   font-size: 13px;
@@ -5052,9 +5617,9 @@ a:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 30px;
+  width: 30px;
   height: 28px;
-  padding: 0 9px;
+  padding: 0;
   color: var(--ink);
   font: inherit;
   font-size: 12px;
@@ -5066,6 +5631,16 @@ a:focus-visible {
   cursor: pointer;
 }
 
+.mermaid-zoom-control svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .mermaid-zoom-control:hover,
 .mermaid-zoom-control:focus-visible {
   background: var(--sidebar-hover);
@@ -5073,10 +5648,8 @@ a:focus-visible {
 }
 
 .mermaid-zoom-close {
-  min-width: 28px;
+  width: 28px;
   padding: 0;
-  font-size: 18px;
-  font-weight: 500;
 }
 
 .mermaid-zoom-viewport {
@@ -5091,6 +5664,8 @@ a:focus-visible {
   background-size: 28px 28px;
   cursor: grab;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .mermaid-zoom-viewport.dragging {
@@ -5111,6 +5686,8 @@ a:focus-visible {
   transform-origin: 0 0;
   box-shadow: var(--shadow-soft);
   will-change: transform;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .mermaid-zoom-canvas svg {
@@ -5118,6 +5695,8 @@ a:focus-visible {
   max-width: none !important;
   width: auto;
   height: auto;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .mermaid-zoom-canvas.mermaid-loading,

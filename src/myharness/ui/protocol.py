@@ -45,6 +45,7 @@ class FrontendRequest(BaseModel):
         "shutdown",
     ]
     line: str | None = None
+    transcript_line: str | None = None
     command: str | None = None
     value: str | None = None
     task_id: str | None = None
@@ -55,6 +56,7 @@ class FrontendRequest(BaseModel):
     answer: str | None = None
     attachments: list[FrontendAttachment] = Field(default_factory=list)
     suppress_user_transcript: bool = False
+    isolated_context: bool = False
 
 
 class TranscriptItem(BaseModel):

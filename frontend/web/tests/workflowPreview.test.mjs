@@ -461,6 +461,44 @@ test("streamed notebook_edit arguments create workflow previews from new_source"
   assert.equal(previewBody.textContent, "print(1)");
 });
 
+test("streamed apply_patch arguments create diff workflow previews", async () => {
+  installBrowserGlobals();
+  const { createMessages } = await import("../modules/messages.js");
+  const ctx = createContext();
+  const messages = createMessages(ctx);
+
+  messages.appendWorkflowInputDelta({
+    type: "tool_input_delta",
+    tool_call_index: 0,
+    tool_name: "apply_patch",
+    arguments_delta: JSON.stringify({
+      patch: [
+        "*** Begin Patch",
+        "*** Update File: outputs/report.html",
+        "@@",
+        "-<h1>Old</h1>",
+      ].join("\n"),
+    }).slice(0, -2),
+  });
+  messages.appendWorkflowInputDelta({
+    type: "tool_input_delta",
+    tool_call_index: 0,
+    tool_name: "apply_patch",
+    arguments_delta: "\\n+<h1>New</h1>\\n*** End Patch\"}",
+  });
+  messages.finalizeWorkflowSummary();
+
+  const previewTitle = ctx.els.messages.querySelector(".workflow-output-title");
+  const removed = [...ctx.els.messages.querySelectorAll(".workflow-diff-line")]
+    .find((node) => node.textContent === "-<h1>Old</h1>");
+  const added = [...ctx.els.messages.querySelectorAll(".workflow-diff-line")]
+    .find((node) => node.textContent === "+<h1>New</h1>");
+  assert.ok(previewTitle);
+  assert.match(previewTitle.textContent, /수정 완료 - report\.html/);
+  assert.ok(removed?.classList.contains("removed"));
+  assert.ok(added?.classList.contains("added"));
+});
+
 test("unnamed streamed new_source arguments infer notebook edit previews", async () => {
   installBrowserGlobals();
   const { createMessages } = await import("../modules/messages.js");

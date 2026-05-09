@@ -1,6 +1,6 @@
-import { deleteJson, getJson, postJson } from "./http";
+import { deleteJson, getJson, postJson, putJson } from "./http";
 import type { ArtifactSummary } from "../types/backend";
-import type { ArtifactPayload } from "../types/ui";
+import type { ArtifactAiEditComment, ArtifactPayload } from "../types/ui";
 
 export function listArtifacts(sessionId: string, clientId: string) {
   const query = new URLSearchParams({ session: sessionId, clientId });
@@ -64,6 +64,60 @@ export function resolveArtifact(params: { sessionId?: string; clientId: string; 
 
 export function saveArtifact(path: string, content: string, sessionId: string, clientId: string) {
   return postJson<{ artifact?: ArtifactSummary }>("/api/artifact/save", { path, content, session: sessionId, clientId });
+}
+
+export function overwriteArtifact(params: {
+  path: string;
+  content: string;
+  sessionId?: string;
+  clientId: string;
+  workspacePath?: string;
+  workspaceName?: string;
+}) {
+  return putJson<{ artifact: ArtifactSummary; payload: ArtifactPayload }>("/api/artifact", {
+    path: params.path,
+    content: params.content,
+    session: params.sessionId || "",
+    clientId: params.clientId,
+    workspacePath: params.workspacePath || "",
+    workspaceName: params.workspaceName || "",
+  });
+}
+
+export function renameArtifact(params: {
+  path: string;
+  name: string;
+  sessionId?: string;
+  clientId: string;
+  workspacePath?: string;
+  workspaceName?: string;
+}) {
+  return postJson<{ artifact: ArtifactSummary; payload: ArtifactPayload }>("/api/artifact/rename", {
+    path: params.path,
+    name: params.name,
+    session: params.sessionId || "",
+    clientId: params.clientId,
+    workspacePath: params.workspacePath || "",
+    workspaceName: params.workspaceName || "",
+  });
+}
+
+export function aiEditArtifact(params: {
+  path: string;
+  comments: ArtifactAiEditComment[];
+  sessionId?: string;
+  clientId: string;
+  workspacePath?: string;
+  workspaceName?: string;
+}) {
+  return postJson<{ ok: boolean; sourcePath: string; targetPath: string }>("/api/artifact/ai-edit", {
+    path: params.path,
+    comments: params.comments,
+    session: params.sessionId || "",
+    clientId: params.clientId,
+    workspacePath: params.workspacePath || "",
+    workspaceName: params.workspaceName || "",
+  });
 }
 
 export function deleteArtifact(params: { path: string; sessionId?: string; clientId: string; workspacePath?: string; workspaceName?: string }) {

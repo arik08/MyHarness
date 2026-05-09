@@ -1,4 +1,4 @@
-export type IconName = "source" | "preview" | "copy" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh";
+export type IconName = "source" | "preview" | "copy" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star";
 
 export function Icon({ name }: { name: IconName }) {
   if (name === "source") {
@@ -97,6 +97,61 @@ export function Icon({ name }: { name: IconName }) {
         <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
         <path d="M3 21v-5h5" />
         <path d="M21 3v5h-5" />
+      </svg>
+    );
+  }
+  if (name === "edit") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </svg>
+    );
+  }
+  if (name === "comment") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-6a8 8 0 1 1 18-5Z" />
+        <path d="M8 11h8" />
+        <path d="M8 15h5" />
+      </svg>
+    );
+  }
+  if (name === "ai") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M15 4V2" />
+        <path d="M15 10V8" />
+        <path d="M12 5h6" />
+        <path d="m4 20 10.5-10.5" />
+        <path d="m13 11 2 2" />
+        <path d="M5 5l1 2 2 1-2 1-1 2-1-2-2-1 2-1Z" />
+      </svg>
+    );
+  }
+  if (name === "undo") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M9 7 4 12l5 5" />
+        <path d="M4 12h10a6 6 0 0 1 0 12h-1" />
+      </svg>
+    );
+  }
+  if (name === "rename") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M4 7h7" />
+        <path d="M4 17h7" />
+        <path d="M15 4v16" />
+        <path d="M12 4h6" />
+        <path d="M12 20h6" />
+      </svg>
+    );
+  }
+  if (name === "star") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M12 3.7l2.5 5.05 5.58.82-4.04 3.93.95 5.55L12 16.43l-4.99 2.62.95-5.55-4.04-3.93 5.58-.82Z" />
       </svg>
     );
   }

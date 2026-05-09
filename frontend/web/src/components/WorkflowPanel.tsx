@@ -116,17 +116,36 @@ function formatWorkflowEditPreview(input: Record<string, unknown> = {}) {
     .join("\n");
 }
 
+function workflowPatchPreview(input: Record<string, unknown> = {}) {
+  return workflowInputValue(input, ["patch", "diff"]).value;
+}
+
+function workflowPatchPath(patch: string) {
+  const match = String(patch || "").match(/^\*\*\* (?:Add|Update|Delete) File:\s+(.+)$/m)
+    || String(patch || "").match(/^\+\+\+\s+(?:b\/)?(.+)$/m)
+    || String(patch || "").match(/^---\s+(?:a\/)?(.+)$/m);
+  return match?.[1]?.trim() || "";
+}
+
 function workflowPreviewSource(event: WorkflowEvent) {
   const lower = event.toolName.toLowerCase();
   const input = event.toolInput || {};
-  const path = workflowInputValue(input, ["file_path", "path"]).value;
-  if (lower.includes("edit")) {
+  const patch = workflowPatchPreview(input);
+  const path = workflowInputValue(input, ["file_path", "path"]).value || workflowPatchPath(patch);
+  if (lower.includes("edit") || lower.includes("patch")) {
     const diff = formatWorkflowEditPreview(input);
     if (diff) {
       return {
         path,
         kind: "diff" as const,
         content: diff,
+      };
+    }
+    if (patch) {
+      return {
+        path,
+        kind: "diff" as const,
+        content: patch,
       };
     }
   }
@@ -142,7 +161,9 @@ function workflowOutputPathKey(path: string) {
 }
 
 function workflowEventOutputPathKey(event: WorkflowEvent) {
-  return workflowOutputPathKey(workflowInputValue(event.toolInput || {}, ["file_path", "path"]).value);
+  const input = event.toolInput || {};
+  const patch = workflowPatchPreview(input);
+  return workflowOutputPathKey(workflowInputValue(input, ["file_path", "path"]).value || workflowPatchPath(patch));
 }
 
 function mergeWorkflowOutputEvents(previous: WorkflowEvent, next: WorkflowEvent) {
@@ -299,13 +320,13 @@ export function webInvestigationSummary(events: WorkflowEvent[]) {
 }
 
 function workflowDiffLineClassName(line: string) {
-  if (line.startsWith("++ ")) {
+  if (line.startsWith("++ ") || /^\+(?!\+\+|\s*$)/.test(line)) {
     return "workflow-diff-line added";
   }
-  if (line.startsWith("-- ")) {
+  if (line.startsWith("-- ") || /^-(?!--|\s*$)/.test(line)) {
     return "workflow-diff-line removed";
   }
-  if (line.startsWith("@@")) {
+  if (line.startsWith("@@") || line.startsWith("*** ")) {
     return "workflow-diff-line hunk";
   }
   return "workflow-diff-line";
@@ -313,7 +334,7 @@ function workflowDiffLineClassName(line: string) {
 
 function isWorkflowOutputTool(toolName: string) {
   const lower = toolName.toLowerCase();
-  return lower !== "todo_write" && lower !== "todowrite" && (lower.includes("write") || lower.includes("edit"));
+  return lower !== "todo_write" && lower !== "todowrite" && (lower.includes("write") || lower.includes("edit") || lower.includes("patch"));
 }
 
 function isTodoWorkflowTool(toolName: string, title = "") {
@@ -349,7 +370,7 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
     ? done ? "수정 완료" : "수정 미리보기"
     : done ? "작성 완료" : "작성 중인 결과물";
   const changedLines = source.kind === "diff"
-    ? source.content.split(/\r?\n/).filter((line) => line.startsWith("++ ") || line.startsWith("-- ")).length
+    ? source.content.split(/\r?\n/).filter((line) => workflowDiffLineClassName(line).includes("added") || workflowDiffLineClassName(line).includes("removed")).length
     : 0;
   const count = source.kind === "diff"
     ? `${formatWorkflowTokenCount(estimateTextTokens(source.content))} (${changedLines.toLocaleString()}줄)`

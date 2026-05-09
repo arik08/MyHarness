@@ -75,14 +75,14 @@ describe("Composer", () => {
       clipboardData: {
         items: [],
         getData: (type: string) => type === "text/plain"
-          ? Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n")
+          ? Array.from({ length: 21 }, (_, index) => `line ${index + 1}`).join("\n")
           : "",
       },
     });
 
     const chip = document.querySelector(".pasted-text-chip");
     expect(chip).toBeTruthy();
-    expect(chip?.textContent).toContain("[Pasted text #1 +10 lines]");
+    expect(chip?.textContent).toContain("[Pasted text #1 +21 lines]");
     expect(document.querySelector(".react-pasted-chip")).toBeNull();
   });
 

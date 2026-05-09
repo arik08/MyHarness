@@ -1,0 +1,12 @@
+# Keep the code graph focused on source and tests.
+**/node_modules/**
+**/.vite/**
+**/dist/**
+**/build/**
+**/.next/**
+.myharness/**
+.playwright-mcp/**
+test-results/**
+outputs/**
+Playground/**
+docs/autopilot/assets/**

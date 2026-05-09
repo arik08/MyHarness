@@ -291,8 +291,20 @@ function scrollMessagesToBottom(options = {}) {
         followVelocity += boundedAcceleration * dt;
         const maxVelocity = Math.max(360, Math.min(3600, els.messages.clientHeight * 4.4 + Math.abs(distance) * 4.5));
         followVelocity = Math.max(0, Math.min(maxVelocity, followVelocity));
+        const snapDistance = Math.max(8, Math.min(18, els.messages.clientHeight * 0.06));
+        const glideVelocity = Math.max(140, Math.min(260, els.messages.clientHeight * 0.85));
+        if (distance > snapDistance && followVelocity > glideVelocity * 0.45) {
+          followVelocity = Math.max(glideVelocity, followVelocity);
+        }
         const nextTop = els.messages.scrollTop + followVelocity * dt;
         els.messages.scrollTop = Math.max(els.messages.scrollTop, Math.min(rawTarget, nextTop));
+        const remaining = rawTarget - els.messages.scrollTop;
+        const snapThreshold = Math.max(3, Math.min(8, followVelocity * dt * 1.35));
+        if (remaining > 0 && remaining <= snapThreshold) {
+          els.messages.scrollTop = rawTarget;
+          dampedTarget = rawTarget;
+          followVelocity = 0;
+        }
         els.messages.dataset.lastScrollTop = String(els.messages.scrollTop);
         if (state.autoFollowMessages && tailFollowAnimationActive) {
           scrollAnimationFrame = window.requestAnimationFrame(step);

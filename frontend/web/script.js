@@ -84,7 +84,7 @@ const {
 } = ctx;
 
 const maxImageBytes = 10 * 1024 * 1024;
-const longPastedTextLineThreshold = 10;
+const longPastedTextLineThreshold = 20;
 const nativeTooltipBackupAttr = "data-native-title";
 const themeOptions = [
   { id: "light", label: "Claude" },
@@ -319,7 +319,7 @@ function countTextLines(value) {
 }
 
 function isLongPastedText(value) {
-  return countTextLines(value) >= longPastedTextLineThreshold;
+  return countTextLines(value) > longPastedTextLineThreshold;
 }
 
 function captureLongInputIfNeeded() {

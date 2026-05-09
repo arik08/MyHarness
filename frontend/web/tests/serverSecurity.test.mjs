@@ -1,12 +1,87 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForSseEvent(url, predicate, { timeoutMs = 5000 } = {}) {
+  const controller = new AbortController();
+  const response = await fetch(url, { signal: controller.signal });
+  assert.equal(response.status, 200);
+  const reader = response.body?.getReader();
+  assert.ok(reader);
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (Date.now() < deadline) {
+      const remaining = Math.max(1, deadline - Date.now());
+      const result = await Promise.race([
+        reader.read(),
+        sleep(remaining).then(() => ({ timeout: true })),
+      ]);
+      if (result.timeout) {
+        break;
+      }
+      if (result.done) {
+        break;
+      }
+      buffer += decoder.decode(result.value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() || "";
+      for (const block of blocks) {
+        const dataLines = block
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice("data:".length).trimStart());
+        if (!dataLines.length) {
+          continue;
+        }
+        const event = JSON.parse(dataLines.join("\n"));
+        if (predicate(event)) {
+          return event;
+        }
+      }
+    }
+    throw new Error(`Timed out waiting for SSE event from ${url}`);
+  } finally {
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  }
+}
+
+async function waitForSessionClosed(baseUrl, clientId, sessionId, { timeoutMs = 3000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${baseUrl}/api/live-sessions?clientId=${encodeURIComponent(clientId)}`);
+    const payload = await response.json();
+    if (!payload.sessions?.some((session) => session.sessionId === sessionId)) {
+      return;
+    }
+    await sleep(100);
+  }
+}
+
+async function rmWithRetry(path, options = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      await rm(path, options);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (error?.code !== "EBUSY" && error?.code !== "EPERM") {
+        throw error;
+      }
+      await sleep(200);
+    }
+  }
+  throw lastError;
+}
 
 async function openPort() {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -115,6 +190,474 @@ test("rejects shell command requests without an owned active session", async (t)
   assert.match(payload.error, /active session/i);
 });
 
+test("overwrites only HTML artifacts through the preview edit API", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  let workspacePath = "";
+  let alternateWorkspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+    if (alternateWorkspacePath) {
+      await rm(alternateWorkspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `PreviewEdit${Date.now().toString(36)}` }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  assert.equal(workspaceResponse.status, 200);
+  workspacePath = workspacePayload.workspace?.path || "";
+  assert.ok(workspacePath);
+
+  await mkdir(join(workspacePath, "outputs"), { recursive: true });
+  const htmlPath = join(workspacePath, "outputs", "report.html");
+  const textPath = join(workspacePath, "outputs", "notes.txt");
+  await writeFile(htmlPath, "<!doctype html><html><body><h1>Old</h1></body></html>", "utf8");
+  await writeFile(textPath, "Old", "utf8");
+
+  const sessionResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "preview-editor", cwd: workspacePath }),
+  });
+  const session = await sessionResponse.json();
+  assert.equal(sessionResponse.status, 200);
+  assert.ok(session.sessionId);
+
+  const alternateWorkspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `PreviewEditAlt${Date.now().toString(36)}` }),
+  });
+  const alternateWorkspacePayload = await alternateWorkspaceResponse.json();
+  assert.equal(alternateWorkspaceResponse.status, 200);
+  alternateWorkspacePath = alternateWorkspacePayload.workspace?.path || "";
+  assert.ok(alternateWorkspacePath);
+  await mkdir(join(alternateWorkspacePath, "outputs"), { recursive: true });
+  const alternateHtmlPath = join(alternateWorkspacePath, "outputs", "other.html");
+  await writeFile(alternateHtmlPath, "<!doctype html><html><body><h1>Other Old</h1></body></html>", "utf8");
+
+  const historyParams = new URLSearchParams({
+    session: session.sessionId,
+    clientId: "preview-editor",
+    workspacePath: alternateWorkspacePath,
+    path: "outputs/other.html",
+  });
+  const historyResolveResponse = await fetch(`${app.baseUrl}/api/artifact/resolve?${historyParams.toString()}`);
+  const historyResolvePayload = await historyResolveResponse.json();
+  assert.equal(historyResolveResponse.status, 200);
+  assert.equal(historyResolvePayload.path, "outputs/other.html");
+
+  const historyReadResponse = await fetch(`${app.baseUrl}/api/artifact?${historyParams.toString()}`);
+  const historyReadPayload = await historyReadResponse.json();
+  assert.equal(historyReadResponse.status, 200);
+  assert.equal(historyReadPayload.content, "<!doctype html><html><body><h1>Other Old</h1></body></html>");
+
+  const historyFilesResponse = await fetch(
+    `${app.baseUrl}/api/project-files?${new URLSearchParams({
+      session: session.sessionId,
+      clientId: "preview-editor",
+      workspacePath: alternateWorkspacePath,
+      scope: "all",
+    }).toString()}`,
+  );
+  const historyFilesPayload = await historyFilesResponse.json();
+  assert.equal(historyFilesResponse.status, 200);
+  assert.ok(historyFilesPayload.files.some((file) => file.path === "outputs/other.html"));
+
+  const overwriteResponse = await fetch(`${app.baseUrl}/api/artifact`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "preview-editor",
+      path: "outputs/report.html",
+      content: "<!doctype html><html><body><h1>New</h1></body></html>",
+    }),
+  });
+  const overwritePayload = await overwriteResponse.json();
+  assert.equal(overwriteResponse.status, 200);
+  assert.equal(overwritePayload.artifact.path, "outputs/report.html");
+  assert.equal(overwritePayload.payload.content, "<!doctype html><html><body><h1>New</h1></body></html>");
+  assert.equal(await readFile(htmlPath, "utf8"), "<!doctype html><html><body><h1>New</h1></body></html>");
+
+  const alternateOverwriteResponse = await fetch(`${app.baseUrl}/api/artifact`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "preview-editor",
+      workspacePath: alternateWorkspacePath,
+      path: "outputs/other.html",
+      content: "<!doctype html><html><body><h1>Other New</h1></body></html>",
+    }),
+  });
+  const alternateOverwritePayload = await alternateOverwriteResponse.json();
+  assert.equal(alternateOverwriteResponse.status, 200);
+  assert.equal(alternateOverwritePayload.artifact.path, "outputs/other.html");
+  assert.equal(await readFile(alternateHtmlPath, "utf8"), "<!doctype html><html><body><h1>Other New</h1></body></html>");
+
+  const searchOverwriteResponse = await fetch(`${app.baseUrl}/api/artifact`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      clientId: "preview-editor",
+      path: "outputs/other.html",
+      content: "<!doctype html><html><body><h1>Other Search Saved</h1></body></html>",
+    }),
+  });
+  const searchOverwritePayload = await searchOverwriteResponse.json();
+  assert.equal(searchOverwriteResponse.status, 200);
+  assert.equal(searchOverwritePayload.artifact.path, "outputs/other.html");
+  assert.equal(await readFile(alternateHtmlPath, "utf8"), "<!doctype html><html><body><h1>Other Search Saved</h1></body></html>");
+
+  const livePreviewSaveResponse = await fetch(`${app.baseUrl}/api/artifact`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "preview-editor",
+      workspacePath,
+      path: "outputs/live-preview-only.html",
+      content: "<!doctype html><html><body><h1>Live Saved</h1></body></html>",
+    }),
+  });
+  const livePreviewSavePayload = await livePreviewSaveResponse.json();
+  assert.equal(livePreviewSaveResponse.status, 200);
+  assert.equal(livePreviewSavePayload.artifact.path, "outputs/live-preview-only.html");
+  assert.equal(
+    await readFile(join(workspacePath, "outputs", "live-preview-only.html"), "utf8"),
+    "<!doctype html><html><body><h1>Live Saved</h1></body></html>",
+  );
+
+  const saveCopyResponse = await fetch(`${app.baseUrl}/api/artifact/save`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "preview-editor",
+      path: "outputs/report.html",
+      content: "<!doctype html><html><body><h1>Copy</h1></body></html>",
+    }),
+  });
+  const saveCopyPayload = await saveCopyResponse.json();
+  assert.equal(saveCopyResponse.status, 200);
+  assert.equal(saveCopyPayload.artifact.path, "outputs/report-2.html");
+  assert.equal(await readFile(htmlPath, "utf8"), "<!doctype html><html><body><h1>New</h1></body></html>");
+
+  const textResponse = await fetch(`${app.baseUrl}/api/artifact`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "preview-editor",
+      path: "outputs/notes.txt",
+      content: "New",
+    }),
+  });
+  const textPayload = await textResponse.json();
+  assert.equal(textResponse.status, 400);
+  assert.match(textPayload.error, /Only HTML artifacts/i);
+  assert.equal(await readFile(textPath, "utf8"), "Old");
+
+  const outsideResponse = await fetch(`${app.baseUrl}/api/artifact`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "preview-editor",
+      path: "../escape.html",
+      content: "<html></html>",
+    }),
+  });
+  const outsidePayload = await outsideResponse.json();
+  assert.equal(outsideResponse.status, 400);
+  assert.match(outsidePayload.error, /inside the current project/i);
+});
+
+test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  let workspacePath = "";
+  let downloadDir = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rmWithRetry(workspacePath, { recursive: true, force: true });
+    }
+    if (downloadDir) {
+      await rmWithRetry(downloadDir, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `MermaidDownload${Date.now().toString(36)}` }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  assert.equal(workspaceResponse.status, 200);
+  workspacePath = workspacePayload.workspace?.path || "";
+  assert.ok(workspacePath);
+
+  await mkdir(join(workspacePath, "outputs"), { recursive: true });
+  const html = [
+    "<!doctype html><html><body>",
+    "<h1>Workflow</h1>",
+    '<div class="mermaid"><svg id="mermaid-test" viewBox="0 0 100 40"><rect width="100" height="40"></rect></svg></div>',
+    "</body></html>",
+  ].join("");
+  await writeFile(join(workspacePath, "outputs", "workflow.html"), html, "utf8");
+  await writeFile(join(workspacePath, "outputs", "plain.html"), "<!doctype html><html><body><h1>Plain</h1></body></html>", "utf8");
+
+  const mermaidParams = new URLSearchParams({
+    workspacePath,
+    path: "outputs/workflow.html",
+  });
+  const downloadResponse = await fetch(`${app.baseUrl}/api/artifact/download?${mermaidParams.toString()}`);
+  const downloaded = await downloadResponse.text();
+  assert.equal(downloadResponse.status, 200);
+  assert.match(downloadResponse.headers.get("content-disposition") || "", /workflow\.html/);
+  assert.match(downloaded, /data-myharness-mermaid-zoom-script/);
+  assert.match(downloaded, /myharness-mermaid-expand-button/);
+  assert.match(downloaded, /Mermaid 다이어그램 크게 보기/);
+  assert.match(downloaded, /화면에 맞춤/);
+
+  const plainParams = new URLSearchParams({
+    workspacePath,
+    path: "outputs/plain.html",
+  });
+  const plainResponse = await fetch(`${app.baseUrl}/api/artifact/download?${plainParams.toString()}`);
+  const plainDownloaded = await plainResponse.text();
+  assert.equal(plainResponse.status, 200);
+  assert.doesNotMatch(plainDownloaded, /data-myharness-mermaid-zoom-script/);
+
+  downloadDir = await mkdtemp(join(tmpdir(), "myharness-mermaid-download-"));
+  const saveCopyResponse = await fetch(`${app.baseUrl}/api/artifact/save-copy`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workspacePath,
+      path: "outputs/workflow.html",
+      folderPath: downloadDir,
+    }),
+  });
+  const saveCopyPayload = await saveCopyResponse.json();
+  assert.equal(saveCopyResponse.status, 200);
+  assert.equal(saveCopyPayload.saved.name, "workflow.html");
+  const savedHtml = await readFile(join(downloadDir, "workflow.html"), "utf8");
+  assert.match(savedHtml, /data-myharness-mermaid-zoom-script/);
+  assert.match(savedHtml, /myharness-mermaid-expand-button/);
+});
+
+test("renames artifacts and keeps old history links resolvable", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rmWithRetry(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `RenameArtifact${Date.now().toString(36)}` }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  assert.equal(workspaceResponse.status, 200);
+  workspacePath = workspacePayload.workspace?.path || "";
+  assert.ok(workspacePath);
+
+  await mkdir(join(workspacePath, "outputs"), { recursive: true });
+  const oldHtmlPath = join(workspacePath, "outputs", "report.html");
+  const renamedHtmlPath = join(workspacePath, "outputs", "renamed-report.html");
+  const finalHtmlPath = join(workspacePath, "outputs", "final-report.html");
+  await writeFile(oldHtmlPath, "<!doctype html><html><body><h1>Old Link</h1></body></html>", "utf8");
+
+  const sessionResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "artifact-rename", cwd: workspacePath }),
+  });
+  const session = await sessionResponse.json();
+  assert.equal(sessionResponse.status, 200);
+
+  const renameResponse = await fetch(`${app.baseUrl}/api/artifact/rename`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "artifact-rename",
+      path: "outputs/report.html",
+      name: "renamed-report.html",
+    }),
+  });
+  const renamePayload = await renameResponse.json();
+  assert.equal(renameResponse.status, 200);
+  assert.equal(renamePayload.artifact.path, "outputs/renamed-report.html");
+  assert.equal(await readFile(renamedHtmlPath, "utf8"), "<!doctype html><html><body><h1>Old Link</h1></body></html>");
+  await assert.rejects(() => readFile(oldHtmlPath, "utf8"), /ENOENT/);
+
+  const oldLinkParams = new URLSearchParams({
+    session: session.sessionId,
+    clientId: "artifact-rename",
+    path: "outputs/report.html",
+  });
+  const oldResolveResponse = await fetch(`${app.baseUrl}/api/artifact/resolve?${oldLinkParams.toString()}`);
+  const oldResolvePayload = await oldResolveResponse.json();
+  assert.equal(oldResolveResponse.status, 200);
+  assert.equal(oldResolvePayload.path, "outputs/renamed-report.html");
+
+  const oldReadResponse = await fetch(`${app.baseUrl}/api/artifact?${oldLinkParams.toString()}`);
+  const oldReadPayload = await oldReadResponse.json();
+  assert.equal(oldReadResponse.status, 200);
+  assert.equal(oldReadPayload.path, "outputs/renamed-report.html");
+  assert.equal(oldReadPayload.content, "<!doctype html><html><body><h1>Old Link</h1></body></html>");
+
+  const secondRenameResponse = await fetch(`${app.baseUrl}/api/artifact/rename`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "artifact-rename",
+      path: "outputs/renamed-report.html",
+      name: "final-report.html",
+    }),
+  });
+  const secondRenamePayload = await secondRenameResponse.json();
+  assert.equal(secondRenameResponse.status, 200);
+  assert.equal(secondRenamePayload.artifact.path, "outputs/final-report.html");
+  assert.equal(await readFile(finalHtmlPath, "utf8"), "<!doctype html><html><body><h1>Old Link</h1></body></html>");
+
+  const oldResolveAfterSecondResponse = await fetch(`${app.baseUrl}/api/artifact/resolve?${oldLinkParams.toString()}`);
+  const oldResolveAfterSecondPayload = await oldResolveAfterSecondResponse.json();
+  assert.equal(oldResolveAfterSecondResponse.status, 200);
+  assert.equal(oldResolveAfterSecondPayload.path, "outputs/final-report.html");
+
+  const extensionChangeResponse = await fetch(`${app.baseUrl}/api/artifact/rename`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "artifact-rename",
+      path: "outputs/final-report.html",
+      name: "final-report.md",
+    }),
+  });
+  const extensionChangePayload = await extensionChangeResponse.json();
+  assert.equal(extensionChangeResponse.status, 400);
+  assert.match(extensionChangePayload.error, /extension/i);
+});
+
+test("submits AI artifact edits with the next version target path", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `AiEditArtifact${Date.now().toString(36)}` }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  assert.equal(workspaceResponse.status, 200);
+  workspacePath = workspacePayload.workspace?.path || "";
+  assert.ok(workspacePath);
+
+  await mkdir(join(workspacePath, "outputs"), { recursive: true });
+  await writeFile(join(workspacePath, "outputs", "report.html"), "<!doctype html><html><body><h1>Old</h1></body></html>", "utf8");
+  await writeFile(join(workspacePath, "outputs", "report v1.html"), "<!doctype html><html><body><h1>Version 1</h1></body></html>", "utf8");
+
+  const sessionResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "artifact-ai-edit", cwd: workspacePath }),
+  });
+  const session = await sessionResponse.json();
+  assert.equal(sessionResponse.status, 200);
+  assert.ok(session.sessionId);
+  const transcriptPromise = waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${session.sessionId}&clientId=artifact-ai-edit`,
+    (event) => event.type === "transcript_item"
+      && event.item?.role === "user"
+      && String(event.item?.text || "").includes("outputs/report.html"),
+  );
+
+  const invalidResponse = await fetch(`${app.baseUrl}/api/artifact/ai-edit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "artifact-ai-edit",
+      path: "outputs/report.html",
+      comments: [],
+    }),
+  });
+  const invalidPayload = await invalidResponse.json();
+  assert.equal(invalidResponse.status, 400);
+  assert.match(invalidPayload.error, /comment/i);
+
+  const editResponse = await fetch(`${app.baseUrl}/api/artifact/ai-edit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: session.sessionId,
+      clientId: "artifact-ai-edit",
+      path: "outputs/report.html",
+      comments: [
+        {
+          text: "Old",
+          start: 0,
+          end: 3,
+          before: "",
+          after: "",
+          instruction: "Make the heading more current",
+        },
+        {
+          comment: "Make the whole document more executive-ready",
+        },
+      ],
+    }),
+  });
+  const editPayload = await editResponse.json();
+  assert.equal(editResponse.status, 200);
+  assert.equal(editPayload.sourcePath, "outputs/report.html");
+  assert.equal(editPayload.targetPath, "outputs/report_v2.html");
+  const transcriptEvent = await transcriptPromise;
+  assert.match(transcriptEvent.item.text, /AI/);
+  assert.match(transcriptEvent.item.text, /outputs\/report\.html/);
+  assert.match(transcriptEvent.item.text, /outputs\/report_v2\.html/);
+  assert.match(transcriptEvent.item.text, /Make the whole document more executive-ready/);
+  assert.doesNotMatch(transcriptEvent.item.text, /<!doctype html>/i);
+  const shutdownResponse = await fetch(`${app.baseUrl}/api/shutdown`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: session.sessionId, clientId: "artifact-ai-edit" }),
+  });
+  assert.equal(shutdownResponse.status, 200);
+  await waitForSessionClosed(app.baseUrl, "artifact-ai-edit", session.sessionId);
+  await sleep(1500);
+});
+
 test("pins history snapshots and lists pinned chats first", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
@@ -146,7 +689,7 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
     JSON.stringify({
       session_id: "newer",
       created_at: 200,
-      summary: "최신 대화",
+      summary: "newer session",
       messages: [],
       message_count: 1,
     }),
@@ -156,7 +699,7 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
     JSON.stringify({
       session_id: "older",
       created_at: 100,
-      summary: "고정할 대화",
+      summary: "older session",
       messages: [],
       message_count: 1,
     }),

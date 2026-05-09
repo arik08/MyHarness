@@ -226,6 +226,387 @@ function observeArtifactFrameResize(frame) {
   artifactFrameResizeCleanup = cleanup;
 }
 
+function withArtifactFrameMermaidZoomBridge(content) {
+  const value = String(content || "");
+  if (!/\bmermaid\b/i.test(value)) {
+    return value;
+  }
+  const bridge = `
+<style data-myharness-mermaid-zoom-style="true">
+.myharness-mermaid-zoom-host {
+  position: relative !important;
+}
+.myharness-mermaid-expand-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(17, 24, 39, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #17212f;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.14);
+  cursor: pointer;
+}
+.myharness-mermaid-expand-button:hover,
+.myharness-mermaid-expand-button:focus-visible {
+  border-color: rgba(37, 99, 235, 0.48);
+  color: #1d4ed8;
+  outline: none;
+}
+.myharness-mermaid-expand-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.myharness-mermaid-zoom-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  background: rgba(248, 250, 252, 0.98);
+  color: #17212f;
+}
+.myharness-mermaid-zoom-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.12);
+  background: #ffffff;
+  font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.myharness-mermaid-zoom-title {
+  font-weight: 700;
+}
+.myharness-mermaid-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.myharness-mermaid-zoom-value {
+  min-width: 48px;
+  text-align: center;
+  color: #5d6877;
+}
+.myharness-mermaid-zoom-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17212f;
+  font: 700 13px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+.myharness-mermaid-zoom-control svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.myharness-mermaid-zoom-control:hover,
+.myharness-mermaid-zoom-control:focus-visible {
+  border-color: rgba(37, 99, 235, 0.48);
+  color: #1d4ed8;
+  outline: none;
+}
+.myharness-mermaid-zoom-control[data-tooltip]::after {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  z-index: 10000;
+  max-width: 220px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.94);
+  color: #ffffff;
+  content: attr(data-tooltip);
+  font: 12px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: nowrap;
+}
+.myharness-mermaid-zoom-control:hover::after,
+.myharness-mermaid-zoom-control:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.myharness-mermaid-zoom-viewport {
+  flex: 1;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+}
+.myharness-mermaid-zoom-viewport.dragging {
+  cursor: grabbing;
+}
+.myharness-mermaid-zoom-canvas {
+  transform-origin: 0 0;
+  transition: transform 120ms ease;
+}
+.myharness-mermaid-zoom-canvas svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+</style>
+<script data-myharness-mermaid-zoom-script="true">
+(() => {
+  const attachedAttribute = "data-myharness-mermaid-zoom-attached";
+  let activeViewer = null;
+  const icon = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 3H3v5"></path><path d="M3 3l7 7"></path><path d="M16 3h5v5"></path><path d="m21 3-7 7"></path><path d="M8 21H3v-5"></path><path d="m3 21 7-7"></path><path d="M16 21h5v-5"></path><path d="m21 21-7-7"></path></svg>';
+  const controlIcons = {
+    close: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
+    fit: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 9V5h4"></path><path d="M19 9V5h-4"></path><path d="M5 15v4h4"></path><path d="M19 15v4h-4"></path><path d="M12 8v8"></path><path d="M8 12h8"></path></svg>',
+    reset: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7v5h5"></path><path d="M5.7 12A7 7 0 0 1 17 6.5"></path><path d="M18.3 12A7 7 0 0 1 7 17.5"></path></svg>',
+    zoomIn: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>',
+    zoomOut: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14"></path></svg>'
+  };
+  const classText = (element) => {
+    const raw = element?.className;
+    if (typeof raw === "string") return raw;
+    return String(raw?.baseVal || "");
+  };
+  const hasMermaidClass = (element) => /(^|\\s)mermaid(?:-|\\s|$)/i.test(classText(element));
+  const findHost = (svg) => {
+    let fallback = svg.closest?.(".mermaid, .mermaid-chart") || svg.parentElement;
+    for (let node = svg.parentElement; node && node !== document.body; node = node.parentElement) {
+      if (hasMermaidClass(node)) fallback = node;
+      const style = getComputedStyle(node);
+      const overflow = [style.overflow, style.overflowX, style.overflowY].join(" ");
+      if (/(auto|scroll)/i.test(overflow) && (node.scrollWidth > node.clientWidth + 8 || node.scrollHeight > node.clientHeight + 8)) return node;
+    }
+    return fallback;
+  };
+  const control = (label, tooltip, iconName, onClick) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "myharness-mermaid-zoom-control";
+    button.setAttribute("aria-label", label);
+    button.dataset.tooltip = tooltip;
+    button.innerHTML = controlIcons[iconName] || "";
+    button.addEventListener("click", onClick);
+    return button;
+  };
+  let viewport = null;
+  let canvas = null;
+  let zoomValue = null;
+  let zoom = 1;
+  let fitScale = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+  let dragging = false;
+  let pointerId = -1;
+  let lastX = 0;
+  let lastY = 0;
+  const updateTransform = () => {
+    if (!canvas || !zoomValue) return;
+    canvas.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + (fitScale * zoom) + ")";
+    zoomValue.textContent = Math.round(zoom * 100) + "%";
+  };
+  const closeViewer = () => {
+    if (!activeViewer) return;
+    activeViewer.remove();
+    activeViewer = null;
+    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+  };
+  const onKeyDown = (event) => {
+    if (event.key === "Escape") closeViewer();
+  };
+  const svgNaturalSize = () => {
+    const svg = canvas?.querySelector("svg");
+    if (!svg) return { width: 0, height: 0 };
+    const viewBox = String(svg.getAttribute("viewBox") || "");
+    const parts = viewBox.split(/[\\s,]+/).map((part) => Number(part));
+    const attrNumber = (name) => {
+      const raw = String(svg.getAttribute(name) || "");
+      const parsed = Number.parseFloat(raw);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return {
+      width: parts.length >= 4 && Number.isFinite(parts[2]) && parts[2] > 0 ? parts[2] : attrNumber("width"),
+      height: parts.length >= 4 && Number.isFinite(parts[3]) && parts[3] > 0 ? parts[3] : attrNumber("height"),
+    };
+  };
+  const normalizeSvgSize = () => {
+    const svg = canvas?.querySelector("svg");
+    const size = svgNaturalSize();
+    if (!svg || !size.width || !size.height) return size;
+    svg.style.width = Math.ceil(size.width) + "px";
+    svg.style.height = Math.ceil(size.height) + "px";
+    svg.style.maxWidth = "none";
+    return size;
+  };
+  const fitView = () => {
+    if (!viewport || !canvas) return;
+    const size = normalizeSvgSize();
+    const rect = viewport.getBoundingClientRect();
+    const width = size.width || canvas.scrollWidth || 1;
+    const height = size.height || canvas.scrollHeight || 1;
+    const padding = 56;
+    const availableWidth = Math.max(1, rect.width - padding);
+    const availableHeight = Math.max(1, rect.height - padding);
+    fitScale = Math.min(4, Math.max(0.05, Math.min(availableWidth / width, availableHeight / height)));
+    zoom = 1;
+    offsetX = (rect.width - width * fitScale) / 2;
+    offsetY = (rect.height - height * fitScale) / 2;
+    updateTransform();
+  };
+  const zoomAt = (nextZoom, clientX, clientY) => {
+    if (!viewport) return;
+    const clampedZoom = Math.min(4, Math.max(0.25, nextZoom));
+    const rect = viewport.getBoundingClientRect();
+    const centerX = Number.isFinite(clientX) ? clientX - rect.left : rect.width / 2;
+    const centerY = Number.isFinite(clientY) ? clientY - rect.top : rect.height / 2;
+    const currentScale = fitScale * zoom;
+    const nextScale = fitScale * clampedZoom;
+    const diagramX = (centerX - offsetX) / currentScale;
+    const diagramY = (centerY - offsetY) / currentScale;
+    zoom = clampedZoom;
+    offsetX = centerX - diagramX * nextScale;
+    offsetY = centerY - diagramY * nextScale;
+    updateTransform();
+  };
+  const resetView = fitView;
+  const onPointerMove = (event) => {
+    if (!dragging || event.pointerId !== pointerId) return;
+    event.preventDefault();
+    offsetX += event.clientX - lastX;
+    offsetY += event.clientY - lastY;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    updateTransform();
+  };
+  const onPointerUp = (event) => {
+    if (event.pointerId !== pointerId) return;
+    dragging = false;
+    pointerId = -1;
+    viewport?.classList.remove("dragging");
+  };
+  const openViewer = (svg) => {
+    closeViewer();
+    const backdrop = document.createElement("div");
+    backdrop.className = "myharness-mermaid-zoom-backdrop";
+    backdrop.setAttribute("role", "dialog");
+    backdrop.setAttribute("aria-modal", "true");
+    backdrop.setAttribute("aria-label", "Mermaid 다이어그램 확대 보기");
+    const header = document.createElement("div");
+    header.className = "myharness-mermaid-zoom-header";
+    const title = document.createElement("strong");
+    title.className = "myharness-mermaid-zoom-title";
+    title.textContent = "Mermaid";
+    const controls = document.createElement("div");
+    controls.className = "myharness-mermaid-zoom-controls";
+    zoomValue = document.createElement("span");
+    zoomValue.className = "myharness-mermaid-zoom-value";
+    zoomValue.textContent = "100%";
+    controls.append(
+      control("축소", "축소", "zoomOut", () => zoomAt(zoom / 1.2)),
+      zoomValue,
+      control("확대", "확대", "zoomIn", () => zoomAt(zoom * 1.2)),
+      control("화면에 맞춤", "Fit", "fit", fitView),
+      control("이동 초기화", "Reset", "reset", resetView),
+      control("닫기", "닫기", "close", closeViewer)
+    );
+    header.append(title, controls);
+    viewport = document.createElement("div");
+    viewport.className = "myharness-mermaid-zoom-viewport";
+    canvas = document.createElement("div");
+    canvas.className = "myharness-mermaid-zoom-canvas";
+    canvas.append(svg.cloneNode(true));
+    viewport.append(canvas);
+    backdrop.append(header, viewport);
+    document.body.append(backdrop);
+    viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      zoomAt(zoom * (event.deltaY < 0 ? 1.1 : 0.9), event.clientX, event.clientY);
+    }, { passive: false });
+    viewport.addEventListener("pointerdown", (event) => {
+      if (typeof event.button === "number" && event.button !== 0) return;
+      event.preventDefault();
+      dragging = true;
+      pointerId = event.pointerId;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      viewport.classList.add("dragging");
+      viewport.setPointerCapture?.(event.pointerId);
+    });
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) closeViewer();
+    });
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    activeViewer = backdrop;
+    requestAnimationFrame(fitView);
+  };
+  const attachButton = (svg) => {
+    if (!svg || svg.closest(".myharness-mermaid-zoom-backdrop")) return;
+    const host = findHost(svg);
+    if (!host || host.hasAttribute(attachedAttribute)) return;
+    host.setAttribute(attachedAttribute, "true");
+    host.classList.add("myharness-mermaid-zoom-host");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "myharness-mermaid-expand-button";
+    button.setAttribute("aria-label", "Mermaid 다이어그램 크게 보기");
+    button.innerHTML = icon;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openViewer(svg);
+    });
+    host.prepend(button);
+  };
+  const enhance = () => {
+    document.querySelectorAll(".mermaid svg, .mermaid-chart svg, svg[id^='mermaid-']").forEach(attachButton);
+  };
+  const schedule = () => {
+    requestAnimationFrame(() => {
+      enhance();
+      setTimeout(enhance, 120);
+      setTimeout(enhance, 500);
+    });
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", schedule, { once: true });
+  } else {
+    schedule();
+  }
+  window.addEventListener("load", schedule);
+  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>`;
+  if (/<\/body\s*>/i.test(value)) {
+    return value.replace(/<\/body\s*>/i, `${bridge}</body>`);
+  }
+  return `${value}${bridge}`;
+}
+
 function withArtifactFrameBackBridge(content) {
   const bridge = `
 <script>
@@ -782,7 +1163,7 @@ function renderArtifactRenderedView(artifact, payload) {
       activeArtifactFrameWindow = iframe.contentWindow;
       postArtifactFrameResize(iframe);
     });
-    iframe.srcdoc = withArtifactFrameBackBridge(withArtifactAssetBase(payload.content, payload.assetBaseUrl));
+    iframe.srcdoc = withArtifactFrameBackBridge(withArtifactFrameMermaidZoomBridge(withArtifactAssetBase(payload.content, payload.assetBaseUrl)));
     els.artifactViewer.append(iframe);
     observeArtifactFrameResize(iframe);
     return;

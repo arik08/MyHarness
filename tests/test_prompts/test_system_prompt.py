@@ -132,6 +132,10 @@ def test_build_system_prompt_guides_chat_html_rendering_and_report_charts():
     assert "use Mermaid for flowcharts, sequence diagrams, state diagrams, and other compact process diagrams" in prompt
     assert "For standalone HTML reports or web reports, use Mermaid when workflow, architecture, sequence, or dependency diagrams" in prompt
     assert "include Mermaid via CDN only when the HTML artifact needs it" in prompt
+    assert "research, investigate, compare, analyze, summarize sources" in prompt
+    assert "default to a standalone HTML web report under `outputs/`" in prompt
+    assert "PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, slides" in prompt
+    assert "honor that requested format instead" in prompt
     assert "quick charts, small data views" in prompt
     assert "Do not force inline HTML for every answer" in prompt
     assert "HTML report or 리포트" in prompt

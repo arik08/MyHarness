@@ -1308,13 +1308,18 @@ describe("appReducer", () => {
       .toBe("<!doctype html><html><body><h1>Live preview</h1>");
   });
 
-  it("updates an already open matching artifact preview while an HTML file is being written", () => {
-    const next = appReducer(
+  it("keeps an already open matching artifact preview stable while an HTML file is being written", () => {
+    const streaming = appReducer(
       {
         ...initialAppState,
         artifactPanelOpen: true,
         activeArtifact: { path: "outputs/office-ai-report.html", name: "office-ai-report.html", kind: "html" },
-        activeArtifactPayload: { path: "outputs/office-ai-report.html", name: "office-ai-report.html", kind: "html", content: "" },
+        activeArtifactPayload: {
+          path: "outputs/office-ai-report.html",
+          name: "office-ai-report.html",
+          kind: "html",
+          content: "<html><body><h1>Current preview</h1></body></html>",
+        },
       },
       {
         type: "backend_event",
@@ -1327,13 +1332,29 @@ describe("appReducer", () => {
       },
     );
 
-    expect(next.artifactPanelOpen).toBe(true);
-    expect(next.activeArtifact).toMatchObject({
+    expect(streaming.artifactPanelOpen).toBe(true);
+    expect(streaming.activeArtifact).toMatchObject({
       path: "outputs/office-ai-report.html",
       name: "office-ai-report.html",
       kind: "html",
     });
-    expect(next.activeArtifactPayload).toMatchObject({
+    expect(streaming.activeArtifactPayload).toMatchObject({
+      path: "outputs/office-ai-report.html",
+      kind: "html",
+      content: "<html><body><h1>Current preview</h1></body></html>",
+    });
+
+    const completed = appReducer(streaming, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "write_file",
+        output: "Wrote outputs/office-ai-report.html",
+        is_error: false,
+      },
+    });
+
+    expect(completed.activeArtifactPayload).toMatchObject({
       path: "outputs/office-ai-report.html",
       kind: "html",
       content: "<!doctype html><html><body><h1>Live preview</h1>",
@@ -1513,6 +1534,40 @@ describe("appReducer", () => {
     expect(notebookEvents).toHaveLength(1);
     expect(notebookEvents[0].toolInput?.new_source).toBe("print(42)");
     expect(started.workflowEvents.some((event) => event.toolName === "write_file")).toBe(false);
+  });
+
+  it("streams apply_patch argument deltas into the workflow preview before tool start", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "apply_patch",
+        tool_call_index: 0,
+        arguments_delta: JSON.stringify({
+          patch: [
+            "*** Begin Patch",
+            "*** Update File: outputs/report.html",
+            "@@",
+            "-<h1>Old</h1>",
+          ].join("\n"),
+        }).slice(0, -2),
+      },
+    });
+    const second = appReducer(first, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "apply_patch",
+        tool_call_index: 0,
+        arguments_delta: "\\n+<h1>New</h1>\\n*** End Patch\"}",
+      },
+    });
+
+    const patchEvents = second.workflowEvents.filter((event) => event.toolName === "apply_patch");
+    expect(patchEvents).toHaveLength(1);
+    expect(patchEvents[0].status).toBe("running");
+    expect(patchEvents[0].toolInput?.path).toBe("outputs/report.html");
+    expect(patchEvents[0].toolInput?.patch).toContain("+<h1>New</h1>");
   });
 
   it("merges write_file deltas into an already started call when the delta lacks the call id", () => {

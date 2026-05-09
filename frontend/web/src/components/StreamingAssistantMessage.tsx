@@ -215,10 +215,14 @@ function useStreamingText(
     setVisibleText(targetText);
   }, [targetText, visuallyStreaming, startBufferMs, revealDurationMs]);
 
+  const snapCompletedReplacement = !visuallyStreaming
+    && visibleText !== targetText
+    && !targetText.startsWith(visibleText);
+
   return {
-    visibleText,
+    visibleText: snapCompletedReplacement ? targetText : visibleText,
     revealFrom,
-    revealing: visuallyStreaming || visibleText !== targetText || Boolean(pendingTextRef.current),
+    revealing: !snapCompletedReplacement && (visuallyStreaming || visibleText !== targetText || Boolean(pendingTextRef.current)),
   };
 }
 

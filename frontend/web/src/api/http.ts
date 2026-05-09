@@ -34,6 +34,18 @@ export async function postJson<T>(url: string, payload: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export async function putJson<T>(url: string, payload: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw await readError(response);
+  }
+  return response.json() as Promise<T>;
+}
+
 export async function deleteJson<T>(url: string, payload: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "DELETE",
