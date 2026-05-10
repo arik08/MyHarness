@@ -41,6 +41,13 @@ def test_build_inherited_cli_flags_explicit_model_included():
     assert "claude-opus-4-5" in flags[idx + 1]
 
 
+def test_build_inherited_cli_flags_effort_included():
+    flags = build_inherited_cli_flags(effort="high")
+    assert "--effort" in flags
+    idx = flags.index("--effort")
+    assert flags[idx + 1] == "high"
+
+
 def test_build_inherited_cli_flags_inherit_model_excluded():
     """model='inherit' must NOT produce a --model flag so the subprocess
     picks up the parent's model from the MYHARNESS_MODEL env var."""

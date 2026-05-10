@@ -399,6 +399,7 @@ def _build_dry_run_preview(
     cwd: str,
     model: str | None,
     subagent_model: str | None = None,
+    subagent_effort: str | None = None,
     active_profile: str | None = None,
     max_turns: int | None,
     base_url: str | None,
@@ -424,6 +425,7 @@ def _build_dry_run_preview(
     settings = load_settings().merge_cli_overrides(
         model=model,
         subagent_model=subagent_model,
+        subagent_effort=subagent_effort,
         active_profile=active_profile,
         max_turns=max_turns,
         base_url=base_url,
@@ -555,6 +557,7 @@ def _build_dry_run_preview(
             "api_format": settings.api_format,
             "model": settings.model,
             "subagent_model": settings.subagent_model,
+            "subagent_effort": settings.subagent_effort,
             "base_url": settings.base_url or "",
             "permission_mode": settings.permission.mode.value,
             "max_turns": settings.max_turns,
@@ -648,6 +651,7 @@ def _format_dry_run_preview(preview: dict[str, object]) -> str:
         f"- api_format: {settings.get('api_format')}",
         f"- model: {settings.get('model')}",
         f"- subagent_model: {settings.get('subagent_model')}",
+        f"- subagent_effort: {settings.get('subagent_effort')}",
         f"- base_url: {settings.get('base_url') or '(default)'}",
         f"- permission_mode: {settings.get('permission_mode')}",
         f"- max_turns: {settings.get('max_turns')}",
@@ -802,10 +806,10 @@ def mcp_list() -> None:
     plugins = load_plugins(settings, str(Path.cwd()), include_program_plugins=True)
     configs = load_mcp_server_configs(settings, plugins)
     if not configs:
-        print("No MCP servers configured.")
+        print("설정된 MCP 서버가 없습니다.")
         return
     for name, cfg in configs.items():
-        transport = cfg.get("transport", cfg.get("command", "unknown"))
+        transport = cfg.get("transport", cfg.get("command", "알 수 없음"))
         print(f"  {name}: {transport}")
 
 
@@ -857,10 +861,10 @@ def plugin_list() -> None:
     settings = load_settings()
     plugins = load_plugins(settings, str(Path.cwd()), include_program_plugins=True)
     if not plugins:
-        print("No plugins installed.")
+        print("설치된 플러그인이 없습니다.")
         return
     for plugin in plugins:
-        status = "enabled" if plugin.enabled else "disabled"
+        status = "활성" if plugin.enabled else "비활성"
         print(f"  {plugin.name} [{status}] - {plugin.description or ''}")
 
 
@@ -1820,23 +1824,23 @@ def auth_status_cmd() -> None:
     auth_sources = manager.get_auth_source_statuses()
     profiles = manager.get_profile_statuses()
 
-    print("Auth sources:")
-    print(f"{'Source':<24} {'State':<14} {'Origin':<10} Active")
+    print("인증 소스:")
+    print(f"{'소스':<24} {'상태':<14} {'출처':<10} 활성")
     print("-" * 60)
     for name, info in auth_sources.items():
         label = _AUTH_SOURCE_LABELS.get(name, name)
-        active_str = "<-- active" if info["active"] else ""
+        active_str = "<-- 활성" if info["active"] else ""
         print(f"{label:<24} {info['state']:<14} {info['source']:<10} {active_str}")
         if info.get("detail"):
-            print(f"  detail: {info['detail']}")
+            print(f"  상세: {info['detail']}")
 
     print()
-    print("Provider profiles:")
-    print(f"{'Profile':<20} {'Provider':<18} {'Auth source':<22} {'State':<12} Active")
+    print("프로바이더 프로필:")
+    print(f"{'프로필':<20} {'프로바이더':<18} {'인증 소스':<22} {'상태':<12} 활성")
     print("-" * 92)
     for name, info in profiles.items():
-        status_str = "ready" if info["configured"] else info.get("auth_state", "missing auth")
-        active_str = "<-- active" if info["active"] else ""
+        status_str = "준비됨" if info["configured"] else info.get("auth_state", "인증 없음")
+        active_str = "<-- 활성" if info["active"] else ""
         print(f"{name:<20} {info['provider']:<18} {info['auth_source']:<22} {status_str:<12} {active_str}")
 
 
@@ -2120,6 +2124,12 @@ def main(
         help="Default model for lightweight subagents",
         rich_help_panel="Model & Effort",
     ),
+    subagent_effort: str | None = typer.Option(
+        None,
+        "--subagent-effort",
+        help="Effort level for lightweight subagents (auto, low, medium, high, xhigh, max)",
+        rich_help_panel="Model & Effort",
+    ),
     active_profile: str | None = typer.Option(
         None,
         "--active-profile",
@@ -2318,6 +2328,7 @@ def main(
             cwd=cwd,
             model=model,
             subagent_model=subagent_model,
+            subagent_effort=subagent_effort,
             active_profile=active_profile,
             max_turns=max_turns,
             base_url=base_url,
@@ -2393,6 +2404,7 @@ def main(
                 cwd=cwd,
                 model=session_data.get("model") or model,
                 subagent_model=subagent_model,
+                subagent_effort=subagent_effort,
                 active_profile=active_profile,
                 backend_only=backend_only,
                 base_url=base_url,
@@ -2419,6 +2431,7 @@ def main(
                 cwd=cwd,
                 model=model,
                 subagent_model=subagent_model,
+                subagent_effort=subagent_effort,
                 active_profile=active_profile,
                 base_url=base_url,
                 system_prompt=system_prompt,
@@ -2438,6 +2451,7 @@ def main(
                 cwd=cwd,
                 model=model,
                 subagent_model=subagent_model,
+                subagent_effort=subagent_effort,
                 active_profile=active_profile,
                 max_turns=max_turns,
                 base_url=base_url,
@@ -2456,6 +2470,7 @@ def main(
             cwd=cwd,
             model=model,
             subagent_model=subagent_model,
+            subagent_effort=subagent_effort,
             active_profile=active_profile,
             max_turns=max_turns,
             backend_only=backend_only,

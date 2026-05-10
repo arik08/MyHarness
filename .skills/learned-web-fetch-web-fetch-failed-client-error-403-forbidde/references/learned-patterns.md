@@ -131,3 +131,10 @@
 - Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://www.cbre.com/press-releases/cbre-report-core-data-center-markets-across-the-globe-race-to-increase-supply-competitio
 - Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.cnbc.com/2025/07/22/openai-oracle-stargate-texas.html
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence c6bebe39e960e9cb
+- Confidence: 0.85
+- Signature: `web-fetch-web-fetch-failed-client-error-403-forbidden-for-url-https-www-gartner-`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://www.gartner.com/en/newsroom/press-releases/2025-08-26-gartner-predicts-40-percent-of-enterprise-apps-will-feature-ta
+- Do next time: Start by applying the verified corrective path: Ran command python - <<'PY' from pathlib import Path p=Path('outputs/포스코_경영기획_AX_심층보고서.html') s=p.read_text(encoding='utf-8') print('chars', len(s)) print('rough_korean_tok [chars 36890]
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

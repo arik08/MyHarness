@@ -241,6 +241,7 @@ class BackendHostConfig:
 
     model: str | None = None
     subagent_model: str | None = None
+    subagent_effort: str | None = None
     max_turns: int | None = None
     base_url: str | None = None
     system_prompt: str | None = None
@@ -287,6 +288,7 @@ class ReactBackendHost:
         self._bundle = await build_runtime(
             model=self._config.model,
             subagent_model=self._config.subagent_model,
+            subagent_effort=self._config.subagent_effort,
             max_turns=self._config.max_turns,
             base_url=self._config.base_url,
             system_prompt=self._config.system_prompt,
@@ -1282,7 +1284,7 @@ class ReactBackendHost:
         if command == "resume":
             await self._restore_history_snapshot(selected)
             return True
-        if command in {"provider", "model", "subagent_model", "effort"}:
+        if command in {"provider", "model", "subagent_model", "effort", "subagent_effort"}:
             await self._apply_runtime_choice(command, selected)
             return True
         line = self._build_select_command_line(command, selected)
@@ -1290,7 +1292,7 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
             await self._emit(BackendEvent(type="line_complete"))
             return True
-        quiet = command in {"model", "subagent_model", "effort"}
+        quiet = command in {"model", "subagent_model", "effort", "subagent_effort"}
         return await self._process_line(line, transcript_line=f"/{command}", quiet=quiet)
 
     def _build_select_command_line(self, command: str, value: str) -> str | None:
@@ -1369,15 +1371,19 @@ class ReactBackendHost:
                 await self._emit(BackendEvent(type="line_complete"))
                 return
             stored_value = "none" if selected == "auto" else selected
-            self._bundle.settings_overrides["effort"] = stored_value
-            message = f"Reasoning effort set to {stored_value}."
+            target_key = "effort" if command == "effort" else "subagent_effort"
+            target_label = "Reasoning effort" if command == "effort" else "Sub agent reasoning effort"
+            self._bundle.settings_overrides[target_key] = stored_value
+            message = f"{target_label} set to {stored_value}."
 
         if refresh_client:
             refresh_runtime_client(self._bundle)
         updated = self._bundle.current_settings()
         self._bundle.engine.tool_metadata["runtime_model"] = updated.model
         self._bundle.engine.tool_metadata["subagent_model"] = updated.subagent_model
-        self._bundle.engine.set_reasoning_effort(updated.effort)
+        self._bundle.engine.tool_metadata["subagent_effort"] = updated.subagent_effort
+        if command == "effort":
+            self._bundle.engine.set_reasoning_effort(updated.effort)
         self._bundle.engine.set_system_prompt(
             build_runtime_system_prompt(
                 updated,
@@ -1388,12 +1394,16 @@ class ReactBackendHost:
             )
         )
         if not refresh_client:
-            self._bundle.app_state.set(effort=updated.effort, subagent_model=updated.subagent_model)
+            self._bundle.app_state.set(
+                effort=updated.effort,
+                subagent_model=updated.subagent_model,
+                subagent_effort=updated.subagent_effort,
+            )
         await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=f"/{command}")))
         if command == "provider":
             await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=message)))
         await self._emit(self._status_snapshot())
-        await self._emit(BackendEvent(type="line_complete", quiet=command in {"model", "subagent_model", "effort"}))
+        await self._emit(BackendEvent(type="line_complete", quiet=command in {"model", "subagent_model", "effort", "subagent_effort"}))
 
     async def _restore_history_snapshot(self, session_id: str) -> None:
         assert self._bundle is not None
@@ -1777,6 +1787,7 @@ class ReactBackendHost:
                             "providers": provider_options,
                             "models_by_provider": model_options_by_provider,
                             "subagent_model": settings.subagent_model,
+                            "subagent_effort": settings.subagent_effort,
                             "efforts": self._effort_select_options(settings),
                         },
                     },
@@ -2240,6 +2251,7 @@ async def run_backend_host(
     *,
     model: str | None = None,
     subagent_model: str | None = None,
+    subagent_effort: str | None = None,
     max_turns: int | None = None,
     base_url: str | None = None,
     system_prompt: str | None = None,
@@ -2264,6 +2276,7 @@ async def run_backend_host(
         BackendHostConfig(
             model=model,
             subagent_model=subagent_model,
+            subagent_effort=subagent_effort,
             max_turns=max_turns,
             base_url=base_url,
             system_prompt=system_prompt,

@@ -665,7 +665,7 @@ function highlightedCodeHtml(source: string, language: string) {
 }
 
 function codeCopyButtonHtml() {
-  return '<button type="button" class="code-copy" aria-label="Copy code" data-tooltip="코드 복사"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>Copy</span></button>';
+  return '<button type="button" class="code-copy" aria-label="코드 복사" data-tooltip="코드 복사"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>복사</span></button>';
 }
 
 function enhanceRenderedCodeBlockHtml(html: string) {
@@ -1773,7 +1773,7 @@ async function copyTextToClipboard(text: string) {
   const copied = document.execCommand("copy");
   textArea.remove();
   if (!copied) {
-    throw new Error("Copy failed");
+    throw new Error("복사에 실패했습니다.");
   }
 }
 
@@ -1802,14 +1802,14 @@ function enhanceCodeBlocks(root: HTMLElement | null) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "code-copy";
-    button.setAttribute("aria-label", "Copy code");
+    button.setAttribute("aria-label", "코드 복사");
     button.dataset.tooltip = "코드 복사";
     button.innerHTML = `
       <svg aria-hidden="true" viewBox="0 0 24 24">
         <rect x="9" y="9" width="10" height="10" rx="2"></rect>
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
       </svg>
-      <span>Copy</span>
+      <span>복사</span>
     `;
     pre.append(button);
   });
@@ -1827,21 +1827,21 @@ async function handleCodeCopyClick(event: MouseEvent<HTMLDivElement>) {
     await copyTextToClipboard(code?.textContent || "");
     button.classList.add("copied");
     if (label) {
-      label.textContent = "Copied";
+      label.textContent = "복사됨";
     }
     window.setTimeout(() => {
       button.classList.remove("copied");
       if (label) {
-        label.textContent = "Copy";
+        label.textContent = "복사";
       }
     }, 1300);
   } catch {
     if (label) {
-      label.textContent = "Failed";
+      label.textContent = "실패";
     }
     window.setTimeout(() => {
       if (label) {
-        label.textContent = "Copy";
+        label.textContent = "복사";
       }
     }, 1300);
   }

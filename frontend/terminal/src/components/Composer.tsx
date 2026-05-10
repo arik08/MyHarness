@@ -18,13 +18,13 @@ export function Composer({
 	return (
 		<Box flexDirection="column" marginTop={1}>
 			<Box borderStyle="round" paddingX={1}>
-				<Text color={busy ? 'yellow' : 'green'}>{busy ? 'busy' : 'ready'}</Text>
+				<Text color={busy ? 'yellow' : 'green'}>{busy ? '작업 중' : '준비됨'}</Text>
 				<Text> </Text>
 				<TextInput value={input} onChange={setInput} onSubmit={onSubmit} />
 			</Box>
 			<Box marginTop={1}>
 				<Text dimColor>
-					shift+enter=newline enter=submit tab=complete ctrl-p/ctrl-n=history history_index={String(historyIndex)}
+					shift+enter=줄바꿈 enter=제출 tab=완성 ctrl-p/ctrl-n=기록 기록_위치={String(historyIndex)}
 				</Text>
 			</Box>
 		</Box>

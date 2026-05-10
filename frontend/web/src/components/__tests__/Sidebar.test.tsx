@@ -101,7 +101,8 @@ describe("Sidebar", () => {
     );
 
     expect(screen.getByRole("button", { name: "프로젝트 선택" }).getAttribute("data-tooltip-placement")).toBe("right");
-    expect(screen.getByRole("button", { name: "New Chat" }).getAttribute("data-tooltip-placement")).toBe("right");
+    expect(screen.getByRole("button", { name: "새 대화" }).getAttribute("data-tooltip")).toBe("새 대화");
+    expect(screen.getByRole("button", { name: "새 대화" }).getAttribute("data-tooltip-placement")).toBe("right");
     expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
   });
 
@@ -147,6 +148,57 @@ describe("Sidebar", () => {
       type: "apply_select_command",
       command: "subagent_model",
       value: "gpt-5.4-nano",
+    }));
+  });
+
+  it("sends subagent_effort after choosing a Sub model", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          clientId: "client-1",
+          provider: "codex",
+          providerLabel: "Codex Subscription",
+          model: "gpt-5.5",
+          subagentModel: "gpt-5.4-mini",
+          subagentEffort: "medium",
+          runtimePicker: {
+            ...initialAppState.runtimePicker,
+            open: true,
+            loading: false,
+            selectedProvider: "codex",
+            modelOpen: true,
+            providers: [{ value: "codex", label: "Codex Subscription", active: true }],
+            efforts: [
+              { value: "medium", label: "Medium", active: true },
+              { value: "high", label: "High" },
+            ],
+            modelsByProvider: {
+              codex: [
+                { value: "gpt-5.4-mini", label: "gpt-5.4-mini", active: true },
+                { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
+              ],
+            },
+            models: [
+              { value: "gpt-5.4-mini", label: "gpt-5.4-mini", active: true },
+              { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
+            ],
+          },
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Sub" }));
+    await userEvent.click(screen.getByRole("button", { name: /gpt-5\.4-nano/ }));
+    await userEvent.click(screen.getByRole("button", { name: /High/ }));
+
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenLastCalledWith("session-active", "client-1", {
+      type: "apply_select_command",
+      command: "subagent_effort",
+      value: "high",
     }));
   });
 
@@ -603,7 +655,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "New Chat" }));
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
 
     await waitFor(() => expect(startSession).toHaveBeenCalledWith({
       clientId: "client-1",
@@ -628,7 +680,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "New Chat" }));
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
 
     expect(screen.getByTestId("message-count").textContent).toBe("0");
     expect(screen.getByTestId("pending-fresh-chat").textContent).toBe("yes");
@@ -636,7 +688,7 @@ describe("Sidebar", () => {
     expect(restartSession).not.toHaveBeenCalled();
   });
 
-  it("keeps the Restart action as an explicit backend restart", async () => {
+  it("keeps the restart action as an explicit backend restart", async () => {
     vi.mocked(restartSession).mockResolvedValue({ sessionId: "session-new" });
 
     render(
@@ -653,7 +705,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Restart" }));
+    await userEvent.click(screen.getByRole("button", { name: "재시작" }));
 
     await waitFor(() => expect(restartSession).toHaveBeenCalledWith({
       sessionId: "session-active",

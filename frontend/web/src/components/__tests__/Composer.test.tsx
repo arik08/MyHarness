@@ -70,7 +70,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     fireEvent.paste(input, {
       clipboardData: {
         items: [],
@@ -82,7 +82,8 @@ describe("Composer", () => {
 
     const chip = document.querySelector(".pasted-text-chip");
     expect(chip).toBeTruthy();
-    expect(chip?.textContent).toContain("[Pasted text #1 +21 lines]");
+    expect(chip?.textContent).toContain("[붙여넣은 텍스트 #1 +21줄]");
+    expect(screen.getByRole("button", { name: "붙여넣은 텍스트 삭제" })).toBeTruthy();
     expect(document.querySelector(".react-pasted-chip")).toBeNull();
   });
 
@@ -104,7 +105,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     fireEvent.paste(input, {
       clipboardData: {
         items: [item],
@@ -138,7 +139,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "/");
 
     expect(screen.getByRole("option", { selected: true }).textContent).toContain("/help");
@@ -175,7 +176,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "$");
 
     expect(screen.getAllByRole("option")).toHaveLength(skills.length);
@@ -198,7 +199,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "본문 중간 $des");
 
     expect(screen.getByRole("option", { name: /\$design-review/ })).toBeTruthy();
@@ -222,13 +223,36 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...") as HTMLTextAreaElement;
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...") as HTMLTextAreaElement;
     input.focus();
     input.setSelectionRange("이 파일 참고 @rep".length, "이 파일 참고 @rep".length);
     fireEvent.select(input);
     await user.click(screen.getByRole("option", { name: /@report\.md/ }));
 
     expect(input).toHaveProperty("value", "이 파일 참고 @outputs/report.md 해줘");
+  });
+
+  it("uses the file path name for file suggestions when an artifact name is missing", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifacts: [
+            { path: "outputs/fallback-report.html", kind: "html" } as any,
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...") as HTMLTextAreaElement;
+    await user.type(input, "@fallback");
+
+    const option = screen.getByRole("option", { name: /@fallback-report\.html/ });
+    expect(option.textContent || "").toContain("outputs/fallback-report.html");
+    expect(option.textContent || "").not.toContain("undefined");
   });
 
   it("grows the input and composer frame for multiline drafts", async () => {
@@ -239,7 +263,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...") as HTMLTextAreaElement;
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...") as HTMLTextAreaElement;
     Object.defineProperty(input, "scrollHeight", {
       configurable: true,
       get: () => (input.value.includes("\n") ? 44 : 20),
@@ -266,7 +290,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "다음 질문");
     await user.keyboard("{Control>}{Enter}{/Control}");
 
@@ -293,7 +317,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "방금 조건 반영");
     await user.keyboard("{Enter}");
 
@@ -323,7 +347,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.type(screen.getByPlaceholderText("메세지를 입력하세요..."), "이 조건 바로 반영");
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "이 조건 바로 반영");
     await user.keyboard("{Enter}");
 
     expect(document.querySelector(".message-kind-steering")?.textContent).toContain("이 조건 바로 반영");
@@ -385,7 +409,7 @@ describe("Composer", () => {
       messages.dataset.lastScrollTop = "520";
       fireEvent.wheel(messages, { deltaY: -120 });
 
-      await user.type(screen.getByPlaceholderText("메세지를 입력하세요..."), "새 질문");
+      await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "새 질문");
       await user.keyboard("{Enter}");
 
       await waitFor(() => expect(messages.scrollTop).toBe(900));
@@ -411,7 +435,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "지금 이 조건 반영");
     await user.click(screen.getByRole("button", { name: "스티어링 보내기" }));
 
@@ -439,7 +463,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "2");
     const form = input.closest("form");
     expect(form).toBeTruthy();
@@ -520,7 +544,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.type(screen.getByPlaceholderText("메세지를 입력하세요..."), "새 질문");
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "새 질문");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
 
     await waitFor(() => expect(startSession).toHaveBeenCalledWith({
@@ -558,7 +582,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.type(screen.getByPlaceholderText("메세지를 입력하세요..."), "새 질문");
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "새 질문");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
 
     expect(document.querySelector("article.message.user")?.textContent).toContain("새 질문");
@@ -592,7 +616,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "작성 중");
     await user.keyboard("{Shift>}{Tab}{/Shift}");
 

@@ -66,9 +66,9 @@ function SwarmPanelInner({
 					{'⚡ '}
 				</Text>
 				<Text dimColor>
-					Swarm: {teammates.length} agents ({activeCount} active)
+					AI 팀: {teammates.length}명 ({activeCount}명 작업 중)
 				</Text>
-				<Text dimColor> [ctrl+w expand]</Text>
+				<Text dimColor> [ctrl+w 펼치기]</Text>
 			</Box>
 		);
 	}
@@ -79,10 +79,10 @@ function SwarmPanelInner({
 				<Text color="cyan" bold>
 					{'⚡ '}
 				</Text>
-				<Text bold>Swarm</Text>
+				<Text bold>AI 팀</Text>
 				<Text dimColor>
 					{' '}
-					({activeCount}/{teammates.length} active) [ctrl+w collapse]
+					({activeCount}/{teammates.length} 작업 중) [ctrl+w 접기]
 				</Text>
 			</Box>
 
@@ -111,7 +111,7 @@ function SwarmPanelInner({
 
 			{notifications.length > 0 && (
 				<Box flexDirection="column" marginTop={1}>
-					<Text dimColor bold>Recent notifications:</Text>
+					<Text dimColor bold>최근 알림:</Text>
 					{notifications.slice(-3).map((n, i) => (
 						<Box key={i}>
 							<Text dimColor>[{n.from}] </Text>

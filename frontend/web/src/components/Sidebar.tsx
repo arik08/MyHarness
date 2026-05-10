@@ -326,7 +326,13 @@ export function Sidebar() {
 
   async function applyRuntimeChoice(command: "provider" | "model" | "effort", option: RuntimePickerOption) {
     if (!state.sessionId || state.busy) return;
-    const backendCommand = command === "model" && state.runtimePicker.agentScope === "sub" ? "subagent_model" : command;
+    const backendCommand = state.runtimePicker.agentScope === "sub"
+      ? command === "model"
+        ? "subagent_model"
+        : command === "effort"
+          ? "subagent_effort"
+          : command
+      : command;
     if (command === "provider") {
       dispatch({ type: "select_runtime_provider", value: option.value });
     } else if (command === "model") {
@@ -591,7 +597,7 @@ export function Sidebar() {
         <div
           className={`sidebar-project-dropdown${workspaceDropdownOpen ? "" : " hidden"}`}
           role="menu"
-          aria-label="Project list"
+          aria-label="프로젝트 목록"
         >
           {state.workspaces.length ? state.workspaces.map((workspace) => (
             <button
@@ -618,7 +624,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <button className="new-chat" type="button" aria-label="New Chat" data-tooltip="New Chat" data-tooltip-placement="right" onClick={() => void startFreshChat()}>
+      <button className="new-chat" type="button" aria-label="새 대화" data-tooltip="새 대화" data-tooltip-placement="right" onClick={() => void startFreshChat()}>
         <span aria-hidden="true">
           <svg viewBox="0 0 24 24">
             <path d="M12 3H5.5A2.5 2.5 0 0 0 3 5.5v13A2.5 2.5 0 0 0 5.5 21h13A2.5 2.5 0 0 0 21 18.5V12" />
@@ -626,14 +632,14 @@ export function Sidebar() {
             <path d="M13 11 19.2 4.8a1.6 1.6 0 0 1 2.3 2.3L15.3 13.3 12 14Z" />
           </svg>
         </span>
-        New Chat
+        새 대화
       </button>
 
-      <section className="history-panel" aria-label="Chat History">
+      <section className="history-panel" aria-label="대화 기록">
         <div className="history-heading">
-          <span className="section-label">Chat History</span>
+          <span className="section-label">대화 기록</span>
           <button className="history-refresh" type="button" onClick={() => void restartActiveSession()}>
-            Restart
+            재시작
           </button>
         </div>
         <div className="history-list" aria-busy={state.historyLoading ? "true" : "false"}>
@@ -760,6 +766,7 @@ export function Sidebar() {
           model={state.model}
           subagentModel={state.subagentModel}
           effort={state.effort}
+          subagentEffort={state.subagentEffort}
           busy={state.busy}
           geometry={runtimePickerGeometry}
           onScopeChange={(scope) => dispatch({ type: "select_runtime_agent_scope", value: scope })}
@@ -773,7 +780,7 @@ export function Sidebar() {
         type="button"
         aria-label="런타임 설정 열기"
         aria-expanded={state.runtimePicker.open}
-        data-tooltip="Provider, 모델, 추론 강도"
+        data-tooltip="프로바이더, 모델, 추론 강도"
         data-tooltip-placement="right"
         onClick={() => void toggleRuntimePicker()}
       >
@@ -816,6 +823,7 @@ function RuntimePicker({
   model,
   subagentModel,
   effort,
+  subagentEffort,
   busy,
   geometry,
   onScopeChange,
@@ -827,6 +835,7 @@ function RuntimePicker({
   model: string;
   subagentModel: string;
   effort: string;
+  subagentEffort: string;
   busy: boolean;
   geometry: RuntimePickerGeometry;
   onScopeChange: (scope: "main" | "sub") => void;
@@ -902,8 +911,8 @@ function RuntimePicker({
           )) : <p className="runtime-picker-empty">선택 가능한 모델이 없습니다.</p>}
         </RuntimePanel>
       ) : null}
-      {picker.effortOpen && picker.agentScope !== "sub" ? (
-        <RuntimePanel title="추론 노력" value={effort || "-"} className="runtime-picker-effort-panel">
+      {picker.effortOpen ? (
+        <RuntimePanel title="추론 노력" value={(picker.agentScope === "sub" ? subagentEffort : effort) || "-"} className="runtime-picker-effort-panel">
           {picker.efforts.length ? picker.efforts.map((option) => (
             <RuntimeOption
               key={option.value || option.label}

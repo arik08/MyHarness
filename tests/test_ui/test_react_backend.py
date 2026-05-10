@@ -1629,6 +1629,7 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == ["gpt-5.5", "gpt-5.4"]
     assert "gpt-5.4-mini" in [option["value"] for option in runtime_options["models_by_provider"]["codex"]]
     assert runtime_options["subagent_model"] == "gpt-5.4-mini"
+    assert runtime_options["subagent_effort"] == "medium"
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
     none_option = next(option for option in runtime_options["efforts"] if option["value"] == "none")
     assert none_option["label"] == "None"
@@ -1711,6 +1712,36 @@ async def test_backend_host_apply_subagent_model_select_command_updates_tool_met
     assert metadata_model == "gpt-5.4-nano"
     user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
     assert user_event.item.text == "/subagent_model"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_apply_subagent_effort_select_command_updates_tool_metadata(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._apply_select_command("subagent_effort", "high")
+        state = host._bundle.app_state.get()
+        metadata_effort = host._bundle.engine.tool_metadata["subagent_effort"]
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert state.subagent_effort == "high"
+    assert state.effort == "medium"
+    assert metadata_effort == "high"
+    user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
+    assert user_event.item.text == "/subagent_effort"
 
 
 @pytest.mark.asyncio

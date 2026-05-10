@@ -48,9 +48,9 @@ function TodoPanelInner({
 					{'☑ '}
 				</Text>
 				<Text dimColor>
-					Todos: {done}/{total} done
+					작업: {done}/{total} 완료
 				</Text>
-				<Text dimColor> [ctrl+t expand]</Text>
+				<Text dimColor> [ctrl+t 펼치기]</Text>
 			</Box>
 		);
 	}
@@ -62,12 +62,12 @@ function TodoPanelInner({
 					{'☑ '}
 				</Text>
 				<Text bold>
-					Todo List{' '}
+					작업 목록{' '}
 				</Text>
 				<Text dimColor>
 					({done}/{total})
 				</Text>
-				<Text dimColor> [ctrl+t compact]</Text>
+				<Text dimColor> [ctrl+t 간단히]</Text>
 			</Box>
 			{items.map((item, i) => (
 				<Box key={i}>

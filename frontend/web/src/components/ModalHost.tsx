@@ -64,10 +64,10 @@ export function ModalHost() {
             </svg>
           </button>
           <h2>모델 설정</h2>
-          <p className="settings-helper">Provider, 모델, 추론 강도 선택은 기존 backend 선택 흐름을 사용합니다.</p>
+          <p className="settings-helper">프로바이더, 모델, 추론 강도 선택은 기존 백엔드 선택 흐름을 사용합니다.</p>
           <div className="settings-grid">
             <button className="settings-row" type="button" onClick={() => void requestRuntimeChoice("provider")}>
-              <strong>Provider</strong>
+              <strong>프로바이더</strong>
               <small>{state.provider}</small>
             </button>
             <button className="settings-row" type="button" onClick={() => void requestRuntimeChoice("model")}>

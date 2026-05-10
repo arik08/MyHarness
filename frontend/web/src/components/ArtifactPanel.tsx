@@ -6,6 +6,7 @@ import type { ArtifactSummary } from "../types/backend";
 import type { ArtifactAiEditComment, ArtifactAiEditSelection, WorkflowEvent } from "../types/ui";
 import {
   artifactCategory,
+  artifactDisplayName,
   artifactExtension,
   artifactIcon,
   formatBytes,
@@ -64,7 +65,7 @@ export function clampArtifactPanelWidth(value: number, options: { windowWidth: n
 }
 
 function artifactTypeBadge(artifact: ArtifactSummary) {
-  const ext = artifactExtension(artifact.path || artifact.name);
+  const ext = artifactExtension(artifact.path || artifact.name || "");
   const category = artifactCategory(artifact);
   if (["html", "htm"].includes(ext)) return { label: "HTML", tone: "web" };
   if (["md", "markdown"].includes(ext)) return { label: "MD", tone: "markdown" };
@@ -164,7 +165,7 @@ type ArtifactVersionInfo = {
 };
 
 function artifactVersionInfo(artifact: ArtifactSummary): ArtifactVersionInfo {
-  const path = normalizeProjectFilePath(artifact.path || artifact.name);
+  const path = normalizeProjectFilePath(artifact.path || artifact.name || "");
   const slashIndex = path.lastIndexOf("/");
   const directory = slashIndex >= 0 ? path.slice(0, slashIndex) : "";
   const fileName = slashIndex >= 0 ? path.slice(slashIndex + 1) : path;
@@ -228,8 +229,9 @@ function ArtifactAction({
 }
 
 function ArtifactDownloadAction({ artifact, url }: { artifact: ArtifactSummary; url: string }) {
+  const displayName = artifactDisplayName(artifact);
   return (
-    <a className="artifact-action" href={url} download={artifact.name} aria-label={`${artifact.name} 다운로드`} data-tooltip="다운로드">
+    <a className="artifact-action" href={url} download={displayName} aria-label={`${displayName} 다운로드`} data-tooltip="다운로드">
       <Icon name="download" />
     </a>
   );
@@ -243,6 +245,8 @@ export function ArtifactPanel() {
   const [fileSort, setFileSort] = useState(() => localStorage.getItem("myharness:projectFileSortMode") || "recent");
   const [fullscreen, setFullscreen] = useState(false);
   const [draftContent, setDraftContent] = useState("");
+  const [draftPath, setDraftPath] = useState("");
+  const [draftUserEdited, setDraftUserEdited] = useState(false);
   const [copyLabel, setCopyLabel] = useState("복사");
   const [sourceMode, setSourceMode] = useState(false);
   const [htmlEditMode, setHtmlEditMode] = useState(false);
@@ -399,7 +403,9 @@ export function ArtifactPanel() {
   }, [titleRenameEditing]);
 
   useEffect(() => {
-    setDraftContent(String(state.activeArtifactPayload?.content || ""));
+    setDraftContent(String(state.activeArtifactPayload?.content ?? ""));
+    setDraftPath(state.activeArtifact?.path || "");
+    setDraftUserEdited(false);
     setCopyLabel("복사");
     setSourceMode(false);
   }, [state.activeArtifact?.path, state.activeArtifactPayload]);
@@ -459,6 +465,8 @@ export function ArtifactPanel() {
         && typeof event.data.html === "string"
       ) {
         setDraftContent(event.data.html);
+        setDraftPath(event.data.path);
+        setDraftUserEdited(true);
       }
       if (
         event.data?.type === artifactAiSelectionMessage
@@ -542,17 +550,18 @@ export function ArtifactPanel() {
   ]);
 
   async function openArtifact(artifact: ArtifactSummary) {
-    dispatch({ type: "open_artifact", artifact });
-    setLoadingPath(artifact.path);
+    const displayArtifact = { ...artifact, name: artifactDisplayName(artifact) };
+    dispatch({ type: "open_artifact", artifact: displayArtifact });
+    setLoadingPath(displayArtifact.path);
     try {
       const payload = await readArtifact({
         sessionId: state.sessionId || undefined,
         clientId: state.clientId,
-        workspacePath: artifact.workspace?.path || state.workspacePath,
-        workspaceName: artifact.workspace?.name || state.workspaceName,
-        path: artifact.path,
+        workspacePath: displayArtifact.workspace?.path || state.workspacePath,
+        workspaceName: displayArtifact.workspace?.name || state.workspaceName,
+        path: displayArtifact.path,
       });
-      dispatch({ type: "open_artifact", artifact: { ...artifact, workspace: payload.workspace || artifact.workspace }, payload });
+      dispatch({ type: "open_artifact", artifact: { ...displayArtifact, workspace: payload.workspace || displayArtifact.workspace }, payload });
     } catch (error) {
       dispatch({
         type: "open_modal",
@@ -591,17 +600,20 @@ export function ArtifactPanel() {
 
   const active = state.activeArtifact;
   const payload = state.activeArtifactPayload;
+  const activePath = active?.path || "";
+  const payloadHasContent = typeof payload?.content === "string";
   const canSave = Boolean(active && payload && isEditablePayload(active, payload));
-  const canShowSource = Boolean(active && payload?.content);
+  const canShowSource = Boolean(active && payloadHasContent);
   const activeExt = artifactExtension(active?.path || active?.name || "");
   const canEditHtmlPreview = Boolean(
     active
-      && payload?.content
+      && payloadHasContent
       && (String(payload.kind || active.kind || "").toLowerCase() === "html" || activeExt === "html" || activeExt === "htm"),
   );
-  const originalContent = String(payload?.content || "");
-  const draftDirty = canEditHtmlPreview && draftContent !== originalContent;
-  const panelTitle = active ? `${active.name}${draftDirty ? " (편집됨)" : ""}` : "프로젝트 파일";
+  const originalContent = String(payload?.content ?? "");
+  const draftContentForActive = draftUserEdited && draftPath === activePath ? draftContent : originalContent;
+  const draftDirty = canSave && draftUserEdited && draftPath === activePath && draftContentForActive !== originalContent;
+  const panelTitle = active ? `${artifactDisplayName(active)}${draftDirty ? " (편집됨)" : ""}` : "프로젝트 파일";
   const aiEditElapsedSeconds = aiEditProgressStartedAt === null
     ? 0
     : Math.max(0, Math.floor((aiEditProgressNow - aiEditProgressStartedAt) / 1000));
@@ -693,8 +705,8 @@ export function ArtifactPanel() {
 
   async function copyActiveArtifact() {
     if (!active || !payload) return;
-    const text = canSave ? draftContent : String(payload.content || payload.dataUrl || "");
-    if (!text) return;
+    const text = canSave ? draftContentForActive : String(payload.content ?? payload.dataUrl ?? "");
+    if (!canSave && !text) return;
     try {
       await navigator.clipboard.writeText(text);
       setCopyLabel("복사됨");
@@ -713,7 +725,7 @@ export function ArtifactPanel() {
     try {
       const saved = await overwriteArtifact({
         path: active.path,
-        content: draftContent,
+        content: draftContentForActive,
         clientId: state.clientId,
         workspacePath: active.workspace?.path || payload.workspace?.path || state.workspacePath,
         workspaceName: active.workspace?.name || payload.workspace?.name || state.workspaceName,
@@ -724,7 +736,9 @@ export function ArtifactPanel() {
         artifacts: state.artifacts.map((item) => item.path === active.path ? nextArtifact : item),
       });
       dispatch({ type: "open_artifact", artifact: nextArtifact, payload: saved.payload });
-      setDraftContent(String(saved.payload.content || draftContent));
+      setDraftContent(String(saved.payload.content ?? draftContentForActive));
+      setDraftPath(nextArtifact.path);
+      setDraftUserEdited(false);
     } catch (error) {
       setAiEditStatus("");
       dispatch({
@@ -738,6 +752,8 @@ export function ArtifactPanel() {
 
   function cancelHtmlDraft() {
     setDraftContent(originalContent);
+    setDraftPath(active?.path || "");
+    setDraftUserEdited(false);
     setHtmlEditMode(false);
   }
 
@@ -824,7 +840,9 @@ export function ArtifactPanel() {
     });
     if (state.activeArtifact?.path === artifact.path) {
       dispatch({ type: "open_artifact", artifact: nextArtifact, payload: saved.payload });
-      setDraftContent(String(saved.payload.content || ""));
+      setDraftContent(String(saved.payload.content ?? ""));
+      setDraftPath(nextArtifact.path);
+      setDraftUserEdited(false);
     }
     const previousPath = normalizeProjectFilePath(artifact.path);
     const nextPath = normalizeProjectFilePath(saved.artifact.path);
@@ -857,7 +875,7 @@ export function ArtifactPanel() {
 
   function beginTitleRename() {
     if (!active || titleRenameSaving) return;
-    setTitleRenameValue(active.name);
+    setTitleRenameValue(artifactDisplayName(active));
     setTitleRenameEditing(true);
   }
 
@@ -870,7 +888,7 @@ export function ArtifactPanel() {
   async function commitTitleRename() {
     if (!active || titleRenameCommittingRef.current) return;
     const nextName = titleRenameValue.trim();
-    if (!nextName || nextName === active.name) {
+    if (!nextName || nextName === artifactDisplayName(active)) {
       cancelTitleRename();
       return;
     }
@@ -975,7 +993,7 @@ export function ArtifactPanel() {
                           }}
                         >
                           <span>{info.label}</span>
-                          <small>{artifact.name || artifactFileName(artifact.path)}</small>
+                          <small>{artifactDisplayName(artifact)}</small>
                         </button>
                       );
                     })}
@@ -1008,7 +1026,7 @@ export function ArtifactPanel() {
                 className="artifact-title-rename-trigger"
                 type="button"
                 onDoubleClick={beginTitleRename}
-                aria-label={`${active.name} 파일명 수정`}
+                aria-label={`${artifactDisplayName(active)} 파일명 수정`}
                 data-tooltip="더블클릭으로 파일명 수정"
               >
                 <strong>{panelTitle}</strong>
@@ -1185,13 +1203,18 @@ export function ArtifactPanel() {
           <ArtifactPreview
             artifact={active}
             payload={payload}
-            draftContent={draftContent}
+            draftContent={draftContentForActive}
+            draftDirty={draftDirty}
             sourceMode={sourceMode}
             downloadUrl={downloadUrl(active, state)}
             htmlEditMode={htmlEditMode}
             aiSelectionEnabled={canEditHtmlPreview && htmlEditMode}
             aiEditComments={aiEditComments}
-            onDraftContentChange={setDraftContent}
+            onDraftContentChange={(value) => {
+              setDraftContent(value);
+              setDraftPath(active.path);
+              setDraftUserEdited(true);
+            }}
           />
         ) : (
           <p className="artifact-empty">산출물을 불러오는 중...</p>
@@ -1325,7 +1348,7 @@ function ArtifactList({
           <section className="project-file-section project-file-section-pinned">
             <div className="project-file-section-header project-file-section-header-static">
               <span className="project-file-section-caret" aria-hidden="true">★</span>
-              <span className="project-file-section-title">Pinned</span>
+              <span className="project-file-section-title">즐겨찾기</span>
               <small>{pinnedArtifacts.length}개</small>
             </div>
             <div className="project-file-section-body">
@@ -1404,15 +1427,16 @@ function ProjectFileItem({
   onTogglePinned: (artifact: ArtifactSummary) => void;
 }) {
   const badge = artifactTypeBadge(artifact);
+  const displayName = artifactDisplayName(artifact);
   const [editingName, setEditingName] = useState(false);
-  const [nameValue, setNameValue] = useState(artifact.name || artifact.path.split(/[\\/]/).pop() || "");
+  const [nameValue, setNameValue] = useState(displayName);
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameError, setRenameError] = useState("");
   const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!editingName) {
-      setNameValue(artifact.name || artifact.path.split(/[\\/]/).pop() || "");
+      setNameValue(displayName);
       setRenameError("");
       return;
     }
@@ -1420,24 +1444,24 @@ function ProjectFileItem({
       nameInputRef.current?.focus();
       nameInputRef.current?.select();
     }, 0);
-  }, [artifact.name, artifact.path, editingName]);
+  }, [displayName, editingName]);
 
   function beginRename() {
-    setNameValue(artifact.name || artifact.path.split(/[\\/]/).pop() || "");
+    setNameValue(displayName);
     setRenameError("");
     setEditingName(true);
   }
 
   function cancelRename() {
     setEditingName(false);
-    setNameValue(artifact.name || artifact.path.split(/[\\/]/).pop() || "");
+    setNameValue(displayName);
     setRenameError("");
   }
 
   async function commitRename() {
     if (renameSaving) return;
     const nextName = nameValue.trim();
-    const currentName = artifact.name || artifact.path.split(/[\\/]/).pop() || "";
+    const currentName = displayName;
     if (!nextName) {
       setRenameError("파일명을 입력하세요.");
       return;
@@ -1462,7 +1486,7 @@ function ProjectFileItem({
     <button
       className={`project-file-pin${pinned ? " active" : ""}`}
       type="button"
-      aria-label={`${artifact.name} ${pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}`}
+      aria-label={`${displayName} ${pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}`}
       aria-pressed={pinned ? "true" : "false"}
       data-tooltip={pinned ? "즐겨찾기 해제" : "즐겨찾기 추가"}
       onClick={(event) => {
@@ -1483,7 +1507,7 @@ function ProjectFileItem({
           <span className="artifact-card-copy project-file-inline-rename">
             <input
               ref={nameInputRef}
-              aria-label={`${artifact.name || artifact.path} 새 파일명`}
+              aria-label={`${displayName} 새 파일명`}
               value={nameValue}
               disabled={renameSaving}
               onBlur={() => void commitRename()}
@@ -1502,9 +1526,9 @@ function ProjectFileItem({
             {renameError ? <small>{renameError}</small> : null}
           </span>
         ) : (
-          <button className="project-file-open" type="button" aria-label={`${artifact.name || artifact.path} 열기`} data-tooltip={artifact.name || artifact.path} onClick={() => void onOpen(artifact)}>
+          <button className="project-file-open" type="button" aria-label={`${displayName} 열기`} data-tooltip={displayName} onClick={() => void onOpen(artifact)}>
             <span className="artifact-card-copy">
-              <strong>{artifact.name || artifact.path}</strong>
+              <strong>{displayName}</strong>
             </span>
           </button>
         )}
@@ -1514,7 +1538,7 @@ function ProjectFileItem({
         <button
           className="project-file-rename"
           type="button"
-          aria-label={`${artifact.name} 파일명 수정`}
+          aria-label={`${displayName} 파일명 수정`}
           data-tooltip="파일명 수정"
           disabled={renameSaving}
           onClick={(event) => {
@@ -1527,7 +1551,7 @@ function ProjectFileItem({
         <button
           className="project-file-delete"
           type="button"
-          aria-label={deleteReady ? `${artifact.name} 삭제 확인` : `${artifact.name} 삭제`}
+          aria-label={deleteReady ? `${displayName} 삭제 확인` : `${displayName} 삭제`}
           data-tooltip={deleteReady ? "한 번 더 누르면 삭제됩니다" : "파일 삭제"}
           disabled={deleting}
           onClick={(event) => {
@@ -1538,7 +1562,7 @@ function ProjectFileItem({
           <Icon name={deleteReady ? "warning" : "trash"} />
         </button>
         <span className="project-file-size artifact-card-size">{loading ? "불러오는 중" : formatBytes(artifact.size)}</span>
-        <a className="project-file-download" href={downloadUrl} download={artifact.name} aria-label={`${artifact.name} 다운로드`} data-tooltip="다운로드" onClick={(event) => event.stopPropagation()}>
+        <a className="project-file-download" href={downloadUrl} download={displayName} aria-label={`${displayName} 다운로드`} data-tooltip="다운로드" onClick={(event) => event.stopPropagation()}>
           <Icon name="download" />
         </a>
       </span>
@@ -1698,7 +1722,7 @@ function OrganizeProjectFilesModal({
                 />
                 <span>
                   <strong>{path}</strong>
-                  <small>{`outputs/${artifact.name || path}`}</small>
+                  <small>{`outputs/${artifactDisplayName(artifact)}`}</small>
                 </span>
               </label>
             );

@@ -66,6 +66,7 @@ export type AppState = {
   providerLabel: string;
   model: string;
   subagentModel: string;
+  subagentEffort: string;
   effort: string;
   permissionMode: string;
   chatTitle: string;

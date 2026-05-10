@@ -2,6 +2,7 @@ import { type ReactNode, useState } from "react";
 import { saveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ChatMessage } from "../types/ui";
+import { artifactName } from "../utils/artifacts";
 
 function answerFileName(title: string, text: string) {
   const source = title.trim() && title.trim() !== "MyHarness"
@@ -36,7 +37,7 @@ async function copyTextToClipboard(text: string) {
   const copied = document.execCommand("copy");
   textArea.remove();
   if (!copied) {
-    throw new Error("Copy failed");
+    throw new Error("복사에 실패했습니다.");
   }
 }
 
@@ -76,7 +77,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
     try {
       const payload = await saveArtifact(answerFileName(state.chatTitle, text), text, state.sessionId, state.clientId);
       dispatch({ type: "refresh_artifacts" });
-      setStatus(payload.artifact?.path ? `${payload.artifact.path} 저장됨` : "저장했습니다.");
+      setStatus(payload.artifact?.path ? `${artifactName(payload.artifact.path)} 저장됨` : "저장했습니다.");
     } catch (error) {
       setStatus(`저장 실패: ${error instanceof Error ? error.message : String(error)}`);
     } finally {

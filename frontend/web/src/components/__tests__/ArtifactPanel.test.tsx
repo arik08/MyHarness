@@ -633,6 +633,67 @@ describe("ArtifactPanel", () => {
     await waitFor(() => expect(actions[2].disabled).toBe(true));
   });
 
+  it("keeps an intentionally blank HTML draft instead of showing the original preview", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.mocked(overwriteArtifact).mockResolvedValueOnce({
+      artifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 0 },
+      payload: { kind: "html", content: "" },
+    });
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          artifacts: [{ path: "outputs/report.html", name: "report.html", kind: "html", size: 42 }],
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 42 },
+          activeArtifactPayload: { kind: "html", content: "<html><body>Preview</body></html>" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+    const actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    await userEvent.click(actions[0]);
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactHtmlEditMessage,
+          path: "outputs/report.html",
+          html: "",
+        },
+      }));
+    });
+
+    await waitFor(() => expect(actions[1].disabled).toBe(false));
+    expect(frame.srcdoc).not.toContain("<html><body>Preview</body></html>");
+    await userEvent.click(screen.getByRole("button", { name: "소스코드 복사" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(""));
+
+    await userEvent.click(actions[1]);
+
+    await waitFor(() => expect(overwriteArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      path: "outputs/report.html",
+      content: "",
+    })));
+    expect(await screen.findByRole("button", { name: "본문 수정" })).toBeTruthy();
+    const sourceButton = screen.getByRole("button", { name: "소스코드 확인" }) as HTMLButtonElement;
+    expect(sourceButton.disabled).toBe(false);
+    expect((await screen.findByTitle("report.html") as HTMLIFrameElement).srcdoc).not.toContain("Preview");
+
+    await userEvent.click(sourceButton);
+    expect(document.querySelector(".artifact-source code")?.textContent).toBe("");
+  });
+
   it("saves restored history artifacts through their resolved workspace", async () => {
     render(
       <AppStateProvider
@@ -1415,7 +1476,7 @@ describe("ArtifactPanel", () => {
     await waitFor(() => expect(screen.queryByText("report.html")).toBeNull());
   });
 
-  it("pins project files into a virtual Pinned section without removing the original row", async () => {
+  it("pins project files into a virtual favorites section without removing the original row", async () => {
     vi.mocked(listProjectFiles).mockResolvedValueOnce({
       scope: "default",
       files: [
@@ -1445,7 +1506,7 @@ describe("ArtifactPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "report.html 즐겨찾기 추가" }));
 
     const pinnedSection = document.querySelector(".project-file-section-pinned");
-    expect(pinnedSection?.querySelector(".project-file-section-title")?.textContent).toBe("Pinned");
+    expect(pinnedSection?.querySelector(".project-file-section-title")?.textContent).toBe("즐겨찾기");
     expect(pinnedSection?.querySelector(".project-file-item strong")?.textContent).toBe("report.html");
     expect(pinnedSection?.querySelector(".project-file-main")?.classList.contains("project-file-main-pinned")).toBe(true);
     expect([...document.querySelectorAll(".project-file-item strong")].filter((node) => node.textContent === "report.html")).toHaveLength(2);
@@ -1571,6 +1632,38 @@ describe("ArtifactPanel", () => {
     expect(badgeByFileName.get("script.py")?.classList.contains("artifact-card-icon-code")).toBe(true);
     expect(badgeByFileName.get("chart.png")?.textContent).toBe("PNG");
     expect(badgeByFileName.get("chart.png")?.classList.contains("artifact-card-icon-image")).toBe(true);
+  });
+
+  it("uses the file path name when a project file summary has no name", async () => {
+    const namelessArtifact = { path: "outputs/fallback-report.html", kind: "html", size: 42 } as any;
+    vi.mocked(readArtifact).mockResolvedValueOnce({ kind: "html", content: "<html><body>Fallback</body></html>" });
+    vi.mocked(listProjectFiles).mockResolvedValueOnce({
+      scope: "default",
+      files: [namelessArtifact],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          artifacts: [namelessArtifact],
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "fallback-report.html 열기" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "fallback-report.html 파일명 수정" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "fallback-report.html 삭제" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "fallback-report.html 다운로드" })).toBeTruthy();
+    expect(document.body.textContent || "").not.toContain("undefined");
+
+    await userEvent.click(screen.getByRole("button", { name: "fallback-report.html 열기" }));
+    expect(await screen.findByRole("button", { name: "fallback-report.html 파일명 수정" })).toBeTruthy();
+    expect(await screen.findByTitle("fallback-report.html")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "fallback-report.html 다운로드" })).toBeTruthy();
   });
 
   it("separates markdown files from document files in the project file filter", async () => {

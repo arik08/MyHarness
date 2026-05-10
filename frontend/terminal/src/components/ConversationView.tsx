@@ -155,7 +155,7 @@ function MessageRow({
 				return (
 					<Box marginTop={0}>
 						<Text>
-							<Text color={theme.colors.warning}>[system]</Text>
+							<Text color={theme.colors.warning}>[시스템]</Text>
 							<Text> {item.text}</Text>
 						</Text>
 					</Box>

@@ -11,6 +11,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 
 - Prefer one self-contained `.html` file with inline CSS and JS.
 - When the user asks for research, investigation, comparison, analysis, source review, or a similar information-gathering task followed by "write/create a report" and does not specify a format, treat the deliverable as an HTML web report. Explicit format requests such as PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, or slides override this default.
+- If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use this scale: `5000~8000` tokens = short report, `10000` = medium report, `15000~20000` = long report, and `20000+` = very long deep report. For `30000 token level` or `30000토큰 수준`, target at least roughly `25000` estimated tokens of substantive report content unless a hard model/tool limit prevents it; estimate the final artifact size and expand before finishing if it is materially under the requested tier.
 - Use a short purpose-specific kebab-case filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it.
 - Keep dependencies minimal. Use no CDN when CSS/SVG is enough; use CDN libraries when they materially improve the result.
 - Make the artifact readable in a constrained iframe and in a normal browser window.

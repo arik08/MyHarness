@@ -118,6 +118,13 @@ def _subagent_model_from_context(context: ToolExecutionContext) -> str | None:
     return None
 
 
+def _subagent_effort_from_context(context: ToolExecutionContext) -> str | None:
+    value = context.metadata.get("subagent_effort")
+    if isinstance(value, str):
+        return value.strip() or None
+    return None
+
+
 def _role_uses_main_model(description: str, prompt: str, subagent_type: str | None) -> bool:
     text = " ".join(
         part.lower()
@@ -214,6 +221,7 @@ class AgentTool(BaseTool):
         if _should_use_agent_definition(team, arguments.subagent_type):
             agent_def = get_agent_definition(arguments.subagent_type)
         agent_model, model_label, model_source = _resolve_agent_model(arguments, agent_def, context)
+        agent_effort = _subagent_effort_from_context(context)
 
         # Resolve team and agent name for the swarm backend
         agent_name = _agent_name_for_spawn(arguments.description, team, arguments.subagent_type)
@@ -238,6 +246,7 @@ class AgentTool(BaseTool):
             cwd=str(context.cwd),
             parent_session_id="main",
             model=agent_model,
+            effort=agent_effort,
             command=arguments.command,
             system_prompt=agent_def.system_prompt if agent_def else None,
             permissions=agent_def.permissions if agent_def else [],
@@ -269,6 +278,8 @@ class AgentTool(BaseTool):
             task_record.metadata["agent_description"] = arguments.description
             task_record.metadata["agent_model"] = model_label
             task_record.metadata["agent_model_source"] = model_source
+            if agent_effort:
+                task_record.metadata["agent_effort"] = agent_effort
             task_record.metadata["agent_prompt"] = delegated_prompt
             task_record.metadata["team"] = team
             manager.notify_task_updated(result.task_id)

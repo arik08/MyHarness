@@ -1158,17 +1158,17 @@ describe("MessageList", () => {
     );
 
     const code = document.querySelector("pre code.language-ts");
-    const copyButton = screen.getByRole("button", { name: "Copy code" });
+    const copyButton = screen.getByRole("button", { name: "코드 복사" });
 
     expect(code?.classList.contains("hljs")).toBe(true);
     expect(code?.querySelector(".hljs-keyword")?.textContent).toBe("const");
     expect(copyButton.getAttribute("data-tooltip")).toBe("코드 복사");
-    expect(copyButton.textContent).toContain("Copy");
+    expect(copyButton.textContent).toContain("복사");
 
     await userEvent.click(copyButton);
 
     expect(writeText).toHaveBeenCalledWith("const answer = 42;\nconsole.log(answer);\n");
-    expect(copyButton.textContent).toContain("Copied");
+    expect(copyButton.textContent).toContain("복사됨");
   });
 
   it("keeps copy actions and highlighting for language-less Python code blocks", () => {
@@ -1192,7 +1192,7 @@ describe("MessageList", () => {
 
     const code = document.querySelector("pre code");
 
-    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "코드 복사" })).toBeTruthy();
     expect(code?.classList.contains("hljs")).toBe(true);
     expect(code?.classList.contains("language-python")).toBe(true);
     expect(code?.querySelector(".hljs-built_in")?.textContent).toBe("print");
@@ -1437,6 +1437,8 @@ describe("MessageList", () => {
     expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
     expect(screen.getByText("작성 중인 결과물 - tailwind_design_system_필요성_보고서.html")).toBeTruthy();
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html>");
+    expect(document.querySelector(".workflow-list")?.textContent || "").not.toContain("outputs/tailwind_design_system_필요성_보고서.html");
+    expect(document.querySelector(".workflow-list .workflow-step.child strong")?.textContent).toBe("파일 작성");
   });
 
   it("renders one write preview when a stale running event follows the completed same-path event", () => {
@@ -1483,6 +1485,9 @@ describe("MessageList", () => {
 
     expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html><h1>Done</h1>");
+    expect(document.querySelector(".workflow-list .workflow-step.child strong")?.textContent).toBe("파일 작성");
+    expect(document.querySelector(".workflow-list .workflow-step.child small")?.textContent).toBe("완료 · live.html");
+    expect(document.querySelector(".workflow-list")?.textContent || "").not.toContain("outputs/live.html");
   });
 
   it("renders one write preview when a duplicate completed same-path event follows a running event", () => {
@@ -1604,6 +1609,7 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("report.html");
+    expect(document.querySelector(".workflow-list")?.textContent || "").not.toContain("outputs/report.html");
     expect(screen.getByText("-<h1>Old</h1>").className).toContain("removed");
     expect(screen.getByText("+<h1>New</h1>").className).toContain("added");
     expect(document.querySelectorAll(".workflow-diff-line")).toHaveLength(6);
@@ -1853,6 +1859,41 @@ describe("MessageList", () => {
     expect(screen.getByLabelText("본문 저장")).toBeTruthy();
   });
 
+  it("shows only the filename after saving a completed assistant answer", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/artifact/save") {
+        return {
+          ok: true,
+          json: async () => ({
+            artifact: { path: "outputs/saved-answer.md", kind: "markdown" },
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            { id: "assistant-1", role: "assistant", text: "저장할 답변입니다.", isComplete: true },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByLabelText("본문 저장"));
+
+    expect(await screen.findByText("saved-answer.md 저장됨")).toBeTruthy();
+    expect(document.body.textContent || "").not.toContain("outputs/saved-answer.md 저장됨");
+  });
+
   it("renders resolved artifact cards at the file reference and opens the preview panel", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -2054,6 +2095,48 @@ describe("MessageList", () => {
     expect(assistantContent).toContain("완료했습니다. HTML 보고서를 아래 경로에 작성했습니다.");
     expect(assistantContent).toContain("포스코_자금그룹_채권업무_프로세스_보고서.html");
     expect(assistantContent).not.toContain("`");
+  });
+
+  it("shows filename-only artifact cards when the resolver omits a name", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact/resolve?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            path: "outputs/fallback-report.html",
+            kind: "html",
+            size: 1024,
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "완료했습니다.\n\n`outputs/fallback-report.html`",
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const card = await screen.findByRole("button", { name: "fallback-report.html 미리보기 열기" });
+    expect(card.textContent || "").toContain("fallback-report.html");
+    expect(card.textContent || "").not.toContain("outputs/fallback-report.html");
+    expect(document.body.textContent || "").not.toContain("undefined");
   });
 
   it("keeps an early completed mermaid chart mounted after artifact cards resolve", async () => {

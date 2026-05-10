@@ -490,6 +490,7 @@ class Settings(BaseModel):
     api_key: str = ""
     model: str = "claude-sonnet-4-6"
     subagent_model: str = "gpt-5.4-mini"
+    subagent_effort: str = "medium"
     max_tokens: int = 16384
     base_url: str | None = None
     timeout: float = 180.0

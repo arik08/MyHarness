@@ -3593,6 +3593,10 @@ async function createBackendSession(options = {}) {
   if (subagentModel) {
     args.push("--subagent-model", subagentModel);
   }
+  const subagentEffort = String(options.subagentEffort || options.subagent_effort || "").trim();
+  if (subagentEffort) {
+    args.push("--subagent-effort", subagentEffort);
+  }
   const activeProfile = String(options.activeProfile || options.active_profile || "").trim();
   if (activeProfile) {
     args.push("--active-profile", activeProfile);
@@ -3980,6 +3984,7 @@ async function handleApi(request, response, pathname) {
         activeProfile: body.activeProfile || body.active_profile,
         model: body.model,
         subagentModel: body.subagentModel || body.subagent_model,
+        subagentEffort: body.subagentEffort || body.subagent_effort,
         effort: body.effort,
         systemPrompt: body.systemPrompt,
         workspaceScope,

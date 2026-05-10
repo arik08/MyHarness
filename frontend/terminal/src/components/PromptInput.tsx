@@ -222,7 +222,7 @@ export function PromptInput({
 			{busy ? (
 				<Box flexDirection="column" marginBottom={0}>
 					<Box>
-						<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : 'Running...')} />
+						<Spinner label={statusLabel ?? (toolName ? `${toolName} 실행 중...` : '실행 중...')} />
 					</Box>
 				</Box>
 			) : null}

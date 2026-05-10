@@ -70,8 +70,8 @@ async def test_textual_app_runs_one_model_turn(tmp_path, monkeypatch):
         await pilot.press("enter")
         await pilot.pause()
 
-    assert any("user> hi" in line for line in app.transcript_lines)
-    assert any("assistant> hello from textual" in line for line in app.transcript_lines)
+    assert any("사용자> hi" in line for line in app.transcript_lines)
+    assert any("어시스턴트> hello from textual" in line for line in app.transcript_lines)
 
 
 @pytest.mark.asyncio
@@ -112,8 +112,8 @@ async def test_textual_app_handles_ask_user_tool(tmp_path, monkeypatch):
         await pilot.press("enter")
         await pilot.pause()
 
-    assert any("tool-result> ask_user_question: green" in line for line in app.transcript_lines)
-    assert any("assistant> chosen green" in line for line in app.transcript_lines)
+    assert any("도구결과> ask_user_question: green" in line for line in app.transcript_lines)
+    assert any("어시스턴트> chosen green" in line for line in app.transcript_lines)
 
 
 @pytest.mark.asyncio

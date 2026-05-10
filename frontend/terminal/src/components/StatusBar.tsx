@@ -35,7 +35,7 @@ function PlanModeIndicator({
 		if (flash) {
 			return (
 				<Text color="green" bold>
-					{' PLAN MODE OFF '}
+					{' 계획 모드 꺼짐 '}
 				</Text>
 			);
 		}
@@ -46,9 +46,9 @@ function PlanModeIndicator({
 
 	return (
 		<Text>
-			<Text color="yellow" bold>{' [PLAN MODE] '}</Text>
+			<Text color="yellow" bold>{' [계획 모드] '}</Text>
 			{isBlockedTool ? (
-				<Text color="red">{'\uD83D\uDEAB '}{activeToolName} blocked</Text>
+				<Text color="red">{'\uD83D\uDEAB '}{activeToolName} 차단됨</Text>
 			) : null}
 		</Text>
 	);
@@ -64,7 +64,7 @@ function StatusBarInner({
 	activeToolName?: string;
 }): React.JSX.Element {
 	const {theme} = useTheme();
-	const model = String(status.model ?? 'unknown');
+	const model = String(status.model ?? '알 수 없음');
 	const mode = String(status.permission_mode ?? 'default');
 	const taskCount = tasks.length;
 	const mcpCount = Number(status.mcp_connected ?? 0);
@@ -77,21 +77,21 @@ function StatusBarInner({
 			<Text dimColor>{'─'.repeat(60)}</Text>
 			<Box flexDirection="row" alignItems="center">
 				<Text>
-					<Text color={theme.colors.primary} dimColor>model: {model}</Text>
+					<Text color={theme.colors.primary} dimColor>모델: {model}</Text>
 					<Text dimColor>{SEP}</Text>
 					{inputTokens > 0 || outputTokens > 0 ? (
 						<>
-							<Text dimColor>tokens: {formatNum(inputTokens)}{'\u2193'} {formatNum(outputTokens)}{'\u2191'}</Text>
+							<Text dimColor>토큰: {formatNum(inputTokens)}{'\u2193'} {formatNum(outputTokens)}{'\u2191'}</Text>
 							<Text dimColor>{SEP}</Text>
 						</>
 					) : null}
 					{!isPlanMode ? (
-						<Text dimColor>mode: {mode}</Text>
+						<Text dimColor>모드: {mode}</Text>
 					) : null}
 					{taskCount > 0 ? (
 						<>
 							<Text dimColor>{SEP}</Text>
-							<Text dimColor>tasks: {taskCount}</Text>
+							<Text dimColor>작업: {taskCount}</Text>
 						</>
 					) : null}
 					{mcpCount > 0 ? (

@@ -26,20 +26,20 @@ export function WelcomeBanner(): React.JSX.Element {
 				))}
 				<Text> </Text>
 				<Text>
-					<Text dimColor> An AI-powered coding assistant</Text>
+					<Text dimColor> 사무계 업무용 AI 에이전트</Text>
 					<Text dimColor>{'  '}v{VERSION}</Text>
 				</Text>
 				<Text> </Text>
 				<Text>
 					<Text dimColor> </Text>
 					<Text color={theme.colors.primary}>/help</Text>
-					<Text dimColor> commands</Text>
+					<Text dimColor> 명령어</Text>
 					<Text dimColor>{'  '}|{'  '}</Text>
 					<Text color={theme.colors.primary}>/model</Text>
-					<Text dimColor> switch</Text>
+					<Text dimColor> 전환</Text>
 					<Text dimColor>{'  '}|{'  '}</Text>
 					<Text color={theme.colors.primary}>Ctrl+C</Text>
-					<Text dimColor> exit</Text>
+					<Text dimColor> 종료</Text>
 				</Text>
 			</Box>
 		</Box>

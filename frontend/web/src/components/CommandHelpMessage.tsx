@@ -358,9 +358,9 @@ export function CommandHelpMessage({ text }: { text: string }) {
       ) : null}
       {parsed.hasSkills ? (
         <ToggleCatalog
-          label="Skills"
+          label="스킬"
           items={skillItems}
-          emptyText="No custom skills available"
+          emptyText="사용 가능한 커스텀 스킬이 없습니다"
           onToggle={(item) => void toggleItem("set_skill_enabled", item.name, item.enabled)}
         />
       ) : null}
@@ -368,15 +368,15 @@ export function CommandHelpMessage({ text }: { text: string }) {
         <ToggleCatalog
           label="MCP"
           items={parsed.mcps}
-          emptyText="No MCP servers configured"
+          emptyText="설정된 MCP 서버가 없습니다"
           onToggle={(item) => void toggleItem("set_mcp_enabled", item.name, item.enabled)}
         />
       ) : null}
       {parsed.hasPlugins ? (
         <ToggleCatalog
-          label="Plugins"
+          label="플러그인"
           items={pluginItems}
-          emptyText="No plugins discovered"
+          emptyText="발견된 플러그인이 없습니다"
           onToggle={(item) => void toggleItem("set_plugin_enabled", item.name, item.enabled)}
         />
       ) : null}
@@ -429,7 +429,7 @@ function ToggleCatalog({
           >
             <span className="skill-pill-header">
               <strong>{item.name}</strong>
-              <small>{item.enabled ? "Active" : "Inactive"}</small>
+              <small>{item.enabled ? "활성" : "비활성"}</small>
             </span>
             <span className="skill-pill-description">{item.description || item.source || label}</span>
           </button>

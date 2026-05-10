@@ -5,6 +5,7 @@ import { startSession } from "../api/session";
 import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary, Attachment, CommandItem, SkillItem } from "../types/backend";
+import { artifactDisplayName } from "../utils/artifacts";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { InlineQuestion } from "./InlineQuestion";
 import { TodoDock } from "./TodoDock";
@@ -69,14 +70,20 @@ function skillSuggestions(skills: SkillItem[], query: string): Suggestion[] {
 function fileSuggestions(artifacts: ArtifactSummary[], query: string): Suggestion[] {
   const normalized = query.replace(/^@/, "").toLowerCase();
   return artifacts
-    .filter((artifact) => artifact.path.toLowerCase().includes(normalized) || artifact.name.toLowerCase().includes(normalized))
+    .filter((artifact) => {
+      const displayName = artifactDisplayName(artifact);
+      return artifact.path.toLowerCase().includes(normalized) || displayName.toLowerCase().includes(normalized);
+    })
     .slice(0, 8)
-    .map((artifact) => ({
-      kind: "file",
-      value: `@${artifact.path}`,
-      label: `@${artifact.name}`,
-      description: artifact.path,
-    }));
+    .map((artifact) => {
+      const displayName = artifactDisplayName(artifact);
+      return {
+        kind: "file",
+        value: `@${artifact.path}`,
+        label: `@${displayName}`,
+        description: artifact.path,
+      };
+    });
 }
 
 function activeSuggestionToken(value: string, cursorOffset: number): ActiveSuggestionToken | null {
@@ -470,11 +477,11 @@ export function Composer() {
   return (
     <form className="composer" id="composer" ref={composerRef} onSubmit={handleSubmit}>
       <TodoDock variant="dock" />
-      <div className={`pasted-text-tray${state.composer.pastedTexts.length ? "" : " hidden"}`} id="pastedTextTray" aria-label="Pasted text">
+      <div className={`pasted-text-tray${state.composer.pastedTexts.length ? "" : " hidden"}`} id="pastedTextTray" aria-label="붙여넣은 텍스트">
         {state.composer.pastedTexts.map((text, index) => (
           <div className="pasted-text-chip" key={`${text.length}-${index}`}>
-            <span>[Pasted text #{index + 1} +{text.replace(/\r\n/g, "\n").split("\n").length} lines]</span>
-            <button className="pasted-text-remove" type="button" aria-label="Remove pasted text" onClick={() => dispatch({ type: "remove_pasted_text", index })}>
+            <span>[붙여넣은 텍스트 #{index + 1} +{text.replace(/\r\n/g, "\n").split("\n").length}줄]</span>
+            <button className="pasted-text-remove" type="button" aria-label="붙여넣은 텍스트 삭제" onClick={() => dispatch({ type: "remove_pasted_text", index })}>
               x
             </button>
           </div>
@@ -509,7 +516,7 @@ export function Composer() {
           id="promptInput"
           ref={inputRef}
           rows={1}
-          placeholder="메세지를 입력하세요..."
+          placeholder="메시지를 입력하세요..."
           autoComplete="off"
           spellCheck={false}
           value={draft}

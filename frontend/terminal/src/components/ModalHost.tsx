@@ -3,10 +3,10 @@ import {Box, Text, useInput} from 'ink';
 import TextInput from 'ink-text-input';
 
 const WAIT_FRAMES = [
-	'Agent is waiting for your input   ',
-	'Agent is waiting for your input.  ',
-	'Agent is waiting for your input.. ',
-	'Agent is waiting for your input...',
+	'입력을 기다리는 중   ',
+	'입력을 기다리는 중.  ',
+	'입력을 기다리는 중.. ',
+	'입력을 기다리는 중...',
 ];
 
 type QuestionChoice = {
@@ -18,7 +18,7 @@ type QuestionChoice = {
 function normalizeQuestionChoices(modal: Record<string, unknown>): QuestionChoice[] {
 	const raw = Array.isArray(modal.choices) ? modal.choices : [];
 	return raw
-		.map((item) => {
+		.map((item): QuestionChoice | null => {
 			if (!item || typeof item !== 'object') {
 				return null;
 			}
@@ -71,7 +71,7 @@ function QuestionModal({
 
 	const toolName = modal.tool_name ? String(modal.tool_name) : null;
 	const reason = modal.reason ? String(modal.reason) : null;
-	const question = String(modal.question ?? 'Question');
+	const question = String(modal.question ?? '질문');
 	const choices = normalizeQuestionChoices(modal);
 
 	useInput((chunk, key) => {
@@ -97,11 +97,11 @@ function QuestionModal({
 			</Box>
 			{toolName ? (
 				<Text dimColor>
-					{'  '}Tool: <Text color="cyan">{toolName}</Text>
+					{'  '}도구: <Text color="cyan">{toolName}</Text>
 				</Text>
 			) : null}
 			{reason ? (
-				<Text dimColor>{'  '}Reason: {reason}</Text>
+				<Text dimColor>{'  '}사유: {reason}</Text>
 			) : null}
 			{extraLines.length > 0 && (
 				<Box flexDirection="column" marginTop={1} marginLeft={2}>
@@ -129,7 +129,7 @@ function QuestionModal({
 				<Text color="cyan">{'> '}</Text>
 				<TextInput value={modalInput} onChange={setModalInput} onSubmit={handleSubmit} />
 			</Box>
-			<Text dimColor>{'  '}number: choose | shift+enter: newline | enter: submit</Text>
+			<Text dimColor>{'  '}숫자: 선택 | shift+enter: 줄바꿈 | enter: 제출</Text>
 		</Box>
 	);
 }
@@ -150,8 +150,8 @@ function ModalHostInner({
 			<Box flexDirection="column" marginTop={1}>
 				<Text>
 					<Text color="yellow" bold>{'\u250C '}</Text>
-					<Text bold>Allow </Text>
-					<Text color="cyan" bold>{String(modal.tool_name ?? 'tool')}</Text>
+					<Text bold>허용 </Text>
+					<Text color="cyan" bold>{String(modal.tool_name ?? '도구')}</Text>
 					<Text bold>?</Text>
 				</Text>
 				{modal.reason ? (
@@ -162,9 +162,9 @@ function ModalHostInner({
 				) : null}
 				<Text>
 					<Text color="yellow">{'\u2514 '}</Text>
-					<Text color="green">[y] Allow</Text>
+					<Text color="green">[y] 허용</Text>
 					<Text>{'  '}</Text>
-					<Text color="red">[n] Deny</Text>
+					<Text color="red">[n] 거부</Text>
 				</Text>
 			</Box>
 		);
@@ -184,9 +184,9 @@ function ModalHostInner({
 			<Box flexDirection="column" marginTop={1}>
 				<Text>
 					<Text color="yellow" bold>{'\u{1F511} '}</Text>
-					<Text bold>MCP Authentication</Text>
+					<Text bold>MCP 인증</Text>
 				</Text>
-				<Text dimColor>{String(modal.prompt ?? 'Provide auth details')}</Text>
+				<Text dimColor>{String(modal.prompt ?? '인증 정보를 입력하세요')}</Text>
 				<Box>
 					<Text color="cyan">{'> '}</Text>
 					<TextInput value={modalInput} onChange={setModalInput} onSubmit={onSubmit} />

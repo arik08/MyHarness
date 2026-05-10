@@ -276,6 +276,9 @@ class TeammateSpawnConfig:
     model: str | None = None
     """Model override for this teammate."""
 
+    effort: str | None = None
+    """Reasoning effort override for this teammate."""
+
     command: str | None = None
     """Optional explicit command override for subprocess-backed teammates."""
 

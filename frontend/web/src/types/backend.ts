@@ -21,6 +21,7 @@ export type BackendStateSnapshot = {
   provider_label?: string;
   model?: string;
   subagent_model?: string;
+  subagent_effort?: string;
   effort?: string;
   permission_mode?: string;
   cwd?: string;
@@ -123,7 +124,7 @@ export type HistoryItem = {
 
 export type ArtifactSummary = {
   path: string;
-  name: string;
+  name?: string;
   kind: string;
   workspace?: Workspace;
   category?: string;

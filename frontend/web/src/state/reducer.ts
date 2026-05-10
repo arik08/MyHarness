@@ -199,6 +199,7 @@ export const initialAppState: AppState = {
   providerLabel: "-",
   model: "-",
   subagentModel: "-",
+  subagentEffort: "-",
   effort: "-",
   permissionMode: "-",
   chatTitle: "MyHarness",
@@ -1165,6 +1166,7 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
     providerLabel,
     model: String(snapshot.model || state.model),
     subagentModel: String(snapshot.subagent_model || state.subagentModel),
+    subagentEffort: String(snapshot.subagent_effort || state.subagentEffort),
     effort: String(snapshot.effort || state.effort),
     permissionMode: String(snapshot.permission_mode || state.permissionMode),
     workspaceName: String(snapshot.workspace?.name || state.workspaceName),
@@ -1197,8 +1199,13 @@ function runtimeModelValueForScope(state: AppState, scope = state.runtimePicker.
   return scope === "sub" ? state.subagentModel : state.model;
 }
 
+function runtimeEffortValueForScope(state: AppState, scope = state.runtimePicker.agentScope) {
+  return scope === "sub" ? state.subagentEffort : state.effort;
+}
+
 function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string, unknown>) {
   const subagentModel = String(runtimeOptions.subagent_model || state.subagentModel || "").trim() || state.subagentModel;
+  const subagentEffort = String(runtimeOptions.subagent_effort || state.subagentEffort || "").trim() || state.subagentEffort;
   const providers = activeRuntimeOptions(
     (Array.isArray(runtimeOptions.providers) ? runtimeOptions.providers : [])
       .map((option) => normalizeRuntimeOption(option as Record<string, unknown>))
@@ -1223,7 +1230,7 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
     (Array.isArray(runtimeOptions.efforts) ? runtimeOptions.efforts : [])
       .map((option) => normalizeRuntimeOption(option as Record<string, unknown>))
       .filter((option): option is NonNullable<typeof option> => Boolean(option)),
-    state.effort,
+    runtimeEffortValueForScope({ ...state, subagentEffort }),
   );
   return {
     ...state.runtimePicker,
@@ -1665,6 +1672,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.runtimePicker,
           agentScope: action.value,
           models: activeRuntimeOptions(models, action.value === "sub" ? state.subagentModel : state.model),
+          efforts: activeRuntimeOptions(state.runtimePicker.efforts, runtimeEffortValueForScope(state, action.value)),
           modelOpen: true,
           effortOpen: false,
         },
@@ -1678,14 +1686,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         runtimePicker: {
           ...state.runtimePicker,
           models: state.runtimePicker.models.map((option) => ({ ...option, active: option.value === action.value })),
-          effortOpen: state.runtimePicker.agentScope !== "sub",
+          efforts: activeRuntimeOptions(state.runtimePicker.efforts, runtimeEffortValueForScope(state)),
+          effortOpen: true,
         },
       };
 
     case "select_runtime_effort":
       return {
         ...state,
-        effort: action.value,
+        ...(state.runtimePicker.agentScope === "sub" ? { subagentEffort: action.value } : { effort: action.value }),
         runtimePicker: {
           ...state.runtimePicker,
           efforts: state.runtimePicker.efforts.map((option) => ({ ...option, active: option.value === action.value })),

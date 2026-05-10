@@ -24,6 +24,7 @@ def test_build_backend_command_includes_flags():
         cwd="/tmp/demo",
         model="kimi-k2.5",
         subagent_model="gpt-5.4-mini",
+        subagent_effort="high",
         base_url="https://api.moonshot.cn/anthropic",
         system_prompt="system",
         api_key="secret",
@@ -33,6 +34,7 @@ def test_build_backend_command_includes_flags():
     assert "--cwd" in command
     assert "--model" in command
     assert "--subagent-model" in command
+    assert "--subagent-effort" in command
     assert "--base-url" in command
     assert "--system-prompt" in command
     assert "--api-key" in command
@@ -47,12 +49,13 @@ async def test_run_repl_uses_react_launcher_by_default(monkeypatch):
         return 0
 
     monkeypatch.setattr("myharness.ui.app.launch_react_tui", _launch)
-    await run_repl(prompt="hi", cwd="/tmp/demo", model="kimi-k2.5", subagent_model="gpt-5.4-mini")
+    await run_repl(prompt="hi", cwd="/tmp/demo", model="kimi-k2.5", subagent_model="gpt-5.4-mini", subagent_effort="high")
 
     assert seen["prompt"] == "hi"
     assert seen["cwd"] == "/tmp/demo"
     assert seen["model"] == "kimi-k2.5"
     assert seen["subagent_model"] == "gpt-5.4-mini"
+    assert seen["subagent_effort"] == "high"
 
 
 @pytest.mark.asyncio

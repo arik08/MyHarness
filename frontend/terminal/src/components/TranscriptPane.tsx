@@ -13,27 +13,35 @@ export function TranscriptPane({
 	const visible = items.slice(-24);
 	return (
 		<Box flexDirection="column" width="68%" paddingRight={1}>
-			<Text bold>Transcript</Text>
+			<Text bold>대화 기록</Text>
 			<Box flexDirection="column" borderStyle="round" paddingX={1} minHeight={24}>
 				{visible.map((item, index) => (
 					<Text key={`${index}-${item.role}`} color={roleColor(item.role)}>
 						{labelFor(item)} {item.text}
 					</Text>
 				))}
-				{assistantBuffer ? <Text color="green">assistant&gt; {assistantBuffer}</Text> : null}
+				{assistantBuffer ? <Text color="green">어시스턴트&gt; {assistantBuffer}</Text> : null}
 			</Box>
 		</Box>
 	);
 }
 
 function labelFor(item: TranscriptItem): string {
-	const kind = item.kind === 'steering' ? ':steering' : item.kind === 'queued' ? ':queued' : '';
+	const kind = item.kind === 'steering' ? ':스티어링' : item.kind === 'queued' ? ':대기열' : '';
 	const role = item.role;
 	switch (role) {
 		case 'tool':
-			return 'tool>';
+			return '도구>';
 		case 'tool_result':
-			return 'tool_result>';
+			return '도구결과>';
+		case 'assistant':
+			return `어시스턴트${kind}>`;
+		case 'user':
+			return `사용자${kind}>`;
+		case 'system':
+			return `시스템${kind}>`;
+		case 'log':
+			return `로그${kind}>`;
 		default:
 			return `${role}${kind}>`;
 	}

@@ -113,10 +113,10 @@ class RuntimeBundle:
         """Return the current plugin summary."""
         plugins = self.current_plugins()
         if not plugins:
-            return "No plugins discovered."
-        lines = ["Plugins:"]
+            return "발견된 플러그인이 없습니다"
+        lines = ["플러그인:"]
         for plugin in plugins:
-            state = "enabled" if plugin.enabled else "disabled"
+            state = "활성" if plugin.enabled else "비활성"
             lines.append(f"- {plugin.manifest.name} [{state}] {plugin.manifest.description}")
         return "\n".join(lines)
 
@@ -131,23 +131,23 @@ class RuntimeBundle:
         )
         disabled = set(self.current_settings().disabled_mcp_servers or set())
         if not statuses and not configs:
-            return "No MCP servers configured."
-        lines = ["MCP servers:"]
+            return "설정된 MCP 서버가 없습니다"
+        lines = ["MCP 서버:"]
         for name in sorted(set(statuses) | set(configs)):
             status = statuses.get(name)
             if status is None:
                 config = configs[name]
-                state = "disabled" if name in disabled else "pending"
-                detail = "Disabled in settings." if name in disabled else "Configured; restart or reload backend to connect."
-                transport = str(getattr(config, "type", "unknown"))
+                state = "비활성" if name in disabled else "대기"
+                detail = "설정에서 비활성화됨" if name in disabled else "설정됨. 연결하려면 백엔드를 재시작하거나 다시 불러오세요."
+                transport = str(getattr(config, "type", "알 수 없음"))
                 lines.append(f"- {name}: {state} ({transport}) - {detail}")
                 continue
             suffix = f" - {status.detail}" if status.detail else ""
             lines.append(f"- {name}: {status.state}{suffix}")
             if status.tools:
-                lines.append(f"  tools: {', '.join(tool.name for tool in status.tools)}")
+                lines.append(f"  도구: {', '.join(tool.name for tool in status.tools)}")
             if status.resources:
-                lines.append(f"  resources: {', '.join(resource.uri for resource in status.resources)}")
+                lines.append(f"  리소스: {', '.join(resource.uri for resource in status.resources)}")
         return "\n".join(lines)
 
 
@@ -226,6 +226,7 @@ async def build_runtime(
     cwd: str | None = None,
     model: str | None = None,
     subagent_model: str | None = None,
+    subagent_effort: str | None = None,
     max_turns: int | None = None,
     base_url: str | None = None,
     system_prompt: str | None = None,
@@ -249,6 +250,7 @@ async def build_runtime(
     settings_overrides: dict[str, Any] = {
         "model": model,
         "subagent_model": subagent_model,
+        "subagent_effort": subagent_effort,
         "max_turns": max_turns,
         "base_url": base_url,
         "system_prompt": system_prompt,
@@ -293,6 +295,7 @@ async def build_runtime(
             # not profile.last_model which may be stale.
             model=settings.model,
             subagent_model=settings.subagent_model,
+            subagent_effort=settings.subagent_effort,
             permission_mode=settings.permission.mode.value,
             theme=settings.theme,
             cwd=cwd,
@@ -392,6 +395,7 @@ async def build_runtime(
             "provider": settings.provider,
             "runtime_model": settings.model,
             "subagent_model": settings.subagent_model,
+            "subagent_effort": settings.subagent_effort,
             **restored_metadata,
         },
     )
@@ -536,6 +540,7 @@ def sync_app_state(bundle: RuntimeBundle) -> None:
     bundle.app_state.set(
         model=settings.model,
         subagent_model=settings.subagent_model,
+        subagent_effort=settings.subagent_effort,
         permission_mode=permission_mode,
         theme=settings.theme,
         cwd=bundle.cwd,

@@ -4,7 +4,7 @@ import {Box, Text} from 'ink';
 function CommandPickerInner({
 	hints,
 	selectedIndex,
-	title = 'Commands',
+	title = '명령어',
 }: {
 	hints: string[];
 	selectedIndex: number;
@@ -28,7 +28,7 @@ function CommandPickerInner({
 					</Box>
 				);
 			})}
-			<Text dimColor>up/down navigate  enter select  esc dismiss</Text>
+			<Text dimColor>위/아래 이동  enter 선택  esc 닫기</Text>
 		</Box>
 	);
 }

@@ -32,19 +32,19 @@ export function SidePanel({
 function StatusPanel({status}: {status: Record<string, unknown>}): React.JSX.Element {
 	return (
 		<>
-			<Text bold>Status</Text>
+			<Text bold>상태</Text>
 			<Box flexDirection="column" borderStyle="round" paddingX={1} marginBottom={1}>
-				<Text>model: {String(status.model ?? 'unknown')}</Text>
-				<Text>provider: {String(status.provider ?? 'unknown')}</Text>
-				<Text>auth: {String(status.auth_status ?? 'unknown')}</Text>
-				<Text>permission: {String(status.permission_mode ?? 'unknown')}</Text>
+				<Text>모델: {String(status.model ?? '알 수 없음')}</Text>
+				<Text>프로바이더: {String(status.provider ?? '알 수 없음')}</Text>
+				<Text>인증: {String(status.auth_status ?? '알 수 없음')}</Text>
+				<Text>권한: {String(status.permission_mode ?? '알 수 없음')}</Text>
 				<Text>cwd: {String(status.cwd ?? '.')}</Text>
 				<Text>vim: {String(Boolean(status.vim_enabled))}</Text>
-				<Text>voice: {String(Boolean(status.voice_enabled))}</Text>
-				<Text>voice ready: {String(Boolean(status.voice_available))}</Text>
-				<Text>fast: {String(Boolean(status.fast_mode))}</Text>
-				<Text>effort: {String(status.effort ?? 'medium')}</Text>
-				<Text>passes: {String(status.passes ?? 1)}</Text>
+				<Text>음성: {String(Boolean(status.voice_enabled))}</Text>
+				<Text>음성 준비: {String(Boolean(status.voice_available))}</Text>
+				<Text>빠른 모드: {String(Boolean(status.fast_mode))}</Text>
+				<Text>추론 강도: {String(status.effort ?? 'medium')}</Text>
+				<Text>패스: {String(status.passes ?? 1)}</Text>
 			</Box>
 		</>
 	);
@@ -54,10 +54,10 @@ function TaskPanel({tasks}: {tasks: TaskSnapshot[]}): React.JSX.Element {
 	const visible = tasks.slice(0, 6);
 	return (
 		<>
-			<Text bold>Tasks</Text>
+			<Text bold>작업</Text>
 			<Box flexDirection="column" borderStyle="round" paddingX={1} marginBottom={1}>
 				{visible.length === 0 ? (
-					<Text>(none)</Text>
+					<Text>(없음)</Text>
 				) : (
 					visible.map((task) => (
 						<Box key={task.id} flexDirection="column">
@@ -65,7 +65,7 @@ function TaskPanel({tasks}: {tasks: TaskSnapshot[]}): React.JSX.Element {
 								{task.id} [{task.status}] {task.description}
 							</Text>
 							<Text dimColor>
-								type={task.type} progress={task.metadata.progress ?? '-'} note={task.metadata.status_note ?? '-'}
+								유형={task.type} 진행={task.metadata.progress ?? '-'} 메모={task.metadata.status_note ?? '-'}
 							</Text>
 						</Box>
 					))
@@ -81,15 +81,15 @@ function McpPanel({servers}: {servers: McpServerSnapshot[]}): React.JSX.Element 
 			<Text bold>MCP</Text>
 			<Box flexDirection="column" borderStyle="round" paddingX={1} marginBottom={1}>
 				{servers.length === 0 ? (
-					<Text>(none)</Text>
+					<Text>(없음)</Text>
 				) : (
 					servers.slice(0, 5).map((server) => (
 						<Box key={server.name} flexDirection="column">
 							<Text>
-								{server.name} [{server.state}] {server.transport ?? 'unknown'}
+								{server.name} [{server.state}] {server.transport ?? '알 수 없음'}
 							</Text>
 							<Text dimColor>
-								auth={String(Boolean(server.auth_configured))} tools={String(server.tool_count ?? 0)} resources=
+								인증={String(Boolean(server.auth_configured))} 도구={String(server.tool_count ?? 0)} 리소스=
 								{String(server.resource_count ?? 0)}
 							</Text>
 							{server.detail ? <Text dimColor>{server.detail}</Text> : null}
@@ -107,7 +107,7 @@ function BridgePanel({sessions}: {sessions: BridgeSessionSnapshot[]}): React.JSX
 			<Text bold>Bridge</Text>
 			<Box flexDirection="column" borderStyle="round" paddingX={1} marginBottom={1}>
 				{sessions.length === 0 ? (
-					<Text>(none)</Text>
+					<Text>(없음)</Text>
 				) : (
 					sessions.slice(0, 4).map((session) => (
 						<Box key={session.session_id} flexDirection="column">
@@ -132,7 +132,7 @@ function CommandPanel({
 }): React.JSX.Element {
 	return (
 		<>
-			<Text bold>Commands</Text>
+			<Text bold>명령어</Text>
 			<Box flexDirection="column" borderStyle="round" paddingX={1}>
 				{hints.length > 0 ? (
 					hints.map((command, index) => (
@@ -142,9 +142,9 @@ function CommandPanel({
 						</Text>
 					))
 				) : commands.length > 0 ? (
-					<Text>type / for commands</Text>
+					<Text>/ 를 입력하면 명령어가 표시됩니다</Text>
 				) : (
-					<Text>(none)</Text>
+					<Text>(없음)</Text>
 				)}
 			</Box>
 		</>

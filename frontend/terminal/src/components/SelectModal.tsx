@@ -32,13 +32,13 @@ export function SelectModal({
 								{opt.label}
 							</Text>
 						</Text>
-						{isCurrent ? <Text color="green"> (current)</Text> : null}
+						{isCurrent ? <Text color="green"> (현재)</Text> : null}
 						{opt.description ? <Text dimColor>  {opt.description}</Text> : null}
 					</Box>
 				);
 			})}
 			<Text> </Text>
-			<Text dimColor>{'\u2191\u2193'} navigate{'  '}{'\u23CE'} select{'  '}esc cancel</Text>
+			<Text dimColor>{'\u2191\u2193'} 이동{'  '}{'\u23CE'} 선택{'  '}esc 취소</Text>
 		</Box>
 	);
 }

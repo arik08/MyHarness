@@ -4,8 +4,10 @@ import { useAppState } from "../state/app-state";
 import type { ArtifactSummary } from "../types/backend";
 import type { AppSettings, ChatMessage } from "../types/ui";
 import {
+  artifactDisplayName,
   artifactIcon,
   artifactLabelForPath,
+  artifactName,
   collectArtifactCandidates,
   collectArtifactReferences,
   dedupeArtifactsByResolvedPath,
@@ -80,7 +82,7 @@ function useMessageArtifacts(message: ChatMessage) {
               ...payload,
               sourcePath: artifact.path,
               path: payload.path || artifact.path,
-              name: payload.name || artifact.name,
+              name: payload.name || artifact.name || artifactName(payload.path || artifact.path),
               kind: payload.kind || artifact.kind,
               workspace: payload.workspace || artifact.workspace,
               label: payload.label || artifactLabelForPath(payload.path || artifact.path, payload.kind || artifact.kind),
@@ -107,17 +109,18 @@ function useMessageArtifacts(message: ChatMessage) {
   }, [candidateSignature, dispatch, message.isComplete, message.text, state.clientId, state.sessionId, state.workspaceName, state.workspacePath]);
 
   async function openArtifact(artifact: ArtifactSummary) {
-    dispatch({ type: "open_artifact", artifact });
-    setLoadingPath(artifact.path);
+    const displayArtifact = { ...artifact, name: artifactDisplayName(artifact) };
+    dispatch({ type: "open_artifact", artifact: displayArtifact });
+    setLoadingPath(displayArtifact.path);
     try {
       const payload = await readArtifact({
         sessionId: state.sessionId || undefined,
         clientId: state.clientId,
-        workspacePath: artifact.workspace?.path || state.workspacePath,
-        workspaceName: artifact.workspace?.name || state.workspaceName,
-        path: artifact.path,
+        workspacePath: displayArtifact.workspace?.path || state.workspacePath,
+        workspaceName: displayArtifact.workspace?.name || state.workspaceName,
+        path: displayArtifact.path,
       });
-      dispatch({ type: "open_artifact", artifact: { ...artifact, workspace: payload.workspace || artifact.workspace }, payload });
+      dispatch({ type: "open_artifact", artifact: { ...displayArtifact, workspace: payload.workspace || displayArtifact.workspace }, payload });
     } catch (error) {
       dispatch({
         type: "open_modal",
@@ -153,17 +156,18 @@ function ArtifactCard({
   loadingPath: string;
   onOpen: (artifact: ArtifactSummary) => void;
 }) {
+  const displayName = artifactDisplayName(artifact);
   return (
     <button
       className="artifact-card"
       type="button"
-      aria-label={`${artifact.name || artifact.path} 미리보기 열기`}
+      aria-label={`${displayName} 미리보기 열기`}
       data-artifact-path={artifact.path}
       onClick={() => onOpen(artifact)}
     >
       <span className="artifact-card-icon" aria-hidden="true">{artifactIcon(artifact.kind)}</span>
       <span className="artifact-card-copy">
-        <strong>{artifact.name || artifact.path}</strong>
+        <strong>{displayName}</strong>
         <small>{loadingPath === artifact.path ? "불러오는 중" : [labelForArtifact(artifact), formatBytes(artifact.size)].filter(Boolean).join(" · ")}</small>
       </span>
     </button>

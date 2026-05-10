@@ -48,6 +48,7 @@ def _build_context(tmp_path: Path) -> CommandContext:
             AppState(
                 model="claude-test",
                 subagent_model="gpt-5.4-mini",
+                subagent_effort="medium",
                 permission_mode="default",
                 theme="default",
                 keybindings={},
@@ -113,7 +114,7 @@ async def test_command_flow_for_memory_modes_and_tasks(tmp_path: Path, monkeypat
 
     issue_command, issue_args = registry.lookup("/issue set Command Flow :: Needs review")
     issue_result = await issue_command.handler(issue_args, context)
-    assert "Saved issue context" in issue_result.message
+    assert "이슈 컨텍스트를" in issue_result.message
 
     pr_command, pr_args = registry.lookup("/pr_comments add README.md:1 :: tighten wording")
     pr_result = await pr_command.handler(pr_args, context)
@@ -137,18 +138,18 @@ async def test_plugin_command_lifecycle_flow(tmp_path: Path, monkeypatch):
 
     install_command, install_args = registry.lookup(f"/plugin install {plugin_source}")
     install_result = await install_command.handler(install_args, context)
-    assert "Installed plugin" in install_result.message
+    assert "플러그인을" in install_result.message
 
     disable_command, disable_args = registry.lookup("/plugin disable fixture-plugin")
     disable_result = await disable_command.handler(disable_args, context)
-    assert "Disabled plugin" in disable_result.message
+    assert "비활성화" in disable_result.message
     assert load_settings().enabled_plugins["fixture-plugin"] is False
 
     enable_command, enable_args = registry.lookup("/plugin enable fixture-plugin")
     enable_result = await enable_command.handler(enable_args, context)
-    assert "Enabled plugin" in enable_result.message
+    assert "활성화" in enable_result.message
     assert load_settings().enabled_plugins["fixture-plugin"] is True
 
     uninstall_command, uninstall_args = registry.lookup("/plugin uninstall fixture-plugin")
     uninstall_result = await uninstall_command.handler(uninstall_args, context)
-    assert "Uninstalled plugin" in uninstall_result.message
+    assert "제거했습니다" in uninstall_result.message

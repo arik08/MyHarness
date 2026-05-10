@@ -26,12 +26,12 @@ export function ToolCallDisplay({
 		if (resultItem) {
 			if (resultItem.is_error) {
 				statusNode = isCodexStyle
-					? <Text color={theme.colors.error}> error</Text>
+					? <Text color={theme.colors.error}> 오류</Text>
 					: <Text color={theme.colors.error}> {theme.icons.error.trim()}</Text>;
 				const lines = resultItem.text.split('\n').filter((l) => l.trim());
 				const maxErrLines = isCodexStyle ? 8 : 5;
 				errorLines = lines.length > maxErrLines
-					? [...lines.slice(0, maxErrLines), `... (${lines.length - maxErrLines} more lines)`]
+					? [...lines.slice(0, maxErrLines), `... (${lines.length - maxErrLines}줄 더 있음)`]
 					: lines;
 			} else if (!isCodexStyle) {
 				const lineCount = resultItem.text.split('\n').filter((l) => l.trim()).length;
@@ -46,7 +46,7 @@ export function ToolCallDisplay({
 		if (isCodexStyle) {
 			return (
 				<Box marginLeft={0} flexDirection="column">
-					<Text dimColor>{`• Ran ${toolName}${summary ? ` ${summary}` : ''}`}{statusNode}</Text>
+					<Text dimColor>{`• 실행 ${toolName}${summary ? ` ${summary}` : ''}`}{statusNode}</Text>
 					{errorLines?.map((line, i) => {
 						const prefix = i === errorLines.length - 1 ? '└ ' : '│ ';
 						return (
@@ -85,7 +85,7 @@ export function ToolCallDisplay({
 			? item.text.split('\n').filter((l) => l.trim())
 			: [''];
 		const maxLines = isCodexStyle ? 8 : 5;
-		const display = lines.length > maxLines ? [...lines.slice(0, maxLines), `... (${lines.length - maxLines} more lines)`] : lines;
+		const display = lines.length > maxLines ? [...lines.slice(0, maxLines), `... (${lines.length - maxLines}줄 더 있음)`] : lines;
 		if (isCodexStyle) {
 			return (
 				<Box marginLeft={0} flexDirection="column">

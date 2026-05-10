@@ -235,12 +235,12 @@ class MyHarnessTerminalApp(App[None]):
         with Horizontal(id="main-row"):
             with Vertical(id="transcript-column"):
                 yield RichLog(id="transcript", wrap=True, highlight=True, markup=True)
-                yield Static("Ready.", id="current-response")
-                yield Input(placeholder="Ask MyHarness or enter a /command", id="composer")
+                yield Static("준비됨.", id="current-response")
+                yield Input(placeholder="MyHarness에 요청하거나 /명령어를 입력하세요", id="composer")
             with Vertical(id="side-column"):
-                yield Static("Starting...", id="status-bar")
-                yield Static("No tasks yet.", id="tasks-panel")
-                yield Static("No MCP servers configured.", id="mcp-panel")
+                yield Static("시작 중...", id="status-bar")
+                yield Static("아직 작업이 없습니다.", id="tasks-panel")
+                yield Static("설정된 MCP 서버가 없습니다.", id="mcp-panel")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -293,7 +293,7 @@ class MyHarnessTerminalApp(App[None]):
         self._busy = True
         composer = self.query_one("#composer", Input)
         composer.disabled = True
-        self._append_line(f"user> {line}")
+        self._append_line(f"사용자> {line}")
         self._set_current_response("[dim]Working...[/dim]")
         try:
             should_continue = await handle_line(
@@ -312,68 +312,68 @@ class MyHarnessTerminalApp(App[None]):
             composer.focus()
 
     async def _print_system(self, message: str) -> None:
-        self._append_line(f"system> {message}")
-        self._set_current_response("Ready.")
+        self._append_line(f"시스템> {message}")
+        self._set_current_response("준비됨.")
 
     async def _render_event(self, event: StreamEvent) -> None:
         if isinstance(event, AssistantTextDelta):
             self._assistant_buffer += event.text
-            self._set_current_response(f"[bold]assistant>[/bold] {self._assistant_buffer}")
+            self._set_current_response(f"[bold]어시스턴트>[/bold] {self._assistant_buffer}")
             return
 
         if isinstance(event, CompactProgressEvent):
             if event.phase == "hooks_start":
                 if event.trigger == "reactive":
-                    self._set_current_response("[dim]Preparing retry compaction...[/dim]")
+                    self._set_current_response("[dim]재시도 압축을 준비하는 중...[/dim]")
                 else:
-                    self._set_current_response("[dim]Preparing conversation compaction...[/dim]")
+                    self._set_current_response("[dim]대화 압축을 준비하는 중...[/dim]")
             elif event.phase == "compact_start":
                 if event.trigger == "reactive":
-                    self._set_current_response("[dim]Context too large. Compacting and retrying...[/dim]")
+                    self._set_current_response("[dim]컨텍스트가 너무 큽니다. 압축 후 재시도하는 중...[/dim]")
                 else:
-                    self._set_current_response("[dim]Compacting conversation memory...[/dim]")
+                    self._set_current_response("[dim]대화 메모리를 압축하는 중...[/dim]")
             elif event.phase == "compact_retry":
-                attempt = f" (attempt {event.attempt})" if event.attempt is not None else ""
-                self._set_current_response(f"[dim]Retrying compaction{attempt}...[/dim]")
+                attempt = f" ({event.attempt}회차)" if event.attempt is not None else ""
+                self._set_current_response(f"[dim]압축 재시도 중{attempt}...[/dim]")
             elif event.phase == "compact_failed":
-                self._append_line(f"system> Compaction failed: {event.message or 'unknown error'}")
-                self._set_current_response("Ready.")
+                self._append_line(f"시스템> 압축 실패: {event.message or '알 수 없는 오류'}")
+                self._set_current_response("준비됨.")
             elif event.phase == "compact_end":
-                self._set_current_response("[dim]Compaction complete.[/dim]")
+                self._set_current_response("[dim]압축 완료.[/dim]")
             elif event.phase == "session_memory_start":
-                self._set_current_response("[dim]Condensing earlier conversation...[/dim]")
+                self._set_current_response("[dim]이전 대화를 요약하는 중...[/dim]")
             elif event.phase == "session_memory_end":
-                self._set_current_response("[dim]Condensed earlier conversation.[/dim]")
+                self._set_current_response("[dim]이전 대화 요약 완료.[/dim]")
             elif event.phase == "context_collapse_start":
-                self._set_current_response("[dim]Collapsing oversized context...[/dim]")
+                self._set_current_response("[dim]큰 컨텍스트를 압축하는 중...[/dim]")
             elif event.phase == "context_collapse_end":
-                self._set_current_response("[dim]Context collapse complete.[/dim]")
+                self._set_current_response("[dim]컨텍스트 압축 완료.[/dim]")
             return
 
         if isinstance(event, AssistantTurnComplete):
-            text = self._assistant_buffer or event.message.text or "(empty response)"
-            self._append_line(f"assistant> {text}")
+            text = self._assistant_buffer or event.message.text or "(빈 응답)"
+            self._append_line(f"어시스턴트> {text}")
             self._assistant_buffer = ""
-            self._set_current_response("Ready.")
+            self._set_current_response("준비됨.")
             return
 
         if isinstance(event, ToolExecutionStarted):
             payload = json.dumps(event.tool_input, ensure_ascii=False)
-            self._append_line(f"tool> {event.tool_name} {payload}")
+            self._append_line(f"도구> {event.tool_name} {payload}")
             return
 
         if isinstance(event, ToolExecutionCompleted):
-            prefix = "tool-error>" if event.is_error else "tool-result>"
+            prefix = "도구오류>" if event.is_error else "도구결과>"
             self._append_line(f"{prefix} {event.tool_name}: {event.output}")
             return
 
         if isinstance(event, ErrorEvent):
-            self._append_line(f"error> {event.message}")
+            self._append_line(f"오류> {event.message}")
             self._assistant_buffer = ""
-            self._set_current_response("Ready.")
+            self._set_current_response("준비됨.")
             return
         if isinstance(event, StatusEvent):
-            self._append_line(f"system> {event.message}")
+            self._append_line(f"시스템> {event.message}")
 
     def action_clear_conversation(self) -> None:
         if self._bundle is None:
@@ -381,7 +381,7 @@ class MyHarnessTerminalApp(App[None]):
         self._bundle.engine.clear()
         self.query_one("#transcript", RichLog).clear()
         self.transcript_lines.clear()
-        self._set_current_response("Conversation cleared.")
+        self._set_current_response("대화를 지웠습니다.")
         self._refresh_sidebars()
 
     def action_refresh_sidebars(self) -> None:

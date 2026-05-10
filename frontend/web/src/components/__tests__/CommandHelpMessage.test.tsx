@@ -80,9 +80,9 @@ describe("CommandHelpMessage", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "snapshot" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /ship/ }).textContent).toContain("Inactive"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /ship/ }).textContent).toContain("비활성"));
 
-    const input = screen.getByPlaceholderText("메세지를 입력하세요...");
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "$");
     expect(screen.queryByRole("option", { name: /\$ship/ })).toBeNull();
     expect(screen.getByRole("option", { name: /\$review/ })).toBeTruthy();
@@ -147,6 +147,6 @@ describe("CommandHelpMessage", () => {
       expect.any(String),
       { type: "set_plugin_enabled", value: "superpowers", enabled: false },
     );
-    expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("Inactive");
+    expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("비활성");
   });
 });

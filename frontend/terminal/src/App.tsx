@@ -492,7 +492,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 
 			{/* Skill picker */}
 			{showSkillPicker ? (
-				<CommandPicker hints={skillHintLabels} selectedIndex={pickerIndex} title="Skills" />
+				<CommandPicker hints={skillHintLabels} selectedIndex={pickerIndex} title="스킬" />
 			) : null}
 
 			{/* Todo panel */}
@@ -513,7 +513,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			{/* Input — show loading indicator until backend is ready */}
 			{!session.ready ? (
 				<Box>
-					<Text color={theme.colors.warning}>Connecting to backend...</Text>
+					<Text color={theme.colors.warning}>백엔드에 연결하는 중...</Text>
 				</Box>
 			) : session.modal || selectModal ? null : (
 				<PromptInput
@@ -523,7 +523,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 					onSubmit={onSubmit}
 					onQueueSubmit={onQueueSubmit}
 					toolName={session.busy ? currentToolName : undefined}
-					statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}...` : 'Running agent loop...')) : undefined}
+					statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `${currentToolName} 실행 중...` : '에이전트 실행 중...')) : undefined}
 					suppressSubmit={showPicker}
 				/>
 			)}
@@ -532,13 +532,13 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			{session.ready && !session.modal && !selectModal ? (
 				<Box>
 					<Text dimColor>
-						<Text color={theme.colors.primary}>shift+enter</Text> newline{'  '}
-						<Text color={theme.colors.primary}>enter</Text> {session.busy ? 'steer' : 'send'}{'  '}
-						<Text color={theme.colors.primary}>ctrl+enter</Text> {session.busy ? 'queue' : 'send'}{'  '}
-						<Text color={theme.colors.primary}>/</Text> commands{'  '}
-						<Text color={theme.colors.primary}>$</Text> skills{'  '}
-						<Text color={theme.colors.primary}>{'\u2191\u2193'}</Text> history{'  '}
-						<Text color={theme.colors.primary}>ctrl+c</Text> exit
+						<Text color={theme.colors.primary}>shift+enter</Text> 줄바꿈{'  '}
+						<Text color={theme.colors.primary}>enter</Text> {session.busy ? '스티어링' : '전송'}{'  '}
+						<Text color={theme.colors.primary}>ctrl+enter</Text> {session.busy ? '대기열' : '전송'}{'  '}
+						<Text color={theme.colors.primary}>/</Text> 명령어{'  '}
+						<Text color={theme.colors.primary}>$</Text> 스킬{'  '}
+						<Text color={theme.colors.primary}>{'\u2191\u2193'}</Text> 기록{'  '}
+						<Text color={theme.colors.primary}>ctrl+c</Text> 종료
 					</Text>
 				</Box>
 			) : null}

@@ -99,15 +99,15 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("workspace")} disabled={!localBrowserHost}>
           <strong>작업공간 범위</strong>
-          <small>{localBrowserHost ? (state.workspaceScope.mode === "ip" ? "IP별 프로젝트 분리" : "공용 shared 프로젝트") : serverOnlyLabel}</small>
+          <small>{localBrowserHost ? (state.workspaceScope.mode === "ip" ? "IP별 프로젝트 분리" : "공용 프로젝트") : serverOnlyLabel}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("learned-skills")} disabled={!localBrowserHost}>
           <strong>자동학습 스킬 표시</strong>
           <small>{localBrowserHost ? "학습된 스킬을 표시하거나 숨깁니다." : serverOnlyLabel}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("pgpt")} disabled={!localBrowserHost}>
-          <strong>P-GPT API KEY</strong>
-          <small>{localBrowserHost ? "API Key, 직원번호, 회사번호를 저장합니다." : serverOnlyLabel}</small>
+          <strong>P-GPT API 키</strong>
+          <small>{localBrowserHost ? "API 키, 직원번호, 회사번호를 저장합니다." : serverOnlyLabel}</small>
         </button>
       </div>
     </>
@@ -371,7 +371,7 @@ function UserStatsSettings({ onBack }: { onBack: () => void }) {
             <StatsMetric label="오늘 DAU" value={formatNumber(stats.dailyActiveIpCount)} helper="오늘 접속한 고유 IP" />
             <StatsMetric label="오늘 접속횟수" value={formatNumber(stats.todayVisitCount)} helper="새로고침 포함 페이지 진입" />
             <StatsMetric label="누적 접속횟수" value={formatNumber(stats.totalVisitCount)} helper="서버에 기록된 전체 진입" />
-            <StatsMetric label="내 현재 IP" value={stats.viewerIp || "-"} helper={`${formatNumber(stats.currentIpTodayVisitCount)} visits today`} />
+            <StatsMetric label="내 현재 IP" value={stats.viewerIp || "-"} helper={`오늘 ${formatNumber(stats.currentIpTodayVisitCount)}회 접속`} />
             <StatsMetric label="저장된 대화" value={formatNumber(stats.conversationCount)} helper="전체 프로젝트 기준" />
             <StatsMetric label="활성 세션" value={formatNumber(stats.activeSessionCount)} helper={`현재 IP: ${formatNumber(stats.activeIpSessionCount)}`} />
           </div>
@@ -384,7 +384,7 @@ function UserStatsSettings({ onBack }: { onBack: () => void }) {
               {(stats.ipBreakdown || []).slice(0, 12).map((item) => (
                 <div className="user-stats-workspace-row" key={`${item.ip}-${item.lastSeenAt}`}>
                   <strong>{item.ip || "-"}</strong>
-                  <small>{`${formatNumber(item.visitCount)} visits / today ${formatNumber(item.todayVisitCount)} / active sessions ${formatNumber(item.activeSessionCount)}`}</small>
+                  <small>{`누적 ${formatNumber(item.visitCount)}회 / 오늘 ${formatNumber(item.todayVisitCount)}회 / 활성 세션 ${formatNumber(item.activeSessionCount)}개`}</small>
                   <span>{formatStatsDate(item.lastSeenAt)}</span>
                 </div>
               ))}
@@ -397,8 +397,8 @@ function UserStatsSettings({ onBack }: { onBack: () => void }) {
               {(stats.dailyBreakdown || []).slice(0, 14).map((item) => (
                 <div className="user-stats-workspace-row" key={item.date || "date"}>
                   <strong>{item.date || "-"}</strong>
-                  <small>{`${formatNumber(item.activeIpCount)} active IPs`}</small>
-                  <span>{`${formatNumber(item.visitCount)} visits`}</span>
+                  <small>{`활성 IP ${formatNumber(item.activeIpCount)}개`}</small>
+                  <span>{`${formatNumber(item.visitCount)}회 접속`}</span>
                 </div>
               ))}
               {!(stats.dailyBreakdown || []).length ? <p className="settings-helper">아직 일자별 기록이 없습니다.</p> : null}
@@ -520,7 +520,7 @@ function WorkspaceScopeSettings({ onBack, onClose }: { onBack: () => void; onClo
       <div className="scope-segmented-control workspace-scope-mode-list" role="radiogroup" aria-label="작업공간 범위">
         <button className={`scope-mode-option${mode === "shared" ? " active" : ""}`} type="button" role="radio" aria-checked={mode === "shared"} onClick={() => void save("shared")}>
           <span className="scope-mode-marker" />
-          <span className="scope-mode-copy"><strong>Shared</strong><small>모든 접속자가 같은 프로젝트와 기록을 봅니다.</small></span>
+          <span className="scope-mode-copy"><strong>공용</strong><small>모든 접속자가 같은 프로젝트와 기록을 봅니다.</small></span>
         </button>
         <button className={`scope-mode-option${mode === "ip" ? " active" : ""}`} type="button" role="radio" aria-checked={mode === "ip"} onClick={() => void save("ip")}>
           <span className="scope-mode-marker" />
@@ -608,11 +608,11 @@ function PgptSettingsForm({ onBack }: { onBack: () => void }) {
 
   return (
     <>
-      <SettingsHeader title="P-GPT API KEY">P-GPT OpenAI-compatible 연결에 필요한 값을 저장합니다.</SettingsHeader>
+      <SettingsHeader title="P-GPT API 키">P-GPT OpenAI 호환 연결에 필요한 값을 저장합니다.</SettingsHeader>
       <div className="setting-field">
-        <label className="setting-field-label" htmlFor="pgptApiKey">API Key</label>
+        <label className="setting-field-label" htmlFor="pgptApiKey">API 키</label>
         <input id="pgptApiKey" type="password" value={apiKey} placeholder={settings.apiKeyConfigured ? settings.apiKeyMasked || "저장됨" : "00000000-0000-0000-0000-000000000000"} autoComplete="off" onChange={(event) => setApiKey(event.currentTarget.value)} />
-        <small>비워두고 저장하면 기존 API Key는 유지됩니다.</small>
+        <small>비워두고 저장하면 기존 API 키는 유지됩니다.</small>
       </div>
       <div className="setting-field">
         <label className="setting-field-label" htmlFor="pgptEmployeeNo">직원번호</label>

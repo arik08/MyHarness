@@ -6,6 +6,7 @@ export type RuntimePreferences = {
   activeProfile?: string;
   model?: string;
   subagentModel?: string;
+  subagentEffort?: string;
   effort?: string;
 };
 
@@ -21,6 +22,7 @@ export function loadRuntimePreferences(): RuntimePreferences {
       activeProfile: clean(value.activeProfile) || undefined,
       model: clean(value.model) || undefined,
       subagentModel: clean(value.subagentModel) || undefined,
+      subagentEffort: clean(value.subagentEffort) || undefined,
       effort: clean(value.effort) || undefined,
     };
   } catch {
@@ -33,6 +35,7 @@ function saveRuntimePreferences(preferences: RuntimePreferences) {
     activeProfile: clean(preferences.activeProfile) || undefined,
     model: clean(preferences.model) || undefined,
     subagentModel: clean(preferences.subagentModel) || undefined,
+    subagentEffort: clean(preferences.subagentEffort) || undefined,
     effort: clean(preferences.effort) || undefined,
   };
   try {
@@ -42,16 +45,17 @@ function saveRuntimePreferences(preferences: RuntimePreferences) {
   }
 }
 
-export function runtimePreferencesFromState(state: Pick<AppState, "provider" | "model" | "subagentModel" | "effort">): RuntimePreferences {
+export function runtimePreferencesFromState(state: Pick<AppState, "provider" | "model" | "subagentModel" | "subagentEffort" | "effort">): RuntimePreferences {
   return {
     activeProfile: clean(state.provider) || undefined,
     model: clean(state.model) || undefined,
     subagentModel: clean(state.subagentModel) || undefined,
+    subagentEffort: clean(state.subagentEffort) || undefined,
     effort: clean(state.effort) || undefined,
   };
 }
 
-export function rememberRuntimeChoice(command: "provider" | "model" | "subagent_model" | "effort", option: RuntimePickerOption) {
+export function rememberRuntimeChoice(command: "provider" | "model" | "subagent_model" | "effort" | "subagent_effort", option: RuntimePickerOption) {
   const current = loadRuntimePreferences();
   if (command === "provider") {
     saveRuntimePreferences({ ...current, activeProfile: option.value, model: undefined });
@@ -63,6 +67,10 @@ export function rememberRuntimeChoice(command: "provider" | "model" | "subagent_
   }
   if (command === "subagent_model") {
     saveRuntimePreferences({ ...current, subagentModel: option.value });
+    return;
+  }
+  if (command === "subagent_effort") {
+    saveRuntimePreferences({ ...current, subagentEffort: option.value });
     return;
   }
   saveRuntimePreferences({ ...current, effort: option.value });

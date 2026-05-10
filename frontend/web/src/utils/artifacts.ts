@@ -93,6 +93,10 @@ export function artifactName(path: string) {
   return normalized.split("/").filter(Boolean).pop() || normalized || "artifact";
 }
 
+export function artifactDisplayName(artifact: Pick<ArtifactSummary, "name" | "path">) {
+  return artifact.name || artifactName(artifact.path);
+}
+
 export function artifactExtension(path: string) {
   const name = artifactName(path);
   const match = name.match(/\.([a-z0-9]+)$/i);
@@ -161,7 +165,7 @@ export function artifactCategoryForPath(path: string) {
 }
 
 export function artifactCategory(artifact: ArtifactSummary) {
-  return artifactCategoryForPath(artifact.path || artifact.name);
+  return artifactCategoryForPath(artifact.path || artifact.name || "");
 }
 
 export function isRootProjectFileCandidatePath(path: string) {
@@ -171,7 +175,7 @@ export function isRootProjectFileCandidatePath(path: string) {
 }
 
 export function isSourceCodeArtifact(artifact: ArtifactSummary) {
-  return sourceCodeExtensions.has(artifactExtension(artifact.path || artifact.name));
+  return sourceCodeExtensions.has(artifactExtension(artifact.path || artifact.name || ""));
 }
 
 export function sourceLanguageForArtifact(path: string) {

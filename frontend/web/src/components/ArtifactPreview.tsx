@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import hljs from "highlight.js/lib/common";
 import type { ArtifactSummary } from "../types/backend";
 import type { ArtifactAiEditComment, ArtifactPayload } from "../types/ui";
-import { isSourceCodeArtifact, sourceLanguageForArtifact } from "../utils/artifacts";
+import { artifactDisplayName, isSourceCodeArtifact, sourceLanguageForArtifact } from "../utils/artifacts";
 import { Icon } from "./ArtifactIcons";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -1521,6 +1521,7 @@ export function ArtifactPreview({
   artifact,
   payload,
   draftContent,
+  draftDirty,
   sourceMode,
   downloadUrl,
   htmlEditMode,
@@ -1531,6 +1532,7 @@ export function ArtifactPreview({
   artifact: ArtifactSummary;
   payload: ArtifactPayload;
   draftContent: string;
+  draftDirty?: boolean;
   sourceMode: boolean;
   downloadUrl: string;
   htmlEditMode?: boolean;
@@ -1539,7 +1541,11 @@ export function ArtifactPreview({
   onDraftContentChange: (value: string) => void;
 }) {
   const kind = String(payload.kind || artifact.kind || "");
-  const content = String(payload.content || "");
+  const payloadHasContent = typeof payload.content === "string";
+  const content = String(payload.content ?? "");
+  const displayName = artifactDisplayName(artifact);
+  const sourceContent = sourceMode || draftDirty ? draftContent : content;
+  const htmlDraftContent = draftDirty || sourceMode ? draftContent : content;
   const dataUrl = String(payload.dataUrl || "");
   const htmlEditFrameRef = useRef<{ key: string; srcDoc: string } | null>(null);
   const htmlFrameElementRef = useRef<HTMLIFrameElement | null>(null);
@@ -1579,31 +1585,31 @@ export function ArtifactPreview({
     frame.addEventListener("load", postMode);
     return () => frame.removeEventListener("load", postMode);
   }, [aiSelectionEnabled, artifact.path, htmlEditMode, kind, sourceMode]);
-  if (sourceMode && content && (kind === "html" || isSourceCodeArtifact(artifact))) {
-    return <HighlightedArtifactSource artifact={artifact} content={draftContent || content} />;
+  if (sourceMode && payloadHasContent && (kind === "html" || isSourceCodeArtifact(artifact))) {
+    return <HighlightedArtifactSource artifact={artifact} content={kind === "html" ? htmlDraftContent : sourceContent} />;
   }
-  if (sourceMode && content) {
+  if (sourceMode && payloadHasContent) {
     return (
       <textarea
         className="artifact-text artifact-source-editor"
-        value={draftContent || content}
-        aria-label={`${artifact.name} 원문`}
+        value={sourceContent}
+        aria-label={`${displayName} 원문`}
         onChange={(event) => onDraftContentChange(event.currentTarget.value)}
       />
     );
   }
   if (kind === "html") {
-    if (isIncompleteHtmlDocument(draftContent || content)) {
-      return <HighlightedArtifactSource artifact={artifact} content={draftContent || content} />;
+    if (isIncompleteHtmlDocument(htmlDraftContent)) {
+      return <HighlightedArtifactSource artifact={artifact} content={htmlDraftContent} />;
     }
     const assetBaseUrl = String(payload.assetBaseUrl || "");
-    const frameBaseContent = draftContent || content;
-    if (htmlEditMode && htmlEditSessionContentRef.current === null) {
+    const frameBaseContent = htmlDraftContent;
+    if (htmlEditMode && (htmlEditSessionContentRef.current === null || !draftDirty)) {
       htmlEditSessionContentRef.current = frameBaseContent;
     } else if (!htmlEditMode) {
       htmlEditSessionContentRef.current = null;
     }
-    const frameContent = htmlEditSessionContentRef.current || frameBaseContent;
+    const frameContent = htmlEditSessionContentRef.current ?? frameBaseContent;
     const aiCommentKey = JSON.stringify(aiEditComments.map((comment) => [comment.id, comment.start, comment.end, comment.instruction]));
     const editFrameKey = `${artifact.path}\u0000${assetBaseUrl}\u0000${frameContent}\u0000${aiCommentKey}`;
     if (htmlEditFrameRef.current?.key !== editFrameKey) {
@@ -1616,13 +1622,13 @@ export function ArtifactPreview({
     const previewContent = htmlEditFrameRef.current.srcDoc;
     const restoredScroll = htmlScrollPositionsRef.current.get(artifact.path);
     const bridgedContent = iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(previewContent), artifact.path, restoredScroll));
-    return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={artifact.name} sandbox="allow-scripts" srcDoc={bridgedContent} />;
+    return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts" srcDoc={bridgedContent} />;
   }
   if (kind === "image") {
-    return <img className="artifact-image" src={dataUrl} alt={artifact.name} />;
+    return <img className="artifact-image" src={dataUrl} alt={displayName} />;
   }
   if (kind === "pdf") {
-    return <iframe className="artifact-frame" title={artifact.name} src={dataUrl} />;
+    return <iframe className="artifact-frame" title={displayName} src={dataUrl} />;
   }
   if (isMarkdownArtifact(artifact, payload)) {
     return (
@@ -1632,13 +1638,13 @@ export function ArtifactPreview({
     );
   }
   if (content && isSourceCodeArtifact(artifact)) {
-    return <HighlightedArtifactSource artifact={artifact} content={draftContent || content} />;
+    return <HighlightedArtifactSource artifact={artifact} content={sourceContent} />;
   }
   if (kind === "file") {
     return (
       <div className="artifact-file">
         <p className="artifact-empty">이 파일 형식은 미리보기 대신 다운로드로 열 수 있습니다.</p>
-        <a className="artifact-file-download" href={downloadUrl} download={artifact.name} aria-label={`${artifact.name} 다운로드`}>
+        <a className="artifact-file-download" href={downloadUrl} download={displayName} aria-label={`${displayName} 다운로드`}>
           <Icon name="download" />
           <span>다운로드</span>
         </a>
@@ -1648,8 +1654,8 @@ export function ArtifactPreview({
   return (
     <textarea
       className="artifact-text artifact-source-editor"
-      value={draftContent || content}
-      aria-label={`${artifact.name} 내용`}
+      value={sourceContent}
+      aria-label={`${displayName} 내용`}
       onChange={(event) => onDraftContentChange(event.currentTarget.value)}
     />
   );
@@ -1692,6 +1698,7 @@ function selectElementText(element: HTMLElement) {
 
 function HighlightedArtifactSource({ artifact, content }: { artifact: ArtifactSummary; content: string }) {
   const sourceRef = useRef<HTMLPreElement | null>(null);
+  const displayName = artifactDisplayName(artifact);
   const language = sourceLanguageForArtifact(artifact.path);
   const highlighted = hljs.getLanguage(language)
     ? hljs.highlight(content, { language, ignoreIllegals: true }).value
@@ -1732,7 +1739,7 @@ function HighlightedArtifactSource({ artifact, content }: { artifact: ArtifactSu
       ref={sourceRef}
       className="artifact-text artifact-source"
       tabIndex={0}
-      aria-label={`${artifact.name} 코드 원문`}
+      aria-label={`${displayName} 코드 원문`}
       onMouseDown={(event) => {
         event.currentTarget.focus();
       }}

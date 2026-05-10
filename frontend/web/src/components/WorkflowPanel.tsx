@@ -156,6 +156,40 @@ function workflowPreviewSource(event: WorkflowEvent) {
   return null;
 }
 
+function workflowDetailPathCandidates(event: WorkflowEvent) {
+  const input = event.toolInput || {};
+  const patch = workflowPatchPreview(input);
+  return [
+    workflowInputValue(input, ["file_path", "path", "file"]).value,
+    workflowPatchPath(patch),
+    workflowPreviewSource(event)?.path || "",
+  ].filter((path, index, paths) => path && paths.indexOf(path) === index);
+}
+
+function replaceLiteral(value: string, search: string, replacement: string) {
+  if (!search || search === replacement) {
+    return value;
+  }
+  return value.split(search).join(replacement);
+}
+
+function compactWorkflowOutputDetail(event: WorkflowEvent, detail: string) {
+  if (!isWorkflowOutputTool(event.toolName)) {
+    return detail;
+  }
+  let next = detail;
+  for (const path of workflowDetailPathCandidates(event)) {
+    const fileName = workflowPreviewFileName(path);
+    next = replaceLiteral(next, path, fileName);
+    next = replaceLiteral(next, path.replace(/\\/g, "/"), fileName);
+    next = replaceLiteral(next, path.replace(/\//g, "\\"), fileName);
+  }
+  return next
+    .replace(/^Wrote\s+/i, "파일 작업 완료 · ")
+    .replace(/^Updated\s+/i, "파일 수정 완료 · ")
+    .replace(/^Created\s+/i, "파일 작성 완료 · ");
+}
+
 function workflowOutputPathKey(path: string) {
   return String(path || "").trim().replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
 }
@@ -362,6 +396,27 @@ function todoWorkflowDetail(status: WorkflowEvent["status"], detail: string) {
   return "할 일을 정리했습니다.";
 }
 
+function workflowStepTitle(event: WorkflowEvent) {
+  if (isTodoWorkflowTool(event.toolName, event.title)) {
+    return "작업 목록 정리";
+  }
+  if (!isWorkflowOutputTool(event.toolName)) {
+    return event.title;
+  }
+  const lowerToolName = event.toolName.toLowerCase();
+  const lowerTitle = event.title.toLowerCase();
+  if (event.title && lowerTitle !== lowerToolName) {
+    return event.title;
+  }
+  if (lowerToolName.includes("write")) {
+    return "파일 작성";
+  }
+  if (lowerToolName.includes("edit") || lowerToolName.includes("patch") || lowerToolName.includes("notebook")) {
+    return "파일 수정";
+  }
+  return "파일 작업";
+}
+
 function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source: WorkflowPreviewSource }) {
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
@@ -452,10 +507,11 @@ function WorkflowStep({
   const showNarration = Boolean(narration);
   const showStatusDetail = showNarration || showCompactToolDetail || showQuietParentDetail || !(quietDone && event.status === "done");
   const todoTool = isTodoWorkflowTool(event.toolName, event.title);
-  const title = todoTool ? "작업 목록 정리" : event.title;
+  const title = workflowStepTitle(event);
+  const baseDetail = showCompactToolDetail ? compactToolDetail(rawDetail ?? detail) : detail;
   const visibleDetail = todoTool
     ? todoWorkflowDetail(event.status, detail)
-    : showCompactToolDetail ? compactToolDetail(rawDetail ?? detail) : detail;
+    : compactWorkflowOutputDetail(event, baseDetail);
 
   useLayoutEffect(() => {
     if (!animate) {

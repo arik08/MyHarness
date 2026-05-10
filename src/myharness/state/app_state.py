@@ -11,6 +11,7 @@ class AppState:
 
     model: str
     subagent_model: str
+    subagent_effort: str
     permission_mode: str
     theme: str
     plan_previous_permission_mode: str = ""

@@ -139,7 +139,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 
 		child.on('exit', (code) => {
 			flushTranscriptItems();
-			queueTranscriptItem({role: 'system', text: `backend exited with code ${code ?? 0}`});
+			queueTranscriptItem({role: 'system', text: `백엔드가 종료되었습니다. 코드: ${code ?? 0}`});
 			process.exitCode = code ?? 0;
 			onExit(code);
 		});
@@ -275,27 +275,27 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			if (phase === 'hooks_start') {
 				setBusyLabel(
 					trigger === 'reactive'
-						? 'Preparing retry compaction…'
-						: 'Preparing conversation compaction…',
+						? '재시도 압축을 준비하는 중...'
+						: '대화 압축을 준비하는 중...',
 				);
 			} else if (phase === 'context_collapse_start') {
-				setBusyLabel('Collapsing oversized context…');
+				setBusyLabel('큰 컨텍스트를 압축하는 중...');
 			} else if (phase === 'context_collapse_end') {
-				setBusyLabel('Context collapse complete…');
+				setBusyLabel('컨텍스트 압축 완료...');
 			} else if (phase === 'session_memory_start') {
-				setBusyLabel('Condensing earlier conversation…');
+				setBusyLabel('이전 대화를 요약하는 중...');
 			} else if (phase === 'compact_start') {
 				setBusyLabel(
 					trigger === 'reactive'
-						? 'Context is too large. Compacting and retrying…'
-						: 'Compacting conversation memory…',
+						? '컨텍스트가 너무 큽니다. 압축 후 재시도하는 중...'
+						: '대화 메모리를 압축하는 중...',
 				);
 			} else if (phase === 'compact_retry') {
-				setBusyLabel(attempt ? `Retrying compaction (${attempt})…` : 'Retrying compaction…');
+				setBusyLabel(attempt ? `압축 재시도 중 (${attempt})...` : '압축 재시도 중...');
 			} else if (phase === 'compact_end') {
-				setBusyLabel('Compaction complete. Continuing…');
+				setBusyLabel('압축 완료. 계속 진행 중...');
 			} else if (phase === 'compact_failed') {
-				setBusyLabel('Compaction failed. Continuing without it…');
+				setBusyLabel('압축 실패. 압축 없이 계속 진행 중...');
 			}
 			if (event.message) {
 				queueTranscriptItem({role: 'status', text: event.message!});
@@ -363,9 +363,9 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		if ((event.type === 'tool_started' || event.type === 'tool_completed') && event.item) {
 			if (event.type === 'tool_started') {
 				setBusy(true);
-				setBusyLabel(`Running ${event.tool_name ?? 'tool'}...`);
+				setBusyLabel(`${event.tool_name ?? '도구'} 실행 중...`);
 			} else {
-				setBusyLabel('Processing...');
+				setBusyLabel('처리 중...');
 			}
 			const enrichedItem: TranscriptItem = {
 				...event.item,
@@ -387,7 +387,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		if (event.type === 'select_request') {
 			const m = event.modal ?? {};
 			setSelectRequest({
-				title: String(m.title ?? 'Select'),
+				title: String(m.title ?? '선택'),
 				command: String(m.command ?? ''),
 				options: event.select_options ?? [],
 			});
@@ -399,7 +399,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		}
 		if (event.type === 'error') {
 			flushTranscriptItems();
-			queueTranscriptItem({role: 'system', text: `error: ${event.message ?? 'unknown error'}`});
+			queueTranscriptItem({role: 'system', text: `오류: ${event.message ?? '알 수 없는 오류'}`});
 			clearAssistantDelta();
 			setBusy(false);
 			setBusyLabel(undefined);

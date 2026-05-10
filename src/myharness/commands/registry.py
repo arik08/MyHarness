@@ -84,7 +84,7 @@ def _format_skills_management_text(skills) -> str:
         return "사용 가능한 스킬:\n(사용자 스킬이 없습니다)"
     lines = ["사용 가능한 스킬:"]
     for skill in skills:
-        status = "enabled" if skill.enabled else "disabled"
+        status = "활성" if skill.enabled else "비활성"
         source = f" [{skill.source}]"
         lines.append(f"- {skill.name}{source} [{status}]: {display_skill_description(skill)}")
     return "\n".join(lines)
@@ -97,7 +97,7 @@ def _format_mcp_management_text(settings, plugins, cwd: str | Path) -> str:
     disabled = set(settings.disabled_mcp_servers or set())
     lines = ["MCP 서버:"]
     for name, config in sorted(servers.items()):
-        status = "disabled" if name in disabled else "enabled"
+        status = "비활성" if name in disabled else "활성"
         transport = getattr(config, "type", "알 수 없음")
         lines.append(f"- {name} [{status}] ({transport})")
     return "\n".join(lines)
@@ -108,7 +108,7 @@ def _format_plugins_management_text(plugins) -> str:
         return "플러그인:\n(발견된 플러그인이 없습니다)"
     lines = ["플러그인:"]
     for plugin in sorted(plugins, key=lambda item: item.manifest.name):
-        status = "enabled" if plugin.enabled else "disabled"
+        status = "활성" if plugin.enabled else "비활성"
         description = f": {plugin.manifest.description}" if plugin.manifest.description else ""
         lines.append(f"- {plugin.manifest.name} [{status}]{description}")
     return "\n".join(lines)
@@ -361,7 +361,7 @@ def create_default_command_registry(
 
     def _effort_label(value: object) -> str:
         normalized = str(value or "").strip()
-        return "None" if normalized.lower() in {"", "none", "auto"} else normalized
+        return "자동" if normalized.lower() in {"", "none", "auto"} else normalized
 
     async def _help_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -389,7 +389,7 @@ def create_default_command_registry(
 
     async def _clear_handler(_: str, context: CommandContext) -> CommandResult:
         context.engine.clear()
-        return CommandResult(message="Conversation cleared.", clear_screen=True)
+        return CommandResult(message="대화를 지웠습니다.", clear_screen=True)
 
     async def _status_handler(_: str, context: CommandContext) -> CommandResult:
         usage = context.engine.total_usage
@@ -397,11 +397,11 @@ def create_default_command_registry(
         manager = AuthManager()
         return CommandResult(
             message=(
-                f"Messages: {len(context.engine.messages)}\n"
-                f"Usage: input={usage.input_tokens} output={usage.output_tokens}\n"
-                f"Profile: {manager.get_active_profile()}\n"
-                f"Effort: {_effort_label(state.effort if state is not None else load_settings().effort)}\n"
-                f"Passes: {state.passes if state is not None else load_settings().passes}"
+                f"메시지: {len(context.engine.messages)}\n"
+                f"사용량: 입력={usage.input_tokens} 출력={usage.output_tokens}\n"
+                f"프로필: {manager.get_active_profile()}\n"
+                f"추론 강도: {_effort_label(state.effort if state is not None else load_settings().effort)}\n"
+                f"패스: {state.passes if state is not None else load_settings().passes}"
             )
         )
 
@@ -424,7 +424,7 @@ def create_default_command_registry(
             try:
                 max_messages = max(1, int(args))
             except ValueError:
-                return CommandResult(message="Usage: /summary [MAX_MESSAGES]")
+                return CommandResult(message="사용법: /summary [MAX_MESSAGES]")
         summary = summarize_messages(context.engine.messages, max_messages=max_messages)
         return CommandResult(message=summary or "No conversation content to summarize.")
 
@@ -434,7 +434,7 @@ def create_default_command_registry(
             try:
                 preserve_recent = max(1, int(args))
             except ValueError:
-                return CommandResult(message="Usage: /compact [PRESERVE_RECENT]")
+                return CommandResult(message="사용법: /compact [PRESERVE_RECENT]")
         before = len(context.engine.messages)
         try:
             compacted_result = await compact_conversation(
@@ -458,9 +458,9 @@ def create_default_command_registry(
         estimated = estimate_conversation_tokens(context.engine.messages)
         return CommandResult(
             message=(
-                f"Actual usage: input={usage.input_tokens} output={usage.output_tokens}\n"
-                f"Estimated conversation tokens: {estimated}\n"
-                f"Messages: {len(context.engine.messages)}"
+                f"실제 사용량: 입력={usage.input_tokens} 출력={usage.output_tokens}\n"
+                f"예상 대화 토큰: {estimated}\n"
+                f"메시지: {len(context.engine.messages)}"
             )
         )
 
@@ -479,11 +479,11 @@ def create_default_command_registry(
             estimated_cost = f"${estimated:.4f} (estimated)"
         return CommandResult(
             message=(
-                f"Model: {model}\n"
-                f"Input tokens: {usage.input_tokens}\n"
-                f"Output tokens: {usage.output_tokens}\n"
-                f"Total tokens: {usage.total_tokens}\n"
-                f"Estimated cost: {estimated_cost}"
+                f"모델: {model}\n"
+                f"입력 토큰: {usage.input_tokens}\n"
+                f"출력 토큰: {usage.output_tokens}\n"
+                f"전체 토큰: {usage.total_tokens}\n"
+                f"예상 비용: {estimated_cost}"
             )
         )
 
@@ -498,13 +498,13 @@ def create_default_command_registry(
             style = state.output_style
         return CommandResult(
             message=(
-                "Session stats:\n"
-                f"- messages: {len(context.engine.messages)}\n"
-                f"- estimated_tokens: {estimate_conversation_tokens(context.engine.messages)}\n"
-                f"- tools: {tool_count}\n"
-                f"- memory_files: {memory_count}\n"
-                f"- background_tasks: {task_count}\n"
-                f"- output_style: {style}"
+                "세션 통계:\n"
+                f"- 메시지: {len(context.engine.messages)}\n"
+                f"- 예상 토큰: {estimate_conversation_tokens(context.engine.messages)}\n"
+                f"- 도구: {tool_count}\n"
+                f"- 메모리 파일: {memory_count}\n"
+                f"- 백그라운드 작업: {task_count}\n"
+                f"- 출력 스타일: {style}"
             )
         )
 
@@ -521,32 +521,32 @@ def create_default_command_registry(
         if action == "list":
             memory_files = list_memory_files(context.cwd)
             if not memory_files:
-                return CommandResult(message="No memory files.")
+                return CommandResult(message="메모리 파일이 없습니다.")
             return CommandResult(message="\n".join(path.name for path in memory_files))
         if action == "show" and rest:
             memory_dir = get_project_memory_dir(context.cwd)
             path, invalid = _resolve_memory_entry_path(memory_dir, rest)
             if invalid:
-                return CommandResult(message="Memory entry path must stay within the project memory directory.")
+                return CommandResult(message="메모리 항목 경로는 프로젝트 메모리 디렉터리 안에 있어야 합니다.")
             if path is None:
-                return CommandResult(message=f"Memory entry not found: {rest}")
+                return CommandResult(message=f"메모리 항목을 찾을 수 없습니다: {rest}")
             if not path.exists():
-                return CommandResult(message=f"Memory entry not found: {rest}")
+                return CommandResult(message=f"메모리 항목을 찾을 수 없습니다: {rest}")
             return CommandResult(message=path.read_text(encoding="utf-8"))
         if action == "add" and rest:
             title, separator, content = rest.partition("::")
             if not separator or not title.strip() or not content.strip():
-                return CommandResult(message="Usage: /memory add TITLE :: CONTENT")
+                return CommandResult(message="사용법: /memory add TITLE :: CONTENT")
             path = add_memory_entry(context.cwd, title.strip(), content.strip())
-            return CommandResult(message=f"Added memory entry {path.name}")
+            return CommandResult(message=f"메모리 항목을 추가했습니다: {path.name}")
         if action == "remove" and rest:
             if remove_memory_entry(context.cwd, rest.strip()):
-                return CommandResult(message=f"Removed memory entry {rest.strip()}")
-            return CommandResult(message=f"Memory entry not found: {rest.strip()}")
-        return CommandResult(message="Usage: /memory [list|show NAME|add TITLE :: CONTENT|remove NAME]")
+                return CommandResult(message=f"메모리 항목을 제거했습니다: {rest.strip()}")
+            return CommandResult(message=f"메모리 항목을 찾을 수 없습니다: {rest.strip()}")
+        return CommandResult(message="사용법: /memory [list|show NAME|add TITLE :: CONTENT|remove NAME]")
 
     async def _hooks_handler(_: str, context: CommandContext) -> CommandResult:
-        return CommandResult(message=context.hooks_summary or "No hooks configured.")
+        return CommandResult(message=context.hooks_summary or "설정된 훅이 없습니다.")
 
     async def _resume_handler(args: str, context: CommandContext) -> CommandResult:
         tokens = args.strip().split()
@@ -556,14 +556,14 @@ def create_default_command_registry(
             sid = tokens[0]
             snapshot = context.session_backend.load_by_id(context.cwd, sid)
             if snapshot is None:
-                return CommandResult(message=f"Session not found: {sid}")
+                return CommandResult(message=f"세션을 찾을 수 없습니다: {sid}")
             messages = sanitize_conversation_messages(
                 [ConversationMessage.model_validate(item) for item in snapshot.get("messages", [])]
             )
             context.engine.load_messages(messages)
             summary = snapshot.get("summary", "")[:60]
             return CommandResult(
-                message=f"Restored {len(messages)} messages from session {sid}"
+                message=f"세션 {sid}에서 메시지 {len(messages)}개를 복원했습니다"
                 + (f" ({summary})" if summary else ""),
                 replay_messages=messages,
             )
@@ -574,43 +574,43 @@ def create_default_command_registry(
             # Fall back to latest.json
             snapshot = context.session_backend.load_latest(context.cwd)
             if snapshot is None:
-                return CommandResult(message="No saved sessions found for this project.")
+                return CommandResult(message="이 프로젝트에 저장된 세션이 없습니다.")
             messages = sanitize_conversation_messages(
                 [ConversationMessage.model_validate(item) for item in snapshot.get("messages", [])]
             )
             context.engine.load_messages(messages)
             return CommandResult(
-                message=f"Restored {len(messages)} messages from the latest session.",
+                message=f"최근 세션에서 메시지 {len(messages)}개를 복원했습니다.",
                 replay_messages=messages,
             )
 
         # Format session list for display / picker
         import time
-        lines = ["Saved sessions:"]
+        lines = ["저장된 세션:"]
         for s in sessions:
             ts = time.strftime("%m/%d %H:%M", time.localtime(s["created_at"]))
-            summary = s["summary"][:50] or "(no summary)"
-            lines.append(f"  {s['session_id']}  {ts}  {s['message_count']}msg  {summary}")
+            summary = s["summary"][:50] or "(요약 없음)"
+            lines.append(f"  {s['session_id']}  {ts}  메시지 {s['message_count']}개  {summary}")
         lines.append("")
-        lines.append("Use /resume <session_id> to restore a specific session.")
+        lines.append("특정 세션을 복원하려면 /resume <session_id>를 사용하세요.")
         return CommandResult(message="\n".join(lines))
 
     async def _export_handler(_: str, context: CommandContext) -> CommandResult:
         path = context.session_backend.export_markdown(cwd=context.cwd, messages=context.engine.messages)
-        return CommandResult(message=f"Exported transcript to {path}")
+        return CommandResult(message=f"대화 기록을 내보냈습니다: {path}")
 
     async def _share_handler(_: str, context: CommandContext) -> CommandResult:
         path = context.session_backend.export_markdown(cwd=context.cwd, messages=context.engine.messages)
-        return CommandResult(message=f"Created shareable transcript snapshot at {path}")
+        return CommandResult(message=f"공유용 대화 기록 스냅샷을 만들었습니다: {path}")
 
     async def _copy_handler(args: str, context: CommandContext) -> CommandResult:
         text = args.strip() or _last_message_text(context.engine.messages)
         if not text:
-            return CommandResult(message="Nothing to copy.")
+            return CommandResult(message="복사할 내용이 없습니다.")
         copied, target = _copy_to_clipboard(text)
         if copied:
-            return CommandResult(message=f"Copied {len(text)} characters to the clipboard.")
-        return CommandResult(message=f"Clipboard unavailable. Saved copied text to {target}")
+            return CommandResult(message=f"클립보드에 {len(text)}자를 복사했습니다.")
+        return CommandResult(message=f"클립보드를 사용할 수 없어 복사 내용을 저장했습니다: {target}")
 
     async def _session_handler(args: str, context: CommandContext) -> CommandResult:
         session_dir = context.session_backend.get_session_dir(context.cwd)
@@ -619,21 +619,21 @@ def create_default_command_registry(
             latest = session_dir / "latest.json"
             transcript = session_dir / "transcript.md"
             lines = [
-                f"Session directory: {session_dir}",
-                f"Latest snapshot: {'present' if latest.exists() else 'missing'}",
-                f"Transcript export: {'present' if transcript.exists() else 'missing'}",
-                f"Message count: {len(context.engine.messages)}",
+                f"세션 디렉터리: {session_dir}",
+                f"최근 스냅샷: {'있음' if latest.exists() else '없음'}",
+                f"대화 기록 내보내기: {'있음' if transcript.exists() else '없음'}",
+                f"메시지 수: {len(context.engine.messages)}",
             ]
             return CommandResult(message="\n".join(lines))
         if tokens[0] == "ls":
             files = sorted(path.name for path in session_dir.iterdir())
-            return CommandResult(message="\n".join(files) if files else "(empty)")
+            return CommandResult(message="\n".join(files) if files else "(비어 있음)")
         if tokens[0] == "path":
             return CommandResult(message=str(session_dir))
         if tokens[0] == "tag" and len(tokens) == 2:
             safe_name = "".join(character for character in tokens[1] if character.isalnum() or character in {"-", "_"})
             if not safe_name:
-                return CommandResult(message="Usage: /session tag NAME")
+                return CommandResult(message="사용법: /session tag NAME")
             snapshot_path = context.session_backend.save_snapshot(
                 cwd=context.cwd,
                 model=context.app_state.get().model if context.app_state is not None else load_settings().model,
@@ -646,13 +646,13 @@ def create_default_command_registry(
             tagged_md = session_dir / f"{safe_name}.md"
             shutil.copy2(snapshot_path, tagged_json)
             shutil.copy2(export_path, tagged_md)
-            return CommandResult(message=f"Tagged session as {safe_name}:\n- {tagged_json}\n- {tagged_md}")
+            return CommandResult(message=f"세션 태그를 저장했습니다: {safe_name}\n- {tagged_json}\n- {tagged_md}")
         if tokens[0] == "clear":
             if session_dir.exists():
                 shutil.rmtree(session_dir)
             session_dir.mkdir(parents=True, exist_ok=True)
-            return CommandResult(message=f"Cleared session storage at {session_dir}")
-        return CommandResult(message="Usage: /session [show|ls|path|tag NAME|clear]")
+            return CommandResult(message=f"세션 저장소를 비웠습니다: {session_dir}")
+        return CommandResult(message="사용법: /session [show|ls|path|tag NAME|clear]")
 
     async def _rewind_handler(args: str, context: CommandContext) -> CommandResult:
         turns = 1
@@ -660,17 +660,17 @@ def create_default_command_registry(
             try:
                 turns = max(1, int(args.strip()))
             except ValueError:
-                return CommandResult(message="Usage: /rewind [TURNS]")
+                return CommandResult(message="사용법: /rewind [TURNS]")
         before = len(context.engine.messages)
         updated = _rewind_turns(context.engine.messages, turns)
         context.engine.load_messages(updated)
         removed = before - len(updated)
-        return CommandResult(message=f"Rewound {turns} turn(s); removed {removed} message(s).")
+        return CommandResult(message=f"{turns}턴을 되감아 메시지 {removed}개를 제거했습니다.")
 
     async def _tag_handler(args: str, context: CommandContext) -> CommandResult:
         name = args.strip()
         if not name:
-            return CommandResult(message="Usage: /tag NAME")
+            return CommandResult(message="사용법: /tag NAME")
         return await _session_handler(f"tag {name}", context)
 
     async def _files_handler(args: str, context: CommandContext) -> CommandResult:
@@ -841,7 +841,7 @@ def create_default_command_registry(
                 return CommandResult(message=str(exc))
             return CommandResult(message=f"Stopped bridge session {tokens[1]}")
         return CommandResult(
-            message="Usage: /bridge [show|encode API_BASE_URL TOKEN|decode SECRET|sdk API_BASE_URL SESSION_ID|spawn CMD|list|output SESSION_ID|stop SESSION_ID]"
+            message="사용법: /bridge [show|encode API_BASE_URL TOKEN|decode SECRET|sdk API_BASE_URL SESSION_ID|spawn CMD|list|output SESSION_ID|stop SESSION_ID]"
         )
 
     async def _reload_plugins_handler(_: str, context: CommandContext) -> CommandResult:
@@ -880,7 +880,7 @@ def create_default_command_registry(
         if action in {"on", "off", "enable", "disable", "toggle"} and rest:
             skill = skill_registry.get(rest)
             if skill is None:
-                return CommandResult(message=f"Skill not found: {rest}")
+                return CommandResult(message=f"스킬을 찾을 수 없습니다: {rest}")
             if action in {"on", "enable"}:
                 enabled = set_skill_enabled(skill.name, True)
             elif action in {"off", "disable"}:
@@ -896,7 +896,7 @@ def create_default_command_registry(
             skills = _custom_skills(refreshed.list_skills())
             return CommandResult(
                 message=(
-                    f"Skill '{skill.name}' {'enabled' if enabled else 'disabled'}.\n\n"
+                    f"스킬 '{skill.name}'을(를) {'활성화' if enabled else '비활성화'}했습니다.\n\n"
                     f"{_format_skills_management_text(skills)}"
                 )
             )
@@ -904,13 +904,13 @@ def create_default_command_registry(
             skill = skill_registry.get(args)
             if skill is None:
                 return CommandResult(
-                    message="Usage: /skills [list|show NAME|enable NAME|disable NAME|toggle NAME]"
+                    message="사용법: /skills [list|show NAME|enable NAME|disable NAME|toggle NAME]"
                 )
             return CommandResult(message=skill.content)
         if action == "show" and rest:
             skill = skill_registry.get(rest)
             if skill is None:
-                return CommandResult(message=f"Skill not found: {rest}")
+                return CommandResult(message=f"스킬을 찾을 수 없습니다: {rest}")
             return CommandResult(message=skill.content)
         skills = _custom_skills(skill_registry.list_skills())
         return CommandResult(message=_format_skills_management_text(skills))
@@ -937,28 +937,28 @@ def create_default_command_registry(
             settings.learning.enabled = normalized_action != "off"
             save_settings(settings)
             label = {
-                "use": "enabled and visible",
-                "hide": "enabled but hidden from $ and /help",
-                "off": "disabled",
+                "use": "활성화하고 표시",
+                "hide": "활성화하지만 $와 /help에서는 숨김",
+                "off": "비활성화",
             }[normalized_action]
             return CommandResult(
-                message=f"Automatic learned skills {label}.",
+                message=f"자동학습 스킬을 {label} 상태로 설정했습니다.",
                 refresh_runtime=True,
             )
         if normalized_action not in {"show", "list"}:
-            return CommandResult(message="Usage: /learned-skills [show|use|hide|off]")
+            return CommandResult(message="사용법: /learned-skills [show|use|hide|off]")
 
         root = get_default_learning_skills_dir()
         learned = context.engine.tool_metadata.get("recent_learned_skills")
         effective_mode = settings.learning.effective_mode
-        enabled_label = "disabled" if effective_mode == "off" else "enabled"
+        enabled_label = "비활성" if effective_mode == "off" else "활성"
         lines = [
-            f"Automatic learned skills: {enabled_label} ({effective_mode})",
-            f"Program skills directory: {root}",
+            f"자동학습 스킬: {enabled_label} ({effective_mode})",
+            f"프로그램 스킬 디렉터리: {root}",
         ]
         if isinstance(learned, list) and learned:
             lines.append("")
-            lines.append("Recent automatic updates:")
+            lines.append("최근 자동 업데이트:")
             for item in learned[-8:]:
                 if not isinstance(item, dict):
                     continue
@@ -971,7 +971,7 @@ def create_default_command_registry(
                     lines.append(f"  {path}")
         else:
             lines.append("")
-            lines.append("No automatic skill updates in this session yet.")
+            lines.append("아직 이 세션의 자동 스킬 업데이트가 없습니다.")
 
         if root.exists():
             learned_dirs = sorted(
@@ -1003,7 +1003,7 @@ def create_default_command_registry(
             setattr(settings, key, coerced)
             save_settings(settings)
             return CommandResult(message=f"Updated {key}")
-        return CommandResult(message="Usage: /config [show|set KEY VALUE]")
+        return CommandResult(message="사용법: /config [show|set KEY VALUE]")
 
     async def _login_handler(args: str, context: CommandContext) -> CommandResult:
         del context
@@ -1027,13 +1027,13 @@ def create_default_command_registry(
                     f"- base_url: {settings.base_url or '(default)'}\n"
                     f"- model: {settings.model}\n"
                     f"- credential_source: {auth_line}\n"
-                    f"Usage: {'/login API_KEY EMPLOYEE_NO [COMPANY_CODE]' if profile.auth_source == 'pgpt_api_key' else '/login API_KEY'}"
+                    f"사용법: {'/login API_KEY EMPLOYEE_NO [COMPANY_CODE]' if profile.auth_source == 'pgpt_api_key' else '/login API_KEY'}"
                 )
             )
         if profile.auth_source == "pgpt_api_key":
             values = _parse_pgpt_login_args(api_key)
             if not values.get("api_key") or not values.get("employee_no"):
-                return CommandResult(message="Usage: /login API_KEY EMPLOYEE_NO [COMPANY_CODE]")
+                return CommandResult(message="사용법: /login API_KEY EMPLOYEE_NO [COMPANY_CODE]")
             env_values = {
                 "PGPT_API_KEY": values["api_key"],
                 "PGPT_EMPLOYEE_NO": values["employee_no"],
@@ -1064,17 +1064,17 @@ def create_default_command_registry(
         if profile.auth_source == "pgpt_api_key":
             os.environ.pop("PGPT_EMPLOYEE_NO", None)
             os.environ.pop("PGPT_COMPANY_CODE", None)
-        return CommandResult(message="Cleared stored API key and current process auth environment.")
+        return CommandResult(message="저장된 API 키와 현재 프로세스 인증 환경을 지웠습니다.")
 
     async def _feedback_handler(args: str, context: CommandContext) -> CommandResult:
         del context
         path = get_feedback_log_path()
         if not args.strip():
-            return CommandResult(message=f"Feedback log: {path}\nUsage: /feedback TEXT")
+            return CommandResult(message=f"피드백 로그: {path}\n사용법: /feedback TEXT")
         timestamp = datetime.now(timezone.utc).isoformat()
         with path.open("a", encoding="utf-8") as handle:
             handle.write(f"[{timestamp}] {args.strip()}\n")
-        return CommandResult(message=f"Saved feedback to {path}")
+        return CommandResult(message=f"피드백을 {path}에 저장했습니다")
 
     async def _onboarding_handler(_: str, context: CommandContext) -> CommandResult:
         del context
@@ -1098,24 +1098,24 @@ def create_default_command_registry(
         )
         action = args.strip() or "show"
         if action == "show":
-            return CommandResult(message=f"Fast mode: {'on' if current else 'off'}")
+            return CommandResult(message=f"빠른 모드: {'켜짐' if current else '꺼짐'}")
         enabled = {"on": True, "off": False, "toggle": not current}.get(action)
         if enabled is None:
-            return CommandResult(message="Usage: /fast [show|on|off|toggle]")
+            return CommandResult(message="사용법: /fast [show|on|off|toggle]")
         settings.fast_mode = enabled
         save_settings(settings)
         if context.app_state is not None:
             context.app_state.set(fast_mode=enabled)
-        return CommandResult(message=f"Fast mode {'enabled' if enabled else 'disabled'}.")
+        return CommandResult(message=f"빠른 모드를 {'켰습니다' if enabled else '껐습니다'}.")
 
     async def _effort_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         current = context.app_state.get().effort if context.app_state is not None else settings.effort
         value = args.strip() or "show"
         if value == "show":
-            return CommandResult(message=f"Reasoning effort: {_effort_label(current)}")
+            return CommandResult(message=f"추론 강도: {_effort_label(current)}")
         if value not in {"auto", "none", "low", "medium", "high", "xhigh", "max"}:
-            return CommandResult(message="Usage: /effort [show|auto|low|medium|high|xhigh|max]")
+            return CommandResult(message="사용법: /effort [show|auto|low|medium|high|xhigh|max]")
         stored_value = "none" if value == "auto" else value
         settings.effort = stored_value
         save_settings(settings)
@@ -1123,24 +1123,24 @@ def create_default_command_registry(
         context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
         if context.app_state is not None:
             context.app_state.set(effort=stored_value)
-        return CommandResult(message=f"Reasoning effort set to {_effort_label(stored_value)}.")
+        return CommandResult(message=f"추론 강도를 {_effort_label(stored_value)}(으)로 설정했습니다.")
 
     async def _passes_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         current = context.app_state.get().passes if context.app_state is not None else settings.passes
         value = args.strip() or "show"
         if value == "show":
-            return CommandResult(message=f"Passes: {current}")
+            return CommandResult(message=f"패스: {current}")
         try:
             passes = max(1, min(int(value), 8))
         except ValueError:
-            return CommandResult(message="Usage: /passes [show|COUNT]")
+            return CommandResult(message="사용법: /passes [show|COUNT]")
         settings.passes = passes
         save_settings(settings)
         context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
         if context.app_state is not None:
             context.app_state.set(passes=passes)
-        return CommandResult(message=f"Pass count set to {passes}.")
+        return CommandResult(message=f"패스 수를 {passes}(으)로 설정했습니다.")
 
     async def _turns_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1149,9 +1149,9 @@ def create_default_command_registry(
         if not tokens or tokens[0] == "show":
             return CommandResult(
                 message=(
-                    f"Max turns (engine): {engine_turns}\n"
-                    f"Max turns (config): {settings.max_turns}\n"
-                    "Usage: /turns [show|unlimited|COUNT]"
+                    f"최대 턴(엔진): {engine_turns}\n"
+                    f"최대 턴(설정): {settings.max_turns}\n"
+                    "사용법: /turns [show|unlimited|COUNT]"
                 )
             )
         if tokens[0] == "set" and len(tokens) == 2:
@@ -1159,29 +1159,29 @@ def create_default_command_registry(
         elif len(tokens) == 1:
             raw = tokens[0]
         else:
-            return CommandResult(message="Usage: /turns [show|unlimited|COUNT]")
+            return CommandResult(message="사용법: /turns [show|unlimited|COUNT]")
         if raw.lower() == "unlimited":
             context.engine.set_max_turns(None)
             return CommandResult(
                 message=(
-                    "Max turns set to unlimited for this session. "
-                    f"Saved config remains {settings.max_turns}."
+                    "이 세션의 최대 턴을 무제한으로 설정했습니다. "
+                    f"저장된 설정은 {settings.max_turns}로 유지됩니다."
                 )
             )
         try:
             turns = int(raw)
         except ValueError:
-            return CommandResult(message="Usage: /turns [show|unlimited|COUNT]")
+            return CommandResult(message="사용법: /turns [show|unlimited|COUNT]")
         turns = max(1, min(turns, 512))
         settings.max_turns = turns
         save_settings(settings)
         context.engine.set_max_turns(turns)
-        return CommandResult(message=f"Max turns set to {turns}.")
+        return CommandResult(message=f"최대 턴을 {turns}(으)로 설정했습니다.")
 
     async def _continue_handler(args: str, context: CommandContext) -> CommandResult:
         raw = args.strip()
         if not context.engine.has_pending_continuation():
-            return CommandResult(message="Nothing to continue (no pending tool results).")
+            return CommandResult(message="계속할 항목이 없습니다. 대기 중인 도구 결과가 없습니다.")
 
         turns: int | None = None
         if raw:
@@ -1191,11 +1191,11 @@ def create_default_command_registry(
             try:
                 turns = int(raw)
             except ValueError:
-                return CommandResult(message="Usage: /continue [COUNT]")
+                return CommandResult(message="사용법: /continue [COUNT]")
             turns = max(1, min(turns, 512))
 
         return CommandResult(
-            message="Continuing pending tool loop...",
+            message="대기 중인 도구 루프를 계속합니다...",
             continue_pending=True,
             continue_turns=turns,
         )
@@ -1207,22 +1207,22 @@ def create_default_command_registry(
         rest = tokens[1] if len(tokens) == 2 else ""
         if action == "show":
             if not path.exists():
-                return CommandResult(message=f"No issue context. File path: {path}")
+                return CommandResult(message=f"이슈 컨텍스트가 없습니다. 파일 경로: {path}")
             return CommandResult(message=path.read_text(encoding="utf-8"))
         if action == "set" and rest:
             title, separator, body = rest.partition("::")
             if not separator or not title.strip() or not body.strip():
-                return CommandResult(message="Usage: /issue set TITLE :: BODY")
+                return CommandResult(message="사용법: /issue set TITLE :: BODY")
             content = f"# {title.strip()}\n\n{body.strip()}\n"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
-            return CommandResult(message=f"Saved issue context to {path}")
+            return CommandResult(message=f"이슈 컨텍스트를 {path}에 저장했습니다")
         if action == "clear":
             if path.exists():
                 path.unlink()
-                return CommandResult(message="Cleared issue context.")
-            return CommandResult(message="No issue context to clear.")
-        return CommandResult(message="Usage: /issue [show|set TITLE :: BODY|clear]")
+                return CommandResult(message="이슈 컨텍스트를 지웠습니다.")
+            return CommandResult(message="지울 이슈 컨텍스트가 없습니다.")
+        return CommandResult(message="사용법: /issue [show|set TITLE :: BODY|clear]")
 
     async def _pr_comments_handler(args: str, context: CommandContext) -> CommandResult:
         path = get_project_pr_comments_file(context.cwd)
@@ -1236,7 +1236,7 @@ def create_default_command_registry(
         if action == "add" and rest:
             location, separator, comment = rest.partition("::")
             if not separator or not location.strip() or not comment.strip():
-                return CommandResult(message="Usage: /pr_comments add FILE[:LINE] :: COMMENT")
+                return CommandResult(message="사용법: /pr_comments add FILE[:LINE] :: COMMENT")
             existing = path.read_text(encoding="utf-8") if path.exists() else "# PR Comments\n"
             if not existing.endswith("\n"):
                 existing += "\n"
@@ -1249,7 +1249,7 @@ def create_default_command_registry(
                 path.unlink()
                 return CommandResult(message="Cleared PR comments context.")
             return CommandResult(message="No PR comments context to clear.")
-        return CommandResult(message="Usage: /pr_comments [show|add FILE[:LINE] :: COMMENT|clear]")
+        return CommandResult(message="사용법: /pr_comments [show|add FILE[:LINE] :: COMMENT|clear]")
 
     async def _mcp_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1266,7 +1266,7 @@ def create_default_command_registry(
         if tokens[0] in {"enable", "disable", "toggle"} and len(tokens) == 2:
             server_name = tokens[1]
             if server_name not in servers:
-                return CommandResult(message=f"Unknown MCP server: {server_name}")
+                return CommandResult(message=f"알 수 없는 MCP 서버: {server_name}")
             disabled = set(settings.disabled_mcp_servers or set())
             if tokens[0] == "enable":
                 disabled.discard(server_name)
@@ -1281,14 +1281,14 @@ def create_default_command_registry(
             save_settings(settings)
             enabled = server_name not in disabled
             return CommandResult(
-                message=f"MCP server '{server_name}' {'enabled' if enabled else 'disabled'}.",
+                message=f"MCP 서버 '{server_name}'을(를) {'활성화' if enabled else '비활성화'}했습니다.",
                 refresh_runtime=True,
             )
         if tokens and tokens[0] == "auth" and len(tokens) >= 3:
             server_name = tokens[1]
             config = settings.mcp_servers.get(server_name)
             if config is None:
-                return CommandResult(message=f"Unknown MCP server: {server_name}")
+                return CommandResult(message=f"알 수 없는 MCP 서버: {server_name}")
 
             if len(tokens) == 3:
                 mode = "bearer"
@@ -1304,12 +1304,12 @@ def create_default_command_registry(
                 value = tokens[4]
             else:
                 return CommandResult(
-                    message="Usage: /mcp auth SERVER TOKEN | /mcp auth SERVER [bearer|env] VALUE | /mcp auth SERVER header KEY VALUE"
+                    message="사용법: /mcp auth SERVER TOKEN | /mcp auth SERVER [bearer|env] VALUE | /mcp auth SERVER header KEY VALUE"
                 )
 
             if hasattr(config, "headers"):
                 if mode not in {"bearer", "header"}:
-                    return CommandResult(message="HTTP/WS MCP auth supports bearer or header modes.")
+                    return CommandResult(message="HTTP/WS MCP 인증은 bearer 또는 header 모드를 지원합니다.")
                 header_key = key or "Authorization"
                 header_value = (
                     f"Bearer {value}" if mode == "bearer" and header_key == "Authorization" else value
@@ -1319,17 +1319,17 @@ def create_default_command_registry(
                 settings.mcp_servers[server_name] = config.model_copy(update={"headers": headers})
             elif hasattr(config, "env"):
                 if mode not in {"bearer", "env"}:
-                    return CommandResult(message="stdio MCP auth supports bearer or env modes.")
+                    return CommandResult(message="stdio MCP 인증은 bearer 또는 env 모드를 지원합니다.")
                 env_key = key or "MCP_AUTH_TOKEN"
                 env_value = f"Bearer {value}" if mode == "bearer" else value
                 env = dict(getattr(config, "env", {}) or {})
                 env[env_key] = env_value
                 settings.mcp_servers[server_name] = config.model_copy(update={"env": env})
             else:
-                return CommandResult(message=f"Server {server_name} does not support auth updates")
+                return CommandResult(message=f"서버 {server_name}은(는) 인증 업데이트를 지원하지 않습니다")
             save_settings(settings)
-            return CommandResult(message=f"Saved MCP auth for {server_name}. Restart session to reconnect.")
-        return CommandResult(message="Usage: /mcp [list|enable NAME|disable NAME|toggle NAME|auth SERVER ...]")
+            return CommandResult(message=f"{server_name} MCP 인증을 저장했습니다. 다시 연결하려면 세션을 재시작하세요.")
+        return CommandResult(message="사용법: /mcp [list|enable NAME|disable NAME|toggle NAME|auth SERVER ...]")
 
     async def _plugin_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1345,11 +1345,11 @@ def create_default_command_registry(
         if tokens[0] == "enable" and len(tokens) == 2:
             settings.enabled_plugins[tokens[1]] = True
             save_settings(settings)
-            return CommandResult(message=f"Enabled plugin '{tokens[1]}'. Restart session to reload.")
+            return CommandResult(message=f"플러그인 '{tokens[1]}'을(를) 활성화했습니다. 다시 불러오려면 세션을 재시작하세요.")
         if tokens[0] == "disable" and len(tokens) == 2:
             settings.enabled_plugins[tokens[1]] = False
             save_settings(settings)
-            return CommandResult(message=f"Disabled plugin '{tokens[1]}'. Restart session to reload.")
+            return CommandResult(message=f"플러그인 '{tokens[1]}'을(를) 비활성화했습니다. 다시 불러오려면 세션을 재시작하세요.")
         if tokens[0] == "toggle" and len(tokens) == 2:
             plugins = load_plugins(
                 settings,
@@ -1360,20 +1360,20 @@ def create_default_command_registry(
             known_plugins = {plugin.manifest.name: plugin for plugin in plugins}
             current = known_plugins.get(tokens[1])
             if current is None:
-                return CommandResult(message=f"Unknown plugin: {tokens[1]}")
+                return CommandResult(message=f"알 수 없는 플러그인: {tokens[1]}")
             enabled = not current.enabled
             settings.enabled_plugins[tokens[1]] = enabled
             save_settings(settings)
             return CommandResult(
-                message=f"{'Enabled' if enabled else 'Disabled'} plugin '{tokens[1]}'. Restart session to reload."
+                message=f"플러그인 '{tokens[1]}'을(를) {'활성화' if enabled else '비활성화'}했습니다. 다시 불러오려면 세션을 재시작하세요."
             )
         if tokens[0] == "install" and len(tokens) == 2:
             path = install_plugin_from_path(tokens[1])
-            return CommandResult(message=f"Installed plugin to {path}")
+            return CommandResult(message=f"플러그인을 {path}에 설치했습니다")
         if tokens[0] == "uninstall" and len(tokens) == 2:
             if uninstall_plugin(tokens[1]):
-                return CommandResult(message=f"Uninstalled plugin '{tokens[1]}'")
-            return CommandResult(message=f"Plugin '{tokens[1]}' not found")
+                return CommandResult(message=f"플러그인 '{tokens[1]}'을(를) 제거했습니다")
+            return CommandResult(message=f"플러그인 '{tokens[1]}'을(를) 찾을 수 없습니다")
         plugins = load_plugins(
             settings,
             context.cwd,
@@ -1382,7 +1382,7 @@ def create_default_command_registry(
         )
         if plugins:
             return CommandResult(message=_format_plugins_management_text(plugins))
-        return CommandResult(message="Usage: /plugin [list|enable NAME|disable NAME|toggle NAME|install PATH|uninstall NAME]")
+        return CommandResult(message="사용법: /plugin [list|enable NAME|disable NAME|toggle NAME|install PATH|uninstall NAME]")
 
     _MODE_LABELS = {"default": "Default", "plan": "Plan Mode", "full_auto": "Auto"}
     _PLAN_MODE_VALUES = {PermissionMode.PLAN.value, "plan_mode", "permissionmode.plan"}
@@ -1467,7 +1467,7 @@ def create_default_command_registry(
                 )
             label = _MODE_LABELS.get(target_mode, target_mode)
             return CommandResult(message=f"Permission mode set to {label}", refresh_runtime=True)
-        return CommandResult(message="Usage: /permissions [show|MODE]")
+        return CommandResult(message="사용법: /permissions [show|MODE]")
 
     async def _plan_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1491,12 +1491,12 @@ def create_default_command_registry(
                 PermissionMode.PLAN,
                 plan_previous_mode=previous_mode,
             )
-            return CommandResult(message="Plan mode enabled.")
+            return CommandResult(message="계획 모드를 켰습니다.")
         if mode in {"off", "exit"}:
             restored_mode = _stored_plan_previous_mode(settings, context)
             _set_runtime_permission_mode(settings, context, restored_mode)
-            return CommandResult(message="Plan mode disabled.")
-        return CommandResult(message="Usage: /plan [on|off]")
+            return CommandResult(message="계획 모드를 껐습니다.")
+        return CommandResult(message="사용법: /plan [on|off]")
 
     async def _model_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1505,7 +1505,7 @@ def create_default_command_registry(
         _, profile = settings.resolve_profile(active_profile)
         tokens = args.split(maxsplit=1)
         if not tokens or tokens[0] == "show":
-            return CommandResult(message=f"Model: {display_model_setting(profile)}\nProfile: {active_profile}")
+            return CommandResult(message=f"모델: {display_model_setting(profile)}\n프로필: {active_profile}")
         if tokens[0] == "set" and len(tokens) == 2:
             model_name = tokens[1].strip()
         elif args.strip():
@@ -1515,20 +1515,20 @@ def create_default_command_registry(
         if model_name:
             if profile.allowed_models and model_name.lower() != "default" and model_name not in profile.allowed_models:
                 allowed = ", ".join(profile.allowed_models)
-                return CommandResult(message=f"Model '{model_name}' is not allowed for profile '{active_profile}'. Allowed models: {allowed}")
+                return CommandResult(message=f"모델 '{model_name}'은 프로필 '{active_profile}'에서 사용할 수 없습니다. 허용 모델: {allowed}")
             if model_name.lower() == "default":
                 manager.update_profile(active_profile, last_model="")
-                message = "Model reset to default."
+                message = "모델을 기본값으로 되돌렸습니다."
             else:
                 manager.update_profile(active_profile, last_model=model_name)
-                message = f"Model set to {model_name}."
+                message = f"모델을 {model_name}(으)로 설정했습니다."
             updated = load_settings()
             context.engine.set_model(updated.model)
             if context.app_state is not None:
                 updated_profile = updated.resolve_profile()[1]
                 context.app_state.set(model=display_model_setting(updated_profile))
             return CommandResult(message=message, refresh_runtime=True)
-        return CommandResult(message="Usage: /model [show|MODEL]")
+        return CommandResult(message="사용법: /model [show|MODEL]")
 
     async def _provider_handler(args: str, context: CommandContext) -> CommandResult:
         manager = AuthManager()
@@ -1538,25 +1538,25 @@ def create_default_command_registry(
             active_name = manager.get_active_profile()
             active = profiles[active_name]
             lines = [
-                f"Active profile: {active_name}",
-                f"Label: {active['label']}",
-                f"Provider: {active['provider']}",
-                f"Auth source: {active['auth_source']}",
-                f"Configured: {'yes' if active['configured'] else 'no'}",
-                f"Base URL: {active['base_url'] or '(default)'}",
-                f"Model: {active['model']}",
+                f"활성 프로필: {active_name}",
+                f"라벨: {active['label']}",
+                f"프로바이더: {active['provider']}",
+                f"인증 소스: {active['auth_source']}",
+                f"설정됨: {'예' if active['configured'] else '아니요'}",
+                f"기본 URL: {active['base_url'] or '(기본값)'}",
+                f"모델: {active['model']}",
             ]
             return CommandResult(message="\n".join(lines))
         if tokens[0] == "list":
-            lines = ["Provider profiles:"]
+            lines = ["프로바이더 프로필:"]
             for name, info in profiles.items():
                 marker = "*" if info["active"] else " "
-                configured = "configured" if info["configured"] else "missing auth"
+                configured = "설정됨" if info["configured"] else "인증 없음"
                 lines.append(f"{marker} {name} [{configured}] {info['label']} -> {info['model']}")
             return CommandResult(message="\n".join(lines))
         target = tokens[1] if tokens[0] == "use" and len(tokens) == 2 else (tokens[0] if len(tokens) == 1 else None)
         if target is None:
-            return CommandResult(message="Usage: /provider [show|list|PROFILE]")
+            return CommandResult(message="사용법: /provider [show|list|PROFILE]")
         manager.use_profile(target)
         updated = load_settings()
         profile = updated.resolve_profile()[1]
@@ -1657,7 +1657,7 @@ def create_default_command_registry(
             ]
             return CommandResult(message="\n".join(lines))
 
-        return CommandResult(message="Usage: /theme [list|show|NAME|preview NAME]")
+        return CommandResult(message="사용법: /theme [list|show|NAME|preview NAME]")
 
     async def _output_style_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1689,7 +1689,7 @@ def create_default_command_registry(
             if context.app_state is not None:
                 context.app_state.set(output_style=style_name)
             return CommandResult(message=f"Output style set to {style_name}")
-        return CommandResult(message="Usage: /output-style [show|list|NAME]")
+        return CommandResult(message="사용법: /output-style [show|list|NAME]")
 
     async def _keybindings_handler(_: str, context: CommandContext) -> CommandResult:
         from myharness.keybindings import get_keybindings_path, load_keybindings
@@ -1712,15 +1712,15 @@ def create_default_command_registry(
         )
         action = args.strip() or "show"
         if action == "show":
-            return CommandResult(message=f"Vim mode: {'on' if current else 'off'}")
+            return CommandResult(message=f"Vim 모드: {'켜짐' if current else '꺼짐'}")
         enabled = {"on": True, "off": False, "toggle": not current}.get(action)
         if enabled is None:
-            return CommandResult(message="Usage: /vim [show|on|off|toggle]")
+            return CommandResult(message="사용법: /vim [show|on|off|toggle]")
         settings.vim_mode = enabled
         save_settings(settings)
         if context.app_state is not None:
             context.app_state.set(vim_enabled=enabled)
-        return CommandResult(message=f"Vim mode {'enabled' if enabled else 'disabled'}.")
+        return CommandResult(message=f"Vim 모드를 {'켰습니다' if enabled else '껐습니다'}.")
 
     async def _voice_handler(args: str, context: CommandContext) -> CommandResult:
         from myharness.voice import extract_keyterms, inspect_voice_capabilities
@@ -1736,7 +1736,7 @@ def create_default_command_registry(
         if not tokens or tokens[0] == "show":
             return CommandResult(
                 message=(
-                    f"Voice mode: {'on' if current else 'off'}\n"
+                    f"음성 모드: {'켜짐' if current else '꺼짐'}\n"
                     f"Available: {'yes' if diagnostics.available else 'no'}\n"
                     f"Recorder: {diagnostics.recorder or '(none)'}\n"
                     f"Reason: {diagnostics.reason}"
@@ -1747,7 +1747,7 @@ def create_default_command_registry(
             return CommandResult(message="\n".join(keyterms) if keyterms else "(no keyterms)")
         enabled = {"on": True, "off": False, "toggle": not current}.get(tokens[0])
         if enabled is None:
-            return CommandResult(message="Usage: /voice [show|on|off|toggle|keyterms TEXT]")
+            return CommandResult(message="사용법: /voice [show|on|off|toggle|keyterms TEXT]")
         settings.voice_mode = enabled
         save_settings(settings)
         if context.app_state is not None:
@@ -1756,7 +1756,7 @@ def create_default_command_registry(
                 voice_available=diagnostics.available,
                 voice_reason=diagnostics.reason,
             )
-        return CommandResult(message=f"Voice mode {'enabled' if enabled else 'disabled'}.")
+        return CommandResult(message=f"음성 모드를 {'켰습니다' if enabled else '껐습니다'}.")
 
     async def _doctor_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1765,7 +1765,7 @@ def create_default_command_registry(
         memory_dir = get_project_memory_dir(context.cwd)
         state = context.app_state.get() if context.app_state is not None else None
         lines = [
-            "Doctor summary:",
+            "진단 요약:",
             f"- cwd: {context.cwd}",
             f"- active_profile: {active_profile_name}",
             f"- model: {settings.model}",
@@ -1780,7 +1780,7 @@ def create_default_command_registry(
             f"- passes: {state.passes if state is not None else settings.passes}",
             f"- memory_dir: {memory_dir}",
             f"- plugin_count: {max(len(context.plugin_summary.splitlines()) - 1, 0) if context.plugin_summary else 0}",
-            f"- mcp_configured: {'yes' if context.mcp_summary and 'No MCP' not in context.mcp_summary else 'no'}",
+            f"- mcp_configured: {'yes' if context.mcp_summary and 'No MCP' not in context.mcp_summary and '설정된 MCP 서버가 없습니다' not in context.mcp_summary else 'no'}",
             f"- auth_configured: {'yes' if manager.get_profile_statuses()[active_profile_name]['configured'] else 'no'}",
         ]
         return CommandResult(message="\n".join(lines))
@@ -1861,7 +1861,7 @@ def create_default_command_registry(
         if action == "list":
             ok, branches = _run_git_command(context.cwd, "branch", "--format", "%(refname:short)")
             return CommandResult(message=branches if ok else branches)
-        return CommandResult(message="Usage: /branch [show|list]")
+        return CommandResult(message="사용법: /branch [show|list]")
 
     async def _commit_handler(args: str, context: CommandContext) -> CommandResult:
         message = args.strip()
@@ -1911,7 +1911,7 @@ def create_default_command_registry(
             field, _, value = rest.partition(" ")
             if not value.strip():
                 return CommandResult(
-                    message="Usage: /tasks update ID [description TEXT|progress NUMBER|note TEXT]"
+                    message="사용법: /tasks update ID [description TEXT|progress NUMBER|note TEXT]"
                 )
             try:
                 if field == "description":
@@ -1930,13 +1930,13 @@ def create_default_command_registry(
             except ValueError as exc:
                 return CommandResult(message=str(exc))
             return CommandResult(
-                message="Usage: /tasks update ID [description TEXT|progress NUMBER|note TEXT]"
+                message="사용법: /tasks update ID [description TEXT|progress NUMBER|note TEXT]"
             )
         if tokens[0] == "output" and len(tokens) == 2:
             return CommandResult(message=manager.read_task_output(tokens[1]) or "(no output)")
         return CommandResult(
             message=(
-                "Usage: /tasks "
+                "사용법: /tasks "
                 "[list|run CMD|stop ID|show ID|update ID description TEXT|update ID progress NUMBER|update ID note TEXT|output ID]"
             )
         )
@@ -2023,7 +2023,7 @@ def create_default_command_registry(
 
         if action == "context":
             content = store.load_active_context()
-            return CommandResult(message=content or "Active repo context is empty.")
+            return CommandResult(message=content or "활성 저장소 컨텍스트가 비어 있습니다.")
 
         if action == "journal":
             limit = 8
@@ -2031,7 +2031,7 @@ def create_default_command_registry(
                 try:
                     limit = max(1, min(30, int(tokens[1])))
                 except ValueError:
-                    return CommandResult(message="Usage: /autopilot journal [LIMIT]")
+                    return CommandResult(message="사용법: /autopilot journal [LIMIT]")
             entries = store.load_journal(limit=limit)
             if not entries:
                 return CommandResult(message="Repo journal is empty.")
@@ -2049,7 +2049,7 @@ def create_default_command_registry(
             if not raw:
                 return CommandResult(
                     message=(
-                        "Usage: /autopilot add "
+                        "사용법: /autopilot add "
                         "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
                     )
                 )
@@ -2072,7 +2072,7 @@ def create_default_command_registry(
             if not title.strip():
                 return CommandResult(
                     message=(
-                        "Usage: /autopilot add "
+                        "사용법: /autopilot add "
                         "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
                     )
                 )
@@ -2143,7 +2143,7 @@ def create_default_command_registry(
         if action == "scan":
             if len(tokens) < 2:
                 return CommandResult(
-                    message="Usage: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
+                    message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
                 )
             target = tokens[1].lower()
             limit = 10
@@ -2152,7 +2152,7 @@ def create_default_command_registry(
                     limit = max(1, min(50, int(tokens[2])))
                 except ValueError:
                     return CommandResult(
-                        message="Usage: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
+                        message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
                     )
             try:
                 if target == "issues":
@@ -2172,12 +2172,12 @@ def create_default_command_registry(
             except ValueError as exc:
                 return CommandResult(message=str(exc))
             return CommandResult(
-                message="Usage: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
+                message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
             )
 
         return CommandResult(
             message=(
-                "Usage: /autopilot "
+                "사용법: /autopilot "
                 "[status|list [STATUS]|show ID|next|context|journal [LIMIT]|"
                 "add [idea|ohmo|issue|pr|claude] TITLE :: DETAILS|"
                 "accept ID|start ID|complete ID [NOTE]|fail ID [NOTE]|reject ID [NOTE]|"
@@ -2189,10 +2189,10 @@ def create_default_command_registry(
     async def _ship_handler(args: str, context: CommandContext) -> CommandResult:
         raw = args.strip()
         if not raw:
-            return CommandResult(message="Usage: /ship TITLE :: DETAILS")
+            return CommandResult(message="사용법: /ship TITLE :: DETAILS")
         title, _, body = raw.partition("::")
         if not title.strip():
-            return CommandResult(message="Usage: /ship TITLE :: DETAILS")
+            return CommandResult(message="사용법: /ship TITLE :: DETAILS")
         store = RepoAutopilotStore(context.cwd)
         card, _ = store.enqueue_card(
             source_kind="ohmo_request",

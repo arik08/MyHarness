@@ -57,6 +57,7 @@ def _make_context(tmp_path: Path) -> CommandContext:
             AppState(
                 model="claude-test",
                 subagent_model="gpt-5.4-mini",
+                subagent_effort="medium",
                 permission_mode="default",
                 theme="default",
                 keybindings={},
@@ -89,7 +90,7 @@ async def test_plan_toggle_restores_full_auto_without_persisting_default(tmp_pat
     assert command is not None
     enabled = await command.handler(args, context)
 
-    assert enabled.message == "Plan mode enabled."
+    assert enabled.message == "계획 모드를 켰습니다."
     assert enabled.refresh_runtime is False
     assert context.app_state.get().permission_mode == "plan"
     assert context.app_state.get().plan_previous_permission_mode == "full_auto"
@@ -99,7 +100,7 @@ async def test_plan_toggle_restores_full_auto_without_persisting_default(tmp_pat
     assert command is not None
     disabled = await command.handler(args, context)
 
-    assert disabled.message == "Plan mode disabled."
+    assert disabled.message == "계획 모드를 껐습니다."
     assert disabled.refresh_runtime is False
     assert context.app_state.get().permission_mode == "full_auto"
     assert context.app_state.get().plan_previous_permission_mode == ""
@@ -117,14 +118,14 @@ async def test_plan_toggle_without_args_returns_to_previous_mode(tmp_path: Path,
     assert command is not None
     enabled = await command.handler(args, context)
 
-    assert enabled.message == "Plan mode enabled."
+    assert enabled.message == "계획 모드를 켰습니다."
     assert context.app_state.get().permission_mode == "plan"
 
     command, args = registry.lookup("/plan")
     assert command is not None
     disabled = await command.handler(args, context)
 
-    assert disabled.message == "Plan mode disabled."
+    assert disabled.message == "계획 모드를 껐습니다."
     assert context.app_state.get().permission_mode == "full_auto"
     assert load_settings().permission.mode == "default"
 
@@ -141,7 +142,7 @@ async def test_plan_exit_uses_global_yolo_fallback(tmp_path: Path, monkeypatch):
     assert command is not None
     result = await command.handler(args, context)
 
-    assert result.message == "Plan mode disabled."
+    assert result.message == "계획 모드를 껐습니다."
     assert context.app_state.get().permission_mode == "full_auto"
 
 
@@ -172,7 +173,7 @@ async def test_learned_skills_command_toggles_setting(tmp_path: Path, monkeypatc
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "disabled" in result.message
+    assert "비활성화" in result.message
     assert load_settings().learning.enabled is False
 
 
@@ -194,7 +195,7 @@ async def test_learned_skills_command_sets_hide_mode(tmp_path: Path, monkeypatch
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "hidden from $ and /help" in result.message
+    assert "$와 /help에서는 숨김" in result.message
     settings = load_settings()
     assert settings.learning.enabled is True
     assert settings.learning.mode == "hide"
@@ -218,7 +219,7 @@ async def test_learned_skills_command_shows_recent_metadata(tmp_path: Path, monk
 
     result = await command.handler(args, CommandContext(engine=engine, cwd=str(tmp_path)))
 
-    assert "Automatic learned skills: enabled" in result.message
+    assert "자동학습 스킬: 활성" in result.message
     assert "learned-python-pytest" in result.message
 
 
@@ -277,8 +278,8 @@ async def test_skills_command_toggles_skill_enabled_state(tmp_path: Path, monkey
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "disabled" in result.message
-    assert "[disabled]" in result.message
+    assert "비활성화" in result.message
+    assert "[비활성]" in result.message
 
 
 @pytest.mark.asyncio
@@ -355,7 +356,7 @@ async def test_model_command_rejects_disallowed_profile_model(tmp_path: Path, mo
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "not allowed" in result.message
+    assert "사용할 수 없습니다" in result.message
     assert "opus" in result.message
     assert load_settings().resolve_profile()[1].last_model is None
     assert load_settings().model == "gpt-5.5"
@@ -400,7 +401,7 @@ async def test_model_command_default_clears_profile_override(tmp_path: Path, mon
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "reset to default" in result.message
+    assert "기본값" in result.message
     assert load_settings().resolve_profile()[1].last_model == ""
     assert load_settings().model == "claude-sonnet-4-6"
 
@@ -417,7 +418,7 @@ async def test_turns_show_reports_unlimited_engine_when_session_is_unbounded(tmp
 
     result = await command.handler(args, context)
 
-    assert "Max turns (engine): unlimited" in result.message
+    assert "최대 턴(엔진): unlimited" in result.message
 
 
 @pytest.mark.asyncio
@@ -431,7 +432,7 @@ async def test_turns_command_accepts_unlimited(tmp_path: Path, monkeypatch):
 
     result = await command.handler(args, context)
 
-    assert "unlimited for this session" in result.message
+    assert "무제한" in result.message
     assert context.engine.max_turns is None
 
 
@@ -598,7 +599,7 @@ async def test_model_command_rejects_values_outside_profile_allowlist(tmp_path: 
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "is not allowed for profile 'kimi-anthropic'" in result.message
+    assert "프로필 'kimi-anthropic'에서 사용할 수 없습니다" in result.message
 
 
 @pytest.mark.asyncio
@@ -614,11 +615,11 @@ async def test_doctor_command_reports_context(tmp_path: Path, monkeypatch):
             engine=_make_engine(tmp_path),
             cwd=str(tmp_path),
             plugin_summary="Plugins:\n- demo [enabled] Example",
-            mcp_summary="No MCP servers configured.",
+            mcp_summary="설정된 MCP 서버가 없습니다",
         ),
     )
 
-    assert "Doctor summary:" in result.message
+    assert "진단 요약:" in result.message
     assert str(tmp_path) in result.message
 
 
@@ -652,13 +653,13 @@ async def test_mcp_command_toggles_server_usage(tmp_path: Path, monkeypatch):
     assert toggle_command is not None
     toggle_result = await toggle_command.handler(toggle_args, context)
 
-    assert "disabled" in toggle_result.message
+    assert "비활성화" in toggle_result.message
     assert toggle_result.refresh_runtime is True
     assert "demo" in load_settings().disabled_mcp_servers
 
     list_command, list_args = registry.lookup("/mcp list")
     list_result = await list_command.handler(list_args, context)
-    assert "- demo [disabled] (stdio)" in list_result.message
+    assert "- demo [비활성] (stdio)" in list_result.message
 
 
 @pytest.mark.asyncio
@@ -677,7 +678,7 @@ async def test_plugin_command_toggles_plugin_usage(tmp_path: Path, monkeypatch):
     assert toggle_command is not None
     toggle_result = await toggle_command.handler(toggle_args, context)
 
-    assert "Disabled plugin 'fixture-plugin'" in toggle_result.message
+    assert "플러그인 'fixture-plugin'을(를) 비활성화" in toggle_result.message
     assert load_settings().enabled_plugins["fixture-plugin"] is False
 
 
@@ -730,7 +731,7 @@ async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
 
     usage_command, usage_args = registry.lookup("/usage")
     usage_result = await usage_command.handler(usage_args, context)
-    assert "Estimated conversation tokens" in usage_result.message
+    assert "예상 대화 토큰" in usage_result.message
 
     stats_command, stats_args = registry.lookup("/stats")
     stats_result = await stats_command.handler(stats_args, context)
@@ -759,7 +760,7 @@ async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeyp
 
     vim_command, vim_args = registry.lookup("/vim toggle")
     vim_result = await vim_command.handler(vim_args, context)
-    assert "enabled" in vim_result.message
+    assert "켰습니다" in vim_result.message
     assert context.app_state.get().vim_enabled is True
 
     voice_command, voice_args = registry.lookup("/voice keyterms Shipping pytest fixtures")
@@ -768,13 +769,13 @@ async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeyp
 
     plan_command, plan_args = registry.lookup("/plan on")
     plan_result = await plan_command.handler(plan_args, context)
-    assert "enabled" in plan_result.message
+    assert "켰습니다" in plan_result.message
     assert context.app_state.get().permission_mode == "plan"
     assert load_settings().permission.mode == "default"
 
     fast_command, fast_args = registry.lookup("/fast on")
     fast_result = await fast_command.handler(fast_args, context)
-    assert "enabled" in fast_result.message
+    assert "켰습니다" in fast_result.message
     assert load_settings().fast_mode is True
     assert context.app_state.get().fast_mode is True
 
@@ -786,7 +787,7 @@ async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeyp
 
     effort_auto_command, effort_auto_args = registry.lookup("/effort auto")
     effort_auto_result = await effort_auto_command.handler(effort_auto_args, context)
-    assert "None" in effort_auto_result.message
+    assert "자동" in effort_auto_result.message
     assert load_settings().effort == "none"
     assert context.app_state.get().effort == "none"
 
@@ -835,7 +836,7 @@ async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkey
 
     issue_command, issue_args = registry.lookup("/issue set Fix CI :: The CI flakes on task retry")
     issue_result = await issue_command.handler(issue_args, context)
-    assert "Saved issue context" in issue_result.message
+    assert "이슈 컨텍스트를" in issue_result.message
     assert "Fix CI" in get_project_issue_file(tmp_path).read_text(encoding="utf-8")
 
     pr_command, pr_args = registry.lookup("/pr_comments add src/app.py:12 :: simplify this branch")
@@ -845,12 +846,12 @@ async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkey
 
     feedback_command, feedback_args = registry.lookup("/feedback this workflow feels good")
     feedback_result = await feedback_command.handler(feedback_args, context)
-    assert "Saved feedback" in feedback_result.message
+    assert "피드백을" in feedback_result.message
     assert "this workflow feels good" in get_feedback_log_path().read_text(encoding="utf-8")
 
     logout_command, logout_args = registry.lookup("/logout")
     logout_result = await logout_command.handler(logout_args, context)
-    assert "Cleared stored API key" in logout_result.message
+    assert "저장된 API 키" in logout_result.message
     assert load_settings().api_key == ""
 
 
@@ -1079,17 +1080,17 @@ async def test_mcp_and_voice_commands_report_richer_state(tmp_path: Path, monkey
 
     mcp_http_command, mcp_http_args = registry.lookup("/mcp auth http-demo secret-token")
     mcp_http_result = await mcp_http_command.handler(mcp_http_args, context)
-    assert "Saved MCP auth for http-demo" in mcp_http_result.message
+    assert "http-demo MCP 인증을 저장했습니다" in mcp_http_result.message
     assert load_settings().mcp_servers["http-demo"].headers["Authorization"] == "Bearer secret-token"
 
     mcp_stdio_command, mcp_stdio_args = registry.lookup("/mcp auth stdio-demo env DEMO_TOKEN")
     mcp_stdio_result = await mcp_stdio_command.handler(mcp_stdio_args, context)
-    assert "Saved MCP auth for stdio-demo" in mcp_stdio_result.message
+    assert "stdio-demo MCP 인증을 저장했습니다" in mcp_stdio_result.message
     assert load_settings().mcp_servers["stdio-demo"].env["MCP_AUTH_TOKEN"] == "DEMO_TOKEN"
 
     voice_command, voice_args = registry.lookup("/voice show")
     voice_result = await voice_command.handler(voice_args, context)
-    assert "Voice mode:" in voice_result.message
+    assert "음성 모드:" in voice_result.message
     assert "Available:" in voice_result.message
     assert "Reason:" in voice_result.message
 

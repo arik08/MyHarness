@@ -150,11 +150,12 @@ def test_task_worker_flag_routes_to_run_task_worker(monkeypatch):
 
     monkeypatch.setattr("myharness.ui.app.run_task_worker", fake_run_task_worker)
 
-    result = runner.invoke(app, ["--task-worker", "--model", "kimi-k2.5", "--subagent-model", "gpt-5.4-mini"])
+    result = runner.invoke(app, ["--task-worker", "--model", "kimi-k2.5", "--subagent-model", "gpt-5.4-mini", "--subagent-effort", "high"])
 
     assert result.exit_code == 0
     assert captured["model"] == "kimi-k2.5"
     assert captured["subagent_model"] == "gpt-5.4-mini"
+    assert captured["subagent_effort"] == "high"
 
 
 def test_dry_run_uses_preview_builder_and_skips_repl(monkeypatch):
