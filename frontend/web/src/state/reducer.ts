@@ -1,6 +1,6 @@
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, ModalState, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
-import { artifactKind, artifactLabelForPath, artifactName, normalizeArtifactPath } from "../utils/artifacts";
+import { normalizeArtifactPath } from "../utils/artifacts";
 import { isLiveOnlyHistoryItem } from "../utils/history";
 
 const clientSessionKey = "myharness:clientSessionId";
@@ -628,53 +628,6 @@ function workflowStringInput(input: Record<string, unknown> | null | undefined, 
   return { found: false, value: "" };
 }
 
-function liveHtmlArtifactPreview(
-  toolName: string,
-  input?: Record<string, unknown> | null,
-): { artifact: ArtifactSummary; payload: ArtifactPayload } | null {
-  if (!isWorkflowOutputTool(toolName)) {
-    return null;
-  }
-  const pathField = workflowStringInput(input, ["path", "file_path"]);
-  const contentField = workflowStringInput(input, ["content", "new_source"]);
-  const path = normalizeArtifactPath(pathField.value);
-  if (!path || !contentField.found || artifactKind(path) !== "html") {
-    return null;
-  }
-  const kind = artifactKind(path);
-  const name = artifactName(path);
-  const content = contentField.value;
-  return {
-    artifact: {
-      path,
-      name,
-      kind,
-      label: artifactLabelForPath(path, kind),
-      size: content.length,
-    },
-    payload: {
-      path,
-      name,
-      kind,
-      content,
-      size: content.length,
-    },
-  };
-}
-
-function applyLiveArtifactPreview(state: AppState, preview: ReturnType<typeof liveHtmlArtifactPreview>) {
-  if (!preview) {
-    return {};
-  }
-  if (!state.artifactPanelOpen || state.activeArtifact?.path !== preview.artifact.path) {
-    return {};
-  }
-  return {
-    activeArtifact: state.activeArtifact,
-    activeArtifactPayload: preview.payload,
-  };
-}
-
 function workflowOutputInputPath(input?: Record<string, unknown> | null) {
   const patch = workflowStringInput(input, ["patch", "diff"]).value;
   const path = workflowStringInput(input, ["path", "file_path"]).value || workflowPatchPath(patch);
@@ -982,6 +935,26 @@ function finishFinalAnswerStep(events: WorkflowEvent[], status: WorkflowEventSta
     next = next.map((event) => event.role === "final" ? { ...event, title: "응답 작성", status, detail } : event);
   }
   return refreshPurposeEvents(next);
+}
+
+function failRunningWorkflowEvents(events: WorkflowEvent[], detail: string): WorkflowEvent[] {
+  const next = events.map((event) => {
+    if (event.status !== "running" || event.role === "purpose") {
+      return event;
+    }
+    return { ...event, status: "error" as const, detail };
+  });
+  return refreshPurposeEvents(next);
+}
+
+function rememberWorkflowEventsForAnchor(state: AppState, workflowEvents: WorkflowEvent[]): Record<string, WorkflowEvent[]> {
+  if (!state.workflowAnchorMessageId || !workflowEvents.length) {
+    return state.workflowEventsByMessageId;
+  }
+  return {
+    ...state.workflowEventsByMessageId,
+    [state.workflowAnchorMessageId]: workflowEvents,
+  };
 }
 
 function updateLatestWorkflowEvent(
@@ -2127,6 +2100,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             : removeWorkflowEventsByRole(state.workflowEvents, "final"),
           status: event.has_tool_uses === true ? "processing" : "ready",
           statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
+          artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
         };
       }
 
@@ -2286,7 +2260,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             }) || state.messages
           : state.messages;
         const detail = workflowToolDetail(state.skills, toolName, lastToolInput, output, `${toolName || "도구"} 완료`, isError);
-        const livePreview = liveHtmlArtifactPreview(toolName, lastToolInput);
         let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, toolName, {
           detail,
           output,
@@ -2315,10 +2288,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           messages,
           workflowEvents,
           workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
-          artifactRefreshKey: state.artifactRefreshKey + 1,
           status: "processing",
           statusText: isError ? "도구 결과 확인 중" : "도구 결과 검토 중",
-          ...applyLiveArtifactPreview(state, livePreview),
         };
       }
 
@@ -2418,6 +2389,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
       if (event.type === "shutdown") {
         const message = "진행 중이던 세션이 종료되었습니다. 새 세션에 다시 연결한 뒤 이어서 입력해주세요.";
+        const workflowEvents = state.busy
+          ? finishFinalAnswerStep(
+              failRunningWorkflowEvents(
+                state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(),
+                "백엔드가 종료되어 작업을 중단했습니다.",
+              ),
+              "error",
+              message,
+            )
+          : state.workflowEvents;
         return {
           ...state,
           sessionId: null,
@@ -2426,13 +2407,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           status: "connecting",
           statusText: "세션이 종료되어 새 세션에 다시 연결 중입니다.",
           messages: state.busy ? appendErrorMessage(state.messages, message) : state.messages,
-          workflowEvents: state.busy
-            ? finishFinalAnswerStep(
-                state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(),
-                "error",
-                message,
-              )
-            : state.workflowEvents,
+          workflowEvents,
+          workflowEventsByMessageId: rememberWorkflowEventsForAnchor(state, workflowEvents),
           workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
           workflowStartedAtMs: null,
         };
@@ -2440,16 +2416,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
       if (event.type === "error") {
         const message = normalizeVisibleText(String(event.message || "오류"));
+        const workflowEvents = state.workflowEvents.length
+          ? finishFinalAnswerStep(
+              failRunningWorkflowEvents(state.workflowEvents, "오류로 작업을 중단했습니다."),
+              "error",
+              message || "응답을 마무리하지 못했습니다.",
+            )
+          : state.workflowEvents;
         return {
           ...state,
           messages: appendErrorMessage(state.messages, message),
-          workflowEvents: state.workflowEvents.length
-            ? finishFinalAnswerStep(
-                state.workflowEvents,
-                "error",
-                message || "응답을 마무리하지 못했습니다.",
-              )
-            : state.workflowEvents,
+          workflowEvents,
+          workflowEventsByMessageId: rememberWorkflowEventsForAnchor(state, workflowEvents),
           busy: false,
           status: "error",
           statusText: message,

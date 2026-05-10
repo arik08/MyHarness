@@ -603,6 +603,20 @@ describe("appReducer", () => {
     expect(next.historyRefreshKey).toBe(busy.historyRefreshKey + 1);
   });
 
+  it("refreshes artifacts only when the final assistant answer completes", () => {
+    const withToolCall = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "도구 호출 준비", has_tool_uses: true },
+    });
+    const completed = appReducer(withToolCall, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "완료했습니다.", has_tool_uses: false },
+    });
+
+    expect(withToolCall.artifactRefreshKey).toBe(initialAppState.artifactRefreshKey);
+    expect(completed.artifactRefreshKey).toBe(withToolCall.artifactRefreshKey + 1);
+  });
+
   it("measures workflow duration from the user request across stage changes", () => {
     vi.useFakeTimers();
     try {
@@ -676,6 +690,56 @@ describe("appReducer", () => {
     expect(next.status).toBe("connecting");
     expect(next.statusText).toBe("세션이 종료되어 새 세션에 다시 연결 중입니다.");
     expect(next.messages.at(-1)?.text).toContain("진행 중이던 세션이 종료되었습니다.");
+  });
+
+  it("marks in-flight workflow steps as failed when the backend shuts down", () => {
+    const withUserMessage = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "보고서 만들어줘" },
+    });
+    const withStreamingWrite = appReducer(withUserMessage, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        arguments_delta: "{\"path\":\"outputs/live.html\",\"content\":\"hello",
+      },
+    });
+    const next = appReducer(withStreamingWrite, {
+      type: "backend_event",
+      event: { type: "shutdown", message: "Backend exited with code 4294967295" },
+    });
+
+    const writeEvent = next.workflowEvents.find((event) => event.toolName === "write_file");
+    expect(next.busy).toBe(false);
+    expect(next.workflowEvents.some((event) => event.status === "running")).toBe(false);
+    expect(writeEvent?.status).toBe("error");
+    expect(writeEvent?.detail).toBe("백엔드가 종료되어 작업을 중단했습니다.");
+    expect(next.workflowEvents.find((event) => event.role === "purpose")?.status).toBe("error");
+  });
+
+  it("marks in-flight workflow steps as failed when the backend reports an error", () => {
+    const withStreamingWrite = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        arguments_delta: "{\"path\":\"outputs/live.html\",\"content\":\"hello",
+      },
+    });
+    const next = appReducer(withStreamingWrite, {
+      type: "backend_event",
+      event: { type: "error", message: "Network error: Connection error." },
+    });
+
+    const writeEvent = next.workflowEvents.find((event) => event.toolName === "write_file");
+    expect(next.busy).toBe(false);
+    expect(next.status).toBe("error");
+    expect(next.workflowEvents.some((event) => event.status === "running")).toBe(false);
+    expect(writeEvent?.status).toBe("error");
+    expect(writeEvent?.detail).toBe("오류로 작업을 중단했습니다.");
   });
 
   it("ignores shutdown events from a stale backend session", () => {
@@ -1174,7 +1238,7 @@ describe("appReducer", () => {
     expect(completed.workflowEvents.map((event) => event.title)).toContain("작업 실행");
     expect(shellEvent?.status).toBe("done");
     expect(shellEvent?.detail).toContain("pass");
-    expect(completed.artifactRefreshKey).toBe(progressed.artifactRefreshKey + 1);
+    expect(completed.artifactRefreshKey).toBe(progressed.artifactRefreshKey);
   });
 
   it("uses the Korean skill snapshot description in workflow progress", () => {
@@ -1473,8 +1537,9 @@ describe("appReducer", () => {
     expect(completed.activeArtifactPayload).toMatchObject({
       path: "outputs/office-ai-report.html",
       kind: "html",
-      content: "<!doctype html><html><body><h1>Live preview</h1>",
+      content: "<html><body><h1>Current preview</h1></body></html>",
     });
+    expect(completed.artifactRefreshKey).toBe(streaming.artifactRefreshKey);
   });
 
   it("keeps the streamed write_file preview row when the tool starts and completes", () => {

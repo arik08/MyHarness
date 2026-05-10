@@ -1310,7 +1310,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("live.html");
   });
 
-  it("summarizes long completed HTML write tool content in the workflow output preview body", () => {
+  it("shows long completed HTML write tool content in the workflow output preview body", () => {
     const longContent = [
       "첫 줄입니다.",
       ...Array.from({ length: 24 }, (_, index) => `긴 본문 ${index + 1}번째 줄입니다.`),
@@ -1346,9 +1346,9 @@ describe("MessageList", () => {
     );
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
-    expect(body.classList.contains("summarized")).toBe(true);
-    expect(body.textContent).toContain("HTML 원문은 대화 흐름을 위해 여기서는 숨겼습니다.");
-    expect(body.textContent).not.toContain("긴 본문 24번째 줄입니다.");
+    expect(body.classList.contains("summarized")).toBe(false);
+    expect(body.textContent).not.toContain("HTML 원문은 대화 흐름을 위해 여기서는 숨겼습니다.");
+    expect(body.textContent).toContain("긴 본문 24번째 줄입니다.");
     expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
     expect(screen.getByText(/\d+ 토큰 \(26줄\)/)).toBeTruthy();
   });

@@ -465,6 +465,28 @@ function StreamingPlainText({ text, revealFrom = null }: { text: string; revealF
   );
 }
 
+function MermaidStreamPending() {
+  return (
+    <div className="markdown-body react-markdown stream-live-text mermaid-stream-pending" role="status">
+      <div className="mermaid-stream-pending-box">
+        <span className="mermaid-stream-pending-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 7h6"></path>
+            <path d="M14 7h6"></path>
+            <path d="M10 7h4"></path>
+            <path d="M7 7v5"></path>
+            <path d="M17 7v5"></path>
+            <path d="M7 12h10"></path>
+            <path d="M12 12v5"></path>
+            <path d="M9 17h6"></path>
+          </svg>
+        </span>
+        <span>다이어그램 작성 중...</span>
+      </div>
+    </div>
+  );
+}
+
 function StreamingMarkdownMessage({
   text,
   complete = false,
@@ -482,6 +504,7 @@ function StreamingMarkdownMessage({
   }, [complete, text]);
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
   const renderLiveTailAsMarkdown = isStructuredLiveMarkdown(liveTail);
+  const liveTailIsPendingMermaid = isIncompleteMermaidFence(liveTail.trimStart());
   const liveTailRevealFrom = revealFrom === null ? null : Math.max(0, revealFrom - Array.from(prefix).length);
   let chunkCursor = 0;
   const chunkOccurrences = new Map<string, number>();
@@ -501,7 +524,9 @@ function StreamingMarkdownMessage({
           />
         );
       })}
-      {liveTail && renderLiveTailAsMarkdown ? (
+      {liveTail && liveTailIsPendingMermaid ? (
+        <MermaidStreamPending />
+      ) : liveTail && renderLiveTailAsMarkdown ? (
         <div className="stream-live-text">
           <MarkdownMessage text={liveTail} revealFrom={liveTailRevealFrom} deferIncompleteTables />
         </div>

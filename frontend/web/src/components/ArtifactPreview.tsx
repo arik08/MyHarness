@@ -1550,7 +1550,10 @@ export function ArtifactPreview({
   const htmlEditFrameRef = useRef<{ key: string; srcDoc: string } | null>(null);
   const htmlFrameElementRef = useRef<HTMLIFrameElement | null>(null);
   const htmlEditSessionContentRef = useRef<string | null>(null);
+  const htmlEditSessionAssetBaseUrlRef = useRef("");
+  const htmlEditWasDraftDirtyRef = useRef(false);
   const htmlScrollPositionsRef = useRef(new Map<string, { x: number; y: number }>());
+  const shouldOmitCompletedHtmlSource = sourceMode && kind === "html" && payloadHasContent && !draftDirty;
   useEffect(() => {
     function handleFrameScrollMessage(event: MessageEvent) {
       if (
@@ -1585,6 +1588,16 @@ export function ArtifactPreview({
     frame.addEventListener("load", postMode);
     return () => frame.removeEventListener("load", postMode);
   }, [aiSelectionEnabled, artifact.path, htmlEditMode, kind, sourceMode]);
+  useEffect(() => {
+    htmlEditWasDraftDirtyRef.current = Boolean(draftDirty);
+  }, [draftDirty]);
+  if (shouldOmitCompletedHtmlSource) {
+    return (
+      <div className="artifact-file artifact-html-source-omitted">
+        <p className="artifact-empty">완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.</p>
+      </div>
+    );
+  }
   if (sourceMode && payloadHasContent && (kind === "html" || isSourceCodeArtifact(artifact))) {
     return <HighlightedArtifactSource artifact={artifact} content={kind === "html" ? htmlDraftContent : sourceContent} />;
   }
@@ -1604,25 +1617,31 @@ export function ArtifactPreview({
     }
     const assetBaseUrl = String(payload.assetBaseUrl || "");
     const frameBaseContent = htmlDraftContent;
-    if (htmlEditMode && (htmlEditSessionContentRef.current === null || !draftDirty)) {
+    const preserveCommittedDraftFrame = htmlEditMode
+      && !draftDirty
+      && htmlEditWasDraftDirtyRef.current
+      && htmlEditSessionContentRef.current !== null;
+    if (htmlEditMode && (htmlEditSessionContentRef.current === null || (!draftDirty && !preserveCommittedDraftFrame))) {
       htmlEditSessionContentRef.current = frameBaseContent;
+      htmlEditSessionAssetBaseUrlRef.current = assetBaseUrl;
     } else if (!htmlEditMode) {
       htmlEditSessionContentRef.current = null;
+      htmlEditSessionAssetBaseUrlRef.current = "";
     }
     const frameContent = htmlEditSessionContentRef.current ?? frameBaseContent;
+    const frameAssetBaseUrl = htmlEditSessionContentRef.current !== null ? htmlEditSessionAssetBaseUrlRef.current : assetBaseUrl;
     const aiCommentKey = JSON.stringify(aiEditComments.map((comment) => [comment.id, comment.start, comment.end, comment.instruction]));
-    const editFrameKey = `${artifact.path}\u0000${assetBaseUrl}\u0000${frameContent}\u0000${aiCommentKey}`;
-    if (htmlEditFrameRef.current?.key !== editFrameKey) {
-      const editableContent = iframeHtmlEditorBridge(iframeEditorAssetBase(frameContent, assetBaseUrl), artifact.path);
+    const editFrameKey = `${artifact.path}\u0000${frameAssetBaseUrl}\u0000${frameContent}\u0000${aiCommentKey}`;
+    if (htmlEditFrameRef.current?.key !== editFrameKey || !htmlFrameElementRef.current) {
+      const editableContent = iframeHtmlEditorBridge(iframeEditorAssetBase(frameContent, frameAssetBaseUrl), artifact.path);
+      const previewContent = iframeHtmlAiSelectionBridge(editableContent, artifact.path, aiEditComments);
+      const restoredScroll = htmlScrollPositionsRef.current.get(artifact.path);
       htmlEditFrameRef.current = {
         key: editFrameKey,
-        srcDoc: iframeHtmlAiSelectionBridge(editableContent, artifact.path, aiEditComments),
+        srcDoc: iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(previewContent), artifact.path, restoredScroll)),
       };
     }
-    const previewContent = htmlEditFrameRef.current.srcDoc;
-    const restoredScroll = htmlScrollPositionsRef.current.get(artifact.path);
-    const bridgedContent = iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(previewContent), artifact.path, restoredScroll));
-    return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts" srcDoc={bridgedContent} />;
+    return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts" srcDoc={htmlEditFrameRef.current.srcDoc} />;
   }
   if (kind === "image") {
     return <img className="artifact-image" src={dataUrl} alt={displayName} />;

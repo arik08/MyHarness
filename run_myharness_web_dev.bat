@@ -6,6 +6,13 @@ title MyHarness Web Dev
 cd /d "%~dp0"
 
 if "%PORT%"=="" set "PORT=4173"
+if "%MYHARNESS_WEB_PORT%"=="" (
+  if "%VITE_PORT%"=="" (
+    set "MYHARNESS_WEB_PORT=5173"
+  ) else (
+    set "MYHARNESS_WEB_PORT=%VITE_PORT%"
+  )
+)
 if "%HOST%"=="" set "HOST=0.0.0.0"
 if "%MYHARNESS_CONFIG_DIR%"=="" set "MYHARNESS_CONFIG_DIR=%CD%\.myharness"
 if "%MYHARNESS_DATA_DIR%"=="" set "MYHARNESS_DATA_DIR=%MYHARNESS_CONFIG_DIR%\data"
@@ -20,13 +27,14 @@ echo ============================================================
 echo   MyHarness Web Dev
 echo ============================================================
 echo.
-echo   React dev UI: http://127.0.0.1:5173
+echo   Preferred React dev UI: http://127.0.0.1:%MYHARNESS_WEB_PORT%
 echo   Backend API:  http://localhost:%PORT%
 echo   Config:       %MYHARNESS_CONFIG_DIR%
 echo   Logs:         %MYHARNESS_LOGS_DIR%
 echo.
 echo   This starts both the backend server and Vite HMR dev server.
-echo   Open http://127.0.0.1:5173 while developing.
+echo   If the preferred React port is unavailable, the launcher will pick another port.
+echo   Open the React dev UI URL printed below while developing.
 echo   Press Q or Ctrl+C in this window to stop both servers.
 echo   Press R in this window to restart both servers.
 echo.
@@ -126,7 +134,7 @@ if not exist "frontend\web\node_modules\.package-lock.json" (
 
 call :free_port "%PORT%" "backend"
 if errorlevel 1 exit /b 1
-call :free_port "5173" "Vite dev"
+call :free_port "%MYHARNESS_WEB_PORT%" "Vite dev"
 if errorlevel 1 exit /b 1
 
 echo [INFO] Starting development servers...

@@ -515,7 +515,7 @@ export function Sidebar() {
   const visibleHistory = state.history.filter((item) => !isCurrentLiveHistoryItem(item, state.sessionId));
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
   const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
-  const renderedHistory = state.busy && activeHistoryValue && !hasActiveHistoryItem
+  const renderedHistory = state.busy && !state.pendingHistoryId && activeHistoryValue && !hasActiveHistoryItem
     ? [
         {
           value: activeHistoryValue,
@@ -678,7 +678,8 @@ export function Sidebar() {
               const editing = editingHistoryId === item.value;
               const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
               const isPendingRestore = state.pendingHistoryId === item.value;
-              const isBusy = (isActive && state.busy) || isPendingRestore || (item.live === true && item.busy === true);
+              const isActiveBusy = isActive && state.busy && (!state.pendingHistoryId || isPendingRestore);
+              const isBusy = isActiveBusy || isPendingRestore || (item.live === true && item.busy === true);
               const isDeleting = deletingHistoryId === item.value;
               const actionsExpanded = expandedHistoryActionId === item.value;
               const canPin = !isLiveOnlyHistoryItem(item);

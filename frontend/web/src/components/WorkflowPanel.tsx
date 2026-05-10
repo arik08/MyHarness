@@ -57,19 +57,6 @@ function countWorkflowPreviewLines(text: string) {
   return value ? value.replace(/\r\n/g, "\n").split("\n").length : 0;
 }
 
-function isHtmlWorkflowPreview(path: string, content: string) {
-  return /\.html?$/i.test(workflowPreviewFileName(path))
-    || /^\s*<!doctype\s+html\b/i.test(content)
-    || /<html[\s>]/i.test(content);
-}
-
-function shouldSummarizeCompletedHtmlPreview(source: WorkflowPreviewSource, done: boolean) {
-  return done
-    && source.kind === "content"
-    && isHtmlWorkflowPreview(source.path, source.content)
-    && (source.content.length > 2000 || countWorkflowPreviewLines(source.content) > 20);
-}
-
 function formatWorkflowContentCount(text: string) {
   const lines = countWorkflowPreviewLines(text);
   return `${formatWorkflowTokenCount(estimateTextTokens(text))} (${lines.toLocaleString()}줄)`;
@@ -433,7 +420,6 @@ function workflowStepTitle(event: WorkflowEvent) {
 function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source: WorkflowPreviewSource }) {
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
-  const summarizeHtml = shouldSummarizeCompletedHtmlPreview(source, done);
   const fileName = workflowPreviewFileName(source.path);
   const prefix = source.kind === "diff"
     ? done ? "수정 완료" : "수정 미리보기"
@@ -459,15 +445,13 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
         <span className="workflow-output-label">{fileName ? `${prefix} - ${fileName}` : prefix}</span>
         <span className="workflow-output-line-count">{count}</span>
       </div>
-      <pre ref={bodyRef} className={`workflow-output-body${source.kind === "diff" ? " diff" : ""}${summarizeHtml ? " summarized" : ""}`}>{source.kind === "diff"
+      <pre ref={bodyRef} className={`workflow-output-body${source.kind === "diff" ? " diff" : ""}`}>{source.kind === "diff"
         ? source.content.split(/\r?\n/).map((line, index) => (
           <span className={workflowDiffLineClassName(line)} key={`${index}:${line}`}>
             {line || " "}
           </span>
         ))
-        : summarizeHtml
-          ? "HTML 원문은 대화 흐름을 위해 여기서는 숨겼습니다. 우측 미리보기 또는 프로젝트 파일에서 렌더링 결과와 전체 파일을 확인하세요."
-          : source.content}</pre>
+        : source.content}</pre>
     </div>
   );
 }

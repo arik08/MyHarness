@@ -1,6 +1,10 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+const backendPort = Number(process.env.PORT || 4173);
+const webPort = Number(process.env.MYHARNESS_WEB_PORT || process.env.VITE_PORT || 5173);
+const backendOrigin = `http://127.0.0.1:${backendPort}`;
+
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -10,11 +14,11 @@ export default defineConfig({
   },
   server: {
     host: "127.0.0.1",
-    port: 5173,
+    port: webPort,
     proxy: {
-      "/api": "http://127.0.0.1:4173",
-      "/assets": "http://127.0.0.1:4173",
-      "/vendor": "http://127.0.0.1:4173",
+      "/api": backendOrigin,
+      "/assets": backendOrigin,
+      "/vendor": backendOrigin,
     },
   },
   test: {

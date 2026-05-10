@@ -1959,7 +1959,7 @@ a:focus-visible {
   left: 10px;
   z-index: 8;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 5px;
   min-height: 42px;
   max-height: 78px;
@@ -1973,7 +1973,8 @@ a:focus-visible {
 }
 
 .artifact-ai-comments.with-progress {
-  align-items: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
   max-height: min(58vh, 520px);
 }
 
@@ -1987,17 +1988,14 @@ a:focus-visible {
 }
 
 .artifact-ai-comments-header {
-  display: flex;
-  align-items: center;
-  flex: 1 0 100%;
-  gap: 8px;
-  min-width: 0;
+  display: contents;
 }
 
 .artifact-ai-status {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  order: 0;
   min-width: 0;
-  margin: 0 0 1px;
+  margin: 0;
   overflow: hidden;
   color: #64748b;
   font-size: 12px;
@@ -2061,9 +2059,16 @@ a:focus-visible {
   stroke-width: 2;
 }
 
+.artifact-ai-comments:not(.collapsed) .artifact-ai-toggle {
+  order: 3;
+  margin-left: 0;
+}
+
 .artifact-ai-comment {
   display: inline-flex;
   align-items: center;
+  flex: 0 1 auto;
+  order: 1;
   gap: 5px;
   min-width: 0;
   max-width: min(320px, 100%);
@@ -2135,6 +2140,8 @@ a:focus-visible {
 .artifact-ai-submit {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
+  order: 2;
   gap: 6px;
   min-height: 28px;
   margin-left: auto;
@@ -2172,7 +2179,9 @@ a:focus-visible {
 }
 
 .artifact-ai-progress {
+  align-self: stretch;
   flex: 1 0 100%;
+  order: 4;
   min-width: 0;
   max-height: min(46vh, 420px);
   overflow: auto;
@@ -2224,6 +2233,93 @@ a:focus-visible {
   background: #0f6ecd;
   box-shadow: 0 0 0 0 rgba(15, 110, 205, 0.28);
   animation: artifactAiProgressPulse 1.25s ease-out infinite;
+}
+
+:root[data-theme="dark"] .artifact-ai-comments {
+  background: rgba(10, 22, 36, 0.94);
+  border-color: rgba(62, 94, 126, 0.92);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .artifact-ai-status {
+  color: #b7c7d9;
+}
+
+:root[data-theme="dark"] .artifact-ai-collapsed-summary {
+  color: #d7e7f7;
+}
+
+:root[data-theme="dark"] .artifact-ai-collapsed-summary:hover,
+:root[data-theme="dark"] .artifact-ai-collapsed-summary:focus-visible {
+  color: #8fd0ff;
+}
+
+:root[data-theme="dark"] .artifact-ai-toggle {
+  background: rgba(19, 43, 66, 0.96);
+  border-color: rgba(79, 118, 156, 0.9);
+  color: #cfe5fb;
+}
+
+:root[data-theme="dark"] .artifact-ai-toggle:hover,
+:root[data-theme="dark"] .artifact-ai-toggle:focus-visible {
+  background: rgba(35, 76, 112, 0.98);
+  border-color: rgba(124, 199, 255, 0.88);
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .artifact-ai-comment {
+  background: rgba(76, 55, 9, 0.96);
+  border-color: rgba(224, 180, 93, 0.72);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="dark"] .artifact-ai-comment-index {
+  background: rgba(53, 168, 255, 0.18);
+  color: #bfe5ff;
+}
+
+:root[data-theme="dark"] .artifact-ai-comment-instruction {
+  color: #fff2c9;
+}
+
+:root[data-theme="dark"] .artifact-ai-comment button {
+  color: #c2d1e0;
+}
+
+:root[data-theme="dark"] .artifact-ai-comment button:hover,
+:root[data-theme="dark"] .artifact-ai-comment button:focus-visible {
+  background: rgba(35, 76, 112, 0.9);
+  border-color: rgba(124, 199, 255, 0.72);
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .artifact-ai-submit {
+  background: #2f94de;
+  border-color: #55afea;
+  color: #06111d;
+}
+
+:root[data-theme="dark"] .artifact-ai-submit:hover:not(:disabled),
+:root[data-theme="dark"] .artifact-ai-submit:focus-visible:not(:disabled) {
+  background: #55afea;
+  border-color: #8fd0ff;
+}
+
+:root[data-theme="dark"] .artifact-ai-submit:disabled {
+  opacity: 0.5;
+}
+
+:root[data-theme="dark"] .artifact-ai-progress .workflow-card,
+:root[data-theme="dark"] .artifact-ai-progress-empty {
+  background: rgba(13, 28, 43, 0.92);
+  border-color: rgba(62, 94, 126, 0.9);
+  color: #b7c7d9;
+}
+
+:root[data-theme="dark"] .artifact-ai-progress-pulse {
+  background: #55afea;
+  box-shadow: 0 0 0 0 rgba(85, 175, 234, 0.34);
 }
 
 @keyframes artifactAiProgressPulse {
@@ -2972,6 +3068,40 @@ a:focus-visible {
 
 .stream-live-text {
   white-space: pre-wrap;
+}
+
+.mermaid-stream-pending-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 7px 10px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-raised) 92%, var(--accent-soft) 8%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.mermaid-stream-pending-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+.mermaid-stream-pending-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .stream-reveal-sentence {
@@ -6879,11 +7009,11 @@ a:focus-visible {
   min-height: 28px;
   overflow-y: hidden;
   resize: none;
-  padding: 0;
+  padding: 4px 0;
   background: transparent;
   border: 0;
   color: var(--ink);
-  line-height: 1.34;
+  line-height: 20px;
   outline: none;
   overscroll-behavior: contain;
   scrollbar-width: none;

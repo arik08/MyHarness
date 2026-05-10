@@ -51,6 +51,71 @@ function Stop-ListeningPort {
     }
 }
 
+function Test-CanListenOnPort {
+    param(
+        [Parameter(Mandatory = $true)][string]$HostAddress,
+        [Parameter(Mandatory = $true)][int]$Port
+    )
+
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse($HostAddress), $Port)
+        $listener.Start()
+        $listener.Stop()
+        return $true
+    }
+    catch {
+        if ($listener) {
+            $listener.Stop()
+        }
+        return $false
+    }
+}
+
+function Get-RequestedVitePort {
+    $rawPort = if ($env:MYHARNESS_WEB_PORT) {
+        $env:MYHARNESS_WEB_PORT
+    }
+    elseif ($env:VITE_PORT) {
+        $env:VITE_PORT
+    }
+    else {
+        "5173"
+    }
+
+    try {
+        $port = [int]$rawPort
+    }
+    catch {
+        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_WEB_PORT to a number from 1 to 65535."
+    }
+
+    if ($port -lt 1 -or $port -gt 65535) {
+        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_WEB_PORT to a number from 1 to 65535."
+    }
+
+    return $port
+}
+
+function Resolve-VitePort {
+    param([Parameter(Mandatory = $true)][int]$PreferredPort)
+
+    Stop-ListeningPort -Port $PreferredPort -Label "Vite dev"
+    if (Test-CanListenOnPort -HostAddress "127.0.0.1" -Port $PreferredPort) {
+        return $PreferredPort
+    }
+
+    Write-Host "[WARN] Vite dev port $PreferredPort is unavailable or reserved. Searching for the next usable port..."
+    $lastPort = [Math]::Min(65535, $PreferredPort + 200)
+    for ($candidate = $PreferredPort + 1; $candidate -le $lastPort; $candidate++) {
+        if (Test-CanListenOnPort -HostAddress "127.0.0.1" -Port $candidate) {
+            Write-Host "[INFO] Using fallback Vite dev port $candidate."
+            return $candidate
+        }
+    }
+
+    throw "No usable Vite dev port found between $PreferredPort and $lastPort."
+}
+
 function Stop-All {
     Stop-ChildProcess -Process $script:ViteProcess
     Stop-ChildProcess -Process $script:BackendProcess
@@ -122,9 +187,9 @@ function Start-BackendLauncher {
 }
 
 function Start-ViteServer {
-    Stop-ListeningPort -Port 5173 -Label "Vite dev"
-    Write-Host "[INFO] Starting Vite React dev server on http://127.0.0.1:5173 ..."
-    return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "5173", "--strictPort") -NoNewWindow -PassThru
+    Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
+    Write-Host "[INFO] Starting Vite React dev server on http://127.0.0.1:$script:VitePort ..."
+    return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", ([string]$script:VitePort), "--strictPort") -NoNewWindow -PassThru
 }
 
 [Console]::add_CancelKeyPress({
@@ -138,8 +203,11 @@ function Start-ViteServer {
 })
 
 $backendPort = if ($env:PORT) { [int]$env:PORT } else { 4173 }
+$preferredVitePort = Get-RequestedVitePort
 Stop-ListeningPort -Port $backendPort -Label "backend"
-Stop-ListeningPort -Port 5173 -Label "Vite dev"
+$script:VitePort = Resolve-VitePort -PreferredPort $preferredVitePort
+$env:MYHARNESS_WEB_PORT = [string]$script:VitePort
+$env:VITE_PORT = [string]$script:VitePort
 
 $script:BackendProcess = Start-BackendLauncher
 
@@ -149,7 +217,7 @@ $script:ViteProcess = Start-ViteServer
 
 Write-Host ""
 Write-Host "MyHarness dev mode is ready:"
-Write-Host "  React dev UI: http://127.0.0.1:5173"
+Write-Host "  React dev UI: http://127.0.0.1:$script:VitePort"
 Write-Host "  Backend API:  http://localhost:$env:PORT"
 Write-Host ""
 Write-Host "Keep this window open while developing."

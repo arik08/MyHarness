@@ -358,7 +358,7 @@ describe("ArtifactPanel", () => {
     expect((source as HTMLTextAreaElement).value).toContain("# 분석 결과");
   });
 
-  it("highlights HTML source mode and omits the redundant back action", async () => {
+  it("omits completed HTML source mode in the right preview and omits the redundant back action", async () => {
     vi.mocked(listProjectFiles).mockResolvedValueOnce({
       scope: "default",
       files: [
@@ -414,11 +414,8 @@ describe("ArtifactPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
 
     expect(screen.queryByLabelText("report.html 원문")).toBeNull();
-    const code = document.querySelector(".artifact-source code.language-html");
-    expect(code?.classList.contains("hljs")).toBe(true);
-    expect(code?.querySelector(".hljs-tag")?.textContent).toContain("<html>");
-    expect(code?.textContent).toContain("<!doctype html>");
-    expect(code?.textContent).toContain("<h1>Hello</h1>");
+    expect(document.querySelector(".artifact-source code.language-html")).toBeNull();
+    expect(screen.getByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeTruthy();
   });
 
   it("shows direct edit actions only for HTML artifacts", () => {
@@ -608,8 +605,10 @@ describe("ArtifactPanel", () => {
       </AppStateProvider>,
     );
 
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
     let actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
     await userEvent.click(actions[0]);
+    const editSessionSrcDoc = frame.srcdoc;
     act(() => {
       window.dispatchEvent(new MessageEvent("message", {
         data: {
@@ -634,6 +633,7 @@ describe("ArtifactPanel", () => {
     actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
     expect((screen.getByRole("button", { name: "수정사항 반영" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "편집 취소" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByTitle("report.html") as HTMLIFrameElement).srcdoc).toBe(editSessionSrcDoc);
   });
 
   it("keeps an intentionally blank HTML draft instead of showing the original preview", async () => {
@@ -694,7 +694,8 @@ describe("ArtifactPanel", () => {
     expect((await screen.findByTitle("report.html") as HTMLIFrameElement).srcdoc).not.toContain("Preview");
 
     await userEvent.click(sourceButton);
-    expect(document.querySelector(".artifact-source code")?.textContent).toBe("");
+    expect(document.querySelector(".artifact-source code")).toBeNull();
+    expect(screen.getByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeTruthy();
   });
 
   it("saves restored history artifacts through their resolved workspace", async () => {
@@ -844,6 +845,7 @@ describe("ArtifactPanel", () => {
     expect(screen.getByText("AI 자동편집 진행 중: outputs/report_v1.html")).toBeTruthy();
     expect(screen.getByRole("button", { name: "report.html 파일명 수정" })).toBeTruthy();
     expect(screen.getByTitle("report.html")).toBeTruthy();
+    vi.mocked(readArtifact).mockClear();
     act(() => {
       sendBackendEvent?.({
         type: "tool_input_delta",
@@ -865,6 +867,15 @@ describe("ArtifactPanel", () => {
         output: "Wrote outputs/report_v1.html",
       } as BackendEvent);
     });
+    expect(readArtifact).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "report.html 파일명 수정" })).toBeTruthy();
+    expect(screen.getByTitle("report.html")).toBeTruthy();
+    expect(screen.queryByTitle("report_v1.html")).toBeNull();
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("Half written");
+
+    act(() => {
+      sendBackendEvent?.({ type: "line_complete" } as BackendEvent);
+    });
     await waitFor(() => expect(readArtifact).toHaveBeenCalledWith(expect.objectContaining({
       path: "outputs/report_v1.html",
       sessionId: "session-a",
@@ -872,11 +883,6 @@ describe("ArtifactPanel", () => {
       workspacePath: "C:/repo",
       workspaceName: "repo",
     })));
-    expect(await screen.findByRole("button", { name: "report_v1.html 파일명 수정" })).toBeTruthy();
-
-    act(() => {
-      sendBackendEvent?.({ type: "line_complete" } as BackendEvent);
-    });
     expect(await screen.findByRole("button", { name: "report_v1.html 파일명 수정" })).toBeTruthy();
   });
 
@@ -1260,8 +1266,8 @@ describe("ArtifactPanel", () => {
     actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
     await waitFor(() => expect(screen.queryByRole("button", { name: "편집 취소" })).toBeNull());
     await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
-    expect(document.querySelector(".artifact-source code")?.textContent).toContain("Preview");
-    expect(document.querySelector(".artifact-source code")?.textContent).not.toContain("Changed");
+    expect(screen.getByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeTruthy();
+    expect(document.querySelector(".artifact-source code")?.textContent || "").not.toContain("Changed");
   });
 
   it("shows streaming HTML source instead of a blank frame while the style block is incomplete", () => {
@@ -1287,21 +1293,21 @@ describe("ArtifactPanel", () => {
     expect(code?.textContent).toContain(".report{display:grid}");
   });
 
-  it("selects the highlighted artifact source instead of the whole page on Ctrl+A", async () => {
-    const source = "<!doctype html>\n<html><body><h1>Hello</h1></body></html>";
+  it("selects the highlighted non-HTML artifact source instead of the whole page on Ctrl+A", async () => {
+    const source = "def greet(name: str) -> str:\n    return f\"Hello, {name}\"\n";
     vi.mocked(listProjectFiles).mockResolvedValueOnce({
       scope: "default",
       files: [
         {
-          path: "outputs/report.html",
-          name: "report.html",
-          kind: "html",
+          path: "outputs/example.py",
+          name: "example.py",
+          kind: "text",
           size: 42,
         },
       ],
     });
     vi.mocked(readArtifact).mockResolvedValueOnce({
-      kind: "html",
+      kind: "text",
       content: source,
     });
 
@@ -1312,9 +1318,9 @@ describe("ArtifactPanel", () => {
           artifactPanelOpen: true,
           artifacts: [
             {
-              path: "outputs/report.html",
-              name: "report.html",
-              kind: "html",
+              path: "outputs/example.py",
+              name: "example.py",
+              kind: "text",
               size: 42,
             },
           ],
@@ -1325,8 +1331,8 @@ describe("ArtifactPanel", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "report.html 열기" }));
-    await screen.findByTitle("report.html");
+    await userEvent.click(screen.getByRole("button", { name: "example.py 열기" }));
+    await screen.findByText("def");
     await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
 
     const event = new KeyboardEvent("keydown", {

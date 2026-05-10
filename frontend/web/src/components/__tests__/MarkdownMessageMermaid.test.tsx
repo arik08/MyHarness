@@ -432,7 +432,10 @@ describe("MarkdownMessage Mermaid rendering", () => {
     );
 
     expect(document.querySelector(".mermaid-chart")).toBeNull();
-    expect(document.body.textContent || "").toContain("```mermaid");
+    expect(document.querySelector(".mermaid-stream-pending")).toBeTruthy();
+    expect(document.body.textContent || "").toContain("다이어그램 작성 중...");
+    expect(document.body.textContent || "").not.toContain("```mermaid");
+    expect(document.body.textContent || "").not.toContain("flowchart LR");
 
     rerender(
       <StreamingAssistantMessage

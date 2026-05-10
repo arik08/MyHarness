@@ -634,6 +634,8 @@ describe("Sidebar", () => {
       .find((item) => item.textContent?.includes("이전 대화"));
     expect(restoringRow?.textContent).toContain("이전 대화");
     expect(restoringRow?.classList.contains("active")).toBe(false);
+    expect(document.querySelectorAll(".history-item.busy")).toHaveLength(1);
+    expect(screen.queryByText("진행 중인 대화")).toBeNull();
   });
 
   it("restores a live saved session snapshot when the current session is idle", async () => {

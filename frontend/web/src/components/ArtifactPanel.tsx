@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary } from "../types/backend";
-import type { ArtifactAiEditComment, ArtifactAiEditSelection, WorkflowEvent } from "../types/ui";
+import type { ArtifactAiEditComment, ArtifactAiEditSelection } from "../types/ui";
 import {
   artifactCategory,
   artifactDisplayName,
@@ -89,32 +89,6 @@ function formatAiEditElapsed(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return remainder ? `${minutes}분 ${remainder}초 경과` : `${minutes}분 경과`;
-}
-
-function workflowEventReferencesArtifact(event: WorkflowEvent, artifactPath: string) {
-  const targetPath = normalizeProjectFilePath(artifactPath);
-  if (!targetPath || event.status === "running") return false;
-  const input = event.toolInput || {};
-  const candidates = [
-    input.path,
-    input.file_path,
-    input.target_path,
-    input.targetPath,
-    input.destination,
-    input.dest,
-    input.output_path,
-    input.outputPath,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "string" && normalizeProjectFilePath(value) === targetPath) {
-      return true;
-    }
-  }
-  const haystack = [input.patch, input.diff, event.output]
-    .filter((value): value is string => typeof value === "string")
-    .map((value) => value.replace(/\\/g, "/"))
-    .join("\n");
-  return Boolean(haystack && haystack.includes(targetPath));
 }
 
 function projectFileDirectory(path: string) {
@@ -294,11 +268,6 @@ export function ArtifactPanel() {
   }, [activeVersionInfo?.key, state.activeArtifact, state.artifacts]);
   const showVersionSwitcher = Boolean(state.activeArtifact && activeVersionArtifacts.length > 1);
   const showAiEditProgress = Boolean(aiEditStatus || submittingAiEdit || (state.busy && aiEditComments.length > 0));
-  const aiEditTargetReady = Boolean(
-    aiEditTargetPath
-      && state.workflowEvents.some((event) => workflowEventReferencesArtifact(event, aiEditTargetPath)),
-  );
-
   function requestHistoryBack() {
     if (!state.artifactPanelOpen || !isArtifactHistoryState(history.state)) {
       return false;
@@ -573,7 +542,7 @@ export function ArtifactPanel() {
   }
 
   useEffect(() => {
-    if (!aiEditTargetPath || (state.busy && !aiEditTargetReady)) {
+    if (!aiEditTargetPath || state.busy) {
       return;
     }
     const fallbackArtifact = state.activeArtifact
@@ -590,9 +559,9 @@ export function ArtifactPanel() {
     const timer = window.setTimeout(() => {
       setAiEditTargetPath("");
       void openArtifact(targetArtifact);
-    }, state.busy ? 0 : 120);
+    }, 120);
     return () => window.clearTimeout(timer);
-  }, [aiEditTargetPath, aiEditTargetReady, state.activeArtifact, state.artifacts, state.busy]);
+  }, [aiEditTargetPath, state.activeArtifact, state.artifacts, state.busy]);
 
   if (!state.artifactPanelOpen) {
     return null;
