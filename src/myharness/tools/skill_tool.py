@@ -33,7 +33,7 @@ class SkillTool(BaseTool):
         )
         skill = registry.get(arguments.name) or registry.get(arguments.name.lower()) or registry.get(arguments.name.title())
         if skill is None:
-            return ToolResult(output=f"Skill not found: {arguments.name}", is_error=True)
+            return ToolResult(output=f"스킬을 찾을 수 없습니다: {arguments.name}", is_error=True)
         return ToolResult(output=_format_skill_output(skill))
 
 
@@ -41,9 +41,9 @@ def _format_skill_output(skill) -> str:
     """Return skill content with user-facing metadata first."""
     description = str(getattr(skill, "description", "") or "").strip()
     if not description:
-        description = f"Skill: {skill.name}"
+        description = f"스킬: {skill.name}"
     return (
-        f"Skill: {skill.name}\n"
-        f"Description: {description}\n\n"
+        f"스킬: {skill.name}\n"
+        f"설명: {description}\n\n"
         f"{skill.content}"
     )

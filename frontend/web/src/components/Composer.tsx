@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, FormEvent, KeyboardEvent } from "react";
+import type { ClipboardEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
 import { cancelMessage, sendMessage } from "../api/messages";
 import { startSession } from "../api/session";
 import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
@@ -456,6 +456,12 @@ export function Composer() {
     }
   }
 
+  function handleComposerBoxMouseDown(event: MouseEvent<HTMLDivElement>) {
+    if (event.target === event.currentTarget) {
+      inputRef.current?.focus();
+    }
+  }
+
   function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
     const items = [...event.clipboardData.items];
     const imageItem = items.find((item) => item.kind === "file" && item.type.startsWith("image/"));
@@ -488,7 +494,7 @@ export function Composer() {
         ))}
       </div>
       <InlineQuestion />
-      <div className={`composer-box${isMultiline ? " multiline" : ""}`} ref={composerBoxRef}>
+      <div className={`composer-box${isMultiline ? " multiline" : ""}`} ref={composerBoxRef} onMouseDown={handleComposerBoxMouseDown}>
         <div className={`attachment-tray${state.composer.attachments.length ? "" : " hidden"}`} id="attachmentTray" aria-label="첨부한 이미지">
           {state.composer.attachments.map((attachment, index) => (
             <div className="attachment-chip" key={`${attachment.name}-${index}`}>

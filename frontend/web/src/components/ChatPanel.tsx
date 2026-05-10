@@ -82,6 +82,23 @@ export function ChatPanel() {
     <main className="chat-panel" onClick={closeArtifactPanelFromChat}>
       <header className="chat-header">
         <div className="header-left">
+          <button
+            className="header-icon-button sidebar-mobile-toggle"
+            type="button"
+            aria-label={state.sidebarCollapsed ? "사이드바 열기" : "사이드바 닫기"}
+            aria-expanded={!state.sidebarCollapsed}
+            data-tooltip={state.sidebarCollapsed ? "사이드바 열기" : "사이드바 닫기"}
+            onClick={(event) => {
+              event.stopPropagation();
+              dispatch({ type: "set_sidebar_collapsed", value: !state.sidebarCollapsed });
+            }}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M4 6h16" />
+              <path d="M4 12h16" />
+              <path d="M4 18h16" />
+            </svg>
+          </button>
           {editingTitle ? (
             <div className="chat-title editing">
               <input

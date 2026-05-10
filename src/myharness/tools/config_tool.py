@@ -30,8 +30,8 @@ class ConfigTool(BaseTool):
             return ToolResult(output=settings.model_dump_json(indent=2))
         if arguments.action == "set" and arguments.key and arguments.value is not None:
             if not hasattr(settings, arguments.key):
-                return ToolResult(output=f"Unknown config key: {arguments.key}", is_error=True)
+                return ToolResult(output=f"알 수 없는 설정 키입니다: {arguments.key}", is_error=True)
             setattr(settings, arguments.key, arguments.value)
             save_settings(settings)
-            return ToolResult(output=f"Updated {arguments.key}")
-        return ToolResult(output="Usage: action=show or action=set with key/value", is_error=True)
+            return ToolResult(output=f"설정을 업데이트했습니다: {arguments.key}")
+        return ToolResult(output="사용법: action=show 또는 action=set과 key/value", is_error=True)

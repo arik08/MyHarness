@@ -14,6 +14,7 @@ import {
   formatBytes,
   labelForArtifact,
   normalizeArtifactPath,
+  shouldResolveArtifactCandidate,
 } from "../utils/artifacts";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { StreamingAssistantMessage } from "./StreamingAssistantMessage";
@@ -52,13 +53,17 @@ function useMessageArtifacts(message: ChatMessage) {
   const [artifacts, setArtifacts] = useState<ResolvedArtifact[]>([]);
   const [loadingPath, setLoadingPath] = useState("");
   const candidateSignature = useMemo(
-    () => collectArtifactCandidates(message.isComplete ? message.text : "").map((artifact) => artifact.path).join("\n"),
-    [message.isComplete, message.text],
+    () => collectArtifactCandidates(message.isComplete ? message.text : "")
+      .filter((artifact) => shouldResolveArtifactCandidate(artifact.path, state.workspacePath))
+      .map((artifact) => artifact.path)
+      .join("\n"),
+    [message.isComplete, message.text, state.workspacePath],
   );
 
   useEffect(() => {
     let canceled = false;
-    const candidates = collectArtifactCandidates(message.isComplete ? message.text : "");
+    const candidates = collectArtifactCandidates(message.isComplete ? message.text : "")
+      .filter((artifact) => shouldResolveArtifactCandidate(artifact.path, state.workspacePath));
     if (!candidates.length || (!state.sessionId && !state.workspacePath && !state.workspaceName)) {
       setArtifacts((current) => (current.length ? [] : current));
       return () => {

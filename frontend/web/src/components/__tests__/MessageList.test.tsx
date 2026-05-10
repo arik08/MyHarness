@@ -1310,7 +1310,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("live.html");
   });
 
-  it("does not collapse long completed write tool content in the workflow output preview body", () => {
+  it("summarizes long completed HTML write tool content in the workflow output preview body", () => {
     const longContent = [
       "첫 줄입니다.",
       ...Array.from({ length: 24 }, (_, index) => `긴 본문 ${index + 1}번째 줄입니다.`),
@@ -1346,7 +1346,9 @@ describe("MessageList", () => {
     );
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
-    expect(body.textContent).toBe(longContent);
+    expect(body.classList.contains("summarized")).toBe(true);
+    expect(body.textContent).toContain("HTML 원문은 대화 흐름을 위해 여기서는 숨겼습니다.");
+    expect(body.textContent).not.toContain("긴 본문 24번째 줄입니다.");
     expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
     expect(screen.getByText(/\d+ 토큰 \(26줄\)/)).toBeTruthy();
   });
@@ -2137,6 +2139,60 @@ describe("MessageList", () => {
     expect(card.textContent || "").toContain("fallback-report.html");
     expect(card.textContent || "").not.toContain("outputs/fallback-report.html");
     expect(document.body.textContent || "").not.toContain("undefined");
+  });
+
+  it("does not resolve prose library names or workspace-external absolute paths as artifacts", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact/resolve?")) {
+        const path = new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("path");
+        if (path === "outputs/report.html") {
+          return {
+            ok: true,
+            json: async () => ({
+              path: "outputs/report.html",
+              name: "report.html",
+              kind: "html",
+              size: 1024,
+            }),
+          } as Response;
+        }
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          workspacePath: "C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/Playground/shared/Default",
+          workspaceName: "Default",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: [
+                "Three.js 기반으로 작성했습니다.",
+                "참고: C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/.plugins/superpowers/skills/using-superpowers/SKILL.md",
+                "산출물: `outputs/report.html`",
+              ].join("\n"),
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "report.html 미리보기 열기" })).toBeTruthy();
+    const resolvedPaths = fetchSpy.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.startsWith("/api/artifact/resolve?"))
+      .map((url) => new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("path"));
+    expect(resolvedPaths).toEqual(["outputs/report.html"]);
   });
 
   it("keeps an early completed mermaid chart mounted after artifact cards resolve", async () => {

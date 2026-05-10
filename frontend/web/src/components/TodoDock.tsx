@@ -103,7 +103,7 @@ export function TodoDock({ variant = "dock" }: TodoDockProps) {
           {items.map((item, index) => (
             <li className={`${item.done ? "done" : ""}${index === runningIndex ? " running" : ""}`} key={`${item.label}-${index}`}>
               <span className="todo-spinner" aria-hidden="true" />
-              <input type="checkbox" checked={item.done} readOnly aria-label={item.label} />
+              <span className="todo-checkmark" aria-hidden="true" />
               <span className="todo-label">{item.done ? `(완료) ${item.label}` : item.label}</span>
             </li>
           ))}

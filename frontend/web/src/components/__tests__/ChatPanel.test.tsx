@@ -20,6 +20,11 @@ function ModalState() {
   return <output aria-label="modal state">{state.modal?.kind === "backend" ? String(state.modal.payload?.output || "") : ""}</output>;
 }
 
+function SidebarState() {
+  const { state } = useAppState();
+  return <output aria-label="sidebar state">{state.sidebarCollapsed ? "collapsed" : "open"}</output>;
+}
+
 describe("ChatPanel", () => {
   beforeEach(() => {
     Element.prototype.scrollTo = vi.fn();
@@ -72,6 +77,21 @@ describe("ChatPanel", () => {
     const titleInput = screen.getByLabelText("대화 제목");
     expect(titleInput.closest("button")).toBeNull();
     expect(titleInput.closest(".chat-title.editing")?.tagName).toBe("DIV");
+  });
+
+  it("toggles the sidebar from the mobile header control", async () => {
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sidebarCollapsed: true }}>
+        <ChatPanel />
+        <SidebarState />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByLabelText("sidebar state").textContent).toBe("collapsed");
+
+    await userEvent.click(screen.getByRole("button", { name: "사이드바 열기" }));
+
+    expect(screen.getByLabelText("sidebar state").textContent).toBe("open");
   });
 
   it("shows the AI team button in the top-right header and opens the popup from there", async () => {

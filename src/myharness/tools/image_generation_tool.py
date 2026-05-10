@@ -95,9 +95,9 @@ class ImageGenerationTool(BaseTool):
             if not current_module._is_codex_provider_context(context):
                 return ToolResult(
                     output=(
-                        "generate_image failed: no OpenAI API key found for the active provider. "
-                        "Codex OAuth image generation is only used when the active provider is Codex. "
-                        "Set MYHARNESS_IMAGE_API_KEY/OPENAI_API_KEY, or switch to the codex provider."
+                        "generate_image 실패: 활성 제공자에서 OpenAI API 키를 찾을 수 없습니다. "
+                        "Codex OAuth 이미지 생성은 활성 제공자가 Codex일 때만 사용합니다. "
+                        "MYHARNESS_IMAGE_API_KEY/OPENAI_API_KEY를 설정하거나 codex 제공자로 전환하세요."
                     ),
                     is_error=True,
                 )
@@ -133,25 +133,25 @@ async def _generate_with_images_api(
         try:
             response = await client.images.generate(**_generation_kwargs(arguments))
         except Exception as exc:
-            return ToolResult(output=f"generate_image failed: {exc}", is_error=True)
+            return ToolResult(output=f"generate_image 실패: {exc}", is_error=True)
 
         image_data = getattr(response.data[0], "b64_json", None) if response.data else None
         if not image_data:
-            return ToolResult(output="generate_image failed: API response did not include image data", is_error=True)
+            return ToolResult(output="generate_image 실패: API 응답에 이미지 데이터가 없습니다.", is_error=True)
 
         try:
             image_bytes = base64.b64decode(image_data)
         except Exception as exc:
-            return ToolResult(output=f"generate_image failed: invalid image data: {exc}", is_error=True)
+            return ToolResult(output=f"generate_image 실패: 이미지 데이터가 올바르지 않습니다: {exc}", is_error=True)
 
         atomic_write_bytes(path, image_bytes)
         return ToolResult(
             output=(
-                f"Generated image saved to: {path}\n"
-                f"Backend: {backend_label}\n"
-                f"Requested image model: {arguments.model} ({_image_model_label(arguments.model)})\n"
-                f"Size: {arguments.size}\n"
-                f"Format: {arguments.output_format}"
+                f"생성한 이미지를 저장했습니다: {path}\n"
+                f"백엔드: {backend_label}\n"
+                f"요청 이미지 모델: {arguments.model} ({_image_model_label(arguments.model)})\n"
+                f"크기: {arguments.size}\n"
+                f"형식: {arguments.output_format}"
             ),
             metadata={
                 "path": str(path),
@@ -174,9 +174,9 @@ async def _generate_with_codex_oauth(
     except ValueError as exc:
         return ToolResult(
             output=(
-                "generate_image failed: no OpenAI API key or Codex OAuth credential found. "
-                "Set MYHARNESS_IMAGE_API_KEY/OPENAI_API_KEY, or run `oh auth codex-login` "
-                f"after signing in with Codex. Details: {exc}"
+                "generate_image 실패: OpenAI API 키 또는 Codex OAuth 자격 증명을 찾을 수 없습니다. "
+                "MYHARNESS_IMAGE_API_KEY/OPENAI_API_KEY를 설정하거나 Codex 로그인 후 "
+                f"`oh auth codex-login`을 실행하세요. 세부 정보: {exc}"
             ),
             is_error=True,
         )
@@ -216,28 +216,28 @@ async def _generate_with_codex_oauth(
                     )
                 image_data = await _read_codex_image_stream(response)
     except Exception as exc:
-        return ToolResult(output=f"generate_image failed via Codex OAuth: {exc}", is_error=True)
+        return ToolResult(output=f"Codex OAuth generate_image 실패: {exc}", is_error=True)
     if not image_data:
         return ToolResult(
-            output="generate_image failed via Codex OAuth: response did not include image data",
+            output="Codex OAuth generate_image 실패: 응답에 이미지 데이터가 없습니다.",
             is_error=True,
         )
 
     try:
         image_bytes = base64.b64decode(image_data)
     except Exception as exc:
-        return ToolResult(output=f"generate_image failed: invalid image data: {exc}", is_error=True)
+        return ToolResult(output=f"generate_image 실패: 이미지 데이터가 올바르지 않습니다: {exc}", is_error=True)
 
     atomic_write_bytes(path, image_bytes)
     return ToolResult(
         output=(
-            f"Generated image saved to: {path}\n"
-            "Backend: Codex OAuth Responses image_generation\n"
-            "Effective image model: gpt-image-2 via Codex image_generation\n"
-            f"Requested image model hint: {arguments.model} ({_image_model_label(arguments.model)})\n"
-            f"Codex model: {model}\n"
-            f"Size: {arguments.size}\n"
-            f"Format: {arguments.output_format}"
+            f"생성한 이미지를 저장했습니다: {path}\n"
+            "백엔드: Codex OAuth Responses image_generation\n"
+            "실제 이미지 모델: Codex image_generation을 통한 gpt-image-2\n"
+            f"요청 이미지 모델 힌트: {arguments.model} ({_image_model_label(arguments.model)})\n"
+            f"Codex 모델: {model}\n"
+            f"크기: {arguments.size}\n"
+            f"형식: {arguments.output_format}"
         ),
         metadata={
             "path": str(path),

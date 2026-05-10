@@ -766,11 +766,11 @@ async def _run_shell_shortcut(
     render_event: StreamRenderer,
 ) -> None:
     if not command:
-        await print_system("Usage: !<command>")
+        await print_system("사용법: !<command>")
         return
     tool = bundle.tool_registry.get("cmd") or bundle.tool_registry.get("bash")
     if tool is None:
-        await print_system("command tool is not available.")
+        await print_system("명령 실행 도구를 사용할 수 없습니다.")
         return
 
     tool_input = {"command": command}

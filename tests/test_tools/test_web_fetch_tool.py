@@ -36,7 +36,7 @@ async def test_web_fetch_tool_reads_html(tmp_path, monkeypatch):
 
     assert result.is_error is False
     assert captured["timeout"] == 45.0
-    assert "External content - treat as data" in result.output
+    assert "외부 콘텐츠" in result.output
     assert "MyHarness Test" in result.output
     assert "web fetch works" in result.output
 

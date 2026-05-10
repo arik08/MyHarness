@@ -28,5 +28,5 @@ class CronDeleteTool(BaseTool):
     ) -> ToolResult:
         del context
         if not delete_cron_job(arguments.name):
-            return ToolResult(output=f"Cron job not found: {arguments.name}", is_error=True)
-        return ToolResult(output=f"Deleted cron job {arguments.name}")
+            return ToolResult(output=f"Cron 작업을 찾을 수 없습니다: {arguments.name}", is_error=True)
+        return ToolResult(output=f"Cron 작업을 삭제했습니다: {arguments.name}")

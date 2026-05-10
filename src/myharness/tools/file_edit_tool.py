@@ -77,7 +77,7 @@ class FileEditTool(BaseTool):
                 return ToolResult(output=f"Sandbox: {reason}", is_error=True)
 
         if not path.exists():
-            return ToolResult(output=f"File not found: {display_tool_path(path, context.cwd)}", is_error=True)
+            return ToolResult(output=f"파일을 찾을 수 없습니다: {display_tool_path(path, context.cwd)}", is_error=True)
 
         original = path.read_text(encoding="utf-8")
         replacements = arguments.edits
@@ -95,7 +95,7 @@ class FileEditTool(BaseTool):
         for index, edit in enumerate(replacements, start=1):
             if edit.old_str not in updated:
                 return ToolResult(
-                    output=f"old_str was not found in the file for edit {index}",
+                    output=f"{index}번째 편집의 old_str을 파일에서 찾을 수 없습니다.",
                     is_error=True,
                 )
             if edit.replace_all:
@@ -114,7 +114,7 @@ class FileEditTool(BaseTool):
 
         path.write_text(updated, encoding="utf-8")
         return ToolResult(
-            output=f"Updated {display_tool_path(path, context.cwd)} ({applied_count} replacement(s))"
+            output=f"{display_tool_path(path, context.cwd)}을(를) 업데이트했습니다. 치환 {applied_count}건"
         )
 
 

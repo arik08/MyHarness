@@ -262,7 +262,7 @@ def test_dry_run_rejects_continue_resume(monkeypatch):
     result = runner.invoke(app, ["--dry-run", "--continue"])
 
     assert result.exit_code == 1
-    assert "--dry-run does not support --continue/--resume yet" in result.output
+    assert "--dry-run은 아직 --continue/--resume을 지원하지 않습니다" in result.output
 
 
 def test_build_dry_run_preview_classifies_slash_command_and_flags_bad_mcp(monkeypatch, tmp_path: Path):
@@ -308,7 +308,7 @@ def test_build_dry_run_preview_classifies_slash_command_and_flags_bad_mcp(monkey
     assert preview["entrypoint"]["behavior"] == "stateful"
     assert preview["validation"]["mcp_errors"] == 1
     assert preview["mcp_servers"][0]["status"] == "error"
-    assert "command not found in PATH" in preview["mcp_servers"][0]["issues"][0]
+    assert "PATH에서 명령을 찾을 수 없습니다" in preview["mcp_servers"][0]["issues"][0]
 
 
 def test_build_dry_run_preview_sets_blocked_when_model_prompt_lacks_auth(monkeypatch, tmp_path: Path):

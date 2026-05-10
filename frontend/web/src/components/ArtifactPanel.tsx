@@ -613,6 +613,7 @@ export function ArtifactPanel() {
   const originalContent = String(payload?.content ?? "");
   const draftContentForActive = draftUserEdited && draftPath === activePath ? draftContent : originalContent;
   const draftDirty = canSave && draftUserEdited && draftPath === activePath && draftContentForActive !== originalContent;
+  const showHtmlDraftActions = htmlEditMode || draftDirty || savingDraft;
   const panelTitle = active ? `${artifactDisplayName(active)}${draftDirty ? " (편집됨)" : ""}` : "프로젝트 파일";
   const aiEditElapsedSeconds = aiEditProgressStartedAt === null
     ? 0
@@ -1051,19 +1052,23 @@ export function ArtifactPanel() {
                     }}
                     active={htmlEditMode}
                   />
-                  <ArtifactAction
-                    label={savingDraft ? "반영 중" : "수정사항 반영"}
-                    icon="save"
-                    onClick={() => void saveHtmlDraft()}
-                    disabled={!draftDirty || savingDraft}
-                  />
-                  <ArtifactAction
-                    label="편집 취소"
-                    icon="undo"
-                    onClick={cancelHtmlDraft}
-                    disabled={!draftDirty || savingDraft}
-                    danger={draftDirty}
-                  />
+                  {showHtmlDraftActions ? (
+                    <>
+                      <ArtifactAction
+                        label={savingDraft ? "반영 중" : "수정사항 반영"}
+                        icon="save"
+                        onClick={() => void saveHtmlDraft()}
+                        disabled={!draftDirty || savingDraft}
+                      />
+                      <ArtifactAction
+                        label="편집 취소"
+                        icon="undo"
+                        onClick={cancelHtmlDraft}
+                        disabled={!draftDirty || savingDraft}
+                        danger={draftDirty}
+                      />
+                    </>
+                  ) : null}
                 </>
               ) : null}
               <ArtifactAction

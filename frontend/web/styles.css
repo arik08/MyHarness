@@ -506,12 +506,13 @@ a:focus-visible {
   width: 100vw;
   height: 100dvh;
   min-height: 620px;
+  overflow: hidden;
   background: var(--panel);
   transition: grid-template-columns 0.18s ease;
 }
 
 .app-shell.sidebar-collapsed {
-  --sidebar-track-width: 16px;
+  --sidebar-track-width: 32px;
   grid-template-columns: var(--sidebar-track-width) minmax(0, 1fr);
 }
 
@@ -722,7 +723,7 @@ a:focus-visible {
   justify-content: center;
   gap: 0;
   min-height: 34px;
-  width: 16px;
+  width: 32px;
 }
 
 .app-shell.sidebar-collapsed .brand,
@@ -742,11 +743,11 @@ a:focus-visible {
 }
 
 .app-shell.sidebar-collapsed .sidebar-toggle {
-  width: 16px;
+  width: 32px;
   height: 34px;
   padding: 0;
   background: transparent;
-  border-radius: 0;
+  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -1484,6 +1485,24 @@ a:focus-visible {
   min-width: 156px;
 }
 
+@media (max-width: 679px) {
+  .runtime-picker-layer {
+    flex-direction: column;
+    gap: 6px;
+    width: min(320px, calc(100vw - 16px));
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .runtime-picker-panel,
+  .runtime-picker-model-panel,
+  .runtime-picker-effort-panel {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 .runtime-picker-header {
   display: flex;
   align-items: flex-start;
@@ -1875,12 +1894,15 @@ a:focus-visible {
 }
 
 .artifact-title-rename-trigger {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
+  min-height: 34px;
   min-width: 0;
   margin: 0;
-  padding: 0;
+  padding: 0 6px;
   border: 0;
+  border-radius: 6px;
   background: transparent;
   color: inherit;
   cursor: text;
@@ -2630,6 +2652,10 @@ a:focus-visible {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.9;
+}
+
+.sidebar-mobile-toggle {
+  display: none;
 }
 
 .header-icon-button::after {
@@ -3532,11 +3558,17 @@ a:focus-visible {
 
 .project-file-toolbar {
   display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 6;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin: -14px -14px 10px;
+  padding: 14px 14px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
 .project-file-sort-summary {
@@ -4192,8 +4224,8 @@ a:focus-visible {
   display: inline-grid;
   place-items: center;
   position: relative;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   margin: 0;
   padding: 0;
   color: var(--muted);
@@ -4628,13 +4660,32 @@ a:focus-visible {
   min-width: 0;
 }
 
-.todo-card-list input {
+.todo-checkmark {
   grid-column: 1;
   grid-row: 1;
-  width: 14px;
-  height: 14px;
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  width: 15px;
+  height: 15px;
   margin: 2px 0 0;
-  accent-color: var(--success);
+  background: color-mix(in srgb, var(--panel-raised) 82%, transparent);
+  border: 1.4px solid color-mix(in srgb, var(--line-strong) 82%, var(--success) 18%);
+  border-radius: 4px;
+}
+
+.todo-card-list li.done .todo-checkmark {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.todo-card-list li.done .todo-checkmark::after {
+  content: "";
+  width: 7px;
+  height: 4px;
+  border-bottom: 1.7px solid var(--panel);
+  border-left: 1.7px solid var(--panel);
+  transform: translateY(-1px) rotate(-45deg);
 }
 
 .todo-card-list .todo-label {
@@ -4668,7 +4719,7 @@ a:focus-visible {
   display: inline-block;
 }
 
-.todo-card-list li.running input {
+.todo-card-list li.running .todo-checkmark {
   opacity: 0;
 }
 
@@ -5168,6 +5219,16 @@ a:focus-visible {
   font-size: 12px;
   line-height: 1.48;
   white-space: pre-wrap;
+}
+
+.workflow-output-body.summarized {
+  max-height: none;
+  overflow: visible;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
 }
 
 .workflow-output-body.diff {
@@ -6815,7 +6876,7 @@ a:focus-visible {
   box-sizing: border-box;
   width: 100%;
   max-height: var(--composer-input-max-height);
-  min-height: 20px;
+  min-height: 28px;
   overflow-y: hidden;
   resize: none;
   padding: 0;
@@ -8410,7 +8471,24 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
     grid-template-columns: 1fr;
   }
 
-  .sidebar {
+  .app-shell.sidebar-collapsed .sidebar {
+    display: none;
+  }
+
+  .app-shell:not(.sidebar-collapsed) .sidebar {
+    display: flex;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 32;
+    width: min(288px, calc(100vw - 40px));
+    box-shadow: 18px 0 42px rgba(0, 0, 0, 0.16);
+  }
+
+  .sidebar-mobile-toggle {
+    display: grid;
+  }
+
+  .artifact-resize-handle {
     display: none;
   }
 

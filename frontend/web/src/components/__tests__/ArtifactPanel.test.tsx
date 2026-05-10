@@ -436,10 +436,10 @@ describe("ArtifactPanel", () => {
     );
 
     let actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
-    expect(actions).toHaveLength(8);
+    expect(actions).toHaveLength(6);
     expect(actions[0].getAttribute("data-tooltip")).toBe("본문 수정");
-    expect(actions[1].getAttribute("data-tooltip")).toBe("수정사항 반영");
-    expect(actions[1].disabled).toBe(true);
+    expect(actions.some((button) => button.getAttribute("data-tooltip") === "수정사항 반영")).toBe(false);
+    expect(actions.some((button) => button.getAttribute("data-tooltip") === "편집 취소")).toBe(false);
     expect(screen.queryByRole("button", { name: "AI 자동편집" })).toBeNull();
 
     unmount();
@@ -482,6 +482,8 @@ describe("ArtifactPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
 
+    expect((screen.getByRole("button", { name: "수정사항 반영" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "편집 취소" }) as HTMLButtonElement).disabled).toBe(true);
     expect(frame.srcdoc).toBe(initialSrcdoc);
     expect(frame.srcdoc).toContain("myharness-editable-text");
     expect(frame.srcdoc).toContain("const activateEditable");
@@ -606,7 +608,7 @@ describe("ArtifactPanel", () => {
       </AppStateProvider>,
     );
 
-    const actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    let actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
     await userEvent.click(actions[0]);
     act(() => {
       window.dispatchEvent(new MessageEvent("message", {
@@ -618,9 +620,9 @@ describe("ArtifactPanel", () => {
       }));
     });
 
-    await waitFor(() => expect(actions[1].disabled).toBe(false));
+    await waitFor(() => expect((screen.getByRole("button", { name: "수정사항 반영" }) as HTMLButtonElement).disabled).toBe(false));
 
-    await userEvent.click(actions[1]);
+    await userEvent.click(screen.getByRole("button", { name: "수정사항 반영" }));
 
     await waitFor(() => expect(overwriteArtifact).toHaveBeenCalledWith({
       path: "outputs/report.html",
@@ -629,8 +631,9 @@ describe("ArtifactPanel", () => {
       workspacePath: "C:/repo",
       workspaceName: "repo",
     }));
-    await waitFor(() => expect(actions[1].disabled).toBe(true));
-    await waitFor(() => expect(actions[2].disabled).toBe(true));
+    actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    expect((screen.getByRole("button", { name: "수정사항 반영" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "편집 취소" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("keeps an intentionally blank HTML draft instead of showing the original preview", async () => {
@@ -662,7 +665,7 @@ describe("ArtifactPanel", () => {
     );
 
     const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
-    const actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
+    let actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
     await userEvent.click(actions[0]);
     act(() => {
       window.dispatchEvent(new MessageEvent("message", {
@@ -674,12 +677,12 @@ describe("ArtifactPanel", () => {
       }));
     });
 
-    await waitFor(() => expect(actions[1].disabled).toBe(false));
+    await waitFor(() => expect((screen.getByRole("button", { name: "수정사항 반영" }) as HTMLButtonElement).disabled).toBe(false));
     expect(frame.srcdoc).not.toContain("<html><body>Preview</body></html>");
     await userEvent.click(screen.getByRole("button", { name: "소스코드 복사" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(""));
 
-    await userEvent.click(actions[1]);
+    await userEvent.click(screen.getByRole("button", { name: "수정사항 반영" }));
 
     await waitFor(() => expect(overwriteArtifact).toHaveBeenCalledWith(expect.objectContaining({
       path: "outputs/report.html",
@@ -733,8 +736,8 @@ describe("ArtifactPanel", () => {
       }));
     });
 
-    await waitFor(() => expect(actions[1].disabled).toBe(false));
-    await userEvent.click(actions[1]);
+    await waitFor(() => expect((screen.getByRole("button", { name: "수정사항 반영" }) as HTMLButtonElement).disabled).toBe(false));
+    await userEvent.click(screen.getByRole("button", { name: "수정사항 반영" }));
 
     await waitFor(() => expect(overwriteArtifact).toHaveBeenCalledWith({
       path: "outputs/history-report.html",
@@ -1251,12 +1254,12 @@ describe("ArtifactPanel", () => {
       }));
     });
 
-    await waitFor(() => expect(actions[2].disabled).toBe(false));
-    await userEvent.click(actions[2]);
+    await waitFor(() => expect((screen.getByRole("button", { name: "편집 취소" }) as HTMLButtonElement).disabled).toBe(false));
+    await userEvent.click(screen.getByRole("button", { name: "편집 취소" }));
 
     actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
-    expect(actions[2].disabled).toBe(true);
-    await userEvent.click(actions[3]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "편집 취소" })).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
     expect(document.querySelector(".artifact-source code")?.textContent).toContain("Preview");
     expect(document.querySelector(".artifact-source code")?.textContent).not.toContain("Changed");
   });

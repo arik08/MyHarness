@@ -51,7 +51,7 @@ async def test_mcp_auth_tool_updates_http_headers(tmp_path: Path, monkeypatch):
     )
 
     assert result.is_error is False
-    assert "Saved MCP auth for demo" in result.output
+    assert "demo MCP 인증을 저장했습니다" in result.output
     saved = load_settings().mcp_servers["demo"]
     assert saved.headers["Authorization"] == "Bearer secret"
     assert manager.updated[0][0] == "demo"

@@ -82,27 +82,27 @@ class OutputRenderer:
                     else "Preparing conversation compaction..."
                 )
             elif event.phase == "session_memory_start":
-                label = "Condensing earlier conversation..."
+                label = "이전 대화를 압축하는 중..."
             elif event.phase == "session_memory_end":
-                label = "Conversation condensed."
+                label = "대화 압축이 완료됐습니다."
             elif event.phase == "context_collapse_start":
-                label = "Collapsing oversized context..."
+                label = "너무 큰 컨텍스트를 축소하는 중..."
             elif event.phase == "context_collapse_end":
-                label = "Context collapse complete."
+                label = "컨텍스트 축소가 완료됐습니다."
             elif event.phase == "compact_start":
                 label = (
-                    "Context is too large. Compacting and retrying..."
+                    "컨텍스트가 너무 큽니다. 압축한 뒤 다시 시도합니다..."
                     if event.trigger == "reactive"
-                    else "Compacting conversation memory..."
+                    else "대화 메모리를 압축하는 중..."
                 )
             elif event.phase == "compact_retry":
-                label = "Retrying compaction..."
+                label = "압축을 다시 시도하는 중..."
             elif event.phase == "compact_end":
-                label = "Compaction complete."
+                label = "압축이 완료됐습니다."
             elif event.phase == "compact_failed":
-                label = "Compaction failed."
+                label = "압축에 실패했습니다."
             else:
-                label = "Compacting..."
+                label = "압축하는 중..."
             self.console.print(f"[yellow]\u2139 {label}[/yellow]")
             return
 

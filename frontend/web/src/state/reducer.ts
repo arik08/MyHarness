@@ -98,6 +98,22 @@ function loadLocalStorageValue(key: string) {
   }
 }
 
+function isNarrowViewport() {
+  try {
+    return typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches;
+  } catch {
+    return false;
+  }
+}
+
+function initialSidebarCollapsed() {
+  const stored = loadLocalStorageValue("myharness:sidebarCollapsed");
+  if (stored) {
+    return stored === "1";
+  }
+  return isNarrowViewport();
+}
+
 function clampNumber(value: unknown, fallback: number, min: number, max: number) {
   const numberValue = Number(value);
   return Math.max(min, Math.min(max, Number.isFinite(numberValue) ? numberValue : fallback));
@@ -206,7 +222,7 @@ export const initialAppState: AppState = {
   systemPrompt: loadLocalStorageValue("myharness:systemPrompt"),
   appSettings: loadAppSettings(),
   themeId: initialThemeId(),
-  sidebarCollapsed: loadLocalStorageValue("myharness:sidebarCollapsed") === "1",
+  sidebarCollapsed: initialSidebarCollapsed(),
   commands: [],
   skills: [],
   workspaceName: "",
@@ -1407,7 +1423,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, themeId: action.themeId };
 
     case "set_sidebar_collapsed":
-      return { ...state, sidebarCollapsed: action.value };
+      return {
+        ...state,
+        sidebarCollapsed: action.value,
+        runtimePicker: action.value ? { ...state.runtimePicker, open: false, loading: false, error: "" } : state.runtimePicker,
+      };
 
     case "set_draft":
       return { ...state, composer: { ...state.composer, draft: action.value } };

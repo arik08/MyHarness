@@ -144,9 +144,9 @@ async def _finish_output_collection(output_task: asyncio.Task[bytearray]) -> byt
 def _format_output(output_buffer: bytearray) -> str:
     text = _decode_output(output_buffer).replace("\r\n", "\n").strip()
     if not text:
-        return "(no output)"
+        return "(출력 없음)"
     if len(text) > 12000:
-        return f"{text[:12000]}\n...[truncated]..."
+        return f"{text[:12000]}\n...[잘림]..."
     return text
 
 

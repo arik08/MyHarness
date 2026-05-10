@@ -132,7 +132,7 @@ async def test_skill_and_config_flow_across_registry(tmp_path: Path, monkeypatch
         config.input_model(action="set", key="theme", value="night-owl"),
         context,
     )
-    assert set_result.output == "Updated theme"
+    assert set_result.output == "설정을 업데이트했습니다: theme"
 
     show_result = await config.execute(config.input_model(action="show"), context)
     assert "night-owl" in show_result.output

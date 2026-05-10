@@ -328,7 +328,7 @@ async def test_memory_show_rejects_path_traversal(tmp_path: Path, monkeypatch):
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert result.message == "Memory entry path must stay within the project memory directory."
+    assert result.message == "메모리 항목 경로는 프로젝트 메모리 디렉터리 안에 있어야 합니다."
 
 
 @pytest.mark.asyncio
@@ -483,7 +483,7 @@ async def test_autopilot_command_add_list_and_complete(tmp_path: Path, monkeypat
     add_command, add_args = registry.lookup("/autopilot add idea Build unified queue :: intake from issues and prs")
     assert add_command is not None
     add_result = await add_command.handler(add_args, context)
-    assert "Queued autopilot card" in add_result.message
+    assert "오토파일럿 카드를 대기열에 추가" in add_result.message
 
     list_command, list_args = registry.lookup("/autopilot list")
     assert list_command is not None
@@ -514,7 +514,7 @@ async def test_autopilot_command_export_dashboard(tmp_path: Path, monkeypatch):
     assert command is not None
     result = await command.handler(args, context)
 
-    assert "Exported autopilot dashboard:" in result.message
+    assert "오토파일럿 대시보드를 내보냈습니다:" in result.message
     output_dir = Path(result.message.split(": ", 1)[1])
     assert (output_dir / "index.html").exists()
     assert (output_dir / "snapshot.json").exists()
@@ -546,8 +546,8 @@ async def test_ship_command_queues_and_executes_card(tmp_path: Path, monkeypatch
     result = await command.handler(args, context)
 
     assert "-> completed" in result.message
-    assert "run report:" in result.message
-    assert "verification report:" in result.message
+    assert "실행 보고서:" in result.message
+    assert "검증 보고서:" in result.message
 
 
 @pytest.mark.asyncio
@@ -691,7 +691,7 @@ async def test_memory_command_manages_entries(tmp_path: Path, monkeypatch):
 
     add_command, add_args = registry.lookup("/memory add Pytest Tips :: use fixtures")
     add_result = await add_command.handler(add_args, context)
-    assert "Added memory entry" in add_result.message
+    assert "메모리 항목을 추가했습니다" in add_result.message
 
     list_command, list_args = registry.lookup("/memory list")
     list_result = await list_command.handler(list_args, context)
@@ -703,7 +703,7 @@ async def test_memory_command_manages_entries(tmp_path: Path, monkeypatch):
 
     remove_command, remove_args = registry.lookup("/memory remove pytest_tips")
     remove_result = await remove_command.handler(remove_args, context)
-    assert "Removed memory entry" in remove_result.message
+    assert "메모리 항목을 제거했습니다" in remove_result.message
 
 
 @pytest.mark.asyncio
@@ -726,7 +726,7 @@ async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
 
     compact_command, compact_args = registry.lookup("/compact 2")
     compact_result = await compact_command.handler(compact_args, context)
-    assert "Compacted conversation" in compact_result.message
+    assert "대화를 압축했습니다" in compact_result.message
     assert len(context.engine.messages) == 3
 
     usage_command, usage_args = registry.lookup("/usage")
@@ -735,7 +735,7 @@ async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
 
     stats_command, stats_args = registry.lookup("/stats")
     stats_result = await stats_command.handler(stats_args, context)
-    assert "Session stats:" in stats_result.message
+    assert "세션 통계:" in stats_result.message
 
 
 @pytest.mark.asyncio
@@ -746,7 +746,7 @@ async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeyp
 
     config_command, config_args = registry.lookup("/config set verbose true")
     config_result = await config_command.handler(config_args, context)
-    assert "Updated verbose" in config_result.message
+    assert "설정을 업데이트했습니다: verbose" in config_result.message
     assert load_settings().verbose is True
 
     output_command, output_args = registry.lookup("/output-style set minimal")
@@ -815,7 +815,7 @@ async def test_version_context_and_share_commands(tmp_path: Path, monkeypatch):
 
     share_command, share_args = registry.lookup("/share")
     share_result = await share_command.handler(share_args, context)
-    assert "shareable transcript snapshot" in share_result.message
+    assert "공유용 대화 기록 스냅샷" in share_result.message
 
 
 @pytest.mark.asyncio
@@ -829,7 +829,7 @@ async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkey
 
     login_command, login_args = registry.lookup("/login sk-test-123456")
     login_result = await login_command.handler(login_args, context)
-    assert "Loaded API key into this process environment" in login_result.message
+    assert "API 키를 현재 프로세스 환경" in login_result.message
     assert load_settings().api_key == ""
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-test-123456"
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -841,7 +841,7 @@ async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkey
 
     pr_command, pr_args = registry.lookup("/pr_comments add src/app.py:12 :: simplify this branch")
     pr_result = await pr_command.handler(pr_args, context)
-    assert "Added PR comment" in pr_result.message
+    assert "PR 댓글 컨텍스트를 추가했습니다" in pr_result.message
     assert "simplify this branch" in get_project_pr_comments_file(tmp_path).read_text(encoding="utf-8")
 
     feedback_command, feedback_args = registry.lookup("/feedback this workflow feels good")
@@ -872,7 +872,7 @@ async def test_login_loads_pgpt_openai_compatible_identity_into_env(tmp_path: Pa
     login_command, login_args = registry.lookup("/login pgpt-key E12345 30")
     login_result = await login_command.handler(login_args, context)
 
-    assert "Loaded P-GPT credentials into this process environment" in login_result.message
+    assert "P-GPT 자격 증명을 현재 프로세스 환경" in login_result.message
     assert os.environ["PGPT_API_KEY"] == "pgpt-key"
     assert os.environ["PGPT_EMPLOYEE_NO"] == "E12345"
     monkeypatch.delenv("PGPT_API_KEY", raising=False)
@@ -893,7 +893,7 @@ async def test_agents_session_files_and_reload_plugins_commands(tmp_path: Path, 
 
     session_command, session_args = registry.lookup("/session")
     session_result = await session_command.handler(session_args, context)
-    assert "Session directory:" in session_result.message
+    assert "세션 디렉터리:" in session_result.message
 
     session_path_command, session_path_args = registry.lookup("/session path")
     session_path_result = await session_path_command.handler(session_path_args, context)
@@ -976,13 +976,13 @@ async def test_init_and_bridge_commands(tmp_path: Path, monkeypatch):
 
     init_command, init_args = registry.lookup("/init")
     init_result = await init_command.handler(init_args, context)
-    assert "Initialized project files" in init_result.message or "already initialized" in init_result.message
+    assert "프로젝트 파일을 초기화했습니다" in init_result.message or "이미 MyHarness용으로 초기화" in init_result.message
     assert (tmp_path / "AGENTS.md").exists()
     assert (tmp_path / ".myharness" / "memory" / "MEMORY.md").exists()
 
     bridge_show_command, bridge_show_args = registry.lookup("/bridge show")
     bridge_show_result = await bridge_show_command.handler(bridge_show_args, context)
-    assert "Bridge summary:" in bridge_show_result.message
+    assert "브리지 요약:" in bridge_show_result.message
 
     bridge_encode_command, bridge_encode_args = registry.lookup("/bridge encode https://api.example.com token123")
     bridge_encode_result = await bridge_encode_command.handler(bridge_encode_args, context)
@@ -998,8 +998,8 @@ async def test_init_and_bridge_commands(tmp_path: Path, monkeypatch):
 
     bridge_spawn_command, bridge_spawn_args = registry.lookup("/bridge spawn printf bridge-ok")
     bridge_spawn_result = await bridge_spawn_command.handler(bridge_spawn_args, context)
-    assert "Spawned bridge session" in bridge_spawn_result.message
-    session_id = bridge_spawn_result.message.split()[3]
+    assert "브리지 세션" in bridge_spawn_result.message
+    session_id = bridge_spawn_result.message.split()[2]
 
     bridge_list_command, bridge_list_args = registry.lookup("/bridge list")
     bridge_list_result = await bridge_list_command.handler(bridge_list_args, context)
@@ -1007,11 +1007,11 @@ async def test_init_and_bridge_commands(tmp_path: Path, monkeypatch):
 
     bridge_output_command, bridge_output_args = registry.lookup(f"/bridge output {session_id}")
     bridge_output_result = await bridge_output_command.handler(bridge_output_args, context)
-    assert "bridge-ok" in bridge_output_result.message or bridge_output_result.message == "(no output)"
+    assert "bridge-ok" in bridge_output_result.message or bridge_output_result.message == "(출력 없음)"
 
     bridge_stop_command, bridge_stop_args = registry.lookup(f"/bridge stop {session_id}")
     bridge_stop_result = await bridge_stop_command.handler(bridge_stop_args, context)
-    assert f"Stopped bridge session {session_id}" in bridge_stop_result.message
+    assert f"브리지 세션 {session_id}" in bridge_stop_result.message
 
 
 @pytest.mark.asyncio
@@ -1038,12 +1038,12 @@ async def test_copy_rewind_and_meta_commands(tmp_path: Path, monkeypatch):
 
     copy_command, copy_args = registry.lookup("/copy")
     copy_result = await copy_command.handler(copy_args, context)
-    assert "Copied" in copy_result.message
+    assert "클립보드" in copy_result.message
     assert copied == ["second answer"]
 
     rewind_command, rewind_args = registry.lookup("/rewind 1")
     rewind_result = await rewind_command.handler(rewind_args, context)
-    assert "removed 2 message(s)" in rewind_result.message
+    assert "메시지 2개를 제거" in rewind_result.message
     assert len(context.engine.messages) == 2
 
     privacy_command, privacy_args = registry.lookup("/privacy-settings")
@@ -1052,11 +1052,11 @@ async def test_copy_rewind_and_meta_commands(tmp_path: Path, monkeypatch):
 
     rate_command, rate_args = registry.lookup("/rate-limit-options")
     rate_result = await rate_command.handler(rate_args, context)
-    assert "Rate limit options:" in rate_result.message
+    assert "레이트 리밋 대응 옵션:" in rate_result.message
 
     release_command, release_args = registry.lookup("/release-notes")
     release_result = await release_command.handler(release_args, context)
-    assert "Release Notes" in release_result.message
+    assert "릴리스 노트" in release_result.message
 
     upgrade_command, upgrade_args = registry.lookup("/upgrade")
     upgrade_result = await upgrade_command.handler(upgrade_args, context)

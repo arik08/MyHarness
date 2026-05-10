@@ -1864,6 +1864,19 @@ describe("appReducer", () => {
     expect(collapsed.sidebarCollapsed).toBe(true);
   });
 
+  it("closes the runtime picker when the sidebar collapses", () => {
+    const openPicker = {
+      ...initialAppState,
+      runtimePicker: { ...initialAppState.runtimePicker, open: true, loading: true, error: "failed" },
+    };
+    const collapsed = appReducer(openPicker, { type: "set_sidebar_collapsed", value: true });
+
+    expect(collapsed.sidebarCollapsed).toBe(true);
+    expect(collapsed.runtimePicker.open).toBe(false);
+    expect(collapsed.runtimePicker.loading).toBe(false);
+    expect(collapsed.runtimePicker.error).toBe("");
+  });
+
   it("keeps artifact list and preview widths independent", () => {
     const base = {
       ...initialAppState,

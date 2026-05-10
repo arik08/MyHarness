@@ -409,8 +409,11 @@ export function Sidebar() {
       const viewportPad = 8;
       const bottomLimit = Math.max(viewportPad, rect.top - gap);
       const providerPanel = root.querySelector(".runtime-picker-provider-panel");
+      const narrowViewport = window.innerWidth < 680;
 
-      if (runtimePickerLockedTopRef.current === null) {
+      if (narrowViewport) {
+        runtimePickerLockedTopRef.current = null;
+      } else if (runtimePickerLockedTopRef.current === null) {
         const providerHeight = Math.min(
           Math.max(96, bottomLimit - viewportPad),
           Math.max(
@@ -428,12 +431,33 @@ export function Sidebar() {
         }
       }
 
+      const openPanelCount = 1 + (state.runtimePicker.modelOpen ? 1 : 0) + (state.runtimePicker.effortOpen ? 1 : 0);
+      const naturalLayerHeight = Math.max(96, root.scrollHeight || root.offsetHeight);
       const top = Math.max(
         viewportPad,
-        runtimePickerLockedTopRef.current ?? Math.max(viewportPad, bottomLimit - Math.max(96, root.offsetHeight)),
+        narrowViewport
+          ? bottomLimit - Math.min(naturalLayerHeight, Math.max(96, bottomLimit - viewportPad))
+          : runtimePickerLockedTopRef.current ?? Math.max(viewportPad, bottomLimit - Math.max(96, root.offsetHeight)),
       );
-      const panelMaxHeight = Math.max(96, Math.min(360, bottomLimit - top));
-      const left = Math.max(8, rect.left + 4);
+      const panelMaxHeight = narrowViewport
+        ? Math.max(
+          96,
+          Math.min(
+            220,
+            Math.floor((Math.max(96, bottomLimit - top) - Math.max(0, openPanelCount - 1) * 6) / openPanelCount),
+          ),
+        )
+        : Math.max(96, Math.min(360, bottomLimit - top));
+      const estimatedWidth = narrowViewport
+        ? Math.min(320, Math.max(0, window.innerWidth - viewportPad * 2))
+        : Math.min(
+          Math.max(214, root.scrollWidth || root.offsetWidth),
+          Math.max(0, window.innerWidth - viewportPad * 2),
+        );
+      const left = Math.min(
+        Math.max(viewportPad, rect.left + 4),
+        Math.max(viewportPad, window.innerWidth - estimatedWidth - viewportPad),
+      );
 
       setRuntimePickerGeometry((current) => {
         if (current.left === left && current.top === top && current.panelMaxHeight === panelMaxHeight) {
@@ -490,6 +514,7 @@ export function Sidebar() {
   const activeHistoryValue = state.activeHistoryId || state.sessionId || "";
   const visibleHistory = state.history.filter((item) => !isCurrentLiveHistoryItem(item, state.sessionId));
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
+  const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
   const renderedHistory = state.busy && activeHistoryValue && !hasActiveHistoryItem
     ? [
         {
@@ -758,7 +783,7 @@ export function Sidebar() {
         </div>
       </section>
 
-      {state.runtimePicker.open ? (
+      {showRuntimePicker ? (
         <RuntimePicker
           refNode={runtimePickerRef}
           picker={state.runtimePicker}

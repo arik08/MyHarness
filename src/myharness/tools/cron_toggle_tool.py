@@ -30,8 +30,8 @@ class CronToggleTool(BaseTool):
         del context
         if not set_job_enabled(arguments.name, arguments.enabled):
             return ToolResult(
-                output=f"Cron job not found: {arguments.name}",
+                output=f"Cron 작업을 찾을 수 없습니다: {arguments.name}",
                 is_error=True,
             )
-        state = "enabled" if arguments.enabled else "disabled"
-        return ToolResult(output=f"Cron job '{arguments.name}' is now {state}")
+        state = "활성화" if arguments.enabled else "비활성화"
+        return ToolResult(output=f"Cron 작업 '{arguments.name}'을(를) {state}했습니다.")

@@ -275,6 +275,21 @@ describe("Composer", () => {
     expect(input.closest(".composer-box")?.classList.contains("multiline")).toBe(true);
   });
 
+  it("focuses the message input when the composer background is clicked", () => {
+    render(
+      <AppStateProvider>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...") as HTMLTextAreaElement;
+    const composerBox = input.closest(".composer-box") as HTMLElement;
+
+    fireEvent.mouseDown(composerBox);
+
+    expect(document.activeElement).toBe(input);
+  });
+
   it("queues the draft with Ctrl+Enter while a response is running", async () => {
     const user = userEvent.setup();
     render(
@@ -703,6 +718,23 @@ describe("Composer", () => {
     expect(document.querySelector(".todo-checklist-dock")).toBeTruthy();
     expect(screen.getByRole("button", { name: "작업 목록 접기" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "작업 목록 닫기" })).toBeNull();
+  });
+
+  it("renders checklist status marks without interactive checkboxes", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          todoMarkdown: "- [x] 조사\n- [ ] 구현",
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(document.querySelectorAll(".todo-checkmark")).toHaveLength(2);
+    expect(screen.getByText("(완료) 조사")).toBeTruthy();
   });
 
   it("renders backend questions inline directly above the composer input", async () => {

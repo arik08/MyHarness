@@ -450,7 +450,7 @@ def create_default_command_registry(
             compacted = compact_messages(context.engine.messages, preserve_recent=preserve_recent)
         context.engine.load_messages(compacted)
         return CommandResult(
-            message=f"Compacted conversation from {before} messages to {len(compacted)}."
+            message=f"대화를 압축했습니다: 메시지 {before}개 -> {len(compacted)}개."
         )
 
     async def _usage_handler(_: str, context: CommandContext) -> CommandResult:
@@ -467,16 +467,16 @@ def create_default_command_registry(
     async def _cost_handler(_: str, context: CommandContext) -> CommandResult:
         usage = context.engine.total_usage
         model = context.app_state.get().model if context.app_state is not None else load_settings().model
-        estimated_cost = "unavailable"
+        estimated_cost = "확인 불가"
         if model.startswith("claude-3-5-sonnet"):
             estimated = (usage.input_tokens * 3.0 + usage.output_tokens * 15.0) / 1_000_000
-            estimated_cost = f"${estimated:.4f} (estimated)"
+            estimated_cost = f"${estimated:.4f} (추정)"
         elif model.startswith("claude-3-7-sonnet"):
             estimated = (usage.input_tokens * 3.0 + usage.output_tokens * 15.0) / 1_000_000
-            estimated_cost = f"${estimated:.4f} (estimated)"
+            estimated_cost = f"${estimated:.4f} (추정)"
         elif model.startswith("claude-3-opus"):
             estimated = (usage.input_tokens * 15.0 + usage.output_tokens * 75.0) / 1_000_000
-            estimated_cost = f"${estimated:.4f} (estimated)"
+            estimated_cost = f"${estimated:.4f} (추정)"
         return CommandResult(
             message=(
                 f"모델: {model}\n"
@@ -514,7 +514,7 @@ def create_default_command_registry(
             memory_dir = get_project_memory_dir(context.cwd)
             entrypoint = get_memory_entrypoint(context.cwd)
             return CommandResult(
-                message=f"Memory directory: {memory_dir}\nEntrypoint: {entrypoint}"
+                message=f"메모리 디렉터리: {memory_dir}\n진입점: {entrypoint}"
             )
         action = tokens[0]
         rest = tokens[1] if len(tokens) == 2 else ""
@@ -787,19 +787,19 @@ def create_default_command_registry(
                 created.append(str(relative.relative_to(Path(context.cwd))))
 
         if not created:
-            return CommandResult(message="Project already initialized for MyHarness.")
-        return CommandResult(message="Initialized project files:\n" + "\n".join(f"- {item}" for item in created))
+            return CommandResult(message="프로젝트가 이미 MyHarness용으로 초기화되어 있습니다.")
+        return CommandResult(message="프로젝트 파일을 초기화했습니다:\n" + "\n".join(f"- {item}" for item in created))
 
     async def _bridge_handler(args: str, context: CommandContext) -> CommandResult:
         tokens = args.split()
         if not tokens or tokens[0] == "show":
             sessions = get_bridge_manager().list_sessions()
             lines = [
-                "Bridge summary:",
-                "- backend host: available",
+                "브리지 요약:",
+                "- 백엔드 호스트: 사용 가능",
                 f"- cwd: {context.cwd}",
-                f"- sessions: {len(sessions)}",
-                "- utilities: encode, decode, sdk, spawn, list, output, stop",
+                f"- 세션: {len(sessions)}",
+                "- 유틸리티: encode, decode, sdk, spawn, list, output, stop",
             ]
             return CommandResult(message="\n".join(lines))
         if tokens[0] == "encode" and len(tokens) == 3:
@@ -820,12 +820,12 @@ def create_default_command_registry(
                 cwd=context.cwd,
             )
             return CommandResult(
-                message=f"Spawned bridge session {handle.session_id} pid={handle.process.pid}"
+                message=f"브리지 세션 {handle.session_id} 시작됨 pid={handle.process.pid}"
             )
         if tokens[0] == "list":
             sessions = get_bridge_manager().list_sessions()
             if not sessions:
-                return CommandResult(message="No bridge sessions.")
+                return CommandResult(message="브리지 세션이 없습니다.")
             return CommandResult(
                 message="\n".join(
                     f"{item.session_id} [{item.status}] pid={item.pid} {item.command}"
@@ -833,13 +833,13 @@ def create_default_command_registry(
                 )
             )
         if tokens[0] == "output" and len(tokens) == 2:
-            return CommandResult(message=get_bridge_manager().read_output(tokens[1]) or "(no output)")
+            return CommandResult(message=get_bridge_manager().read_output(tokens[1]) or "(출력 없음)")
         if tokens[0] == "stop" and len(tokens) == 2:
             try:
                 await get_bridge_manager().stop(tokens[1])
             except ValueError as exc:
                 return CommandResult(message=str(exc))
-            return CommandResult(message=f"Stopped bridge session {tokens[1]}")
+            return CommandResult(message=f"브리지 세션 {tokens[1]}을(를) 중지했습니다.")
         return CommandResult(
             message="사용법: /bridge [show|encode API_BASE_URL TOKEN|decode SECRET|sdk API_BASE_URL SESSION_ID|spawn CMD|list|output SESSION_ID|stop SESSION_ID]"
         )
@@ -1002,7 +1002,7 @@ def create_default_command_registry(
                 return CommandResult(message=str(exc))
             setattr(settings, key, coerced)
             save_settings(settings)
-            return CommandResult(message=f"Updated {key}")
+            return CommandResult(message=f"설정을 업데이트했습니다: {key}")
         return CommandResult(message="사용법: /config [show|set KEY VALUE]")
 
     async def _login_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1014,19 +1014,19 @@ def create_default_command_registry(
         if not api_key:
             try:
                 auth = settings.resolve_auth()
-                auth_line = f"configured via {auth.source}"
+                auth_line = f"{auth.source}에서 설정됨"
             except Exception:
-                auth_line = "not configured"
+                auth_line = "설정되지 않음"
             return CommandResult(
                 message=(
-                    f"Auth status:\n"
-                    f"- profile: {profile_name}\n"
-                    f"- provider: {provider.name}\n"
-                    f"- auth_source: {profile.auth_source}\n"
-                    f"- auth_status: {auth_status(settings)}\n"
-                    f"- base_url: {settings.base_url or '(default)'}\n"
-                    f"- model: {settings.model}\n"
-                    f"- credential_source: {auth_line}\n"
+                    f"인증 상태:\n"
+                    f"- 프로필: {profile_name}\n"
+                    f"- 제공자: {provider.name}\n"
+                    f"- 인증 소스: {profile.auth_source}\n"
+                    f"- 인증 상태: {auth_status(settings)}\n"
+                    f"- base_url: {settings.base_url or '(기본값)'}\n"
+                    f"- 모델: {settings.model}\n"
+                    f"- 자격 증명 소스: {auth_line}\n"
                     f"사용법: {'/login API_KEY EMPLOYEE_NO [COMPANY_CODE]' if profile.auth_source == 'pgpt_api_key' else '/login API_KEY'}"
                 )
             )
@@ -1043,15 +1043,15 @@ def create_default_command_registry(
             _set_process_env(env_values)
             return CommandResult(
                 message=(
-                    "Loaded P-GPT credentials into this process environment. "
-                    "For permanent Windows user environment registration, run run_myharness_web.bat and choose setup when prompted."
+                    "P-GPT 자격 증명을 현재 프로세스 환경에 불러왔습니다. "
+                    "Windows 사용자 환경에 영구 등록하려면 run_myharness_web.bat을 실행한 뒤 안내가 나오면 setup을 선택하세요."
                 )
             )
         env_var = _AUTH_ENV_BY_SOURCE.get(profile.auth_source)
         if env_var is None:
             return CommandResult(message=f"/login does not support auth source: {profile.auth_source}")
         _set_process_env({env_var: api_key})
-        return CommandResult(message=f"Loaded API key into this process environment as {env_var}.")
+        return CommandResult(message=f"API 키를 현재 프로세스 환경에 {env_var}(으)로 불러왔습니다.")
 
     async def _logout_handler(_: str, context: CommandContext) -> CommandResult:
         del context
@@ -1231,7 +1231,7 @@ def create_default_command_registry(
         rest = tokens[1] if len(tokens) == 2 else ""
         if action == "show":
             if not path.exists():
-                return CommandResult(message=f"No PR comments context. File path: {path}")
+                return CommandResult(message=f"PR 댓글 컨텍스트가 없습니다. 파일 경로: {path}")
             return CommandResult(message=path.read_text(encoding="utf-8"))
         if action == "add" and rest:
             location, separator, comment = rest.partition("::")
@@ -1243,12 +1243,12 @@ def create_default_command_registry(
             existing += f"- {location.strip()}: {comment.strip()}\n"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(existing, encoding="utf-8")
-            return CommandResult(message=f"Added PR comment to {path}")
+            return CommandResult(message=f"PR 댓글 컨텍스트를 추가했습니다: {path}")
         if action == "clear":
             if path.exists():
                 path.unlink()
-                return CommandResult(message="Cleared PR comments context.")
-            return CommandResult(message="No PR comments context to clear.")
+                return CommandResult(message="PR 댓글 컨텍스트를 지웠습니다.")
+            return CommandResult(message="지울 PR 댓글 컨텍스트가 없습니다.")
         return CommandResult(message="사용법: /pr_comments [show|add FILE[:LINE] :: COMMENT|clear]")
 
     async def _mcp_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1590,22 +1590,22 @@ def create_default_command_registry(
             try:
                 theme = load_theme(current)
                 lines = [
-                    f"Theme: {theme.name}",
-                    f"  Colors:  primary={theme.colors.primary}  secondary={theme.colors.secondary}"
+                    f"테마: {theme.name}",
+                    f"  색상:  primary={theme.colors.primary}  secondary={theme.colors.secondary}"
                     f"  accent={theme.colors.accent}  error={theme.colors.error}"
                     f"  muted={theme.colors.muted}",
                     f"           background={theme.colors.background}  foreground={theme.colors.foreground}",
-                    f"  Borders: style={theme.borders.style}",
-                    f"  Icons:   spinner={theme.icons.spinner}  tool={theme.icons.tool}"
+                    f"  테두리: style={theme.borders.style}",
+                    f"  아이콘: spinner={theme.icons.spinner}  tool={theme.icons.tool}"
                     f"  error={theme.icons.error}  success={theme.icons.success}"
                     f"  agent={theme.icons.agent}",
-                    f"  Layout:  compact={theme.layout.compact}"
+                    f"  레이아웃: compact={theme.layout.compact}"
                     f"  show_tokens={theme.layout.show_tokens}"
                     f"  show_time={theme.layout.show_time}",
                 ]
                 return CommandResult(message="\n".join(lines))
             except KeyError:
-                return CommandResult(message=f"Theme: {current} (not found)")
+                return CommandResult(message=f"테마: {current} (찾을 수 없음)")
 
         if tokens[0] == "list":
             available = list_themes()
@@ -1624,13 +1624,13 @@ def create_default_command_registry(
             except KeyError:
                 available = list_themes()
                 return CommandResult(
-                    message=f"Unknown theme: {name!r}. Available: {', '.join(available)}"
+                    message=f"알 수 없는 테마: {name!r}. 사용 가능: {', '.join(available)}"
                 )
             settings.theme = name
             save_settings(settings)
             if context.app_state is not None:
                 context.app_state.set(theme=name)
-            return CommandResult(message=f"Theme set to {name}")
+            return CommandResult(message=f"테마를 {name}(으)로 설정했습니다.")
 
         if tokens[0] == "preview" and len(tokens) == 2:
             name = tokens[1]
@@ -1639,10 +1639,10 @@ def create_default_command_registry(
             except KeyError:
                 available = list_themes()
                 return CommandResult(
-                    message=f"Unknown theme: {name!r}. Available: {', '.join(available)}"
+                    message=f"알 수 없는 테마: {name!r}. 사용 가능: {', '.join(available)}"
                 )
             lines = [
-                f"Preview: {theme.name}",
+                f"미리보기: {theme.name}",
                 f"  primary    {theme.colors.primary}",
                 f"  secondary  {theme.colors.secondary}",
                 f"  accent     {theme.colors.accent}",
@@ -1804,12 +1804,12 @@ def create_default_command_registry(
         settings = load_settings()
         provider = "moonshot-compatible" if (settings.base_url and "moonshot" in settings.base_url) else "anthropic-compatible"
         lines = [
-            "Rate limit options:",
+            "레이트 리밋 대응 옵션:",
             f"- provider: {provider}",
-            "- reduce /passes or switch /effort low for lighter requests",
-            "- enable /fast for shorter responses and less tool churn",
-            "- use /compact to shrink long transcripts before retrying",
-            "- prefer background /tasks for long-running local work",
+            "- 가벼운 요청에는 /passes를 줄이거나 /effort low로 전환하세요",
+            "- 응답을 짧게 하고 도구 호출을 줄이려면 /fast를 켜세요",
+            "- 긴 대화는 재시도 전에 /compact로 줄이세요",
+            "- 오래 걸리는 로컬 작업은 백그라운드 /tasks를 우선 고려하세요",
         ]
         return CommandResult(message="\n".join(lines))
 
@@ -1819,10 +1819,10 @@ def create_default_command_registry(
             return CommandResult(message=path.read_text(encoding="utf-8"))
         return CommandResult(
             message=(
-                "# Release Notes\n\n"
-                "- React TUI is now the default `oh` interface.\n"
-                "- Added richer session, files, bridge, agent, copy, rewind, effort, passes, and privacy commands.\n"
-                "- Expanded real-model validation across tools, MCP, tasks, plugins, notebook, LSP, cron, and worktree flows.\n"
+                "# 릴리스 노트\n\n"
+                "- React TUI가 기본 `oh` 인터페이스입니다.\n"
+                "- 세션, 파일, 브리지, 에이전트, 복사, 되감기, 추론 강도, 패스, 개인정보 명령을 보강했습니다.\n"
+                "- 도구, MCP, 작업, 플러그인, 노트북, LSP, cron, worktree 흐름 전반의 실제 모델 검증을 확장했습니다.\n"
             )
         )
 
@@ -1896,14 +1896,14 @@ def create_default_command_registry(
                 description=command[:80],
                 cwd=context.cwd,
             )
-            return CommandResult(message=f"Started task {task.id}")
+            return CommandResult(message=f"작업을 시작했습니다: {task.id}")
         if tokens[0] == "stop" and len(tokens) == 2:
             task = await manager.stop_task(tokens[1])
-            return CommandResult(message=f"Stopped task {task.id}")
+            return CommandResult(message=f"작업을 중지했습니다: {task.id}")
         if tokens[0] == "show" and len(tokens) == 2:
             task = manager.get_task(tokens[1])
             if task is None:
-                return CommandResult(message=f"No task found with ID: {tokens[1]}")
+                return CommandResult(message=f"작업을 찾을 수 없습니다: {tokens[1]}")
             return CommandResult(message=str(task))
         if tokens[0] == "update" and len(tokens) == 3:
             task_id = tokens[1]
@@ -1916,24 +1916,24 @@ def create_default_command_registry(
             try:
                 if field == "description":
                     task = manager.update_task(task_id, description=value)
-                    return CommandResult(message=f"Updated task {task.id} description")
+                    return CommandResult(message=f"작업 설명을 업데이트했습니다: {task.id}")
                 if field == "progress":
                     try:
                         progress = int(value)
                     except ValueError:
-                        return CommandResult(message="Progress must be an integer between 0 and 100.")
+                        return CommandResult(message="진행률은 0부터 100 사이의 정수여야 합니다.")
                     task = manager.update_task(task_id, progress=progress)
-                    return CommandResult(message=f"Updated task {task.id} progress to {progress}%")
+                    return CommandResult(message=f"작업 {task.id} 진행률을 {progress}%로 업데이트했습니다.")
                 if field == "note":
                     task = manager.update_task(task_id, status_note=value)
-                    return CommandResult(message=f"Updated task {task.id} note")
+                    return CommandResult(message=f"작업 메모를 업데이트했습니다: {task.id}")
             except ValueError as exc:
                 return CommandResult(message=str(exc))
             return CommandResult(
                 message="사용법: /tasks update ID [description TEXT|progress NUMBER|note TEXT]"
             )
         if tokens[0] == "output" and len(tokens) == 2:
-            return CommandResult(message=manager.read_task_output(tokens[1]) or "(no output)")
+            return CommandResult(message=manager.read_task_output(tokens[1]) or "(출력 없음)")
         return CommandResult(
             message=(
                 "사용법: /tasks "
@@ -1962,7 +1962,7 @@ def create_default_command_registry(
         if action == "status":
             counts = store.stats()
             active = store.pick_next_card()
-            lines = ["Autopilot queue status:"]
+            lines = ["오토파일럿 큐 상태:"]
             for status_name in (
                 "queued",
                 "accepted",
@@ -1979,11 +1979,11 @@ def create_default_command_registry(
                 "superseded",
             ):
                 lines.append(f"- {status_name}: {counts.get(status_name, 0)}")
-            lines.append(f"- registry: {store.registry_path}")
-            lines.append(f"- journal: {store.journal_path}")
-            lines.append(f"- context: {store.context_path}")
+            lines.append(f"- 레지스트리: {store.registry_path}")
+            lines.append(f"- 저널: {store.journal_path}")
+            lines.append(f"- 컨텍스트: {store.context_path}")
             if active is not None:
-                lines.append(f"- next: {active.id} {active.title} (score={active.score})")
+                lines.append(f"- 다음: {active.id} {active.title} (score={active.score})")
             return CommandResult(message="\n".join(lines))
 
         if action == "list":
@@ -2003,22 +2003,22 @@ def create_default_command_registry(
                 "rejected",
                 "superseded",
             }:
-                return CommandResult(message=f"Unknown autopilot status: {status}")
+                return CommandResult(message=f"알 수 없는 오토파일럿 상태: {status}")
             cards = store.list_cards(status=status)
             if not cards:
-                return CommandResult(message="No autopilot cards.")
+                return CommandResult(message="오토파일럿 카드가 없습니다.")
             return CommandResult(message="\n\n".join(_render_card(card) for card in cards[:12]))
 
         if action == "show" and len(tokens) >= 2:
             card = store.get_card(tokens[1])
             if card is None:
-                return CommandResult(message=f"No autopilot card found with ID: {tokens[1]}")
+                return CommandResult(message=f"오토파일럿 카드를 찾을 수 없습니다: {tokens[1]}")
             return CommandResult(message=_render_card(card))
 
         if action == "next":
             card = store.pick_next_card()
             if card is None:
-                return CommandResult(message="No queued autopilot cards.")
+                return CommandResult(message="대기 중인 오토파일럿 카드가 없습니다.")
             return CommandResult(message=_render_card(card))
 
         if action == "context":
@@ -2034,7 +2034,7 @@ def create_default_command_registry(
                     return CommandResult(message="사용법: /autopilot journal [LIMIT]")
             entries = store.load_journal(limit=limit)
             if not entries:
-                return CommandResult(message="Repo journal is empty.")
+                return CommandResult(message="저장소 저널이 비어 있습니다.")
             lines = []
             for entry in entries:
                 timestamp = datetime.fromtimestamp(entry.timestamp, tz=timezone.utc).strftime(
@@ -2081,9 +2081,9 @@ def create_default_command_registry(
                 title=title.strip(),
                 body=body.strip(),
             )
-            status_word = "Queued" if created else "Refreshed"
+            status_word = "대기열에 추가" if created else "새로고침"
             return CommandResult(
-                message=f"{status_word} autopilot card {card.id} (score={card.score}): {card.title}"
+                message=f"오토파일럿 카드를 {status_word}했습니다: {card.id} (score={card.score}) {card.title}"
             )
 
         if action in {"accept", "start", "complete", "reject", "fail"} and len(tokens) >= 2:
@@ -2111,8 +2111,8 @@ def create_default_command_registry(
             return CommandResult(
                 message=(
                     f"{result.card_id} -> {result.status}\n"
-                    f"run report: {result.run_report_path}\n"
-                    f"verification report: {result.verification_report_path}"
+                    f"실행 보고서: {result.run_report_path}\n"
+                    f"검증 보고서: {result.verification_report_path}"
                 )
             )
 
@@ -2122,23 +2122,23 @@ def create_default_command_registry(
             except ValueError as exc:
                 return CommandResult(message=str(exc))
             if result is None:
-                return CommandResult(message="Autopilot tick completed with no execution.")
+                return CommandResult(message="오토파일럿 틱이 실행 없이 완료됐습니다.")
             return CommandResult(
                 message=(
-                    f"Autopilot tick executed {result.card_id} -> {result.status}\n"
-                    f"run report: {result.run_report_path}\n"
-                    f"verification report: {result.verification_report_path}"
+                    f"오토파일럿 틱 실행: {result.card_id} -> {result.status}\n"
+                    f"실행 보고서: {result.run_report_path}\n"
+                    f"검증 보고서: {result.verification_report_path}"
                 )
             )
 
         if action == "install-cron":
             names = store.install_default_cron()
-            return CommandResult(message="Installed autopilot cron jobs: " + ", ".join(names))
+            return CommandResult(message="오토파일럿 cron 작업을 설치했습니다: " + ", ".join(names))
 
         if action == "export-dashboard":
             output = tokens[1] if len(tokens) >= 2 else None
             path = store.export_dashboard(output)
-            return CommandResult(message=f"Exported autopilot dashboard: {path}")
+            return CommandResult(message=f"오토파일럿 대시보드를 내보냈습니다: {path}")
 
         if action == "scan":
             if len(tokens) < 2:
@@ -2206,8 +2206,8 @@ def create_default_command_registry(
         return CommandResult(
             message=(
                 f"{result.card_id} -> {result.status}\n"
-                f"run report: {result.run_report_path}\n"
-                f"verification report: {result.verification_report_path}"
+                f"실행 보고서: {result.run_report_path}\n"
+                f"검증 보고서: {result.verification_report_path}"
             )
         )
 

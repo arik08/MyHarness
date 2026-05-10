@@ -106,7 +106,7 @@ async def test_command_flow_for_memory_modes_and_tasks(tmp_path: Path, monkeypat
 
     note_command, note_args = registry.lookup(f"/tasks update {task_id} note waiting on review")
     note_result = await note_command.handler(note_args, context)
-    assert "note" in note_result.message
+    assert "메모" in note_result.message
 
     onboarding_command, onboarding_args = registry.lookup("/onboarding")
     onboarding_result = await onboarding_command.handler(onboarding_args, context)
@@ -118,7 +118,7 @@ async def test_command_flow_for_memory_modes_and_tasks(tmp_path: Path, monkeypat
 
     pr_command, pr_args = registry.lookup("/pr_comments add README.md:1 :: tighten wording")
     pr_result = await pr_command.handler(pr_args, context)
-    assert "Added PR comment" in pr_result.message
+    assert "PR 댓글 컨텍스트를 추가했습니다" in pr_result.message
 
     doctor_command, doctor_args = registry.lookup("/doctor")
     doctor_result = await doctor_command.handler(doctor_args, context)

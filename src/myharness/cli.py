@@ -97,19 +97,19 @@ def _validate_mcp_server(name: str, config: object) -> dict[str, object]:
         raw_cwd = getattr(config, "cwd", None) if not isinstance(config, dict) else config.get("cwd")
         command_text = str(command or "").strip()
         if not command_text:
-            issues.append("missing command")
+            issues.append("명령이 없습니다")
         elif shutil.which(command_text) is None:
-            issues.append(f"command not found in PATH: {command_text}")
+            issues.append(f"PATH에서 명령을 찾을 수 없습니다: {command_text}")
         if raw_cwd:
             resolved_cwd = Path(str(raw_cwd)).expanduser()
             if not resolved_cwd.exists():
-                issues.append(f"cwd does not exist: {resolved_cwd}")
+                issues.append(f"cwd가 존재하지 않습니다: {resolved_cwd}")
     elif transport in {"http", "ws"}:
         raw_url = getattr(config, "url", None) if not isinstance(config, dict) else config.get("url")
         parsed = urlparse(str(raw_url or "").strip())
         expected = {"http", "https"} if transport == "http" else {"ws", "wss"}
         if parsed.scheme not in expected or not parsed.netloc:
-            issues.append(f"invalid {transport} url: {raw_url}")
+            issues.append(f"올바르지 않은 {transport} URL입니다: {raw_url}")
 
     if issues:
         status = "error"
@@ -843,11 +843,11 @@ def mcp_remove(
 
     settings = load_settings()
     if not isinstance(settings.mcp_servers, dict) or name not in settings.mcp_servers:
-        print(f"MCP server not found: {name}", file=sys.stderr)
+        print(f"MCP 서버를 찾을 수 없습니다: {name}", file=sys.stderr)
         raise typer.Exit(1)
     del settings.mcp_servers[name]
     save_settings(settings)
-    print(f"Removed MCP server: {name}")
+    print(f"MCP 서버를 제거했습니다: {name}")
 
 
 # ---- plugin subcommands ----
@@ -876,7 +876,7 @@ def plugin_install(
     from myharness.plugins.installer import install_plugin_from_path
 
     result = install_plugin_from_path(source)
-    print(f"Installed plugin: {result}")
+    print(f"플러그인을 설치했습니다: {result}")
 
 
 @plugin_app.command("uninstall")
@@ -887,7 +887,7 @@ def plugin_uninstall(
     from myharness.plugins.installer import uninstall_plugin
 
     uninstall_plugin(name)
-    print(f"Uninstalled plugin: {name}")
+    print(f"플러그인을 제거했습니다: {name}")
 
 
 # ---- cron subcommands ----
@@ -898,10 +898,10 @@ def cron_start() -> None:
     from myharness.services.cron_scheduler import is_scheduler_running, start_daemon
 
     if is_scheduler_running():
-        print("Cron scheduler is already running.")
+        print("Cron 스케줄러가 이미 실행 중입니다.")
         return
     pid = start_daemon()
-    print(f"Cron scheduler started (pid={pid})")
+    print(f"Cron 스케줄러를 시작했습니다 (pid={pid})")
 
 
 @cron_app.command("stop")
@@ -910,9 +910,9 @@ def cron_stop() -> None:
     from myharness.services.cron_scheduler import stop_scheduler
 
     if stop_scheduler():
-        print("Cron scheduler stopped.")
+        print("Cron 스케줄러를 중지했습니다.")
     else:
-        print("Cron scheduler is not running.")
+        print("Cron 스케줄러가 실행 중이 아닙니다.")
 
 
 @cron_app.command("status")
@@ -921,10 +921,10 @@ def cron_status_cmd() -> None:
     from myharness.services.cron_scheduler import scheduler_status
 
     status = scheduler_status()
-    state = "running" if status["running"] else "stopped"
-    print(f"Scheduler: {state}" + (f" (pid={status['pid']})" if status["pid"] else ""))
-    print(f"Jobs:      {status['enabled_jobs']} enabled / {status['total_jobs']} total")
-    print(f"Log:       {status['log_file']}")
+    state = "실행 중" if status["running"] else "중지됨"
+    print(f"스케줄러: {state}" + (f" (pid={status['pid']})" if status["pid"] else ""))
+    print(f"작업:     활성 {status['enabled_jobs']}개 / 전체 {status['total_jobs']}개")
+    print(f"로그:     {status['log_file']}")
 
 
 @cron_app.command("list")
@@ -934,18 +934,20 @@ def cron_list_cmd() -> None:
 
     jobs = load_cron_jobs()
     if not jobs:
-        print("No cron jobs configured.")
+        print("설정된 Cron 작업이 없습니다.")
         return
     for job in jobs:
         enabled = "on " if job.get("enabled", True) else "off"
         last = job.get("last_run", "never")
         if last != "never":
             last = last[:19]  # trim to readable datetime
+        else:
+            last = "없음"
         last_status = job.get("last_status", "")
         status_indicator = f" [{last_status}]" if last_status else ""
         print(f"  [{enabled}] {job['name']}  {job.get('schedule', '?')}")
         print(f"        cmd: {job['command']}")
-        print(f"        last: {last}{status_indicator}  next: {job.get('next_run', 'n/a')[:19]}")
+        print(f"        마지막: {last}{status_indicator}  다음: {job.get('next_run', 'n/a')[:19]}")
 
 
 @cron_app.command("toggle")
@@ -957,10 +959,10 @@ def cron_toggle_cmd(
     from myharness.services.cron import set_job_enabled
 
     if not set_job_enabled(name, enabled):
-        print(f"Cron job not found: {name}")
+        print(f"Cron 작업을 찾을 수 없습니다: {name}")
         raise typer.Exit(1)
-    state = "enabled" if enabled else "disabled"
-    print(f"Cron job '{name}' is now {state}")
+    state = "활성화" if enabled else "비활성화"
+    print(f"Cron 작업 '{name}'을(를) {state}했습니다.")
 
 
 @cron_app.command("history")
@@ -1084,12 +1086,12 @@ def autopilot_add_cmd(
     }
     source_kind = source_map.get(source.lower())
     if source_kind is None:
-        print(f"Unknown source kind: {source}", file=sys.stderr)
+        print(f"알 수 없는 소스 유형입니다: {source}", file=sys.stderr)
         raise typer.Exit(1)
     store = RepoAutopilotStore(cwd)
     card, created = store.enqueue_card(source_kind=source_kind, title=title, body=body)
-    state = "Queued" if created else "Refreshed"
-    print(f"{state} {card.id} (score={card.score}): {card.title}")
+    state = "대기열에 추가" if created else "새로고침"
+    print(f"{state}: {card.id} (score={card.score}) {card.title}")
 
 
 @autopilot_app.command("context")
@@ -1114,7 +1116,7 @@ def autopilot_journal_cmd(
     store = RepoAutopilotStore(cwd)
     entries = store.load_journal(limit=limit)
     if not entries:
-        print("Repo journal is empty.")
+        print("저장소 저널이 비어 있습니다.")
         return
     for entry in entries:
         print(f"{entry.kind} {entry.task_id or '-'} {entry.summary}")
@@ -1131,18 +1133,18 @@ def autopilot_scan_cmd(
 
     store = RepoAutopilotStore(cwd)
     if target == "issues":
-        print(f"Scanned {len(store.scan_github_issues(limit=limit))} GitHub issues.")
+        print(f"GitHub 이슈 {len(store.scan_github_issues(limit=limit))}개를 스캔했습니다.")
         return
     if target == "prs":
-        print(f"Scanned {len(store.scan_github_prs(limit=limit))} GitHub PRs.")
+        print(f"GitHub PR {len(store.scan_github_prs(limit=limit))}개를 스캔했습니다.")
         return
     if target == "claude-code":
-        print(f"Scanned {len(store.scan_claude_code_candidates(limit=limit))} claude-code candidates.")
+        print(f"claude-code 후보 {len(store.scan_claude_code_candidates(limit=limit))}개를 스캔했습니다.")
         return
     if target == "all":
         print(json.dumps(store.scan_all_sources(issue_limit=limit, pr_limit=limit), ensure_ascii=False))
         return
-    print(f"Unknown scan target: {target}", file=sys.stderr)
+    print(f"알 수 없는 스캔 대상입니다: {target}", file=sys.stderr)
     raise typer.Exit(1)
 
 
@@ -1336,11 +1338,11 @@ def _select_from_menu(
         if value == default_value:
             default_index = index
         print(f"  {index}. {label}{marker}", flush=True)
-    raw = typer.prompt("Choose", default=str(default_index))
+    raw = typer.prompt("선택", default=str(default_index))
     try:
         selected = options[int(raw) - 1]
     except (ValueError, IndexError):
-        raise typer.BadParameter(f"Invalid selection: {raw}") from None
+        raise typer.BadParameter(f"올바르지 않은 선택입니다: {raw}") from None
     return selected[0]
 
 
@@ -1356,18 +1358,18 @@ def _prompt_model_for_profile(profile) -> str:
         if len(profile.allowed_models) == 1:
             return profile.allowed_models[0]
         options = [(value, value) for value in profile.allowed_models]
-        return _select_from_menu("Choose a model setting:", options, default_value=current if current in profile.allowed_models else profile.allowed_models[0])
+        return _select_from_menu("모델 설정을 선택하세요:", options, default_value=current if current in profile.allowed_models else profile.allowed_models[0])
     if is_claude_family_provider(profile.provider):
         options = [(value, f"{label} - {description}") for value, label, description in CLAUDE_MODEL_ALIAS_OPTIONS]
         options.append(("__custom__", "Custom model ID"))
         selection = _select_from_menu(
-            "Choose a model setting:",
+            "모델 설정을 선택하세요:",
             options,
             default_value=current if any(value == current for value, _, _ in CLAUDE_MODEL_ALIAS_OPTIONS) else "__custom__",
         )
         if selection != "__custom__":
             return selection
-    return _text_prompt("Model", default=current).strip() or current
+    return _text_prompt("모델", default=current).strip() or current
 
 
 def _format_profile_choice_label(info: dict[str, object]) -> str:
@@ -1426,7 +1428,7 @@ def _select_setup_workflow(
                     ]
             choices.append(questionary.Choice(title=title, value=name, checked=(name == default_value)))
 
-        result = questionary.select("Choose a provider workflow:", choices=choices, default=default_value).ask()
+        result = questionary.select("제공자 워크플로를 선택하세요:", choices=choices, default=default_value).ask()
         if result is None:
             raise typer.Abort()
         return str(result)
@@ -1438,7 +1440,7 @@ def _select_setup_workflow(
         if hint is not None:
             label = f"{label} ({hint[0]})"
         options.append((name, label))
-    return _select_from_menu("Choose a provider workflow:", options, default_value=default_value)
+    return _select_from_menu("제공자 워크플로를 선택하세요:", options, default_value=default_value)
 
 
 def _default_credential_slot_for_profile(name: str, auth_source: str) -> str | None:
@@ -1452,9 +1454,9 @@ def _default_credential_slot_for_profile(name: str, auth_source: str) -> str | N
 
 
 def _prompt_api_key_for_profile(label: str) -> str:
-    key = _secret_prompt(f"Enter API key for {label}").strip()
+    key = _secret_prompt(f"{label} API 키를 입력하세요").strip()
     if not key:
-        raise typer.BadParameter("API key cannot be empty.")
+        raise typer.BadParameter("API 키는 비워둘 수 없습니다.")
     return key
 
 
@@ -1462,7 +1464,7 @@ def _configure_custom_profile_via_setup(manager) -> str:
     from myharness.config.settings import ProviderProfile, default_auth_source_for_provider
 
     family = _select_from_menu(
-        "Choose a compatible API family:",
+        "호환 API 계열을 선택하세요:",
         [
             ("anthropic", "Anthropic-compatible"),
             ("openai", "OpenAI-compatible"),
@@ -1470,10 +1472,10 @@ def _configure_custom_profile_via_setup(manager) -> str:
         default_value="anthropic",
     )
     default_name = f"custom-{family}"
-    name = _text_prompt("Profile name", default=default_name).strip()
+    name = _text_prompt("프로필 이름", default=default_name).strip()
     if not name:
-        raise typer.BadParameter("Profile name cannot be empty.")
-    label = _text_prompt("Display label", default=name).strip() or name
+        raise typer.BadParameter("프로필 이름은 비워둘 수 없습니다.")
+    label = _text_prompt("표시 이름", default=name).strip() or name
     base_url = _text_prompt("Base URL", default="").strip()
     if not base_url:
         raise typer.BadParameter("Base URL cannot be empty.")
@@ -1535,7 +1537,7 @@ def _specialize_setup_target(manager, target: str) -> str:
 
     if target == "claude-api":
         choice = _select_from_menu(
-            "Choose an Anthropic-compatible provider:",
+            "Anthropic 호환 제공자를 선택하세요:",
             [
                 ("claude-api", "Claude official"),
                 ("kimi-anthropic", "Moonshot Kimi"),
@@ -1554,10 +1556,10 @@ def _specialize_setup_target(manager, target: str) -> str:
         label, suggested_base_url, suggested_model = defaults[choice]
         base_url = _text_prompt("Base URL", default=suggested_base_url).strip()
         if not base_url:
-            raise typer.BadParameter("Base URL cannot be empty.")
-        model = _text_prompt("Model", default=suggested_model).strip()
+            raise typer.BadParameter("Base URL은 비워둘 수 없습니다.")
+        model = _text_prompt("모델", default=suggested_model).strip()
         if not model:
-            raise typer.BadParameter("Model cannot be empty.")
+            raise typer.BadParameter("모델은 비워둘 수 없습니다.")
         return _ensure_preset_profile(
             manager,
             name=choice,
@@ -1572,7 +1574,7 @@ def _specialize_setup_target(manager, target: str) -> str:
 
     if target == "openai-compatible":
         choice = _select_from_menu(
-            "Choose an OpenAI-compatible provider:",
+            "OpenAI 호환 제공자를 선택하세요:",
             [
                 ("openai-compatible", "OpenAI official"),
                 ("openrouter", "OpenRouter"),
@@ -1618,10 +1620,10 @@ def _ensure_profile_auth(manager, profile_name: str) -> None:
     try:
         key = flow.run()
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"오류: {exc}", file=sys.stderr)
         raise typer.Exit(1)
     manager.store_profile_credential(profile_name, "api_key", key)
-    print(f"{profile.label} API key saved.", flush=True)
+    print(f"{profile.label} API 키를 저장했습니다.", flush=True)
 
 
 def _profile_needs_external_binding(manager, profile_name: str) -> bool:
@@ -1671,7 +1673,7 @@ def _bind_external_provider(provider: str) -> None:
             refresh_if_needed=(provider == "anthropic_claude"),
         )
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr, flush=True)
+        print(f"오류: {exc}", file=sys.stderr, flush=True)
         raise typer.Exit(1)
 
     profile_label = credential.profile_label or binding.profile_label
@@ -1717,17 +1719,17 @@ def _login_provider(provider: str) -> None:
         try:
             key = flow.run()
         except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
+            print(f"오류: {exc}", file=sys.stderr)
             raise typer.Exit(1)
         store_credential(provider, "api_key", key)
         try:
             manager.store_credential(provider, "api_key", key)
         except Exception:
             pass
-        print(f"{label} API key saved.", flush=True)
+        print(f"{label} API 키를 저장했습니다.", flush=True)
         return
 
-    print(f"Unknown provider: {provider!r}. Known: {', '.join(_PROVIDER_LABELS)}", file=sys.stderr)
+    print(f"알 수 없는 제공자입니다: {provider!r}. 알려진 값: {', '.join(_PROVIDER_LABELS)}", file=sys.stderr)
     raise typer.Exit(1)
 
 
@@ -1742,7 +1744,7 @@ def setup_cmd(
     manager = AuthManager()
     statuses = manager.get_profile_statuses()
     if not statuses:
-        print("No provider profiles available.", file=sys.stderr)
+        print("사용 가능한 제공자 프로필이 없습니다.", file=sys.stderr)
         raise typer.Exit(1)
 
     target = profile
@@ -1757,7 +1759,7 @@ def setup_cmd(
     statuses = manager.get_profile_statuses()
 
     if target not in statuses:
-        print(f"Unknown provider profile: {target!r}", file=sys.stderr)
+        print(f"알 수 없는 제공자 프로필입니다: {target!r}", file=sys.stderr)
         raise typer.Exit(1)
 
     info = statuses[target]
@@ -1796,17 +1798,17 @@ def auth_login(
     Supported providers: anthropic, anthropic_claude, openai, openai_codex, copilot, dashscope, bedrock, vertex, moonshot, minimax.
     """
     if provider is None:
-        print("Select a provider to authenticate:", flush=True)
+        print("인증할 제공자를 선택하세요:", flush=True)
         labels = list(_PROVIDER_LABELS.items())
         for i, (name, label) in enumerate(labels, 1):
             print(f"  {i}. {label} [{name}]", flush=True)
-        raw = typer.prompt("Enter number or provider name", default="1")
+        raw = typer.prompt("번호 또는 제공자 이름을 입력하세요", default="1")
         try:
             idx = int(raw.strip()) - 1
             if 0 <= idx < len(labels):
                 provider = labels[idx][0]
             else:
-                print("Invalid selection.", file=sys.stderr)
+                print("올바르지 않은 선택입니다.", file=sys.stderr)
                 raise typer.Exit(1)
         except ValueError:
             provider = raw.strip()
@@ -1855,10 +1857,10 @@ def auth_logout(
     if provider is None:
         target = manager.get_active_profile()
         manager.clear_profile_credential(target)
-        print(f"Authentication cleared for profile: {target}", flush=True)
+        print(f"프로필 인증을 지웠습니다: {target}", flush=True)
         return
     manager.clear_credential(provider)
-    print(f"Authentication cleared for provider: {provider}", flush=True)
+    print(f"제공자 인증을 지웠습니다: {provider}", flush=True)
 
 
 @auth_app.command("switch")
@@ -1872,9 +1874,9 @@ def auth_switch(
     try:
         manager.switch_provider(provider)
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"오류: {exc}", file=sys.stderr)
         raise typer.Exit(1)
-    print(f"Switched auth/profile to: {provider}", flush=True)
+    print(f"인증/프로필을 전환했습니다: {provider}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1887,10 +1889,10 @@ def _run_copilot_login() -> None:
     from myharness.api.copilot_auth import save_copilot_auth
     from myharness.auth.flows import DeviceCodeFlow
 
-    print("Select GitHub deployment type:", flush=True)
+    print("GitHub 배포 유형을 선택하세요:", flush=True)
     print("  1. GitHub.com (public)", flush=True)
     print("  2. GitHub Enterprise (data residency / self-hosted)", flush=True)
-    choice = typer.prompt("Enter choice", default="1")
+    choice = typer.prompt("선택값을 입력하세요", default="1")
 
     enterprise_url: str | None = None
     github_domain = "github.com"
@@ -1899,7 +1901,7 @@ def _run_copilot_login() -> None:
         raw_url = typer.prompt("Enter your GitHub Enterprise URL or domain (e.g. company.ghe.com)")
         domain = raw_url.replace("https://", "").replace("http://", "").rstrip("/")
         if not domain:
-            print("Error: domain cannot be empty.", file=sys.stderr, flush=True)
+            print("오류: 도메인은 비워둘 수 없습니다.", file=sys.stderr, flush=True)
             raise typer.Exit(1)
         enterprise_url = domain
         github_domain = domain
@@ -1909,15 +1911,15 @@ def _run_copilot_login() -> None:
     try:
         token = flow.run()
     except RuntimeError as exc:
-        print(f"Error: {exc}", file=sys.stderr, flush=True)
+        print(f"오류: {exc}", file=sys.stderr, flush=True)
         raise typer.Exit(1)
 
     save_copilot_auth(token, enterprise_url=enterprise_url)
-    print("GitHub Copilot authenticated successfully.", flush=True)
+    print("GitHub Copilot 인증이 완료됐습니다.", flush=True)
     if enterprise_url:
-        print(f"  Enterprise domain: {enterprise_url}", flush=True)
+        print(f"  Enterprise 도메인: {enterprise_url}", flush=True)
     print(flush=True)
-    print("To use Copilot as the provider, run:", flush=True)
+    print("Copilot을 제공자로 사용하려면 다음을 실행하세요:", flush=True)
     print("  oh provider use copilot", flush=True)
 
 
@@ -1976,9 +1978,9 @@ def provider_use(
     try:
         manager.use_profile(name)
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"오류: {exc}", file=sys.stderr)
         raise typer.Exit(1)
-    print(f"Activated provider profile: {name}", flush=True)
+    print(f"제공자 프로필을 활성화했습니다: {name}", flush=True)
 
 
 @provider_app.command("add")
@@ -2016,7 +2018,7 @@ def provider_add(
             auto_compact_threshold_tokens=auto_compact_threshold_tokens,
         ),
     )
-    print(f"Saved provider profile: {name}", flush=True)
+    print(f"제공자 프로필을 저장했습니다: {name}", flush=True)
 
 
 @provider_app.command("edit")
@@ -2053,9 +2055,9 @@ def provider_edit(
             auto_compact_threshold_tokens=auto_compact_threshold_tokens,
         )
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"오류: {exc}", file=sys.stderr)
         raise typer.Exit(1)
-    print(f"Updated provider profile: {name}", flush=True)
+    print(f"제공자 프로필을 업데이트했습니다: {name}", flush=True)
 
 
 @provider_app.command("remove")
@@ -2069,9 +2071,9 @@ def provider_remove(
     try:
         manager.remove_profile(name)
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"오류: {exc}", file=sys.stderr)
         raise typer.Exit(1)
-    print(f"Removed provider profile: {name}", flush=True)
+    print(f"제공자 프로필을 제거했습니다: {name}", flush=True)
 
 # ---------------------------------------------------------------------------
 # Main command
@@ -2315,13 +2317,13 @@ def main(
     from myharness.ui.app import run_print_mode, run_repl, run_task_worker
 
     if dry_run and (continue_session or resume is not None):
-        print("Error: --dry-run does not support --continue/--resume yet.", file=sys.stderr)
+        print("오류: --dry-run은 아직 --continue/--resume을 지원하지 않습니다.", file=sys.stderr)
         raise typer.Exit(1)
 
     if dry_run:
         prompt = print_mode.strip() if print_mode is not None else None
         if print_mode is not None and not prompt:
-            print("Error: -p/--print requires a prompt value, e.g. -p 'your prompt'", file=sys.stderr)
+            print("오류: -p/--print에는 프롬프트 값이 필요합니다. 예: -p 'your prompt'", file=sys.stderr)
             raise typer.Exit(1)
         preview = _build_dry_run_preview(
             prompt=prompt,
@@ -2348,7 +2350,7 @@ def main(
             print(json.dumps(preview, ensure_ascii=False))
         else:
             print(
-                "Error: --dry-run only supports --output-format text, json, or stream-json",
+                "오류: --dry-run은 --output-format text, json, stream-json만 지원합니다.",
                 file=sys.stderr,
             )
             raise typer.Exit(1)
@@ -2366,35 +2368,35 @@ def main(
         if continue_session:
             session_data = load_session_snapshot(cwd)
             if session_data is None:
-                print("No previous session found in this directory.", file=sys.stderr)
+                print("이 디렉터리에서 이전 세션을 찾을 수 없습니다.", file=sys.stderr)
                 raise typer.Exit(1)
-            print(f"Continuing session: {session_data.get('summary', '(untitled)')[:60]}")
+            print(f"세션을 이어갑니다: {session_data.get('summary', '(제목 없음)')[:60]}")
         elif resume == "" or resume is None:
             # --resume with no value: show session picker
             sessions = list_session_snapshots(cwd, limit=10)
             if not sessions:
-                print("No saved sessions found.", file=sys.stderr)
+                print("저장된 세션이 없습니다.", file=sys.stderr)
                 raise typer.Exit(1)
-            print("Saved sessions:")
+            print("저장된 세션:")
             for i, s in enumerate(sessions, 1):
-                print(f"  {i}. [{s['session_id']}] {s.get('summary', '?')[:50]} ({s['message_count']} msgs)")
-            choice = typer.prompt("Enter session number or ID")
+                print(f"  {i}. [{s['session_id']}] {s.get('summary', '?')[:50]} (메시지 {s['message_count']}개)")
+            choice = typer.prompt("세션 번호 또는 ID를 입력하세요")
             try:
                 idx = int(choice) - 1
                 if 0 <= idx < len(sessions):
                     session_data = load_session_by_id(cwd, sessions[idx]["session_id"])
                 else:
-                    print("Invalid selection.", file=sys.stderr)
+                    print("올바르지 않은 선택입니다.", file=sys.stderr)
                     raise typer.Exit(1)
             except ValueError:
                 session_data = load_session_by_id(cwd, choice)
             if session_data is None:
-                print(f"Session not found: {choice}", file=sys.stderr)
+                print(f"세션을 찾을 수 없습니다: {choice}", file=sys.stderr)
                 raise typer.Exit(1)
         else:
             session_data = load_session_by_id(cwd, resume)
             if session_data is None:
-                print(f"Session not found: {resume}", file=sys.stderr)
+                print(f"세션을 찾을 수 없습니다: {resume}", file=sys.stderr)
                 raise typer.Exit(1)
 
         # Pass restored session to the REPL
@@ -2422,7 +2424,7 @@ def main(
     if print_mode is not None:
         prompt = print_mode.strip()
         if not prompt:
-            print("Error: -p/--print requires a prompt value, e.g. -p 'your prompt'", file=sys.stderr)
+            print("오류: -p/--print에는 프롬프트 값이 필요합니다. 예: -p 'your prompt'", file=sys.stderr)
             raise typer.Exit(1)
         asyncio.run(
             run_print_mode(

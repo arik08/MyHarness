@@ -43,14 +43,14 @@ def build_async_task_summary(
     task_status: str,
     return_code: int | None,
 ) -> str:
-    description = str(entry.get("description") or entry.get("agent_id") or "background task").strip()
+    description = str(entry.get("description") or entry.get("agent_id") or "백그라운드 작업").strip()
     if task_status == "completed":
-        return f'Agent "{description}" completed'
+        return f'에이전트 "{description}" 완료'
     if task_status == "killed":
-        return f'Agent "{description}" was stopped'
+        return f'에이전트 "{description}" 중지됨'
     if return_code is not None:
-        return f'Agent "{description}" failed with exit code {return_code}'
-    return f'Agent "{description}" failed'
+        return f'에이전트 "{description}" 실패, 종료 코드 {return_code}'
+    return f'에이전트 "{description}" 실패'
 
 
 async def wait_for_completed_async_agent_entries(

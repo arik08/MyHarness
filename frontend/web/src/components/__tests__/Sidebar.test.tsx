@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "../Sidebar";
@@ -200,6 +200,85 @@ describe("Sidebar", () => {
       command: "subagent_effort",
       value: "high",
     }));
+  });
+
+  it("keeps the runtime picker inside narrow viewports", async () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 360 });
+
+    try {
+      const { container } = render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            sessionId: "session-active",
+            clientId: "client-1",
+            providerLabel: "Codex Subscription",
+            model: "gpt-5.5",
+            subagentModel: "gpt-5.4-mini",
+            runtimePicker: {
+              ...initialAppState.runtimePicker,
+              open: true,
+              loading: false,
+              selectedProvider: "codex",
+              modelOpen: true,
+              effortOpen: true,
+              providers: [{ value: "codex", label: "Codex Subscription", active: true }],
+              models: [{ value: "gpt-5.5", label: "gpt-5.5", active: true }],
+              efforts: [{ value: "medium", label: "Medium", active: true }],
+            },
+          }}
+        >
+          <Sidebar />
+        </AppStateProvider>,
+      );
+
+      const button = screen.getByRole("button", { name: "런타임 설정 열기" });
+      button.getBoundingClientRect = () => ({
+        x: 340,
+        y: 500,
+        left: 340,
+        top: 500,
+        right: 356,
+        bottom: 532,
+        width: 16,
+        height: 32,
+        toJSON: () => ({}),
+      });
+
+      const picker = container.querySelector(".runtime-picker-layer") as HTMLElement;
+      Object.defineProperty(picker, "scrollWidth", { configurable: true, value: 620 });
+      Object.defineProperty(picker, "scrollHeight", { configurable: true, value: 420 });
+      Object.defineProperty(picker, "offsetHeight", { configurable: true, value: 420 });
+
+      fireEvent(window, new Event("resize"));
+
+      await waitFor(() => expect(Number.parseFloat(picker.style.left)).toBeLessThanOrEqual(32));
+      expect(picker.style.getPropertyValue("--runtime-picker-panel-max-height")).toBeTruthy();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
+    }
+  });
+
+  it("does not leave the runtime picker floating when the sidebar is collapsed", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sidebarCollapsed: true,
+          runtimePicker: {
+            ...initialAppState.runtimePicker,
+            open: true,
+            loading: false,
+            providers: [{ value: "codex", label: "Codex Subscription", active: true }],
+          },
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    expect(screen.queryByRole("region", { name: "Provider 선택" })).toBeNull();
   });
 
   it("shows the busy spinner in the delete slot while the active answer is running", () => {

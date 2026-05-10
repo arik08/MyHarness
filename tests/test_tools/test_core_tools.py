@@ -162,7 +162,7 @@ async def test_file_tool_results_hide_absolute_paths_outside_workspace(tmp_path:
         context,
     )
     assert read_missing.is_error is True
-    assert read_missing.output == "File not found: missing.txt"
+    assert read_missing.output == "파일을 찾을 수 없습니다: missing.txt"
     assert str(tmp_path) not in read_missing.output
 
     edit_result = await FileEditTool().execute(
@@ -170,7 +170,7 @@ async def test_file_tool_results_hide_absolute_paths_outside_workspace(tmp_path:
         context,
     )
     assert edit_result.is_error is False
-    assert edit_result.output == "Updated notes.txt (1 replacement(s))"
+    assert edit_result.output == "notes.txt을(를) 업데이트했습니다. 치환 1건"
     assert str(tmp_path) not in edit_result.output
 
 
@@ -215,7 +215,7 @@ async def test_file_edit_multi_replacement_does_not_partially_write_on_missing_t
     )
 
     assert edit_result.is_error is True
-    assert "edit 2" in edit_result.output
+    assert "2번째 편집" in edit_result.output
     assert target.read_text(encoding="utf-8") == original
 
 
@@ -282,7 +282,7 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
         SkillToolInput(name="Pytest"),
         ToolExecutionContext(cwd=tmp_path),
     )
-    assert skill_result.output.startswith("Skill: Pytest\nDescription: Helpful pytest notes.")
+    assert skill_result.output.startswith("스킬: Pytest\n설명: Helpful pytest notes.")
     assert "Skill file:" not in skill_result.output
     assert "Skill directory:" not in skill_result.output
     assert "Helpful pytest notes." in skill_result.output
@@ -298,7 +298,7 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
         ConfigToolInput(action="set", key="theme", value="solarized"),
         ToolExecutionContext(cwd=tmp_path),
     )
-    assert config_result.output == "Updated theme"
+    assert config_result.output == "설정을 업데이트했습니다: theme"
 
 
 @pytest.mark.asyncio

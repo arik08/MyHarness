@@ -107,6 +107,18 @@ export function isKnownArtifactPath(path: string) {
   return artifactExtensions.has(artifactExtension(path));
 }
 
+function hasPathSeparator(path: string) {
+  return /[\\/]/.test(path);
+}
+
+function hasDrivePrefix(path: string) {
+  return /^[A-Za-z]:[\\/]/.test(path);
+}
+
+function isRootSourceCodePath(path: string) {
+  return !hasPathSeparator(path) && !hasDrivePrefix(path) && sourceCodeExtensions.has(artifactExtension(path));
+}
+
 export function artifactKind(path: string) {
   const ext = artifactExtension(path);
   if (ext === "html" || ext === "htm") return "html";
@@ -176,6 +188,23 @@ export function isRootProjectFileCandidatePath(path: string) {
 
 export function isSourceCodeArtifact(artifact: ArtifactSummary) {
   return sourceCodeExtensions.has(artifactExtension(artifact.path || artifact.name || ""));
+}
+
+export function shouldResolveArtifactCandidate(path: string, workspacePath?: string) {
+  const normalizedPath = normalizeArtifactPath(path);
+  if (!normalizedPath || !isKnownArtifactPath(normalizedPath)) {
+    return false;
+  }
+  if (!hasDrivePrefix(normalizedPath)) {
+    return true;
+  }
+  const normalizedWorkspace = normalizeArtifactPath(workspacePath || "");
+  if (!normalizedWorkspace) {
+    return false;
+  }
+  const lowerPath = normalizedPath.toLowerCase();
+  const lowerWorkspace = normalizedWorkspace.replace(/\/+$/, "").toLowerCase();
+  return lowerPath === lowerWorkspace || lowerPath.startsWith(`${lowerWorkspace}/`);
 }
 
 export function sourceLanguageForArtifact(path: string) {
@@ -275,6 +304,14 @@ function isReferenceWrapperLine(value: string) {
   return Boolean(trimmed) && /^["'`]{1,2}$/.test(trimmed);
 }
 
+function isPlainPathReferenceAllowed(value: string, start: number, end: number, rawPath: string) {
+  if (!isRootSourceCodePath(rawPath)) {
+    return true;
+  }
+  const { lineStart } = lineRangeForPosition(value, start, end);
+  return isArtifactLabelPrefix(value.slice(lineStart, start));
+}
+
 function expandArtifactReferenceRange(value: string, start: number, end: number) {
   const { lineStart, lineEnd, nextNewline } = lineRangeForPosition(value, start, end);
   const line = value.slice(lineStart, lineEnd);
@@ -372,6 +409,9 @@ export function collectArtifactReferences(text: string) {
   for (const match of value.matchAll(pathPattern)) {
     const rawPath = match[1] || "";
     const start = (match.index || 0) + match[0].length - rawPath.length;
+    if (!isPlainPathReferenceAllowed(value, start, start + rawPath.length, rawPath)) {
+      continue;
+    }
     push(start, start + rawPath.length);
   }
 

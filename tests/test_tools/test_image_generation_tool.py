@@ -106,7 +106,7 @@ async def test_generate_image_saves_api_image(tmp_path: Path, monkeypatch: pytes
 
     assert result.is_error is False
     assert (tmp_path / "out" / "cube.png").read_bytes() == b"fake-png"
-    assert "Generated image saved to" in result.output
+    assert "생성한 이미지를 저장했습니다" in result.output
     assert result.metadata["path"] == str((tmp_path / "out" / "cube.png").resolve())
 
     client = _FakeOpenAI.last_instance
@@ -134,7 +134,7 @@ async def test_generate_image_requires_api_key(tmp_path: Path, monkeypatch: pyte
     )
 
     assert result.is_error is True
-    assert "Codex OAuth image generation is only used when the active provider is Codex" in result.output
+    assert "Codex OAuth 이미지 생성은 활성 제공자가 Codex일 때만 사용" in result.output
 
 
 @pytest.mark.asyncio
@@ -156,7 +156,7 @@ async def test_generate_image_reports_missing_codex_auth_for_codex_provider(
     )
 
     assert result.is_error is True
-    assert "no OpenAI API key or Codex OAuth credential" in result.output
+    assert "OpenAI API 키 또는 Codex OAuth 자격 증명을 찾을 수 없습니다" in result.output
 
 
 @pytest.mark.asyncio

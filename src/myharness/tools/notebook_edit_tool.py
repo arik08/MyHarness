@@ -37,7 +37,7 @@ class NotebookEditTool(BaseTool):
         path = _resolve_path(context.cwd, arguments.path)
         notebook = _load_notebook(path, create_if_missing=arguments.create_if_missing)
         if notebook is None:
-            return ToolResult(output=f"Notebook not found: {path}", is_error=True)
+            return ToolResult(output=f"노트북을 찾을 수 없습니다: {path}", is_error=True)
 
         cells = notebook.setdefault("cells", [])
         while len(cells) <= arguments.cell_index:
@@ -56,7 +56,7 @@ class NotebookEditTool(BaseTool):
 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(notebook, indent=2) + "\n", encoding="utf-8")
-        return ToolResult(output=f"Updated notebook cell {arguments.cell_index} in {path}")
+        return ToolResult(output=f"노트북 셀 {arguments.cell_index}을(를) 업데이트했습니다: {path}")
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:

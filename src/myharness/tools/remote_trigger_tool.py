@@ -34,7 +34,7 @@ class RemoteTriggerTool(BaseTool):
     ) -> ToolResult:
         job = get_cron_job(arguments.name)
         if job is None:
-            return ToolResult(output=f"Cron job not found: {arguments.name}", is_error=True)
+            return ToolResult(output=f"Cron 작업을 찾을 수 없습니다: {arguments.name}", is_error=True)
 
         cwd = Path(job.get("cwd") or context.cwd).expanduser()
         try:
@@ -55,7 +55,7 @@ class RemoteTriggerTool(BaseTool):
             process.kill()
             await process.wait()
             return ToolResult(
-                output=f"Remote trigger timed out after {arguments.timeout_seconds} seconds",
+                output=f"원격 트리거가 {arguments.timeout_seconds}초 후 시간 초과됐습니다.",
                 is_error=True,
             )
 
@@ -64,9 +64,9 @@ class RemoteTriggerTool(BaseTool):
             parts.append(stdout.decode("utf-8", errors="replace").rstrip())
         if stderr:
             parts.append(stderr.decode("utf-8", errors="replace").rstrip())
-        body = "\n".join(part for part in parts if part).strip() or "(no output)"
+        body = "\n".join(part for part in parts if part).strip() or "(출력 없음)"
         return ToolResult(
-            output=f"Triggered {arguments.name}\n{body}",
+            output=f"{arguments.name} 작업을 실행했습니다.\n{body}",
             is_error=process.returncode != 0,
             metadata={"returncode": process.returncode},
         )

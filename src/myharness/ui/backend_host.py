@@ -1188,7 +1188,7 @@ class ReactBackendHost:
     async def _handle_set_mcp_enabled(self, name: str, enabled: bool | None) -> None:
         assert self._bundle is not None
         if not name.strip():
-            await self._emit(BackendEvent(type="error", message="MCP server name is required"))
+            await self._emit(BackendEvent(type="error", message="MCP 서버 이름이 필요합니다."))
             return
         settings = self._bundle.current_settings()
         configs = load_mcp_server_configs(
@@ -1198,7 +1198,7 @@ class ReactBackendHost:
             include_disabled=True,
         )
         if name not in configs:
-            await self._emit(BackendEvent(type="error", message=f"Unknown MCP server: {name}"))
+            await self._emit(BackendEvent(type="error", message=f"알 수 없는 MCP 서버입니다: {name}"))
             return
         set_project_mcp_enabled(self._bundle.cwd, name, enabled is not False, settings)
         await self._emit(self._status_snapshot())
@@ -1206,12 +1206,12 @@ class ReactBackendHost:
     async def _handle_set_plugin_enabled(self, name: str, enabled: bool | None) -> None:
         assert self._bundle is not None
         if not name.strip():
-            await self._emit(BackendEvent(type="error", message="Plugin name is required"))
+            await self._emit(BackendEvent(type="error", message="플러그인 이름이 필요합니다."))
             return
         settings = self._bundle.current_settings()
         plugins = {plugin.manifest.name: plugin for plugin in self._bundle.current_plugins()}
         if name not in plugins:
-            await self._emit(BackendEvent(type="error", message=f"Unknown plugin: {name}"))
+            await self._emit(BackendEvent(type="error", message=f"알 수 없는 플러그인입니다: {name}"))
             return
         set_project_plugin_enabled(self._bundle.cwd, name, enabled is not False, settings)
         await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
@@ -1289,7 +1289,7 @@ class ReactBackendHost:
             return True
         line = self._build_select_command_line(command, selected)
         if line is None:
-            await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
+            await self._emit(BackendEvent(type="error", message=f"알 수 없는 선택 명령입니다: {command_name}"))
             await self._emit(BackendEvent(type="line_complete"))
             return True
         quiet = command in {"model", "subagent_model", "effort", "subagent_effort"}
@@ -1337,13 +1337,13 @@ class ReactBackendHost:
         if command == "provider":
             profiles = AuthManager(settings).list_profiles()
             if selected not in profiles:
-                await self._emit(BackendEvent(type="error", message=f"Unknown provider profile: {selected}"))
+                await self._emit(BackendEvent(type="error", message=f"알 수 없는 제공자 프로필입니다: {selected}"))
                 await self._emit(BackendEvent(type="line_complete"))
                 return
             self._bundle.settings_overrides["active_profile"] = selected
             self._bundle.settings_overrides.pop("model", None)
             profile = profiles[selected]
-            message = f"Switched provider profile to {selected} ({profile.label})."
+            message = f"제공자 프로필을 {selected}({profile.label})(으)로 전환했습니다."
             refresh_client = True
         elif command in {"model", "subagent_model"}:
             if active_profile.allowed_models and selected.lower() != "default" and selected not in active_profile.allowed_models:
@@ -1357,24 +1357,24 @@ class ReactBackendHost:
                 await self._emit(BackendEvent(type="line_complete"))
                 return
             target_key = "model" if command == "model" else "subagent_model"
-            target_label = "Model" if command == "model" else "Sub agent model"
+            target_label = "모델" if command == "model" else "서브에이전트 모델"
             if selected.lower() == "default":
                 self._bundle.settings_overrides.pop(target_key, None)
-                message = f"{target_label} reset to default."
+                message = f"{target_label}을(를) 기본값으로 되돌렸습니다."
             else:
                 self._bundle.settings_overrides[target_key] = selected
-                message = f"{target_label} set to {selected}."
+                message = f"{target_label}을(를) {selected}(으)로 설정했습니다."
             refresh_client = command == "model"
         else:
             if selected not in {"auto", "none", "low", "medium", "high", "xhigh", "max"}:
-                await self._emit(BackendEvent(type="error", message="Usage: /effort [show|auto|low|medium|high|xhigh|max]"))
+                await self._emit(BackendEvent(type="error", message="사용법: /effort [show|auto|low|medium|high|xhigh|max]"))
                 await self._emit(BackendEvent(type="line_complete"))
                 return
             stored_value = "none" if selected == "auto" else selected
             target_key = "effort" if command == "effort" else "subagent_effort"
-            target_label = "Reasoning effort" if command == "effort" else "Sub agent reasoning effort"
+            target_label = "추론 강도" if command == "effort" else "서브에이전트 추론 강도"
             self._bundle.settings_overrides[target_key] = stored_value
-            message = f"{target_label} set to {stored_value}."
+            message = f"{target_label}를 {stored_value}(으)로 설정했습니다."
 
         if refresh_client:
             refresh_runtime_client(self._bundle)
@@ -1409,12 +1409,12 @@ class ReactBackendHost:
         assert self._bundle is not None
         selected = session_id.strip()
         if not selected:
-            await self._emit(BackendEvent(type="error", message="Missing session id"))
+            await self._emit(BackendEvent(type="error", message="세션 ID가 없습니다."))
             await self._emit(BackendEvent(type="line_complete"))
             return
         snapshot = self._bundle.session_backend.load_by_id(self._bundle.cwd, selected)
         if snapshot is None:
-            await self._emit(BackendEvent(type="error", message=f"Session not found: {selected}"))
+            await self._emit(BackendEvent(type="error", message=f"세션을 찾을 수 없습니다: {selected}"))
             await self._emit(BackendEvent(type="line_complete"))
             return
         messages = sanitize_conversation_messages(
@@ -1687,7 +1687,7 @@ class ReactBackendHost:
         await self._emit(
             BackendEvent(
                 type="select_request",
-                modal={"kind": "select", "title": "Resume Session", "command": "resume"},
+                modal={"kind": "select", "title": "세션 이어하기", "command": "resume"},
                 select_options=options,
             )
         )
@@ -1696,7 +1696,7 @@ class ReactBackendHost:
         assert self._bundle is not None
         session_id = session_id.strip()
         if not session_id:
-            await self._emit(BackendEvent(type="error", message="Missing session id"))
+            await self._emit(BackendEvent(type="error", message="세션 ID가 없습니다."))
             return
         deleted = self._bundle.session_backend.delete_by_id(self._bundle.cwd, session_id)
         if self._bundle.session_id == session_id:
@@ -1704,7 +1704,7 @@ class ReactBackendHost:
             deleted = True
             await self._emit(BackendEvent(type="active_session", value=new_session_id))
         if not deleted:
-            await self._emit(BackendEvent(type="error", message=f"Session not found: {session_id}"))
+            await self._emit(BackendEvent(type="error", message=f"세션을 찾을 수 없습니다: {session_id}"))
             return
         await self._handle_list_sessions()
 

@@ -71,9 +71,9 @@ class LspTool(BaseTool):
         assert arguments.file_path is not None  # validated above
         file_path = _resolve_path(root, arguments.file_path)
         if not file_path.exists():
-            return ToolResult(output=f"File not found: {file_path}", is_error=True)
+            return ToolResult(output=f"파일을 찾을 수 없습니다: {file_path}", is_error=True)
         if file_path.suffix != ".py":
-            return ToolResult(output="The lsp tool currently supports Python files only.", is_error=True)
+            return ToolResult(output="lsp 도구는 현재 Python 파일만 지원합니다.", is_error=True)
 
         if arguments.operation == "document_symbol":
             return ToolResult(output=_format_symbol_locations(list_document_symbols(file_path), root))

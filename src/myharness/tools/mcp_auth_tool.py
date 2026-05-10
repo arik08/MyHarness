@@ -34,18 +34,18 @@ class McpAuthTool(BaseTool):
             if callable(getter):
                 config = getter(arguments.server_name)
         if config is None:
-            return ToolResult(output=f"Unknown MCP server: {arguments.server_name}", is_error=True)
+            return ToolResult(output=f"알 수 없는 MCP 서버입니다: {arguments.server_name}", is_error=True)
 
         if isinstance(config, McpStdioServerConfig):
             if arguments.mode not in {"env", "bearer"}:
-                return ToolResult(output="stdio MCP auth supports env or bearer modes", is_error=True)
+                return ToolResult(output="stdio MCP 인증은 env 또는 bearer 모드를 지원합니다.", is_error=True)
             env_key = arguments.key or "MCP_AUTH_TOKEN"
             env = dict(config.env or {})
             env[env_key] = f"Bearer {arguments.value}" if arguments.mode == "bearer" else arguments.value
             updated = config.model_copy(update={"env": env})
         elif isinstance(config, (McpHttpServerConfig, McpWebSocketServerConfig)):
             if arguments.mode not in {"header", "bearer"}:
-                return ToolResult(output="http/ws MCP auth supports header or bearer modes", is_error=True)
+                return ToolResult(output="http/ws MCP 인증은 header 또는 bearer 모드를 지원합니다.", is_error=True)
             header_key = arguments.key or "Authorization"
             headers = dict(config.headers)
             headers[header_key] = (
@@ -53,7 +53,7 @@ class McpAuthTool(BaseTool):
             )
             updated = config.model_copy(update={"headers": headers})
         else:
-            return ToolResult(output="Unsupported MCP server config type", is_error=True)
+            return ToolResult(output="지원하지 않는 MCP 서버 설정 유형입니다.", is_error=True)
 
         settings.mcp_servers[arguments.server_name] = updated
         save_settings(settings)
@@ -64,8 +64,8 @@ class McpAuthTool(BaseTool):
                 await mcp_manager.reconnect_all()
             except Exception as exc:  # pragma: no cover - defensive
                 return ToolResult(
-                    output=f"Saved MCP auth for {arguments.server_name}, but reconnect failed: {exc}",
+                    output=f"{arguments.server_name} MCP 인증을 저장했지만 재연결에 실패했습니다: {exc}",
                     is_error=True,
                 )
 
-        return ToolResult(output=f"Saved MCP auth for {arguments.server_name}")
+        return ToolResult(output=f"{arguments.server_name} MCP 인증을 저장했습니다.")

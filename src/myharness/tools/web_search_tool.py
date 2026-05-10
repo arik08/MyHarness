@@ -54,13 +54,13 @@ class WebSearchTool(BaseTool):
             )
             response.raise_for_status()
         except (httpx.HTTPError, NetworkGuardError) as exc:
-            return ToolResult(output=f"web_search failed: {exc}", is_error=True)
+            return ToolResult(output=f"web_search 실패: {exc}", is_error=True)
 
         results = _parse_search_results(response.text, limit=arguments.max_results)
         if not results:
-            return ToolResult(output="No search results found.", is_error=True)
+            return ToolResult(output="검색 결과가 없습니다.", is_error=True)
 
-        lines = [f"Search results for: {arguments.query}"]
+        lines = [f"검색 결과: {arguments.query}"]
         for index, result in enumerate(results, start=1):
             lines.append(f"{index}. {result['title']}")
             lines.append(f"   URL: {result['url']}")

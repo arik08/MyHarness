@@ -147,7 +147,7 @@ async def test_bash_tool_drains_large_output_while_process_runs(tmp_path: Path):
 
     assert result.is_error is False
     assert result.output.startswith("x")
-    assert "...[truncated]..." in result.output
+    assert "...[잘림]..." in result.output
     assert result.metadata["returncode"] == 0
 
 

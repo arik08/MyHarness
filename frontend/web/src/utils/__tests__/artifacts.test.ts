@@ -19,6 +19,7 @@ import {
   labelForArtifact,
   normalizeArtifactPath,
   normalizeProjectFilePath,
+  shouldResolveArtifactCandidate,
   sourceLanguageForArtifact,
 } from "../artifacts";
 
@@ -95,6 +96,20 @@ describe("artifact utilities", () => {
 
     const candidates = collectArtifactCandidates("결과물: outputs/data.csv");
     expect(candidates).toEqual([{ path: "outputs/data.csv", name: "data.csv", kind: "text", label: "텍스트" }]);
+  });
+
+  it("does not treat prose library names as artifact paths", () => {
+    expect(collectArtifactCandidates("Three.js 기반으로 작성했습니다.")).toEqual([]);
+    expect(collectArtifactCandidates("파일: script.js")).toEqual([{ path: "script.js", name: "script.js", kind: "text", label: "텍스트" }]);
+    expect(collectArtifactCandidates("보고서.html 파일을 확인하세요.").map((artifact) => artifact.path)).toEqual(["보고서.html"]);
+  });
+
+  it("resolves absolute paths only when they are inside the active workspace", () => {
+    const workspace = "C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/Playground/shared/Default";
+
+    expect(shouldResolveArtifactCandidate("outputs/report.html", workspace)).toBe(true);
+    expect(shouldResolveArtifactCandidate(`${workspace}/outputs/report.html`, workspace)).toBe(true);
+    expect(shouldResolveArtifactCandidate("C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/.plugins/superpowers/skills/using-superpowers/SKILL.md", workspace)).toBe(false);
   });
 
   it("deduplicates artifacts by normalized path", () => {
