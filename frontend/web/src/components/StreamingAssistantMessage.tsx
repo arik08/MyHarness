@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type { AppSettings, ChatMessage } from "../types/ui";
 import { isStandaloneHtmlDocument, MarkdownMessage } from "./MarkdownMessage";
 
@@ -19,6 +20,7 @@ function useStreamingText(
   const frameFallbackTimerRef = useRef<number | null>(null);
   const lastFrameAtRef = useRef<number | null>(null);
   const revealBudgetRef = useRef(0);
+  const revealFromRef = useRef<number | null>(visuallyStreaming && targetText ? 0 : null);
   const displayStartedRef = useRef(false);
   const startBufferMsRef = useRef(startBufferMs);
   const revealDurationMsRef = useRef(revealDurationMs);
@@ -56,6 +58,7 @@ function useStreamingText(
     clearFlushTimer();
     clearAnimationFrame();
     pendingTextRef.current = "";
+    revealFromRef.current = null;
     displayStartedRef.current = false;
   }
 
@@ -69,6 +72,10 @@ function useStreamingText(
 
   function normalizedRevealWipePercent() {
     return Math.max(100, Math.min(400, revealWipePercentRef.current));
+  }
+
+  function visibleTextLength() {
+    return Array.from(visibleTextRef.current).length;
   }
 
   function streamingRevealRate(pendingLength: number) {
@@ -149,6 +156,7 @@ function useStreamingText(
       return;
     }
     displayStartedRef.current = true;
+    revealFromRef.current = visibleTextLength();
     visibleTextRef.current = `${visibleTextRef.current}${pendingTextRef.current}`;
     pendingTextRef.current = "";
     revealBudgetRef.current = 0;
@@ -183,6 +191,7 @@ function useStreamingText(
     revealBudgetRef.current = Math.max(0, revealBudgetRef.current - revealCount);
     const nextText = pendingChars.slice(0, revealCount).join("");
     pendingTextRef.current = pendingChars.slice(revealCount).join("");
+    revealFromRef.current = visibleTextLength();
     visibleTextRef.current = `${visibleTextRef.current}${nextText}`;
     setVisibleText(visibleTextRef.current);
     if (pendingTextRef.current) {
@@ -227,6 +236,7 @@ function useStreamingText(
       }
       resetRevealLoop();
       if (visibleTextRef.current !== targetText) {
+        revealFromRef.current = null;
         visibleTextRef.current = targetText;
         setVisibleText(targetText);
       }
@@ -252,6 +262,7 @@ function useStreamingText(
     }
 
     resetRevealLoop();
+    revealFromRef.current = targetText ? 0 : null;
     visibleTextRef.current = targetText;
     setVisibleText(targetText);
   }, [targetText, visuallyStreaming, startBufferMs, revealDurationMs, revealWipePercent]);
@@ -262,6 +273,7 @@ function useStreamingText(
 
   return {
     visibleText: snapCompletedReplacement ? targetText : visibleText,
+    revealFrom: snapCompletedReplacement ? null : revealFromRef.current,
     revealing: !snapCompletedReplacement && (visuallyStreaming || visibleText !== targetText || Boolean(pendingTextRef.current)),
   };
 }
@@ -437,16 +449,30 @@ function isStructuredLiveMarkdown(text: string) {
   return false;
 }
 
-function StreamingPlainText({ text }: { text: string }) {
-  return <p>{text}</p>;
+function StreamingPlainText({ text, revealFrom = null }: { text: string; revealFrom?: number | null }) {
+  if (revealFrom === null || revealFrom < 0) {
+    return <p>{text}</p>;
+  }
+  const chars = Array.from(text);
+  const localStart = Math.max(0, Math.min(chars.length, revealFrom));
+  const before = chars.slice(0, localStart).join("");
+  const revealText = chars.slice(localStart).join("");
+  return (
+    <p>
+      {before}
+      {revealText ? <span className="stream-reveal-sentence">{revealText}</span> : null}
+    </p>
+  );
 }
 
 function StreamingMarkdownMessage({
   text,
   complete = false,
+  revealFrom = null,
 }: {
   text: string;
   complete?: boolean;
+  revealFrom?: number | null;
 }) {
   const { prefix, liveTail } = useMemo(() => {
     if (complete) {
@@ -456,6 +482,7 @@ function StreamingMarkdownMessage({
   }, [complete, text]);
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
   const renderLiveTailAsMarkdown = isStructuredLiveMarkdown(liveTail);
+  const liveTailRevealFrom = revealFrom === null ? null : Math.max(0, revealFrom - Array.from(prefix).length);
   let chunkCursor = 0;
   const chunkOccurrences = new Map<string, number>();
 
@@ -476,11 +503,11 @@ function StreamingMarkdownMessage({
       })}
       {liveTail && renderLiveTailAsMarkdown ? (
         <div className="stream-live-text">
-          <MarkdownMessage text={liveTail} deferIncompleteTables />
+          <MarkdownMessage text={liveTail} revealFrom={liveTailRevealFrom} deferIncompleteTables />
         </div>
       ) : liveTail ? (
         <div className="markdown-body react-markdown stream-live-text">
-          <StreamingPlainText text={liveTail} />
+          <StreamingPlainText text={liveTail} revealFrom={liveTailRevealFrom} />
         </div>
       ) : null}
     </div>
@@ -499,7 +526,7 @@ export function StreamingAssistantMessage({
   onVisibleTextChange?: () => void;
 }) {
   const visuallyStreaming = active && !message.isComplete;
-  const { visibleText, revealing } = useStreamingText(
+  const { visibleText, revealFrom, revealing } = useStreamingText(
     message.text,
     visuallyStreaming,
     settings.streamStartBufferMs,
@@ -513,11 +540,19 @@ export function StreamingAssistantMessage({
     }
   }, [revealing, onVisibleTextChange, visibleText]);
 
+  const revealStyle = revealing
+    ? {
+        "--stream-reveal-duration": `${Math.max(0, Math.min(2000, settings.streamRevealDurationMs))}ms`,
+        "--stream-reveal-wipe": `${Math.max(100, Math.min(400, settings.streamRevealWipePercent))}%`,
+      } as CSSProperties
+    : undefined;
+
   return (
-    <div className={revealing ? "react-streaming-text streaming-text" : undefined}>
+    <div className={revealing ? "react-streaming-text streaming-text" : undefined} style={revealStyle}>
       <StreamingMarkdownMessage
         text={revealing ? visibleText : message.text}
         complete={!revealing}
+        revealFrom={revealing ? revealFrom : null}
       />
     </div>
   );

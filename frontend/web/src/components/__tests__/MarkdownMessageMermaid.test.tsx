@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import mermaid from "mermaid";
 import { ArtifactPreview } from "../ArtifactPreview";
@@ -304,6 +304,29 @@ describe("MarkdownMessage Mermaid rendering", () => {
     expect(document.querySelector(".mermaid-chart .stream-reveal-sentence")).toBeNull();
     expect(document.querySelector(".mermaid-render-placeholder")).toBeNull();
     expect(screen.getByText("Ready")).toBeTruthy();
+  });
+
+  it("does not nest streaming reveal spans when markdown enhancement reruns", async () => {
+    const { container, rerender } = render(<MarkdownMessage text="첫 문장입니다." revealFrom={0} />);
+
+    expect(container.querySelector(".stream-reveal-sentence")).toBeTruthy();
+
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." revealFrom={7} />);
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    const revealCount = container.querySelectorAll(".stream-reveal-sentence").length;
+    expect(container.querySelector(".stream-reveal-sentence .stream-reveal-sentence")).toBeNull();
+    expect(revealCount).toBeGreaterThan(0);
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    expect(container.querySelector(".stream-reveal-sentence .stream-reveal-sentence")).toBeNull();
+    expect(container.querySelectorAll(".stream-reveal-sentence")).toHaveLength(revealCount);
   });
 
   it("opens rendered mermaid charts in a zoomable and pannable viewer", async () => {

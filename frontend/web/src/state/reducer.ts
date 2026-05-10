@@ -234,6 +234,7 @@ export const initialAppState: AppState = {
   historyLoading: false,
   historyRefreshKey: 0,
   activeHistoryId: null,
+  pendingHistoryId: null,
   restoringHistory: false,
   historyReadOnly: false,
   pendingFreshChat: false,
@@ -1549,6 +1550,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         workflowDurationSecondsByMessageId: {},
         workflowInputBuffers: {},
         activeHistoryId: null,
+        pendingHistoryId: null,
         restoringHistory: false,
         historyReadOnly: false,
         pendingFreshChat: Boolean(state.sessionId),
@@ -1573,7 +1575,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const backendModalsBySessionId = rememberCurrentBackendModal(state);
         return {
         ...state,
-        activeHistoryId: action.sessionId,
+        pendingHistoryId: action.sessionId,
         restoringHistory: true,
         historyReadOnly: false,
         pendingFreshChat: false,
@@ -1589,7 +1591,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
 
     case "finish_history_restore":
-      return { ...state, restoringHistory: false };
+      return { ...state, pendingHistoryId: null, restoringHistory: false };
 
     case "set_artifacts":
       return { ...state, artifacts: action.artifacts };
@@ -1961,7 +1963,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
         return {
           ...state,
-          activeHistoryId: String(historyEvent.value || state.activeHistoryId || "").trim() || null,
+          activeHistoryId: String(historyEvent.value || state.pendingHistoryId || state.activeHistoryId || "").trim() || null,
+          pendingHistoryId: null,
           chatTitle: normalizeChatTitle(String(historyEvent.message || state.chatTitle || "")),
           messages,
           workflowAnchorMessageId,
@@ -2000,9 +2003,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
       if (event.type === "active_session") {
         const activeHistoryId = String(event.value || "").trim() || null;
+        if (state.restoringHistory && state.pendingHistoryId && activeHistoryId !== state.pendingHistoryId) {
+          return state;
+        }
         return {
           ...state,
           activeHistoryId,
+          pendingHistoryId: null,
           restoringHistory: false,
           pendingFreshChat: false,
           preserveMessagesOnNextClearTranscript: false,

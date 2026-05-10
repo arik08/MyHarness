@@ -856,6 +856,25 @@ describe("appReducer", () => {
     expect(next.restoringHistory).toBe(false);
   });
 
+  it("keeps pending history restore state through stale active session echoes", () => {
+    const next = appReducer(
+      {
+        ...initialAppState,
+        activeHistoryId: "current-session",
+        pendingHistoryId: "saved-session",
+        restoringHistory: true,
+      },
+      {
+        type: "backend_event",
+        event: { type: "active_session", value: "current-session" },
+      },
+    );
+
+    expect(next.activeHistoryId).toBe("current-session");
+    expect(next.pendingHistoryId).toBe("saved-session");
+    expect(next.restoringHistory).toBe(true);
+  });
+
   it("rebuilds visible chat from restored history snapshots", () => {
     const busy = appReducer(
       {
@@ -893,6 +912,8 @@ describe("appReducer", () => {
   it("keeps the current messages through the restore clear event until the history snapshot arrives", () => {
     const restoring = {
       ...initialAppState,
+      activeHistoryId: "current-session",
+      pendingHistoryId: "saved-session",
       restoringHistory: true,
       busy: true,
       messages: [{ id: "current-message", role: "user" as const, text: "현재 화면 질문" }],
@@ -904,6 +925,8 @@ describe("appReducer", () => {
     });
 
     expect(afterClear.messages).toEqual(restoring.messages);
+    expect(afterClear.activeHistoryId).toBe("current-session");
+    expect(afterClear.pendingHistoryId).toBe("saved-session");
 
     const restored = appReducer(afterClear, {
       type: "backend_event",
@@ -918,6 +941,8 @@ describe("appReducer", () => {
     });
 
     expect(restored.messages.map((message) => message.text)).toEqual(["저장된 질문", "저장된 답변"]);
+    expect(restored.activeHistoryId).toBe("saved-session");
+    expect(restored.pendingHistoryId).toBeNull();
   });
 
   it("restores swarm status from history snapshots", () => {
@@ -1109,6 +1134,7 @@ describe("appReducer", () => {
     const restoring = appReducer(
       {
         ...initialAppState,
+        activeHistoryId: "current-session",
         modal: { kind: "settings" },
         artifactPanelOpen: true,
         activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
@@ -1118,6 +1144,8 @@ describe("appReducer", () => {
       { type: "begin_history_restore", sessionId: "saved-session" },
     );
 
+    expect(restoring.activeHistoryId).toBe("current-session");
+    expect(restoring.pendingHistoryId).toBe("saved-session");
     expect(restoring.modal).toBeNull();
     expect(restoring.artifactPanelOpen).toBe(false);
     expect(restoring.activeArtifact).toBeNull();

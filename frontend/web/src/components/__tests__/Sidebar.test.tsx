@@ -39,6 +39,8 @@ function ChatStateProbe() {
     <>
       <output data-testid="message-count">{state.messages.length}</output>
       <output data-testid="message-texts">{state.messages.map((message) => message.text).join("|")}</output>
+      <output data-testid="active-history">{state.activeHistoryId || ""}</output>
+      <output data-testid="pending-history">{state.pendingHistoryId || ""}</output>
       <output data-testid="pending-fresh-chat">{state.pendingFreshChat ? "yes" : "no"}</output>
     </>
   );
@@ -626,6 +628,12 @@ describe("Sidebar", () => {
     }));
     expect(screen.getByTestId("message-count").textContent).toBe("1");
     expect(screen.getByTestId("message-texts").textContent).toBe("현재 화면 질문");
+    expect(screen.getByTestId("active-history").textContent).toBe("");
+    expect(screen.getByTestId("pending-history").textContent).toBe("session-old");
+    const restoringRow = Array.from(document.querySelectorAll(".history-item.busy"))
+      .find((item) => item.textContent?.includes("이전 대화"));
+    expect(restoringRow?.textContent).toContain("이전 대화");
+    expect(restoringRow?.classList.contains("active")).toBe(false);
   });
 
   it("restores a live saved session snapshot when the current session is idle", async () => {

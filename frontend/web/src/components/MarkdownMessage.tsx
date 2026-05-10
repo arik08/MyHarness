@@ -1851,10 +1851,15 @@ function revealRenderedText(root: HTMLElement | null, revealFrom: number | null)
   if (!root || revealFrom === null || revealFrom < 0) {
     return;
   }
+  root.querySelectorAll<HTMLElement>(".stream-reveal-sentence").forEach((span) => {
+    if (span.isConnected) {
+      span.replaceWith(document.createTextNode(span.textContent || ""));
+    }
+  });
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      return parent?.closest(".code-copy, .mermaid-chart, .html-render-preview, .assistant-workflow-diagram")
+      return parent?.closest(".stream-reveal-sentence, .code-copy, .mermaid-chart, .html-render-preview, .assistant-workflow-diagram")
         ? NodeFilter.FILTER_REJECT
         : NodeFilter.FILTER_ACCEPT;
     },
@@ -1916,13 +1921,13 @@ export function MarkdownMessage({
     }
     ensureMarkdownEnhancementObserver();
     enhanceMarkdownRoot(node, revealFrom);
-    window.requestAnimationFrame(() => enhanceMarkdownRoot(node, revealFrom));
+    window.requestAnimationFrame(() => enhanceMarkdownRoot(node, null));
   }, [html, revealFrom]);
 
   useLayoutEffect(() => {
     ensureMarkdownEnhancementObserver();
     enhanceMarkdownRoot(ref.current, revealFrom);
-    const frame = window.requestAnimationFrame(() => enhanceMarkdownRoot(ref.current, revealFrom));
+    const frame = window.requestAnimationFrame(() => enhanceMarkdownRoot(ref.current, null));
     return () => window.cancelAnimationFrame(frame);
   }, [html, revealFrom]);
 

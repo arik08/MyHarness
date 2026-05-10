@@ -85,6 +85,7 @@ export type AppState = {
   historyLoading: boolean;
   historyRefreshKey: number;
   activeHistoryId: string | null;
+  pendingHistoryId: string | null;
   restoringHistory: boolean;
   historyReadOnly: boolean;
   pendingFreshChat: boolean;

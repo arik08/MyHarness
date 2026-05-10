@@ -2577,7 +2577,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변입니다.");
   });
 
-  it("keeps streaming text reveal on the single React pacing path", () => {
+  it("reveals the live streaming tail with the configured horizontal wipe", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider
@@ -2608,7 +2608,9 @@ describe("MessageList", () => {
     });
 
     expect(document.querySelector(".react-streaming-text")).toBeTruthy();
-    expect(document.querySelector(".stream-reveal-sentence")).toBeNull();
+    expect(document.querySelector(".stream-reveal-sentence")).toBeTruthy();
+    expect(document.querySelector(".react-streaming-text")?.getAttribute("style")).toContain("--stream-reveal-duration: 600ms");
+    expect(document.querySelector(".react-streaming-text")?.getAttribute("style")).toContain("--stream-reveal-wipe: 400%");
   });
 
   it("continues revealing the completion tail instead of snapping to the final answer", () => {

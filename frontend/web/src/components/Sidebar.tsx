@@ -677,7 +677,8 @@ export function Sidebar() {
               const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
               const editing = editingHistoryId === item.value;
               const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
-              const isBusy = (isActive && state.busy) || (item.live === true && item.busy === true);
+              const isPendingRestore = state.pendingHistoryId === item.value;
+              const isBusy = (isActive && state.busy) || isPendingRestore || (item.live === true && item.busy === true);
               const isDeleting = deletingHistoryId === item.value;
               const actionsExpanded = expandedHistoryActionId === item.value;
               const canPin = !isLiveOnlyHistoryItem(item);

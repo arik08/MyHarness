@@ -260,7 +260,7 @@ export function useMessageAutoFollow({
 
   useLayoutEffect(() => {
     const container = messagesRef.current;
-    if (!container || !state.restoringHistory || !state.activeHistoryId) {
+    if (!container || !state.restoringHistory || state.pendingHistoryId || !state.activeHistoryId) {
       return;
     }
     stopAutoFollow(container);
@@ -270,7 +270,7 @@ export function useMessageAutoFollow({
     requestAnimationFrame(() => {
       dispatch({ type: "finish_history_restore" });
     });
-  }, [dispatch, state.activeHistoryId, state.messages.length, state.restoringHistory]);
+  }, [dispatch, state.activeHistoryId, state.messages.length, state.pendingHistoryId, state.restoringHistory]);
 
   useEffect(() => {
     function handleSaveMessageScroll() {
