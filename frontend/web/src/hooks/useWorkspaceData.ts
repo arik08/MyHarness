@@ -92,7 +92,7 @@ export function useWorkspaceData() {
         cancelled = true;
       };
     }
-    if (state.historyReadOnly || (state.restoringHistory && state.pendingHistoryId)) {
+    if ((state.historyReadOnly && state.history.length > 0) || (state.restoringHistory && state.pendingHistoryId)) {
       return () => {
         cancelled = true;
       };
@@ -130,6 +130,7 @@ export function useWorkspaceData() {
     state.activeHistoryId,
     state.busy,
     state.clientId,
+    state.history.length,
     state.historyReadOnly,
     state.historyRefreshKey,
     state.pendingHistoryId,

@@ -112,25 +112,17 @@ def _build_task_worker_section() -> str:
 
 
 def _build_long_report_section() -> str:
-    """Build guidance for long file-based report generation."""
+    """Build report length guidance while split report generation is disabled."""
     return "\n".join(
         [
-            "# Long Report Generation",
+            "# Report Generation Limits",
             "",
-            "Default report length: unless the user explicitly asks for a longer report, keep report bodies around 10,000-12,000 tokens. "
-            "Ordinary requests such as 보고서 작성, 분석 보고서, 리포트, 조사 정리, or HTML 보고서 do not justify exceeding that default.",
-            "For a plain long-form request such as 길게 써줘 or 자세히 작성해줘, aim around 15,000-18,000 tokens. "
-            "Only exceed 18,000 tokens when the user gives a numeric target or clearly requests excessive length/detail, such as 아주아주 길게, "
-            "매우 디테일하게, 초장문, 대보고서, 2-3x expansion, or an explicit length such as 40,000 or 80,000 tokens. "
-            "Because reports above about 20,000 tokens feel slow, treat that as an intentional opt-in.",
-            "For file-based reports, HTML reports, or reports that should not stream the full body into chat, use the `write_long_report` tool. "
-            "Leave `target_tokens` unset for ordinary reports; set it to about 18,000 for a plain long-form request, "
-            "and set it to 40,000 or the user's numeric target only for excessive or explicit longer requests. "
-            "Use `output_format=\"html\"` for HTML reports.",
-            "For HTML reports, include concrete visual requirements in the `brief`: ask for a timeline, comparison table, section-weight chart, "
-            "market structure or value-chain diagram, KPI/risk/action tables, or other visuals that fit the subject. "
-            "The renderer adds structural visuals, but the report brief should still ask source sections to surface visualizable facts.",
-            "The final chat response should report the file path, section count, and a short summary, not the full report body.",
+            "Temporary hotfix: split report generation is disabled. Do not split a report into section-by-section model calls, "
+            "continue short sections, review the draft, and later reassemble the pieces.",
+            "Do not generate more than 20,000 tokens for any report, even when the user asks for a numeric target above that limit "
+            "or requests very long, exhaustive, ultra-detailed, 초장문, 대보고서, or similar output.",
+            "Ordinary requests such as 상세 보고서, 분석 보고서, 리포트, 조사 정리, or HTML 보고서 should be answered directly at a reasonable length. "
+            "If a file artifact is useful, write a single coherent Markdown or HTML file in one pass within the 20,000-token cap.",
         ]
     )
 

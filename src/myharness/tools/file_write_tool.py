@@ -29,7 +29,7 @@ class FileWriteTool(BaseTool):
     description = (
         "Create or intentionally overwrite a complete text file in the local repository. "
         "For changes to an existing file, prefer read_file followed by edit_file unless a full rewrite is clearly intended. "
-        "Do not use this for numeric long-report targets such as 40,000 tokens or 80,000 tokens; use write_long_report so the file streams and stays near the requested length. "
+        "Do not split and later reassemble reports; report artifacts must stay at or below 20,000 tokens. "
         "For new standalone artifacts, prefer an `outputs/` relative path; keep files that reference each other in the same subfolder. "
         "For human-facing HTML, Markdown, PDF, DOCX, XLSX, and PPTX artifacts, prefer concise readable Korean filenames with underscores between words when the user/content is Korean; "
         "English snake/kebab-style filenames are fine for code, scripts, configs, and data such as PY, JS, JSON, or CSV. "

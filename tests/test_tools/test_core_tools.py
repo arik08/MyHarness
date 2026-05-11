@@ -143,6 +143,9 @@ async def test_file_edit_blocks_invalid_mermaid_before_updating(tmp_path: Path, 
 def test_file_write_tool_description_guides_human_artifact_filenames():
     description = FileWriteTool.description
 
+    assert "Do not split and later reassemble reports" in description
+    assert "20,000 tokens" in description
+    assert "write_long_report" not in description
     assert "human-facing HTML, Markdown, PDF, DOCX, XLSX, and PPTX artifacts" in description
     assert "Korean filenames" in description
     assert "underscores between words" in description

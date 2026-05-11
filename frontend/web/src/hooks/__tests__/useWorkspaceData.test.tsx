@@ -337,4 +337,40 @@ describe("useWorkspaceData", () => {
     expect(listLiveSessions).not.toHaveBeenCalled();
     expect(history.map((item: { value: string }) => item.value)).toEqual(["session-top", "session-second"]);
   });
+
+  it("loads saved history when reconnecting to a restored chat without a cached sidebar list", async () => {
+    vi.mocked(listHistory).mockResolvedValue({
+      options: [
+        { value: "session-top", label: "5/4 10:00 2 msg", description: "최상단 대화" },
+        { value: "session-old", label: "5/4 09:30 2 msg", description: "이전 대화" },
+      ],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          activeHistoryId: "session-top",
+          clientId: "client-1",
+          historyReadOnly: true,
+          busy: false,
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [],
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
+      workspacePath: "C:/demo",
+      workspaceName: "Default",
+    }));
+    await waitFor(() => {
+      const history = JSON.parse(screen.getByTestId("history").textContent || "[]");
+      expect(history.map((item: { value: string }) => item.value)).toEqual(["session-top", "session-old"]);
+    });
+  });
 });

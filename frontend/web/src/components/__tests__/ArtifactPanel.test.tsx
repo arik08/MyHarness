@@ -1367,7 +1367,7 @@ describe("ArtifactPanel", () => {
 
     expect(document.querySelector(".artifact-ai-progress .workflow-message")).toBeTruthy();
     expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("AI 편집 요청");
-    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("응답 대기");
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("첫 streaming 이벤트 대기");
     expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("report_v1.html");
     expect(document.querySelector(".artifact-ai-progress .workflow-output-preview")?.textContent || "").not.toContain("Old headline");
 
@@ -1405,6 +1405,85 @@ describe("ArtifactPanel", () => {
     await waitFor(() => expect(document.querySelector(".artifact-ai-progress .workflow-message")).toBeTruthy());
     expect(document.querySelector(".artifact-ai-progress .workflow-output-preview")?.textContent || "").toContain("report.html");
     expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("Old headline");
+    expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("New headline");
+  });
+
+  it("keeps the AI edit overlay in an explicit streaming wait state until live progress arrives", async () => {
+    let sendBackendEvent: ((event: BackendEvent) => void) | null = null;
+    function BackendEventProbe() {
+      const { dispatch } = useAppState();
+      sendBackendEvent = (event: BackendEvent) => dispatch({ type: "backend_event", event, sessionId: "session-a" });
+      return null;
+    }
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+          },
+        }}
+      >
+        <ArtifactPanel />
+        <BackendEventProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "Old headline",
+            html: "<h1>Old headline</h1>",
+            start: 0,
+            end: 12,
+            before: "",
+            after: "Old body",
+            instruction: "Make it clearer",
+          },
+        },
+      }));
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
+
+    act(() => {
+      sendBackendEvent?.({
+        type: "transcript_item",
+        item: { role: "user", text: "AI edit request" },
+      } as BackendEvent);
+    });
+
+    const progressText = document.querySelector(".artifact-ai-progress")?.textContent || "";
+    expect(progressText).toContain("첫 streaming 이벤트 대기");
+    expect(progressText).toContain("report_v1.html");
+    expect(progressText).not.toContain("작업 계획 수립");
+
+    act(() => {
+      sendBackendEvent?.({
+        type: "tool_started",
+        tool_name: "edit_file",
+        tool_call_index: 0,
+        tool_input: {
+          path: "outputs/report_v1.html",
+          old_str: "Old headline",
+          new_str: "New headline",
+        },
+      });
+    });
+
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("파일 수정");
     expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("New headline");
   });
 

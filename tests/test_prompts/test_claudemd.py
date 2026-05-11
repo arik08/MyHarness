@@ -185,7 +185,7 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
     assert "Environment" in prompt
 
 
-def test_build_runtime_system_prompt_guides_long_report_threshold(tmp_path: Path, monkeypatch):
+def test_build_runtime_system_prompt_disables_split_report_generation(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     repo = tmp_path / "repo"
@@ -193,17 +193,12 @@ def test_build_runtime_system_prompt_guides_long_report_threshold(tmp_path: Path
 
     prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="80,000 토큰 HTML 보고서 작성")
 
-    assert "Long Report Generation" in prompt
-    assert "10,000-12,000 tokens" in prompt
-    assert "15,000-18,000 tokens" in prompt
-    assert "18,000 tokens" in prompt
+    assert "Report Generation Limits" in prompt
     assert "20,000 tokens" in prompt
-    assert "40,000" in prompt
-    assert "write_long_report" in prompt
-    assert "80,000 tokens" in prompt
-    assert "target_tokens" in prompt
-    assert "include concrete visual requirements in the `brief`" in prompt
-    assert "timeline, comparison table, section-weight chart" in prompt
+    assert "Do not split a report into section-by-section model calls" in prompt
+    assert "Do not generate more than 20,000 tokens" in prompt
+    assert "write_long_report" not in prompt
+    assert "target_tokens" not in prompt
 
 
 def test_task_worker_prompt_skips_delegation_and_parent_task_queries(tmp_path: Path, monkeypatch):

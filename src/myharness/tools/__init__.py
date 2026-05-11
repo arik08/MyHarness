@@ -22,7 +22,6 @@ from myharness.tools.glob_tool import GlobTool
 from myharness.tools.grep_tool import GrepTool
 from myharness.tools.image_generation_tool import ImageGenerationTool
 from myharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
-from myharness.tools.long_report_tool import LongReportTool
 from myharness.tools.lsp_tool import LspTool
 from myharness.tools.mcp_auth_tool import McpAuthTool
 from myharness.tools.mcp_tool import McpToolAdapter
@@ -84,7 +83,6 @@ def create_default_tool_registry(mcp_manager=None, *, task_worker: bool = False)
         GlobTool(),
         GrepTool(),
         ImageGenerationTool(),
-        LongReportTool(),
         SkillTool(),
         ToolSearchTool(),
         WebFetchTool(),

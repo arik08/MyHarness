@@ -97,6 +97,25 @@ function meaningfulAiEditStatusText(value: string) {
   return text;
 }
 
+function aiEditWaitingDetail(liveStatus: string, elapsedSeconds: number, targetPath: string) {
+  if (liveStatus) return liveStatus;
+  const targetName = targetPath ? artifactFileName(targetPath) : "";
+  const targetPrefix = targetName
+    ? `${targetName} 작업 요청은 전달됐습니다.`
+    : "AI 편집 요청을 전달하고 있습니다.";
+  if (elapsedSeconds >= 30) {
+    return `${targetPrefix} 첫 streaming 이벤트가 30초 이상 도착하지 않아 계속 대기 중입니다.`;
+  }
+  if (elapsedSeconds >= 8) {
+    return `${targetPrefix} 아직 첫 streaming 이벤트는 없고, AI가 수정 방향을 구성 중일 수 있습니다.`;
+  }
+  return `${targetPrefix} 첫 응답이나 도구 호출을 기다리고 있습니다.`;
+}
+
+function hasConcreteAiEditProgress(events: WorkflowEvent[]) {
+  return events.some((event) => Boolean(event.toolName.trim()) || event.role === "final" || event.role === "activity");
+}
+
 function buildAiEditFallbackEvents({
   show,
   statusText,
@@ -104,6 +123,8 @@ function buildAiEditFallbackEvents({
   activePath,
   targetPath,
   commentCount,
+  elapsedSeconds,
+  liveProgressReceived,
 }: {
   show: boolean;
   statusText: string;
@@ -111,6 +132,8 @@ function buildAiEditFallbackEvents({
   activePath: string;
   targetPath: string;
   commentCount: number;
+  elapsedSeconds: number;
+  liveProgressReceived: boolean;
 }): WorkflowEvent[] {
   if (!show) return [];
   const sourceName = activePath ? artifactFileName(activePath) : "현재 문서";
@@ -120,8 +143,7 @@ function buildAiEditFallbackEvents({
   const requestDetail = targetPath
     ? `${sourceName}에서 ${targetName}으로 수정 의견 ${commentCount}개를 반영합니다.`
     : `${sourceName}의 수정 의견 ${commentCount}개를 중앙 채팅으로 전달하고 있습니다.`;
-  const waitingDetail = liveStatus
-    || "AI가 수정 방향을 잡고 있습니다. 응답이나 도구 호출이 오면 여기서 이어서 표시됩니다.";
+  const waitingDetail = aiEditWaitingDetail(liveStatus, elapsedSeconds, targetPath);
   const events: WorkflowEvent[] = [
     {
       id: "artifact-ai-edit-request",
@@ -133,11 +155,11 @@ function buildAiEditFallbackEvents({
       role: "waiting",
     },
   ];
-  if (requestSent) {
+  if (requestSent && !liveProgressReceived) {
     events.push({
       id: "artifact-ai-edit-waiting",
       toolName: "",
-      title: liveStatus ? "현재 상태" : "응답 대기",
+      title: liveStatus ? "현재 상태" : "첫 streaming 이벤트 대기",
       detail: waitingDetail,
       status: "running",
       level: "parent",
@@ -666,16 +688,22 @@ export function ArtifactPanel() {
     ? 0
     : Math.max(0, Math.floor((aiEditProgressNow - aiEditProgressStartedAt) / 1000));
   const showAiEditFallbackProgress = showAiEditProgress && Boolean(aiEditStatus || submittingAiEdit || aiEditTargetPath);
-  const aiEditProgressEvents = state.workflowEvents.length
+  const aiEditLiveProgressEvents = showAiEditProgress && hasConcreteAiEditProgress(state.workflowEvents)
     ? state.workflowEvents
-    : buildAiEditFallbackEvents({
-        show: showAiEditFallbackProgress,
-        statusText: state.statusText,
-        aiEditStatus,
-        activePath,
-        targetPath: aiEditTargetPath,
-        commentCount: aiEditComments.length,
-      });
+    : [];
+  const aiEditFallbackEvents = buildAiEditFallbackEvents({
+    show: showAiEditFallbackProgress,
+    statusText: state.statusText,
+    aiEditStatus,
+    activePath,
+    targetPath: aiEditTargetPath,
+    commentCount: aiEditComments.length,
+    elapsedSeconds: aiEditElapsedSeconds,
+    liveProgressReceived: aiEditLiveProgressEvents.length > 0,
+  });
+  const aiEditProgressEvents = aiEditLiveProgressEvents.length
+    ? [...aiEditFallbackEvents, ...aiEditLiveProgressEvents]
+    : aiEditFallbackEvents;
   const aiEditProgressSummaryText = aiEditProgressSummary(aiEditProgressEvents);
   const aiEditWaitingText = aiEditProgressEvents.length
     ? ""
@@ -1221,10 +1249,10 @@ export function ArtifactPanel() {
                 <span>{submittingAiEdit ? "요청 중" : "AI 자동편집"}</span>
               </button>
               {showAiEditProgress ? (
-                <div className="artifact-ai-progress" aria-label="AI 자동편집 진행 과정">
+                <div className="artifact-ai-progress" aria-label="AI 자동편집 진행 과정" role="status" aria-live="polite">
                   <WorkflowPanel
                     events={aiEditProgressEvents}
-                    durationSeconds={state.workflowEvents.length ? state.workflowDurationSeconds : aiEditElapsedSeconds}
+                    durationSeconds={aiEditLiveProgressEvents.length ? state.workflowDurationSeconds : aiEditElapsedSeconds}
                   />
                   {!aiEditProgressEvents.length ? (
                     <p className="artifact-ai-progress-empty" role="status" aria-live="polite">

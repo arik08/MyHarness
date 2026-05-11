@@ -26,8 +26,9 @@ from myharness.tools.path_display import display_tool_path
 
 
 DEFAULT_REPORT_TOKEN_CAP = 12_000
+REPORT_TOKEN_HARD_CAP = 20_000
 IMPLIED_LONG_REPORT_TARGET_TOKENS = 18_000
-IMPLIED_EXTRA_LONG_REPORT_TARGET_TOKENS = 40_000
+IMPLIED_EXTRA_LONG_REPORT_TARGET_TOKENS = REPORT_TOKEN_HARD_CAP
 
 
 class LongReportToolInput(BaseModel):
@@ -43,10 +44,9 @@ class LongReportToolInput(BaseModel):
     target_tokens: int = Field(
         default=0,
         ge=0,
-        le=200_000,
+        le=REPORT_TOKEN_HARD_CAP,
         description=(
-            "Approximate desired report body length. Leave unset for the default report cap of 10,000-12,000 tokens; "
-            "set only when the user explicitly requests a longer, excessive, or numeric target."
+            "Approximate desired report body length. Hard-capped at 20,000 tokens while split report generation is disabled."
         ),
     )
     source_paths: list[str] = Field(default_factory=list, description="Optional local text files to use as source material")
@@ -58,10 +58,11 @@ class LongReportTool(BaseTool):
 
     name = "write_long_report"
     description = (
+        "Temporarily disabled from the default registry. "
         "Generate a long Markdown or HTML report as a file instead of streaming the full report into chat. "
         "Normal report requests should stay around 10,000-12,000 tokens. "
         "A plain request to write long should stay around 15,000-18,000 tokens. "
-        "Use this for file-based reports and for excessive long requests such as 초장문, 대보고서, "
+        "Do not exceed 20,000 tokens, including for excessive long requests such as 초장문, 대보고서, "
         "아주아주 길게, 매우 디테일하게, 2-3x expansion, or numeric targets such as 80,000 tokens. "
         "Set target_tokens only when the user gives or clearly implies a longer or excessive desired length. "
         "The tool creates an outline, writes sections with lower per-call token caps, reviews the result, "
@@ -383,21 +384,21 @@ def _resolve_output_format(arguments: LongReportToolInput, output_path: Path) ->
 
 def _resolve_target_tokens(arguments: LongReportToolInput) -> int:
     if arguments.target_tokens > 0:
-        return arguments.target_tokens
+        return min(arguments.target_tokens, REPORT_TOKEN_HARD_CAP)
     text = f"{arguments.title}\n{arguments.brief}"
     k_match = re.search(r"\b(\d{1,3}(?:\.\d+)?)\s*k\b\s*(?:tokens?|토큰)?", text, flags=re.IGNORECASE)
     if k_match:
-        return int(float(k_match.group(1)) * 1_000)
+        return min(int(float(k_match.group(1)) * 1_000), REPORT_TOKEN_HARD_CAP)
     man_match = re.search(r"(\d{1,3})\s*만\s*(?:tokens?|토큰)?", text, flags=re.IGNORECASE)
     if man_match:
-        return int(man_match.group(1)) * 10_000
+        return min(int(man_match.group(1)) * 10_000, REPORT_TOKEN_HARD_CAP)
     token_match = re.search(
         r"(\d{1,3}(?:,\d{3})+|\d{4,6})\s*(?:tokens?|토큰)",
         text,
         flags=re.IGNORECASE,
     )
     if token_match:
-        return int(token_match.group(1).replace(",", ""))
+        return min(int(token_match.group(1).replace(",", "")), REPORT_TOKEN_HARD_CAP)
     if _implies_extra_long_report(arguments.brief):
         return IMPLIED_EXTRA_LONG_REPORT_TARGET_TOKENS
     if _implies_long_report(arguments.brief):
@@ -412,9 +413,7 @@ def _implies_long_report(text: str) -> bool:
     patterns = (
         r"길게\s*(?:작성|써|서술|정리|해)",
         r"긴\s*(?:보고서|리포트)",
-        r"(?:자세|상세|디테일)하게",
         r"\blong(?:er)?\b",
-        r"\bdetailed\b",
     )
     return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in patterns)
 

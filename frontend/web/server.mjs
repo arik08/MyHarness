@@ -1572,13 +1572,15 @@ function buildAiArtifactEditPrompt({ sourceRel, targetRel, sourceContent, commen
     "작업 지시",
     `- 원본 파일: ${sourceRel}`,
     `- 새 버전 파일: ${targetRel}`,
+    "- 새 버전 파일은 이미 원본 HTML을 복사해 만들어 둔 작업 파일입니다.",
     "- 아래 원본 HTML 문서와 수정 의견만 편집 컨텍스트로 사용하세요. 이전 대화 전체 맥락에 의존하지 마세요.",
     "- 원본 파일은 수정하지 마세요.",
-    "- 반드시 같은 디렉터리에 새 버전 파일을 저장하세요.",
+    `- 반드시 ${targetRel} 파일을 대상으로 부분 수정하세요.`,
     "- Scope가 entire document인 의견은 문서 전체 방향의 수정 요청으로 처리하세요.",
     "- Scope가 selected range인 의견은 선택 영역과 주변 문맥을 중심으로 수정하되, 문체/단어/구조 통일이 필요하면 관련된 앞뒤 문맥도 함께 조정할 수 있습니다.",
     "- selected range의 좌표는 preview에서 보이는 렌더링 텍스트 기준이며 not raw HTML offsets 입니다. Selected HTML과 Before/After context를 우선 앵커로 사용하세요.",
-    "- 실제 변경은 가능하면 edit_file 또는 apply_patch로 수행해 중앙 작업 진행 영역에 편집 작업과 diff 미리보기가 보이게 하세요. 불가피한 경우가 아니면 불투명한 셸 스크립트나 전체 파일 재작성만으로 처리하지 마세요.",
+    "- 실제 변경은 edit_file 또는 apply_patch로 수행해 중앙 작업 진행 영역에 편집 작업과 diff 미리보기가 보이게 하세요.",
+    "- write_file로 전체 HTML을 처음부터 다시 작성하지 마세요. edit_file/apply_patch가 기술적으로 실패한 경우에만 예외로 사용하세요.",
     "- 최종 답변에는 저장한 새 버전 파일 경로와 핵심 변경 요약만 간단히 알려주세요.",
     "",
     "## Source HTML document",
@@ -1641,19 +1643,36 @@ async function submitAiArtifactEdit(session, artifactPath, comments) {
     error.status = 429;
     throw error;
   }
+  const { target: targetFile } = workspaceRelativeTarget(session.workspace.path, targetRel);
   session.busy = true;
-  const ok = sendBackend(session, {
-    type: "submit_line",
-    line: prompt,
-    attachments: [],
-    transcript_line: transcriptLine,
-    suppress_user_transcript: false,
-    isolated_context: true,
-  });
-  if (!ok) {
+  let targetPrepared = false;
+  try {
+    await mkdir(dirname(targetFile), { recursive: true });
+    await writeFile(targetFile, sourceContent, { encoding: "utf8", flag: "wx" });
+    targetPrepared = true;
+    invalidateProjectFileCache(session.workspace.path);
+    const ok = sendBackend(session, {
+      type: "submit_line",
+      line: prompt,
+      attachments: [],
+      transcript_line: transcriptLine,
+      suppress_user_transcript: false,
+      isolated_context: true,
+    });
+    if (!ok) {
+      const error = new Error("Could not submit AI edit request");
+      error.status = 409;
+      throw error;
+    }
+  } catch (error) {
     session.busy = false;
-    const error = new Error("Could not submit AI edit request");
-    error.status = 409;
+    if (targetPrepared) {
+      try {
+        await rm(targetFile, { force: true });
+      } finally {
+        invalidateProjectFileCache(session.workspace.path);
+      }
+    }
     throw error;
   }
   return { ok: true, sourcePath: source.rel, targetPath: targetRel };

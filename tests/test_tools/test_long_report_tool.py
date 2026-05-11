@@ -211,7 +211,6 @@ async def test_long_report_target_tokens_continue_short_sections_and_render_html
             title="초장문 보고서",
             brief="80,000 토큰 수준으로 작성하세요.",
             output_path="outputs/deep.html",
-            target_tokens=80_000,
         ),
         ToolExecutionContext(
             cwd=tmp_path,
@@ -224,13 +223,13 @@ async def test_long_report_target_tokens_continue_short_sections_and_render_html
     )
 
     assert result.is_error is False
-    assert [request.max_tokens for request in client.requests] == [8_000, 16_065, 16_065, 16_065, 8_000]
-    assert result.metadata["target_tokens"] == 80_000
+    assert [request.max_tokens for request in client.requests] == [8_000, 10_500, 10_500, 10_500, 8_000]
+    assert result.metadata["target_tokens"] == 20_000
     report = (tmp_path / "outputs" / "deep.html").read_text(encoding="utf-8")
     assert "<!doctype html>" in report
     assert "<title>초장문 보고서</title>" in report
     assert "본문 약" in report
-    assert "목표 80,000 tokens" in report
+    assert "목표 20,000 tokens" in report
 
 
 @pytest.mark.asyncio
@@ -249,7 +248,6 @@ async def test_long_report_clamps_sections_to_requested_target_budget(tmp_path: 
             title="40k 보고서",
             brief="40,000 토큰 수준으로 작성하세요.",
             output_path="outputs/clamped.md",
-            target_tokens=40_000,
         ),
         ToolExecutionContext(
             cwd=tmp_path,
@@ -263,28 +261,29 @@ async def test_long_report_clamps_sections_to_requested_target_budget(tmp_path: 
 
     assert result.is_error is False
     report = (tmp_path / "outputs" / "clamped.md").read_text(encoding="utf-8")
-    assert estimate_tokens(report, model="gpt-5.5") < 50_000
-    assert result.metadata["estimated_tokens"] < 50_000
+    assert result.metadata["target_tokens"] == 20_000
+    assert estimate_tokens(report, model="gpt-5.5") < 25_000
+    assert result.metadata["estimated_tokens"] < 25_000
 
 
 def test_long_report_infers_user_requested_target_tokens():
     assert _resolve_target_tokens(LongReportToolInput(title="일반 보고서", brief="HTML 보고서를 작성하세요.")) == 0
     assert _resolve_target_tokens(LongReportToolInput(title="시장 분석", brief="18k 토큰 보고서로 작성하세요.")) == 18_000
     assert _resolve_target_tokens(LongReportToolInput(title="시장 분석", brief="길게 작성해줘")) == 18_000
-    assert _resolve_target_tokens(LongReportToolInput(title="시장 분석", brief="디테일하게 작성해줘")) == 18_000
+    assert _resolve_target_tokens(LongReportToolInput(title="시장 분석", brief="디테일하게 작성해줘")) == 0
     assert (
         _resolve_target_tokens(
             LongReportToolInput(title="GPT 역사", brief="HTML 보고서를 80,000 토큰 수준으로 작성하세요.")
         )
-        == 80_000
+        == 20_000
     )
     assert (
         _resolve_target_tokens(LongReportToolInput(title="시장 분석", brief="초장문 8만 토큰 대보고서로 작성"))
-        == 80_000
+        == 20_000
     )
     assert (
         _resolve_target_tokens(LongReportToolInput(title="시장 분석", brief="매우 디테일하게 작성해줘"))
-        == 40_000
+        == 20_000
     )
 
 
@@ -363,7 +362,7 @@ def test_section_prompt_requires_visualizable_material_without_raw_html():
     assert "차트·타임라인·비교표 후보" in prompt
 
 
-def test_default_tool_registry_includes_long_report_tool():
+def test_default_tool_registry_excludes_long_report_tool():
     registry = create_default_tool_registry()
 
-    assert registry.get("write_long_report") is not None
+    assert registry.get("write_long_report") is None

@@ -660,6 +660,8 @@ test("submits AI artifact edits with the next version target path", async (t) =>
   assert.equal(editResponse.status, 200);
   assert.equal(editPayload.sourcePath, "outputs/report.html");
   assert.equal(editPayload.targetPath, "outputs/report_v2.html");
+  const copiedTarget = await readFile(join(workspacePath, "outputs", "report_v2.html"), "utf8");
+  assert.equal(copiedTarget, "<!doctype html><html><body><h1>Old</h1></body></html>");
   const transcriptEvent = await transcriptPromise;
   assert.match(transcriptEvent.item.text, /AI/);
   assert.match(transcriptEvent.item.text, /outputs\/report\.html/);
