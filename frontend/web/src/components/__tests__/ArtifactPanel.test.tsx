@@ -1365,8 +1365,10 @@ describe("ArtifactPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
 
-    expect(document.querySelector(".artifact-ai-progress-empty")?.textContent).toContain("AI 자동편집");
-    expect(document.querySelector(".artifact-ai-progress-empty")?.textContent).toContain("초 경과");
+    expect(document.querySelector(".artifact-ai-progress .workflow-message")).toBeTruthy();
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("AI 편집 요청");
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("응답 대기");
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("report_v1.html");
     expect(document.querySelector(".artifact-ai-progress .workflow-output-preview")?.textContent || "").not.toContain("Old headline");
 
     await userEvent.click(screen.getByRole("button", { name: "AI 수정 패널 접기" }));
@@ -1377,6 +1379,15 @@ describe("ArtifactPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "AI 수정 패널 다시 펼치기" }));
     expect(document.querySelector(".artifact-ai-comments.collapsed")).toBeNull();
     expect(document.querySelector(".artifact-ai-progress")).toBeTruthy();
+
+    act(() => {
+      sendBackendEvent?.({
+        type: "status",
+        message: "수정 위치를 확인하고 있습니다.",
+      });
+    });
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("현재 상태");
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("수정 위치를 확인하고 있습니다.");
 
     act(() => {
       sendBackendEvent?.({

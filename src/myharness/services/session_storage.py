@@ -285,10 +285,17 @@ def save_session_snapshot(
     sid = session_id or uuid4().hex[:12]
     session_path = session_dir / f"session-{sid}.json"
     existing_pinned = False
+    existing_created_at: float | None = None
     if session_path.exists():
         try:
             existing = json.loads(session_path.read_text(encoding="utf-8"))
             existing_pinned = bool(existing.get("pinned"))
+            try:
+                created_at = float(existing.get("created_at") or 0)
+                if created_at > 0:
+                    existing_created_at = created_at
+            except (TypeError, ValueError):
+                existing_created_at = None
         except (OSError, json.JSONDecodeError):
             existing_pinned = False
     now = time.time()
@@ -317,7 +324,7 @@ def save_session_snapshot(
         "history_events": _sanitize_history_events(history_events),
         "usage": usage.model_dump(),
         "tool_metadata": _persistable_tool_metadata(tool_metadata),
-        "created_at": now,
+        "created_at": existing_created_at or now,
         "summary": summary,
         "message_count": len(messages),
         "pinned": existing_pinned,

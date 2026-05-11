@@ -193,6 +193,64 @@ describe("useWorkspaceData", () => {
     });
   });
 
+  it("refreshes saved history while an active saved chat is answering", async () => {
+    vi.mocked(listHistory).mockResolvedValue({
+      options: [
+        { value: "session-old", label: "5/4 09:00 2 msg", description: "이전 대화" },
+        { value: "session-current", label: "5/4 10:00 2 msg", description: "현재 진행 중" },
+      ],
+    });
+    vi.mocked(listLiveSessions).mockResolvedValue({
+      sessions: [{
+        sessionId: "web-current",
+        savedSessionId: "session-current",
+        title: "현재 진행 중",
+        workspace: { name: "Default", path: "C:/demo" },
+        busy: true,
+        createdAt: 2,
+      }, {
+        sessionId: "web-other",
+        savedSessionId: "",
+        title: "다른 사용자 진행 중",
+        workspace: { name: "Default", path: "C:/demo" },
+        busy: true,
+        createdAt: 3,
+      }],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          activeHistoryId: "session-current",
+          clientId: "client-1",
+          busy: true,
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
+      workspacePath: "C:/demo",
+      workspaceName: "Default",
+    }));
+    await waitFor(() => {
+      const history = JSON.parse(screen.getByTestId("history").textContent || "[]");
+      expect(history.map((item: { value: string }) => item.value)).toEqual(["web-other", "session-old", "session-current"]);
+      expect(history[0]).toMatchObject({
+        value: "web-other",
+        description: "다른 사용자 진행 중",
+        live: true,
+        liveSessionId: "web-other",
+        busy: true,
+      });
+    });
+  });
+
   it("keeps the visible history order stable while a saved chat is restoring", async () => {
     vi.mocked(listHistory).mockResolvedValue({
       options: [
@@ -217,8 +275,48 @@ describe("useWorkspaceData", () => {
           ...initialAppState,
           sessionId: "web-restoring",
           activeHistoryId: "session-second",
+          pendingHistoryId: "session-second",
+          restoringHistory: true,
           clientId: "client-1",
           busy: true,
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [
+            { value: "session-top", label: "5/4 10:00 2 msg", description: "최상단 대화" },
+            { value: "session-second", label: "5/4 09:59 2 msg", description: "두 번째 대화" },
+          ],
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(listWorkspaces).toHaveBeenCalled());
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    const history = JSON.parse(screen.getByTestId("history").textContent || "[]");
+    expect(listHistory).not.toHaveBeenCalled();
+    expect(listLiveSessions).not.toHaveBeenCalled();
+    expect(history.map((item: { value: string }) => item.value)).toEqual(["session-top", "session-second"]);
+  });
+
+  it("keeps the history list in place while reading a restored chat", async () => {
+    vi.mocked(listHistory).mockResolvedValue({
+      options: [
+        { value: "session-second", label: "5/4 09:59 2 msg", description: "두 번째 대화" },
+        { value: "session-top", label: "5/4 10:00 2 msg", description: "최상단 대화" },
+      ],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          activeHistoryId: "session-second",
+          clientId: "client-1",
+          historyReadOnly: true,
+          busy: false,
           workspaceName: "Default",
           workspacePath: "C:/demo",
           history: [

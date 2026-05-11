@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
-import html
 import inspect
 import json
 import logging
@@ -46,6 +45,7 @@ from myharness.project_preferences import (
     set_project_skill_enabled,
 )
 from myharness.prompts import build_runtime_system_prompt
+from myharness.services.long_report_progress import read_long_report_progress_state
 from myharness.services.session_storage import (
     fallback_session_title_from_user_text,
     title_echoes_first_user,
@@ -75,8 +75,8 @@ _TOOL_PROGRESS_FIRST_DELAY_SECONDS = 2.5
 _TOOL_PROGRESS_INTERVAL_SECONDS = 3.0
 _LONG_REPORT_PROGRESS_FIRST_DELAY_SECONDS = 1.5
 _LONG_REPORT_PROGRESS_INTERVAL_SECONDS = 2.0
-_LONG_REPORT_PROGRESS_READ_LIMIT = 24_000
-_LONG_REPORT_PROGRESS_DISPLAY_LIMIT = 3_000
+_LONG_REPORT_PROGRESS_READ_LIMIT = 0
+_LONG_REPORT_PROGRESS_DISPLAY_LIMIT = 0
 _SWARM_STATUS_INTERVAL_SECONDS = 2.0
 _SWARM_STRAGGLER_MIN_SECONDS = 10 * 60
 _SWARM_STRAGGLER_PEER_FACTOR = 3.0
@@ -327,25 +327,17 @@ def _looks_like_text_preview_path(path: str) -> bool:
     }
 
 
-_PROGRESS_PREVIEW_READ_LIMIT = 24_000
-_PROGRESS_PREVIEW_DISPLAY_LIMIT = 3_000
+_PROGRESS_PREVIEW_READ_LIMIT = 0
+_PROGRESS_PREVIEW_DISPLAY_LIMIT = 0
 
 
 def _trim_progress_preview_text(text: str, *, limit: int = _PROGRESS_PREVIEW_DISPLAY_LIMIT) -> str:
     value = str(text or "")
+    if limit <= 0:
+        return value
     if len(value) <= limit:
         return value
     return f"...\n{value[-limit:]}"
-
-
-def _html_to_progress_text(text: str) -> str:
-    value = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", text)
-    value = re.sub(r"(?i)<br\s*/?>", "\n", value)
-    value = re.sub(r"(?i)</(?:p|div|section|article|main|header|footer|h[1-6]|li|tr)>", "\n", value)
-    value = re.sub(r"(?s)<[^>]+>", "", value)
-    value = html.unescape(value)
-    lines = [" ".join(line.split()) for line in value.splitlines()]
-    return "\n".join(line for line in lines if line).strip()
 
 
 def _read_progress_preview_content(cwd: Path, path: str, *, limit: int = _PROGRESS_PREVIEW_READ_LIMIT) -> str:
@@ -359,19 +351,27 @@ def _read_progress_preview_content(cwd: Path, path: str, *, limit: int = _PROGRE
         text = preview_path.resolve().read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+    if limit <= 0:
+        return text
     return text if len(text) <= limit else text[-limit:]
 
 
 def _progress_preview_content(tool_name: str, cwd: Path, path: str) -> str:
-    is_long_report = tool_name.lower() == "write_long_report"
-    read_limit = _LONG_REPORT_PROGRESS_READ_LIMIT if is_long_report else _PROGRESS_PREVIEW_READ_LIMIT
-    display_limit = _LONG_REPORT_PROGRESS_DISPLAY_LIMIT if is_long_report else _PROGRESS_PREVIEW_DISPLAY_LIMIT
+    read_limit = _LONG_REPORT_PROGRESS_READ_LIMIT if tool_name.lower() == "write_long_report" else _PROGRESS_PREVIEW_READ_LIMIT
+    display_limit = (
+        _LONG_REPORT_PROGRESS_DISPLAY_LIMIT
+        if tool_name.lower() == "write_long_report"
+        else _PROGRESS_PREVIEW_DISPLAY_LIMIT
+    )
     content = _read_progress_preview_content(cwd, path, limit=read_limit)
     if not content:
         return ""
-    if is_long_report and Path(path).suffix.lower() in {".html", ".htm"}:
-        content = _html_to_progress_text(content)
     return _trim_progress_preview_text(content, limit=display_limit)
+
+
+def _long_report_progress_usage_input(cwd: Path, path: str) -> dict[str, object]:
+    state = read_long_report_progress_state(cwd, path)
+    return {key: value for key, value in state.items() if value > 0}
 
 
 def _tool_progress_message(tool_name: str, tool_input: dict[str, object] | None, elapsed_seconds: int) -> str:
@@ -924,6 +924,10 @@ class ReactBackendHost:
             await self._emit(
                 BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=transcript_text))
             )
+        elif not quiet and not is_shell_shortcut and not is_internal_task_notification and transcript_text.strip():
+            self._record_history_event(
+                BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=transcript_text))
+            )
         if not image_blocks and not is_shell_shortcut and isinstance(effective_prompt, str) and not is_internal_task_notification:
             swarm_hint = _swarm_delegation_hint_for_prompt(effective_line)
             if swarm_hint:
@@ -966,6 +970,8 @@ class ReactBackendHost:
                     if preview_content:
                         progress_input.setdefault("path", preview_path)
                         progress_input.setdefault("content", preview_content)
+                if tool_name.lower() == "write_long_report" and preview_path:
+                    progress_input.update(_long_report_progress_usage_input(cwd, preview_path))
                 await self._emit(
                     BackendEvent(
                         type="tool_progress",

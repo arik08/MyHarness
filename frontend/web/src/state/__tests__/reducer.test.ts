@@ -217,6 +217,27 @@ describe("appReducer", () => {
     expect(completed.busy).toBe(false);
   });
 
+  it("does not shrink streamed assistant text when completion only repeats the tail", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "공개적으로 확인 가능한 자료를 기준으로 작성하겠습니다.\n\n" },
+    });
+    const streaming = appReducer(first, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "OpenAI 공식 페이지 일부가 403으로 막혀 우회/대체 출처를 병행해." },
+    });
+    const completed = appReducer(streaming, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "OpenAI 공식 페이지 일부가 403으로 막혀 우회/대체 출처를 병행해." },
+    });
+
+    expect(completed.messages).toHaveLength(1);
+    expect(completed.messages[0].text).toBe(
+      "공개적으로 확인 가능한 자료를 기준으로 작성하겠습니다.\n\nOpenAI 공식 페이지 일부가 403으로 막혀 우회/대체 출처를 병행해.",
+    );
+    expect(completed.messages[0].isComplete).toBe(true);
+  });
+
   it("does not mark tool-use assistant completions as final answers", () => {
     const completed = appReducer(initialAppState, {
       type: "backend_event",

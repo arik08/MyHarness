@@ -20,7 +20,7 @@ from myharness.api.client import (
     SupportsStreamingMessages,
 )
 from myharness.api.usage import UsageSnapshot
-from myharness.engine.messages import ConversationMessage, ToolResultBlock
+from myharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock
 from myharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
@@ -61,6 +61,16 @@ MAX_TRACKED_WORK_LOG = 10
 MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
+MAX_AUTO_CONTINUATIONS = 4
+CONTINUATION_PROMPT = (
+    "Continue the previous assistant response exactly where it stopped. "
+    "Do not restart, summarize, or mention that you are continuing. "
+    "Continue in the same language and format."
+)
+TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
+    "\n\n[응답이 출력 한도에 여러 번 도달해 여기까지 표시했습니다. "
+    "이어서 더 작성하려면 계속 요청해주세요.]"
+)
 
 
 def _is_prompt_too_long_error(exc: Exception) -> bool:
@@ -98,6 +108,37 @@ def _is_network_error_message(message: str) -> bool:
             "errno 11001",
         )
     )
+
+
+def _is_output_truncated_stop_reason(stop_reason: str | None) -> bool:
+    normalized = str(stop_reason or "").strip().lower()
+    return normalized in {"length", "max_tokens", "max_completion_tokens", "incomplete"}
+
+
+def _add_usage(left: UsageSnapshot, right: UsageSnapshot) -> UsageSnapshot:
+    return UsageSnapshot(
+        input_tokens=left.input_tokens + right.input_tokens,
+        output_tokens=left.output_tokens + right.output_tokens,
+    )
+
+
+def _raw_message_text(message: ConversationMessage) -> str:
+    return "".join(block.text for block in message.content if isinstance(block, TextBlock))
+
+
+def _combine_continued_assistant_message(
+    previous_text_parts: list[str],
+    final_message: ConversationMessage,
+    *,
+    append_notice: bool = False,
+) -> ConversationMessage:
+    text = "".join([*previous_text_parts, _raw_message_text(final_message)])
+    if append_notice:
+        text = f"{text}{TRUNCATED_AFTER_CONTINUATIONS_NOTICE}"
+    non_text_blocks = [block for block in final_message.content if isinstance(block, ToolUseBlock)]
+    content = [TextBlock(text=text)] if text else []
+    content.extend(non_text_blocks)
+    return ConversationMessage(role="assistant", content=content)
 
 
 class MaxTurnsExceeded(RuntimeError):
@@ -609,6 +650,11 @@ async def run_query(
         return
 
     turn_count = 0
+    continuation_start_index: int | None = None
+    continued_text_parts: list[str] = []
+    continued_usage = UsageSnapshot()
+    continuation_count = 0
+    continuation_status_sent = False
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
         # --- auto-compact check before calling the model ---------------
@@ -624,6 +670,7 @@ async def run_query(
 
         final_message: ConversationMessage | None = None
         usage = UsageSnapshot()
+        stop_reason: str | None = None
 
         try:
             async for event in context.api_client.stream_message(
@@ -658,6 +705,7 @@ async def run_query(
                 if isinstance(event, ApiMessageCompleteEvent):
                     final_message = event.message
                     usage = event.usage
+                    stop_reason = event.stop_reason
         except Exception as exc:
             error_msg = str(exc)
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
@@ -691,6 +739,34 @@ async def run_query(
                 )
             ), usage
             return
+
+        output_truncated = _is_output_truncated_stop_reason(stop_reason)
+        if output_truncated and not final_message.tool_uses and continuation_count < MAX_AUTO_CONTINUATIONS:
+            if continuation_start_index is None:
+                continuation_start_index = len(messages)
+            messages.append(final_message)
+            messages.append(ConversationMessage.from_user_text(CONTINUATION_PROMPT))
+            continued_text_parts.append(_raw_message_text(final_message))
+            continued_usage = _add_usage(continued_usage, usage)
+            continuation_count += 1
+            if not continuation_status_sent:
+                continuation_status_sent = True
+                yield StatusEvent(message="응답이 출력 한도에 도달해 자동으로 이어서 작성합니다."), None
+            continue
+
+        if continuation_start_index is not None:
+            final_message = _combine_continued_assistant_message(
+                continued_text_parts,
+                final_message,
+                append_notice=output_truncated and not final_message.tool_uses,
+            )
+            usage = _add_usage(continued_usage, usage)
+            del messages[continuation_start_index:]
+            continuation_start_index = None
+            continued_text_parts = []
+            continued_usage = UsageSnapshot()
+            continuation_count = 0
+            continuation_status_sent = False
 
         messages.append(final_message)
         yield AssistantTurnComplete(message=final_message, usage=usage), usage

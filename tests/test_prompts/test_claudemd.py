@@ -194,10 +194,16 @@ def test_build_runtime_system_prompt_guides_long_report_threshold(tmp_path: Path
     prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="80,000 토큰 HTML 보고서 작성")
 
     assert "Long Report Generation" in prompt
-    assert "up to about 40,000 tokens" in prompt
+    assert "10,000-12,000 tokens" in prompt
+    assert "15,000-18,000 tokens" in prompt
+    assert "18,000 tokens" in prompt
+    assert "20,000 tokens" in prompt
+    assert "40,000" in prompt
     assert "write_long_report" in prompt
     assert "80,000 tokens" in prompt
     assert "target_tokens" in prompt
+    assert "include concrete visual requirements in the `brief`" in prompt
+    assert "timeline, comparison table, section-weight chart" in prompt
 
 
 def test_task_worker_prompt_skips_delegation_and_parent_task_queries(tmp_path: Path, monkeypatch):
@@ -218,6 +224,8 @@ def test_task_worker_prompt_skips_delegation_and_parent_task_queries(tmp_path: P
     assert "You are a **coordinator**." not in prompt
     assert "Do not use task_get, task_list, or task_output" in prompt
     assert "Use task_update only" in prompt
+    assert "chart, table, timeline, or comparison candidates" in prompt
+    assert "Do not return raw unstyled HTML" in prompt
 
 
 def test_build_runtime_system_prompt_does_not_reinject_exported_secret_values(tmp_path: Path, monkeypatch):

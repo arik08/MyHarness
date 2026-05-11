@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary } from "../types/backend";
-import type { ArtifactAiEditComment, ArtifactAiEditSelection } from "../types/ui";
+import type { ArtifactAiEditComment, ArtifactAiEditSelection, WorkflowEvent } from "../types/ui";
 import {
   artifactCategory,
   artifactDisplayName,
@@ -89,6 +89,68 @@ function formatAiEditElapsed(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return remainder ? `${minutes}분 ${remainder}초 경과` : `${minutes}분 경과`;
+}
+
+function meaningfulAiEditStatusText(value: string) {
+  const text = String(value || "").trim();
+  if (!text || text === "준비됨" || text === "연결 중") return "";
+  return text;
+}
+
+function buildAiEditFallbackEvents({
+  show,
+  statusText,
+  aiEditStatus,
+  activePath,
+  targetPath,
+  commentCount,
+}: {
+  show: boolean;
+  statusText: string;
+  aiEditStatus: string;
+  activePath: string;
+  targetPath: string;
+  commentCount: number;
+}): WorkflowEvent[] {
+  if (!show) return [];
+  const sourceName = activePath ? artifactFileName(activePath) : "현재 문서";
+  const targetName = targetPath ? artifactFileName(targetPath) : "새 버전";
+  const liveStatus = meaningfulAiEditStatusText(statusText);
+  const requestSent = Boolean(targetPath || !aiEditStatus.includes("전달 중"));
+  const requestDetail = targetPath
+    ? `${sourceName}에서 ${targetName}으로 수정 의견 ${commentCount}개를 반영합니다.`
+    : `${sourceName}의 수정 의견 ${commentCount}개를 중앙 채팅으로 전달하고 있습니다.`;
+  const waitingDetail = liveStatus
+    || "AI가 수정 방향을 잡고 있습니다. 응답이나 도구 호출이 오면 여기서 이어서 표시됩니다.";
+  const events: WorkflowEvent[] = [
+    {
+      id: "artifact-ai-edit-request",
+      toolName: "",
+      title: "AI 편집 요청",
+      detail: requestDetail,
+      status: requestSent ? "done" : "running",
+      level: "parent",
+      role: "waiting",
+    },
+  ];
+  if (requestSent) {
+    events.push({
+      id: "artifact-ai-edit-waiting",
+      toolName: "",
+      title: liveStatus ? "현재 상태" : "응답 대기",
+      detail: waitingDetail,
+      status: "running",
+      level: "parent",
+      role: "waiting",
+    });
+  }
+  return events;
+}
+
+function aiEditProgressSummary(events: WorkflowEvent[]) {
+  const event = [...events].reverse().find((item) => item.status === "running") || events.at(-1);
+  if (!event) return "";
+  return [event.title, event.detail].filter(Boolean).join(" · ");
 }
 
 function projectFileDirectory(path: string) {
@@ -603,11 +665,24 @@ export function ArtifactPanel() {
   const aiEditElapsedSeconds = aiEditProgressStartedAt === null
     ? 0
     : Math.max(0, Math.floor((aiEditProgressNow - aiEditProgressStartedAt) / 1000));
-  const aiEditWaitingText = state.workflowEvents.length
+  const showAiEditFallbackProgress = showAiEditProgress && Boolean(aiEditStatus || submittingAiEdit || aiEditTargetPath);
+  const aiEditProgressEvents = state.workflowEvents.length
+    ? state.workflowEvents
+    : buildAiEditFallbackEvents({
+        show: showAiEditFallbackProgress,
+        statusText: state.statusText,
+        aiEditStatus,
+        activePath,
+        targetPath: aiEditTargetPath,
+        commentCount: aiEditComments.length,
+      });
+  const aiEditProgressSummaryText = aiEditProgressSummary(aiEditProgressEvents);
+  const aiEditWaitingText = aiEditProgressEvents.length
     ? ""
     : `AI 자동편집 요청 처리 중 · ${formatAiEditElapsed(aiEditElapsedSeconds)} · 응답 또는 도구 시작을 기다리고 있습니다.`;
-  const aiEditCollapsedText = aiEditStatus
-    || (showAiEditProgress ? (aiEditWaitingText || "AI 자동편집 진행 과정을 숨긴 상태입니다.") : `수정 의견 ${aiEditComments.length}개`);
+  const aiEditCollapsedText = showAiEditProgress
+    ? (aiEditProgressSummaryText || aiEditStatus || aiEditWaitingText || "AI 자동편집 진행 과정을 숨긴 상태입니다.")
+    : `수정 의견 ${aiEditComments.length}개`;
 
   async function refreshProjectFiles(nextScope = fileScope) {
     try {
@@ -1147,8 +1222,11 @@ export function ArtifactPanel() {
               </button>
               {showAiEditProgress ? (
                 <div className="artifact-ai-progress" aria-label="AI 자동편집 진행 과정">
-                  <WorkflowPanel events={state.workflowEvents} durationSeconds={state.workflowDurationSeconds} />
-                  {!state.workflowEvents.length ? (
+                  <WorkflowPanel
+                    events={aiEditProgressEvents}
+                    durationSeconds={state.workflowEvents.length ? state.workflowDurationSeconds : aiEditElapsedSeconds}
+                  />
+                  {!aiEditProgressEvents.length ? (
                     <p className="artifact-ai-progress-empty" role="status" aria-live="polite">
                       <span className="artifact-ai-progress-pulse" aria-hidden="true" />
                       <span>{aiEditWaitingText}</span>

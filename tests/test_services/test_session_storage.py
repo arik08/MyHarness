@@ -147,6 +147,39 @@ def test_user_edited_session_title_is_preserved(tmp_path: Path, monkeypatch):
     assert snapshot["tool_metadata"]["session_title_user_edited"] is True
 
 
+def test_overwriting_session_snapshot_keeps_original_created_at(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    times = iter([100.0, 200.0])
+    monkeypatch.setattr("myharness.services.session_storage.time.time", lambda: next(times))
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="첫 질문")])],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        session_id="stable-order",
+    )
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="이어진 질문")])],
+        usage=UsageSnapshot(input_tokens=3, output_tokens=4),
+        session_id="stable-order",
+    )
+
+    snapshot = load_session_by_id(project, "stable-order")
+
+    assert snapshot is not None
+    assert snapshot["created_at"] == 100.0
+
+
 def test_export_session_markdown(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     project = tmp_path / "repo"

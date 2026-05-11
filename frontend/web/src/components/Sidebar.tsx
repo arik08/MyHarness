@@ -106,12 +106,17 @@ export function Sidebar() {
   }
 
   async function openHistory(sessionId: string, label: string) {
-    if (!state.sessionId) {
+    const nextHistoryId = String(sessionId || "").trim();
+    if (!state.sessionId || !nextHistoryId) {
       return;
     }
     setExpandedHistoryActionId("");
+    const activeHistoryId = state.activeHistoryId || state.sessionId;
+    if (nextHistoryId === state.pendingHistoryId || nextHistoryId === activeHistoryId || nextHistoryId === state.sessionId) {
+      return;
+    }
     window.dispatchEvent(new Event("myharness:saveMessageScroll"));
-    dispatch({ type: "begin_history_restore", sessionId });
+    dispatch({ type: "begin_history_restore", sessionId: nextHistoryId });
     dispatch({ type: "set_busy", value: true });
     try {
       let targetSessionId = state.sessionId;
@@ -120,7 +125,7 @@ export function Sidebar() {
         workspacePath: state.workspacePath || undefined,
       });
       const liveSession = liveSessions.sessions.find((item) => (
-        item.savedSessionId === sessionId || item.sessionId === sessionId
+        item.savedSessionId === nextHistoryId || item.sessionId === nextHistoryId
       ));
       if (liveSession) {
         dispatch({
@@ -168,7 +173,7 @@ export function Sidebar() {
       await sendBackendRequest(targetSessionId, state.clientId, {
         type: "apply_select_command",
         command: "resume",
-        value: sessionId,
+        value: nextHistoryId,
       });
     } catch (error) {
       dispatch({

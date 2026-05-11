@@ -21,6 +21,7 @@ import {
   canReplayFromLastEventId,
   createSessionReplayState,
   rawEventsAfterLastEventId,
+  rememberSuppressedUserTranscript,
   replayEventsForState,
   shouldReplayRawEvent,
   updateSessionReplayState,
@@ -3584,6 +3585,16 @@ function normalizeAttachment(attachment) {
   };
 }
 
+function visibleSubmittedUserText(line, attachments = []) {
+  const cleanLine = String(line || "").trim();
+  const text = cleanLine || (attachments.length ? "(이미지 첨부)" : "");
+  if (!attachments.length) {
+    return text;
+  }
+  const suffix = ` [image attachments: ${attachments.length}]`;
+  return text ? `${text}${suffix}` : suffix.trim();
+}
+
 function writeSseEvent(client, event, id = null) {
   if (id !== null && id !== undefined) {
     client.write(`id: ${id}\n`);
@@ -4505,6 +4516,9 @@ async function handleApi(request, response, pathname) {
       if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
         json(response, 429, { error: "Concurrent response limit reached" });
         return true;
+      }
+      if (body.suppressUserTranscript === true && !line.startsWith("!")) {
+        rememberSuppressedUserTranscript(session.replayState, visibleSubmittedUserText(line, attachments));
       }
       session.busy = true;
       const ok = sendBackend(session, {

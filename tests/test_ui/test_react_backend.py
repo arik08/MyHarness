@@ -19,12 +19,14 @@ from myharness.engine.stream_events import (
     ToolInputDelta,
 )
 from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.services.long_report_progress import write_long_report_progress_state
 from myharness.tasks.types import TaskRecord
 from myharness.ui.backend_host import (
     BackendHostConfig,
     ReactBackendHost,
     _detect_slow_swarm_teammate,
     _long_report_progress_path,
+    _long_report_progress_usage_input,
     _progress_preview_content,
     _read_progress_preview_content,
     _tool_progress_delays,
@@ -99,7 +101,7 @@ def test_long_report_progress_infers_path_and_reads_streamed_file(tmp_path):
     assert "<h1>생성 중</h1>" in preview
 
 
-def test_long_report_progress_preview_strips_html_and_caps_tail(tmp_path):
+def test_long_report_progress_preview_keeps_full_raw_file_text(tmp_path):
     progress_path = "outputs/report.html"
     report_path = tmp_path / progress_path
     report_path.parent.mkdir(parents=True)
@@ -112,9 +114,29 @@ def test_long_report_progress_preview_strips_html_and_caps_tail(tmp_path):
 
     preview = _progress_preview_content("write_long_report", tmp_path, progress_path)
 
-    assert "<p>" not in preview
+    assert preview.startswith("<!doctype html>")
+    assert "<p>초반 HTML 본문</p>" in preview
     assert "마지막 사람이 읽을 본문" in preview
-    assert len(preview) <= 3_004
+    assert len(preview) == len(report_path.read_text(encoding="utf-8"))
+
+
+def test_long_report_progress_usage_reads_sidecar_state(tmp_path):
+    progress_path = "outputs/report.html"
+    write_long_report_progress_state(
+        tmp_path,
+        progress_path,
+        usage=UsageSnapshot(input_tokens=1234, output_tokens=5678),
+        document_written_tokens=4321,
+    )
+
+    usage_input = _long_report_progress_usage_input(tmp_path, progress_path)
+
+    assert usage_input == {
+        "document_written_tokens": 4321,
+        "usage_input_tokens": 1234,
+        "usage_output_tokens": 5678,
+        "usage_total_tokens": 6912,
+    }
 
 
 def test_long_report_progress_uses_less_aggressive_preview_updates():
@@ -805,6 +827,32 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
         and "hello from react backend" in event.item.text
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_backend_host_records_suppressed_user_transcript_for_history(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("기록된 답변")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("기록된 답변"))
+    events = []
+
+    async def _emit(event):
+        host._record_history_event(event)
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line("저장되어야 하는 질문", emit_user_transcript=False)
+    finally:
+        await close_runtime(host._bundle)
+
+    assert not any(event.type == "transcript_item" and event.item and event.item.role == "user" for event in events)
+    assert host._history_events[0] == {"type": "user", "text": "저장되어야 하는 질문"}
+    assert any(event == {"type": "assistant", "text": "기록된 답변", "has_tool_uses": False} for event in host._history_events)
 
 
 @pytest.mark.asyncio

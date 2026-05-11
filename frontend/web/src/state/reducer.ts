@@ -307,6 +307,19 @@ function normalizeVisibleText(message: string) {
   return text.replace(brainstormingBrowserPrompt, localizedBrainstormingBrowserPrompt);
 }
 
+function assistantCompletionText(streamedText: string, completedText: string) {
+  if (!streamedText || !completedText) {
+    return completedText || streamedText;
+  }
+  if (completedText === streamedText || completedText.startsWith(streamedText)) {
+    return completedText;
+  }
+  if (streamedText.endsWith(completedText) || streamedText.includes(completedText)) {
+    return streamedText;
+  }
+  return completedText;
+}
+
 function appendErrorMessage(messages: ChatMessage[], message: string): ChatMessage[] {
   const text = normalizeVisibleText(message).trim() || "응답 생성 중 오류가 발생했습니다.";
   const last = messages[messages.length - 1];
@@ -2103,7 +2116,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ? last?.role === "assistant" && last.isComplete !== true
             ? [
                 ...state.messages.slice(0, -1),
-                { ...last, text: value, isComplete: isFinalAnswer },
+                { ...last, text: assistantCompletionText(last.text, value), isComplete: isFinalAnswer },
               ]
             : appendMessage(state.messages, { role: "assistant", text: value, isComplete: isFinalAnswer })
           : isFinalAnswer && last?.role === "assistant"

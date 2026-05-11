@@ -127,6 +127,30 @@ class EmptyAssistantApiClient:
         )
 
 
+class TruncatedThenContinuedApiClient:
+    def __init__(self) -> None:
+        self.requests = []
+        self._calls = 0
+
+    async def stream_message(self, request):
+        self.requests.append(replace(request, messages=list(request.messages)))
+        self._calls += 1
+        if self._calls == 1:
+            yield ApiTextDeltaEvent(text="첫 부분")
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="첫 부분")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=4096),
+                stop_reason="length",
+            )
+            return
+        yield ApiTextDeltaEvent(text=" 이어진 부분")
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text=" 이어진 부분")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=3),
+            stop_reason="stop",
+        )
+
+
 class CoordinatorLoopApiClient:
     def __init__(self) -> None:
         self.requests = []
@@ -201,6 +225,34 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
     assert engine.total_usage.input_tokens == 10
     assert engine.total_usage.output_tokens == 5
     assert len(engine.messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_engine_auto_continues_truncated_final_answer(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    client = TruncatedThenContinuedApiClient()
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("긴 보고서를 작성해줘")]
+
+    deltas = [event.text for event in events if isinstance(event, AssistantTextDelta)]
+    completions = [event for event in events if isinstance(event, AssistantTurnComplete)]
+
+    assert deltas == ["첫 부분", " 이어진 부분"]
+    assert len(completions) == 1
+    assert completions[0].message.text == "첫 부분 이어진 부분"
+    assert engine.messages[-1].text == "첫 부분 이어진 부분"
+    assert all("continue" not in message.text.lower() for message in engine.messages)
+    assert len(client.requests) == 2
+    assert client.requests[1].messages[-1].role == "user"
+    assert "continue" in client.requests[1].messages[-1].text.lower()
 
 
 @pytest.mark.asyncio

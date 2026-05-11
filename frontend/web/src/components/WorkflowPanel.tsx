@@ -52,6 +52,33 @@ function formatWorkflowTokenCount(tokens: number) {
   return `${Math.max(0, Math.round(tokens || 0)).toLocaleString()} 토큰`;
 }
 
+function parseWorkflowTokenNumber(value: string | undefined | null) {
+  const normalized = String(value || "").replace(/,/g, "").trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function workflowLongReportUsageTokens(output: string | undefined) {
+  const value = String(output || "");
+  const match = value.match(/작성 사용량\s*합계\s*([0-9][0-9,]*)\s*tokens?/iu)
+    || value.match(/문서 작성 사용량\s*합계\s*([0-9][0-9,]*)\s*tokens?/iu);
+  return parseWorkflowTokenNumber(match?.[1]);
+}
+
+function workflowLongReportInputUsageTokens(input: Record<string, unknown> | null | undefined) {
+  return parseWorkflowTokenNumber(String(input?.document_written_tokens ?? ""));
+}
+
+function workflowLongReportDocumentTokens(output: string | undefined) {
+  const value = String(output || "");
+  const match = value.match(/문서 약\s*([0-9][0-9,]*)\s*tokens?/iu)
+    || value.match(/약\s*([0-9][0-9,]*)\s*tokens?/iu);
+  return parseWorkflowTokenNumber(match?.[1]);
+}
+
 function countWorkflowPreviewLines(text: string) {
   const value = String(text || "");
   return value ? value.replace(/\r\n/g, "\n").split("\n").length : 0;
@@ -62,19 +89,22 @@ function formatWorkflowContentCount(text: string) {
   return `${formatWorkflowTokenCount(estimateTextTokens(text))} (${lines.toLocaleString()}줄)`;
 }
 
-function trimWorkflowPreviewContent(text: string, limit = 3_000) {
-  const value = String(text || "");
-  if (value.length <= limit) {
-    return value;
+function formatWorkflowLongReportCount(event: WorkflowEvent, fallbackText: string) {
+  const runningUsageTokens = workflowLongReportInputUsageTokens(event.toolInput);
+  if (runningUsageTokens !== null && runningUsageTokens > 0) {
+    return `작성 사용량 ${formatWorkflowTokenCount(runningUsageTokens)}`;
   }
-  return `...\n${value.slice(-limit)}`;
-}
-
-function workflowPreviewDisplayLimit(event: WorkflowEvent, source: WorkflowPreviewSource) {
-  if (source.kind !== "content") {
-    return 12_000;
+  if (event.status !== "running") {
+    const usageTokens = workflowLongReportUsageTokens(event.output);
+    if (usageTokens !== null) {
+      return `작성 사용량 ${formatWorkflowTokenCount(usageTokens)}`;
+    }
+    const documentTokens = workflowLongReportDocumentTokens(event.output);
+    if (documentTokens !== null) {
+      return `문서 ${formatWorkflowTokenCount(documentTokens)}`;
+    }
   }
-  return 3_000;
+  return formatWorkflowContentCount(fallbackText);
 }
 
 function workflowPreviewFileName(path: string) {
@@ -509,9 +539,7 @@ function workflowStepTitle(event: WorkflowEvent) {
 function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source: WorkflowPreviewSource }) {
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
-  const displayContent = source.kind === "diff"
-    ? source.content
-    : trimWorkflowPreviewContent(source.content, workflowPreviewDisplayLimit(event, source));
+  const displayContent = source.content;
   const fileName = workflowPreviewFileName(source.path);
   const prefix = source.kind === "diff"
     ? done ? "수정 완료" : "수정 미리보기"
@@ -521,7 +549,9 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
     : 0;
   const count = source.kind === "diff"
     ? `${formatWorkflowTokenCount(estimateTextTokens(source.content))} (${changedLines.toLocaleString()}줄)`
-    : formatWorkflowContentCount(displayContent);
+    : isLongReportWorkflowTool(event.toolName)
+      ? formatWorkflowLongReportCount(event, source.content)
+      : formatWorkflowContentCount(source.content);
 
   useLayoutEffect(() => {
     const body = bodyRef.current;

@@ -1510,7 +1510,7 @@ describe("MessageList", () => {
     expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
   });
 
-  it("caps very large running write previews to the recent tail", () => {
+  it("shows the full running write preview text", () => {
     const hugeContent = `${"초반 내용\n".repeat(30000)}마지막 본문`;
 
     render(
@@ -1542,13 +1542,13 @@ describe("MessageList", () => {
     );
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
-    expect(body.textContent?.startsWith("...\n")).toBe(true);
+    expect(body.textContent?.startsWith("초반 내용\n")).toBe(true);
     expect(body.textContent).toContain("마지막 본문");
-    expect((body.textContent || "").length).toBeLessThan(3_100);
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toMatch(/2,\d{3} 토큰 \(501줄\)/);
+    expect(body.textContent).toBe(hugeContent);
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("30,001줄");
   });
 
-  it("keeps running long report file previews to a small rolling window", () => {
+  it("shows the full running long report file preview text", () => {
     const hugeContent = `${"초반 분석 본문\n".repeat(12000)}마지막 장문 보고서 본문`;
 
     render(
@@ -1584,10 +1584,10 @@ describe("MessageList", () => {
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
     expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
-    expect(body.textContent?.startsWith("...\n")).toBe(true);
+    expect(body.textContent?.startsWith("초반 분석 본문\n")).toBe(true);
     expect(body.textContent).toContain("마지막 장문 보고서 본문");
-    expect((body.textContent || "").length).toBeLessThan(3_100);
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").not.toContain("12000");
+    expect(body.textContent).toBe(hugeContent);
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("12,001줄");
   });
 
   it("renders one running write preview for duplicate same-path workflow events", () => {
@@ -1972,6 +1972,78 @@ describe("MessageList", () => {
     expect(screen.queryByText("작성 중인 결과물 - internet-ai-future-report.html")).toBeNull();
     expect(screen.getByText("작성 완료 - internet-ai-future-report.html")).toBeTruthy();
     expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
+  });
+
+  it("shows long report generation usage instead of preview text tokens", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "장문 HTML 보고서 작성해줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-long-report",
+              toolName: "write_long_report",
+              title: "write_long_report",
+              detail: "장문 보고서를 생성했습니다: outputs/CPU_반도체_주가_급등_분석_보고서.html",
+              status: "done",
+              level: "child",
+              toolInput: {
+                output_path: "outputs/CPU_반도체_주가_급등_분석_보고서.html",
+                title: "CPU 반도체 주가 급등 분석 보고서",
+                output_format: "html",
+              },
+              output: "장문 보고서를 생성했습니다: outputs/CPU_반도체_주가_급등_분석_보고서.html (섹션 8개, 문서 약 52,400 tokens, 작성 사용량 합계 141,234 tokens, 모델 호출 합계 210,000 tokens (입력 82,000 / 출력 128,000))",
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("작성 완료 - CPU_반도체_주가_급등_분석_보고서.html")).toBeTruthy();
+    expect(screen.getByText("작성 사용량 141,234 토큰")).toBeTruthy();
+    expect(screen.queryByText(/29줄/)).toBeNull();
+  });
+
+  it("shows running long report generation usage from progress metadata", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "장문 HTML 보고서 작성해줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-long-report-running",
+              toolName: "write_long_report",
+              title: "write_long_report",
+              detail: "파일 작업 중... 44초 경과 · outputs/cpu_주가_급등_분석_보고서.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                output_path: "outputs/cpu_주가_급등_분석_보고서.html",
+                content: "<section><p>미리보기 본문</p></section>",
+                document_written_tokens: 98234,
+                usage_total_tokens: 1588,
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("작성 중인 결과물 - cpu_주가_급등_분석_보고서.html")).toBeTruthy();
+    expect(screen.getByText("작성 사용량 98,234 토큰")).toBeTruthy();
+    expect(screen.queryByText(/1,781 토큰/)).toBeNull();
   });
 
   it("renders web investigation sources after the completed assistant answer", async () => {

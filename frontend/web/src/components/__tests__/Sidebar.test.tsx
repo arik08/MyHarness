@@ -570,6 +570,40 @@ describe("Sidebar", () => {
     expect(document.querySelector(".history-item.active")).not.toBeNull();
   });
 
+  it("does not re-open the already active history row", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          activeHistoryId: "saved-current",
+          clientId: "client-1",
+          busy: false,
+          history: [{
+            value: "saved-current",
+            label: "5/3 10:00 2 msg",
+            description: "저장된 live 대화",
+            live: true,
+            liveSessionId: "web-current",
+            busy: false,
+          }],
+        }}
+      >
+        <Sidebar />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getAllByRole("button", { name: /저장된 live 대화/ })[0]);
+
+    expect(listLiveSessions).not.toHaveBeenCalled();
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("active-history").textContent).toBe("saved-current");
+    expect(screen.getByTestId("pending-history").textContent).toBe("");
+    expect(document.querySelector(".history-item.busy")).toBeNull();
+  });
+
   it("shows the current question as the active history row when the current live row is filtered", () => {
     render(
       <AppStateProvider

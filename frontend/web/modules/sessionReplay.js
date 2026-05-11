@@ -200,6 +200,17 @@ export function updateSessionReplayState(state, event) {
   pushStableEvent(state, event);
 }
 
+export function rememberSuppressedUserTranscript(state, text) {
+  const clean = String(text || "").trim();
+  if (!clean) {
+    return;
+  }
+  updateSessionReplayState(state, {
+    type: "transcript_item",
+    item: { role: "user", text: clean },
+  });
+}
+
 export function replayEventsForState(state) {
   const entries = [
     ...state.latestEvents.values(),

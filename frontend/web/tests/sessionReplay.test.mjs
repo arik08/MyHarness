@@ -6,6 +6,7 @@ import {
   canReplayFromLastEventId,
   createSessionReplayState,
   rawEventsAfterLastEventId,
+  rememberSuppressedUserTranscript,
   replayEventsForState,
   updateSessionReplayState,
 } from "../modules/sessionReplay.js";
@@ -95,6 +96,21 @@ test("keeps the user transcript when status messages exceed the stable replay li
 
   assert.deepEqual(userMessages.map((event) => event.item.text), ["사용자 질문"]);
   assert.deepEqual(statuses.map((event) => event.message), ["상태 1000"]);
+});
+
+test("keeps a suppressed optimistic user transcript for full state replay", () => {
+  const state = createSessionReplayState();
+
+  rememberSuppressedUserTranscript(state, "프론트에서 먼저 표시한 질문");
+  updateSessionReplayState(state, { type: "assistant_complete", message: "답변 완료" });
+
+  assert.deepEqual(
+    replayEventsForState(state).map((event) => [event.type, event.item?.role || "", event.item?.text || event.message || ""]),
+    [
+      ["transcript_item", "user", "프론트에서 먼저 표시한 질문"],
+      ["assistant_complete", "", "답변 완료"],
+    ],
+  );
 });
 
 test("returns raw replay events after Last-Event-ID without duplicating the last event", () => {
