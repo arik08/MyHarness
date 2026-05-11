@@ -13,6 +13,9 @@ from myharness.config.settings import (
     Settings,
     display_model_setting,
     load_settings,
+    model_output_profile,
+    report_token_limits_for_model,
+    supported_model_output_token_limits,
     normalize_anthropic_model_name,
     save_settings,
     strip_ansi_escape_sequences,
@@ -20,18 +23,97 @@ from myharness.config.settings import (
 )
 
 
+def test_checked_in_project_settings_default_to_pgpt():
+    settings_path = Path(__file__).resolve().parents[2] / ".myharness" / "settings.json"
+
+    settings = load_settings(settings_path)
+
+    assert settings.active_profile == "p-gpt"
+    assert settings.provider == "openai"
+    assert settings.api_format == "openai"
+    assert settings.resolve_profile()[0] == "p-gpt"
+
+
 class TestSettings:
     def test_defaults(self):
         s = Settings()
         assert s.api_key == ""
         assert s.model == "claude-sonnet-4-6"
-        assert s.max_tokens == 16384
+        assert s.max_tokens == 42000
         assert s.timeout == 180.0
         assert s.max_turns == 200
         assert s.fast_mode is False
         assert s.permission.mode == "default"
         assert s.sandbox.enabled is False
         assert s.sandbox.filesystem.allow_write == ["."]
+
+    def test_env_override_keeps_max_tokens_user_configurable(self, monkeypatch):
+        monkeypatch.setenv("MYHARNESS_MAX_TOKENS", "12345")
+
+        updated = _apply_env_overrides(Settings())
+
+        assert updated.max_tokens == 12345
+        assert updated.effective_max_tokens("gpt-5.5") == 12345
+
+    def test_gpt55_output_profile(self):
+        profile = model_output_profile("gpt-5.5")
+
+        assert profile.context_window_tokens == 1_050_000
+        assert profile.model_max_output_tokens == 128_000
+        assert profile.interactive_max_tokens == 42_000
+        assert report_token_limits_for_model("gpt-5.5") == {
+            "outline": 8_000,
+            "section": 18_000,
+            "review": 8_000,
+        }
+
+    def test_gpt54_mini_output_profile(self):
+        profile = model_output_profile("gpt-5.4-mini")
+
+        assert profile.context_window_tokens == 400_000
+        assert profile.model_max_output_tokens == 128_000
+        assert profile.interactive_max_tokens == 42_000
+        assert report_token_limits_for_model("gpt-5.4-mini") == {
+            "outline": 6_000,
+            "section": 14_000,
+            "review": 6_000,
+        }
+
+    def test_gpt54_output_profile(self):
+        profile = model_output_profile("gpt-5.4")
+
+        assert profile.context_window_tokens == 1_050_000
+        assert profile.model_max_output_tokens == 128_000
+        assert profile.interactive_max_tokens == 42_000
+        assert report_token_limits_for_model("gpt-5.4") == {
+            "outline": 8_000,
+            "section": 18_000,
+            "review": 8_000,
+        }
+
+    def test_model_specific_output_token_limit_overrides_global_limit(self):
+        settings = Settings(
+            model="gpt-5.4-mini",
+            max_tokens=42_000,
+            model_output_token_limits={"gpt-5.4-mini": 14_000},
+        )
+
+        assert settings.effective_max_tokens() == 14_000
+
+    def test_model_specific_output_token_limit_is_capped_to_official_max(self):
+        settings = Settings(
+            model="gpt-5.5",
+            model_output_token_limits={"gpt-5.5": 200_000},
+        )
+
+        assert settings.effective_max_tokens() == 128_000
+
+    def test_supported_model_output_token_limits(self):
+        assert supported_model_output_token_limits() == {
+            "gpt-5.5": 128_000,
+            "gpt-5.4": 128_000,
+            "gpt-5.4-mini": 128_000,
+        }
 
     def test_resolve_api_key_from_instance(self):
         s = Settings(api_key="sk-test-123")

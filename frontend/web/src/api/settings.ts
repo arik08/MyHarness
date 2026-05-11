@@ -8,6 +8,26 @@ export function changeYoloMode(enabled: boolean) {
   return postJson<{ enabled: boolean }>("/api/settings/yolo-mode", { enabled });
 }
 
+export type OutputTokenModelSetting = {
+  id: string;
+  label: string;
+  value: number;
+  officialMax: number;
+};
+
+export type OutputTokenSettings = {
+  values: Record<string, number>;
+  models: OutputTokenModelSetting[];
+};
+
+export function readOutputTokenSettings() {
+  return getJson<OutputTokenSettings>("/api/settings/output-tokens");
+}
+
+export function saveOutputTokenSettings(values: Record<string, number>) {
+  return postJson<OutputTokenSettings>("/api/settings/output-tokens", { values });
+}
+
 export function readShellSettings() {
   return getJson<{ shell: string }>("/api/settings/shell");
 }

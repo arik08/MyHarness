@@ -7,6 +7,7 @@ import { loadRuntimePreferences } from "../utils/runtimePreferences";
 
 const activeBackendSessionKey = "myharness:activeBackendSessionId";
 const pendingSessionStarts = new Map<string, Promise<SessionResponse>>();
+const busySessionPollMs = 3000;
 
 function startSharedSession(clientId: string) {
   const preferences = loadRuntimePreferences();
@@ -142,4 +143,43 @@ export function useBackendSession() {
       sourceRef.current = null;
     };
   }, [dispatch, state.clientId, state.sessionId]);
+
+  useEffect(() => {
+    if (!state.busy || !state.sessionId || !state.clientId) {
+      return;
+    }
+
+    let cancelled = false;
+    const sessionId = state.sessionId;
+
+    async function reconcileBusyState() {
+      try {
+        const liveSessions = await listLiveSessions({
+          clientId: state.clientId,
+          workspacePath: state.workspacePath || undefined,
+        });
+        if (cancelled) {
+          return;
+        }
+        const liveSession = liveSessions.sessions.find((item) => item.sessionId === sessionId);
+        if (liveSession && liveSession.busy === false) {
+          dispatch({
+            type: "backend_event",
+            sessionId,
+            event: { type: "line_complete" },
+          });
+        }
+      } catch {
+        // The EventSource path remains authoritative; this poll only repairs missed completion events.
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void reconcileBusyState();
+    }, busySessionPollMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [dispatch, state.busy, state.clientId, state.sessionId, state.workspacePath]);
 }

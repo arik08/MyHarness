@@ -914,6 +914,74 @@ function deferTrailingMarkdownTable(markdown: string) {
   ].filter(Boolean).join("\n\n");
 }
 
+function normalizedTableCellText(cell: HTMLTableCellElement) {
+  return String(cell.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizedTableHeaderText(cell: HTMLTableCellElement) {
+  return normalizedTableCellText(cell).replace(/\s+/g, "").toLowerCase();
+}
+
+function companyColumnIndex(table: HTMLTableElement) {
+  const headerRow = table.tHead?.rows[0] || table.rows[0];
+  if (!headerRow || Array.from(headerRow.cells).some((cell) => cell.colSpan !== 1 || cell.rowSpan !== 1)) {
+    return -1;
+  }
+  return Array.from(headerRow.cells).findIndex((cell) => {
+    const header = normalizedTableHeaderText(cell);
+    return header === "회사" || header === "회사명";
+  });
+}
+
+function mergeCompanyColumnCells(table: HTMLTableElement) {
+  if (table.dataset.myharnessCompanyMerged === "true") {
+    return;
+  }
+  table.dataset.myharnessCompanyMerged = "true";
+
+  const columnIndex = companyColumnIndex(table);
+  if (columnIndex < 0) {
+    return;
+  }
+
+  const bodyRows = Array.from(table.tBodies).flatMap((body) => Array.from(body.rows));
+  const rows = bodyRows.length ? bodyRows : Array.from(table.rows).slice(1);
+  if (rows.some((row) => Array.from(row.cells).some((cell) => cell.colSpan !== 1 || cell.rowSpan !== 1))) {
+    return;
+  }
+
+  let active: { cell: HTMLTableCellElement; value: string; rowSpan: number } | null = null;
+  rows.forEach((row) => {
+    const cell = row.cells[columnIndex] as HTMLTableCellElement | undefined;
+    if (!cell) {
+      active = null;
+      return;
+    }
+
+    const value = normalizedTableCellText(cell);
+    if (!value) {
+      active = null;
+      return;
+    }
+
+    if (active && active.value === value) {
+      active.rowSpan += 1;
+      active.cell.rowSpan = active.rowSpan;
+      cell.remove();
+      return;
+    }
+
+    active = { cell, value, rowSpan: 1 };
+  });
+}
+
+function enhanceCompanyColumnRowspans(root: HTMLElement | null) {
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll<HTMLTableElement>("table").forEach(mergeCompanyColumnCells);
+}
+
 function isHtmlPreviewCodeBlock(code: Element) {
   const language = codeBlockLanguage(code);
   return language === "html" || language === "htm" || (!language && isLikelyStandaloneHtml(code.textContent || ""));
@@ -1653,6 +1721,7 @@ function enhanceMarkdownRoot(root: HTMLElement | null, revealFrom: number | null
   enhanceHtmlPreviews(root);
   enhanceCodeBlocks(root);
   enhancePromptTokens(root);
+  enhanceCompanyColumnRowspans(root);
   revealRenderedText(root, revealFrom);
 }
 

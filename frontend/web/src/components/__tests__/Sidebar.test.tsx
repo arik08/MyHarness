@@ -570,6 +570,34 @@ describe("Sidebar", () => {
     expect(document.querySelector(".history-item.active")).not.toBeNull();
   });
 
+  it("shows the current question as the active history row when the current live row is filtered", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          clientId: "client-1",
+          busy: true,
+          messages: [{ id: "message-current", role: "user", text: "데이터센터 산업의 2025~2026년 현황을 오라클 보고서" }],
+          history: [{
+            value: "web-current",
+            label: "진행 중인 채팅",
+            description: "열려 있는 세션",
+            live: true,
+            liveSessionId: "web-current",
+            busy: true,
+          }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText(/^데이터센터 산업의 2025~2026년/)).toBeTruthy();
+    expect(screen.queryByText("진행 중인 대화")).toBeNull();
+    expect(document.querySelector(".history-item.active")).not.toBeNull();
+  });
+
   it("opens a saved history item in a separate backend while the current answer is running", async () => {
     render(
       <AppStateProvider

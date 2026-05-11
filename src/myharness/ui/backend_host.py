@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import html
 import inspect
 import json
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -71,7 +73,14 @@ _PROTOCOL_PREFIX = "OHJSON:"
 _BUILT_IN_SKILL_SOURCES = {"bundled"}
 _TOOL_PROGRESS_FIRST_DELAY_SECONDS = 2.5
 _TOOL_PROGRESS_INTERVAL_SECONDS = 3.0
+_LONG_REPORT_PROGRESS_FIRST_DELAY_SECONDS = 1.5
+_LONG_REPORT_PROGRESS_INTERVAL_SECONDS = 2.0
+_LONG_REPORT_PROGRESS_READ_LIMIT = 24_000
+_LONG_REPORT_PROGRESS_DISPLAY_LIMIT = 3_000
 _SWARM_STATUS_INTERVAL_SECONDS = 2.0
+_SWARM_STRAGGLER_MIN_SECONDS = 10 * 60
+_SWARM_STRAGGLER_PEER_FACTOR = 3.0
+_SWARM_STRAGGLER_WAVE_WINDOW_SECONDS = 15 * 60
 _SWARM_TASK_TYPES = {"local_agent", "remote_agent", "in_process_teammate"}
 _SESSION_TITLE_SOURCE_PROMPT = "prompt"
 _SESSION_TITLE_SOURCE_CONVERSATION = "conversation"
@@ -92,6 +101,9 @@ _SWARM_DELEGATION_HINT = (
     "and avoid duplicating the other workers' searches. "
     "Tell each worker to report brief interim progress as it works, ideally with `task_update` status_note updates "
     "or short progress lines, so the AI 팀 panel can stay fresh. "
+    "After launching a parallel wave, watch for stragglers: if most workers finish within a few minutes but one worker "
+    "runs much longer, inspect it briefly, stop it with `task_stop`, and either spawn a narrower replacement or finish "
+    "that slice in the main agent. Do not let one lagging worker block the whole task. "
     "For office/research tasks, use role names such as 조사, 정리, and 검토 only when they fit the actual workflow, "
     "and treat every label as a workflow node rather than a hard-coded stage. "
     "Use worker descriptions with visible role labels, such as `조사 담당: 전력 용량 출처 확인`, "
@@ -101,6 +113,12 @@ _SWARM_DELEGATION_HINT = (
     "After spawning workers, briefly tell the user the workflow shape and which workers started in the current wave. "
     "Do not present final research conclusions until worker results are available."
 )
+
+
+def _tool_progress_delays(tool_name: str) -> tuple[float, float]:
+    if tool_name.lower() == "write_long_report":
+        return (_LONG_REPORT_PROGRESS_FIRST_DELAY_SECONDS, _LONG_REPORT_PROGRESS_INTERVAL_SECONDS)
+    return (_TOOL_PROGRESS_FIRST_DELAY_SECONDS, _TOOL_PROGRESS_INTERVAL_SECONDS)
 _RESTORABLE_TOOL_METADATA_DEFAULTS = {
     "read_file_state": {},
     "invoked_skills": [],
@@ -151,6 +169,70 @@ def _swarm_delegation_hint_for_prompt(prompt: str) -> str | None:
     role_split = "조사" in text and "정리" in text and "검토" in text
     if explicit_team or role_split:
         return _SWARM_DELEGATION_HINT
+    return None
+
+
+def _task_duration_seconds(task, *, now: float) -> float:
+    started_at = getattr(task, "started_at", None)
+    if started_at is None:
+        started_at = getattr(task, "created_at", None)
+    if started_at is None:
+        started_at = now
+    ended_at = getattr(task, "ended_at", None)
+    if ended_at is None:
+        ended_at = now
+    return max(0.0, float(ended_at) - float(started_at))
+
+
+def _task_created_seconds(task, *, now: float) -> float:
+    created_at = getattr(task, "created_at", None)
+    if created_at is None:
+        created_at = getattr(task, "started_at", None)
+    if created_at is None:
+        created_at = now
+    return float(created_at)
+
+
+def _detect_slow_swarm_teammate(tasks, *, now: float, alerted_task_ids: set[str]) -> dict[str, object] | None:
+    swarm_tasks = [task for task in tasks if getattr(task, "type", "") in _SWARM_TASK_TYPES]
+    running = [task for task in swarm_tasks if getattr(task, "status", "") == "running"]
+    finished = [
+        task
+        for task in swarm_tasks
+        if getattr(task, "status", "") == "completed" and getattr(task, "ended_at", None)
+    ]
+    if not running or not finished:
+        return None
+
+    for task in sorted(running, key=lambda item: _task_created_seconds(item, now=now)):
+        task_id = str(getattr(task, "id", "") or "")
+        if not task_id or task_id in alerted_task_ids:
+            continue
+        running_duration = _task_duration_seconds(task, now=now)
+        if running_duration < _SWARM_STRAGGLER_MIN_SECONDS:
+            continue
+        created_at = _task_created_seconds(task, now=now)
+        peers = [
+            peer
+            for peer in finished
+            if abs(_task_created_seconds(peer, now=now) - created_at)
+            <= _SWARM_STRAGGLER_WAVE_WINDOW_SECONDS
+        ]
+        if not peers:
+            continue
+        peer_durations = sorted(_task_duration_seconds(peer, now=now) for peer in peers)
+        median_peer_duration = peer_durations[len(peer_durations) // 2]
+        if running_duration < max(_SWARM_STRAGGLER_MIN_SECONDS, median_peer_duration * _SWARM_STRAGGLER_PEER_FACTOR):
+            continue
+        metadata = getattr(task, "metadata", {}) if isinstance(getattr(task, "metadata", {}), dict) else {}
+        return {
+            "task_id": task_id,
+            "agent_id": str(metadata.get("agent_id") or task_id),
+            "role": str(metadata.get("agent_role") or getattr(task, "description", "") or task_id),
+            "running_seconds": running_duration,
+            "peer_seconds": median_peer_duration,
+            "peer_count": len(peers),
+        }
     return None
 
 
@@ -205,6 +287,93 @@ def _truncate_progress_text(value: object, limit: int = 96) -> str:
     return f"{text[:limit - 3]}..."
 
 
+def _slugify_progress_report_title(title: object) -> str:
+    text = re.sub(r"\s+", "_", str(title or "").strip())
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", text)
+    return text.strip("._") or "long_report"
+
+
+def _long_report_progress_path(payload: dict[str, object]) -> str:
+    explicit = str(payload.get("output_path") or "").strip()
+    if explicit:
+        return explicit
+    suffix = ".html" if str(payload.get("output_format") or "").strip().lower() == "html" else ".md"
+    return f"outputs/{_slugify_progress_report_title(payload.get('title'))}_report{suffix}"
+
+
+def _progress_preview_path(tool_name: str, payload: dict[str, object]) -> str:
+    lower = tool_name.lower()
+    raw_path: object = payload.get("file_path") or payload.get("path")
+    if lower == "write_long_report":
+        raw_path = raw_path or _long_report_progress_path(payload)
+    return str(raw_path or "").strip()
+
+
+def _looks_like_text_preview_path(path: str) -> bool:
+    return Path(path).suffix.lower() in {
+        ".html",
+        ".htm",
+        ".md",
+        ".markdown",
+        ".txt",
+        ".json",
+        ".csv",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".css",
+        ".py",
+    }
+
+
+_PROGRESS_PREVIEW_READ_LIMIT = 24_000
+_PROGRESS_PREVIEW_DISPLAY_LIMIT = 3_000
+
+
+def _trim_progress_preview_text(text: str, *, limit: int = _PROGRESS_PREVIEW_DISPLAY_LIMIT) -> str:
+    value = str(text or "")
+    if len(value) <= limit:
+        return value
+    return f"...\n{value[-limit:]}"
+
+
+def _html_to_progress_text(text: str) -> str:
+    value = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", text)
+    value = re.sub(r"(?i)<br\s*/?>", "\n", value)
+    value = re.sub(r"(?i)</(?:p|div|section|article|main|header|footer|h[1-6]|li|tr)>", "\n", value)
+    value = re.sub(r"(?s)<[^>]+>", "", value)
+    value = html.unescape(value)
+    lines = [" ".join(line.split()) for line in value.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
+def _read_progress_preview_content(cwd: Path, path: str, *, limit: int = _PROGRESS_PREVIEW_READ_LIMIT) -> str:
+    clean_path = str(path or "").strip()
+    if not clean_path or not _looks_like_text_preview_path(clean_path):
+        return ""
+    preview_path = Path(clean_path).expanduser()
+    if not preview_path.is_absolute():
+        preview_path = cwd / preview_path
+    try:
+        text = preview_path.resolve().read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text if len(text) <= limit else text[-limit:]
+
+
+def _progress_preview_content(tool_name: str, cwd: Path, path: str) -> str:
+    is_long_report = tool_name.lower() == "write_long_report"
+    read_limit = _LONG_REPORT_PROGRESS_READ_LIMIT if is_long_report else _PROGRESS_PREVIEW_READ_LIMIT
+    display_limit = _LONG_REPORT_PROGRESS_DISPLAY_LIMIT if is_long_report else _PROGRESS_PREVIEW_DISPLAY_LIMIT
+    content = _read_progress_preview_content(cwd, path, limit=read_limit)
+    if not content:
+        return ""
+    if is_long_report and Path(path).suffix.lower() in {".html", ".htm"}:
+        content = _html_to_progress_text(content)
+    return _trim_progress_preview_text(content, limit=display_limit)
+
+
 def _tool_progress_message(tool_name: str, tool_input: dict[str, object] | None, elapsed_seconds: int) -> str:
     lower = tool_name.lower()
     payload = tool_input or {}
@@ -212,7 +381,7 @@ def _tool_progress_message(tool_name: str, tool_input: dict[str, object] | None,
         command = _truncate_progress_text(payload.get("command"))
         return f"명령 실행 중... {elapsed_seconds}초 경과" + (f" · {command}" if command else "")
     if "write" in lower or "edit" in lower or "notebook" in lower:
-        path = _truncate_progress_text(payload.get("file_path") or payload.get("path"))
+        path = _truncate_progress_text(_progress_preview_path(tool_name, payload))
         return f"파일 작업 중... {elapsed_seconds}초 경과" + (f" · {path}" if path else "")
     target = _truncate_progress_text(payload.get("url") or payload.get("query") or payload.get("pattern"))
     return f"{tool_name} 실행 중... {elapsed_seconds}초 경과" + (f" · {target}" if target else "")
@@ -283,6 +452,7 @@ class ReactBackendHost:
         self._swarm_status_monitor_task: asyncio.Task[None] | None = None
         self._swarm_emit_task: asyncio.Task[None] | None = None
         self._task_update_unregister: Callable[[], None] | None = None
+        self._swarm_straggler_alerted_task_ids: set[str] = set()
 
     async def run(self) -> int:
         self._bundle = await build_runtime(
@@ -379,6 +549,9 @@ class ReactBackendHost:
                     continue
                 if request.type == "set_system_prompt":
                     await self._handle_set_system_prompt(request.value or "")
+                    continue
+                if request.type == "refresh_runtime_settings":
+                    await self._handle_refresh_runtime_settings()
                     continue
                 if request.type == "update_session_title":
                     await self._handle_update_session_title(request.value or "")
@@ -540,9 +713,53 @@ class ReactBackendHost:
                 )
                 return
             await asyncio.sleep(_SWARM_STATUS_INTERVAL_SECONDS)
+            await self._maybe_steer_slow_swarm_teammate()
             await self._emit(
                 BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[])
             )
+
+    async def _maybe_steer_slow_swarm_teammate(self) -> None:
+        if self._bundle is None or not self._running:
+            return
+        try:
+            tasks = get_task_manager().list_tasks()
+        except Exception:
+            return
+        slow = _detect_slow_swarm_teammate(
+            tasks,
+            now=time.time(),
+            alerted_task_ids=self._swarm_straggler_alerted_task_ids,
+        )
+        if slow is None:
+            return
+        task_id = str(slow["task_id"])
+        self._swarm_straggler_alerted_task_ids.add(task_id)
+        running_minutes = max(1, round(float(slow["running_seconds"]) / 60))
+        peer_minutes = max(1, round(float(slow["peer_seconds"]) / 60))
+        line = (
+            f"AI team worker {slow['agent_id']} ({slow['role']}, task_id={task_id}) "
+            f"has been running for about {running_minutes} minutes, while {slow['peer_count']} peer worker(s) "
+            f"from the same wave finished around {peer_minutes} minutes. "
+            "Briefly inspect its latest output if useful. If it is not clearly making fresh progress, use "
+            f"`task_stop(task_id=\"{task_id}\")`, then either spawn a narrower replacement or complete the remaining slice "
+            "in the main agent. Do not keep waiting on one lagging worker."
+        )
+        await self._emit(BackendEvent(type="status", message="느린 AI 팀 작업자를 감지했습니다."))
+        internal_line = format_internal_steering_update(line)
+        if self._busy:
+            await self._steering_queue.put(internal_line)
+            return
+        await self._request_queue.put(
+            FrontendRequest(
+                type="submit_line",
+                line=(
+                    "Internal coordination note for this turn. Use it as execution guidance, "
+                    "but do not mention the note itself to the user.\n"
+                    f"{line}"
+                ),
+                suppress_user_transcript=True,
+            )
+        )
 
     async def _monitor_async_agents(self) -> None:
         assert self._bundle is not None
@@ -589,7 +806,6 @@ class ReactBackendHost:
         await self._emit(
             BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=text, kind="steering"))
         )
-        await self._emit(BackendEvent(type="status", message="추가 요청을 반영하겠습니다."))
 
     async def _queue_line_after_current(self, line: str) -> None:
         text = line.strip()
@@ -736,21 +952,31 @@ class ReactBackendHost:
             tool_call_id: str | None,
             tool_call_index: int | None,
         ) -> None:
+            assert self._bundle is not None
+            cwd = self._bundle.cwd
             started_at = time.monotonic()
-            await asyncio.sleep(_TOOL_PROGRESS_FIRST_DELAY_SECONDS)
+            first_delay, interval = _tool_progress_delays(tool_name)
+            await asyncio.sleep(first_delay)
             while True:
                 elapsed = max(1, round(time.monotonic() - started_at))
+                progress_input = dict(tool_input or {})
+                preview_path = _progress_preview_path(tool_name, progress_input)
+                if preview_path and "content" not in progress_input:
+                    preview_content = _progress_preview_content(tool_name, cwd, preview_path)
+                    if preview_content:
+                        progress_input.setdefault("path", preview_path)
+                        progress_input.setdefault("content", preview_content)
                 await self._emit(
                     BackendEvent(
                         type="tool_progress",
                         tool_name=tool_name,
                         tool_call_id=tool_call_id,
                         tool_call_index=tool_call_index,
-                        tool_input=tool_input or {},
-                        message=_tool_progress_message(tool_name, tool_input, elapsed),
+                        tool_input=progress_input,
+                        message=_tool_progress_message(tool_name, progress_input, elapsed),
                     )
                 )
-                await asyncio.sleep(_TOOL_PROGRESS_INTERVAL_SECONDS)
+                await asyncio.sleep(interval)
 
         def _start_tool_progress(
             tool_name: str,
@@ -866,6 +1092,13 @@ class ReactBackendHost:
                     assert self._bundle is not None
                     new_mode = self._bundle.app_state.get().permission_mode
                     await self._emit(BackendEvent(type="plan_mode_change", plan_mode=new_mode))
+                if event.transcript_output:
+                    await self._emit(
+                        BackendEvent(
+                            type="transcript_item",
+                            item=TranscriptItem(role="assistant", text=event.transcript_output),
+                        )
+                    )
                 return
             if isinstance(event, ErrorEvent):
                 await self._emit(BackendEvent(type="error", message=event.message))
@@ -1379,6 +1612,8 @@ class ReactBackendHost:
         if refresh_client:
             refresh_runtime_client(self._bundle)
         updated = self._bundle.current_settings()
+        self._bundle.engine.tool_metadata["active_profile"] = updated.active_profile
+        self._bundle.engine.tool_metadata["provider"] = updated.provider
         self._bundle.engine.tool_metadata["runtime_model"] = updated.model
         self._bundle.engine.tool_metadata["subagent_model"] = updated.subagent_model
         self._bundle.engine.tool_metadata["subagent_effort"] = updated.subagent_effort
@@ -1729,6 +1964,12 @@ class ReactBackendHost:
                 item=TranscriptItem(role="system", text="시스템 프롬프트 설정을 적용했습니다."),
             )
         )
+
+    async def _handle_refresh_runtime_settings(self) -> None:
+        assert self._bundle is not None
+        settings = self._bundle.current_settings()
+        self._bundle.engine.set_max_tokens(settings.effective_max_tokens())
+        await self._emit(self._status_snapshot())
 
     async def _handle_update_session_title(self, value: str) -> None:
         assert self._bundle is not None

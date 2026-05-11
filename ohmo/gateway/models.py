@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class GatewayConfig(BaseModel):
     """Persistent gateway configuration."""
 
-    provider_profile: str = "codex"
+    provider_profile: str = "p-gpt"
     enabled_channels: list[str] = Field(default_factory=list)
     session_routing: str = "chat-thread"
     send_progress: bool = True
@@ -27,7 +27,7 @@ class GatewayState(BaseModel):
     running: bool = False
     pid: int | None = None
     active_sessions: int = 0
-    provider_profile: str = "codex"
+    provider_profile: str = "p-gpt"
     enabled_channels: list[str] = Field(default_factory=list)
     last_error: str | None = None
 

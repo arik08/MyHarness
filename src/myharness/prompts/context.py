@@ -71,6 +71,10 @@ def _build_delegation_section() -> str:
             "and ask for concise bullet findings instead of a full report. Prefer more workers only when they reduce wall-clock time.",
             "Ask workers to publish brief interim progress with `task_update` status_note updates or short progress lines "
             "so UI surfaces can show what each person is doing.",
+            "After launching a parallel wave, watch completion times. If most workers finish within a few minutes but one worker "
+            "runs much longer, briefly inspect that worker, stop it with `task_stop` if it is not clearly making fresh progress, "
+            "then either spawn a narrower replacement or complete the remaining slice yourself in the main agent. "
+            "Do not let one lagging worker block the whole task.",
             "Give worker descriptions visible role labels, such as `조사 담당: 전력 용량 출처 확인`, "
             "so the AI 팀 panel can show what each worker owns.",
             "",
@@ -81,6 +85,7 @@ def _build_delegation_section() -> str:
             "- Inspect one worker in detail with `/agents show TASK_ID`.",
             "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
             "- Read worker output with `task_output(task_id=...)`.",
+            "- Stop a stalled worker with `task_stop(task_id=...)` before retrying with a narrower prompt.",
             "",
             "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
         ]
@@ -99,6 +104,23 @@ def _build_task_worker_section() -> str:
             "Those parent task records live in another process and are intentionally unavailable here.",
             "Use task_update only for brief progress updates when the prompt gives you a task id.",
             "Return concise findings or the requested change summary when finished.",
+        ]
+    )
+
+
+def _build_long_report_section() -> str:
+    """Build guidance for long file-based report generation."""
+    return "\n".join(
+        [
+            "# Long Report Generation",
+            "",
+            "For long chat responses up to about 40,000 tokens, a normal single answer is acceptable when the active output cap allows it; "
+            "treat the number as a target length, not as permission to greatly exceed it.",
+            "When the user asks for a file-based report, HTML report, 초장문, 대보고서, 2-3x expansion, or any report above about 40,000 tokens, "
+            "or an explicit length such as 80,000 tokens, use the `write_long_report` tool.",
+            "Do not try to stream reports above the single-response cap in one chat response. Create a file artifact under `outputs/`, "
+            "set `target_tokens` when a numeric target is given or implied, and use `output_format=\"html\"` for HTML reports.",
+            "The final chat response should report the file path, section count, and a short summary, not the full report body.",
         ]
     )
 
@@ -147,6 +169,7 @@ def build_runtime_system_prompt(
         sections.append(_build_task_worker_section())
     elif not coordinator_mode:
         sections.append(_build_delegation_section())
+        sections.append(_build_long_report_section())
 
     project_instructions = load_project_instructions_prompt(cwd)
     if project_instructions:

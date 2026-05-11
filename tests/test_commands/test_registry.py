@@ -739,6 +739,45 @@ async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_status_and_usage_report_model_output_limits(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    tool_registry = create_default_tool_registry()
+    context = CommandContext(
+        engine=QueryEngine(
+            api_client=FakeApiClient(),
+            tool_registry=tool_registry,
+            permission_checker=PermissionChecker(load_settings().permission),
+            cwd=tmp_path,
+            model="gpt-5.5",
+            system_prompt="system",
+            max_tokens=42000,
+        ),
+        cwd=str(tmp_path),
+        tool_registry=tool_registry,
+        app_state=AppStateStore(
+            AppState(
+                model="gpt-5.5",
+                subagent_model="gpt-5.4-mini",
+                subagent_effort="medium",
+                permission_mode="default",
+                theme="default",
+                keybindings={},
+            )
+        ),
+    )
+
+    status_command, status_args = registry.lookup("/status")
+    status_result = await status_command.handler(status_args, context)
+    usage_command, usage_args = registry.lookup("/usage")
+    usage_result = await usage_command.handler(usage_args, context)
+
+    assert "출력 상한: 42,000 / 모델 최대: 128,000" in status_result.message
+    assert "컨텍스트: 1,050,000" in status_result.message
+    assert "출력 상한: 42,000 / 모델 최대: 128,000" in usage_result.message
+
+
+@pytest.mark.asyncio
 async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()

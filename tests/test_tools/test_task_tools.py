@@ -235,12 +235,18 @@ async def test_agent_tool_treats_office_worker_as_lightweight_research_agent(
         ),
         ToolExecutionContext(
             cwd=tmp_path,
-            metadata={"runtime_model": "gpt-5.5", "subagent_model": "gpt-5.4-mini", "subagent_effort": "high"},
+            metadata={
+                "active_profile": "p-gpt",
+                "runtime_model": "gpt-5.5",
+                "subagent_model": "gpt-5.4-mini",
+                "subagent_effort": "high",
+            },
         ),
     )
 
     assert result.is_error is False
     config = captured["config"]
+    assert config.active_profile == "p-gpt"
     assert config.team == "office"
     assert config.system_prompt is None
     assert config.name.startswith("research-")

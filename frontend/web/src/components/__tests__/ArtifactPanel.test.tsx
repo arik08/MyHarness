@@ -1,13 +1,20 @@
 ﻿import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRequire } from "node:module";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactPanel, clampArtifactPanelWidth } from "../ArtifactPanel";
-import { artifactAiSelectionMessage, artifactHtmlEditMessage } from "../ArtifactPreview";
+import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactHtmlEditMessage, artifactHtmlEditModeMessage } from "../ArtifactPreview";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../../api/artifacts";
 import type { BackendEvent } from "../../types/backend";
+import type { ArtifactAiEditComment } from "../../types/ui";
+
+const require = createRequire(import.meta.url);
+const { JSDOM } = require("jsdom") as {
+  JSDOM: new (html: string, options?: Record<string, unknown>) => { window: Window & typeof globalThis };
+};
 
 vi.mock("../../api/artifacts", () => ({
   aiEditArtifact: vi.fn(async () => ({ ok: true, sourcePath: "outputs/report.html", targetPath: "outputs/report_v1.html" })),
@@ -24,6 +31,92 @@ vi.mock("../../api/artifacts", () => ({
   })),
   readArtifact: vi.fn(async () => ({ kind: "html", content: "<html><body>Preview</body></html>" })),
 }));
+
+function renderHtmlPreviewSrcdoc(content: string, comments: ArtifactAiEditComment[] = []) {
+  const { container, unmount } = render(
+    <ArtifactPreview
+      artifact={{ path: "outputs/report.html", name: "report.html", kind: "html" }}
+      payload={{ kind: "html", content }}
+      draftContent={content}
+      sourceMode={false}
+      downloadUrl="#"
+      htmlEditMode
+      aiSelectionEnabled
+      aiEditComments={comments}
+      onDraftContentChange={vi.fn()}
+    />,
+  );
+  const frame = container.querySelector("iframe") as HTMLIFrameElement;
+  const srcdoc = frame.srcdoc;
+  unmount();
+  return srcdoc;
+}
+
+function collectHighlightText(dom: { window: Window & typeof globalThis }) {
+  return Array.from(dom.window.document.querySelectorAll(".myharness-ai-comment-highlight"))
+    .map((node) => node.textContent || "")
+    .join("");
+}
+
+async function loadPreviewDom(srcdoc: string) {
+  const dom = new JSDOM(srcdoc, { pretendToBeVisual: true, runScripts: "dangerously", url: "http://localhost/" });
+  const rangePrototype = dom.window.Range.prototype as unknown as {
+    getClientRects?: unknown;
+    getBoundingClientRect?: unknown;
+  };
+  const rect = {
+    left: 10,
+    top: 10,
+    right: 80,
+    bottom: 24,
+    width: 70,
+    height: 14,
+    x: 10,
+    y: 10,
+    toJSON: () => ({}),
+  } as DOMRect;
+  rangePrototype.getClientRects = () => [rect];
+  rangePrototype.getBoundingClientRect = () => rect;
+  dom.window.postMessage({ type: artifactHtmlEditModeMessage, path: "outputs/report.html", edit: true, ai: true }, "*");
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  return dom;
+}
+
+async function submitInlineAiSelection(
+  dom: { window: Window & typeof globalThis },
+  configureRange: (document: Document) => Range,
+  instruction = "범위 유지",
+) {
+  const submitted: ArtifactAiEditComment[] = [];
+  dom.window.addEventListener("message", (event: MessageEvent) => {
+    if (event.data?.type === artifactAiSelectionMessage) {
+      submitted.push({
+        ...event.data.selection,
+        id: "comment-1",
+        instruction: event.data.selection.instruction,
+      });
+    }
+  });
+
+  const range = configureRange(dom.window.document);
+  const selection = dom.window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  dom.window.document.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    clientX: 24,
+    clientY: 24,
+  }));
+  const textarea = dom.window.document.querySelector(".myharness-ai-comment-popover textarea") as HTMLTextAreaElement;
+  expect(textarea).toBeTruthy();
+  textarea.value = instruction;
+  textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  textarea.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  expect(submitted).toHaveLength(1);
+  return submitted[0] as ArtifactAiEditComment & { htmlSnapshot?: string };
+}
 
 describe("ArtifactPanel", () => {
   afterEach(() => {
@@ -568,8 +661,9 @@ describe("ArtifactPanel", () => {
     expect(frame.srcdoc).toContain("submit.addEventListener(\"click\", submitComment)");
     expect(frame.srcdoc).toContain('event.key === "Enter" && !event.shiftKey');
     expect(frame.srcdoc).toContain("if ((node.nodeValue || \"\").trim())");
-    expect(frame.srcdoc).toContain("const html = htmlFromRange(range)");
-    expect(frame.srcdoc).toContain("showPendingHighlight(range.cloneRange())");
+    expect(frame.srcdoc).toContain("const html = htmlFromRange(payloadRange)");
+    expect(frame.srcdoc).toContain("htmlSnapshot: cleanDocumentHtml()");
+    expect(frame.srcdoc).toContain("showPendingHighlight(selectionResult.pendingRange.cloneRange())");
     expect(frame.srcdoc).toContain("openSelectionPopover({ x: event.clientX, y: event.clientY })");
     expect(frame.srcdoc).toContain("showPopover(documentPayload()");
     expect(frame.srcdoc).toContain("const safeLeft = clamp(point.x + 8");
@@ -580,10 +674,183 @@ describe("ArtifactPanel", () => {
     expect(frame.srcdoc).toContain("myharness-ai-comment-anchor");
     expect(frame.srcdoc).toContain("syncFormShape");
     expect(frame.srcdoc).toContain("myharness-ai-comment-multiline");
+    expect(frame.srcdoc).toContain("event.stopImmediatePropagation?.();");
+    expect(frame.srcdoc).toContain("event.stopPropagation();");
+    expect(frame.srcdoc).toContain("const textOffsetsFromRange = (range) =>");
+    expect(frame.srcdoc).toContain("const documentTextFromNodes = (nodes) =>");
+    expect(frame.srcdoc).not.toContain("bodyRange.toString().length");
     expect(frame.srcdoc).not.toContain("myharness-ai-comment-mic");
     expect(frame.srcdoc).toContain("댓글 추가");
     expect(frame.srcdoc).toContain("취소");
     expect(frame.srcdoc).toContain("myharness-ai-comment-submit");
+  });
+
+  it("keeps an inline AI comment anchored to the selected text when submitting with Enter", async () => {
+    const content = `<html><body>
+      <main>
+        <p>Alpha target range omega.</p>
+      </main>
+    </body></html>`;
+    const dom = await loadPreviewDom(renderHtmlPreviewSrcdoc(content));
+    const submitted = await submitInlineAiSelection(dom, (document) => {
+      const textNode = document.querySelector("p")?.firstChild as Text;
+      const start = textNode.nodeValue?.indexOf("target range") ?? -1;
+      expect(start).toBeGreaterThanOrEqual(0);
+      const range = document.createRange();
+      range.setStart(textNode, start);
+      range.setEnd(textNode, start + "target range".length);
+      return range;
+    });
+
+    const highlightedDom = await loadPreviewDom(renderHtmlPreviewSrcdoc(content, [submitted]));
+    expect(collectHighlightText(highlightedDom)).toBe("target range");
+  });
+
+  it("trims boundary whitespace from inline AI selection ranges before anchoring comments", async () => {
+    const content = `<html><body><p>Alpha target range omega.</p></body></html>`;
+    const dom = await loadPreviewDom(renderHtmlPreviewSrcdoc(content));
+    const submitted = await submitInlineAiSelection(dom, (document) => {
+      const textNode = document.querySelector("p")?.firstChild as Text;
+      const start = textNode.nodeValue?.indexOf(" target") ?? -1;
+      expect(start).toBeGreaterThanOrEqual(0);
+      const range = document.createRange();
+      range.setStart(textNode, start);
+      range.setEnd(textNode, start + " target range ".length);
+      return range;
+    });
+
+    expect(submitted.text).toBe("target range");
+    const highlightedDom = await loadPreviewDom(renderHtmlPreviewSrcdoc(content, [submitted]));
+    expect(collectHighlightText(highlightedDom)).toBe("target range");
+  });
+
+  it("keeps inline AI comments anchored across formatted inline nodes", async () => {
+    const content = `<html><body><p>Alpha <strong>target</strong> range omega.</p></body></html>`;
+    const dom = await loadPreviewDom(renderHtmlPreviewSrcdoc(content));
+    const submitted = await submitInlineAiSelection(dom, (document) => {
+      const first = document.querySelector("p")?.firstChild?.firstChild as Text;
+      const tail = document.querySelector("strong")?.nextSibling?.firstChild as Text;
+      const range = document.createRange();
+      range.setStart(first, first.nodeValue?.indexOf(" ") ?? 0);
+      range.setEnd(tail, " range".length);
+      return range;
+    });
+
+    expect(submitted.text).toBe("target range");
+    const highlightedDom = await loadPreviewDom(renderHtmlPreviewSrcdoc(content, [submitted]));
+    expect(collectHighlightText(highlightedDom)).toBe("target range");
+  });
+
+  it("uses the live edited HTML snapshot when submitting an inline AI comment", async () => {
+    const originalContent = `<html><body><p>Alpha target range omega.</p></body></html>`;
+    const dom = await loadPreviewDom(renderHtmlPreviewSrcdoc(originalContent));
+    const paragraphText = dom.window.document.querySelector("p")?.firstChild as Text;
+    paragraphText.nodeValue = "Alpha edited target range omega.";
+    const submitted = await submitInlineAiSelection(dom, (document) => {
+      const textNode = document.querySelector("p")?.firstChild as Text;
+      const start = textNode.nodeValue?.indexOf("target range") ?? -1;
+      expect(start).toBeGreaterThanOrEqual(0);
+      const range = document.createRange();
+      range.setStart(textNode, start);
+      range.setEnd(textNode, start + "target range".length);
+      return range;
+    });
+
+    const htmlSnapshot = submitted.htmlSnapshot || "";
+    expect(htmlSnapshot).toContain("Alpha edited target range omega.");
+    const highlightedDom = await loadPreviewDom(renderHtmlPreviewSrcdoc(htmlSnapshot, [submitted]));
+    expect(collectHighlightText(highlightedDom)).toBe("target range");
+  });
+
+  it("re-anchors stale inline AI comment offsets with selected text and context", async () => {
+    const content = `<html><body><p>Alpha target range omega.</p></body></html>`;
+    const staleComment: ArtifactAiEditComment = {
+      id: "comment-1",
+      instruction: "범위 유지",
+      text: "target range",
+      start: "Alpha edited ".length,
+      end: "Alpha edited target range".length,
+      before: "Alpha ",
+      after: " omega.",
+      html: "target range",
+      scope: "selection",
+    };
+
+    const highlightedDom = await loadPreviewDom(renderHtmlPreviewSrcdoc(content, [staleComment]));
+    expect(collectHighlightText(highlightedDom)).toBe("target range");
+  });
+
+  it("updates inline AI comment highlights inside the live iframe without rebuilding srcdoc", async () => {
+    const content = `<html><body><p>Alpha target range omega.</p></body></html>`;
+    const dom = await loadPreviewDom(renderHtmlPreviewSrcdoc(content));
+    const comment: ArtifactAiEditComment = {
+      id: "comment-1",
+      instruction: "범위 유지",
+      text: "target range",
+      start: "Alpha ".length,
+      end: "Alpha target range".length,
+      before: "Alpha ",
+      after: " omega.",
+      html: "target range",
+      scope: "selection",
+    };
+
+    dom.window.postMessage({
+      type: artifactAiCommentsMessage,
+      path: "outputs/report.html",
+      comments: [comment],
+    }, "*");
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    expect(collectHighlightText(dom)).toBe("target range");
+  });
+
+  it("keeps the HTML preview iframe srcdoc stable when Enter submits an AI comment", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><p>Alpha target range omega.</p></body></html>",
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+    const editModeSrcdoc = frame.srcdoc;
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "target range",
+            html: "target range",
+            htmlSnapshot: "<html><body><p>Alpha target range omega.</p></body></html>",
+            start: "Alpha ".length,
+            end: "Alpha target range".length,
+            before: "Alpha ",
+            after: " omega.",
+            instruction: "범위 유지",
+          },
+        },
+      }));
+    });
+
+    await waitFor(() => expect(document.querySelector(".artifact-ai-comment")).toBeTruthy());
+    expect(frame.srcdoc).toBe(editModeSrcdoc);
   });
 
   it("saves edited HTML preview drafts back to the current artifact path", async () => {
@@ -1232,6 +1499,52 @@ describe("ArtifactPanel", () => {
       workspaceName: "repo",
     })));
     expect(await screen.findByTitle("report_v2.html")).toBeTruthy();
+  });
+
+  it("keeps the file list open when a stale version preview load finishes after close", async () => {
+    const versionArtifacts = [
+      { path: "outputs/report.html", name: "report.html", kind: "html", size: 40 },
+      { path: "outputs/report_v1.html", name: "report_v1.html", kind: "html", size: 41 },
+    ];
+    vi.mocked(listProjectFiles).mockResolvedValue({ scope: "default", files: versionArtifacts });
+    const pendingReads = new Map<string, (payload: { kind: "html"; content: string }) => void>();
+    vi.mocked(readArtifact).mockImplementation(({ path }) => new Promise((resolve) => {
+      pendingReads.set(String(path), resolve);
+    }));
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          artifacts: versionArtifacts,
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "report.html 열기" }));
+    await userEvent.click(document.querySelector(".artifact-version-trigger") as HTMLButtonElement);
+    await userEvent.click(screen.getByRole("menuitem", { name: /v1/ }));
+
+    await userEvent.click(screen.getByRole("button", { name: "닫기" }));
+    expect(screen.getByText("프로젝트 파일")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "report.html 열기" })).toBeTruthy();
+
+    await act(async () => {
+      pendingReads.get("outputs/report.html")?.({ kind: "html", content: "<html><body>Original</body></html>" });
+      pendingReads.get("outputs/report_v1.html")?.({ kind: "html", content: "<html><body>Version 1</body></html>" });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("프로젝트 파일")).toBeTruthy();
+    expect(screen.queryByTitle("report.html")).toBeNull();
+    expect(screen.queryByTitle("report_v1.html")).toBeNull();
   });
 
   it("restores the loaded HTML when direct edit is canceled", async () => {

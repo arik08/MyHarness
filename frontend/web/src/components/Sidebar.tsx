@@ -514,13 +514,14 @@ export function Sidebar() {
   const activeHistoryValue = state.activeHistoryId || state.sessionId || "";
   const visibleHistory = state.history.filter((item) => !isCurrentLiveHistoryItem(item, state.sessionId));
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
+  const activeHistoryDescription = currentConversationHistoryTitle(state);
   const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
-  const renderedHistory = state.busy && !state.pendingHistoryId && activeHistoryValue && !hasActiveHistoryItem
+  const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !hasActiveHistoryItem && (state.busy || activeHistoryDescription)
     ? [
         {
           value: activeHistoryValue,
           label: "진행 중",
-          description: state.chatTitle && state.chatTitle !== "MyHarness" ? state.chatTitle : "진행 중인 대화",
+          description: activeHistoryDescription || "진행 중인 대화",
           workspace: state.workspacePath || state.workspaceName
             ? { name: state.workspaceName, path: state.workspacePath }
             : null,
@@ -837,6 +838,15 @@ function compactHistoryTitle(title: string) {
     return normalized;
   }
   return `${normalized.slice(0, historyTitleMaxLength).trimEnd()}...`;
+}
+
+function currentConversationHistoryTitle(state: ReturnType<typeof useAppState>["state"]) {
+  if (state.chatTitle && state.chatTitle !== "MyHarness") {
+    return state.chatTitle;
+  }
+  return state.messages.find((message) => (
+    message.role === "user" && !message.kind && !/^\/\S*/.test(message.text.trim())
+  ))?.text.replace(/\s+/g, " ").trim() || "";
 }
 
 function sortPinnedHistory(items: HistoryItem[]) {

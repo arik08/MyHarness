@@ -52,6 +52,7 @@ class ToolExecutionCompleted:
     is_error: bool = False
     tool_use_id: str | None = None
     index: int | None = None
+    transcript_output: str | None = None
 
 
 @dataclass(frozen=True)

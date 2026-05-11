@@ -55,6 +55,10 @@ const projectPreferencesRel = join(".myharness", "preferences.json");
 const artifactAliasesRel = join(".myharness", "artifact-aliases.json");
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
+const devUiRedirectEnabled = normalizeBooleanEnv(process.env.MYHARNESS_DEV_UI_REDIRECT);
+const devUiRedirectPort = normalizeOptionalPort(
+  process.env.MYHARNESS_DEV_UI_PORT || process.env.MYHARNESS_WEB_PORT || process.env.VITE_PORT,
+);
 let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.MYHARNESS_WORKSPACE_SCOPE);
 let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
 const protocolPrefix = "OHJSON:";
@@ -179,6 +183,13 @@ const projectFileListSkipPrefixes = [
 const shellCommandTimeoutMs = 60_000;
 const shellOutputMaxChars = 24_000;
 const tokenCountMaxChars = 200_000;
+const modelOutputTokenDefault = 42_000;
+const modelOutputTokenCaps = Object.freeze({
+  "gpt-5.5": 128_000,
+  "gpt-5.4": 128_000,
+  "gpt-5.4-mini": 128_000,
+});
+const configurableOutputTokenModels = Object.freeze(Object.keys(modelOutputTokenCaps));
 const backendIdleClientCloseMs = Math.max(
   10,
   Number(process.env.MYHARNESS_BACKEND_IDLE_CLIENT_CLOSE_MS || 30 * 60 * 1000),
@@ -299,6 +310,41 @@ function localDateKey(date = new Date()) {
 
 function isPageVisitPath(pathname) {
   return pathname === "/" || pathname === "/index.html";
+}
+
+function normalizeBooleanEnv(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function normalizeOptionalPort(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return null;
+  }
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535 ? parsed : null;
+}
+
+function devUiRedirectLocation(request) {
+  if (!devUiRedirectEnabled || !devUiRedirectPort) {
+    return null;
+  }
+  try {
+    const incoming = new URL(request.url || "/", `http://${request.headers.host || `localhost:${port}`}`);
+    const incomingPort = Number(incoming.port || "80");
+    if (incomingPort === devUiRedirectPort) {
+      return null;
+    }
+    incoming.protocol = "http:";
+    incoming.port = String(devUiRedirectPort);
+    return incoming.toString();
+  } catch {
+    return `http://localhost:${devUiRedirectPort}/`;
+  }
+}
+
+function shouldRedirectDevUiRequest(request, pathname) {
+  return (request.method === "GET" || request.method === "HEAD") && isPageVisitPath(pathname);
 }
 
 function hasBuiltReactUi() {
@@ -1509,7 +1555,7 @@ function buildAiArtifactEditPrompt({ sourceRel, targetRel, sourceContent, commen
         ]
       : [
           `- Scope: selected range`,
-          `- Text offsets: ${comment.start}-${comment.end}`,
+          `- Rendered text offsets (not raw HTML offsets): ${comment.start}-${comment.end}`,
           `- Selected text: ${JSON.stringify(comment.text)}`,
           comment.html ? `- Selected HTML: ${JSON.stringify(comment.html)}` : "",
           `- User edit request: ${JSON.stringify(comment.instruction)}`,
@@ -1530,6 +1576,7 @@ function buildAiArtifactEditPrompt({ sourceRel, targetRel, sourceContent, commen
     "- 반드시 같은 디렉터리에 새 버전 파일을 저장하세요.",
     "- Scope가 entire document인 의견은 문서 전체 방향의 수정 요청으로 처리하세요.",
     "- Scope가 selected range인 의견은 선택 영역과 주변 문맥을 중심으로 수정하되, 문체/단어/구조 통일이 필요하면 관련된 앞뒤 문맥도 함께 조정할 수 있습니다.",
+    "- selected range의 좌표는 preview에서 보이는 렌더링 텍스트 기준이며 not raw HTML offsets 입니다. Selected HTML과 Before/After context를 우선 앵커로 사용하세요.",
     "- 실제 변경은 가능하면 edit_file 또는 apply_patch로 수행해 중앙 작업 진행 영역에 편집 작업과 diff 미리보기가 보이게 하세요. 불가피한 경우가 아니면 불투명한 셸 스크립트나 전체 파일 재작성만으로 처리하지 마세요.",
     "- 최종 답변에는 저장한 새 버전 파일 경로와 핵심 변경 요약만 간단히 알려주세요.",
     "",
@@ -2113,6 +2160,81 @@ async function saveYoloModeSettings(body = {}) {
   settings.yolo_mode_enabled = enabled;
   await writeJsonFile(settingsPath, settings);
   return readYoloModeSettings();
+}
+
+function normalizeModelFamily(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  const model = raw.includes("/") ? raw.split("/").pop() : raw;
+  for (const key of [...configurableOutputTokenModels].sort((left, right) => right.length - left.length)) {
+    if (model === key || model.startsWith(`${key}-`)) {
+      return key;
+    }
+  }
+  return "";
+}
+
+function coerceOutputTokenLimit(model, value, fallback = modelOutputTokenDefault) {
+  const officialMax = modelOutputTokenCaps[model] || modelOutputTokenDefault;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return Math.min(fallback, officialMax);
+  }
+  return Math.max(1, Math.min(Math.trunc(parsed), officialMax));
+}
+
+function outputTokenValuesFromSettings(settings = {}) {
+  const stored = settings.model_output_token_limits && typeof settings.model_output_token_limits === "object"
+    ? settings.model_output_token_limits
+    : {};
+  const fallback = Number.isFinite(Number(settings.max_tokens))
+    ? Number(settings.max_tokens)
+    : modelOutputTokenDefault;
+  return Object.fromEntries(configurableOutputTokenModels.map((model) => [
+    model,
+    coerceOutputTokenLimit(model, stored[model], fallback),
+  ]));
+}
+
+async function readOutputTokenSettings() {
+  const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
+  const values = outputTokenValuesFromSettings(settings);
+  return {
+    values,
+    models: configurableOutputTokenModels.map((model) => ({
+      id: model,
+      label: model,
+      value: values[model],
+      officialMax: modelOutputTokenCaps[model],
+    })),
+  };
+}
+
+async function saveOutputTokenSettings(body = {}) {
+  const incoming = body.values && typeof body.values === "object" ? body.values : {};
+  const settingsPath = join(globalConfigDir(), "settings.json");
+  const settings = await readJsonFileIfExists(settingsPath) || {};
+  const previous = outputTokenValuesFromSettings(settings);
+  const values = { ...previous };
+  for (const model of configurableOutputTokenModels) {
+    if (!Object.prototype.hasOwnProperty.call(incoming, model)) {
+      continue;
+    }
+    const parsed = Number(incoming[model]);
+    if (!Number.isFinite(parsed) || parsed < 1 || Math.trunc(parsed) !== parsed) {
+      throw new Error(`${model} 출력 토큰은 1 이상의 정수여야 합니다.`);
+    }
+    if (parsed > modelOutputTokenCaps[model]) {
+      throw new Error(`${model} 출력 토큰은 공식 최대값 ${modelOutputTokenCaps[model].toLocaleString("en-US")}을 넘을 수 없습니다.`);
+    }
+    values[model] = parsed;
+  }
+  settings.model_output_token_limits = values;
+  const activeModel = normalizeModelFamily(settings.model);
+  if (activeModel && Object.prototype.hasOwnProperty.call(values, activeModel)) {
+    settings.max_tokens = values[activeModel];
+  }
+  await writeJsonFile(settingsPath, settings);
+  return readOutputTokenSettings();
 }
 
 async function defaultPermissionMode() {
@@ -3767,6 +3889,12 @@ const settingsApiRoutes = {
     readError: "Could not read Yolo mode settings",
     writeError: "Could not save Yolo mode settings",
   },
+  "/api/settings/output-tokens": {
+    read: () => readOutputTokenSettings(),
+    write: (body) => saveOutputTokenSettings(body),
+    readError: "Could not read output token settings",
+    writeError: "Could not save output token settings",
+  },
 };
 
 async function writeApiJsonResult(response, action, fallbackMessage, useErrorStatus = false) {
@@ -4496,6 +4624,17 @@ server = createServer(async (request, response) => {
       await recordWebVisit(request);
     } catch (error) {
       writeRuntimeLog("web_visit_record_failed", { error: errorPayload(error) });
+    }
+  }
+  if (shouldRedirectDevUiRequest(request, pathname)) {
+    const location = devUiRedirectLocation(request);
+    if (location) {
+      response.writeHead(302, {
+        Location: location,
+        "Cache-Control": "no-store",
+      });
+      response.end();
+      return;
     }
   }
   if (pathname.startsWith("/api/") && (await handleApi(request, response, pathname))) {

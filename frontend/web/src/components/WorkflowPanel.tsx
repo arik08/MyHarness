@@ -62,6 +62,21 @@ function formatWorkflowContentCount(text: string) {
   return `${formatWorkflowTokenCount(estimateTextTokens(text))} (${lines.toLocaleString()}줄)`;
 }
 
+function trimWorkflowPreviewContent(text: string, limit = 3_000) {
+  const value = String(text || "");
+  if (value.length <= limit) {
+    return value;
+  }
+  return `...\n${value.slice(-limit)}`;
+}
+
+function workflowPreviewDisplayLimit(event: WorkflowEvent, source: WorkflowPreviewSource) {
+  if (source.kind !== "content") {
+    return 12_000;
+  }
+  return 3_000;
+}
+
 function workflowPreviewFileName(path: string) {
   const normalized = String(path || "").trim().replace(/[\\/]+$/g, "");
   return normalized.split(/[\\/]+/).pop() || normalized;
@@ -75,6 +90,62 @@ function workflowInputValue(input: Record<string, unknown> | null | undefined, k
     }
   }
   return { found: false, value: "" };
+}
+
+function isLongReportWorkflowTool(toolName: string) {
+  return toolName.toLowerCase() === "write_long_report";
+}
+
+function slugifyWorkflowReportTitle(title: unknown) {
+  const cleaned = String(title || "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[<>:"/\\|?*\x00-\x1f]+/g, "_")
+    .replace(/^[._]+|[._]+$/g, "");
+  return cleaned || "long_report";
+}
+
+function workflowLongReportOutputPath(input: Record<string, unknown> | null | undefined) {
+  const explicit = workflowInputValue(input, ["output_path"]).value.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const suffix = workflowInputValue(input, ["output_format"]).value.trim().toLowerCase() === "html" ? ".html" : ".md";
+  return `outputs/${slugifyWorkflowReportTitle(input?.title)}_report${suffix}`;
+}
+
+function workflowElapsedDetail(detail: string) {
+  return String(detail || "").match(/(?:\d+분(?: \d+초)?|\d+초) 경과/)?.[0] || "";
+}
+
+function workflowLongReportProcessLines(done: boolean) {
+  const marker = done ? "완료" : "진행";
+  return [
+    `1. 목차 설계 - ${marker}`,
+    `2. 섹션별 본문 작성 - ${marker}`,
+    `3. 짧거나 잘린 섹션 이어쓰기 - ${marker}`,
+    `4. 검토 요약 및 최종 병합 - ${marker}`,
+  ];
+}
+
+function workflowLongReportPreviewContent(event: WorkflowEvent, input: Record<string, unknown>) {
+  const target = typeof input.target_tokens === "number" && Number.isFinite(input.target_tokens)
+    ? `목표 분량: ${input.target_tokens.toLocaleString()} tokens`
+    : "";
+  const elapsed = event.status === "running" ? workflowElapsedDetail(event.detail) : "";
+  const stateLine = [
+    event.status === "running" ? "상태: 섹션 단위 생성 중" : "상태: 생성 완료",
+    elapsed,
+  ].filter(Boolean).join(" · ");
+  return [
+    event.status === "running"
+      ? "장문 보고서를 한 번에 쓰지 않고, 목차와 섹션 단위로 나눠 작성한 뒤 최종 파일로 합칩니다."
+      : "장문 보고서를 섹션별 작성물과 검토 요약으로 합쳤습니다.",
+    target,
+    stateLine,
+    ...workflowLongReportProcessLines(event.status !== "running"),
+    compactDetail(event.output || "").replace(/^장문 보고서를 생성했습니다:\s*/u, "결과: "),
+  ].filter(Boolean).join("\n");
 }
 
 function splitWorkflowPreviewLines(value: string) {
@@ -131,7 +202,9 @@ function workflowPreviewSource(event: WorkflowEvent) {
   const lower = event.toolName.toLowerCase();
   const input = event.toolInput || {};
   const patch = workflowPatchPreview(input);
-  const path = workflowInputValue(input, ["file_path", "path"]).value || workflowPatchPath(patch);
+  const path = workflowInputValue(input, ["file_path", "path", "output_path"]).value
+    || workflowPatchPath(patch)
+    || (isLongReportWorkflowTool(event.toolName) ? workflowLongReportOutputPath(input) : "");
   if (lower.includes("edit") || lower.includes("patch")) {
     const diff = formatWorkflowEditPreview(input);
     if (diff) {
@@ -153,6 +226,9 @@ function workflowPreviewSource(event: WorkflowEvent) {
   if (content.found) {
     return { path, kind: "content" as const, content: content.value };
   }
+  if (isLongReportWorkflowTool(event.toolName)) {
+    return { path, kind: "content" as const, content: workflowLongReportPreviewContent(event, input) };
+  }
   return null;
 }
 
@@ -160,8 +236,9 @@ function workflowDetailPathCandidates(event: WorkflowEvent) {
   const input = event.toolInput || {};
   const patch = workflowPatchPreview(input);
   return [
-    workflowInputValue(input, ["file_path", "path", "file"]).value,
+    workflowInputValue(input, ["file_path", "path", "output_path", "file"]).value,
     workflowPatchPath(patch),
+    isLongReportWorkflowTool(event.toolName) ? workflowLongReportOutputPath(input) : "",
     workflowPreviewSource(event)?.path || "",
   ].filter((path, index, paths) => path && paths.indexOf(path) === index);
 }
@@ -174,6 +251,15 @@ function replaceLiteral(value: string, search: string, replacement: string) {
 }
 
 function compactWorkflowOutputDetail(event: WorkflowEvent, detail: string) {
+  if (isLongReportWorkflowTool(event.toolName)) {
+    const elapsed = workflowElapsedDetail(detail);
+    if (event.status === "running") {
+      return ["섹션별 작성/이어쓰기/검토 후 병합 중", elapsed].filter(Boolean).join(" · ");
+    }
+    return compactDetail(detail)
+      .replace(/^장문 보고서를 생성했습니다:\s*/u, "생성 완료 · ")
+      .replace(/\s+/g, " ");
+  }
   if (!isWorkflowOutputTool(event.toolName)) {
     return detail;
   }
@@ -400,6 +486,9 @@ function workflowStepTitle(event: WorkflowEvent) {
   if (isTodoWorkflowTool(event.toolName, event.title)) {
     return "작업 목록 정리";
   }
+  if (isLongReportWorkflowTool(event.toolName)) {
+    return "장문 보고서 생성";
+  }
   if (!isWorkflowOutputTool(event.toolName)) {
     return event.title;
   }
@@ -420,6 +509,9 @@ function workflowStepTitle(event: WorkflowEvent) {
 function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source: WorkflowPreviewSource }) {
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
+  const displayContent = source.kind === "diff"
+    ? source.content
+    : trimWorkflowPreviewContent(source.content, workflowPreviewDisplayLimit(event, source));
   const fileName = workflowPreviewFileName(source.path);
   const prefix = source.kind === "diff"
     ? done ? "수정 완료" : "수정 미리보기"
@@ -429,7 +521,7 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
     : 0;
   const count = source.kind === "diff"
     ? `${formatWorkflowTokenCount(estimateTextTokens(source.content))} (${changedLines.toLocaleString()}줄)`
-    : formatWorkflowContentCount(source.content);
+    : formatWorkflowContentCount(displayContent);
 
   useLayoutEffect(() => {
     const body = bodyRef.current;
@@ -437,7 +529,7 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
       return;
     }
     body.scrollTop = body.scrollHeight;
-  }, [event.status, source.content]);
+  }, [event.status, displayContent]);
 
   return (
     <div className="workflow-output-preview">
@@ -451,7 +543,7 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
             {line || " "}
           </span>
         ))
-        : source.content}</pre>
+        : displayContent}</pre>
     </div>
   );
 }
@@ -502,6 +594,7 @@ function WorkflowStep({
   narration?: string;
 }) {
   const [entering, setEntering] = useState(animate);
+  const showToolDetailLine = Boolean(detail) && (event.level === "child" || Boolean(event.toolName));
   const showCompactToolDetail = quietDone && event.status === "done" && Boolean(detail) && (event.level === "child" || Boolean(event.toolName));
   const showQuietParentDetail = quietDone && event.status === "done" && Boolean(detail) && event.level !== "child" && !event.toolName;
   const showNarration = Boolean(narration);
@@ -534,7 +627,7 @@ function WorkflowStep({
       <span className="workflow-copy">
         <strong>{title}</strong>
         {showStatusDetail ? (
-          <small className={showCompactToolDetail ? "workflow-tool-detail" : undefined}>
+          <small className={showToolDetailLine ? "workflow-tool-detail" : undefined}>
             {showNarration ? narration : showCompactToolDetail || showQuietParentDetail ? visibleDetail : (
               <>
                 {statusLabel(event.status)}

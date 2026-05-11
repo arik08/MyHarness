@@ -212,6 +212,7 @@ export const initialAppState: AppState = {
   status: "connecting",
   statusText: "연결 중",
   provider: "-",
+  activeProfile: "-",
   providerLabel: "-",
   model: "-",
   subagentModel: "-",
@@ -313,6 +314,18 @@ function appendErrorMessage(messages: ChatMessage[], message: string): ChatMessa
     return messages;
   }
   return appendMessage(messages, { role: "system", text, isError: true });
+}
+
+function appendStatusMessage(messages: ChatMessage[], message: string): ChatMessage[] {
+  const text = normalizeVisibleText(message).trim();
+  if (!text) {
+    return messages;
+  }
+  const last = messages[messages.length - 1];
+  if (last?.role === "system" && !last.isError && last.text === text) {
+    return messages;
+  }
+  return appendMessage(messages, { role: "system", text });
 }
 
 function isShellTool(toolName: string) {
@@ -463,7 +476,7 @@ function compactToolStatus(toolName: string, fallback = "처리 중") {
 
 function workflowDetailFromInput(input?: Record<string, unknown> | null) {
   if (!input) return "";
-  const candidates = ["command", "cmd", "script", "path", "file", "cwd", "query", "pattern"];
+  const candidates = ["command", "cmd", "script", "path", "file_path", "output_path", "file", "cwd", "query", "pattern"];
   for (const key of candidates) {
     const value = input[key];
     if (typeof value === "string" && value.trim()) {
@@ -630,7 +643,7 @@ function workflowStringInput(input: Record<string, unknown> | null | undefined, 
 
 function workflowOutputInputPath(input?: Record<string, unknown> | null) {
   const patch = workflowStringInput(input, ["patch", "diff"]).value;
-  const path = workflowStringInput(input, ["path", "file_path"]).value || workflowPatchPath(patch);
+  const path = workflowStringInput(input, ["path", "file_path", "output_path"]).value || workflowPatchPath(patch);
   return normalizeArtifactPath(path).toLowerCase();
 }
 
@@ -674,7 +687,7 @@ function workflowDraftFromBuffer(toolName: string, buffer: string): { toolName: 
   if (!isWorkflowOutputTool(inferredToolName)) {
     return null;
   }
-  const path = firstPartialJsonStringField(buffer, ["file_path", "path"]);
+  const path = firstPartialJsonStringField(buffer, ["file_path", "path", "output_path"]);
   const input: Record<string, unknown> = {};
   if (path.found) {
     input.path = path.value;
@@ -1146,6 +1159,7 @@ function ensureLiveHistoryItem(state: AppState, userText: string) {
 function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type: "ready" | "state_snapshot" }>): AppState {
   const snapshot = event.state || {};
   const provider = String(snapshot.provider || state.provider);
+  const activeProfile = String(snapshot.active_profile || state.activeProfile || provider);
   const providerLabel = String(snapshot.provider_label || state.providerLabel || provider);
   return {
     ...state,
@@ -1153,6 +1167,7 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
     status: event.type === "ready" ? "ready" : state.status,
     statusText: event.type === "ready" ? "준비됨" : state.statusText,
     provider,
+    activeProfile,
     providerLabel,
     model: String(snapshot.model || state.model),
     subagentModel: String(snapshot.subagent_model || state.subagentModel),
@@ -1647,6 +1662,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         provider: action.value,
+        activeProfile: action.value,
         providerLabel: state.runtimePicker.providers.find((option) => option.value === action.value)?.label || state.providerLabel,
         runtimePicker: {
           ...state.runtimePicker,
@@ -1959,9 +1975,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
 
       if (event.type === "status") {
+        const text = String(event.message || event.value || "");
         return {
           ...state,
-          statusText: String(event.message || event.value || state.statusText),
+          statusText: text || state.statusText,
+          messages: appendStatusMessage(state.messages, text),
         };
       }
 
@@ -2082,7 +2100,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const last = state.messages[state.messages.length - 1];
         const isFinalAnswer = event.has_tool_uses !== true;
         const messages = value
-          ? last?.role === "assistant"
+          ? last?.role === "assistant" && last.isComplete !== true
             ? [
                 ...state.messages.slice(0, -1),
                 { ...last, text: value, isComplete: isFinalAnswer },

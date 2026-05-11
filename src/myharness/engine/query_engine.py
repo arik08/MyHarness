@@ -84,6 +84,11 @@ class QueryEngine:
         return self._model
 
     @property
+    def max_tokens(self) -> int:
+        """Return the maximum output tokens for a single model request."""
+        return self._max_tokens
+
+    @property
     def system_prompt(self) -> str:
         """Return the active system prompt."""
         return self._system_prompt
@@ -118,6 +123,10 @@ class QueryEngine:
     def set_max_turns(self, max_turns: int | None) -> None:
         """Update the maximum number of agentic turns per user input."""
         self._max_turns = None if max_turns is None else max(1, int(max_turns))
+
+    def set_max_tokens(self, max_tokens: int) -> None:
+        """Update the maximum output tokens for future model requests."""
+        self._max_tokens = max(1, int(max_tokens))
 
     def set_reasoning_effort(self, effort: str | None) -> None:
         """Update the reasoning effort for future model requests."""

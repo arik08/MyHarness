@@ -28,7 +28,8 @@ echo   MyHarness Web Dev
 echo ============================================================
 echo.
 echo   Preferred React dev UI: http://127.0.0.1:%MYHARNESS_WEB_PORT%
-echo   Backend API:  http://localhost:%PORT%
+echo   Backend/dev entry: http://localhost:%PORT%
+echo   Other PCs: use http://THIS_PC_IP:%PORT% to enter dev mode
 echo   Config:       %MYHARNESS_CONFIG_DIR%
 echo   Logs:         %MYHARNESS_LOGS_DIR%
 echo.
@@ -70,8 +71,6 @@ if not exist "%MYHARNESS_SETTINGS%" (
   >> "%MYHARNESS_SETTINGS%" echo }
 )
 
-call :ensure_pgpt_env
-
 echo [INFO] Checking Python package dependencies...
 set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
 call :find_bootstrap_python
@@ -84,6 +83,13 @@ if errorlevel 1 (
   exit /b 1
 )
 echo [INFO] Using Python: %MYHARNESS_BOOTSTRAP_PYTHON% %MYHARNESS_BOOTSTRAP_PYTHON_ARGS%
+
+call :select_default_provider_profile
+if /i "%MYHARNESS_SELECTED_PROFILE%"=="p-gpt" (
+  call :ensure_pgpt_env
+) else (
+  echo [INFO] Codex OAuth is available. Skipping P-GPT environment setup.
+)
 
 call :upgrade_posco_bundle
 if errorlevel 1 (
@@ -232,6 +238,18 @@ set "CURL_CA_BUNDLE=%POSCO_CA_BUNDLE%"
 set "PIP_CERT=%POSCO_CA_BUNDLE%"
 set "NODE_EXTRA_CA_CERTS=C:\POSCO_CA.crt"
 set "npm_config_cafile=C:\POSCO_CA.crt"
+exit /b 0
+
+:select_default_provider_profile
+set "MYHARNESS_SELECTED_PROFILE="
+for /f "usebackq delims=" %%P in (`"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% "%CD%\scripts\select_default_provider_profile.py" --settings "%MYHARNESS_SETTINGS%" 2^>nul`) do (
+  set "MYHARNESS_SELECTED_PROFILE=%%P"
+)
+if "%MYHARNESS_SELECTED_PROFILE%"=="" (
+  set "MYHARNESS_SELECTED_PROFILE=p-gpt"
+  echo [WARN] Could not auto-select provider profile. Falling back to P-GPT.
+)
+echo [INFO] Default provider profile: %MYHARNESS_SELECTED_PROFILE%
 exit /b 0
 
 :ensure_pgpt_env

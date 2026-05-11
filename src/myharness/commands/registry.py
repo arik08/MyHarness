@@ -29,7 +29,14 @@ from myharness.bridge import get_bridge_manager
 from myharness.bridge.types import WorkSecret
 from myharness.bridge.work_secret import build_sdk_url, decode_work_secret, encode_work_secret
 from myharness.api.provider import auth_status, detect_provider
-from myharness.config.settings import Settings, display_model_setting, load_settings, save_settings
+from myharness.config.settings import (
+    Settings,
+    display_model_setting,
+    format_token_count,
+    load_settings,
+    model_output_profile,
+    save_settings,
+)
 from myharness.engine.messages import ConversationMessage, sanitize_conversation_messages
 from myharness.engine.query_engine import QueryEngine
 from myharness.learning import get_default_learning_skills_dir
@@ -304,6 +311,15 @@ def _shorten_text(text: str, *, limit: int = 160) -> str:
     return normalized[: limit - 3] + "..."
 
 
+def _format_output_limit_text(model: str, max_tokens: int) -> str:
+    profile = model_output_profile(model)
+    return (
+        f"출력 상한: {format_token_count(max_tokens)} / "
+        f"모델 최대: {format_token_count(profile.model_max_output_tokens)}\n"
+        f"컨텍스트: {format_token_count(profile.context_window_tokens)}"
+    )
+
+
 def _rewind_turns(messages: list[ConversationMessage], turns: int) -> list[ConversationMessage]:
     updated = list(messages)
     for _ in range(max(0, turns)):
@@ -399,6 +415,7 @@ def create_default_command_registry(
             message=(
                 f"메시지: {len(context.engine.messages)}\n"
                 f"사용량: 입력={usage.input_tokens} 출력={usage.output_tokens}\n"
+                f"{_format_output_limit_text(context.engine.model, context.engine.max_tokens)}\n"
                 f"프로필: {manager.get_active_profile()}\n"
                 f"추론 강도: {_effort_label(state.effort if state is not None else load_settings().effort)}\n"
                 f"패스: {state.passes if state is not None else load_settings().passes}"
@@ -459,6 +476,7 @@ def create_default_command_registry(
         return CommandResult(
             message=(
                 f"실제 사용량: 입력={usage.input_tokens} 출력={usage.output_tokens}\n"
+                f"{_format_output_limit_text(context.engine.model, context.engine.max_tokens)}\n"
                 f"예상 대화 토큰: {estimated}\n"
                 f"메시지: {len(context.engine.messages)}"
             )

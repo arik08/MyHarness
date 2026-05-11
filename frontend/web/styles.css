@@ -1703,6 +1703,7 @@ a:focus-visible {
   display: flex;
   position: relative;
   flex-direction: column;
+  container: artifact-panel / inline-size;
   min-width: 0;
   min-height: 0;
   background: var(--panel);
@@ -3687,14 +3688,14 @@ a:focus-visible {
 }
 
 .project-file-toolbar {
-  display: flex;
+  display: grid;
   position: sticky;
   top: 0;
   z-index: 6;
+  grid-template-columns: minmax(92px, 1fr) max-content;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  column-gap: 12px;
+  row-gap: 8px;
   margin: -14px -14px 10px;
   padding: 14px 14px 10px;
   background: var(--panel);
@@ -3702,7 +3703,6 @@ a:focus-visible {
 }
 
 .project-file-sort-summary {
-  flex: 1 1 180px;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -3716,9 +3716,23 @@ a:focus-visible {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+  justify-self: end;
+  max-width: 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
   gap: 6px;
+}
+
+@container artifact-panel (max-width: 700px) {
+  .project-file-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-file-controls {
+    justify-self: stretch;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
 }
 
 .project-file-sort {
@@ -8216,6 +8230,96 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   outline-offset: 1px;
 }
 
+.output-token-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.output-token-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(190px, 240px);
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-raised) 96%, white), var(--panel-raised));
+}
+
+.output-token-model {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.output-token-model strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.output-token-model small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.output-token-input-wrap {
+  display: grid;
+  grid-template-columns: minmax(96px, 1fr) auto;
+  align-items: center;
+  height: 36px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.output-token-input-wrap input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.output-token-input-wrap input:focus {
+  outline: none;
+}
+
+.output-token-input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.output-token-input-wrap span {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-raised) 88%, var(--accent-soft));
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .scope-segmented-control {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8371,6 +8475,15 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 @media (max-width: 640px) {
   .modal-card .modal-close {
     right: 0;
+  }
+
+  .output-token-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .output-token-model {
+    justify-content: space-between;
   }
 
   .scope-segmented-control {

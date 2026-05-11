@@ -1325,6 +1325,26 @@ class _SlowTool(BaseTool):
         return ToolResult(output="slow")
 
 
+class _DisplayTool(BaseTool):
+    name = "display_tool"
+    description = "Returns compact model output and separate display output."
+    input_model = _OkInput
+
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        return True
+
+    async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+        del arguments, context
+        return ToolResult(
+            output="model-only",
+            metadata={
+                "model_output": "model-only",
+                "display_output": "full source for UI",
+                "transcript_output": "full source for transcript",
+            },
+        )
+
+
 class _BoomTool(BaseTool):
     name = "boom_tool"
     description = "Always raises."
@@ -1350,6 +1370,52 @@ class _NeverTool(BaseTool):
         del arguments, context
         await asyncio.Event().wait()
         return ToolResult(output="unreachable")
+
+
+@pytest.mark.asyncio
+async def test_query_engine_keeps_display_output_out_of_model_context(tmp_path: Path):
+    registry = ToolRegistry()
+    registry.register(_DisplayTool())
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[ToolUseBlock(id="toolu_display", name="display_tool", input={})],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="shown")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("show source")]
+    completed = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    tool_messages = [
+        message
+        for message in engine.messages
+        if message.role == "user" and any(isinstance(block, ToolResultBlock) for block in message.content)
+    ]
+    result_block = next(block for block in tool_messages[0].content if isinstance(block, ToolResultBlock))
+
+    assert completed[0].output == "full source for UI"
+    assert completed[0].transcript_output == "full source for transcript"
+    assert result_block.content == "model-only"
+    assert result_block.display_content == "full source for UI"
+    assert result_block.transcript_content == "full source for transcript"
+    assert "full source" not in str(api_client.requests[1].messages[-1].to_api_param())
+    assert "model-only" in str(api_client.requests[1].messages[-1].to_api_param())
 
 
 @pytest.mark.asyncio

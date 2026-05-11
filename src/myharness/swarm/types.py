@@ -276,6 +276,9 @@ class TeammateSpawnConfig:
     model: str | None = None
     """Model override for this teammate."""
 
+    active_profile: str | None = None
+    """Provider profile inherited from the parent session."""
+
     effort: str | None = None
     """Reasoning effort override for this teammate."""
 

@@ -96,6 +96,7 @@ def get_teammate_command() -> str:
 def build_inherited_cli_flags(
     *,
     model: str | None = None,
+    active_profile: str | None = None,
     effort: str | None = None,
     system_prompt: str | None = None,
     system_prompt_mode: str | None = None,
@@ -117,6 +118,7 @@ def build_inherited_cli_flags(
 
     Args:
         model: Model override to forward (e.g. ``"claude-opus-4-6"``).
+        active_profile: Provider profile override to forward.
         effort: Reasoning effort override to forward.
         system_prompt: System prompt override to forward to the teammate.
         system_prompt_mode: One of ``"replace"``/``"default"`` or ``"append"``.
@@ -153,6 +155,9 @@ def build_inherited_cli_flags(
     # "inherit" means use the parent's model via the MYHARNESS_MODEL env var.
     if model and model != "inherit":
         flags.extend(["--model", shlex.quote(model)])
+
+    if active_profile:
+        flags.extend(["--active-profile", shlex.quote(active_profile)])
 
     if effort:
         flags.extend(["--effort", shlex.quote(effort)])

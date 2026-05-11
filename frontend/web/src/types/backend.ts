@@ -18,6 +18,7 @@ export type Attachment = {
 
 export type BackendStateSnapshot = {
   provider?: string;
+  active_profile?: string;
   provider_label?: string;
   model?: string;
   subagent_model?: string;

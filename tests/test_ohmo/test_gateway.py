@@ -26,6 +26,11 @@ from ohmo.session_storage import save_session_snapshot
 from ohmo.workspace import get_gateway_restart_notice_path, initialize_workspace
 
 
+def test_gateway_models_default_to_pgpt_provider_profile():
+    assert GatewayConfig().provider_profile == "p-gpt"
+    assert GatewayState().provider_profile == "p-gpt"
+
+
 def test_gateway_router_uses_thread_and_sender_when_present():
     message = InboundMessage(
         channel="slack",

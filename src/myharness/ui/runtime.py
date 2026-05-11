@@ -373,7 +373,7 @@ async def build_runtime(
         cwd=cwd,
         model=settings.model,
         system_prompt=system_prompt_text,
-        max_tokens=settings.max_tokens,
+        max_tokens=settings.effective_max_tokens(),
         reasoning_effort=settings.effort,
         context_window_tokens=settings.context_window_tokens or settings.memory.context_window_tokens,
         auto_compact_threshold_tokens=(
@@ -586,6 +586,7 @@ def refresh_runtime_client(bundle: RuntimeBundle) -> None:
             default_model=settings.model,
         )
     bundle.engine.set_model(settings.model)
+    bundle.engine.set_max_tokens(settings.effective_max_tokens())
     sync_app_state(bundle)
 
 

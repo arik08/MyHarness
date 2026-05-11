@@ -733,10 +733,11 @@ async def run_query(
             result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
             yield ToolExecutionCompleted(
                 tool_name=tc.name,
-                output=result.content,
+                output=result.display_content or result.content,
                 is_error=result.is_error,
                 tool_use_id=tc.id,
                 index=0,
+                transcript_output=result.transcript_content,
             ), None
             tool_results = [result]
         else:
@@ -777,10 +778,11 @@ async def run_query(
                     tool_results[index] = result
                     yield ToolExecutionCompleted(
                         tool_name=tc.name,
-                        output=result.content,
+                        output=result.display_content or result.content,
                         is_error=result.is_error,
                         tool_use_id=tc.id,
                         index=index,
+                        transcript_output=result.transcript_content,
                     ), None
             finally:
                 pending = [task for task in tasks if not task.done()]
@@ -911,8 +913,13 @@ async def _execute_tool_call(
         ToolExecutionContext(
             cwd=context.cwd,
             metadata={
+                "api_client": context.api_client,
                 "tool_registry": context.tool_registry,
                 "ask_user_prompt": context.ask_user_prompt,
+                "model": context.model,
+                "system_prompt": context.system_prompt,
+                "max_tokens": context.max_tokens,
+                "reasoning_effort": context.reasoning_effort,
                 **(context.tool_metadata or {}),
             },
             hook_executor=context.hook_executor,
@@ -921,10 +928,15 @@ async def _execute_tool_call(
     elapsed = time.monotonic() - t0
     log.debug("executed %s in %.2fs err=%s output_len=%d",
               tool_name, elapsed, result.is_error, len(result.output or ""))
+    model_output = str(result.metadata.get("model_output") or result.output)
+    display_output = result.metadata.get("display_output")
+    transcript_output = result.metadata.get("transcript_output")
     tool_result = ToolResultBlock(
         tool_use_id=tool_use_id,
-        content=result.output,
+        content=model_output,
         is_error=result.is_error,
+        display_content=str(display_output) if display_output is not None else None,
+        transcript_content=str(transcript_output) if transcript_output is not None else None,
     )
     _record_tool_carryover(
         context,

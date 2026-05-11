@@ -1,0 +1,262 @@
+"""Tests for the long report generation tool."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from myharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, ApiTextDeltaEvent
+from myharness.api.usage import UsageSnapshot
+from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.services.token_estimation import estimate_tokens
+from myharness.tools import create_default_tool_registry
+from myharness.tools.base import ToolExecutionContext
+from myharness.tools.long_report_tool import (
+    LongReportTool,
+    LongReportToolInput,
+    _resolve_target_tokens,
+    _trim_text_to_token_budget,
+)
+
+
+class FakeReportClient:
+    def __init__(self, responses: list[tuple[str, str | None]]) -> None:
+        self.responses = list(responses)
+        self.requests: list[ApiMessageRequest] = []
+
+    async def stream_message(self, request: ApiMessageRequest):
+        self.requests.append(request)
+        text, stop_reason = self.responses.pop(0)
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text=text)]),
+            usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+            stop_reason=stop_reason,
+        )
+
+
+class StreamingReportClient:
+    def __init__(self, output_path: Path) -> None:
+        self.output_path = output_path
+        self.requests: list[ApiMessageRequest] = []
+        self.saw_partial_file = False
+
+    async def stream_message(self, request: ApiMessageRequest):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="- 배경")]),
+                usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+                stop_reason=None,
+            )
+            return
+        if len(self.requests) == 2:
+            yield ApiTextDeltaEvent(text="첫 문단이 ")
+            self.saw_partial_file = self.output_path.exists() and "첫 문단이" in self.output_path.read_text(encoding="utf-8")
+            yield ApiTextDeltaEvent(text="스트리밍됩니다.")
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="첫 문단이 스트리밍됩니다.")]),
+                usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+                stop_reason=None,
+            )
+            return
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="검토 요약")]),
+            usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+            stop_reason=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_long_report_uses_lower_gpt55_report_token_limits(tmp_path: Path):
+    client = FakeReportClient(
+        [
+            ("- 배경\n- 영향", None),
+            ("배경 본문", None),
+            ("영향 본문", None),
+            ("검토 요약", None),
+        ]
+    )
+    result = await LongReportTool().execute(
+        LongReportToolInput(
+            title="긴 보고서",
+            brief="테스트용 보고서를 작성하세요.",
+            output_path="outputs/long_report.md",
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.5",
+                "system_prompt": "system",
+                "reasoning_effort": "medium",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    assert [request.max_tokens for request in client.requests] == [8_000, 18_000, 18_000, 8_000]
+    report = (tmp_path / "outputs" / "long_report.md").read_text(encoding="utf-8")
+    assert "# 긴 보고서" in report
+    assert "## 배경" in report
+    assert "배경 본문" in report
+    assert "## 검토 요약" in report
+    assert "outputs/long_report.md" in result.output
+
+
+@pytest.mark.asyncio
+async def test_long_report_uses_gpt54_mini_section_limit_and_continues_truncated_sections(tmp_path: Path):
+    client = FakeReportClient(
+        [
+            ("- 요약", None),
+            ("요약 본문 1", "length"),
+            (" 이어쓰기", None),
+            ("검토 요약", None),
+        ]
+    )
+    result = await LongReportTool().execute(
+        LongReportToolInput(title="미니 보고서", brief="짧게", output_path="outputs/mini.md"),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.4-mini",
+                "system_prompt": "system",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    assert [request.max_tokens for request in client.requests] == [6_000, 14_000, 14_000, 6_000]
+    report = (tmp_path / "outputs" / "mini.md").read_text(encoding="utf-8")
+    assert "요약 본문 1 이어쓰기" in report
+
+
+@pytest.mark.asyncio
+async def test_long_report_flushes_partial_file_while_section_streams(tmp_path: Path):
+    output_path = tmp_path / "outputs" / "stream.html"
+    client = StreamingReportClient(output_path)
+
+    result = await LongReportTool().execute(
+        LongReportToolInput(
+            title="스트리밍 보고서",
+            brief="본문이 생성되는 동안 파일을 갱신하세요.",
+            output_path="outputs/stream.html",
+            output_format="html",
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.5",
+                "system_prompt": "system",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    assert client.saw_partial_file is True
+    assert "첫 문단이 스트리밍됩니다." in output_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_long_report_target_tokens_continue_short_sections_and_render_html(tmp_path: Path):
+    long_body = "확장 분석 문장입니다. " * 8_000
+    client = FakeReportClient(
+        [
+            ("- 배경\n- 결론", None),
+            ("짧은 배경", None),
+            (long_body, None),
+            (long_body, None),
+            ("검토 요약", None),
+        ]
+    )
+
+    result = await LongReportTool().execute(
+        LongReportToolInput(
+            title="초장문 보고서",
+            brief="80,000 토큰 수준으로 작성하세요.",
+            output_path="outputs/deep.html",
+            target_tokens=80_000,
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.5",
+                "system_prompt": "system",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    assert [request.max_tokens for request in client.requests] == [8_000, 16_065, 16_065, 16_065, 8_000]
+    assert result.metadata["target_tokens"] == 80_000
+    report = (tmp_path / "outputs" / "deep.html").read_text(encoding="utf-8")
+    assert "<!doctype html>" in report
+    assert "<title>초장문 보고서</title>" in report
+    assert "본문 약" in report
+    assert "목표 80,000 tokens" in report
+
+
+@pytest.mark.asyncio
+async def test_long_report_clamps_sections_to_requested_target_budget(tmp_path: Path):
+    runaway_body = "과잉 생성 문장입니다. " * 20_000
+    client = FakeReportClient(
+        [
+            ("- 본론", None),
+            (runaway_body, None),
+            ("검토 요약", None),
+        ]
+    )
+
+    result = await LongReportTool().execute(
+        LongReportToolInput(
+            title="40k 보고서",
+            brief="40,000 토큰 수준으로 작성하세요.",
+            output_path="outputs/clamped.md",
+            target_tokens=40_000,
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.5",
+                "system_prompt": "system",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    report = (tmp_path / "outputs" / "clamped.md").read_text(encoding="utf-8")
+    assert estimate_tokens(report, model="gpt-5.5") < 50_000
+    assert result.metadata["estimated_tokens"] < 50_000
+
+
+def test_long_report_infers_user_requested_target_tokens():
+    assert (
+        _resolve_target_tokens(
+            LongReportToolInput(title="GPT 역사", brief="HTML 보고서를 80,000 토큰 수준으로 작성하세요.")
+        )
+        == 80_000
+    )
+    assert (
+        _resolve_target_tokens(LongReportToolInput(title="시장 분석", brief="초장문 8만 토큰 대보고서로 작성"))
+        == 80_000
+    )
+
+
+def test_long_report_token_budget_trim_uses_complete_sentence_boundary():
+    text = ("완성 문장입니다. " * 200) + "잘리면 안 되는 미완성 문"
+
+    trimmed = _trim_text_to_token_budget(text, 500, model="gpt-5.5")
+
+    assert trimmed.endswith("완성 문장입니다.")
+    assert not trimmed.endswith("미완성 문")
+    assert estimate_tokens(trimmed, model="gpt-5.5") <= 500
+
+
+def test_default_tool_registry_includes_long_report_tool():
+    registry = create_default_tool_registry()
+
+    assert registry.get("write_long_report") is not None

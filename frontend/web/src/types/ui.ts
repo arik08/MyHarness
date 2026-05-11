@@ -63,6 +63,7 @@ export type AppState = {
   status: StatusKind;
   statusText: string;
   provider: string;
+  activeProfile: string;
   providerLabel: string;
   model: string;
   subagentModel: string;
@@ -169,6 +170,7 @@ export type ArtifactAiEditSelection = {
   before: string;
   after: string;
   html?: string;
+  htmlSnapshot?: string;
   scope?: "selection" | "document";
 };
 

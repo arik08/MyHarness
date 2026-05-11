@@ -9,6 +9,7 @@ from myharness.coordinator.coordinator_mode import (
     WorkerConfig,
     format_task_notification,
     get_coordinator_tools,
+    get_coordinator_system_prompt,
     get_coordinator_user_context,
     is_coordinator_mode,
     match_session_mode,
@@ -174,6 +175,16 @@ def test_coordinator_user_context_with_scratchpad(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
     ctx = get_coordinator_user_context(scratchpad_dir="/tmp/scratch")
     assert "/tmp/scratch" in ctx["workerToolsContext"]
+
+
+def test_coordinator_system_prompt_guides_straggler_recovery(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SIMPLE", raising=False)
+    prompt = get_coordinator_system_prompt()
+
+    assert "Stragglers" in prompt
+    assert "If most workers finish within a few minutes but one worker" in prompt
+    assert "stop it with task_stop" in prompt
+    assert "Do not let one lagging worker block the whole task" in prompt
 
 
 # ---------------------------------------------------------------------------

@@ -62,6 +62,7 @@ class SubprocessBackend:
 
         flags = build_flags(
             model=config.model,
+            active_profile=config.active_profile,
             effort=config.effort,
             system_prompt=config.system_prompt,
             system_prompt_mode=config.system_prompt_mode,

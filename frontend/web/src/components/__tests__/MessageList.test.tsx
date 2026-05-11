@@ -251,6 +251,50 @@ describe("MessageList", () => {
     expect(document.querySelector(".markdown-body")?.textContent).toContain("~~취소선~~");
   });
 
+  it("merges consecutive rows in markdown tables by company column", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "| 회사 | 연도 | 매출액 |",
+          "| --- | ---: | ---: |",
+          "| 포스코홀딩스 | 2021 | 763,320 |",
+          "| 포스코홀딩스 | 2022 | 847,500 |",
+          "| 현대제철 | 2021 | 228,499 |",
+          "| 현대제철 | 2022 | 273,406 |",
+          "| 고려아연 | 2024 | 120,529 |",
+        ].join("\n")}
+      />,
+    );
+
+    const rows = Array.from(document.querySelectorAll<HTMLTableRowElement>(".markdown-body tbody tr"));
+    expect(rows).toHaveLength(5);
+    expect(rows[0].cells[0].textContent).toBe("포스코홀딩스");
+    expect(rows[0].cells[0].rowSpan).toBe(2);
+    expect(rows[1].cells[0].textContent).toBe("2022");
+    expect(rows[2].cells[0].textContent).toBe("현대제철");
+    expect(rows[2].cells[0].rowSpan).toBe(2);
+    expect(rows[3].cells[0].textContent).toBe("2022");
+    expect(rows[4].cells[0].textContent).toBe("고려아연");
+    expect(rows[4].cells[0].rowSpan).toBe(1);
+  });
+
+  it("does not merge repeated values from non-company markdown table columns", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "| 항목 | 연도 | 값 |",
+          "| --- | ---: | ---: |",
+          "| 포스코홀딩스 | 2021 | 1 |",
+          "| 포스코홀딩스 | 2022 | 2 |",
+        ].join("\n")}
+      />,
+    );
+
+    const rows = Array.from(document.querySelectorAll<HTMLTableRowElement>(".markdown-body tbody tr"));
+    expect(rows[0].cells[0].rowSpan).toBe(1);
+    expect(rows[1].cells[0].textContent).toBe("포스코홀딩스");
+  });
+
   it("renders display and inline LaTeX math without touching code fences", () => {
     render(
       <MarkdownMessage
@@ -884,6 +928,33 @@ describe("MessageList", () => {
     expect(workflowText).not.toContain("TODO.md");
   });
 
+  it("keeps the latest running tool detail in the compact one-line style", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [{ id: "user-1", role: "user", text: "긴 도구 실행해줘" }],
+          workflowAnchorMessageId: "user-1",
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "shell_command",
+              title: "명령 실행",
+              detail: "아주 긴 진행 메시지가 도구 실행 중에 들어와도 현재 단계에서 여러 줄로 늘어나지 않아야 합니다.",
+              status: "running",
+              level: "child",
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const detail = document.querySelector(".workflow-step.child.running small");
+    expect(detail?.className).toContain("workflow-tool-detail");
+  });
+
   it("does not describe failed todo_write steps as completed", () => {
     render(
       <AppStateProvider
@@ -1310,6 +1381,51 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("live.html");
   });
 
+  it("shows a running long report preview even before generated file content is available", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "GPT 1부터 GPT 5까지 HTML 보고서를 길게 작성해줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-report",
+              toolName: "write_long_report",
+              title: "write_long_report",
+              detail: "파일 작업 중... 36초 경과",
+              status: "running",
+              level: "child",
+              toolInput: {
+                title: "GPT 1 ~ GPT 5 보고서",
+                brief: "40k 토큰 수준으로 길게",
+                output_path: "",
+                output_format: "html",
+                target_tokens: 40000,
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
+    expect(screen.queryByText("파일 작성")).toBeNull();
+    expect(screen.getByText("작성 중인 결과물 - GPT_1_~_GPT_5_보고서_report.html")).toBeTruthy();
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("목차와 섹션 단위로 나눠 작성한 뒤 최종 파일로 합칩니다.");
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("목표 분량: 40,000 tokens");
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("상태: 섹션 단위 생성 중 · 36초 경과");
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("1. 목차 설계");
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("2. 섹션별 본문 작성");
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("3. 짧거나 잘린 섹션 이어쓰기");
+    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("4. 검토 요약 및 최종 병합");
+  });
+
   it("shows long completed HTML write tool content in the workflow output preview body", () => {
     const longContent = [
       "첫 줄입니다.",
@@ -1392,6 +1508,86 @@ describe("MessageList", () => {
     expect(screen.getByText("작성 중인 결과물 - internet-ai-future-report.html")).toBeTruthy();
     expect(body.textContent).toBe(longContent);
     expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
+  });
+
+  it("caps very large running write previews to the recent tail", () => {
+    const hugeContent = `${"초반 내용\n".repeat(30000)}마지막 본문`;
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "큰 파일 작성해줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "outputs/huge.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/huge.html",
+                content: hugeContent,
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const body = document.querySelector(".workflow-output-body") as HTMLElement;
+    expect(body.textContent?.startsWith("...\n")).toBe(true);
+    expect(body.textContent).toContain("마지막 본문");
+    expect((body.textContent || "").length).toBeLessThan(3_100);
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toMatch(/2,\d{3} 토큰 \(501줄\)/);
+  });
+
+  it("keeps running long report file previews to a small rolling window", () => {
+    const hugeContent = `${"초반 분석 본문\n".repeat(12000)}마지막 장문 보고서 본문`;
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "8만 토큰 HTML 보고서 작성해줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-report",
+              toolName: "write_long_report",
+              title: "write_long_report",
+              detail: "파일 작업 중... 49초 경과",
+              status: "running",
+              level: "child",
+              toolInput: {
+                title: "데이터센터 산업 보고서",
+                output_path: "outputs/report.html",
+                output_format: "html",
+                target_tokens: 80000,
+                content: hugeContent,
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const body = document.querySelector(".workflow-output-body") as HTMLElement;
+    expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
+    expect(body.textContent?.startsWith("...\n")).toBe(true);
+    expect(body.textContent).toContain("마지막 장문 보고서 본문");
+    expect((body.textContent || "").length).toBeLessThan(3_100);
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").not.toContain("12000");
   });
 
   it("renders one running write preview for duplicate same-path workflow events", () => {

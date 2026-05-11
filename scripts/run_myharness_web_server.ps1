@@ -94,12 +94,10 @@ function Test-LauncherKey {
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
 
-    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue
-    foreach ($child in $children) {
-        Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+    & taskkill.exe /PID $ProcessId /T /F >$null 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
     }
-
-    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
 function Stop-ServerProcess {
@@ -110,7 +108,13 @@ function Stop-ServerProcess {
     }
 
     Stop-ProcessTree -ProcessId $Process.Id
-    if (-not $Process.WaitForExit(5000)) {
+    try {
+        $Process.Refresh()
+    }
+    catch {
+        # Process handles can become invalid immediately after taskkill.
+    }
+    if (-not $Process.HasExited -and -not $Process.WaitForExit(1000)) {
         Write-Host "[WARN] Server process did not exit cleanly; continuing restart."
     }
 }

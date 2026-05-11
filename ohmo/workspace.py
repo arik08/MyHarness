@@ -276,7 +276,7 @@ def initialize_workspace(workspace: str | Path | None = None) -> Path:
         gateway_path.write_text(
             json.dumps(
                 {
-                    "provider_profile": "codex",
+                    "provider_profile": "p-gpt",
                     "enabled_channels": [],
                     "session_routing": "chat-thread",
                     "send_progress": True,

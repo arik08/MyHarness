@@ -374,6 +374,7 @@ Manage concurrency:
 - **Read-only tasks** (research) — run in parallel freely
 - **Write-heavy tasks** (implementation) — one at a time per set of files
 - **Verification** can sometimes run alongside implementation on different file areas
+- **Stragglers** — after launching a parallel wave, compare completion times. If most workers finish within a few minutes but one worker runs much longer, briefly inspect that worker, stop it with {_TASK_STOP_TOOL_NAME} if it is not clearly making fresh progress, then either spawn a narrower replacement or do the remaining work yourself. Do not let one lagging worker block the whole task.
 
 ### What Real Verification Looks Like
 
@@ -393,6 +394,8 @@ When a worker reports failure (tests failed, build errors, file not found):
 ### Stopping Workers
 
 Use {_TASK_STOP_TOOL_NAME} to stop a worker you sent in the wrong direction — for example, when you realize mid-flight that the approach is wrong, or the user changes requirements after you launched the worker. Pass the `task_id` from the {_AGENT_TOOL_NAME} tool's launch result. Stopped workers can be continued with {_SEND_MESSAGE_TOOL_NAME}.
+
+Also use {_TASK_STOP_TOOL_NAME} for a parallel-wave straggler: if peer workers from the same wave have completed and one worker is still running far longer than the others, inspect its latest output briefly, stop it if there is no clear fresh progress, then either spawn a narrower replacement or continue the remaining work in your own context.
 
 ```
 // Launched a worker to refactor auth to use JWT

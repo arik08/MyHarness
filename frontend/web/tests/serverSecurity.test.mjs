@@ -1,6 +1,7 @@
 ﻿import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -81,6 +82,23 @@ async function rmWithRetry(path, options = {}) {
     }
   }
   throw lastError;
+}
+
+async function requestWithHost(baseUrl, path, host) {
+  const url = new URL(path, baseUrl);
+  return await new Promise((resolve, reject) => {
+    const request = httpRequest(url, { headers: { host } }, (response) => {
+      response.resume();
+      response.on("end", () => {
+        resolve({
+          status: response.statusCode,
+          headers: response.headers,
+        });
+      });
+    });
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 async function openPort() {
@@ -845,6 +863,21 @@ test("defaults to shared workspaces when listening on LAN interfaces", async (t)
   assert.equal(payload.scope.mode, "shared");
 });
 
+test("dev launcher backend entry redirects page visits to Vite on the same host", async (t) => {
+  const app = await startWebServer({
+    env: {
+      MYHARNESS_DEV_UI_REDIRECT: "1",
+      MYHARNESS_DEV_UI_PORT: "5173",
+    },
+  });
+  t.after(() => app.stop());
+
+  const response = await requestWithHost(app.baseUrl, "/", `172.17.64.1:${app.port}`);
+
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.location, "http://172.17.64.1:5173/");
+});
+
 test("can still use IP-scoped workspaces when explicitly configured", async (t) => {
   const app = await startWebServer({
     host: "0.0.0.0",
@@ -858,6 +891,56 @@ test("can still use IP-scoped workspaces when explicitly configured", async (t) 
   assert.equal(response.status, 200);
   assert.equal(payload.mode, "ip");
   assert.equal(payload.scope.mode, "ip");
+});
+
+test("output token settings expose official model caps and save valid values", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const initialResponse = await fetch(`${app.baseUrl}/api/settings/output-tokens`);
+  const initial = await initialResponse.json();
+
+  assert.equal(initialResponse.status, 200);
+  assert.deepEqual(initial.values, {
+    "gpt-5.5": 42000,
+    "gpt-5.4": 42000,
+    "gpt-5.4-mini": 42000,
+  });
+  assert.deepEqual(
+    initial.models.map((model) => [model.id, model.officialMax]),
+    [
+      ["gpt-5.5", 128000],
+      ["gpt-5.4", 128000],
+      ["gpt-5.4-mini", 128000],
+    ],
+  );
+
+  const saveResponse = await fetch(`${app.baseUrl}/api/settings/output-tokens`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values: { "gpt-5.5": 64000, "gpt-5.4": 42000, "gpt-5.4-mini": 32000 } }),
+  });
+  const saved = await saveResponse.json();
+  const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+
+  assert.equal(saveResponse.status, 200);
+  assert.equal(saved.values["gpt-5.5"], 64000);
+  assert.equal(settings.model_output_token_limits["gpt-5.4-mini"], 32000);
+});
+
+test("output token settings reject values above official model caps", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const response = await fetch(`${app.baseUrl}/api/settings/output-tokens`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values: { "gpt-5.5": 128001 } }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.match(payload.error, /128,000/);
 });
 
 test("rejects global settings writes from forwarded remote clients", async (t) => {

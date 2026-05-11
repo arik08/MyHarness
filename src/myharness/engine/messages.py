@@ -95,6 +95,8 @@ class ToolResultBlock(BaseModel):
     tool_use_id: str
     content: str
     is_error: bool = False
+    display_content: str | None = None
+    transcript_content: str | None = None
 
 
 ContentBlock = Annotated[

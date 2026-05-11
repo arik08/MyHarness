@@ -22,6 +22,7 @@ def test_initialize_workspace_creates_expected_files(tmp_path: Path):
     assert get_bootstrap_path(workspace).exists()
     assert get_memory_index_path(workspace).exists()
     assert get_gateway_config_path(workspace).exists()
+    assert '"provider_profile": "p-gpt"' in get_gateway_config_path(workspace).read_text(encoding="utf-8")
 
     health = workspace_health(workspace)
     assert all(health.values())

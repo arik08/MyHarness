@@ -69,6 +69,34 @@ test("preserves streamed tool call ids in live file preview snapshots", () => {
   assert.equal(replay[0].tool_call_id, "call-write");
 });
 
+test("keeps only the latest status progress message in live replay", () => {
+  const state = createSessionReplayState();
+
+  updateSessionReplayState(state, { type: "status", message: "맥락을 확인하고 있습니다." });
+  updateSessionReplayState(state, { type: "status", message: "관련 파일을 읽고 있습니다." });
+
+  const replay = replayEventsForState(state);
+  const statuses = replay.filter((event) => event.type === "status");
+
+  assert.deepEqual(statuses.map((event) => event.message), ["관련 파일을 읽고 있습니다."]);
+});
+
+test("keeps the user transcript when status messages exceed the stable replay limit", () => {
+  const state = createSessionReplayState();
+
+  updateSessionReplayState(state, { type: "transcript_item", item: { role: "user", text: "사용자 질문" } });
+  for (let index = 0; index < 1001; index += 1) {
+    updateSessionReplayState(state, { type: "status", message: `상태 ${index}` });
+  }
+
+  const replay = replayEventsForState(state);
+  const userMessages = replay.filter((event) => event.type === "transcript_item" && event.item?.role === "user");
+  const statuses = replay.filter((event) => event.type === "status");
+
+  assert.deepEqual(userMessages.map((event) => event.item.text), ["사용자 질문"]);
+  assert.deepEqual(statuses.map((event) => event.message), ["상태 1000"]);
+});
+
 test("returns raw replay events after Last-Event-ID without duplicating the last event", () => {
   const rawEvents = [];
   appendRawSessionEvent(rawEvents, 1, { type: "assistant_delta", message: "a" });

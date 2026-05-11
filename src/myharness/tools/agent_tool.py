@@ -118,6 +118,13 @@ def _subagent_model_from_context(context: ToolExecutionContext) -> str | None:
     return None
 
 
+def _active_profile_from_context(context: ToolExecutionContext) -> str | None:
+    value = context.metadata.get("active_profile")
+    if isinstance(value, str):
+        return value.strip() or None
+    return None
+
+
 def _subagent_effort_from_context(context: ToolExecutionContext) -> str | None:
     value = context.metadata.get("subagent_effort")
     if isinstance(value, str):
@@ -246,6 +253,7 @@ class AgentTool(BaseTool):
             cwd=str(context.cwd),
             parent_session_id="main",
             model=agent_model,
+            active_profile=_active_profile_from_context(context),
             effort=agent_effort,
             command=arguments.command,
             system_prompt=agent_def.system_prompt if agent_def else None,

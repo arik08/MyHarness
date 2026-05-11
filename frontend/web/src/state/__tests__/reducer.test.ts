@@ -126,6 +126,36 @@ describe("appReducer", () => {
     expect(answerEvent?.detail).toContain("수신 중");
   });
 
+  it("keeps status progress messages in the transcript instead of replacing them", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "status", message: "맥락을 확인하고 있습니다." },
+    });
+    const second = appReducer(first, {
+      type: "backend_event",
+      event: { type: "status", message: "관련 파일을 읽고 있습니다." },
+    });
+
+    expect(second.statusText).toBe("관련 파일을 읽고 있습니다.");
+    expect(second.messages.map((message) => [message.role, message.text])).toEqual([
+      ["system", "맥락을 확인하고 있습니다."],
+      ["system", "관련 파일을 읽고 있습니다."],
+    ]);
+  });
+
+  it("deduplicates repeated status progress messages", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "status", message: "관련 파일을 읽고 있습니다." },
+    });
+    const duplicate = appReducer(first, {
+      type: "backend_event",
+      event: { type: "status", message: "관련 파일을 읽고 있습니다." },
+    });
+
+    expect(duplicate.messages).toHaveLength(1);
+  });
+
   it("rebuilds a live streaming answer and workflow from replayed snapshot events", () => {
     const cleared = appReducer(
       {
@@ -780,6 +810,22 @@ describe("appReducer", () => {
     });
 
     expect(next.messages[0].text).toBe("브라우저로 간단한 목업, 다이어그램, 비교 화면 같은 시각 자료를 함께 보여드리면 더 설명하기 쉬울 수 있습니다. 이 기능은 아직 새 기능이라 토큰을 조금 더 쓸 수 있습니다. 사용해볼까요? (로컬 URL을 여는 과정이 필요합니다)");
+  });
+
+  it("keeps completed assistant transcript items when the final assistant answer arrives", () => {
+    const withTranscript = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "assistant", text: "스킬 원문 전문" } },
+    });
+    const next = appReducer(withTranscript, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "원문을 위에 표시했습니다.", has_tool_uses: false },
+    });
+
+    expect(next.messages.map((message) => message.text)).toEqual([
+      "스킬 원문 전문",
+      "원문을 위에 표시했습니다.",
+    ]);
   });
 
   it("tracks tool completion without rendering raw tool output as a chat message", () => {

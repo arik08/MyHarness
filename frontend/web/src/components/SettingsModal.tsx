@@ -8,12 +8,15 @@ import {
   changeYoloMode,
   openFolderDialog,
   readLearnedSkillsSettings,
+  readOutputTokenSettings,
   readPgptSettings,
   readShellSettings,
   readUserStats,
   readWorkspaceScopeSettings,
   readYoloModeSettings,
+  saveOutputTokenSettings,
   savePgptSettings,
+  type OutputTokenSettings,
   type PgptSettings,
   type UserStats,
 } from "../api/settings";
@@ -35,7 +38,7 @@ function handleBackdropClick(event: MouseEvent<HTMLDivElement>, onDismiss: () =>
   }
 }
 
-type SettingsView = "home" | "prompt" | "behavior" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt";
+type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [view, setView] = useState<SettingsView>("home");
@@ -76,6 +79,10 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
         <button type="button" className="settings-row" onClick={() => onSelect("behavior")}>
           <strong>스트리밍 스크롤</strong>
           <small>{streamingSettingsLabel(state.appSettings)}</small>
+        </button>
+        <button type="button" className="settings-row" onClick={() => onSelect("output-tokens")} disabled={!localBrowserHost}>
+          <strong>모델별 출력 토큰</strong>
+          <small>{localBrowserHost ? "GPT-5.5 / 5.4 / 5.4 mini" : serverOnlyLabel}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("download")}>
           <strong>파일 저장경로</strong>
@@ -118,6 +125,7 @@ function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack:
   if (!isLocalBrowserHost() && isServerHostSettingsView(view)) return <ServerHostOnlySettings onBack={onBack} />;
   if (view === "prompt") return <PromptSettings onBack={onBack} />;
   if (view === "behavior") return <BehaviorSettings onBack={onBack} />;
+  if (view === "output-tokens") return <OutputTokenSettingsForm onBack={onBack} />;
   if (view === "download") return <DownloadSettings onBack={onBack} />;
   if (view === "shell") return <ShellSettings onBack={onBack} />;
   if (view === "yolo") return <YoloSettings onBack={onBack} />;
@@ -129,7 +137,7 @@ function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack:
 }
 
 function isServerHostSettingsView(view: SettingsView) {
-  return view === "shell" || view === "yolo" || view === "workspace" || view === "learned-skills" || view === "pgpt";
+  return view === "shell" || view === "yolo" || view === "workspace" || view === "learned-skills" || view === "pgpt" || view === "output-tokens";
 }
 
 function ServerHostOnlySettings({ onBack }: { onBack: () => void }) {
@@ -226,6 +234,79 @@ function BehaviorSettings({ onBack }: { onBack: () => void }) {
         <button type="button" onClick={onBack}>뒤로</button>
         <button type="button" className="primary" onClick={save}>저장</button>
       </div>
+    </>
+  );
+}
+
+function OutputTokenSettingsForm({ onBack }: { onBack: () => void }) {
+  const { state } = useAppState();
+  const [settings, setSettings] = useState<OutputTokenSettings | null>(null);
+  const [values, setValues] = useState<Record<string, number>>({});
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    void readOutputTokenSettings()
+      .then((data) => {
+        setSettings(data);
+        setValues(data.values || {});
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+  }, []);
+
+  function update(model: string, value: number) {
+    setValues((current) => ({ ...current, [model]: value }));
+  }
+
+  async function save() {
+    setError("");
+    try {
+      const data = await saveOutputTokenSettings(values);
+      setSettings(data);
+      setValues(data.values || {});
+      if (state.sessionId) {
+        await sendBackendRequest(state.sessionId, state.clientId, { type: "refresh_runtime_settings" });
+      }
+      onBack();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
+  return (
+    <>
+      <SettingsHeader title="모델별 출력 토큰">공식 최대 출력 토큰 이내에서 모델별 1회 응답 상한을 정합니다.</SettingsHeader>
+      {!settings ? <p className="settings-helper">설정을 불러오는 중입니다...</p> : null}
+      <div className="output-token-list">
+        {settings?.models.map((model) => {
+          const inputId = `outputTokens-${model.id}`;
+          return (
+            <label className="output-token-row" key={model.id} htmlFor={inputId}>
+              <span className="output-token-model">
+                <strong>{model.label}</strong>
+                <small>공식 최대 {model.officialMax.toLocaleString("ko-KR")}</small>
+              </span>
+              <span className="output-token-input-wrap">
+                <input
+                  id={inputId}
+                  type="number"
+                  min={1}
+                  max={model.officialMax}
+                  step={1000}
+                  value={values[model.id] ?? model.value}
+                  aria-label={`${model.label} 출력 토큰`}
+                  onChange={(event) => update(model.id, Number(event.currentTarget.value))}
+                />
+                <span>tokens</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      <div className="modal-actions">
+        <button type="button" onClick={onBack}>뒤로</button>
+        <button type="button" className="primary" onClick={() => void save()} disabled={!settings}>저장</button>
+      </div>
+      <p className="workspace-error">{error}</p>
     </>
   );
 }

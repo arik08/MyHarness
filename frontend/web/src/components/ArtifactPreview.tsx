@@ -9,6 +9,7 @@ import { MarkdownMessage } from "./MarkdownMessage";
 export const artifactFrameBackMessage = "myharness:artifact-panel-back";
 export const artifactHtmlEditMessage = "myharness:artifact-html-edit";
 export const artifactAiSelectionMessage = "myharness:artifact-ai-selection";
+export const artifactAiCommentsMessage = "myharness:artifact-ai-comments";
 export const artifactFrameScrollMessage = "myharness:artifact-frame-scroll";
 export const artifactHtmlEditModeMessage = "myharness:artifact-html-edit-mode";
 
@@ -865,6 +866,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
 }
 
 function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comments: ArtifactAiEditComment[]) {
+  const isFullDocument = /<(?:!doctype|html|head|body)\b/i.test(content);
   const bridge = `
 <style data-myharness-ai-style="true">
 .myharness-ai-comment-highlight {
@@ -1040,13 +1042,18 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
 <script data-myharness-ai-script="true">
 (() => {
   const messageType = ${JSON.stringify(artifactAiSelectionMessage)};
+  const commentsMessageType = ${JSON.stringify(artifactAiCommentsMessage)};
   const modeMessageType = ${JSON.stringify(artifactHtmlEditModeMessage)};
   const artifactPath = ${JSON.stringify(artifactPath)};
-  const comments = ${JSON.stringify(comments.map((comment, index) => ({
+  const fullDocument = ${JSON.stringify(isFullDocument)};
+  let comments = ${JSON.stringify(comments.map((comment, index) => ({
     id: comment.id,
     index: index + 1,
     start: comment.start,
     end: comment.end,
+    text: comment.text,
+    before: comment.before,
+    after: comment.after,
     scope: comment.scope || "selection",
     instruction: comment.instruction,
     html: comment.html || "",
@@ -1056,6 +1063,22 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
   let activePopover = null;
   let aiSelectionEnabled = false;
   let commentsRendered = false;
+
+  const normalizeComments = (items) => {
+    if (!Array.isArray(items)) return [];
+    return items.map((comment, index) => ({
+      id: String(comment?.id || "comment-" + (index + 1)),
+      index: index + 1,
+      start: Number(comment?.start),
+      end: Number(comment?.end),
+      text: String(comment?.text || ""),
+      before: String(comment?.before || ""),
+      after: String(comment?.after || ""),
+      scope: comment?.scope === "document" ? "document" : "selection",
+      instruction: String(comment?.instruction || ""),
+      html: String(comment?.html || ""),
+    }));
+  };
 
   const removePopover = () => {
     activePopover?.remove();
@@ -1113,24 +1136,143 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
       },
     });
     let offset = 0;
+    let documentText = "";
     while (walker.nextNode()) {
       const node = walker.currentNode;
       const length = node.nodeValue.length;
+      documentText += node.nodeValue || "";
       if ((node.nodeValue || "").trim()) {
         nodes.push({ node, start: offset, end: offset + length });
       }
       offset += length;
     }
+    nodes.documentText = documentText;
     return nodes;
+  };
+
+  const documentTextFromNodes = (nodes) => nodes.documentText || nodes.map((item) => item.node.nodeValue || "").join("");
+
+  const compareBoundary = (leftNode, leftOffset, rightNode, rightOffset) => {
+    const left = document.createRange();
+    const right = document.createRange();
+    left.setStart(leftNode, leftOffset);
+    left.collapse(true);
+    right.setStart(rightNode, rightOffset);
+    right.collapse(true);
+    return left.compareBoundaryPoints(Range.START_TO_START, right);
+  };
+
+  const textOffsetsFromRange = (range) => {
+    const nodes = textNodes();
+    const parts = [];
+
+    for (const item of nodes) {
+      const length = (item.node.nodeValue || "").length;
+      const nodeStart = { node: item.node, offset: 0 };
+      const nodeEnd = { node: item.node, offset: length };
+      const rangeStart = { node: range.startContainer, offset: range.startOffset };
+      const rangeEnd = { node: range.endContainer, offset: range.endOffset };
+      const overlapStart = compareBoundary(nodeStart.node, nodeStart.offset, rangeStart.node, rangeStart.offset) >= 0 ? nodeStart : rangeStart;
+      const overlapEnd = compareBoundary(nodeEnd.node, nodeEnd.offset, rangeEnd.node, rangeEnd.offset) <= 0 ? nodeEnd : rangeEnd;
+
+      if (compareBoundary(overlapStart.node, overlapStart.offset, overlapEnd.node, overlapEnd.offset) < 0) {
+        const localStart = overlapStart.node === item.node ? overlapStart.offset : 0;
+        const localEnd = overlapEnd.node === item.node ? overlapEnd.offset : length;
+        parts.push({
+          start: item.start + localStart,
+          end: item.start + localEnd,
+          text: (item.node.nodeValue || "").slice(localStart, localEnd),
+        });
+      }
+    }
+
+    const rawText = parts.map((part) => part.text).join("");
+    const leadingTrim = rawText.length - rawText.trimStart().length;
+    const trailingTrim = rawText.length - rawText.trimEnd().length;
+    const trimmedText = rawText.slice(leadingTrim, rawText.length - trailingTrim);
+    if (!trimmedText) {
+      return { start: 0, end: 0, text: "", rawText, nodes };
+    }
+
+    let start = null;
+    let end = null;
+    let cursor = 0;
+    for (const part of parts) {
+      const partStart = cursor;
+      const partEnd = cursor + part.text.length;
+      const overlapStart = Math.max(partStart, leadingTrim);
+      const overlapEnd = Math.min(partEnd, rawText.length - trailingTrim);
+      if (overlapStart < overlapEnd) {
+        if (start === null) start = part.start + (overlapStart - partStart);
+        end = part.start + (overlapEnd - partStart);
+      }
+      cursor = partEnd;
+    }
+
+    return { start: start ?? 0, end: end ?? start ?? 0, text: trimmedText, rawText, nodes };
+  };
+
+  const rangeFromTextOffsets = (start, end, nodes = textNodes()) => {
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+    const range = document.createRange();
+    let started = false;
+    for (const item of nodes) {
+      if (!started && start >= item.start && start <= item.end) {
+        range.setStart(item.node, Math.max(0, Math.min((item.node.nodeValue || "").length, start - item.start)));
+        started = true;
+      }
+      if (started && end >= item.start && end <= item.end) {
+        range.setEnd(item.node, Math.max(0, Math.min((item.node.nodeValue || "").length, end - item.start)));
+        return range;
+      }
+    }
+    return null;
+  };
+
+  const resolveCommentRange = (comment, nodes) => {
+    if (comment.scope === "document") return null;
+    const documentText = documentTextFromNodes(nodes);
+    const text = String(comment.text || "").trim();
+    if (!text || !Number.isFinite(comment.start) || !Number.isFinite(comment.end) || comment.end <= comment.start) return null;
+    const exact = documentText.slice(comment.start, comment.end);
+    if (exact === text) {
+      return { ...comment, start: comment.start, end: comment.end };
+    }
+    if (exact.trim() === text) {
+      const leadingTrim = exact.length - exact.trimStart().length;
+      const trailingTrim = exact.length - exact.trimEnd().length;
+      return { ...comment, start: comment.start + leadingTrim, end: comment.end - trailingTrim };
+    }
+
+    let best = null;
+    let index = documentText.indexOf(text);
+    while (index !== -1) {
+      const before = String(comment.before || "").slice(-180);
+      const after = String(comment.after || "").slice(0, 180);
+      const beforeWindow = documentText.slice(Math.max(0, index - before.length), index);
+      const afterWindow = documentText.slice(index + text.length, index + text.length + after.length);
+      let score = 0;
+      if (before && beforeWindow === before) score += 4;
+      else if (before && beforeWindow.trimEnd().endsWith(before.trim())) score += 2;
+      if (after && afterWindow === after) score += 4;
+      else if (after && afterWindow.trimStart().startsWith(after.trim())) score += 2;
+      score -= Math.abs(index - comment.start) / 100000;
+      if (!best || score > best.score) {
+        best = { score, start: index, end: index + text.length };
+      }
+      index = documentText.indexOf(text, index + Math.max(1, text.length));
+    }
+    return best ? { ...comment, start: best.start, end: best.end } : null;
   };
 
   const wrapCommentRanges = () => {
     if (!comments.length || !document.body) return;
     const nodes = textNodes();
+    const resolvedComments = comments.map((comment) => resolveCommentRange(comment, nodes)).filter(Boolean);
     for (let nodeIndex = nodes.length - 1; nodeIndex >= 0; nodeIndex -= 1) {
       const item = nodes[nodeIndex];
       const text = item.node.nodeValue || "";
-      const ranges = comments
+      const ranges = resolvedComments
         .filter((comment) => comment.scope !== "document" && Number.isFinite(comment.start) && Number.isFinite(comment.end) && comment.start < item.end && comment.end > item.start)
         .map((comment) => ({
           comment,
@@ -1192,6 +1334,12 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
     commentsRendered = true;
   };
 
+  const replaceLiveComments = (items) => {
+    comments = normalizeComments(items);
+    clearCommentAnnotations();
+    if (aiSelectionEnabled) renderComments();
+  };
+
   const positionCommentAnchors = () => {
     comments.forEach((comment) => {
       const firstHighlight = document.querySelector('.myharness-ai-comment-highlight[data-myharness-ai-comment-id="' + escapeSelector(comment.id) + '"]');
@@ -1213,16 +1361,6 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
         delete anchor.dataset.tooltipAlign;
       }
     });
-  };
-
-  const selectionOffsets = (range) => {
-    const bodyRange = document.createRange();
-    bodyRange.setStart(document.body, 0);
-    bodyRange.setEnd(range.startContainer, range.startOffset);
-    const start = bodyRange.toString().length;
-    bodyRange.setEnd(range.endContainer, range.endOffset);
-    const end = bodyRange.toString().length;
-    return { start, end };
   };
 
   const rectFromRange = (range) => {
@@ -1270,6 +1408,37 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
     return wrapper.innerHTML.trim();
   };
 
+  const cleanDocumentHtml = () => {
+    const clone = document.cloneNode(true);
+    const root = clone.documentElement;
+    if (!root) return "";
+    root.querySelectorAll?.(".myharness-ai-comment-highlight,.myharness-ai-pending-highlight").forEach((item) => {
+      item.replaceWith(clone.createTextNode(item.textContent || ""));
+    });
+    root.querySelectorAll?.("[data-myharness-ai-style],[data-myharness-ai-script],.myharness-ai-comment-popover,.myharness-ai-comment-anchor").forEach((item) => item.remove());
+    root.querySelectorAll?.("[data-myharness-ai-comment-id],[data-myharness-ai-comment-anchor],[aria-label]").forEach((item) => {
+      item.removeAttribute("data-myharness-ai-comment-id");
+      item.removeAttribute("data-myharness-ai-comment-anchor");
+      if ((item.getAttribute("aria-label") || "").startsWith("AI 수정 의견 ")) item.removeAttribute("aria-label");
+    });
+    root.querySelectorAll?.("[data-myharness-editor-style],[data-myharness-editor-script],[data-myharness-editor-base]").forEach((item) => item.remove());
+    root.querySelectorAll?.("[data-myharness-edit-wrapper]").forEach((item) => {
+      while (item.firstChild) item.parentNode?.insertBefore(item.firstChild, item);
+      item.remove();
+    });
+    root.querySelectorAll?.("[data-myharness-editable-text]").forEach((item) => {
+      item.removeAttribute("data-myharness-editable-text");
+      item.removeAttribute("data-myharness-edit-target");
+      item.removeAttribute("data-myharness-text-index");
+      item.removeAttribute("contenteditable");
+      item.removeAttribute("spellcheck");
+      item.removeAttribute("tabindex");
+    });
+    if (!fullDocument) return clone.body?.innerHTML || "";
+    const doctype = clone.doctype ? "<!DOCTYPE " + clone.doctype.name + ">" : "";
+    return doctype + root.outerHTML;
+  };
+
   const htmlFromRange = (range) => cleanClone(range.cloneContents()).slice(0, 6000);
 
   const showPendingHighlight = (range) => {
@@ -1297,25 +1466,30 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
     if (!document.body.contains(range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement)) {
       return null;
     }
-    const offsets = selectionOffsets(range);
-    const bodyText = document.body.textContent || "";
-    const html = htmlFromRange(range);
-    const text = String(fallbackText || range.toString() || html).trim();
-    if (!text || offsets.end <= offsets.start) return null;
+    const offsets = textOffsetsFromRange(range);
+    if (!offsets.text || offsets.end <= offsets.start) return null;
+    const payloadRange = rangeFromTextOffsets(offsets.start, offsets.end, offsets.nodes) || range;
+    const bodyText = documentTextFromNodes(offsets.nodes);
+    const html = htmlFromRange(payloadRange);
     return {
-      text,
-      html,
-      start: offsets.start,
-      end: offsets.end,
-      before: bodyText.slice(Math.max(0, offsets.start - 180), offsets.start),
-      after: bodyText.slice(offsets.end, Math.min(bodyText.length, offsets.end + 180)),
-      scope: "selection",
+      payload: {
+        text: offsets.text,
+        html,
+        htmlSnapshot: cleanDocumentHtml(),
+        start: offsets.start,
+        end: offsets.end,
+        before: bodyText.slice(Math.max(0, offsets.start - 180), offsets.start),
+        after: bodyText.slice(offsets.end, Math.min(bodyText.length, offsets.end + 180)),
+        scope: "selection",
+      },
+      pendingRange: payloadRange,
     };
   };
 
   const documentPayload = () => ({
     text: "전체 문서",
     html: "",
+    htmlSnapshot: cleanDocumentHtml(),
     start: 0,
     end: 0,
     before: "",
@@ -1352,6 +1526,11 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
     close.setAttribute("aria-label", "닫기");
     close.textContent = "취소";
 
+    const stopPopoverEvent = (event) => {
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+    };
+
     const syncFormShape = () => {
       submit.disabled = !textarea.value.trim();
       textarea.style.height = "25px";
@@ -1369,6 +1548,10 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
     const submitComment = () => {
       const instruction = textarea.value.trim();
       if (!instruction) return;
+      const optimisticComments = selection.scope === "document" ? null : [
+        ...comments,
+        { ...selection, id: "pending-" + Date.now(), instruction },
+      ];
       parent.postMessage({
         type: messageType,
         path: artifactPath,
@@ -1376,15 +1559,25 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
       }, "*");
       const selected = window.getSelection();
       selected?.removeAllRanges();
-      clearUi();
+      if (optimisticComments) {
+        removePopover();
+        clearPendingHighlight();
+        replaceLiveComments(optimisticComments);
+      } else {
+        clearUi();
+      }
     };
     textarea.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
+        stopPopoverEvent(event);
         submitComment();
       }
     });
     submit.addEventListener("click", submitComment);
+    ["keydown", "keyup", "keypress", "mousedown", "mouseup", "pointerdown", "pointerup", "click", "dblclick", "contextmenu"].forEach((type) => {
+      popover.addEventListener(type, stopPopoverEvent);
+    });
     popover.append(textarea, close, submit);
     document.body.appendChild(popover);
     activePopover = popover;
@@ -1399,15 +1592,15 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
     const range = selection.getRangeAt(0);
-    const payload = selectionPayloadFromRange(range, selection.toString());
-    if (!payload) return false;
-    const rect = rectFromRange(range);
+    const selectionResult = selectionPayloadFromRange(range, selection.toString());
+    if (!selectionResult) return false;
+    const rect = rectFromRange(selectionResult.pendingRange);
     const fallbackPoint = {
       x: rect.left + Math.min(rect.width, 18),
       y: rect.top + rect.height + 7,
     };
-    showPendingHighlight(range.cloneRange());
-    showPopover(payload, point || fallbackPoint);
+    showPendingHighlight(selectionResult.pendingRange.cloneRange());
+    showPopover(selectionResult.payload, point || fallbackPoint);
     return true;
   };
 
@@ -1447,13 +1640,19 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
     if (commentsRendered) positionCommentAnchors();
   }, { once: true });
   window.addEventListener("message", (event) => {
-    if (event.data?.type !== modeMessageType || event.data.path !== artifactPath) return;
-    aiSelectionEnabled = Boolean(event.data.ai);
-    if (aiSelectionEnabled) {
-      renderComments();
-    } else {
-      clearUi();
-      clearCommentAnnotations();
+    if (event.data?.path !== artifactPath) return;
+    if (event.data?.type === commentsMessageType) {
+      replaceLiveComments(event.data.comments);
+      return;
+    }
+    if (event.data?.type === modeMessageType) {
+      aiSelectionEnabled = Boolean(event.data.ai);
+      if (aiSelectionEnabled) {
+        renderComments();
+      } else {
+        clearUi();
+        clearCommentAnnotations();
+      }
     }
   });
 })();
@@ -1589,6 +1788,16 @@ export function ArtifactPreview({
     return () => frame.removeEventListener("load", postMode);
   }, [aiSelectionEnabled, artifact.path, htmlEditMode, kind, sourceMode]);
   useEffect(() => {
+    if (kind !== "html" || sourceMode) return;
+    const frame = htmlFrameElementRef.current;
+    if (!frame) return;
+    frame.contentWindow?.postMessage({
+      type: artifactAiCommentsMessage,
+      path: artifact.path,
+      comments: aiEditComments,
+    }, "*");
+  }, [aiEditComments, artifact.path, kind, sourceMode]);
+  useEffect(() => {
     htmlEditWasDraftDirtyRef.current = Boolean(draftDirty);
   }, [draftDirty]);
   if (shouldOmitCompletedHtmlSource) {
@@ -1630,8 +1839,7 @@ export function ArtifactPreview({
     }
     const frameContent = htmlEditSessionContentRef.current ?? frameBaseContent;
     const frameAssetBaseUrl = htmlEditSessionContentRef.current !== null ? htmlEditSessionAssetBaseUrlRef.current : assetBaseUrl;
-    const aiCommentKey = JSON.stringify(aiEditComments.map((comment) => [comment.id, comment.start, comment.end, comment.instruction]));
-    const editFrameKey = `${artifact.path}\u0000${frameAssetBaseUrl}\u0000${frameContent}\u0000${aiCommentKey}`;
+    const editFrameKey = `${artifact.path}\u0000${frameAssetBaseUrl}\u0000${frameContent}`;
     if (htmlEditFrameRef.current?.key !== editFrameKey || !htmlFrameElementRef.current) {
       const editableContent = iframeHtmlEditorBridge(iframeEditorAssetBase(frameContent, frameAssetBaseUrl), artifact.path);
       const previewContent = iframeHtmlAiSelectionBridge(editableContent, artifact.path, aiEditComments);

@@ -41,6 +41,18 @@ def test_build_inherited_cli_flags_explicit_model_included():
     assert "claude-opus-4-5" in flags[idx + 1]
 
 
+def test_build_inherited_cli_flags_active_profile_included():
+    flags = build_inherited_cli_flags(active_profile="p-gpt")
+    assert "--active-profile" in flags
+    idx = flags.index("--active-profile")
+    assert flags[idx + 1] == "p-gpt"
+
+
+def test_build_inherited_cli_flags_empty_active_profile_excluded():
+    flags = build_inherited_cli_flags(active_profile="")
+    assert "--active-profile" not in flags
+
+
 def test_build_inherited_cli_flags_effort_included():
     flags = build_inherited_cli_flags(effort="high")
     assert "--effort" in flags

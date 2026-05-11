@@ -39,6 +39,7 @@ async def test_subprocess_backend_forwards_system_prompt_in_command(monkeypatch,
         prompt="Review the code changes.\nInclude edge cases.",
         cwd=str(tmp_path),
         parent_session_id="sess-001",
+        active_profile="p-gpt",
         system_prompt="You are a careful code reviewer.",
         task_type="local_agent",
     )
@@ -47,6 +48,7 @@ async def test_subprocess_backend_forwards_system_prompt_in_command(monkeypatch,
 
     assert result.success is True
     command = str(captured["command"])
+    assert "--active-profile p-gpt" in command
     assert "--system-prompt" in command
     assert "You are a careful code reviewer." in command
     assert captured["env"] == {

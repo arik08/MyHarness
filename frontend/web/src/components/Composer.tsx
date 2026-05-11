@@ -346,7 +346,7 @@ export function Composer() {
         clientId: state.clientId,
         line,
         attachments,
-        suppressUserTranscript: shellShortcut || attachments.length > 0,
+        suppressUserTranscript: true,
         systemPrompt: state.systemPrompt.trim() || undefined,
       });
     } catch (error) {

@@ -19,7 +19,18 @@ from myharness.engine.stream_events import (
     ToolInputDelta,
 )
 from myharness.engine.messages import ConversationMessage, TextBlock
-from myharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
+from myharness.tasks.types import TaskRecord
+from myharness.ui.backend_host import (
+    BackendHostConfig,
+    ReactBackendHost,
+    _detect_slow_swarm_teammate,
+    _long_report_progress_path,
+    _progress_preview_content,
+    _read_progress_preview_content,
+    _tool_progress_delays,
+    _tool_progress_message,
+    run_backend_host,
+)
 from myharness.ui.protocol import BackendEvent
 from myharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 
@@ -67,6 +78,53 @@ class FailingApiClient:
         if False:
             yield None
         raise RuntimeError(self._message)
+
+
+def test_long_report_progress_infers_path_and_reads_streamed_file(tmp_path):
+    payload = {
+        "title": "GPT 진화와 미래 보고서",
+        "output_path": "",
+        "output_format": "html",
+    }
+    progress_path = _long_report_progress_path(payload)
+    report_path = tmp_path / progress_path
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("<!doctype html><h1>생성 중</h1>", encoding="utf-8")
+
+    message = _tool_progress_message("write_long_report", payload, 7)
+    preview = _read_progress_preview_content(tmp_path, progress_path)
+
+    assert progress_path == "outputs/GPT_진화와_미래_보고서_report.html"
+    assert "outputs/GPT_진화와_미래_보고서_report.html" in message
+    assert "<h1>생성 중</h1>" in preview
+
+
+def test_long_report_progress_preview_strips_html_and_caps_tail(tmp_path):
+    progress_path = "outputs/report.html"
+    report_path = tmp_path / progress_path
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(
+        "<!doctype html><html><head><style>.x{}</style></head><body>"
+        + "<p>초반 HTML 본문</p>" * 500
+        + "<p>마지막 사람이 읽을 본문</p></body></html>",
+        encoding="utf-8",
+    )
+
+    preview = _progress_preview_content("write_long_report", tmp_path, progress_path)
+
+    assert "<p>" not in preview
+    assert "마지막 사람이 읽을 본문" in preview
+    assert len(preview) <= 3_004
+
+
+def test_long_report_progress_uses_less_aggressive_preview_updates():
+    first_delay, interval = _tool_progress_delays("write_long_report")
+    normal_first_delay, normal_interval = _tool_progress_delays("write_file")
+
+    assert first_delay >= 1.0
+    assert interval >= 2.0
+    assert normal_first_delay == 2.5
+    assert normal_interval == 3.0
 
 
 class FakeBinaryStdout:
@@ -392,7 +450,7 @@ async def test_read_requests_queues_steering_line_while_busy(monkeypatch):
         and event.item.kind == "steering"
         for event in events
     )
-    assert any(event.type == "status" and event.message == "추가 요청을 반영하겠습니다." for event in events)
+    assert not any(event.type == "status" and "추가 요청" in (event.message or "") for event in events)
     assert not any(event.type == "status" and "스티어링" in (event.message or "") for event in events)
     queued = await host._request_queue.get()
     assert queued.type == "shutdown"
@@ -1007,8 +1065,91 @@ async def test_backend_host_steers_divided_work_to_swarm_agents(tmp_path, monkey
     assert "Do not spawn serial downstream roles prematurely" in steering_lines[0]
     assert "at most 5 workers" in steering_lines[0]
     assert "narrow non-overlapping scope" in steering_lines[0]
+    assert "one worker" in steering_lines[0]
+    assert "`task_stop`" in steering_lines[0]
+    assert "Do not let one lagging worker block" in steering_lines[0]
     assert any(event.type == "status" and event.message == "역할을 나눠 진행하겠습니다." for event in events)
     assert not any(event.type == "status" and "지시" in (event.message or "") for event in events)
+
+
+def test_detect_slow_swarm_teammate_flags_parallel_wave_straggler(tmp_path, monkeypatch):
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_STRAGGLER_MIN_SECONDS", 60)
+    now = 1_000.0
+    tasks = [
+        TaskRecord(
+            id="agent-fast-1",
+            type="local_agent",
+            status="completed",
+            description="fast worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "fast-1.log",
+            created_at=0.0,
+            started_at=0.0,
+            ended_at=120.0,
+        ),
+        TaskRecord(
+            id="agent-fast-2",
+            type="local_agent",
+            status="completed",
+            description="fast worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "fast-2.log",
+            created_at=5.0,
+            started_at=5.0,
+            ended_at=125.0,
+        ),
+        TaskRecord(
+            id="agent-slow",
+            type="local_agent",
+            status="running",
+            description="slow worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "slow.log",
+            created_at=10.0,
+            started_at=10.0,
+            metadata={"agent_id": "slow@office", "agent_role": "검토 담당"},
+        ),
+    ]
+
+    slow = _detect_slow_swarm_teammate(tasks, now=now, alerted_task_ids=set())
+
+    assert slow is not None
+    assert slow["task_id"] == "agent-slow"
+    assert slow["agent_id"] == "slow@office"
+    assert slow["role"] == "검토 담당"
+    assert slow["peer_count"] == 2
+
+
+def test_detect_slow_swarm_teammate_ignores_already_alerted_task(tmp_path, monkeypatch):
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_STRAGGLER_MIN_SECONDS", 60)
+    now = 1_000.0
+    tasks = [
+        TaskRecord(
+            id="agent-fast",
+            type="local_agent",
+            status="completed",
+            description="fast worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "fast.log",
+            created_at=0.0,
+            started_at=0.0,
+            ended_at=100.0,
+        ),
+        TaskRecord(
+            id="agent-slow",
+            type="local_agent",
+            status="running",
+            description="slow worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "slow.log",
+            created_at=0.0,
+            started_at=0.0,
+        ),
+    ]
+
+    slow = _detect_slow_swarm_teammate(tasks, now=now, alerted_task_ids={"agent-slow"})
+
+    assert slow is None
 
 
 @pytest.mark.asyncio
@@ -1180,6 +1321,49 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
         and event.compact_phase == "compact_start"
         and event.compact_checkpoint == "compact_start"
         and event.compact_metadata == {"token_count": 12345}
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_backend_host_emits_tool_transcript_output(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del bundle, line, print_system, clear_output
+        await render_event(
+            ToolExecutionCompleted(
+                tool_name="skill",
+                output="compact tool display",
+                tool_use_id="toolu_skill",
+                transcript_output="full skill source",
+            )
+        )
+        return True
+
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("show skill source")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert any(
+        event.type == "transcript_item"
+        and event.item is not None
+        and event.item.role == "assistant"
+        and event.item.text == "full skill source"
         for event in events
     )
 
@@ -1677,10 +1861,14 @@ async def test_backend_host_apply_provider_select_command_shows_single_segment_t
     await start_runtime(host._bundle)
     try:
         should_continue = await host._apply_select_command("provider", "claude-api")
+        metadata_profile = host._bundle.engine.tool_metadata["active_profile"]
+        metadata_provider = host._bundle.engine.tool_metadata["provider"]
     finally:
         await close_runtime(host._bundle)
 
     assert should_continue is True
+    assert metadata_profile == "claude-api"
+    assert metadata_provider == "anthropic"
     user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
     assert user_event.item.text == "/provider"
 

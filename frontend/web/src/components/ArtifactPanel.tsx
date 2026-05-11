@@ -246,6 +246,7 @@ export function ArtifactPanel() {
   const titleRenameCommittingRef = useRef(false);
   const versionMenuRef = useRef<HTMLDivElement | null>(null);
   const lastArtifactRefreshKeyRef = useRef(state.artifactRefreshKey);
+  const openArtifactRequestRef = useRef(0);
   const projectFilePinnedStorage = useMemo(
     () => projectFilePinnedStorageKey(state.workspacePath, state.workspaceName),
     [state.workspaceName, state.workspacePath],
@@ -278,11 +279,13 @@ export function ArtifactPanel() {
 
   function closePanel() {
     if (state.activeArtifact) {
+      openArtifactRequestRef.current += 1;
       skipNextHistoryPushRef.current = true;
       if (isArtifactHistoryState(history.state)) {
         history.replaceState(artifactHistoryState("list"), "", window.location.href);
       }
       setFullscreen(false);
+      setLoadingPath("");
       dispatch({ type: "open_artifact_list" });
       return;
     }
@@ -296,7 +299,9 @@ export function ArtifactPanel() {
     if (requestHistoryBack()) {
       return;
     }
+    openArtifactRequestRef.current += 1;
     setFullscreen(false);
+    setLoadingPath("");
     dispatch({ type: "open_artifact_list" });
   }
 
@@ -401,7 +406,9 @@ export function ArtifactPanel() {
       if (isArtifactHistoryState(event.state)) {
         skipNextHistoryPushRef.current = true;
         if (event.state.view === "list") {
+          openArtifactRequestRef.current += 1;
           setFullscreen(false);
+          setLoadingPath("");
           dispatch({ type: "open_artifact_list" });
           return;
         }
@@ -452,7 +459,7 @@ export function ArtifactPanel() {
           && typeof selection.end === "number"
           && selection.text.trim()
         ) {
-          setPendingAiSelection({
+          const normalizedSelection: ArtifactAiEditSelection = {
             text: selection.text,
             start: selection.start,
             end: selection.end,
@@ -460,17 +467,16 @@ export function ArtifactPanel() {
             after: typeof selection.after === "string" ? selection.after : "",
             html: typeof selection.html === "string" ? selection.html : "",
             scope: selection.scope === "document" ? "document" : "selection",
-          });
+          };
+          const htmlSnapshot = typeof selection.htmlSnapshot === "string" ? selection.htmlSnapshot : "";
+          if (htmlSnapshot) {
+            setDraftContent(htmlSnapshot);
+            setDraftPath(event.data.path);
+            setDraftUserEdited(true);
+          }
+          setPendingAiSelection(normalizedSelection);
           if (instruction.trim()) {
-            addAiEditComment({
-              text: selection.text,
-              start: selection.start,
-              end: selection.end,
-              before: typeof selection.before === "string" ? selection.before : "",
-              after: typeof selection.after === "string" ? selection.after : "",
-              html: typeof selection.html === "string" ? selection.html : "",
-              scope: selection.scope === "document" ? "document" : "selection",
-            }, instruction);
+            addAiEditComment(normalizedSelection, instruction);
           }
         }
       }
@@ -519,6 +525,8 @@ export function ArtifactPanel() {
   ]);
 
   async function openArtifact(artifact: ArtifactSummary) {
+    const requestId = openArtifactRequestRef.current + 1;
+    openArtifactRequestRef.current = requestId;
     const displayArtifact = { ...artifact, name: artifactDisplayName(artifact) };
     dispatch({ type: "open_artifact", artifact: displayArtifact });
     setLoadingPath(displayArtifact.path);
@@ -530,14 +538,22 @@ export function ArtifactPanel() {
         workspaceName: displayArtifact.workspace?.name || state.workspaceName,
         path: displayArtifact.path,
       });
+      if (requestId !== openArtifactRequestRef.current) {
+        return;
+      }
       dispatch({ type: "open_artifact", artifact: { ...displayArtifact, workspace: payload.workspace || displayArtifact.workspace }, payload });
     } catch (error) {
+      if (requestId !== openArtifactRequestRef.current) {
+        return;
+      }
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      setLoadingPath("");
+      if (requestId === openArtifactRequestRef.current) {
+        setLoadingPath("");
+      }
     }
   }
 
@@ -904,6 +920,8 @@ export function ArtifactPanel() {
       });
       dispatch({ type: "set_artifacts", artifacts: state.artifacts.filter((item) => item.path !== artifact.path) });
       if (state.activeArtifact?.path === artifact.path) {
+        openArtifactRequestRef.current += 1;
+        setLoadingPath("");
         dispatch({ type: "open_artifact_list" });
       }
     } catch (error) {

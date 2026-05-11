@@ -157,6 +157,114 @@ class ResolvedAuth:
     state: str = "configured"
 
 
+@dataclass(frozen=True)
+class ModelOutputProfile:
+    """Known context/output limits for a model family."""
+
+    context_window_tokens: int | None = None
+    model_max_output_tokens: int | None = None
+    interactive_max_tokens: int | None = None
+    report_outline_max_tokens: int | None = None
+    report_section_max_tokens: int | None = None
+    report_review_max_tokens: int | None = None
+
+
+_MODEL_OUTPUT_PROFILES: tuple[tuple[str, ModelOutputProfile], ...] = (
+    (
+        "gpt-5.5",
+        ModelOutputProfile(
+            context_window_tokens=1_050_000,
+            model_max_output_tokens=128_000,
+            interactive_max_tokens=42_000,
+            report_outline_max_tokens=8_000,
+            report_section_max_tokens=18_000,
+            report_review_max_tokens=8_000,
+        ),
+    ),
+    (
+        "gpt-5.4-mini",
+        ModelOutputProfile(
+            context_window_tokens=400_000,
+            model_max_output_tokens=128_000,
+            interactive_max_tokens=42_000,
+            report_outline_max_tokens=6_000,
+            report_section_max_tokens=14_000,
+            report_review_max_tokens=6_000,
+        ),
+    ),
+    (
+        "gpt-5.4",
+        ModelOutputProfile(
+            context_window_tokens=1_050_000,
+            model_max_output_tokens=128_000,
+            interactive_max_tokens=42_000,
+            report_outline_max_tokens=8_000,
+            report_section_max_tokens=18_000,
+            report_review_max_tokens=8_000,
+        ),
+    ),
+)
+
+_CONFIGURABLE_OUTPUT_TOKEN_MODELS = ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini")
+
+
+def _normalize_model_family(model: str) -> str:
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    return normalized
+
+
+def model_output_profile(model: str) -> ModelOutputProfile:
+    """Return known output/context limits for the model, if available."""
+    normalized = _normalize_model_family(model)
+    for prefix, profile in _MODEL_OUTPUT_PROFILES:
+        if normalized == prefix or normalized.startswith(f"{prefix}-"):
+            return profile
+    return ModelOutputProfile()
+
+
+def model_output_profile_key(model: str) -> str | None:
+    """Return the configurable model family key for a model identifier."""
+    normalized = _normalize_model_family(model)
+    for key in sorted(_CONFIGURABLE_OUTPUT_TOKEN_MODELS, key=len, reverse=True):
+        if normalized == key or normalized.startswith(f"{key}-"):
+            return key
+    return None
+
+
+def supported_model_output_token_limits() -> dict[str, int]:
+    """Return official max-output caps for models exposed in settings UI."""
+    return {
+        model: model_output_profile(model).model_max_output_tokens or 0
+        for model in _CONFIGURABLE_OUTPUT_TOKEN_MODELS
+    }
+
+
+def clamp_model_output_tokens(model: str, value: int) -> int:
+    """Clamp a requested output-token cap to the model's official maximum."""
+    requested = max(1, int(value))
+    official_max = model_output_profile(model).model_max_output_tokens
+    if official_max:
+        return min(requested, official_max)
+    return requested
+
+
+def report_token_limits_for_model(model: str) -> dict[str, int]:
+    """Return conservative per-call token limits for long report generation."""
+    profile = model_output_profile(model)
+    return {
+        "outline": profile.report_outline_max_tokens or 6_000,
+        "section": profile.report_section_max_tokens or 12_000,
+        "review": profile.report_review_max_tokens or 6_000,
+    }
+
+
+def format_token_count(value: int | None) -> str:
+    """Format a token count for user-facing command output."""
+    return f"{int(value):,}" if value else "알 수 없음"
+
+
 CLAUDE_MODEL_ALIAS_OPTIONS: tuple[tuple[str, str, str], ...] = (
     ("default", "Default", "Recommended model for this profile"),
     ("best", "Best", "Most capable available model"),
@@ -491,7 +599,8 @@ class Settings(BaseModel):
     model: str = "claude-sonnet-4-6"
     subagent_model: str = "gpt-5.4-mini"
     subagent_effort: str = "medium"
-    max_tokens: int = 16384
+    max_tokens: int = 42000
+    model_output_token_limits: dict[str, int] = Field(default_factory=dict)
     base_url: str | None = None
     timeout: float = 180.0
     context_window_tokens: int | None = None
@@ -525,6 +634,14 @@ class Settings(BaseModel):
     shell: str = "auto"
     passes: int = 1
     verbose: bool = False
+
+    def effective_max_tokens(self, model: str | None = None) -> int:
+        """Return the output-token cap for a model, honoring per-model settings."""
+        target_model = model or self.model
+        profile_key = model_output_profile_key(target_model)
+        if profile_key and profile_key in self.model_output_token_limits:
+            return clamp_model_output_tokens(profile_key, self.model_output_token_limits[profile_key])
+        return clamp_model_output_tokens(target_model, self.max_tokens)
 
     def merged_profiles(self) -> dict[str, ProviderProfile]:
         """Return the saved profiles merged over the built-in catalog."""
@@ -899,7 +1016,12 @@ def _apply_env_overrides(settings: Settings) -> Settings:
 
     max_tokens = os.environ.get("MYHARNESS_MAX_TOKENS")
     if max_tokens:
-        updates["max_tokens"] = int(max_tokens)
+        env_max_tokens = int(max_tokens)
+        updates["max_tokens"] = env_max_tokens
+        updates["model_output_token_limits"] = {
+            model: clamp_model_output_tokens(model, env_max_tokens)
+            for model in _CONFIGURABLE_OUTPUT_TOKEN_MODELS
+        }
 
     timeout = os.environ.get("MYHARNESS_TIMEOUT")
     if timeout:

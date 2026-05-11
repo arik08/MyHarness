@@ -6,12 +6,10 @@ $script:ViteProcess = $null
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
 
-    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue
-    foreach ($child in $children) {
-        Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+    & taskkill.exe /PID $ProcessId /T /F >$null 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
     }
-
-    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
 function Stop-ChildProcess {
@@ -22,7 +20,15 @@ function Stop-ChildProcess {
     }
 
     Stop-ProcessTree -ProcessId $Process.Id
-    $Process.WaitForExit(5000) | Out-Null
+    try {
+        $Process.Refresh()
+    }
+    catch {
+        # Process handles can become invalid immediately after taskkill.
+    }
+    if (-not $Process.HasExited) {
+        $Process.WaitForExit(1000) | Out-Null
+    }
 }
 
 function Stop-ListeningPort {
@@ -100,14 +106,14 @@ function Resolve-VitePort {
     param([Parameter(Mandatory = $true)][int]$PreferredPort)
 
     Stop-ListeningPort -Port $PreferredPort -Label "Vite dev"
-    if (Test-CanListenOnPort -HostAddress "127.0.0.1" -Port $PreferredPort) {
+    if (Test-CanListenOnPort -HostAddress "0.0.0.0" -Port $PreferredPort) {
         return $PreferredPort
     }
 
     Write-Host "[WARN] Vite dev port $PreferredPort is unavailable or reserved. Searching for the next usable port..."
     $lastPort = [Math]::Min(65535, $PreferredPort + 200)
     for ($candidate = $PreferredPort + 1; $candidate -le $lastPort; $candidate++) {
-        if (Test-CanListenOnPort -HostAddress "127.0.0.1" -Port $candidate) {
+        if (Test-CanListenOnPort -HostAddress "0.0.0.0" -Port $candidate) {
             Write-Host "[INFO] Using fallback Vite dev port $candidate."
             return $candidate
         }
@@ -166,8 +172,12 @@ function Start-BackendLauncher {
     Stop-ListeningPort -Port $backendPort -Label "backend"
     Write-Host "[INFO] Starting MyHarness backend launcher on http://localhost:$env:PORT ..."
     $previousKeyHandling = $env:MYHARNESS_SERVER_KEY_HANDLING
+    $previousDevUiRedirect = $env:MYHARNESS_DEV_UI_REDIRECT
+    $previousDevUiPort = $env:MYHARNESS_DEV_UI_PORT
     try {
         $env:MYHARNESS_SERVER_KEY_HANDLING = "0"
+        $env:MYHARNESS_DEV_UI_REDIRECT = "1"
+        $env:MYHARNESS_DEV_UI_PORT = [string]$script:VitePort
         return Start-Process -FilePath "powershell.exe" -ArgumentList @(
             "-NoProfile",
             "-ExecutionPolicy",
@@ -183,13 +193,25 @@ function Start-BackendLauncher {
         else {
             $env:MYHARNESS_SERVER_KEY_HANDLING = $previousKeyHandling
         }
+        if ($null -eq $previousDevUiRedirect) {
+            Remove-Item Env:\MYHARNESS_DEV_UI_REDIRECT -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:MYHARNESS_DEV_UI_REDIRECT = $previousDevUiRedirect
+        }
+        if ($null -eq $previousDevUiPort) {
+            Remove-Item Env:\MYHARNESS_DEV_UI_PORT -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:MYHARNESS_DEV_UI_PORT = $previousDevUiPort
+        }
     }
 }
 
 function Start-ViteServer {
     Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
-    Write-Host "[INFO] Starting Vite React dev server on http://127.0.0.1:$script:VitePort ..."
-    return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", ([string]$script:VitePort), "--strictPort") -NoNewWindow -PassThru
+    Write-Host "[INFO] Starting Vite React dev server on http://0.0.0.0:$script:VitePort ..."
+    return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "0.0.0.0", "--port", ([string]$script:VitePort), "--strictPort") -NoNewWindow -PassThru
 }
 
 [Console]::add_CancelKeyPress({
@@ -217,8 +239,9 @@ $script:ViteProcess = Start-ViteServer
 
 Write-Host ""
 Write-Host "MyHarness dev mode is ready:"
-Write-Host "  React dev UI: http://127.0.0.1:$script:VitePort"
-Write-Host "  Backend API:  http://localhost:$env:PORT"
+Write-Host "  Local React dev UI: http://127.0.0.1:$script:VitePort"
+Write-Host "  Backend entry:      http://localhost:$env:PORT"
+Write-Host "  Network entry:      use http://<this PC IP>:$env:PORT from another PC"
 Write-Host ""
 Write-Host "Keep this window open while developing."
 Write-Host "If the backend or Vite exits unexpectedly, this launcher will restart it."
@@ -258,9 +281,7 @@ try {
             if (Test-LauncherKey -Key $key -ExpectedKey R) {
                 Write-Host "[INFO] Restart requested. Restarting backend and Vite dev server..."
                 Stop-All
-                Start-Sleep -Seconds 2
                 $script:BackendProcess = Start-BackendLauncher
-                Start-Sleep -Seconds 2
                 $script:ViteProcess = Start-ViteServer
             }
         }

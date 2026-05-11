@@ -1,13 +1,20 @@
 {
   "model": "gpt-5.5",
-  "max_tokens": 16384,
-  "base_url": null,
+  "subagent_model": "gpt-5.4-mini",
+  "subagent_effort": "medium",
+  "max_tokens": 42000,
+  "model_output_token_limits": {
+    "gpt-5.5": 42000,
+    "gpt-5.4": 42000,
+    "gpt-5.4-mini": 42000
+  },
+  "base_url": "http://pgpt.posco.com/s0la01-gpt/v1",
   "timeout": 180.0,
   "context_window_tokens": null,
   "auto_compact_threshold_tokens": null,
   "api_format": "openai",
-  "provider": "openai_codex",
-  "active_profile": "codex",
+  "provider": "openai",
+  "active_profile": "p-gpt",
   "profiles": {
     "p-gpt": {
       "label": "P-GPT",

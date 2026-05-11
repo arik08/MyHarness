@@ -36,6 +36,7 @@ class FrontendRequest(BaseModel):
         "set_mcp_enabled",
         "set_plugin_enabled",
         "set_system_prompt",
+        "refresh_runtime_settings",
         "update_session_title",
         "select_command",
         "apply_select_command",

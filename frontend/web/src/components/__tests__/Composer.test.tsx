@@ -493,7 +493,40 @@ describe("Composer", () => {
       sessionId: "session-1",
       clientId: "client-1",
       line: "2",
-      suppressUserTranscript: false,
+      suppressUserTranscript: true,
+    }));
+  });
+
+  it("suppresses backend user transcript when sending a long pasted text attachment", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    const pastedText = Array.from({ length: 21 }, (_, index) => `첨부 내용 ${index + 1}`).join("\n");
+    await user.type(input, "이 내용 요약해줘");
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => type === "text/plain" ? pastedText : "",
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: `이 내용 요약해줘\n\n[붙여넣은 텍스트 1]\n${pastedText}`,
+      suppressUserTranscript: true,
     }));
   });
 

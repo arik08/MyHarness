@@ -287,6 +287,16 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     assert "Skill directory:" not in skill_result.output
     assert "Helpful pytest notes." in skill_result.output
 
+    source_result = await SkillTool().execute(
+        SkillToolInput(name="Pytest", mode="source"),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+    assert source_result.is_error is False
+    assert "Displayed the full source for skill 'Pytest'" in source_result.output
+    assert "Helpful pytest notes." not in source_result.output
+    assert source_result.metadata["model_output"] == source_result.output
+    assert "Helpful pytest notes." in source_result.metadata["transcript_output"]
+
     todo_result = await TodoWriteTool().execute(
         TodoWriteToolInput(item="wire commands"),
         ToolExecutionContext(cwd=tmp_path),

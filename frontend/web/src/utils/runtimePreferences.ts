@@ -15,11 +15,22 @@ function clean(value: unknown) {
   return text && text !== "-" ? text : "";
 }
 
+function normalizeActiveProfile(value: unknown) {
+  const text = clean(value);
+  const aliases: Record<string, string> = {
+    "github_copilot": "copilot",
+    "openai-codex": "codex",
+    "openai_codex": "codex",
+    "pgpt": "p-gpt",
+  };
+  return aliases[text] || text;
+}
+
 export function loadRuntimePreferences(): RuntimePreferences {
   try {
     const value = JSON.parse(localStorage.getItem(runtimePreferenceKey) || "{}") as RuntimePreferences;
     return {
-      activeProfile: clean(value.activeProfile) || undefined,
+      activeProfile: normalizeActiveProfile(value.activeProfile) || undefined,
       model: clean(value.model) || undefined,
       subagentModel: clean(value.subagentModel) || undefined,
       subagentEffort: clean(value.subagentEffort) || undefined,
@@ -32,7 +43,7 @@ export function loadRuntimePreferences(): RuntimePreferences {
 
 function saveRuntimePreferences(preferences: RuntimePreferences) {
   const normalized: RuntimePreferences = {
-    activeProfile: clean(preferences.activeProfile) || undefined,
+    activeProfile: normalizeActiveProfile(preferences.activeProfile) || undefined,
     model: clean(preferences.model) || undefined,
     subagentModel: clean(preferences.subagentModel) || undefined,
     subagentEffort: clean(preferences.subagentEffort) || undefined,
@@ -45,9 +56,9 @@ function saveRuntimePreferences(preferences: RuntimePreferences) {
   }
 }
 
-export function runtimePreferencesFromState(state: Pick<AppState, "provider" | "model" | "subagentModel" | "subagentEffort" | "effort">): RuntimePreferences {
+export function runtimePreferencesFromState(state: Pick<AppState, "provider" | "activeProfile" | "model" | "subagentModel" | "subagentEffort" | "effort">): RuntimePreferences {
   return {
-    activeProfile: clean(state.provider) || undefined,
+    activeProfile: normalizeActiveProfile(state.activeProfile) || normalizeActiveProfile(state.provider) || undefined,
     model: clean(state.model) || undefined,
     subagentModel: clean(state.subagentModel) || undefined,
     subagentEffort: clean(state.subagentEffort) || undefined,
