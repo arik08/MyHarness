@@ -1487,6 +1487,117 @@ describe("ArtifactPanel", () => {
     expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("New headline");
   });
 
+  it("keeps AI edit progress visibly alive during a long pre-streaming wait", async () => {
+    const user = userEvent.setup();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000);
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "본문 수정" }));
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "Old headline",
+            html: "<h1>Old headline</h1>",
+            start: 0,
+            end: 12,
+            before: "",
+            after: "Old body",
+            instruction: "Make it clearer",
+          },
+        },
+      }));
+    });
+
+    await user.click(screen.getByRole("button", { name: "AI 자동편집" }));
+
+    nowSpy.mockReturnValue(181_000);
+    await user.click(screen.getByRole("button", { name: "AI 수정 패널 접기" }));
+    await user.click(screen.getByRole("button", { name: "AI 수정 패널 다시 펼치기" }));
+
+    const progressText = document.querySelector(".artifact-ai-progress")?.textContent || "";
+    expect(progressText).toContain("AI 응답 대기 중");
+    expect(progressText).toContain("3분 경과");
+    expect(progressText).toContain("report_v1.html");
+    expect(progressText).not.toContain("첫 streaming 이벤트 대기");
+  });
+
+  it("does not show two elapsed timers for AI edit waiting progress", async () => {
+    const user = userEvent.setup();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000);
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "본문 수정" }));
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "Old headline",
+            html: "<h1>Old headline</h1>",
+            start: 0,
+            end: 12,
+            before: "",
+            after: "Old body",
+            instruction: "Make it clearer",
+          },
+        },
+      }));
+    });
+
+    await user.click(screen.getByRole("button", { name: "AI 자동편집" }));
+
+    nowSpy.mockReturnValue(59_000);
+    await user.click(screen.getByRole("button", { name: "AI 수정 패널 접기" }));
+    await user.click(screen.getByRole("button", { name: "AI 수정 패널 다시 펼치기" }));
+
+    const waitingStep = [...document.querySelectorAll(".workflow-step")]
+      .find((item) => (item.textContent || "").includes("streaming 이벤트 지연"));
+    const elapsedMatches = waitingStep?.textContent?.match(/(?:\d+분(?: \d+초)?|\d+초) 경과/g) || [];
+    expect(elapsedMatches).toEqual(["58초 경과"]);
+  });
+
   it("renames the active preview title on double click and Enter", async () => {
     vi.mocked(renameArtifact).mockResolvedValueOnce({
       artifact: {

@@ -5,7 +5,7 @@ title MyHarness Web Dev
 
 cd /d "%~dp0"
 
-if "%PORT%"=="" set "PORT=4173"
+if "%PORT%"=="" set "PORT=4273"
 if "%MYHARNESS_WEB_PORT%"=="" (
   if "%VITE_PORT%"=="" (
     set "MYHARNESS_WEB_PORT=5173"

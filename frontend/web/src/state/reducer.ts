@@ -458,6 +458,15 @@ function initialWorkflowEvents(): WorkflowEvent[] {
   ];
 }
 
+function hasRestorableWorkflowEvents(events: WorkflowEvent[]) {
+  return events.some((event) => (
+    Boolean(event.toolName)
+    || event.role === "purpose"
+    || event.role === "activity"
+    || event.role === "final"
+  ));
+}
+
 function workflowTitle(toolName: string) {
   const lower = toolName.toLowerCase();
   if (!toolName) return "도구 실행";
@@ -1817,7 +1826,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             continue;
           }
           if (type === "user") {
-            if (workflowAnchorMessageId && workflowEvents.length) {
+            if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
               workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
             }
             const message = createMessage({ role: "user", text: String(record.text || "") });
@@ -1956,24 +1965,26 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
           }
         }
-        if (workflowAnchorMessageId && workflowEvents.length) {
+        if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
           workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
           const workflowDurationSeconds = workflowDurationFromMetadata(historyEvent.compact_metadata);
           if (workflowDurationSeconds) {
             workflowDurationSecondsByMessageId[workflowAnchorMessageId] = workflowDurationSeconds;
           }
         }
+        const restoredWorkflowAnchorMessageId = hasRestorableWorkflowEvents(workflowEvents) ? workflowAnchorMessageId : null;
+        const restoredWorkflowEvents = restoredWorkflowAnchorMessageId ? workflowEvents : [];
         return {
           ...state,
           activeHistoryId: String(historyEvent.value || state.pendingHistoryId || state.activeHistoryId || "").trim() || null,
           pendingHistoryId: null,
           chatTitle: normalizeChatTitle(String(historyEvent.message || state.chatTitle || "")),
           messages,
-          workflowAnchorMessageId,
+          workflowAnchorMessageId: restoredWorkflowAnchorMessageId,
           workflowEventsByMessageId,
           workflowDurationSecondsByMessageId,
-          workflowEvents,
-          workflowDurationSeconds: workflowAnchorMessageId ? workflowDurationSecondsByMessageId[workflowAnchorMessageId] ?? null : null,
+          workflowEvents: restoredWorkflowEvents,
+          workflowDurationSeconds: restoredWorkflowAnchorMessageId ? workflowDurationSecondsByMessageId[restoredWorkflowAnchorMessageId] ?? null : null,
           workflowStartedAtMs: null,
           swarmTeammates: restoredSwarmTeammates,
           swarmNotifications: restoredSwarmNotifications,
@@ -1992,7 +2003,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         return {
           ...state,
           statusText: text || state.statusText,
-          messages: appendStatusMessage(state.messages, text),
+          messages: event.quiet === true ? state.messages : appendStatusMessage(state.messages, text),
         };
       }
 
@@ -2397,12 +2408,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
 
       if (event.type === "line_complete") {
-        const workflowDurationSeconds = workflowDurationFromMetadata(recordOrNull(event.compact_metadata))
-          ?? workflowElapsedDurationSeconds(state);
-        const workflowDurationSecondsByMessageId = workflowDurationSeconds !== null && state.workflowAnchorMessageId
+        const hasRestorableWorkflow = hasRestorableWorkflowEvents(state.workflowEvents);
+        const workflowAnchorMessageId = hasRestorableWorkflow ? state.workflowAnchorMessageId : null;
+        const workflowEvents = hasRestorableWorkflow ? state.workflowEvents : [];
+        const workflowDurationSeconds = hasRestorableWorkflow
+          ? workflowDurationFromMetadata(recordOrNull(event.compact_metadata)) ?? workflowElapsedDurationSeconds(state)
+          : null;
+        const workflowDurationSecondsByMessageId = workflowDurationSeconds !== null && workflowAnchorMessageId
           ? {
               ...state.workflowDurationSecondsByMessageId,
-              [state.workflowAnchorMessageId]: workflowDurationSeconds,
+              [workflowAnchorMessageId]: workflowDurationSeconds,
             }
           : state.workflowDurationSecondsByMessageId;
         return {
@@ -2412,7 +2427,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           statusText: state.status === "error" ? state.statusText : "준비됨",
           artifactRefreshKey: event.type === "line_complete" ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
           historyRefreshKey: state.historyRefreshKey + 1,
-          workflowDurationSeconds: workflowDurationSeconds ?? state.workflowDurationSeconds,
+          workflowAnchorMessageId,
+          workflowEvents,
+          workflowDurationSeconds: hasRestorableWorkflow ? workflowDurationSeconds ?? state.workflowDurationSeconds : null,
           workflowDurationSecondsByMessageId,
           workflowStartedAtMs: null,
         };

@@ -54,8 +54,9 @@ const sharedWorkspaceScopeName = "shared";
 const defaultWorkspaceName = "Default";
 const projectPreferencesRel = join(".myharness", "preferences.json");
 const artifactAliasesRel = join(".myharness", "artifact-aliases.json");
-const port = Number(process.env.PORT || 4173);
+const port = Number(process.env.PORT || 4273);
 const host = process.env.HOST || "0.0.0.0";
+let effectiveHost = host;
 const devUiRedirectEnabled = normalizeBooleanEnv(process.env.MYHARNESS_DEV_UI_REDIRECT);
 const devUiRedirectPort = normalizeOptionalPort(
   process.env.MYHARNESS_DEV_UI_PORT || process.env.MYHARNESS_WEB_PORT || process.env.VITE_PORT,
@@ -65,6 +66,7 @@ let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
 let server = null;
+const aiEditHeartbeatIntervalMs = 15_000;
 const reservedWorkspaceNames = new Set([
   "CON",
   "PRN",
@@ -228,6 +230,10 @@ writeRuntimeLog("server_process_start", {
 function normalizeWorkspaceScopeMode(value) {
   const mode = String(value || "").trim().toLowerCase();
   return mode === "ip" || mode === "client_ip" || mode === "client-ip" ? "ip" : "shared";
+}
+
+function isWildcardListenHost(value) {
+  return value === "0.0.0.0" || value === "::";
 }
 
 function normalizeShellPreference(value) {
@@ -1547,6 +1553,72 @@ function buildAiArtifactEditTranscript({ sourceRel, targetRel, comments }) {
   ].join("\n").trim();
 }
 
+function formatAiEditHeartbeatElapsed(seconds) {
+  const safeSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (safeSeconds < 60) return `${safeSeconds}초 경과`;
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return remainder ? `${minutes}분 ${remainder}초 경과` : `${minutes}분 경과`;
+}
+
+function aiEditHeartbeatMessage(heartbeat) {
+  const elapsedSeconds = Math.floor((Date.now() - heartbeat.startedAtMs) / 1000);
+  return [
+    `AI 자동편집 진행 중: ${heartbeat.targetRel}`,
+    formatAiEditHeartbeatElapsed(elapsedSeconds),
+    "첫 streaming 이벤트를 기다리는 중입니다.",
+  ].join(" · ");
+}
+
+function clearAiEditHeartbeat(session) {
+  if (!session) return;
+  if (session.aiEditHeartbeatTimer) {
+    clearInterval(session.aiEditHeartbeatTimer);
+    session.aiEditHeartbeatTimer = null;
+  }
+  session.aiEditHeartbeat = null;
+}
+
+function emitAiEditHeartbeat(session) {
+  if (!session?.aiEditHeartbeat || session.shuttingDown) return;
+  emit(session, {
+    type: "status",
+    quiet: true,
+    message: aiEditHeartbeatMessage(session.aiEditHeartbeat),
+  });
+}
+
+function startAiEditHeartbeat(session, { sourceRel, targetRel, commentCount }) {
+  clearAiEditHeartbeat(session);
+  session.aiEditHeartbeat = {
+    startedAtMs: Date.now(),
+    sourceRel,
+    targetRel,
+    commentCount,
+  };
+  emitAiEditHeartbeat(session);
+  session.aiEditHeartbeatTimer = setInterval(() => {
+    emitAiEditHeartbeat(session);
+  }, aiEditHeartbeatIntervalMs);
+  session.aiEditHeartbeatTimer.unref?.();
+}
+
+function stopAiEditHeartbeatForBackendEvent(session, event) {
+  if (!session?.aiEditHeartbeat || !event) return;
+  if ([
+    "tool_started",
+    "tool_input_delta",
+    "tool_progress",
+    "assistant_delta",
+    "assistant_complete",
+    "error",
+    "line_complete",
+    "shutdown",
+  ].includes(event.type)) {
+    clearAiEditHeartbeat(session);
+  }
+}
+
 function buildAiArtifactEditPrompt({ sourceRel, targetRel, sourceContent, comments }) {
   const commentLines = comments.map((comment) => {
     const scopedLines = comment.scope === "document"
@@ -1664,7 +1736,13 @@ async function submitAiArtifactEdit(session, artifactPath, comments) {
       error.status = 409;
       throw error;
     }
+    startAiEditHeartbeat(session, {
+      sourceRel: source.rel,
+      targetRel,
+      commentCount: normalizedComments.length,
+    });
   } catch (error) {
+    clearAiEditHeartbeat(session);
     session.busy = false;
     if (targetPrepared) {
       try {
@@ -3662,6 +3740,7 @@ function shutdownSession(session, reason = "shutdown") {
     return;
   }
   session.shuttingDown = true;
+  clearAiEditHeartbeat(session);
   if (session.clientCloseTimer) {
     clearTimeout(session.clientCloseTimer);
     session.clientCloseTimer = null;
@@ -3709,6 +3788,9 @@ function cancelIdleClientClose(session) {
 }
 
 function getLanUrl() {
+  if (!isWildcardListenHost(effectiveHost)) {
+    return "";
+  }
   for (const addresses of Object.values(networkInterfaces())) {
     for (const address of addresses || []) {
       if (address.family === "IPv4" && !address.internal && !address.address.startsWith("169.254.")) {
@@ -3784,6 +3866,8 @@ async function createBackendSession(options = {}) {
     shuttingDown: false,
     clientCloseTimer: null,
     forceKillTimer: null,
+    aiEditHeartbeat: null,
+    aiEditHeartbeatTimer: null,
   };
   sessions.set(id, session);
 
@@ -3801,6 +3885,7 @@ async function createBackendSession(options = {}) {
     }
     try {
       const event = JSON.parse(line.slice(protocolPrefix.length));
+      stopAiEditHeartbeatForBackendEvent(session, event);
       updateSessionStateFromBackendEvent(session, event);
       emit(session, event);
     } catch (error) {
@@ -3825,6 +3910,7 @@ async function createBackendSession(options = {}) {
       clearTimeout(session.clientCloseTimer);
       session.clientCloseTimer = null;
     }
+    clearAiEditHeartbeat(session);
     writeRuntimeLog("backend_session_exit", {
       session_id: id,
       code: code ?? null,
@@ -4744,11 +4830,32 @@ if (!String(process.env.MYHARNESS_SHELL || "").trim()) {
   shellPreference = normalizeShellPreference(savedShellSettings.shell || savedShellSettings.web_shell || shellPreference);
 }
 
-server.listen(port, host, () => {
+let retriedLoopbackListen = false;
+server.on("error", (error) => {
+  if (!retriedLoopbackListen && isWildcardListenHost(effectiveHost) && error?.code === "EACCES") {
+    retriedLoopbackListen = true;
+    const fallbackHost = "127.0.0.1";
+    writeRuntimeLog("server_listen_fallback", {
+      from_host: effectiveHost,
+      to_host: fallbackHost,
+      port,
+      error: errorPayload(error),
+    });
+    console.warn(`[WARN] Could not listen on ${effectiveHost}:${port}; retrying on ${fallbackHost}:${port}.`);
+    effectiveHost = fallbackHost;
+    setImmediate(() => server.listen(port, effectiveHost));
+    return;
+  }
+  throw error;
+});
+
+server.listen(port, effectiveHost, () => {
   const localUrl = `http://localhost:${port}`;
   const lanUrl = getLanUrl();
-  if (host === "0.0.0.0" || host === "::") {
+  if (isWildcardListenHost(effectiveHost)) {
     console.log(`Listening on all network interfaces.`);
+  } else if (effectiveHost !== host) {
+    console.log(`Listening on ${effectiveHost} after network-interface bind fallback.`);
   }
   console.log("");
   console.log("MyHarness web is ready:");

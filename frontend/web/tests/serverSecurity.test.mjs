@@ -619,6 +619,13 @@ test("submits AI artifact edits with the next version target path", async (t) =>
       && event.item?.role === "user"
       && String(event.item?.text || "").includes("outputs/report.html"),
   );
+  const aiEditHeartbeatPromise = waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${session.sessionId}&clientId=artifact-ai-edit`,
+    (event) => event.type === "status"
+      && event.quiet === true
+      && String(event.message || "").includes("AI 자동편집")
+      && String(event.message || "").includes("outputs/report_v2.html"),
+  );
 
   const invalidResponse = await fetch(`${app.baseUrl}/api/artifact/ai-edit`, {
     method: "POST",
@@ -662,6 +669,8 @@ test("submits AI artifact edits with the next version target path", async (t) =>
   assert.equal(editPayload.targetPath, "outputs/report_v2.html");
   const copiedTarget = await readFile(join(workspacePath, "outputs", "report_v2.html"), "utf8");
   assert.equal(copiedTarget, "<!doctype html><html><body><h1>Old</h1></body></html>");
+  const heartbeatEvent = await aiEditHeartbeatPromise;
+  assert.match(heartbeatEvent.message, /0초 경과|1초 경과/);
   const transcriptEvent = await transcriptPromise;
   assert.match(transcriptEvent.item.text, /AI/);
   assert.match(transcriptEvent.item.text, /outputs\/report\.html/);

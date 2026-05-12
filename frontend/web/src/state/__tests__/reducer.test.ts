@@ -156,6 +156,16 @@ describe("appReducer", () => {
     expect(duplicate.messages).toHaveLength(1);
   });
 
+  it("updates status text without adding transcript rows for quiet status heartbeats", () => {
+    const next = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "status", message: "AI 자동편집 대기 중 · 45초 경과", quiet: true },
+    });
+
+    expect(next.statusText).toBe("AI 자동편집 대기 중 · 45초 경과");
+    expect(next.messages).toHaveLength(0);
+  });
+
   it("rebuilds a live streaming answer and workflow from replayed snapshot events", () => {
     const cleared = appReducer(
       {
@@ -654,6 +664,22 @@ describe("appReducer", () => {
     expect(next.historyRefreshKey).toBe(busy.historyRefreshKey + 1);
   });
 
+  it("clears initial-only workflow progress when a turn completes without work events", () => {
+    const requested = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "[image attachments: 1]" },
+    });
+    const completed = appReducer(requested, {
+      type: "backend_event",
+      event: { type: "line_complete" },
+    });
+
+    expect(completed.busy).toBe(false);
+    expect(completed.workflowEvents).toHaveLength(0);
+    expect(completed.workflowAnchorMessageId).toBeNull();
+    expect(Object.values(completed.workflowEventsByMessageId).flat()).toHaveLength(0);
+  });
+
   it("refreshes artifacts only when the final assistant answer completes", () => {
     const withToolCall = appReducer(initialAppState, {
       type: "backend_event",
@@ -1038,6 +1064,43 @@ describe("appReducer", () => {
     const shellEvent = restoredWorkflowEvents.find((event) => event.toolName === "shell_command");
     expect(shellEvent?.status).toBe("done");
     expect(shellEvent?.output).toBe("passed");
+    expect(busy.workflowEvents).toHaveLength(0);
+    expect(busy.workflowAnchorMessageId).toBeNull();
+  });
+
+  it("does not restore a stale running planning step for simple history turns", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "이미지 첨부만 한 요청" },
+          { type: "assistant", text: "확인했습니다." },
+        ],
+      },
+    });
+
+    expect(restored.workflowEvents).toHaveLength(0);
+    expect(restored.workflowAnchorMessageId).toBeNull();
+    expect(Object.values(restored.workflowEventsByMessageId).flat()).toHaveLength(0);
+  });
+
+  it("does not restore workflow progress for a history turn with only a user message", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "[image attachments: 1]" },
+        ],
+      },
+    });
+
+    expect(restored.messages.map((message) => [message.role, message.text])).toEqual([
+      ["user", "[image attachments: 1]"],
+    ]);
+    expect(restored.workflowEvents).toHaveLength(0);
+    expect(restored.workflowAnchorMessageId).toBeNull();
   });
 
   it("keeps the current messages through the restore clear event until the history snapshot arrives", () => {

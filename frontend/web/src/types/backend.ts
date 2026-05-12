@@ -87,7 +87,7 @@ export type BackendEvent =
   | { type: "plan_mode_change"; plan_mode?: string | null }
   | { type: "active_session"; value?: string | null }
   | { type: "history_snapshot"; value?: string | null; message?: string | null; history_events?: Array<Record<string, unknown>> | null; compact_metadata?: Record<string, unknown> | null }
-  | { type: "status"; message?: string | null; value?: string | null }
+  | { type: "status"; message?: string | null; value?: string | null; quiet?: boolean | null }
   | { type: "error"; message?: string | null }
   | { type: "shutdown"; message?: string | null }
   | { type: string; [key: string]: unknown };

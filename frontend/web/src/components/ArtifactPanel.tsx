@@ -103,13 +103,23 @@ function aiEditWaitingDetail(liveStatus: string, elapsedSeconds: number, targetP
   const targetPrefix = targetName
     ? `${targetName} 작업 요청은 전달됐습니다.`
     : "AI 편집 요청을 전달하고 있습니다.";
+  if (elapsedSeconds >= 120) {
+    return `${targetPrefix} ${formatAiEditElapsed(elapsedSeconds)}입니다. AI가 수정안을 작성 중이거나 이벤트 갱신이 지연되고 있어 계속 확인 중입니다.`;
+  }
   if (elapsedSeconds >= 30) {
-    return `${targetPrefix} 첫 streaming 이벤트가 30초 이상 도착하지 않아 계속 대기 중입니다.`;
+    return `${targetPrefix} ${formatAiEditElapsed(elapsedSeconds)}입니다. 첫 streaming 이벤트가 늦어지고 있어 계속 대기 중입니다.`;
   }
   if (elapsedSeconds >= 8) {
     return `${targetPrefix} 아직 첫 streaming 이벤트는 없고, AI가 수정 방향을 구성 중일 수 있습니다.`;
   }
   return `${targetPrefix} 첫 응답이나 도구 호출을 기다리고 있습니다.`;
+}
+
+function aiEditWaitingTitle(liveStatus: string, elapsedSeconds: number) {
+  if (liveStatus) return "현재 상태";
+  if (elapsedSeconds >= 120) return "AI 응답 대기 중";
+  if (elapsedSeconds >= 30) return "streaming 이벤트 지연";
+  return "첫 streaming 이벤트 대기";
 }
 
 function hasConcreteAiEditProgress(events: WorkflowEvent[]) {
@@ -159,7 +169,7 @@ function buildAiEditFallbackEvents({
     events.push({
       id: "artifact-ai-edit-waiting",
       toolName: "",
-      title: liveStatus ? "현재 상태" : "첫 streaming 이벤트 대기",
+      title: aiEditWaitingTitle(liveStatus, elapsedSeconds),
       detail: waitingDetail,
       status: "running",
       level: "parent",
@@ -1186,7 +1196,10 @@ export function ArtifactPanel() {
                 type="button"
                 aria-label={`AI 수정 패널 요약: ${aiEditCollapsedText}`}
                 data-tooltip="다시 펼치기"
-                onClick={() => setAiEditOverlayCollapsed(false)}
+                onClick={() => {
+                  setAiEditProgressNow(Date.now());
+                  setAiEditOverlayCollapsed(false);
+                }}
               >
                 {aiEditCollapsedText}
               </button>
@@ -1196,7 +1209,10 @@ export function ArtifactPanel() {
                 aria-label="AI 수정 패널 다시 펼치기"
                 aria-expanded="false"
                 data-tooltip="다시 펼치기"
-                onClick={() => setAiEditOverlayCollapsed(false)}
+                onClick={() => {
+                  setAiEditProgressNow(Date.now());
+                  setAiEditOverlayCollapsed(false);
+                }}
               >
                 <Icon name="chevron-down" />
               </button>
@@ -1211,7 +1227,10 @@ export function ArtifactPanel() {
                   aria-label="AI 수정 패널 접기"
                   aria-expanded="true"
                   data-tooltip="접기"
-                  onClick={() => setAiEditOverlayCollapsed(true)}
+                  onClick={() => {
+                    setAiEditProgressNow(Date.now());
+                    setAiEditOverlayCollapsed(true);
+                  }}
                 >
                   <Icon name="chevron-up" />
                 </button>

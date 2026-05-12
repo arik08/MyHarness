@@ -122,6 +122,49 @@ describe("Composer", () => {
     readerSpy.mockRestore();
   });
 
+  it("shows the pasted image filename in the sent user message", async () => {
+    const user = userEvent.setup();
+    const file = new File(["image"], "quarter-plan.png", { type: "image/png" });
+    const item = { kind: "file", type: "image/png", getAsFile: () => file };
+    const readerSpy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function readAsDataURLMock(this: FileReader) {
+      Object.defineProperty(this, "result", {
+        configurable: true,
+        value: "data:image/png;base64,aW1hZ2U=",
+      });
+      this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+        }}
+      >
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [item],
+        getData: () => "",
+      },
+    });
+    await screen.findByRole("button", { name: "quarter-plan.png" });
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(screen.getByText("[quarter-plan.png]")).toBeTruthy();
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [expect.objectContaining({ name: "quarter-plan.png" })],
+      line: "",
+    }));
+    readerSpy.mockRestore();
+  });
+
   it("moves the active command suggestion with arrow keys and applies it", async () => {
     const user = userEvent.setup();
     render(

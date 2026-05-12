@@ -5,7 +5,7 @@ title MyHarness Web Backend
 
 cd /d "%~dp0"
 
-if "%PORT%"=="" set "PORT=4173"
+if "%PORT%"=="" set "PORT=4273"
 if "%HOST%"=="" set "HOST=0.0.0.0"
 set "MYHARNESS_URL=http://localhost:%PORT%"
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ip = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.PrefixOrigin -ne 'WellKnown' } | Sort-Object InterfaceMetric | Select-Object -First 1 -ExpandProperty IPAddress; if ($ip) { $ip }"`) do set "MYHARNESS_LAN_IP=%%I"

@@ -27,6 +27,10 @@ function formatDuration(seconds: number) {
   return formatElapsed(seconds).replace(/\s*경과$/, "");
 }
 
+function detailIncludesElapsed(value: string) {
+  return /(?:\d+분(?: \d+초)?|\d+초) 경과/.test(value);
+}
+
 function estimateTextTokens(text: string) {
   const value = String(text || "");
   if (!value) {
@@ -994,6 +998,9 @@ export function WorkflowPanel({
   function eventDetail(event: WorkflowEvent) {
     const detail = compactDetail(event.detail);
     if (event.status !== "running") {
+      return detail;
+    }
+    if (detailIncludesElapsed(detail)) {
       return detail;
     }
     const startedAt = runningSinceRef.current[event.id];

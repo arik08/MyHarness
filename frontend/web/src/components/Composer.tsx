@@ -42,6 +42,20 @@ function fileToAttachment(file: File): Promise<Attachment> {
   });
 }
 
+function visibleAttachmentNames(attachments: Attachment[]) {
+  return attachments
+    .map((attachment, index) => `[${attachment.name || `이미지 ${index + 1}`}]`)
+    .join(" ");
+}
+
+function visibleUserMessageText(line: string, attachments: Attachment[]) {
+  const attachmentNames = visibleAttachmentNames(attachments);
+  if (!attachmentNames) {
+    return line;
+  }
+  return [line, attachmentNames].filter(Boolean).join("\n");
+}
+
 function commandSuggestions(commands: CommandItem[], query: string): Suggestion[] {
   const normalized = query.replace(/^\//, "").toLowerCase();
   return commands
@@ -311,6 +325,7 @@ export function Composer() {
     submittingRef.current = true;
     const shellShortcut = line.trim().startsWith("!") && state.composer.attachments.length === 0;
     const attachments = state.composer.attachments;
+    const visibleText = visibleUserMessageText(line, attachments);
     let targetSessionId = state.sessionId;
     const userMessage = shellShortcut
       ? {
@@ -319,7 +334,7 @@ export function Composer() {
           toolName: "shell-shortcut",
           terminal: { command: line.trim().slice(1).trim(), status: "running" as const },
         }
-      : { role: "user" as const, text: line || "(이미지 첨부)" };
+      : { role: "user" as const, text: visibleText || "(이미지 첨부)" };
     dispatch({ type: "set_busy", value: true });
     dispatch({ type: "append_message", message: userMessage, skipHistory: state.pendingFreshChat });
     dispatch({ type: "clear_composer" });

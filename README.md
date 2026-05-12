@@ -45,7 +45,7 @@ http://127.0.0.1:5173
 브라우저에서 아래 주소를 엽니다.
 
 ```text
-http://localhost:4173
+http://localhost:4273
 ```
 
 설치기와 런처는 모두 프로젝트 안의 `.myharness/` 폴더를 사용합니다. 그래서 폴더를 다른 PC로 옮겨도 사용자 홈 디렉터리 설정과 섞이지 않습니다.
@@ -55,14 +55,14 @@ http://localhost:4173
 다른 포트를 쓰고 싶으면 다음처럼 실행하세요.
 
 ```bat
-set PORT=4174
+set PORT=4274
 run_myharness_web.bat
 ```
 
 React/Vite/TypeScript 기반 Web UI가 기본 루트 화면입니다.
 
 ```text
-http://localhost:4173/
+http://localhost:4273/
 ```
 
 ## Provider 설정

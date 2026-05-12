@@ -224,7 +224,7 @@ function Start-ViteServer {
     Stop-All
 })
 
-$backendPort = if ($env:PORT) { [int]$env:PORT } else { 4173 }
+$backendPort = if ($env:PORT) { [int]$env:PORT } else { 4273 }
 $preferredVitePort = Get-RequestedVitePort
 Stop-ListeningPort -Port $backendPort -Label "backend"
 $script:VitePort = Resolve-VitePort -PreferredPort $preferredVitePort
