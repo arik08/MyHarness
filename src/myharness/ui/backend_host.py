@@ -404,6 +404,139 @@ def _normalize_question_choices(choices: list[dict[str, object]]) -> list[dict[s
     return normalized
 
 
+def _provider_select_options(settings: Settings) -> list[dict[str, object]]:
+    statuses = AuthManager(settings).get_profile_statuses()
+    hidden_profiles = {"copilot", "moonshot", "gemini", "minimax"}
+    hidden_providers = {"copilot", "moonshot", "gemini", "minimax"}
+    return [
+        {
+            "value": name,
+            "label": info["label"],
+            "description": f"{info['provider']} / {info['auth_source']}" + (" [missing auth]" if not info["configured"] else ""),
+            "active": info["active"],
+        }
+        for name, info in statuses.items()
+        if name not in hidden_profiles and info["provider"] not in hidden_providers
+    ]
+
+
+def _effort_select_options(settings: Settings) -> list[dict[str, object]]:
+    return [
+        {"value": "none", "label": "None", "description": "Disable explicit reasoning effort", "active": settings.effort in {"none", "auto", ""}},
+        {"value": "low", "label": "Low", "description": "Fastest responses", "active": settings.effort == "low"},
+        {"value": "medium", "label": "Medium", "description": "Balanced reasoning", "active": settings.effort == "medium"},
+        {"value": "high", "label": "High", "description": "Deepest reasoning", "active": settings.effort == "high"},
+        {"value": "xhigh", "label": "XHigh", "description": "Maximum reasoning", "active": settings.effort in {"xhigh", "max"}},
+    ]
+
+
+def _model_select_options(current_model: str, provider: str, allowed_models: list[str] | None = None) -> list[dict[str, object]]:
+    provider_name = provider.lower()
+    if allowed_models:
+        return [
+            {
+                "value": value,
+                "label": value,
+                "description": _model_option_description(provider_name, value),
+                "active": value == current_model,
+            }
+            for value in allowed_models
+        ]
+    if provider_name in {"anthropic", "anthropic_claude"}:
+        resolved_current = resolve_model_setting(current_model, provider_name)
+        return [
+            {
+                "value": value,
+                "label": label,
+                "description": description,
+                "active": value == current_model
+                or resolve_model_setting(value, provider_name) == resolved_current,
+            }
+            for value, label, description in CLAUDE_MODEL_ALIAS_OPTIONS
+        ]
+    families: list[tuple[str, str]] = []
+    if provider_name == "pgpt":
+        families.extend(
+            [
+                ("gpt-5.5", _model_option_description(provider_name, "gpt-5.5")),
+                ("gpt-5.4", _model_option_description(provider_name, "gpt-5.4")),
+                ("gpt-5.4-mini", _model_option_description(provider_name, "gpt-5.4-mini")),
+                ("gpt-5.4-nano", _model_option_description(provider_name, "gpt-5.4-nano")),
+            ]
+        )
+    elif provider_name in {"openai_codex", "openai-codex", "openai", "openai-compatible", "openrouter", "github_copilot"}:
+        families.extend(
+            [
+                ("gpt-5.5", "OpenAI flagship"),
+                ("gpt-5.4", "Previous GPT-5.4"),
+                ("gpt-5.4-mini", _model_option_description(provider_name, "gpt-5.4-mini")),
+                ("gpt-5.4-nano", _model_option_description(provider_name, "gpt-5.4-nano")),
+                ("gpt-5", "General GPT-5"),
+                ("gpt-4.1", "Stable GPT-4.1"),
+                ("o4-mini", "Fast reasoning"),
+            ]
+        )
+    elif provider_name in {"moonshot", "moonshot-compatible"}:
+        families.extend(
+            [
+                ("kimi-k2.5", "Moonshot K2.5"),
+                ("kimi-k2-turbo-preview", "Faster Moonshot"),
+            ]
+        )
+    elif provider_name == "dashscope":
+        families.extend(
+            [
+                ("qwen3.5-flash", "Fast Qwen"),
+                ("qwen3-max", "Strong Qwen"),
+                ("deepseek-r1", "Reasoning model"),
+            ]
+        )
+    elif provider_name == "gemini":
+        families.extend(
+            [
+                ("gemini-2.5-pro", "Gemini Pro"),
+                ("gemini-2.5-flash", "Gemini Flash"),
+            ]
+        )
+    elif provider_name == "minimax":
+        families.extend(
+            [
+                ("MiniMax-M2.7", "MiniMax flagship"),
+                ("MiniMax-M2.7-highspeed", "MiniMax fast"),
+            ]
+        )
+    seen: set[str] = set()
+    options: list[dict[str, object]] = []
+    for value, description in [*families, (current_model, "Current model")]:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        options.append(
+            {
+                "value": value,
+                "label": value,
+                "description": description,
+                "active": value == current_model,
+            }
+        )
+    return options
+
+
+def _model_option_description(provider_name: str, model: str) -> str:
+    normalized = model.strip().lower()
+    if normalized == "gpt-5.5":
+        return "Strongest coding and reasoning"
+    if normalized == "gpt-5.4":
+        return "Balanced default model"
+    if normalized == "gpt-5.4-mini":
+        return "Faster and lighter"
+    if normalized == "gpt-5.4-nano":
+        return "Lowest latency"
+    if provider_name == "pgpt":
+        return "P-GPT model"
+    return "Available model"
+
+
 @dataclass(frozen=True)
 class BackendHostConfig:
     """Configuration for one backend host session."""
@@ -2225,133 +2358,16 @@ class ReactBackendHost:
         await self._emit(BackendEvent(type="error", message=f"No selector available for /{command}"))
 
     def _provider_select_options(self, settings: Settings) -> list[dict[str, object]]:
-        statuses = AuthManager(settings).get_profile_statuses()
-        hidden_profiles = {"copilot", "moonshot", "gemini", "minimax"}
-        hidden_providers = {"copilot", "moonshot", "gemini", "minimax"}
-        return [
-            {
-                "value": name,
-                "label": info["label"],
-                "description": f"{info['provider']} / {info['auth_source']}" + (" [missing auth]" if not info["configured"] else ""),
-                "active": info["active"],
-            }
-            for name, info in statuses.items()
-            if name not in hidden_profiles and info["provider"] not in hidden_providers
-        ]
+        return _provider_select_options(settings)
 
     def _effort_select_options(self, settings: Settings) -> list[dict[str, object]]:
-        return [
-            {"value": "none", "label": "None", "description": "Disable explicit reasoning effort", "active": settings.effort in {"none", "auto", ""}},
-            {"value": "low", "label": "Low", "description": "Fastest responses", "active": settings.effort == "low"},
-            {"value": "medium", "label": "Medium", "description": "Balanced reasoning", "active": settings.effort == "medium"},
-            {"value": "high", "label": "High", "description": "Deepest reasoning", "active": settings.effort == "high"},
-            {"value": "xhigh", "label": "XHigh", "description": "Maximum reasoning", "active": settings.effort in {"xhigh", "max"}},
-        ]
+        return _effort_select_options(settings)
 
     def _model_select_options(self, current_model: str, provider: str, allowed_models: list[str] | None = None) -> list[dict[str, object]]:
-        provider_name = provider.lower()
-        if allowed_models:
-            return [
-                {
-                    "value": value,
-                    "label": value,
-                    "description": self._model_option_description(provider_name, value),
-                    "active": value == current_model,
-                }
-                for value in allowed_models
-            ]
-        if provider_name in {"anthropic", "anthropic_claude"}:
-            resolved_current = resolve_model_setting(current_model, provider_name)
-            return [
-                {
-                    "value": value,
-                    "label": label,
-                    "description": description,
-                    "active": value == current_model
-                    or resolve_model_setting(value, provider_name) == resolved_current,
-                }
-                for value, label, description in CLAUDE_MODEL_ALIAS_OPTIONS
-            ]
-        families: list[tuple[str, str]] = []
-        if provider_name == "pgpt":
-            families.extend(
-                [
-                    ("gpt-5.5", self._model_option_description(provider_name, "gpt-5.5")),
-                    ("gpt-5.4", self._model_option_description(provider_name, "gpt-5.4")),
-                    ("gpt-5.4-mini", self._model_option_description(provider_name, "gpt-5.4-mini")),
-                    ("gpt-5.4-nano", self._model_option_description(provider_name, "gpt-5.4-nano")),
-                ]
-            )
-        elif provider_name in {"openai_codex", "openai-codex", "openai", "openai-compatible", "openrouter", "github_copilot"}:
-            families.extend(
-                [
-                    ("gpt-5.5", "OpenAI flagship"),
-                    ("gpt-5.4", "Previous GPT-5.4"),
-                    ("gpt-5.4-mini", self._model_option_description(provider_name, "gpt-5.4-mini")),
-                    ("gpt-5.4-nano", self._model_option_description(provider_name, "gpt-5.4-nano")),
-                    ("gpt-5", "General GPT-5"),
-                    ("gpt-4.1", "Stable GPT-4.1"),
-                    ("o4-mini", "Fast reasoning"),
-                ]
-            )
-        elif provider_name in {"moonshot", "moonshot-compatible"}:
-            families.extend(
-                [
-                    ("kimi-k2.5", "Moonshot K2.5"),
-                    ("kimi-k2-turbo-preview", "Faster Moonshot"),
-                ]
-            )
-        elif provider_name == "dashscope":
-            families.extend(
-                [
-                    ("qwen3.5-flash", "Fast Qwen"),
-                    ("qwen3-max", "Strong Qwen"),
-                    ("deepseek-r1", "Reasoning model"),
-                ]
-            )
-        elif provider_name == "gemini":
-            families.extend(
-                [
-                    ("gemini-2.5-pro", "Gemini Pro"),
-                    ("gemini-2.5-flash", "Gemini Flash"),
-                ]
-            )
-        elif provider_name == "minimax":
-            families.extend(
-                [
-                    ("MiniMax-M2.7", "MiniMax flagship"),
-                    ("MiniMax-M2.7-highspeed", "MiniMax fast"),
-                ]
-            )
-        seen: set[str] = set()
-        options: list[dict[str, object]] = []
-        for value, description in [*families, (current_model, "Current model")]:
-            if not value or value in seen:
-                continue
-            seen.add(value)
-            options.append(
-                {
-                    "value": value,
-                    "label": value,
-                    "description": description,
-                    "active": value == current_model,
-                }
-            )
-        return options
+        return _model_select_options(current_model, provider, allowed_models)
 
     def _model_option_description(self, provider_name: str, model: str) -> str:
-        normalized = model.strip().lower()
-        if normalized == "gpt-5.5":
-            return "Strongest coding and reasoning"
-        if normalized == "gpt-5.4":
-            return "Balanced default model"
-        if normalized == "gpt-5.4-mini":
-            return "Faster and lighter"
-        if normalized == "gpt-5.4-nano":
-            return "Lowest latency"
-        if provider_name == "pgpt":
-            return "P-GPT model"
-        return "Available model"
+        return _model_option_description(provider_name, model)
 
     async def _ask_permission(self, tool_name: str, reason: str) -> bool:
         async with self._permission_lock:

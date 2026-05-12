@@ -1323,6 +1323,771 @@ function isResumeSelectModal(modal: ModalState | null) {
   return String(modal.payload?.command || "").trim().toLowerCase() === "resume";
 }
 
+function reduceHistoryRestoreEvent(
+  state: AppState,
+  event: Extract<BackendEvent, { type: "history_snapshot" }>,
+): AppState {
+  const historyEvent = event as Extract<BackendEvent, { type: "history_snapshot" }>;
+  const messages: ChatMessage[] = [];
+  let workflowEvents: WorkflowEvent[] = [];
+  let workflowAnchorMessageId: string | null = null;
+  const workflowEventsByMessageId: Record<string, WorkflowEvent[]> = {};
+  const workflowDurationSecondsByMessageId: Record<string, number> = {};
+  let restoredSwarmTeammates = state.swarmTeammates;
+  let restoredSwarmNotifications = state.swarmNotifications;
+  let workflowInputBuffers: Record<string, string> = {};
+  const historyEvents = (Array.isArray(historyEvent.history_events) ? historyEvent.history_events : [])
+    .map((item) => (item && typeof item === "object" ? item as Record<string, unknown> : {}));
+  for (const [index, record] of historyEvents.entries()) {
+    const type = String(record.type || "");
+    if (type === "swarm_status") {
+      restoredSwarmTeammates = Array.isArray(record.swarm_teammates)
+        ? record.swarm_teammates.map((item, teammateIndex) => normalizeSwarmTeammate(item as SwarmTeammateSnapshot, teammateIndex))
+        : restoredSwarmTeammates;
+      restoredSwarmNotifications = Array.isArray(record.swarm_notifications)
+        ? record.swarm_notifications.map((item, notificationIndex) => normalizeSwarmNotification(item as SwarmNotificationSnapshot, notificationIndex)).slice(-20)
+        : restoredSwarmNotifications;
+      continue;
+    }
+    if (type === "user") {
+      if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
+        workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
+      }
+      const message = createMessage({ role: "user", text: String(record.text || "") });
+      messages.push(message);
+      workflowAnchorMessageId = message.id;
+      workflowEvents = initialWorkflowEvents();
+      workflowInputBuffers = {};
+      continue;
+    }
+    if (type === "assistant") {
+      const text = String(record.text || "");
+      if (text.trim()) {
+        messages.push(createMessage({ role: "assistant", text, isComplete: isFinalRestoredAssistantAnswer(historyEvents, index) }));
+      }
+      continue;
+    }
+    if (type === "tool_started") {
+      const toolName = String(record.tool_name || "");
+      const toolInput = recordOrNull(record.tool_input);
+      const detail = workflowToolDetail(state.skills, toolName, toolInput);
+      const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
+      const rawToolCallIndex = Number(record.tool_call_index);
+      const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+      const purpose = ensurePurposeEvent(completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()), toolName);
+      workflowEvents = updateLatestWorkflowEvent(purpose.events, toolName, {
+        detail,
+        status: "running",
+        toolCallId,
+        toolCallIndex,
+        toolInput,
+      }, { toolCallId, toolCallIndex }) || appendWorkflowEvent(purpose.events, {
+        toolName,
+        title: workflowTitle(toolName),
+        detail,
+        status: "running",
+        level: "child",
+        groupId: purpose.groupId,
+        toolCallId,
+        toolCallIndex,
+        toolInput,
+      });
+      workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
+      continue;
+    }
+    if (type === "tool_input_delta") {
+      const toolName = String(record.tool_name || "");
+      const rawToolCallIndex = Number(record.tool_call_index);
+      const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+      const delta = String(record.arguments_delta || "");
+      if (!delta) {
+        continue;
+      }
+      const deltaEvent = {
+        type: "tool_input_delta",
+        tool_name: toolName,
+        tool_call_index: toolCallIndex,
+        arguments_delta: delta,
+      } as Extract<BackendEvent, { type: "tool_input_delta" }>;
+      const key = workflowInputBufferKey(deltaEvent);
+      const current = workflowInputBuffers[key] || "";
+      const nextBuffer = current && /^\s*\{/.test(delta) && /\}\s*$/.test(current) ? delta : `${current}${delta}`;
+      workflowInputBuffers = { ...workflowInputBuffers, [key]: nextBuffer };
+      const draft = workflowDraftFromBuffer(toolName, nextBuffer);
+      if (!draft) {
+        continue;
+      }
+      const { toolName: workflowToolName, toolInput } = draft;
+      const detail = workflowDetailFromInput(toolInput) || "작성 내용 수신 중";
+      let nextEvents = updateLatestWorkflowEvent(workflowEvents, workflowToolName, {
+        detail,
+        status: "running",
+        toolCallIndex,
+        toolInput,
+      }, { toolCallIndex });
+      if (!nextEvents) {
+        const purpose = ensurePurposeEvent(
+          completePlanning(removeWorkflowEventsByRole(workflowEvents.length ? workflowEvents : initialWorkflowEvents(), "activity")),
+          workflowToolName,
+        );
+        nextEvents = appendWorkflowEvent(purpose.events, {
+          toolName: workflowToolName,
+          title: workflowTitle(workflowToolName),
+          detail,
+          status: "running",
+          level: "child",
+          groupId: purpose.groupId,
+          toolCallIndex,
+          toolInput,
+        });
+      }
+      workflowEvents = refreshPurposeEvents(nextEvents);
+      continue;
+    }
+    if (type === "tool_completed") {
+      const toolName = String(record.tool_name || "");
+      const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
+      const rawToolCallIndex = Number(record.tool_call_index);
+      const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+      const output = String(record.output || "");
+      const isError = record.is_error === true;
+      const completionStatus = workflowCompletionStatus(toolName, isError);
+      const lastToolInput = [...workflowEvents]
+        .reverse()
+        .find((workflowEvent) => {
+          if (toolCallId) {
+            return workflowEvent.toolCallId === toolCallId && workflowEvent.toolInput;
+          }
+          if (toolCallIndex !== null) {
+            return workflowEvent.toolName === toolName && workflowEvent.toolCallIndex === toolCallIndex && workflowEvent.toolInput;
+          }
+          return workflowEvent.toolName === toolName && workflowEvent.toolInput;
+        })?.toolInput || null;
+      const detail = workflowToolDetail(state.skills, toolName, lastToolInput, output, `${toolName || "도구"} 완료`, isError);
+      let nextEvents = updateLatestWorkflowEvent(workflowEvents, toolName, {
+        detail,
+        output,
+        status: completionStatus,
+        toolCallId,
+        toolCallIndex,
+      }, { toolCallId, toolCallIndex });
+      if (!nextEvents) {
+        const purpose = ensurePurposeEvent(completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()), toolName);
+        nextEvents = appendWorkflowEvent(purpose.events, {
+          toolName,
+          title: workflowTitle(toolName),
+          detail,
+          output,
+          status: completionStatus,
+          level: "child",
+          groupId: purpose.groupId,
+          toolCallId,
+          toolCallIndex,
+        });
+      }
+      workflowEvents = refreshPurposeEvents(nextEvents);
+      workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
+    }
+  }
+  if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
+    workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
+    const workflowDurationSeconds = workflowDurationFromMetadata(historyEvent.compact_metadata);
+    if (workflowDurationSeconds) {
+      workflowDurationSecondsByMessageId[workflowAnchorMessageId] = workflowDurationSeconds;
+    }
+  }
+  const restoredWorkflowAnchorMessageId = hasRestorableWorkflowEvents(workflowEvents) ? workflowAnchorMessageId : null;
+  const restoredWorkflowEvents = restoredWorkflowAnchorMessageId ? workflowEvents : [];
+  return {
+    ...state,
+    activeHistoryId: String(historyEvent.value || state.pendingHistoryId || state.activeHistoryId || "").trim() || null,
+    pendingHistoryId: null,
+    chatTitle: normalizeChatTitle(String(historyEvent.message || state.chatTitle || "")),
+    messages,
+    workflowAnchorMessageId: restoredWorkflowAnchorMessageId,
+    workflowEventsByMessageId,
+    workflowDurationSecondsByMessageId,
+    workflowEvents: restoredWorkflowEvents,
+    workflowDurationSeconds: restoredWorkflowAnchorMessageId ? workflowDurationSecondsByMessageId[restoredWorkflowAnchorMessageId] ?? null : null,
+    workflowStartedAtMs: null,
+    swarmTeammates: restoredSwarmTeammates,
+    swarmNotifications: restoredSwarmNotifications,
+    restoringHistory: true,
+    historyReadOnly: true,
+    pendingFreshChat: false,
+    preserveMessagesOnNextClearTranscript: false,
+    busy: false,
+    status: "ready",
+    statusText: "준비됨",
+  };
+}
+
+type WorkflowToolBackendEvent = Extract<BackendEvent, {
+  type: "tool_started" | "tool_input_delta" | "tool_progress" | "tool_completed";
+}>;
+
+function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEvent): AppState {
+  if (event.type === "tool_started") {
+    const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
+    const label = compactToolStatus(toolName, "도구 실행 중");
+    const toolInput = recordOrNull(event.tool_input);
+    const toolCallId = backendToolCallId(event);
+    const toolCallIndex = backendToolCallIndex(event);
+    const detail = workflowToolDetail(state.skills, toolName, toolInput);
+    const purpose = ensurePurposeEvent(
+      completePlanning(removeWorkflowEventsByRole(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), "activity")),
+      toolName,
+    );
+    const command = isShellTool(toolName) ? commandFromToolInput(toolInput) : "";
+    const messages = command
+      ? updateLatestTerminalMessage(state.messages, command, { command, status: "running" }) || state.messages
+      : state.messages;
+    const startedWorkflowEvents = updateLatestWorkflowEvent(purpose.events, toolName, {
+      detail,
+      status: "running",
+      toolCallId,
+      toolCallIndex,
+      toolInput,
+    }, { toolCallId, toolCallIndex }) || appendWorkflowEvent(purpose.events, {
+      toolName,
+      title: workflowTitle(toolName),
+      detail,
+      status: "running",
+      level: "child",
+      groupId: purpose.groupId,
+      toolCallId,
+      toolCallIndex,
+      toolInput,
+    });
+    return {
+      ...state,
+      busy: true,
+      messages,
+      status: "processing",
+      statusText: label,
+      workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
+      workflowEvents: startedWorkflowEvents,
+    };
+  }
+
+  if (event.type === "tool_input_delta") {
+    const deltaEvent = event as Extract<BackendEvent, { type: "tool_input_delta" }>;
+    const toolName = typeof deltaEvent.tool_name === "string" ? deltaEvent.tool_name : "";
+    const toolCallIndex = backendToolCallIndex(deltaEvent);
+    const delta = String(deltaEvent.arguments_delta || "");
+    if (!delta) {
+      return state;
+    }
+    const key = workflowInputBufferKey(deltaEvent);
+    const current = state.workflowInputBuffers[key] || "";
+    const nextBuffer = current && /^\s*\{/.test(delta) && /\}\s*$/.test(current) ? delta : `${current}${delta}`;
+    const draft = workflowDraftFromBuffer(toolName, nextBuffer);
+    const workflowInputBuffers = { ...state.workflowInputBuffers, [key]: nextBuffer };
+    if (!draft) {
+      return { ...state, busy: true, workflowInputBuffers };
+    }
+    const { toolName: workflowToolName, toolInput } = draft;
+    const detail = workflowDetailFromInput(toolInput) || "작성 내용 수신 중";
+    let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, workflowToolName, {
+      detail,
+      status: "running",
+      toolCallIndex,
+      toolInput,
+    }, { toolCallIndex });
+    if (!workflowEvents) {
+      const purpose = ensurePurposeEvent(
+        completePlanning(removeWorkflowEventsByRole(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), "activity")),
+        workflowToolName,
+      );
+      workflowEvents = appendWorkflowEvent(purpose.events, {
+        toolName: workflowToolName,
+        title: workflowTitle(workflowToolName),
+        detail,
+        status: "running",
+        level: "child",
+        groupId: purpose.groupId,
+        toolCallIndex,
+        toolInput,
+      });
+    }
+    return {
+      ...state,
+      busy: true,
+      workflowInputBuffers,
+      workflowEvents: refreshPurposeEvents(workflowEvents),
+      status: "processing",
+      statusText: compactToolStatus(workflowToolName, `${workflowTitle(workflowToolName)} 중`),
+    };
+  }
+
+  if (event.type === "tool_progress") {
+    const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
+    const toolCallId = backendToolCallId(event);
+    const toolCallIndex = backendToolCallIndex(event);
+    const toolInput = recordOrNull(event.tool_input);
+    const detail = String(event.message || workflowDetailFromInput(toolInput) || "처리 중");
+    let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, toolName, {
+      detail,
+      status: "running",
+      toolCallId,
+      toolCallIndex,
+      toolInput,
+    }, { toolCallId, toolCallIndex });
+    if (!workflowEvents) {
+      const purpose = ensurePurposeEvent(completePlanning(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents()), toolName);
+      workflowEvents = appendWorkflowEvent(purpose.events, {
+        toolName,
+        title: `${workflowTitle(toolName)} 중`,
+        detail,
+        status: "running",
+        level: "child",
+        groupId: purpose.groupId,
+        toolCallId,
+        toolCallIndex,
+        toolInput,
+      });
+    }
+    return {
+      ...state,
+      busy: true,
+      workflowEvents: refreshPurposeEvents(workflowEvents),
+      status: "processing",
+      statusText: compactToolStatus(toolName),
+    };
+  }
+
+  if (event.type === "tool_completed") {
+    const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
+    const toolCallId = backendToolCallId(event);
+    const toolCallIndex = backendToolCallIndex(event);
+    const output = String(event.output || "");
+    const isError = event.is_error === true;
+    const lastToolInput = [...state.workflowEvents]
+      .reverse()
+      .find((workflowEvent) => {
+        if (toolCallId) {
+          return workflowEvent.toolCallId === toolCallId && workflowEvent.toolInput;
+        }
+        if (toolCallIndex !== null) {
+          return workflowEvent.toolName === toolName && workflowEvent.toolCallIndex === toolCallIndex && workflowEvent.toolInput;
+        }
+        return workflowEvent.toolName === toolName && workflowEvent.toolInput;
+      })?.toolInput || null;
+    const command = isShellTool(toolName) ? commandFromToolInput(lastToolInput) : "";
+    const completionStatus = workflowCompletionStatus(toolName, isError);
+    const messages = command
+      ? updateLatestTerminalMessage(state.messages, command, {
+          command,
+          output,
+          status: isError ? "error" : "done",
+        }) || state.messages
+      : state.messages;
+    const detail = workflowToolDetail(state.skills, toolName, lastToolInput, output, `${toolName || "도구"} 완료`, isError);
+    let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, toolName, {
+      detail,
+      output,
+      status: completionStatus,
+      toolCallId,
+      toolCallIndex,
+    }, { toolCallId, toolCallIndex });
+    if (!workflowEvents) {
+      const purpose = ensurePurposeEvent(completePlanning(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents()), toolName);
+      workflowEvents = appendWorkflowEvent(purpose.events, {
+        toolName,
+        title: workflowTitle(toolName),
+        detail,
+        output,
+        status: completionStatus,
+        level: "child",
+        groupId: purpose.groupId,
+        toolCallId,
+        toolCallIndex,
+      });
+    }
+    workflowEvents = startActivityStep(refreshPurposeEvents(workflowEvents));
+    return {
+      ...state,
+      busy: true,
+      messages,
+      workflowEvents,
+      workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
+      status: "processing",
+      statusText: isError ? "도구 결과 확인 중" : "도구 결과 검토 중",
+    };
+  }
+
+  return state;
+}
+
+function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: "backend_event" }>): AppState {
+  if (action.sessionId && action.sessionId !== state.sessionId) {
+    return state;
+  }
+  const event = action.event;
+  if (state.historyReadOnly && event.type !== "history_snapshot") {
+    return state;
+  }
+
+  if (event.type === "ready" || event.type === "state_snapshot") {
+    const next = applyStateSnapshot(state, event as Extract<BackendEvent, { type: "ready" | "state_snapshot" }>);
+    if (event.type === "ready") {
+      return {
+        ...next,
+        commands: normalizeCommands(Array.isArray(event.commands) ? event.commands : []),
+        skills: normalizeSkills(Array.isArray(event.skills) ? event.skills : []),
+      };
+    }
+    return next;
+  }
+
+  if (event.type === "skills_snapshot") {
+    return {
+      ...state,
+      skills: normalizeSkills(Array.isArray(event.skills) ? event.skills : []),
+    };
+  }
+
+  if (event.type === "clear_transcript") {
+    if (state.restoringHistory) {
+      return {
+        ...state,
+        preserveMessagesOnNextClearTranscript: false,
+      };
+    }
+    if (state.preserveMessagesOnNextClearTranscript && state.busy && state.messages.length > 0) {
+      return {
+        ...state,
+        preserveMessagesOnNextClearTranscript: false,
+      };
+    }
+    return {
+      ...state,
+      preserveMessagesOnNextClearTranscript: false,
+      messages: [],
+      workflowAnchorMessageId: null,
+      workflowEventsByMessageId: {},
+      workflowDurationSecondsByMessageId: {},
+      workflowInputBuffers: {},
+      todoMarkdown: "",
+      workflowEvents: [],
+      workflowDurationSeconds: null,
+      workflowStartedAtMs: null,
+    };
+  }
+
+  if (event.type === "history_snapshot") {
+    return reduceHistoryRestoreEvent(state, event as Extract<BackendEvent, { type: "history_snapshot" }>);
+  }
+
+  if (event.type === "status") {
+    const text = String(event.message || event.value || "");
+    return {
+      ...state,
+      statusText: text || state.statusText,
+      messages: event.quiet === true ? state.messages : appendStatusMessage(state.messages, text),
+    };
+  }
+
+  if (event.type === "session_title") {
+    const title = normalizeChatTitle(String(event.message ?? event.value ?? ""));
+    return {
+      ...state,
+      chatTitle: title,
+      history: updateCurrentHistoryTitle(state.history, state.activeHistoryId || state.sessionId, title),
+    };
+  }
+
+  if (event.type === "active_session") {
+    const activeHistoryId = String(event.value || "").trim() || null;
+    if (state.restoringHistory && state.pendingHistoryId && activeHistoryId !== state.pendingHistoryId) {
+      return state;
+    }
+    return {
+      ...state,
+      activeHistoryId,
+      pendingHistoryId: null,
+      restoringHistory: false,
+      pendingFreshChat: false,
+      preserveMessagesOnNextClearTranscript: false,
+    };
+  }
+
+  if (event.type === "transcript_item" && event.item) {
+    const item = event.item as NonNullable<Extract<BackendEvent, { type: "transcript_item" }>["item"]>;
+    if (isNonConversationTranscriptItem(item)) {
+      return state;
+    }
+    if (
+      item.role === "user"
+      && (item.kind === "steering" || item.kind === "queued")
+      && /^\/plan(?:\s|$)/i.test(String(item.text || "").trim())
+    ) {
+      return state;
+    }
+    const text = normalizeVisibleText(item.text);
+    if (item.role === "user" && (item.kind === "steering" || item.kind === "queued")) {
+      if (isDuplicateKindedUserTranscript(state, text, item.kind)) {
+        return state;
+      }
+    }
+    if (item.role === "user" && item.kind !== "steering" && item.kind !== "queued") {
+      if (isDuplicateActiveUserTranscript(state, text)) {
+        return state;
+      }
+      const message = createMessage({
+        role: item.role,
+        text,
+        kind: item.kind || undefined,
+        toolName: item.tool_name || undefined,
+        isError: item.is_error === true,
+      });
+      if (isSlashCommandMessage(text)) {
+        return {
+          ...state,
+          messages: [...state.messages, message],
+        };
+      }
+      return {
+        ...state,
+        messages: [...state.messages, message],
+        workflowAnchorMessageId: message.id,
+        workflowEventsByMessageId: workflowSnapshotMap(state),
+        workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
+        workflowEvents: initialWorkflowEvents(),
+        workflowDurationSeconds: null,
+        workflowStartedAtMs: Date.now(),
+      };
+    }
+    return {
+      ...state,
+      messages: appendMessage(state.messages, {
+        role: item.role,
+        text,
+        kind: item.kind || undefined,
+        toolName: item.tool_name || undefined,
+        isError: item.is_error === true,
+        isComplete: item.role === "assistant" ? true : undefined,
+      }),
+    };
+  }
+
+  if (event.type === "assistant_delta") {
+    const value = String(event.message ?? event.value ?? "");
+    const last = state.messages[state.messages.length - 1];
+    const shouldAppendToLastAssistant = last?.role === "assistant" && last.isComplete === undefined;
+    const characterCount = (shouldAppendToLastAssistant ? last.text.length : 0) + value.length;
+    const workflowEvents = startFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), characterCount);
+    if (shouldAppendToLastAssistant) {
+      return {
+        ...state,
+        busy: true,
+        status: "processing",
+        statusText: "응답 작성 중",
+        workflowEvents,
+        messages: [
+          ...state.messages.slice(0, -1),
+          { ...last, text: `${last.text}${value}` },
+        ],
+      };
+    }
+    return {
+      ...state,
+      busy: true,
+      status: "processing",
+      statusText: "응답 작성 중",
+      workflowEvents,
+      messages: appendMessage(state.messages, { role: "assistant", text: value }),
+    };
+  }
+
+  if (event.type === "assistant_complete") {
+    const value = normalizeVisibleText(String(event.message || ""));
+    const last = state.messages[state.messages.length - 1];
+    const isFinalAnswer = event.has_tool_uses !== true;
+    const messages = value
+      ? last?.role === "assistant" && last.isComplete !== true
+        ? [
+            ...state.messages.slice(0, -1),
+            { ...last, text: assistantCompletionText(last.text, value), isComplete: isFinalAnswer },
+          ]
+        : appendMessage(state.messages, { role: "assistant", text: value, isComplete: isFinalAnswer })
+      : isFinalAnswer && last?.role === "assistant"
+        ? [...state.messages.slice(0, -1), { ...last, isComplete: true }]
+        : state.messages;
+    return {
+      ...state,
+      busy: event.has_tool_uses === true,
+      messages,
+      workflowEvents: isFinalAnswer
+        ? finishFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())
+        : removeWorkflowEventsByRole(state.workflowEvents, "final"),
+      status: event.has_tool_uses === true ? "processing" : "ready",
+      statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
+      artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
+    };
+  }
+
+  if (
+    event.type === "tool_started"
+    || event.type === "tool_input_delta"
+    || event.type === "tool_progress"
+    || event.type === "tool_completed"
+  ) {
+    return reduceWorkflowToolEvent(state, event as WorkflowToolBackendEvent);
+  }
+
+  if (event.type === "todo_update") {
+    const todoMarkdown = String(event.todo_markdown || "");
+    return {
+      ...state,
+      todoMarkdown,
+      todoCollapsed: todoMarkdown.trim() ? state.todoCollapsed : false,
+    };
+  }
+
+  if (event.type === "swarm_status") {
+    const teammates = Array.isArray(event.swarm_teammates)
+      ? event.swarm_teammates.map(normalizeSwarmTeammate)
+      : state.swarmTeammates;
+    const notifications = Array.isArray(event.swarm_notifications)
+      ? [...state.swarmNotifications, ...event.swarm_notifications.map(normalizeSwarmNotification)].slice(-20)
+      : state.swarmNotifications;
+    return {
+      ...state,
+      swarmTeammates: teammates,
+      swarmNotifications: notifications,
+      swarmPopupOpen: state.swarmPopupOpen,
+    };
+  }
+
+  if (event.type === "modal_request") {
+    const payload = event.modal && typeof event.modal === "object"
+      ? event.modal as Record<string, unknown>
+      : {};
+    const modal: BackendModalState = { kind: "backend", payload };
+    return {
+      ...state,
+      modal,
+      backendModalsBySessionId: rememberBackendModalForActiveSession(state, modal),
+    };
+  }
+
+  if (event.type === "select_request") {
+    const modal = event.modal && typeof event.modal === "object" ? event.modal as Record<string, unknown> : {};
+    const command = String(modal.command || "").trim().toLowerCase();
+    if (command === "resume") {
+      const history = Array.isArray(event.select_options)
+        ? event.select_options as HistoryItem[]
+        : [];
+      return {
+        ...state,
+        history: removeLiveHistoryRowsForSession(removeDeletedHistoryRows(history, state.deletedHistoryIds), state.sessionId),
+        historyLoading: false,
+        modal: state.modal?.kind === "backend" ? null : state.modal,
+      };
+    }
+    if (state.runtimePicker.open && command === "runtime-picker") {
+      const runtimeOptions = modal.runtime_options && typeof modal.runtime_options === "object"
+        ? modal.runtime_options as Record<string, unknown>
+        : {};
+      return {
+        ...state,
+        runtimePicker: runtimePickerFromOptions(state, runtimeOptions),
+      };
+    }
+    const payload = {
+      ...modal,
+      select_options: Array.isArray(event.select_options) ? event.select_options : [],
+      message: event.message || "",
+    };
+    const nextModal: BackendModalState = { kind: "backend", payload };
+    return {
+      ...state,
+      modal: nextModal,
+      backendModalsBySessionId: rememberBackendModalForActiveSession(state, nextModal),
+    };
+  }
+
+  if (event.type === "line_complete") {
+    const hasRestorableWorkflow = hasRestorableWorkflowEvents(state.workflowEvents);
+    const workflowAnchorMessageId = hasRestorableWorkflow ? state.workflowAnchorMessageId : null;
+    const workflowEvents = hasRestorableWorkflow ? state.workflowEvents : [];
+    const workflowDurationSeconds = hasRestorableWorkflow
+      ? workflowDurationFromMetadata(recordOrNull(event.compact_metadata)) ?? workflowElapsedDurationSeconds(state)
+      : null;
+    const workflowDurationSecondsByMessageId = workflowDurationSeconds !== null && workflowAnchorMessageId
+      ? {
+          ...state.workflowDurationSecondsByMessageId,
+          [workflowAnchorMessageId]: workflowDurationSeconds,
+        }
+      : state.workflowDurationSecondsByMessageId;
+    return {
+      ...state,
+      busy: false,
+      status: state.status === "error" ? "error" : "ready",
+      statusText: state.status === "error" ? state.statusText : "준비됨",
+      artifactRefreshKey: event.type === "line_complete" ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
+      historyRefreshKey: state.historyRefreshKey + 1,
+      workflowAnchorMessageId,
+      workflowEvents,
+      workflowDurationSeconds: hasRestorableWorkflow ? workflowDurationSeconds ?? state.workflowDurationSeconds : null,
+      workflowDurationSecondsByMessageId,
+      workflowStartedAtMs: null,
+    };
+  }
+
+  if (event.type === "shutdown") {
+    const message = "진행 중이던 세션이 종료되었습니다. 새 세션에 다시 연결한 뒤 이어서 입력해주세요.";
+    const workflowEvents = state.busy
+      ? finishFinalAnswerStep(
+          failRunningWorkflowEvents(
+            state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(),
+            "백엔드가 종료되어 작업을 중단했습니다.",
+          ),
+          "error",
+          message,
+        )
+      : state.workflowEvents;
+    return {
+      ...state,
+      sessionId: null,
+      ready: false,
+      busy: false,
+      status: "connecting",
+      statusText: "세션이 종료되어 새 세션에 다시 연결 중입니다.",
+      messages: state.busy ? appendErrorMessage(state.messages, message) : state.messages,
+      workflowEvents,
+      workflowEventsByMessageId: rememberWorkflowEventsForAnchor(state, workflowEvents),
+      workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
+      workflowStartedAtMs: null,
+    };
+  }
+
+  if (event.type === "error") {
+    const message = normalizeVisibleText(String(event.message || "오류"));
+    const workflowEvents = state.workflowEvents.length
+      ? finishFinalAnswerStep(
+          failRunningWorkflowEvents(state.workflowEvents, "오류로 작업을 중단했습니다."),
+          "error",
+          message || "응답을 마무리하지 못했습니다.",
+        )
+      : state.workflowEvents;
+    return {
+      ...state,
+      messages: appendErrorMessage(state.messages, message),
+      workflowEvents,
+      workflowEventsByMessageId: rememberWorkflowEventsForAnchor(state, workflowEvents),
+      busy: false,
+      status: "error",
+      statusText: message,
+      workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
+      workflowStartedAtMs: null,
+    };
+  }
+
+  return state;
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "session_started":
@@ -1746,746 +2511,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "clear_messages":
       return { ...state, messages: [], workflowAnchorMessageId: null, workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowInputBuffers: {}, todoMarkdown: "", todoCollapsed: false, workflowEvents: [], workflowDurationSeconds: null, workflowStartedAtMs: null };
 
-    case "backend_event": {
-      if (action.sessionId && action.sessionId !== state.sessionId) {
-        return state;
-      }
-      const event = action.event;
-      if (state.historyReadOnly && event.type !== "history_snapshot") {
-        return state;
-      }
-
-      if (event.type === "ready" || event.type === "state_snapshot") {
-        const next = applyStateSnapshot(state, event as Extract<BackendEvent, { type: "ready" | "state_snapshot" }>);
-        if (event.type === "ready") {
-          return {
-            ...next,
-            commands: normalizeCommands(Array.isArray(event.commands) ? event.commands : []),
-            skills: normalizeSkills(Array.isArray(event.skills) ? event.skills : []),
-          };
-        }
-        return next;
-      }
-
-      if (event.type === "skills_snapshot") {
-        return {
-          ...state,
-          skills: normalizeSkills(Array.isArray(event.skills) ? event.skills : []),
-        };
-      }
-
-      if (event.type === "clear_transcript") {
-        if (state.restoringHistory) {
-          return {
-            ...state,
-            preserveMessagesOnNextClearTranscript: false,
-          };
-        }
-        if (state.preserveMessagesOnNextClearTranscript && state.busy && state.messages.length > 0) {
-          return {
-            ...state,
-            preserveMessagesOnNextClearTranscript: false,
-          };
-        }
-        return {
-          ...state,
-          preserveMessagesOnNextClearTranscript: false,
-          messages: [],
-          workflowAnchorMessageId: null,
-          workflowEventsByMessageId: {},
-          workflowDurationSecondsByMessageId: {},
-          workflowInputBuffers: {},
-          todoMarkdown: "",
-          workflowEvents: [],
-          workflowDurationSeconds: null,
-          workflowStartedAtMs: null,
-        };
-      }
-
-      if (event.type === "history_snapshot") {
-        const historyEvent = event as Extract<BackendEvent, { type: "history_snapshot" }>;
-        const messages: ChatMessage[] = [];
-        let workflowEvents: WorkflowEvent[] = [];
-        let workflowAnchorMessageId: string | null = null;
-        const workflowEventsByMessageId: Record<string, WorkflowEvent[]> = {};
-        const workflowDurationSecondsByMessageId: Record<string, number> = {};
-        let restoredSwarmTeammates = state.swarmTeammates;
-        let restoredSwarmNotifications = state.swarmNotifications;
-        let workflowInputBuffers: Record<string, string> = {};
-        const historyEvents = (Array.isArray(historyEvent.history_events) ? historyEvent.history_events : [])
-          .map((item) => (item && typeof item === "object" ? item as Record<string, unknown> : {}));
-        for (const [index, record] of historyEvents.entries()) {
-          const type = String(record.type || "");
-          if (type === "swarm_status") {
-            restoredSwarmTeammates = Array.isArray(record.swarm_teammates)
-              ? record.swarm_teammates.map((item, teammateIndex) => normalizeSwarmTeammate(item as SwarmTeammateSnapshot, teammateIndex))
-              : restoredSwarmTeammates;
-            restoredSwarmNotifications = Array.isArray(record.swarm_notifications)
-              ? record.swarm_notifications.map((item, notificationIndex) => normalizeSwarmNotification(item as SwarmNotificationSnapshot, notificationIndex)).slice(-20)
-              : restoredSwarmNotifications;
-            continue;
-          }
-          if (type === "user") {
-            if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
-              workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
-            }
-            const message = createMessage({ role: "user", text: String(record.text || "") });
-            messages.push(message);
-            workflowAnchorMessageId = message.id;
-            workflowEvents = initialWorkflowEvents();
-            workflowInputBuffers = {};
-            continue;
-          }
-          if (type === "assistant") {
-            const text = String(record.text || "");
-            if (text.trim()) {
-              messages.push(createMessage({ role: "assistant", text, isComplete: isFinalRestoredAssistantAnswer(historyEvents, index) }));
-            }
-            continue;
-          }
-          if (type === "tool_started") {
-            const toolName = String(record.tool_name || "");
-            const toolInput = recordOrNull(record.tool_input);
-            const detail = workflowToolDetail(state.skills, toolName, toolInput);
-            const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
-            const rawToolCallIndex = Number(record.tool_call_index);
-            const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
-            const purpose = ensurePurposeEvent(completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()), toolName);
-            workflowEvents = updateLatestWorkflowEvent(purpose.events, toolName, {
-              detail,
-              status: "running",
-              toolCallId,
-              toolCallIndex,
-              toolInput,
-            }, { toolCallId, toolCallIndex }) || appendWorkflowEvent(purpose.events, {
-              toolName,
-              title: workflowTitle(toolName),
-              detail,
-              status: "running",
-              level: "child",
-              groupId: purpose.groupId,
-              toolCallId,
-              toolCallIndex,
-              toolInput,
-            });
-            workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
-            continue;
-          }
-          if (type === "tool_input_delta") {
-            const toolName = String(record.tool_name || "");
-            const rawToolCallIndex = Number(record.tool_call_index);
-            const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
-            const delta = String(record.arguments_delta || "");
-            if (!delta) {
-              continue;
-            }
-            const deltaEvent = {
-              type: "tool_input_delta",
-              tool_name: toolName,
-              tool_call_index: toolCallIndex,
-              arguments_delta: delta,
-            } as Extract<BackendEvent, { type: "tool_input_delta" }>;
-            const key = workflowInputBufferKey(deltaEvent);
-            const current = workflowInputBuffers[key] || "";
-            const nextBuffer = current && /^\s*\{/.test(delta) && /\}\s*$/.test(current) ? delta : `${current}${delta}`;
-            workflowInputBuffers = { ...workflowInputBuffers, [key]: nextBuffer };
-            const draft = workflowDraftFromBuffer(toolName, nextBuffer);
-            if (!draft) {
-              continue;
-            }
-            const { toolName: workflowToolName, toolInput } = draft;
-            const detail = workflowDetailFromInput(toolInput) || "작성 내용 수신 중";
-            let nextEvents = updateLatestWorkflowEvent(workflowEvents, workflowToolName, {
-              detail,
-              status: "running",
-              toolCallIndex,
-              toolInput,
-            }, { toolCallIndex });
-            if (!nextEvents) {
-              const purpose = ensurePurposeEvent(
-                completePlanning(removeWorkflowEventsByRole(workflowEvents.length ? workflowEvents : initialWorkflowEvents(), "activity")),
-                workflowToolName,
-              );
-              nextEvents = appendWorkflowEvent(purpose.events, {
-                toolName: workflowToolName,
-                title: workflowTitle(workflowToolName),
-                detail,
-                status: "running",
-                level: "child",
-                groupId: purpose.groupId,
-                toolCallIndex,
-                toolInput,
-              });
-            }
-            workflowEvents = refreshPurposeEvents(nextEvents);
-            continue;
-          }
-          if (type === "tool_completed") {
-            const toolName = String(record.tool_name || "");
-            const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
-            const rawToolCallIndex = Number(record.tool_call_index);
-            const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
-            const output = String(record.output || "");
-            const isError = record.is_error === true;
-            const completionStatus = workflowCompletionStatus(toolName, isError);
-            const lastToolInput = [...workflowEvents]
-              .reverse()
-              .find((workflowEvent) => {
-                if (toolCallId) {
-                  return workflowEvent.toolCallId === toolCallId && workflowEvent.toolInput;
-                }
-                if (toolCallIndex !== null) {
-                  return workflowEvent.toolName === toolName && workflowEvent.toolCallIndex === toolCallIndex && workflowEvent.toolInput;
-                }
-                return workflowEvent.toolName === toolName && workflowEvent.toolInput;
-              })?.toolInput || null;
-            const detail = workflowToolDetail(state.skills, toolName, lastToolInput, output, `${toolName || "도구"} 완료`, isError);
-            let nextEvents = updateLatestWorkflowEvent(workflowEvents, toolName, {
-              detail,
-              output,
-              status: completionStatus,
-              toolCallId,
-              toolCallIndex,
-            }, { toolCallId, toolCallIndex });
-            if (!nextEvents) {
-              const purpose = ensurePurposeEvent(completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()), toolName);
-              nextEvents = appendWorkflowEvent(purpose.events, {
-                toolName,
-                title: workflowTitle(toolName),
-                detail,
-                output,
-                status: completionStatus,
-                level: "child",
-                groupId: purpose.groupId,
-                toolCallId,
-                toolCallIndex,
-              });
-            }
-            workflowEvents = refreshPurposeEvents(nextEvents);
-            workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
-          }
-        }
-        if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
-          workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
-          const workflowDurationSeconds = workflowDurationFromMetadata(historyEvent.compact_metadata);
-          if (workflowDurationSeconds) {
-            workflowDurationSecondsByMessageId[workflowAnchorMessageId] = workflowDurationSeconds;
-          }
-        }
-        const restoredWorkflowAnchorMessageId = hasRestorableWorkflowEvents(workflowEvents) ? workflowAnchorMessageId : null;
-        const restoredWorkflowEvents = restoredWorkflowAnchorMessageId ? workflowEvents : [];
-        return {
-          ...state,
-          activeHistoryId: String(historyEvent.value || state.pendingHistoryId || state.activeHistoryId || "").trim() || null,
-          pendingHistoryId: null,
-          chatTitle: normalizeChatTitle(String(historyEvent.message || state.chatTitle || "")),
-          messages,
-          workflowAnchorMessageId: restoredWorkflowAnchorMessageId,
-          workflowEventsByMessageId,
-          workflowDurationSecondsByMessageId,
-          workflowEvents: restoredWorkflowEvents,
-          workflowDurationSeconds: restoredWorkflowAnchorMessageId ? workflowDurationSecondsByMessageId[restoredWorkflowAnchorMessageId] ?? null : null,
-          workflowStartedAtMs: null,
-          swarmTeammates: restoredSwarmTeammates,
-          swarmNotifications: restoredSwarmNotifications,
-          restoringHistory: true,
-          historyReadOnly: true,
-          pendingFreshChat: false,
-          preserveMessagesOnNextClearTranscript: false,
-          busy: false,
-          status: "ready",
-          statusText: "준비됨",
-        };
-      }
-
-      if (event.type === "status") {
-        const text = String(event.message || event.value || "");
-        return {
-          ...state,
-          statusText: text || state.statusText,
-          messages: event.quiet === true ? state.messages : appendStatusMessage(state.messages, text),
-        };
-      }
-
-      if (event.type === "session_title") {
-        const title = normalizeChatTitle(String(event.message ?? event.value ?? ""));
-        return {
-          ...state,
-          chatTitle: title,
-          history: updateCurrentHistoryTitle(state.history, state.activeHistoryId || state.sessionId, title),
-        };
-      }
-
-      if (event.type === "active_session") {
-        const activeHistoryId = String(event.value || "").trim() || null;
-        if (state.restoringHistory && state.pendingHistoryId && activeHistoryId !== state.pendingHistoryId) {
-          return state;
-        }
-        return {
-          ...state,
-          activeHistoryId,
-          pendingHistoryId: null,
-          restoringHistory: false,
-          pendingFreshChat: false,
-          preserveMessagesOnNextClearTranscript: false,
-        };
-      }
-
-      if (event.type === "transcript_item" && event.item) {
-        const item = event.item as NonNullable<Extract<BackendEvent, { type: "transcript_item" }>["item"]>;
-        if (isNonConversationTranscriptItem(item)) {
-          return state;
-        }
-        if (
-          item.role === "user"
-          && (item.kind === "steering" || item.kind === "queued")
-          && /^\/plan(?:\s|$)/i.test(String(item.text || "").trim())
-        ) {
-          return state;
-        }
-        const text = normalizeVisibleText(item.text);
-        if (item.role === "user" && (item.kind === "steering" || item.kind === "queued")) {
-          if (isDuplicateKindedUserTranscript(state, text, item.kind)) {
-            return state;
-          }
-        }
-        if (item.role === "user" && item.kind !== "steering" && item.kind !== "queued") {
-          if (isDuplicateActiveUserTranscript(state, text)) {
-            return state;
-          }
-          const message = createMessage({
-            role: item.role,
-            text,
-            kind: item.kind || undefined,
-            toolName: item.tool_name || undefined,
-            isError: item.is_error === true,
-          });
-          if (isSlashCommandMessage(text)) {
-            return {
-              ...state,
-              messages: [...state.messages, message],
-            };
-          }
-          return {
-            ...state,
-            messages: [...state.messages, message],
-            workflowAnchorMessageId: message.id,
-            workflowEventsByMessageId: workflowSnapshotMap(state),
-            workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
-            workflowEvents: initialWorkflowEvents(),
-            workflowDurationSeconds: null,
-            workflowStartedAtMs: Date.now(),
-          };
-        }
-        return {
-          ...state,
-          messages: appendMessage(state.messages, {
-            role: item.role,
-            text,
-            kind: item.kind || undefined,
-            toolName: item.tool_name || undefined,
-            isError: item.is_error === true,
-            isComplete: item.role === "assistant" ? true : undefined,
-          }),
-        };
-      }
-
-      if (event.type === "assistant_delta") {
-        const value = String(event.message ?? event.value ?? "");
-        const last = state.messages[state.messages.length - 1];
-        const shouldAppendToLastAssistant = last?.role === "assistant" && last.isComplete === undefined;
-        const characterCount = (shouldAppendToLastAssistant ? last.text.length : 0) + value.length;
-        const workflowEvents = startFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), characterCount);
-        if (shouldAppendToLastAssistant) {
-          return {
-            ...state,
-            busy: true,
-            status: "processing",
-            statusText: "응답 작성 중",
-            workflowEvents,
-            messages: [
-              ...state.messages.slice(0, -1),
-              { ...last, text: `${last.text}${value}` },
-            ],
-          };
-        }
-        return {
-          ...state,
-          busy: true,
-          status: "processing",
-          statusText: "응답 작성 중",
-          workflowEvents,
-          messages: appendMessage(state.messages, { role: "assistant", text: value }),
-        };
-      }
-
-      if (event.type === "assistant_complete") {
-        const value = normalizeVisibleText(String(event.message || ""));
-        const last = state.messages[state.messages.length - 1];
-        const isFinalAnswer = event.has_tool_uses !== true;
-        const messages = value
-          ? last?.role === "assistant" && last.isComplete !== true
-            ? [
-                ...state.messages.slice(0, -1),
-                { ...last, text: assistantCompletionText(last.text, value), isComplete: isFinalAnswer },
-              ]
-            : appendMessage(state.messages, { role: "assistant", text: value, isComplete: isFinalAnswer })
-          : isFinalAnswer && last?.role === "assistant"
-            ? [...state.messages.slice(0, -1), { ...last, isComplete: true }]
-            : state.messages;
-        return {
-          ...state,
-          busy: event.has_tool_uses === true,
-          messages,
-          workflowEvents: isFinalAnswer
-            ? finishFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())
-            : removeWorkflowEventsByRole(state.workflowEvents, "final"),
-          status: event.has_tool_uses === true ? "processing" : "ready",
-          statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
-          artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
-        };
-      }
-
-      if (event.type === "tool_started") {
-        const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
-        const label = compactToolStatus(toolName, "도구 실행 중");
-        const toolInput = recordOrNull(event.tool_input);
-        const toolCallId = backendToolCallId(event);
-        const toolCallIndex = backendToolCallIndex(event);
-        const detail = workflowToolDetail(state.skills, toolName, toolInput);
-        const purpose = ensurePurposeEvent(
-          completePlanning(removeWorkflowEventsByRole(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), "activity")),
-          toolName,
-        );
-        const command = isShellTool(toolName) ? commandFromToolInput(toolInput) : "";
-        const messages = command
-          ? updateLatestTerminalMessage(state.messages, command, { command, status: "running" }) || state.messages
-          : state.messages;
-        const startedWorkflowEvents = updateLatestWorkflowEvent(purpose.events, toolName, {
-          detail,
-          status: "running",
-          toolCallId,
-          toolCallIndex,
-          toolInput,
-        }, { toolCallId, toolCallIndex }) || appendWorkflowEvent(purpose.events, {
-          toolName,
-          title: workflowTitle(toolName),
-          detail,
-          status: "running",
-          level: "child",
-          groupId: purpose.groupId,
-          toolCallId,
-          toolCallIndex,
-          toolInput,
-        });
-        return {
-          ...state,
-          busy: true,
-          messages,
-          status: "processing",
-          statusText: label,
-          workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
-          workflowEvents: startedWorkflowEvents,
-        };
-      }
-
-      if (event.type === "tool_input_delta") {
-        const deltaEvent = event as Extract<BackendEvent, { type: "tool_input_delta" }>;
-        const toolName = typeof deltaEvent.tool_name === "string" ? deltaEvent.tool_name : "";
-        const toolCallIndex = backendToolCallIndex(deltaEvent);
-        const delta = String(deltaEvent.arguments_delta || "");
-        if (!delta) {
-          return state;
-        }
-        const key = workflowInputBufferKey(deltaEvent);
-        const current = state.workflowInputBuffers[key] || "";
-        const nextBuffer = current && /^\s*\{/.test(delta) && /\}\s*$/.test(current) ? delta : `${current}${delta}`;
-        const draft = workflowDraftFromBuffer(toolName, nextBuffer);
-        const workflowInputBuffers = { ...state.workflowInputBuffers, [key]: nextBuffer };
-        if (!draft) {
-          return { ...state, busy: true, workflowInputBuffers };
-        }
-        const { toolName: workflowToolName, toolInput } = draft;
-        const detail = workflowDetailFromInput(toolInput) || "작성 내용 수신 중";
-        let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, workflowToolName, {
-          detail,
-          status: "running",
-          toolCallIndex,
-          toolInput,
-        }, { toolCallIndex });
-        if (!workflowEvents) {
-          const purpose = ensurePurposeEvent(
-            completePlanning(removeWorkflowEventsByRole(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), "activity")),
-            workflowToolName,
-          );
-          workflowEvents = appendWorkflowEvent(purpose.events, {
-            toolName: workflowToolName,
-            title: workflowTitle(workflowToolName),
-            detail,
-            status: "running",
-            level: "child",
-            groupId: purpose.groupId,
-            toolCallIndex,
-            toolInput,
-          });
-        }
-        return {
-          ...state,
-          busy: true,
-          workflowInputBuffers,
-          workflowEvents: refreshPurposeEvents(workflowEvents),
-          status: "processing",
-          statusText: compactToolStatus(workflowToolName, `${workflowTitle(workflowToolName)} 중`),
-        };
-      }
-
-      if (event.type === "tool_progress") {
-        const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
-        const toolCallId = backendToolCallId(event);
-        const toolCallIndex = backendToolCallIndex(event);
-        const toolInput = recordOrNull(event.tool_input);
-        const detail = String(event.message || workflowDetailFromInput(toolInput) || "처리 중");
-        let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, toolName, {
-          detail,
-          status: "running",
-          toolCallId,
-          toolCallIndex,
-          toolInput,
-        }, { toolCallId, toolCallIndex });
-        if (!workflowEvents) {
-          const purpose = ensurePurposeEvent(completePlanning(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents()), toolName);
-          workflowEvents = appendWorkflowEvent(purpose.events, {
-            toolName,
-            title: `${workflowTitle(toolName)} 중`,
-            detail,
-            status: "running",
-            level: "child",
-            groupId: purpose.groupId,
-            toolCallId,
-            toolCallIndex,
-            toolInput,
-          });
-        }
-        return {
-          ...state,
-          busy: true,
-          workflowEvents: refreshPurposeEvents(workflowEvents),
-          status: "processing",
-          statusText: compactToolStatus(toolName),
-        };
-      }
-
-      if (event.type === "tool_completed") {
-        const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
-        const toolCallId = backendToolCallId(event);
-        const toolCallIndex = backendToolCallIndex(event);
-        const output = String(event.output || "");
-        const isError = event.is_error === true;
-        const lastToolInput = [...state.workflowEvents]
-          .reverse()
-          .find((workflowEvent) => {
-            if (toolCallId) {
-              return workflowEvent.toolCallId === toolCallId && workflowEvent.toolInput;
-            }
-            if (toolCallIndex !== null) {
-              return workflowEvent.toolName === toolName && workflowEvent.toolCallIndex === toolCallIndex && workflowEvent.toolInput;
-            }
-            return workflowEvent.toolName === toolName && workflowEvent.toolInput;
-          })?.toolInput || null;
-        const command = isShellTool(toolName) ? commandFromToolInput(lastToolInput) : "";
-        const completionStatus = workflowCompletionStatus(toolName, isError);
-        const messages = command
-          ? updateLatestTerminalMessage(state.messages, command, {
-              command,
-              output,
-              status: isError ? "error" : "done",
-            }) || state.messages
-          : state.messages;
-        const detail = workflowToolDetail(state.skills, toolName, lastToolInput, output, `${toolName || "도구"} 완료`, isError);
-        let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, toolName, {
-          detail,
-          output,
-          status: completionStatus,
-          toolCallId,
-          toolCallIndex,
-        }, { toolCallId, toolCallIndex });
-        if (!workflowEvents) {
-          const purpose = ensurePurposeEvent(completePlanning(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents()), toolName);
-          workflowEvents = appendWorkflowEvent(purpose.events, {
-            toolName,
-            title: workflowTitle(toolName),
-            detail,
-            output,
-            status: completionStatus,
-            level: "child",
-            groupId: purpose.groupId,
-            toolCallId,
-            toolCallIndex,
-          });
-        }
-        workflowEvents = startActivityStep(refreshPurposeEvents(workflowEvents));
-        return {
-          ...state,
-          busy: true,
-          messages,
-          workflowEvents,
-          workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
-          status: "processing",
-          statusText: isError ? "도구 결과 확인 중" : "도구 결과 검토 중",
-        };
-      }
-
-      if (event.type === "todo_update") {
-        const todoMarkdown = String(event.todo_markdown || "");
-        return {
-          ...state,
-          todoMarkdown,
-          todoCollapsed: todoMarkdown.trim() ? state.todoCollapsed : false,
-        };
-      }
-
-      if (event.type === "swarm_status") {
-        const teammates = Array.isArray(event.swarm_teammates)
-          ? event.swarm_teammates.map(normalizeSwarmTeammate)
-          : state.swarmTeammates;
-        const notifications = Array.isArray(event.swarm_notifications)
-          ? [...state.swarmNotifications, ...event.swarm_notifications.map(normalizeSwarmNotification)].slice(-20)
-          : state.swarmNotifications;
-        return {
-          ...state,
-          swarmTeammates: teammates,
-          swarmNotifications: notifications,
-          swarmPopupOpen: state.swarmPopupOpen,
-        };
-      }
-
-      if (event.type === "modal_request") {
-        const payload = event.modal && typeof event.modal === "object"
-          ? event.modal as Record<string, unknown>
-          : {};
-        const modal: BackendModalState = { kind: "backend", payload };
-        return {
-          ...state,
-          modal,
-          backendModalsBySessionId: rememberBackendModalForActiveSession(state, modal),
-        };
-      }
-
-      if (event.type === "select_request") {
-        const modal = event.modal && typeof event.modal === "object" ? event.modal as Record<string, unknown> : {};
-        const command = String(modal.command || "").trim().toLowerCase();
-        if (command === "resume") {
-          const history = Array.isArray(event.select_options)
-            ? event.select_options as HistoryItem[]
-            : [];
-          return {
-            ...state,
-            history: removeLiveHistoryRowsForSession(removeDeletedHistoryRows(history, state.deletedHistoryIds), state.sessionId),
-            historyLoading: false,
-            modal: state.modal?.kind === "backend" ? null : state.modal,
-          };
-        }
-        if (state.runtimePicker.open && command === "runtime-picker") {
-          const runtimeOptions = modal.runtime_options && typeof modal.runtime_options === "object"
-            ? modal.runtime_options as Record<string, unknown>
-            : {};
-          return {
-            ...state,
-            runtimePicker: runtimePickerFromOptions(state, runtimeOptions),
-          };
-        }
-        const payload = {
-          ...modal,
-          select_options: Array.isArray(event.select_options) ? event.select_options : [],
-          message: event.message || "",
-        };
-        const nextModal: BackendModalState = { kind: "backend", payload };
-        return {
-          ...state,
-          modal: nextModal,
-          backendModalsBySessionId: rememberBackendModalForActiveSession(state, nextModal),
-        };
-      }
-
-      if (event.type === "line_complete") {
-        const hasRestorableWorkflow = hasRestorableWorkflowEvents(state.workflowEvents);
-        const workflowAnchorMessageId = hasRestorableWorkflow ? state.workflowAnchorMessageId : null;
-        const workflowEvents = hasRestorableWorkflow ? state.workflowEvents : [];
-        const workflowDurationSeconds = hasRestorableWorkflow
-          ? workflowDurationFromMetadata(recordOrNull(event.compact_metadata)) ?? workflowElapsedDurationSeconds(state)
-          : null;
-        const workflowDurationSecondsByMessageId = workflowDurationSeconds !== null && workflowAnchorMessageId
-          ? {
-              ...state.workflowDurationSecondsByMessageId,
-              [workflowAnchorMessageId]: workflowDurationSeconds,
-            }
-          : state.workflowDurationSecondsByMessageId;
-        return {
-          ...state,
-          busy: false,
-          status: state.status === "error" ? "error" : "ready",
-          statusText: state.status === "error" ? state.statusText : "준비됨",
-          artifactRefreshKey: event.type === "line_complete" ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
-          historyRefreshKey: state.historyRefreshKey + 1,
-          workflowAnchorMessageId,
-          workflowEvents,
-          workflowDurationSeconds: hasRestorableWorkflow ? workflowDurationSeconds ?? state.workflowDurationSeconds : null,
-          workflowDurationSecondsByMessageId,
-          workflowStartedAtMs: null,
-        };
-      }
-
-      if (event.type === "shutdown") {
-        const message = "진행 중이던 세션이 종료되었습니다. 새 세션에 다시 연결한 뒤 이어서 입력해주세요.";
-        const workflowEvents = state.busy
-          ? finishFinalAnswerStep(
-              failRunningWorkflowEvents(
-                state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(),
-                "백엔드가 종료되어 작업을 중단했습니다.",
-              ),
-              "error",
-              message,
-            )
-          : state.workflowEvents;
-        return {
-          ...state,
-          sessionId: null,
-          ready: false,
-          busy: false,
-          status: "connecting",
-          statusText: "세션이 종료되어 새 세션에 다시 연결 중입니다.",
-          messages: state.busy ? appendErrorMessage(state.messages, message) : state.messages,
-          workflowEvents,
-          workflowEventsByMessageId: rememberWorkflowEventsForAnchor(state, workflowEvents),
-          workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
-          workflowStartedAtMs: null,
-        };
-      }
-
-      if (event.type === "error") {
-        const message = normalizeVisibleText(String(event.message || "오류"));
-        const workflowEvents = state.workflowEvents.length
-          ? finishFinalAnswerStep(
-              failRunningWorkflowEvents(state.workflowEvents, "오류로 작업을 중단했습니다."),
-              "error",
-              message || "응답을 마무리하지 못했습니다.",
-            )
-          : state.workflowEvents;
-        return {
-          ...state,
-          messages: appendErrorMessage(state.messages, message),
-          workflowEvents,
-          workflowEventsByMessageId: rememberWorkflowEventsForAnchor(state, workflowEvents),
-          busy: false,
-          status: "error",
-          statusText: message,
-          workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
-          workflowStartedAtMs: null,
-        };
-      }
-
-      return state;
-    }
+    case "backend_event":
+      return reduceBackendEvent(state, action);
 
     default:
       return state;

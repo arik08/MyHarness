@@ -369,6 +369,284 @@ def _render_plugin_command_prompt(command: PluginCommandDefinition, args: str, s
     return prompt
 
 
+def _create_autopilot_commands() -> list[SlashCommand]:
+    async def _autopilot_handler(args: str, context: CommandContext) -> CommandResult:
+        store = RepoAutopilotStore(context.cwd)
+        tokens = args.split()
+        action = tokens[0].lower() if tokens else "status"
+
+        def _render_card(card) -> str:
+            lines = [
+                f"{card.id} [{card.status}] score={card.score} {card.title}",
+                f"source={card.source_kind} ref={card.source_ref or '-'}",
+            ]
+            if card.labels:
+                lines.append(f"labels={', '.join(card.labels)}")
+            if card.score_reasons:
+                lines.append(f"reasons={', '.join(card.score_reasons[:4])}")
+            if card.body:
+                lines.append(_shorten_text(card.body, limit=220))
+            return "\n".join(lines)
+
+        if action == "status":
+            counts = store.stats()
+            active = store.pick_next_card()
+            lines = ["오토파일럿 큐 상태:"]
+            for status_name in (
+                "queued",
+                "accepted",
+                "preparing",
+                "running",
+                "verifying",
+                "pr_open",
+                "waiting_ci",
+                "repairing",
+                "completed",
+                "merged",
+                "failed",
+                "rejected",
+                "superseded",
+            ):
+                lines.append(f"- {status_name}: {counts.get(status_name, 0)}")
+            lines.append(f"- 레지스트리: {store.registry_path}")
+            lines.append(f"- 저널: {store.journal_path}")
+            lines.append(f"- 컨텍스트: {store.context_path}")
+            if active is not None:
+                lines.append(f"- 다음: {active.id} {active.title} (score={active.score})")
+            return CommandResult(message="\n".join(lines))
+
+        if action == "list":
+            status = tokens[1].lower() if len(tokens) >= 2 else None
+            if status is not None and status not in {
+                "queued",
+                "accepted",
+                "preparing",
+                "running",
+                "verifying",
+                "pr_open",
+                "waiting_ci",
+                "repairing",
+                "completed",
+                "merged",
+                "failed",
+                "rejected",
+                "superseded",
+            }:
+                return CommandResult(message=f"알 수 없는 오토파일럿 상태: {status}")
+            cards = store.list_cards(status=status)
+            if not cards:
+                return CommandResult(message="오토파일럿 카드가 없습니다.")
+            return CommandResult(message="\n\n".join(_render_card(card) for card in cards[:12]))
+
+        if action == "show" and len(tokens) >= 2:
+            card = store.get_card(tokens[1])
+            if card is None:
+                return CommandResult(message=f"오토파일럿 카드를 찾을 수 없습니다: {tokens[1]}")
+            return CommandResult(message=_render_card(card))
+
+        if action == "next":
+            card = store.pick_next_card()
+            if card is None:
+                return CommandResult(message="대기 중인 오토파일럿 카드가 없습니다.")
+            return CommandResult(message=_render_card(card))
+
+        if action == "context":
+            content = store.load_active_context()
+            return CommandResult(message=content or "활성 저장소 컨텍스트가 비어 있습니다.")
+
+        if action == "journal":
+            limit = 8
+            if len(tokens) >= 2:
+                try:
+                    limit = max(1, min(30, int(tokens[1])))
+                except ValueError:
+                    return CommandResult(message="사용법: /autopilot journal [LIMIT]")
+            entries = store.load_journal(limit=limit)
+            if not entries:
+                return CommandResult(message="저장소 저널이 비어 있습니다.")
+            lines = []
+            for entry in entries:
+                timestamp = datetime.fromtimestamp(entry.timestamp, tz=timezone.utc).strftime(
+                    "%Y-%m-%d %H:%M UTC"
+                )
+                task_suffix = f" [{entry.task_id}]" if entry.task_id else ""
+                lines.append(f"{timestamp} {entry.kind}{task_suffix}: {entry.summary}")
+            return CommandResult(message="\n".join(lines))
+
+        if action == "add":
+            raw = args[len("add") :].strip()
+            if not raw:
+                return CommandResult(
+                    message=(
+                        "사용법: /autopilot add "
+                        "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
+                    )
+                )
+            source_kind = "manual_idea"
+            source_map = {
+                "idea": "manual_idea",
+                "manual": "manual_idea",
+                "ohmo": "ohmo_request",
+                "issue": "github_issue",
+                "pr": "github_pr",
+                "claude": "claude_code_candidate",
+            }
+            if " " in raw:
+                first, remainder = raw.split(" ", 1)
+                mapped = source_map.get(first.lower())
+                if mapped is not None:
+                    source_kind = mapped
+                    raw = remainder.strip()
+            title, _, body = raw.partition("::")
+            if not title.strip():
+                return CommandResult(
+                    message=(
+                        "사용법: /autopilot add "
+                        "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
+                    )
+                )
+            card, created = store.enqueue_card(
+                source_kind=source_kind,
+                title=title.strip(),
+                body=body.strip(),
+            )
+            status_word = "대기열에 추가" if created else "새로고침"
+            return CommandResult(
+                message=f"오토파일럿 카드를 {status_word}했습니다: {card.id} (score={card.score}) {card.title}"
+            )
+
+        if action in {"accept", "start", "complete", "reject", "fail"} and len(tokens) >= 2:
+            status_map = {
+                "accept": "accepted",
+                "start": "running",
+                "complete": "completed",
+                "fail": "failed",
+                "reject": "rejected",
+            }
+            note = ""
+            if len(tokens) >= 3:
+                note = args.split(maxsplit=2)[2]
+            try:
+                card = store.update_status(tokens[1], status=status_map[action], note=note or None)
+            except ValueError as exc:
+                return CommandResult(message=str(exc))
+            return CommandResult(message=f"{card.id} -> {card.status}: {card.title}")
+
+        if action == "run-next":
+            try:
+                result = await store.run_next()
+            except ValueError as exc:
+                return CommandResult(message=str(exc))
+            return CommandResult(
+                message=(
+                    f"{result.card_id} -> {result.status}\n"
+                    f"실행 보고서: {result.run_report_path}\n"
+                    f"검증 보고서: {result.verification_report_path}"
+                )
+            )
+
+        if action == "tick":
+            try:
+                result = await store.tick()
+            except ValueError as exc:
+                return CommandResult(message=str(exc))
+            if result is None:
+                return CommandResult(message="오토파일럿 틱이 실행 없이 완료됐습니다.")
+            return CommandResult(
+                message=(
+                    f"오토파일럿 틱 실행: {result.card_id} -> {result.status}\n"
+                    f"실행 보고서: {result.run_report_path}\n"
+                    f"검증 보고서: {result.verification_report_path}"
+                )
+            )
+
+        if action == "install-cron":
+            names = store.install_default_cron()
+            return CommandResult(message="오토파일럿 cron 작업을 설치했습니다: " + ", ".join(names))
+
+        if action == "export-dashboard":
+            output = tokens[1] if len(tokens) >= 2 else None
+            path = store.export_dashboard(output)
+            return CommandResult(message=f"오토파일럿 대시보드를 내보냈습니다: {path}")
+
+        if action == "scan":
+            if len(tokens) < 2:
+                return CommandResult(
+                    message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
+                )
+            target = tokens[1].lower()
+            limit = 10
+            if len(tokens) >= 3:
+                try:
+                    limit = max(1, min(50, int(tokens[2])))
+                except ValueError:
+                    return CommandResult(
+                        message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
+                    )
+            try:
+                if target == "issues":
+                    cards = store.scan_github_issues(limit=limit)
+                    return CommandResult(message=f"Scanned {len(cards)} GitHub issues into autopilot.")
+                if target == "prs":
+                    cards = store.scan_github_prs(limit=limit)
+                    return CommandResult(message=f"Scanned {len(cards)} GitHub PRs into autopilot.")
+                if target == "claude-code":
+                    cards = store.scan_claude_code_candidates(limit=limit)
+                    return CommandResult(
+                        message=f"Scanned {len(cards)} claude-code candidates into autopilot."
+                    )
+                if target == "all":
+                    counts = store.scan_all_sources(issue_limit=limit, pr_limit=limit)
+                    return CommandResult(message=f"Scanned all sources: {json.dumps(counts)}")
+            except ValueError as exc:
+                return CommandResult(message=str(exc))
+            return CommandResult(
+                message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
+            )
+
+        return CommandResult(
+            message=(
+                "사용법: /autopilot "
+                "[status|list [STATUS]|show ID|next|context|journal [LIMIT]|"
+                "add [idea|ohmo|issue|pr|claude] TITLE :: DETAILS|"
+                "accept ID|start ID|complete ID [NOTE]|fail ID [NOTE]|reject ID [NOTE]|"
+                "run-next|tick|install-cron|export-dashboard [OUTPUT]|"
+                "scan [issues|prs|claude-code|all] [LIMIT]]"
+            )
+        )
+
+    return [SlashCommand("autopilot", "저장소 자동 작업 입력과 컨텍스트를 관리합니다", _autopilot_handler)]
+
+
+def _create_repo_commands() -> list[SlashCommand]:
+    async def _ship_handler(args: str, context: CommandContext) -> CommandResult:
+        raw = args.strip()
+        if not raw:
+            return CommandResult(message="사용법: /ship TITLE :: DETAILS")
+        title, _, body = raw.partition("::")
+        if not title.strip():
+            return CommandResult(message="사용법: /ship TITLE :: DETAILS")
+        store = RepoAutopilotStore(context.cwd)
+        card, _ = store.enqueue_card(
+            source_kind="ohmo_request",
+            title=title.strip(),
+            body=body.strip(),
+        )
+        try:
+            result = await store.run_card(card.id)
+        except ValueError as exc:
+            return CommandResult(message=str(exc))
+        return CommandResult(
+            message=(
+                f"{result.card_id} -> {result.status}\n"
+                f"실행 보고서: {result.run_report_path}\n"
+                f"검증 보고서: {result.verification_report_path}"
+            )
+        )
+
+    return [SlashCommand("ship", "ohmo 기반 저장소 작업을 큐에 넣고 실행합니다", _ship_handler)]
+
+
 def create_default_command_registry(
     plugin_commands: Iterable[PluginCommandDefinition] | None = None,
 ) -> CommandRegistry:
@@ -1959,276 +2237,6 @@ def create_default_command_registry(
             )
         )
 
-    async def _autopilot_handler(args: str, context: CommandContext) -> CommandResult:
-        store = RepoAutopilotStore(context.cwd)
-        tokens = args.split()
-        action = tokens[0].lower() if tokens else "status"
-
-        def _render_card(card) -> str:
-            lines = [
-                f"{card.id} [{card.status}] score={card.score} {card.title}",
-                f"source={card.source_kind} ref={card.source_ref or '-'}",
-            ]
-            if card.labels:
-                lines.append(f"labels={', '.join(card.labels)}")
-            if card.score_reasons:
-                lines.append(f"reasons={', '.join(card.score_reasons[:4])}")
-            if card.body:
-                lines.append(_shorten_text(card.body, limit=220))
-            return "\n".join(lines)
-
-        if action == "status":
-            counts = store.stats()
-            active = store.pick_next_card()
-            lines = ["오토파일럿 큐 상태:"]
-            for status_name in (
-                "queued",
-                "accepted",
-                "preparing",
-                "running",
-                "verifying",
-                "pr_open",
-                "waiting_ci",
-                "repairing",
-                "completed",
-                "merged",
-                "failed",
-                "rejected",
-                "superseded",
-            ):
-                lines.append(f"- {status_name}: {counts.get(status_name, 0)}")
-            lines.append(f"- 레지스트리: {store.registry_path}")
-            lines.append(f"- 저널: {store.journal_path}")
-            lines.append(f"- 컨텍스트: {store.context_path}")
-            if active is not None:
-                lines.append(f"- 다음: {active.id} {active.title} (score={active.score})")
-            return CommandResult(message="\n".join(lines))
-
-        if action == "list":
-            status = tokens[1].lower() if len(tokens) >= 2 else None
-            if status is not None and status not in {
-                "queued",
-                "accepted",
-                "preparing",
-                "running",
-                "verifying",
-                "pr_open",
-                "waiting_ci",
-                "repairing",
-                "completed",
-                "merged",
-                "failed",
-                "rejected",
-                "superseded",
-            }:
-                return CommandResult(message=f"알 수 없는 오토파일럿 상태: {status}")
-            cards = store.list_cards(status=status)
-            if not cards:
-                return CommandResult(message="오토파일럿 카드가 없습니다.")
-            return CommandResult(message="\n\n".join(_render_card(card) for card in cards[:12]))
-
-        if action == "show" and len(tokens) >= 2:
-            card = store.get_card(tokens[1])
-            if card is None:
-                return CommandResult(message=f"오토파일럿 카드를 찾을 수 없습니다: {tokens[1]}")
-            return CommandResult(message=_render_card(card))
-
-        if action == "next":
-            card = store.pick_next_card()
-            if card is None:
-                return CommandResult(message="대기 중인 오토파일럿 카드가 없습니다.")
-            return CommandResult(message=_render_card(card))
-
-        if action == "context":
-            content = store.load_active_context()
-            return CommandResult(message=content or "활성 저장소 컨텍스트가 비어 있습니다.")
-
-        if action == "journal":
-            limit = 8
-            if len(tokens) >= 2:
-                try:
-                    limit = max(1, min(30, int(tokens[1])))
-                except ValueError:
-                    return CommandResult(message="사용법: /autopilot journal [LIMIT]")
-            entries = store.load_journal(limit=limit)
-            if not entries:
-                return CommandResult(message="저장소 저널이 비어 있습니다.")
-            lines = []
-            for entry in entries:
-                timestamp = datetime.fromtimestamp(entry.timestamp, tz=timezone.utc).strftime(
-                    "%Y-%m-%d %H:%M UTC"
-                )
-                task_suffix = f" [{entry.task_id}]" if entry.task_id else ""
-                lines.append(f"{timestamp} {entry.kind}{task_suffix}: {entry.summary}")
-            return CommandResult(message="\n".join(lines))
-
-        if action == "add":
-            raw = args[len("add") :].strip()
-            if not raw:
-                return CommandResult(
-                    message=(
-                        "사용법: /autopilot add "
-                        "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
-                    )
-                )
-            source_kind = "manual_idea"
-            source_map = {
-                "idea": "manual_idea",
-                "manual": "manual_idea",
-                "ohmo": "ohmo_request",
-                "issue": "github_issue",
-                "pr": "github_pr",
-                "claude": "claude_code_candidate",
-            }
-            if " " in raw:
-                first, remainder = raw.split(" ", 1)
-                mapped = source_map.get(first.lower())
-                if mapped is not None:
-                    source_kind = mapped
-                    raw = remainder.strip()
-            title, _, body = raw.partition("::")
-            if not title.strip():
-                return CommandResult(
-                    message=(
-                        "사용법: /autopilot add "
-                        "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
-                    )
-                )
-            card, created = store.enqueue_card(
-                source_kind=source_kind,
-                title=title.strip(),
-                body=body.strip(),
-            )
-            status_word = "대기열에 추가" if created else "새로고침"
-            return CommandResult(
-                message=f"오토파일럿 카드를 {status_word}했습니다: {card.id} (score={card.score}) {card.title}"
-            )
-
-        if action in {"accept", "start", "complete", "reject", "fail"} and len(tokens) >= 2:
-            status_map = {
-                "accept": "accepted",
-                "start": "running",
-                "complete": "completed",
-                "fail": "failed",
-                "reject": "rejected",
-            }
-            note = ""
-            if len(tokens) >= 3:
-                note = args.split(maxsplit=2)[2]
-            try:
-                card = store.update_status(tokens[1], status=status_map[action], note=note or None)
-            except ValueError as exc:
-                return CommandResult(message=str(exc))
-            return CommandResult(message=f"{card.id} -> {card.status}: {card.title}")
-
-        if action == "run-next":
-            try:
-                result = await store.run_next()
-            except ValueError as exc:
-                return CommandResult(message=str(exc))
-            return CommandResult(
-                message=(
-                    f"{result.card_id} -> {result.status}\n"
-                    f"실행 보고서: {result.run_report_path}\n"
-                    f"검증 보고서: {result.verification_report_path}"
-                )
-            )
-
-        if action == "tick":
-            try:
-                result = await store.tick()
-            except ValueError as exc:
-                return CommandResult(message=str(exc))
-            if result is None:
-                return CommandResult(message="오토파일럿 틱이 실행 없이 완료됐습니다.")
-            return CommandResult(
-                message=(
-                    f"오토파일럿 틱 실행: {result.card_id} -> {result.status}\n"
-                    f"실행 보고서: {result.run_report_path}\n"
-                    f"검증 보고서: {result.verification_report_path}"
-                )
-            )
-
-        if action == "install-cron":
-            names = store.install_default_cron()
-            return CommandResult(message="오토파일럿 cron 작업을 설치했습니다: " + ", ".join(names))
-
-        if action == "export-dashboard":
-            output = tokens[1] if len(tokens) >= 2 else None
-            path = store.export_dashboard(output)
-            return CommandResult(message=f"오토파일럿 대시보드를 내보냈습니다: {path}")
-
-        if action == "scan":
-            if len(tokens) < 2:
-                return CommandResult(
-                    message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
-                )
-            target = tokens[1].lower()
-            limit = 10
-            if len(tokens) >= 3:
-                try:
-                    limit = max(1, min(50, int(tokens[2])))
-                except ValueError:
-                    return CommandResult(
-                        message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
-                    )
-            try:
-                if target == "issues":
-                    cards = store.scan_github_issues(limit=limit)
-                    return CommandResult(message=f"Scanned {len(cards)} GitHub issues into autopilot.")
-                if target == "prs":
-                    cards = store.scan_github_prs(limit=limit)
-                    return CommandResult(message=f"Scanned {len(cards)} GitHub PRs into autopilot.")
-                if target == "claude-code":
-                    cards = store.scan_claude_code_candidates(limit=limit)
-                    return CommandResult(
-                        message=f"Scanned {len(cards)} claude-code candidates into autopilot."
-                    )
-                if target == "all":
-                    counts = store.scan_all_sources(issue_limit=limit, pr_limit=limit)
-                    return CommandResult(message=f"Scanned all sources: {json.dumps(counts)}")
-            except ValueError as exc:
-                return CommandResult(message=str(exc))
-            return CommandResult(
-                message="사용법: /autopilot scan [issues|prs|claude-code|all] [LIMIT]"
-            )
-
-        return CommandResult(
-            message=(
-                "사용법: /autopilot "
-                "[status|list [STATUS]|show ID|next|context|journal [LIMIT]|"
-                "add [idea|ohmo|issue|pr|claude] TITLE :: DETAILS|"
-                "accept ID|start ID|complete ID [NOTE]|fail ID [NOTE]|reject ID [NOTE]|"
-                "run-next|tick|install-cron|export-dashboard [OUTPUT]|"
-                "scan [issues|prs|claude-code|all] [LIMIT]]"
-            )
-        )
-
-    async def _ship_handler(args: str, context: CommandContext) -> CommandResult:
-        raw = args.strip()
-        if not raw:
-            return CommandResult(message="사용법: /ship TITLE :: DETAILS")
-        title, _, body = raw.partition("::")
-        if not title.strip():
-            return CommandResult(message="사용법: /ship TITLE :: DETAILS")
-        store = RepoAutopilotStore(context.cwd)
-        card, _ = store.enqueue_card(
-            source_kind="ohmo_request",
-            title=title.strip(),
-            body=body.strip(),
-        )
-        try:
-            result = await store.run_card(card.id)
-        except ValueError as exc:
-            return CommandResult(message=str(exc))
-        return CommandResult(
-            message=(
-                f"{result.card_id} -> {result.status}\n"
-                f"실행 보고서: {result.run_report_path}\n"
-                f"검증 보고서: {result.verification_report_path}"
-            )
-        )
-
     registry.register(SlashCommand("help", "사용 가능한 명령어를 보여줍니다", _help_handler))
     registry.register(
         SlashCommand("exit", "MyHarness를 종료합니다", _exit_handler, aliases=("quit",))
@@ -2329,8 +2337,8 @@ def create_default_command_registry(
     registry.register(SlashCommand("agents", "에이전트와 팀 작업을 나열하거나 확인합니다", _agents_handler))
     registry.register(SlashCommand("subagents", "서브에이전트 사용량과 작업자 태스크를 확인합니다", _agents_handler))
     registry.register(SlashCommand("tasks", "백그라운드 작업을 관리합니다", _tasks_handler))
-    registry.register(SlashCommand("autopilot", "저장소 자동 작업 입력과 컨텍스트를 관리합니다", _autopilot_handler))
-    registry.register(SlashCommand("ship", "ohmo 기반 저장소 작업을 큐에 넣고 실행합니다", _ship_handler))
+    for command in [*_create_autopilot_commands(), *_create_repo_commands()]:
+        registry.register(command)
 
     for plugin_command in plugin_commands or ():
         if not plugin_command.user_invocable:
