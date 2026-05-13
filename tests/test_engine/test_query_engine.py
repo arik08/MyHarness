@@ -663,8 +663,10 @@ async def test_query_engine_tracks_recent_read_files_and_skills(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_query_engine_records_repeated_tool_failures_for_learning(tmp_path: Path):
     missing = tmp_path / "missing.txt"
-    sample = tmp_path / "hello.txt"
-    sample.write_text("alpha\n", encoding="utf-8")
+    command_tool = _command_tool_name()
+    verification_command = (
+        "Write-Output verified" if command_tool == "cmd" else "printf 'verified\\n'"
+    )
     engine = QueryEngine(
         api_client=FakeApiClient(
             [
@@ -674,7 +676,10 @@ async def test_query_engine_records_repeated_tool_failures_for_learning(tmp_path
                         content=[
                             ToolUseBlock(name="read_file", input={"path": str(missing)}),
                             ToolUseBlock(name="read_file", input={"path": str(missing)}),
-                            ToolUseBlock(name="read_file", input={"path": str(sample)}),
+                            ToolUseBlock(
+                                name=command_tool,
+                                input={"command": verification_command},
+                            ),
                         ],
                     ),
                     usage=UsageSnapshot(input_tokens=1, output_tokens=1),
@@ -711,8 +716,10 @@ async def test_query_engine_auto_learning_persists_repeated_verified_failure(
     import myharness.learning.service as learning_service
 
     missing = tmp_path / "missing.txt"
-    sample = tmp_path / "hello.txt"
-    sample.write_text("alpha\n", encoding="utf-8")
+    command_tool = _command_tool_name()
+    verification_command = (
+        "Write-Output verified" if command_tool == "cmd" else "printf 'verified\\n'"
+    )
     learned_skills_dir = tmp_path / ".learned-skills"
     monkeypatch.setattr(
         learning_service,
@@ -728,7 +735,10 @@ async def test_query_engine_auto_learning_persists_repeated_verified_failure(
                         content=[
                             ToolUseBlock(name="read_file", input={"path": str(missing)}),
                             ToolUseBlock(name="read_file", input={"path": str(missing)}),
-                            ToolUseBlock(name="read_file", input={"path": str(sample)}),
+                            ToolUseBlock(
+                                name=command_tool,
+                                input={"command": verification_command},
+                            ),
                         ],
                     ),
                     usage=UsageSnapshot(input_tokens=1, output_tokens=1),

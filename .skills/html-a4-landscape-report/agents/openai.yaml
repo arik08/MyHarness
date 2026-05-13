@@ -1,0 +1,4 @@
+interface:
+  display_name: "A4 Landscape HTML Report"
+  short_description: "A4 가로 고정 페이지 HTML 보고서 작성 전용"
+  default_prompt: "Use $html-a4-landscape-report to create an A4 landscape fixed-page HTML report."

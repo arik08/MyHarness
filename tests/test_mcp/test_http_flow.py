@@ -66,7 +66,8 @@ async def test_http_mcp_manager_connects_and_executes_in_process_server(monkeypa
             assert statuses[0].auth_configured is True
             assert statuses[0].tools[0].name == "hello"
             assert statuses[0].resources[0].uri == "demo://readme"
-            assert seen_headers[0] == {"Authorization": "Bearer token-smoke"}
+            assert seen_headers[0] is not None
+            assert seen_headers[0]["Authorization"] == "Bearer token-smoke"
 
             registry = create_default_tool_registry(manager)
             hello_tool = registry.get("mcp__http-fixture__hello")

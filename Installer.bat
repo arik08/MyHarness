@@ -139,11 +139,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [INFO] Installing Python-pptx for PowerPoint document generation...
-"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -m pip install --upgrade python-pptx
+echo [INFO] Installing PPTX writer dependencies...
+if exist ".skills\pptx-writer\scripts\bootstrap_pptx_env.py" (
+  "%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% ".skills\pptx-writer\scripts\bootstrap_pptx_env.py"
+) else (
+  echo [WARN] pptx-writer bootstrap script not found. Installing python-pptx fallback only.
+  "%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -m pip install --upgrade python-pptx
+)
 if errorlevel 1 (
   echo.
-  echo [ERROR] Python-pptx installation failed.
+  echo [ERROR] PPTX writer dependency installation failed.
   pause
   exit /b 1
 )
@@ -158,12 +163,26 @@ if errorlevel 1 (
 )
 
 echo [INFO] Verifying Python runtime...
-"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -c "import importlib.util, sys; required=['myharness','anthropic','openai','tiktoken','rich','prompt_toolkit','textual','typer','pydantic','httpx','feedparser','websockets','mcp','pyperclip','yaml','questionary','watchfiles','croniter','slack_sdk','telegram','discord','lark_oapi','pptx','pytest']; missing=[name for name in required if importlib.util.find_spec(name) is None]; print('Missing: ' + ', '.join(missing)) if missing else None; sys.exit(1 if missing else 0)"
+"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -c "import importlib.util, sys; required=['myharness','anthropic','openai','tiktoken','rich','prompt_toolkit','textual','typer','pydantic','httpx','feedparser','websockets','mcp','pyperclip','yaml','questionary','watchfiles','croniter','slack_sdk','telegram','discord','lark_oapi','pptx','markitdown','fitz','mammoth','markdownify','bs4','openpyxl','svglib','reportlab','PIL','numpy','requests','curl_cffi','pytest']; missing=[name for name in required if importlib.util.find_spec(name) is None]; print('Missing: ' + ', '.join(missing)) if missing else None; sys.exit(1 if missing else 0)"
 if errorlevel 1 (
   echo.
   echo [ERROR] Python dependency verification failed.
   pause
   exit /b 1
+)
+
+echo [INFO] Verifying PPTX writer Node runtime...
+if exist ".skills\pptx-writer\node-runtime\package.json" (
+  pushd ".skills\pptx-writer\node-runtime"
+  node -e "require.resolve('pptxgenjs'); require.resolve('jszip'); require.resolve('fast-xml-parser')"
+  if errorlevel 1 (
+    popd
+    echo.
+    echo [ERROR] PPTX writer Node dependency verification failed.
+    pause
+    exit /b 1
+  )
+  popd
 )
 
 echo [INFO] Verifying provider defaults...

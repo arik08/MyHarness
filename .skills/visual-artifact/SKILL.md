@@ -20,6 +20,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 ## Decide the artifact type
 
 - **Executive/report page**: structured findings, tables, charts, recommendations, sources.
+- **A4 landscape page report**: if the user asks for A4 landscape, A4 가로, 가로형 A4, printable horizontal PDF, or a fixed-page report, use `html-a4-landscape-report` instead of the general scrolling report workflow.
 - **Dashboard**: KPI cards, charts, filters/toggles if useful, data table.
 - **Infographic/one-pager**: strong story flow, big numbers, compact sections, print/capture-ready layout.
 - **Slide-like HTML**: 16:9 sections, keyboard or scroll navigation only if useful.
@@ -75,6 +76,7 @@ quarterly trends, sources, or a report:
 ## Capture-friendly conventions
 
 - For presentation-style output, include a `.stage` or `.slide` layout with 16:9 ratio when appropriate.
+- For A4 landscape HTML, use `html-a4-landscape-report`; treat it as a page-based slide deck with `section.page`, a Page Plan, density limits, and overflow QA.
 - For reports, make A4/Letter print behavior explicit with sensible page breaks.
 - Avoid content that depends on hover-only interactions for core meaning.
 - Keep animations subtle and disable or simplify them for print.

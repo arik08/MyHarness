@@ -20,6 +20,10 @@ _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
         "애플리케이션, 랜딩 페이지, 대시보드, React 컴포넌트, HTML/CSS 레이아웃, 웹 UI 스타일링과 "
         "시각 개선 작업에 사용합니다."
     ),
+    "html-a4-landscape-report": (
+        "A4 가로 HTML 보고서, PDF용 고정 페이지 자료, 인쇄용 가로 보고서처럼 페이지 단위 레이아웃과 "
+        "넘침 검사가 중요한 산출물을 만들 때 사용합니다."
+    ),
     "insane-search": (
         "차단된 웹사이트를 자동으로 우회하기 위해 가능한 방법을 순차적으로 시도합니다. "
         "WebFetch가 402/403/차단 오류를 반환하거나 X/Twitter, Reddit, YouTube, GitHub, "
