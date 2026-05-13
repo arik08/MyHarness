@@ -149,4 +149,55 @@ describe("CommandHelpMessage", () => {
     );
     expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("비활성");
   });
+
+  it("groups plugin-owned skills together under their plugin", () => {
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- using-superpowers [plugin] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
+      "- writing-skills [plugin] [활성]: 새 스킬을 만듭니다.",
+      "- review [project] [활성]: Review checklist",
+      "",
+      "플러그인:",
+      "- superpowers [활성]: Superpowers skills",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            {
+              name: "using-superpowers",
+              description: "스킬을 찾고 사용하는 방식을 정합니다.",
+              source: "plugin:superpowers",
+              enabled: true,
+            },
+            {
+              name: "writing-skills",
+              description: "새 스킬을 만듭니다.",
+              source: "plugin:superpowers",
+              enabled: true,
+            },
+            { name: "review", description: "Review checklist", source: "project", enabled: true },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    const superpowersGroup = screen.getByRole("group", { name: /superpowers 플러그인 스킬/ });
+    expect(superpowersGroup.textContent).toContain("using-superpowers");
+    expect(superpowersGroup.textContent).toContain("writing-skills");
+    expect(superpowersGroup.textContent).not.toContain("review");
+
+    const standaloneGroup = screen.getByRole("group", { name: "일반 스킬" });
+    expect(standaloneGroup.className).toContain("skill-plugin-group");
+    expect(standaloneGroup.textContent).toContain("review");
+    expect(standaloneGroup.textContent).not.toContain("using-superpowers");
+  });
 });

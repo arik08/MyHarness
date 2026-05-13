@@ -85,7 +85,7 @@ function Get-RequestedVitePort {
         $env:VITE_PORT
     }
     else {
-        "5173"
+        "4174"
     }
 
     try {

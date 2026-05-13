@@ -201,6 +201,25 @@ def test_build_runtime_system_prompt_disables_split_report_generation(tmp_path: 
     assert "target_tokens" not in prompt
 
 
+def test_build_runtime_system_prompt_keeps_report_limits_from_overriding_html_artifacts(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    prompt = build_runtime_system_prompt(
+        Settings(),
+        cwd=repo,
+        latest_user_prompt="아래 사이트 내용을 이해하기 쉬운 보고서로 자세히 작성해줘",
+    )
+
+    assert "Ordinary report requests may still require standalone files" in prompt
+    assert "create a standalone HTML report under `outputs/`" in prompt
+    assert "should be answered directly" not in prompt
+
+
 def test_task_worker_prompt_skips_delegation_and_parent_task_queries(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")

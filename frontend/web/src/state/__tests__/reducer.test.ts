@@ -321,6 +321,53 @@ describe("appReducer", () => {
     expect(optimistic.messages[0].text).toBe("안녕?");
   });
 
+  it("ignores normalized duplicate long pasted user transcripts after replay progress", () => {
+    const pastedText = Array.from({ length: 21 }, (_, index) => `붙여넣은 내용 ${index + 1}`).join("\r\n");
+    const optimisticText = `요약해줘\n\n[붙여넣은 텍스트 1]\n${pastedText}\n`;
+    const replayText = optimisticText.trim();
+    const withOptimisticUser = appReducer({ ...initialAppState, sessionId: "session-live" }, {
+      type: "append_message",
+      message: { role: "user", text: optimisticText },
+    });
+    const busy = appReducer(withOptimisticUser, { type: "set_busy", value: true });
+    const afterReplayClear = appReducer(busy, {
+      type: "backend_event",
+      event: { type: "clear_transcript" } as any,
+    });
+    const withWorkflowProgress = appReducer(afterReplayClear, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "shell_command",
+        tool_input: { command: "echo progress" },
+      },
+    });
+    const afterReplayUser = appReducer(withWorkflowProgress, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: replayText } },
+    });
+
+    expect(afterReplayUser.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(afterReplayUser.messages[0].text).toBe(optimisticText);
+    expect(afterReplayUser.workflowAnchorMessageId).toBe(afterReplayClear.workflowAnchorMessageId);
+  });
+
+  it("keeps distinct long user transcripts when replay text changes after normalization", () => {
+    const pastedText = Array.from({ length: 21 }, (_, index) => `붙여넣은 내용 ${index + 1}`).join("\n");
+    const firstText = `요약해줘\n\n[붙여넣은 텍스트 1]\n${pastedText}\n`;
+    const withOptimisticUser = appReducer({ ...initialAppState, sessionId: "session-live" }, {
+      type: "append_message",
+      message: { role: "user", text: firstText },
+    });
+    const busy = appReducer(withOptimisticUser, { type: "set_busy", value: true });
+    const next = appReducer(busy, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: `${firstText.trim()} 추가 요청` } },
+    });
+
+    expect(next.messages.filter((message) => message.role === "user")).toHaveLength(2);
+  });
+
   it("ignores delayed duplicate regular user transcripts after an assistant tool-use handoff", () => {
     const withOptimisticUser = appReducer(initialAppState, {
       type: "append_message",

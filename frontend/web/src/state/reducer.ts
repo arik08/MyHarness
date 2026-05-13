@@ -396,24 +396,30 @@ function isNonConversationTranscriptItem(item: { role?: string; text?: string })
   return false;
 }
 
+function canonicalUserTranscriptText(text: string) {
+  return String(text || "").replace(/\r\n/g, "\n").trim();
+}
+
 function isDuplicateActiveUserTranscript(state: AppState, text: string) {
+  const canonicalText = canonicalUserTranscriptText(text);
   const last = state.messages[state.messages.length - 1];
-  if (last?.role === "user" && last.text === text && !last.kind) {
+  if (last?.role === "user" && canonicalUserTranscriptText(last.text) === canonicalText && !last.kind) {
     return true;
   }
   if (!state.busy || !state.workflowAnchorMessageId) {
     return false;
   }
   const anchor = state.messages.find((message) => message.id === state.workflowAnchorMessageId);
-  return anchor?.role === "user" && !anchor.kind && anchor.text === text;
+  return anchor?.role === "user" && !anchor.kind && canonicalUserTranscriptText(anchor.text) === canonicalText;
 }
 
 function isDuplicateKindedUserTranscript(state: AppState, text: string, kind: ChatMessage["kind"]) {
   if (!kind) {
     return false;
   }
+  const canonicalText = canonicalUserTranscriptText(text);
   const last = state.messages[state.messages.length - 1];
-  return last?.role === "user" && last.text === text && last.kind === kind;
+  return last?.role === "user" && canonicalUserTranscriptText(last.text) === canonicalText && last.kind === kind;
 }
 
 function isFinalRestoredAssistantAnswer(historyEvents: Array<Record<string, unknown>>, index: number) {

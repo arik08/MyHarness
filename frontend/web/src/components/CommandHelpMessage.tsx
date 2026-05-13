@@ -16,6 +16,11 @@ type ToggleEntry = {
   source: string;
 };
 
+type SkillPluginGroup = {
+  plugin: ToggleEntry;
+  items: ToggleEntry[];
+};
+
 const koSkillDescriptionsByName: Record<string, string> = {
   "brainstorming": "창의적 작업, 기능 생성, 컴포넌트 구축, 기능 추가, 동작 수정처럼 구현 전에 의도와 요구사항, 설계를 먼저 탐색해야 할 때 사용합니다.",
   "commit": "작업 내용을 깔끔하고 구조화된 git 커밋으로 정리해야 할 때 사용합니다.",
@@ -235,6 +240,32 @@ function pluginNameFromSkillSource(source: string) {
   return match?.[1]?.trim().toLowerCase() || "";
 }
 
+function groupSkillsByPlugin(items: ToggleEntry[], plugins: ToggleEntry[]) {
+  const pluginByName = new Map(plugins.map((plugin) => [plugin.name.toLowerCase(), plugin]));
+  const standalone: ToggleEntry[] = [];
+  const groups = new Map<string, SkillPluginGroup>();
+
+  for (const item of items) {
+    const pluginName = pluginNameFromSkillSource(item.source);
+    if (!pluginName) {
+      standalone.push(item);
+      continue;
+    }
+
+    const plugin = pluginByName.get(pluginName) || {
+      name: pluginName,
+      enabled: item.enabled,
+      description: "Plugin",
+      source: "plugin",
+    };
+    const group = groups.get(pluginName) || { plugin, items: [] };
+    group.items.push(item);
+    groups.set(pluginName, group);
+  }
+
+  return { standalone, groups: [...groups.values()] };
+}
+
 function mergeSkillState(
   items: ToggleEntry[],
   skills: SkillItem[],
@@ -299,6 +330,10 @@ export function CommandHelpMessage({ text }: { text: string }) {
     })),
     [parsed.skills, pluginEnabledByName, state.skills, toggleOverrides],
   );
+  const groupedSkillItems = useMemo(
+    () => groupSkillsByPlugin(skillItems, pluginItems),
+    [pluginItems, skillItems],
+  );
 
   const describeCommand = (name: string, fallback: string) =>
     state.commands.find((command) => command.name === name)?.description || fallback || "명령어를 실행합니다";
@@ -357,9 +392,11 @@ export function CommandHelpMessage({ text }: { text: string }) {
         </div>
       ) : null}
       {parsed.hasSkills ? (
-        <ToggleCatalog
+        <SkillCatalog
           label="스킬"
-          items={skillItems}
+          standaloneItems={groupedSkillItems.standalone}
+          pluginGroups={groupedSkillItems.groups}
+          itemCount={skillItems.length}
           emptyText="사용 가능한 커스텀 스킬이 없습니다"
           onToggle={(item) => void toggleItem("set_skill_enabled", item.name, item.enabled)}
         />
@@ -400,6 +437,66 @@ export function CommandHelpMessage({ text }: { text: string }) {
   );
 }
 
+function SkillCatalog({
+  label,
+  standaloneItems,
+  pluginGroups,
+  itemCount,
+  emptyText,
+  onToggle,
+}: {
+  label: string;
+  standaloneItems: ToggleEntry[];
+  pluginGroups: SkillPluginGroup[];
+  itemCount: number;
+  emptyText: string;
+  onToggle: (item: ToggleEntry) => void;
+}) {
+  const hasItems = standaloneItems.length > 0 || pluginGroups.length > 0;
+  return (
+    <details className="command-card skill-card" open>
+      <summary>
+        <span>{label}</span>
+        <span className="command-count">{itemCount ? `${itemCount}개` : "0개"}</span>
+      </summary>
+      {hasItems ? (
+        <div className="skill-catalog-groups">
+          {standaloneItems.length ? (
+            <section className="skill-plugin-group" role="group" aria-label="일반 스킬">
+              <div className="skill-section-header">
+                <strong>일반 스킬</strong>
+                <span>{standaloneItems.length}개</span>
+              </div>
+              <ToggleGrid label={label} items={standaloneItems} onToggle={onToggle} />
+            </section>
+          ) : null}
+          {pluginGroups.map((group) => (
+            <section
+              className={`skill-plugin-group${group.plugin.enabled ? "" : " disabled"}`}
+              role="group"
+              aria-label={`${group.plugin.name} 플러그인 스킬`}
+              key={`plugin-group:${group.plugin.name}`}
+            >
+              <div className="skill-section-header plugin-skill-header">
+                <span>
+                  <strong>{group.plugin.name}</strong>
+                  <small>{group.plugin.enabled ? "활성" : "비활성"}</small>
+                </span>
+                <span>{group.items.length}개</span>
+              </div>
+              <ToggleGrid label={group.plugin.name} items={group.items} onToggle={onToggle} />
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="command-grid skill-grid">
+          <span className="skill-pill-description">{emptyText}</span>
+        </div>
+      )}
+    </details>
+  );
+}
+
 function ToggleCatalog({
   label,
   items,
@@ -417,26 +514,44 @@ function ToggleCatalog({
         <span>{label}</span>
         <span className="command-count">{items.length ? `${items.length}개` : "0개"}</span>
       </summary>
-      <div className="command-grid skill-grid">
-        {items.length ? items.map((item) => (
-          <button
-            className={`command-pill skill-toggle-pill${item.enabled ? "" : " disabled"}`}
-            type="button"
-            aria-pressed={item.enabled}
-            data-tooltip={catalogTooltip(item, label)}
-            key={`${label}:${item.name}`}
-            onClick={() => onToggle(item)}
-          >
-            <span className="skill-pill-header">
-              <strong>{item.name}</strong>
-              <small>{item.enabled ? "활성" : "비활성"}</small>
-            </span>
-            <span className="skill-pill-description">{item.description || item.source || label}</span>
-          </button>
-        )) : (
+      {items.length ? (
+        <ToggleGrid label={label} items={items} onToggle={onToggle} />
+      ) : (
+        <div className="command-grid skill-grid">
           <span className="skill-pill-description">{emptyText}</span>
-        )}
-      </div>
+        </div>
+      )}
     </details>
+  );
+}
+
+function ToggleGrid({
+  label,
+  items,
+  onToggle,
+}: {
+  label: string;
+  items: ToggleEntry[];
+  onToggle: (item: ToggleEntry) => void;
+}) {
+  return (
+    <div className="command-grid skill-grid">
+      {items.map((item) => (
+        <button
+          className={`command-pill skill-toggle-pill${item.enabled ? "" : " disabled"}`}
+          type="button"
+          aria-pressed={item.enabled}
+          data-tooltip={catalogTooltip(item, label)}
+          key={`${label}:${item.name}`}
+          onClick={() => onToggle(item)}
+        >
+          <span className="skill-pill-header">
+            <strong>{item.name}</strong>
+            <small>{item.enabled ? "활성" : "비활성"}</small>
+          </span>
+          <span className="skill-pill-description">{item.description || item.source || label}</span>
+        </button>
+      ))}
+    </div>
   );
 }

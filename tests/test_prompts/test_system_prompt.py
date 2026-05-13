@@ -153,6 +153,16 @@ def test_build_system_prompt_guides_chat_html_rendering_and_report_charts():
     assert "self-contained, compact, readable in a constrained iframe" in prompt
 
 
+def test_build_system_prompt_defaults_pasted_source_report_requests_to_html_artifacts():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+
+    assert "pasted site, article, document, transcript, or source text" in prompt
+    assert "보고서로 작성해줘" in prompt
+    assert "create a standalone HTML report under `outputs/`" in prompt
+    assert "Do not put the full report body only in the chat" in prompt
+
+
 def test_build_system_prompt_guides_interactive_3d_html_artifacts():
     env = _make_env()
     prompt = build_system_prompt(env=env)

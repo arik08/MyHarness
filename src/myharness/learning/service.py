@@ -7,11 +7,13 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from myharness.skills.loader import get_program_skills_dirs
 
 MAX_TRACKED_FAILURES = 20
 MAX_TRACKED_LEARNED_SKILLS = 12
+MAX_EVIDENCE_BLOCKS_PER_SKILL = 8
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+"),
@@ -94,31 +96,22 @@ def analyze_learning_candidate(metadata: dict[str, object] | None) -> LearningCa
     verified_work = metadata.get("recent_verified_work")
     if not isinstance(failures, list) or not isinstance(verified_work, list) or not verified_work:
         return None
+    verified_summary = _latest_helpful_verified_work(verified_work)
+    if verified_summary is None:
+        return None
 
     failure_items = [item for item in failures if isinstance(item, dict)]
     signatures = [str(item.get("signature") or "").strip() for item in failure_items]
     signature_counts = Counter(signature for signature in signatures if signature)
     repeated = [(signature, count) for signature, count in signature_counts.items() if count >= 2]
-    categories = [str(item.get("category") or "").strip() for item in failure_items]
-    category_counts = Counter(category for category in categories if category)
-    repeated_categories = [
-        (category, count) for category, count in category_counts.items() if count >= 3
-    ]
-    if not repeated and not repeated_categories:
+    if not repeated:
         return None
-    if repeated:
-        signature, count = sorted(repeated, key=lambda item: (-item[1], item[0]))[0]
-        matching = [
-            item for item in failure_items if str(item.get("signature") or "").strip() == signature
-        ]
-    else:
-        category, count = sorted(repeated_categories, key=lambda item: (-item[1], item[0]))[0]
-        signature = f"category-{category}"
-        matching = [
-            item for item in failure_items if str(item.get("category") or "").strip() == category
-        ]
+
+    signature, count = sorted(repeated, key=lambda item: (-item[1], item[0]))[0]
+    matching = [
+        item for item in failure_items if str(item.get("signature") or "").strip() == signature
+    ]
     summary = str(matching[-1].get("summary") or signature).strip()
-    verified_summary = _redact(str(verified_work[-1]))[:240]
     evidence_hash = hashlib.sha256(
         "\n".join([signature, summary, verified_summary]).encode("utf-8")
     ).hexdigest()[:16]
@@ -172,7 +165,9 @@ def persist_learning_candidate(
     skill_file = skill_dir / "SKILL.md"
     patterns_file = skill_dir / "references" / "learned-patterns.md"
     existing_patterns = patterns_file.read_text(encoding="utf-8") if patterns_file.exists() else ""
-    if candidate.evidence_hash in existing_patterns:
+    if candidate.evidence_hash in existing_patterns or _has_duplicate_pattern(
+        existing_patterns, candidate
+    ):
         return LearningResult(candidate=candidate, skill_path=skill_file, action="unchanged")
 
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -182,10 +177,11 @@ def persist_learning_candidate(
         action = "created"
     else:
         action = "updated"
-    with patterns_file.open("a", encoding="utf-8", newline="\n") as handle:
-        if existing_patterns and not existing_patterns.endswith("\n"):
-            handle.write("\n")
-        handle.write(_render_pattern(candidate))
+    patterns_file.write_text(
+        _prune_evidence_blocks(existing_patterns + _render_pattern(candidate)),
+        encoding="utf-8",
+        newline="\n",
+    )
     return LearningResult(candidate=candidate, skill_path=skill_file, action=action)
 
 
@@ -240,8 +236,11 @@ def _render_pattern(candidate: LearningCandidate) -> str:
 
 
 def _failure_signature(tool_name: str, tool_input: dict[str, object], output: str) -> str:
+    normalized = _normalized_failure_signature(tool_name, tool_input, output)
+    if normalized:
+        return normalized
     input_hint = ""
-    for key in ("command", "path", "file_path", "pattern", "name"):
+    for key in ("command", "path", "file_path", "pattern", "name", "url", "query"):
         value = tool_input.get(key)
         if isinstance(value, str) and value.strip():
             input_hint = value.strip()
@@ -253,7 +252,7 @@ def _failure_signature(tool_name: str, tool_input: dict[str, object], output: st
 
 def _failure_summary(tool_name: str, tool_input: dict[str, object], output: str) -> str:
     input_hint = ""
-    for key in ("command", "path", "file_path", "pattern", "name"):
+    for key in ("command", "path", "file_path", "pattern", "name", "url", "query"):
         value = tool_input.get(key)
         if isinstance(value, str) and value.strip():
             input_hint = f" input={value.strip()[:160]}"
@@ -271,6 +270,91 @@ def _slugify(value: str) -> str:
     while "--" in cleaned:
         cleaned = cleaned.replace("--", "-")
     return cleaned or "learned-skill"
+
+
+def _normalized_failure_signature(
+    tool_name: str,
+    tool_input: dict[str, object],
+    output: str,
+) -> str | None:
+    tool_slug = _slugify(tool_name.strip().lower())
+    normalized_output = " ".join(output.lower().split())
+    if tool_slug == "web-search" and (
+        "no search results found" in normalized_output
+        or "검색 결과가 없습니다" in normalized_output
+    ):
+        return "web-search-no-results"
+
+    if tool_slug in {"web-fetch", "web-search"}:
+        status = _extract_http_status(output)
+        domain = _extract_domain(tool_input, output)
+        if status and domain:
+            return f"{tool_slug}-{status}-{_slugify(domain)}"[:80]
+    return None
+
+
+def _extract_http_status(output: str) -> str | None:
+    match = re.search(r"Client error ['\"]?(\d{3})\b", output, flags=re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def _extract_domain(tool_input: dict[str, object], output: str) -> str | None:
+    candidates: list[str] = []
+    for key in ("url", "uri", "href"):
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+    candidates.extend(re.findall(r"https?://[^\s'\"\)]+", output))
+    for candidate in candidates:
+        parsed = urlparse(candidate.rstrip(".,;"))
+        if parsed.hostname:
+            return parsed.hostname.lower().removeprefix("www.")
+    return None
+
+
+def _latest_helpful_verified_work(verified_work: list[object]) -> str | None:
+    for item in reversed(verified_work):
+        summary = _redact(str(item))[:240]
+        if summary and _is_helpful_verified_work(summary):
+            return summary
+    return None
+
+
+def _is_helpful_verified_work(summary: str) -> bool:
+    normalized = " ".join(summary.lower().split())
+    if not normalized:
+        return False
+    if normalized.startswith(
+        ("inspected file ", "checked repository matches ", "expanded glob pattern ")
+    ):
+        return False
+    if normalized.startswith("ran command "):
+        command = normalized.removeprefix("ran command ").strip()
+        return not command.startswith(("cp ", "copy ", "grep ", "rg "))
+    return True
+
+
+def _has_duplicate_pattern(existing_patterns: str, candidate: LearningCandidate) -> bool:
+    for block in _evidence_blocks(existing_patterns):
+        if (
+            f"- Signature: `{candidate.failure_signature}`" in block
+            and f"- Lesson: {candidate.lesson}" in block
+        ):
+            return True
+    return False
+
+
+def _prune_evidence_blocks(patterns: str) -> str:
+    blocks = _evidence_blocks(patterns)
+    kept = blocks[-MAX_EVIDENCE_BLOCKS_PER_SKILL:]
+    return "\n\n".join(kept).strip() + "\n"
+
+
+def _evidence_blocks(patterns: str) -> list[str]:
+    cleaned = patterns.strip()
+    if not cleaned:
+        return []
+    return [block.strip() for block in re.split(r"\n(?=## Evidence )", cleaned) if block.strip()]
 
 
 def _redact(value: str) -> str:

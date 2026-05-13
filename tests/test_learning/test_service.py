@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from myharness.learning.service import (
+    LearningCandidate,
     analyze_learning_candidate,
     persist_learning_candidate,
     remember_tool_failure,
@@ -62,7 +63,7 @@ def test_unverified_repeated_failure_does_not_create_candidate():
     assert analyze_learning_candidate(metadata) is None
 
 
-def test_three_failures_in_same_category_create_candidate():
+def test_three_failures_in_same_category_do_not_create_candidate():
     metadata: dict[str, object] = {"recent_verified_work": ["Verified the corrected file workflow"]}
     for path in ("missing-one.txt", "missing-two.txt", "missing-three.txt"):
         remember_tool_failure(
@@ -74,8 +75,69 @@ def test_three_failures_in_same_category_create_candidate():
 
     candidate = analyze_learning_candidate(metadata)
 
+    assert candidate is None
+
+
+def test_web_search_no_results_variants_share_signature():
+    metadata: dict[str, object] = {
+        "recent_verified_work": ["Fetched remote content from https://example.com/fallback"]
+    }
+    remember_tool_failure(
+        metadata,
+        tool_name="web_search",
+        tool_input={"query": "example english"},
+        tool_output="No search results found.",
+    )
+    remember_tool_failure(
+        metadata,
+        tool_name="web_search",
+        tool_input={"query": "example korean"},
+        tool_output="검색 결과가 없습니다.",
+    )
+
+    candidate = analyze_learning_candidate(metadata)
+
     assert candidate is not None
-    assert candidate.failure_signature == "category-read-file"
+    assert candidate.failure_signature == "web-search-no-results"
+
+
+def test_web_fetch_signature_uses_status_and_domain_not_path():
+    metadata: dict[str, object] = {
+        "recent_verified_work": ["Fetched remote content from https://r.jina.ai/http://example.com/a"]
+    }
+    for path in ("first", "second"):
+        remember_tool_failure(
+            metadata,
+            tool_name="web_fetch",
+            tool_input={"url": f"https://example.com/{path}"},
+            tool_output=(
+                "web_fetch failed: Client error '403 Forbidden' "
+                f"for url 'https://example.com/{path}'"
+            ),
+        )
+
+    candidate = analyze_learning_candidate(metadata)
+
+    assert candidate is not None
+    assert candidate.failure_signature == "web-fetch-403-example-com"
+
+
+def test_unhelpful_verified_work_does_not_create_candidate():
+    metadata: dict[str, object] = {
+        "recent_verified_work": [
+            "Inspected file C:\\Users\\Myeongcheol\\repo\\report.html (lines 1-20)",
+            "Ran command cp outputs/report.html outputs/report_v1.html [(출력 없음)]",
+        ]
+    }
+    for _ in range(2):
+        remember_tool_failure(
+            metadata,
+            tool_name="web_search",
+            tool_input={"query": "stale result"},
+            tool_output="No search results found.",
+        )
+
+    assert analyze_learning_candidate(metadata) is None
 
 
 def test_secret_and_user_path_are_redacted(tmp_path: Path):
@@ -120,4 +182,49 @@ def test_existing_candidate_is_not_duplicated(tmp_path: Path):
 
     assert first.action == "created"
     assert second.action == "unchanged"
+
+
+def test_persist_caps_evidence_and_skips_duplicate_signature_lesson(tmp_path: Path):
+    base = LearningCandidate(
+        skill_name="learned-demo",
+        trigger_description="Use for repeated demo failures",
+        lesson="Use the stable fallback",
+        do_next_time="Fetch the stable fallback URL",
+        avoid_next_time="Do not repeat the broken URL",
+        evidence_hash="hash0000",
+        confidence=0.85,
+        failure_signature="web-fetch-403-example-com",
+    )
+
+    first = persist_learning_candidate(base, skills_dir=tmp_path / ".skills")
+    duplicate = persist_learning_candidate(
+        LearningCandidate(
+            **{
+                **base.__dict__,
+                "evidence_hash": "hash0001",
+            }
+        ),
+        skills_dir=tmp_path / ".skills",
+    )
+    for index in range(2, 12):
+        persist_learning_candidate(
+            LearningCandidate(
+                **{
+                    **base.__dict__,
+                    "lesson": f"Use stable fallback {index}",
+                    "evidence_hash": f"hash{index:04d}",
+                }
+            ),
+            skills_dir=tmp_path / ".skills",
+        )
+
+    patterns = (first.skill_path.parent / "references" / "learned-patterns.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert duplicate.action == "unchanged"
+    assert patterns.count("## Evidence") == 8
+    assert "hash0000" not in patterns
+    assert "hash0001" not in patterns
+    assert "hash0011" in patterns
 

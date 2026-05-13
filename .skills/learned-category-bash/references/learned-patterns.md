@@ -1,4 +1,3 @@
-
 ## Evidence 59bc3e84b5776c87
 - Confidence: 0.95
 - Signature: `category-bash`

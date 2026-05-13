@@ -5516,6 +5516,76 @@ a:focus-visible {
   padding: 0 10px 10px;
 }
 
+.skill-catalog-groups {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 10px 10px;
+}
+
+.skill-catalog-groups .command-grid {
+  padding: 0;
+}
+
+.skill-section,
+.skill-plugin-group {
+  min-width: 0;
+}
+
+.skill-plugin-group {
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-raised) 72%, transparent);
+}
+
+.skill-plugin-group.disabled {
+  background: color-mix(in srgb, var(--sidebar-hover) 58%, transparent);
+}
+
+.skill-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 7px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.skill-section-header strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-skill-header > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.plugin-skill-header small {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.skill-plugin-group.disabled .plugin-skill-header small {
+  background: var(--sidebar-hover);
+  color: var(--faint);
+}
+
 .command-pill {
   display: block;
   width: 100%;

@@ -1,5 +1,5 @@
 param(
-    [string]$Url = "http://127.0.0.1:5173",
+    [string]$Url = "http://127.0.0.1:4174",
     [string]$WaitForSelector = "body",
     [string]$ViewportSize = "1366,768",
     [switch]$Headed,

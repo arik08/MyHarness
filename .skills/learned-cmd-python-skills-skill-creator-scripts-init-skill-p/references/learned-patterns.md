@@ -1,4 +1,3 @@
-
 ## Evidence 0801a33d927b4419
 - Confidence: 0.85
 - Signature: `cmd-python-skills-skill-creator-scripts-init-skill-py-ui-design-essence-path-ski`

@@ -121,8 +121,10 @@ def _build_long_report_section() -> str:
             "continue short sections, review the draft, and later reassemble the pieces.",
             "Do not generate more than 20,000 tokens for any report, even when the user asks for a numeric target above that limit "
             "or requests very long, exhaustive, ultra-detailed, 초장문, 대보고서, or similar output.",
-            "Ordinary requests such as 상세 보고서, 분석 보고서, 리포트, 조사 정리, or HTML 보고서 should be answered directly at a reasonable length. "
-            "If a file artifact is useful, write a single coherent Markdown or HTML file in one pass within the 20,000-token cap.",
+            "Ordinary report requests may still require standalone files. If the user asks for a report based on pasted text, "
+            "a site, article, document, transcript, research, investigation, comparison, analysis, or source summary and does not "
+            "name another format, create a standalone HTML report under `outputs/` rather than putting the full report body only "
+            "in the chat. Keep that single coherent artifact within the 20,000-token cap.",
         ]
     )
 

@@ -1,4 +1,3 @@
-
 ## Evidence 1004e480fdb6cacf
 - Confidence: 0.95
 - Signature: `web-fetch-web-fetch-실패-client-error-403-forbidden-for-url-https-openai-com-index`
