@@ -235,6 +235,25 @@ def test_backend_host_records_history_events_for_snapshot_replay():
     ]
 
 
+def test_backend_host_records_line_complete_duration_for_snapshot_replay():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    host._record_history_event(BackendEvent(type="transcript_item", item={"role": "user", "text": "질문"}))
+    host._record_history_event(BackendEvent(type="assistant_complete", message="답변"))
+    host._record_history_event(
+        BackendEvent(
+            type="line_complete",
+            compact_metadata={"workflow_duration_seconds": 17},
+        )
+    )
+
+    assert host._history_events == [
+        {"type": "user", "text": "질문"},
+        {"type": "assistant", "text": "답변", "has_tool_uses": False},
+        {"type": "line_complete", "workflow_duration_seconds": 17},
+    ]
+
+
 def test_backend_host_records_tool_input_deltas_for_snapshot_replay():
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
 

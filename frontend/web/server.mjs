@@ -1130,31 +1130,9 @@ function assertClientOwnsSession(session, clientId) {
   }
 }
 
-function canReclaimSessionFromAddress(session, clientAddress) {
-  const expected = normalizeClientAddress(session?.clientAddress || "");
-  const actual = normalizeClientAddress(clientAddress || "");
-  return Boolean(expected && actual && expected === actual);
-}
-
-function reclaimSessionForClient(session, clientId, clientAddress) {
-  const actual = String(clientId || "").trim();
-  if (!session || !actual || session.clientId === actual || !canReclaimSessionFromAddress(session, clientAddress)) {
-    return session;
-  }
-  writeRuntimeLog("backend_session_reclaimed", {
-    session_id: session.id,
-    previous_client_id: session.clientId || "",
-    client_id: actual,
-    client_address: normalizeClientAddress(clientAddress || ""),
-  });
-  session.clientId = actual;
-  return session;
-}
-
-function sessionFromIdForClient(sessionId, clientId, clientAddress = "") {
+function sessionFromIdForClient(sessionId, clientId) {
   const session = sessions.get(sessionId);
   if (session) {
-    reclaimSessionForClient(session, clientId, clientAddress);
     assertClientOwnsSession(session, clientId);
   }
   return session;
@@ -2772,10 +2750,33 @@ async function listWorkspaceHistory(workspace, options = {}) {
   return sorted.map(({ createdAt, ...item }) => item);
 }
 
+function historyTitleForSort(item) {
+  return String(item.titleSortKey || item.description || item.label || item.value || "").trim();
+}
+
+function compareHistoryTitle(left, right) {
+  return (
+    historyTitleForSort(left).localeCompare(historyTitleForSort(right), "ko", {
+      numeric: true,
+      sensitivity: "base",
+    })
+    || String(left.value || "").localeCompare(String(right.value || ""), "ko")
+  );
+}
+
+function compareHistoryItems(left, right) {
+  const byPinned = Number(right.pinned === true) - Number(left.pinned === true);
+  if (byPinned) return byPinned;
+  if (left.pinned === true && right.pinned === true) {
+    const byTitle = compareHistoryTitle(left, right);
+    if (byTitle) return byTitle;
+  }
+  return (right.createdAt || 0) - (left.createdAt || 0);
+}
+
 function sortHistoryItems(items) {
   return items.sort((left, right) => {
-    const byPinned = Number(right.pinned === true) - Number(left.pinned === true);
-    return byPinned || (right.createdAt || 0) - (left.createdAt || 0);
+    return compareHistoryItems(left, right);
   });
 }
 
@@ -2785,6 +2786,7 @@ async function listAllWorkspaceHistory(scope = defaultWorkspaceScope()) {
     const items = await listWorkspaceHistory(workspace, { includeCreatedAt: true });
     return items.map(({ createdAt, ...item }) => ({
       ...item,
+      titleSortKey: item.description || item.label || item.value || "",
       description: item.description ? `${workspace.name} · ${item.description}` : workspace.name,
       workspace,
       createdAt,
@@ -2792,11 +2794,8 @@ async function listAllWorkspaceHistory(scope = defaultWorkspaceScope()) {
   }));
   return grouped
     .flat()
-    .sort((left, right) => {
-      const byPinned = Number(right.pinned === true) - Number(left.pinned === true);
-      return byPinned || (right.createdAt || 0) - (left.createdAt || 0);
-    })
-    .map(({ createdAt, ...item }) => item);
+    .sort((left, right) => compareHistoryItems(left, right))
+    .map(({ createdAt, titleSortKey, ...item }) => item);
 }
 
 function createEmptyUserStats(clientId = "", clientAddress = "") {
@@ -4274,10 +4273,9 @@ async function handleApi(request, response, pathname) {
       .filter((session) => (
         !session.shuttingDown
         && session.clientId
-        && (session.clientId === clientId || canReclaimSessionFromAddress(session, clientAddress))
+        && session.clientId === clientId
       ))
       .filter((session) => !workspacePath || session.workspace?.path === workspacePath)
-      .map((session) => reclaimSessionForClient(session, clientId, clientAddress))
       .map(liveSessionPayload)
       .sort((left, right) => left.createdAt - right.createdAt);
     json(response, 200, { sessions: liveSessions });
@@ -4307,7 +4305,7 @@ async function handleApi(request, response, pathname) {
     const id = params.get("session");
     let session;
     try {
-      session = sessionFromIdForClient(id, params.get("clientId"), clientAddress);
+      session = sessionFromIdForClient(id, params.get("clientId"));
     } catch (error) {
       json(response, error.status || 403, { error: error.message || "Forbidden session" });
       return true;

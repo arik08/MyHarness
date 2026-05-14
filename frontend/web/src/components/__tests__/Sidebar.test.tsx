@@ -373,7 +373,30 @@ describe("Sidebar", () => {
     expect(document.querySelector(".history-list")?.getAttribute("aria-busy")).toBe("true");
   });
 
-  it("renders pinned history items before recent items", () => {
+  it("renders every loaded history row without a fixed display cap", () => {
+    const history = Array.from({ length: 25 }, (_, index) => ({
+      value: `session-${index + 1}`,
+      label: `5/3 10:${String(index).padStart(2, "0")} 2 msg`,
+      description: `대화 ${index + 1}`,
+    }));
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          history,
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelectorAll(".history-item")).toHaveLength(25);
+    expect(screen.getByText("대화 25")).toBeTruthy();
+  });
+
+  it("renders pinned history items before recent items sorted by title", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -381,7 +404,8 @@ describe("Sidebar", () => {
           sessionId: "session-active",
           history: [
             { value: "session-new", label: "5/4 10:00 2 msg", description: "최신 대화" },
-            { value: "session-pin", label: "5/3 10:00 2 msg", description: "고정 대화", pinned: true },
+            { value: "session-pin-b", label: "5/3 10:00 2 msg", description: "나중 고정 대화", pinned: true },
+            { value: "session-pin-a", label: "5/2 10:00 2 msg", description: "가장 앞 고정 대화", pinned: true },
           ],
         }}
       >
@@ -391,7 +415,7 @@ describe("Sidebar", () => {
 
     const titles = Array.from(document.querySelectorAll(".history-title")).map((node) => node.textContent);
 
-    expect(titles).toEqual(["고정 대화", "최신 대화"]);
+    expect(titles).toEqual(["가장 앞 고정 대화", "나중 고정 대화", "최신 대화"]);
   });
 
   it("pins a history item from the expanded right-side action", async () => {
@@ -442,6 +466,36 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 삭제" }));
 
     await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith("session-old", "C:/other", "Other"));
+    expect(screen.queryByText("이전 대화")).toBeNull();
+  });
+
+  it("does not redraw the active saved history row after deleting it", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          activeHistoryId: "session-old",
+          clientId: "client-1",
+          chatTitle: "이전 대화",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{
+            value: "session-old",
+            label: "5/3 10:00 2 msg",
+            description: "이전 대화",
+            workspace: { name: "Default", path: "C:/demo" },
+          }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 삭제" }));
+
+    await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith("session-old", "C:/demo", "Default"));
     expect(screen.queryByText("이전 대화")).toBeNull();
   });
 

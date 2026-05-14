@@ -28,6 +28,20 @@ def test_visual_artifact_routes_a4_landscape_requests_to_specific_skill():
 
     assert "html-a4-landscape-report" in skill_text
     assert "A4 landscape" in skill_text or "A4 가로" in skill_text
+    assert "only when the user explicitly asks" in skill_text
+
+
+def test_visual_artifact_preserves_general_scrolling_report_design():
+    skill_text = (ROOT / ".skills" / "visual-artifact" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "ordinary report-style HTML should remain a web-native scrolling report" in skill_text
+    assert "ordinary vertical HTML reports" in skill_text
+    assert "It should feel designed, not like a plain document exported to HTML" in skill_text
+    assert "Restrained does not mean all-white, gray, or template-like" in skill_text
+    assert "Choose a visual concept before writing CSS" in skill_text
+    assert "Choose the archetype yourself" in skill_text
+    assert "Do not ask the user to choose a layout, style, or report archetype" in skill_text
+    assert "Avoid defaulting to the same hero/KPI-card/three-section/table layout" in skill_text
 
 
 def test_a4_landscape_report_skill_description_is_translated_for_ui():

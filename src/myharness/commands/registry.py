@@ -865,7 +865,7 @@ def create_default_command_registry(
             )
 
         # /resume — list sessions (for the TUI to show a picker)
-        sessions = context.session_backend.list_snapshots(context.cwd, limit=10)
+        sessions = context.session_backend.list_snapshots(context.cwd, limit=None)
         if not sessions:
             # Fall back to latest.json
             snapshot = context.session_backend.load_latest(context.cwd)

@@ -8,7 +8,7 @@ cd /d "%~dp0"
 if "%PORT%"=="" set "PORT=4273"
 if "%MYHARNESS_WEB_PORT%"=="" (
   if "%VITE_PORT%"=="" (
-    set "MYHARNESS_WEB_PORT=4174"
+    set "MYHARNESS_WEB_PORT=4173"
   ) else (
     set "MYHARNESS_WEB_PORT=%VITE_PORT%"
   )

@@ -1135,6 +1135,50 @@ async def test_mcp_and_voice_commands_report_richer_state(tmp_path: Path, monkey
 
 
 @pytest.mark.asyncio
+async def test_resume_command_lists_all_saved_sessions(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+
+    class FakeSessionBackend:
+        requested_limit = object()
+
+        def list_snapshots(self, cwd, limit=None):
+            del cwd
+            self.requested_limit = limit
+            sessions = [
+                {
+                    "session_id": f"session-{index}",
+                    "created_at": float(index),
+                    "summary": f"대화 {index}",
+                    "message_count": 2,
+                }
+                for index in range(12)
+            ]
+            return sessions if limit is None else sessions[:limit]
+
+        def load_latest(self, cwd):
+            del cwd
+            return None
+
+    session_backend = FakeSessionBackend()
+    command, args = registry.lookup("/resume")
+    assert command is not None
+
+    result = await command.handler(
+        args,
+        CommandContext(
+            engine=_make_engine(tmp_path),
+            cwd=str(tmp_path),
+            session_backend=session_backend,
+        ),
+    )
+
+    assert session_backend.requested_limit is None
+    assert "session-11" in result.message
+    assert result.message.count("session-") == 12
+
+
+@pytest.mark.asyncio
 async def test_git_commands_report_repository_state(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)

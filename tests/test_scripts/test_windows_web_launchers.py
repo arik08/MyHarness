@@ -53,11 +53,11 @@ def test_dev_launcher_exposes_vite_and_enables_backend_entry_redirect() -> None:
     assert "MYHARNESS_DEV_UI_PORT" in start_backend
 
 
-def test_dev_launcher_defaults_react_dev_ui_to_4174() -> None:
+def test_dev_launcher_defaults_react_dev_ui_to_4173() -> None:
     batch = (ROOT / "run_myharness_web_dev.bat").read_text(encoding="utf-8")
     script = _read_launcher("run_myharness_web_dev.ps1")
     vite_config = (ROOT / "frontend" / "web" / "vite.config.ts").read_text(encoding="utf-8")
 
-    assert 'set "MYHARNESS_WEB_PORT=4174"' in batch
-    assert '"4174"' in _function_body(script, "Get-RequestedVitePort")
-    assert "process.env.MYHARNESS_WEB_PORT || process.env.VITE_PORT || 4174" in vite_config
+    assert 'set "MYHARNESS_WEB_PORT=4173"' in batch
+    assert '"4173"' in _function_body(script, "Get-RequestedVitePort")
+    assert "process.env.MYHARNESS_WEB_PORT || process.env.VITE_PORT || 4173" in vite_config

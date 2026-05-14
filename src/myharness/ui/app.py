@@ -36,7 +36,7 @@ class _TaskWorkerSessionBackend:
         del cwd
         return None
 
-    def list_snapshots(self, cwd: str | Path, limit: int | None = 20) -> list[dict]:
+    def list_snapshots(self, cwd: str | Path, limit: int | None = None) -> list[dict]:
         del cwd, limit
         return []
 

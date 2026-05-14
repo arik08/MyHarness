@@ -717,38 +717,57 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
     join(sessionDir, "session-newer.json"),
     JSON.stringify({
       session_id: "newer",
-      created_at: 200,
+      created_at: 300,
       summary: "newer session",
       messages: [],
       message_count: 1,
     }),
   );
   await writeFile(
-    join(sessionDir, "session-older.json"),
+    join(sessionDir, "session-zeta.json"),
     JSON.stringify({
-      session_id: "older",
+      session_id: "zeta",
+      created_at: 200,
+      summary: "zeta pinned session",
+      messages: [],
+      message_count: 1,
+    }),
+  );
+  await writeFile(
+    join(sessionDir, "session-alpha.json"),
+    JSON.stringify({
+      session_id: "alpha",
       created_at: 100,
-      summary: "older session",
+      summary: "alpha pinned session",
       messages: [],
       message_count: 1,
     }),
   );
 
-  const pinResponse = await fetch(`${app.baseUrl}/api/history/pin`, {
+  const pinZetaResponse = await fetch(`${app.baseUrl}/api/history/pin`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId: "older", pinned: true, workspacePath: workspace.path, workspaceName: workspace.name }),
+    body: JSON.stringify({ sessionId: "zeta", pinned: true, workspacePath: workspace.path, workspaceName: workspace.name }),
   });
-  const pinPayload = await pinResponse.json();
-  assert.equal(pinResponse.status, 200);
-  assert.equal(pinPayload.pinned, true);
+  const pinZetaPayload = await pinZetaResponse.json();
+  assert.equal(pinZetaResponse.status, 200);
+  assert.equal(pinZetaPayload.pinned, true);
+  const pinAlphaResponse = await fetch(`${app.baseUrl}/api/history/pin`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: "alpha", pinned: true, workspacePath: workspace.path, workspaceName: workspace.name }),
+  });
+  const pinAlphaPayload = await pinAlphaResponse.json();
+  assert.equal(pinAlphaResponse.status, 200);
+  assert.equal(pinAlphaPayload.pinned, true);
 
   const historyResponse = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspace.path)}`);
   const historyPayload = await historyResponse.json();
 
   assert.equal(historyResponse.status, 200);
-  assert.deepEqual(historyPayload.options.map((item) => item.value), ["older", "newer"]);
+  assert.deepEqual(historyPayload.options.map((item) => item.value), ["alpha", "zeta", "newer"]);
   assert.equal(historyPayload.options[0].pinned, true);
+  assert.equal(historyPayload.options[1].pinned, true);
 });
 
 test("deletes a project after stopping active backend sessions in that project", async (t) => {
@@ -794,7 +813,7 @@ test("deletes a project after stopping active backend sessions in that project",
   assert.equal(deletePayload.workspaces.some((item) => item.name === workspaceName), false);
 });
 
-test("lists and reclaims live sessions from the same browser address", async (t) => {
+test("keeps live sessions isolated for different clients on the same browser address", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "ip" },
   });
@@ -814,7 +833,11 @@ test("lists and reclaims live sessions from the same browser address", async (t)
   const live = await liveResponse.json();
 
   assert.equal(liveResponse.status, 200);
-  assert.equal(live.sessions.some((session) => session.sessionId === created.sessionId), true);
+  assert.equal(live.sessions.some((session) => session.sessionId === created.sessionId), false);
+
+  const eventsResponse = await fetch(`${app.baseUrl}/api/events?session=${created.sessionId}&clientId=client-new`);
+  await eventsResponse.body?.cancel().catch(() => {});
+  assert.equal(eventsResponse.status, 403);
 
   const shutdownResponse = await fetch(`${app.baseUrl}/api/shutdown`, {
     method: "POST",
@@ -822,7 +845,7 @@ test("lists and reclaims live sessions from the same browser address", async (t)
     body: JSON.stringify({ sessionId: created.sessionId, clientId: "client-new" }),
   });
 
-  assert.equal(shutdownResponse.status, 200);
+  assert.equal(shutdownResponse.status, 403);
 });
 
 test("shuts down idle backend sessions after the event stream closes", async (t) => {

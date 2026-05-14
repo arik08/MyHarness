@@ -462,7 +462,7 @@ def _is_hidden_worker_snapshot(data: dict[str, Any]) -> bool:
     return False
 
 
-def list_session_snapshots(cwd: str | Path, limit: int | None = 20) -> list[dict[str, Any]]:
+def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[dict[str, Any]]:
     """List saved sessions for the project, newest first."""
     session_dir = get_project_session_dir(cwd)
     sessions: list[dict[str, Any]] = []

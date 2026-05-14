@@ -2373,7 +2373,7 @@ def main(
             print(f"세션을 이어갑니다: {session_data.get('summary', '(제목 없음)')[:60]}")
         elif resume == "" or resume is None:
             # --resume with no value: show session picker
-            sessions = list_session_snapshots(cwd, limit=10)
+            sessions = list_session_snapshots(cwd, limit=None)
             if not sessions:
                 print("저장된 세션이 없습니다.", file=sys.stderr)
                 raise typer.Exit(1)

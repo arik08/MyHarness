@@ -142,14 +142,24 @@ def test_build_system_prompt_guides_chat_html_rendering_and_report_charts():
     assert "quick charts, small data views" in prompt
     assert "Do not force inline HTML for every answer" in prompt
     assert "HTML report or 리포트" in prompt
-    assert "add charts or graphs" in prompt
+    assert "do not ask them to choose the layout, style, or report archetype" in prompt
+    assert "Choose a business-appropriate visual concept yourself" in prompt
+    assert "instead of reusing the same card-grid template" in prompt
+    assert "editorial briefing" in prompt
+    assert "intelligence dossier" in prompt
+    assert "polished web-native report composition" in prompt
+    assert "strong section rhythm" in prompt
+    assert "visual anchors" in prompt
     assert "prefer ECharts via CDN" in prompt
+    assert "Only when the user explicitly asks for an A4 landscape" in prompt
     assert "actively consider restrained semantic icons" in prompt
     assert "Lucide or inline SVG" in prompt
     assert "do not force icons into every card or paragraph" in prompt
     assert "business-style HTML reports, dashboards, and charts" in prompt
+    assert "restrained and work-focused but not bland" in prompt
     assert "Avoid oversized border-radius" in prompt
     assert "usually around 4-8px radius" in prompt
+    assert "feels designed rather than like a generic white document" in prompt
     assert "self-contained, compact, readable in a constrained iframe" in prompt
 
 
@@ -198,7 +208,8 @@ def test_build_system_prompt_rejects_yellowed_report_palettes():
     assert "Avoid yellowed report palettes" in prompt
     assert "aged paper, parchment, sepia" in prompt
     assert "cream/beige/yellowed document" in prompt
-    assert "any appropriate non-yellowed palette" in prompt
+    assert "appropriate non-yellowed palette" in prompt
+    assert "all-white/all-gray surfaces" in prompt
 
 
 def test_build_system_prompt_includes_default_report_chart_palette():

@@ -1543,6 +1543,70 @@ describe("ArtifactPanel", () => {
     expect(progressText).not.toContain("첫 streaming 이벤트 대기");
   });
 
+  it("keeps the AI edit progress panel open on a transient event connection error", async () => {
+    let sendBackendEvent: ((event: BackendEvent) => void) | null = null;
+    function BackendEventProbe() {
+      const { dispatch } = useAppState();
+      sendBackendEvent = (event: BackendEvent) => dispatch({ type: "backend_event", event, sessionId: "session-a" });
+      return null;
+    }
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+          },
+        }}
+      >
+        <ArtifactPanel />
+        <BackendEventProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          type: artifactAiSelectionMessage,
+          path: "outputs/report.html",
+          selection: {
+            text: "Old headline",
+            html: "<h1>Old headline</h1>",
+            start: 0,
+            end: 12,
+            before: "",
+            after: "Old body",
+            instruction: "Make it clearer",
+          },
+        },
+      }));
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
+    await waitFor(() => expect(screen.getByText("AI 자동편집 진행 중: outputs/report_v1.html")).toBeTruthy());
+
+    act(() => {
+      sendBackendEvent?.({ type: "error", message: "이벤트 연결 오류" } as BackendEvent);
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    expect(readArtifact).not.toHaveBeenCalledWith(expect.objectContaining({
+      path: "outputs/report_v1.html",
+    }));
+    expect(screen.getByRole("button", { name: "report.html 파일명 수정" })).toBeTruthy();
+    expect(document.querySelector(".artifact-ai-progress")).toBeTruthy();
+    expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("report_v1.html");
+  });
+
   it("does not show two elapsed timers for AI edit waiting progress", async () => {
     const user = userEvent.setup();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000);

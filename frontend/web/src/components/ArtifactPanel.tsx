@@ -340,6 +340,7 @@ export function ArtifactPanel() {
   const titleRenameCommittingRef = useRef(false);
   const versionMenuRef = useRef<HTMLDivElement | null>(null);
   const lastArtifactRefreshKeyRef = useRef(state.artifactRefreshKey);
+  const aiEditCompletionRefreshKeyRef = useRef<number | null>(null);
   const openArtifactRequestRef = useRef(0);
   const projectFilePinnedStorage = useMemo(
     () => projectFilePinnedStorageKey(state.workspacePath, state.workspaceName),
@@ -423,6 +424,7 @@ export function ArtifactPanel() {
     setAiEditStatus("");
     setAiEditProgressStartedAt(null);
     setAiEditOverlayCollapsed(false);
+    aiEditCompletionRefreshKeyRef.current = null;
     setVersionMenuOpen(false);
   }, [aiEditTargetPath, state.activeArtifact?.path]);
 
@@ -652,7 +654,12 @@ export function ArtifactPanel() {
   }
 
   useEffect(() => {
-    if (!aiEditTargetPath || state.busy) {
+    const completionRefreshKey = aiEditCompletionRefreshKeyRef.current;
+    if (
+      !aiEditTargetPath
+      || state.busy
+      || (completionRefreshKey !== null && state.artifactRefreshKey <= completionRefreshKey)
+    ) {
       return;
     }
     const fallbackArtifact = state.activeArtifact
@@ -667,11 +674,12 @@ export function ArtifactPanel() {
       return;
     }
     const timer = window.setTimeout(() => {
+      aiEditCompletionRefreshKeyRef.current = null;
       setAiEditTargetPath("");
       void openArtifact(targetArtifact);
     }, 120);
     return () => window.clearTimeout(timer);
-  }, [aiEditTargetPath, state.activeArtifact, state.artifacts, state.busy]);
+  }, [aiEditTargetPath, state.activeArtifact, state.artifacts, state.artifactRefreshKey, state.busy]);
 
   if (!state.artifactPanelOpen) {
     return null;
@@ -884,6 +892,7 @@ export function ArtifactPanel() {
     setAiEditProgressStartedAt(Date.now());
     setAiEditProgressNow(Date.now());
     setAiEditStatus("AI 자동편집 요청을 중앙 채팅으로 전달 중입니다.");
+    aiEditCompletionRefreshKeyRef.current = state.artifactRefreshKey;
     dispatch({ type: "clear_workflow" });
     try {
       const response = await aiEditArtifact({
@@ -911,6 +920,7 @@ export function ArtifactPanel() {
       dispatch({ type: "set_busy", value: true });
       setAiEditStatus(`AI 자동편집 진행 중: ${response.targetPath}`);
     } catch (error) {
+      aiEditCompletionRefreshKeyRef.current = null;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },

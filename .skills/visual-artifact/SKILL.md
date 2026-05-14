@@ -1,6 +1,6 @@
 ---
 name: visual-artifact
-description: Create polished single-file HTML visual artifacts such as dense reports, dashboards, infographics, one-pagers, slide-like webpages, visual summaries, comparison pages, timelines, and interactive previews. Use when the user asks for a beautiful/dynamic webpage-like output, HTML preview, visual report, presentation-style page, screenshot-ready artifact, PDF-ready page, business/research summary, or any reusable visual deliverable intended to be opened in a browser or captured into PPT/PDF. Preserve the requested artifact type; report-style HTML should not default to a homepage or landing page layout.
+description: Create polished single-file HTML visual artifacts such as visually rich reports, dashboards, infographics, one-pagers, slide-like webpages, visual summaries, comparison pages, timelines, and interactive previews. Use when the user asks for a beautiful/dynamic webpage-like output, HTML preview, visual report, presentation-style page, screenshot-ready artifact, PDF-ready page, business/research summary, or any reusable visual deliverable intended to be opened in a browser or captured into PPT/PDF. Preserve the requested artifact type; ordinary report-style HTML should remain a web-native scrolling report unless the user explicitly asks for a fixed page, A4, or slide format.
 ---
 
 # Visual Artifact
@@ -11,7 +11,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 
 - Prefer one self-contained `.html` file with inline CSS and JS.
 - When the user asks for research, investigation, comparison, analysis, source review, or a similar information-gathering task followed by "write/create a report" and does not specify a format, treat the deliverable as an HTML web report. Explicit format requests such as PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, or slides override this default.
-- If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use this scale: `5000~8000` tokens = short report, `10000` = medium report, `15000~20000` = long report, and `20000+` = very long deep report. For `30000 token level` or `30000토큰 수준`, target at least roughly `25000` estimated tokens of substantive report content unless a hard model/tool limit prevents it; estimate the final artifact size and expand before finishing if it is materially under the requested tier.
+- If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use the target to plan content depth, but do not crowd the page with walls of prose, cramped tables, or repetitive cards just to hit a length. Preserve visual rhythm with section summaries, charts, callouts, and source notes.
 - Use a short purpose-specific kebab-case filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it.
 - Keep dependencies minimal. Use no CDN when CSS/SVG is enough; use CDN libraries when they materially improve the result.
 - Make the artifact readable in a constrained iframe and in a normal browser window.
@@ -19,8 +19,8 @@ Create browser-native visual deliverables that are polished enough to screenshot
 
 ## Decide the artifact type
 
-- **Executive/report page**: structured findings, tables, charts, recommendations, sources.
-- **A4 landscape page report**: if the user asks for A4 landscape, A4 가로, 가로형 A4, printable horizontal PDF, or a fixed-page report, use `html-a4-landscape-report` instead of the general scrolling report workflow.
+- **Executive/report page**: structured findings, tables, charts, recommendations, sources in a polished scrolling web report.
+- **A4 landscape page report**: only when the user explicitly asks for A4 landscape, A4 가로, 가로형 A4, printable horizontal PDF, or a fixed-page report, use `html-a4-landscape-report` instead of the general scrolling report workflow.
 - **Dashboard**: KPI cards, charts, filters/toggles if useful, data table.
 - **Infographic/one-pager**: strong story flow, big numbers, compact sections, print/capture-ready layout.
 - **Slide-like HTML**: 16:9 sections, keyboard or scroll navigation only if useful.
@@ -33,7 +33,9 @@ quarterly trends, sources, or a report:
 
 - Make it read like a report, not like a company homepage.
 - Start with report metadata and an executive summary, not a marketing hero with CTA buttons.
-- Prefer dense section bands, tables, footnotes, callouts, and charts over oversized feature cards.
+- Do not ask the user to choose a layout, style, or report archetype when they already asked for a report. Infer the best direction from the subject, audience, source material, and requested format, then proceed.
+- For ordinary vertical HTML reports, use a web-native report composition: masthead, executive summary, strong section rhythm, visual anchors, charts, callouts, tables, footnotes, and a clear closing. It should feel designed, not like a plain document exported to HTML.
+- Prefer well-composed section bands, tables, footnotes, callouts, and charts over oversized feature cards.
 - Use brand/style references as surface treatment only: typography, spacing, material, color, chart
   finish, and tone.
 - Avoid nav menus, sign-up buttons, pricing blocks, testimonials, "features" funnels, and generic
@@ -41,13 +43,22 @@ quarterly trends, sources, or a report:
 - Put exact numbers in tables and chart labels; use charts for trend cognition.
 - For financial/company reports, include a compact source note area and make uncertainty explicit.
 
+## Visual direction
+
+- Choose a visual concept before writing CSS. Keep it business-appropriate, but vary the format to fit the subject instead of reusing the same card grid every time.
+- Choose the archetype yourself. Do not pause to offer these as options unless the user explicitly asks for alternatives.
+- Useful report archetypes include: editorial briefing, analytical dashboard-report, consulting memo, intelligence dossier, market map, timeline review, operating review, and executive decision note.
+- Let the archetype change the composition: a market map may use broad comparison bands and quadrant visuals; a timeline review may use a strong chronology spine; an executive decision note may use a tight recommendation stack; an intelligence dossier may use compact evidence panels and source trails.
+- Avoid defaulting to the same hero/KPI-card/three-section/table layout unless it is clearly the best fit for the content.
+
 ## Design bar
 
 - Aim for “usable in a real meeting,” not merely “AI-generated.”
-- Use restrained business styling: clear type scale, tight spacing, meaningful hierarchy, limited palette.
+- Use restrained but visually intentional business styling: clear type scale, crisp spacing, meaningful hierarchy, a subject-appropriate palette, and enough contrast between sections to guide the eye.
+- Restrained does not mean all-white, gray, or template-like. Give each report a coherent visual system with a few distinctive accents, chart colors, rules, tags, or background bands that match the topic.
 - Avoid oversized radii, pill-heavy cards, excessive gradients, and bloated padding unless requested.
 - Prefer 4–8px radius for panels/cards/buttons.
-- Avoid tinting large card, quadrant, table-cell, or section surfaces with different pastel semantic colors just to distinguish categories. This often looks childish, noisy, or like a heatmap without data. For business reports, keep most surfaces white/neutral and express category meaning with restrained accents: thin left/top borders, small tags, icons, headings, chart marks, or subtle section rules. If colored surfaces are necessary, pair a very pale fill with a stronger border or top/left accent so the fill stays quiet and the semantic color is carried by the edge, not the whole surface. Use large colored fills only when the color encodes real quantitative intensity, status severity, selected state, or a deliberately infographic-style artifact.
+- Avoid arbitrary pastel flooding across large cards, quadrants, table cells, or sections just to label categories. This is a caution against noisy decoration, not a ban on color. For business reports, use color with intent: section bands, pale fills with crisp accents, chart marks, left/top borders, small tags, icons, or callouts. Use stronger color when it supports quantitative intensity, status severity, selected state, brand tone, or a deliberately infographic-style artifact.
 - Use exact tables for exact values; use charts for trends, comparisons, proportions, timelines, or distributions.
 - For report-like artifacts, actively consider restrained semantic icons for section markers, KPIs, risks, recommendations, and action items when they improve scanning. Keep icons small, consistent, and businesslike; avoid childish, toy-like, emoji-heavy, or purely decorative icon use. Do not force icons into every card or paragraph.
 - Prefer this default color palette for charts, categorical accents, heat scales, and report highlights unless the user provides a brand palette or the artifact clearly needs another scheme: `#3288bd`, `#66c2a5`, `#e6f598`, `#d53e4f`, `#9e0142`, `#f46d43`, `#fdae61`, `#fee08b`, `#abdda4`, `#5e4fa2`. Use a few colors intentionally; avoid turning every section into a rainbow.
@@ -66,7 +77,7 @@ quarterly trends, sources, or a report:
 
 ## Workflow
 
-1. Infer audience, output type, size target, and reuse goal. Ask only if ambiguity risks the wrong artifact.
+1. Infer audience, output type, size target, reuse goal, and visual archetype. For report requests, choose the visual archetype yourself and proceed; ask only when missing information prevents the factual work or the requested output format is genuinely unclear.
 2. Structure the content before styling: sections, data, charts, interactions, export needs.
 3. Build the single HTML artifact with responsive CSS and print/capture considerations.
 4. Include `@media print` for PDF-friendly output when the artifact is report-like or slide-like.

@@ -1306,7 +1306,10 @@ class ReactBackendHost:
                     self._bundle.engine.tool_metadata.pop("conversation_state", None)
                 else:
                     self._bundle.engine.tool_metadata["conversation_state"] = original_conversation_state
-            self._bundle.engine.tool_metadata["workflow_duration_seconds"] = max(1, round(time.monotonic() - started_at))
+            workflow_duration_seconds = max(1, round(time.monotonic() - started_at))
+            workflow_duration_metadata = {"workflow_duration_seconds": workflow_duration_seconds}
+            self._bundle.engine.tool_metadata["workflow_duration_seconds"] = workflow_duration_seconds
+            self._record_history_event(BackendEvent(type="line_complete", compact_metadata=workflow_duration_metadata))
             if first_token != "/clear" and not quiet:
                 self._save_current_session_snapshot()
             await self._emit(self._status_snapshot())
@@ -1330,9 +1333,7 @@ class ReactBackendHost:
                 BackendEvent(
                     type="line_complete",
                     quiet=quiet,
-                    compact_metadata={
-                        "workflow_duration_seconds": self._bundle.engine.tool_metadata.get("workflow_duration_seconds")
-                    },
+                    compact_metadata=workflow_duration_metadata,
                 )
             )
             return should_continue
@@ -2446,6 +2447,21 @@ class ReactBackendHost:
                         "has_tool_uses": bool(event.has_tool_uses),
                     }
                 )
+            return
+
+        if event.type == "line_complete":
+            metadata = event.compact_metadata if isinstance(event.compact_metadata, dict) else {}
+            try:
+                duration_seconds = round(float(metadata.get("workflow_duration_seconds") or 0))
+            except (TypeError, ValueError):
+                duration_seconds = 0
+            if duration_seconds <= 0:
+                return
+            payload = {"type": "line_complete", "workflow_duration_seconds": duration_seconds}
+            if self._history_events and self._history_events[-1].get("type") == "line_complete":
+                self._history_events[-1] = payload
+            else:
+                self._append_history_event(payload)
             return
 
         if event.type in {"tool_input_delta", "tool_started", "tool_progress", "tool_completed"}:

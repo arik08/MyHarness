@@ -1024,6 +1024,20 @@ describe("appReducer", () => {
     expect(dismissed.todoCollapsed).toBe(false);
   });
 
+  it("collapses the todo checklist when the final assistant answer completes", () => {
+    const withTodo = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "todo_update", todo_markdown: "- [ ] 조사\n- [ ] 답변" },
+    });
+    const completed = appReducer(withTodo, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "완료했습니다.", has_tool_uses: false },
+    });
+
+    expect(withTodo.todoCollapsed).toBe(false);
+    expect(completed.todoCollapsed).toBe(true);
+  });
+
   it("applies generated session titles to the active chat and history", () => {
     const base = {
       ...initialAppState,
@@ -1130,6 +1144,47 @@ describe("appReducer", () => {
     expect(restored.workflowEvents).toHaveLength(0);
     expect(restored.workflowAnchorMessageId).toBeNull();
     expect(Object.values(restored.workflowEventsByMessageId).flat()).toHaveLength(0);
+  });
+
+  it("restores saved duration for completed simple history turns", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "간단히 답해줘" },
+          { type: "assistant", text: "답변입니다." },
+          { type: "line_complete", workflow_duration_seconds: 12 },
+        ],
+      },
+    });
+
+    const userMessageId = restored.messages[0].id;
+
+    expect(restored.workflowAnchorMessageId).toBe(userMessageId);
+    expect(restored.workflowDurationSeconds).toBe(12);
+    expect(restored.workflowDurationSecondsByMessageId[userMessageId]).toBe(12);
+    expect(restored.workflowEvents.some((event) => event.role === "final" && event.status === "done")).toBe(true);
+  });
+
+  it("restores legacy compact duration metadata for the latest completed history turn", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        compact_metadata: { workflow_duration_seconds: 9 },
+        history_events: [
+          { type: "user", text: "이전 저장 질문" },
+          { type: "assistant", text: "이전 저장 답변" },
+        ],
+      },
+    });
+
+    const userMessageId = restored.messages[0].id;
+
+    expect(restored.workflowAnchorMessageId).toBe(userMessageId);
+    expect(restored.workflowDurationSeconds).toBe(9);
+    expect(restored.workflowDurationSecondsByMessageId[userMessageId]).toBe(9);
   });
 
   it("does not restore workflow progress for a history turn with only a user message", () => {

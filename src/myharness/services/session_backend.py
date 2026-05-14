@@ -34,8 +34,8 @@ class SessionBackend(Protocol):
     def load_latest(self, cwd: str | Path) -> dict | None:
         """Load the latest session snapshot."""
 
-    def list_snapshots(self, cwd: str | Path, limit: int | None = 20) -> list[dict]:
-        """List recent snapshots."""
+    def list_snapshots(self, cwd: str | Path, limit: int | None = None) -> list[dict]:
+        """List saved snapshots."""
 
     def load_by_id(self, cwd: str | Path, session_id: str) -> dict | None:
         """Load a snapshot by ID."""
@@ -85,7 +85,7 @@ class MyHarnessSessionBackend:
     def load_latest(self, cwd: str | Path) -> dict | None:
         return session_storage.load_session_snapshot(cwd)
 
-    def list_snapshots(self, cwd: str | Path, limit: int | None = 20) -> list[dict]:
+    def list_snapshots(self, cwd: str | Path, limit: int | None = None) -> list[dict]:
         return session_storage.list_session_snapshots(cwd, limit=limit)
 
     def load_by_id(self, cwd: str | Path, session_id: str) -> dict | None:

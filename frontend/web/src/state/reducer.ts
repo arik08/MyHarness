@@ -1342,6 +1342,7 @@ function reduceHistoryRestoreEvent(
   let restoredSwarmTeammates = state.swarmTeammates;
   let restoredSwarmNotifications = state.swarmNotifications;
   let workflowInputBuffers: Record<string, string> = {};
+  let currentTurnHasAssistant = false;
   const historyEvents = (Array.isArray(historyEvent.history_events) ? historyEvent.history_events : [])
     .map((item) => (item && typeof item === "object" ? item as Record<string, unknown> : {}));
   for (const [index, record] of historyEvents.entries()) {
@@ -1364,12 +1365,23 @@ function reduceHistoryRestoreEvent(
       workflowAnchorMessageId = message.id;
       workflowEvents = initialWorkflowEvents();
       workflowInputBuffers = {};
+      currentTurnHasAssistant = false;
       continue;
     }
     if (type === "assistant") {
       const text = String(record.text || "");
       if (text.trim()) {
         messages.push(createMessage({ role: "assistant", text, isComplete: isFinalRestoredAssistantAnswer(historyEvents, index) }));
+        currentTurnHasAssistant = true;
+      }
+      continue;
+    }
+    if (type === "line_complete") {
+      const workflowDurationSeconds = workflowDurationFromMetadata(record);
+      if (workflowDurationSeconds !== null && workflowAnchorMessageId && currentTurnHasAssistant) {
+        workflowEvents = finishFinalAnswerStep(workflowEvents.length ? workflowEvents : initialWorkflowEvents());
+        workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
+        workflowDurationSecondsByMessageId[workflowAnchorMessageId] = workflowDurationSeconds;
       }
       continue;
     }
@@ -1499,6 +1511,13 @@ function reduceHistoryRestoreEvent(
     workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
     const workflowDurationSeconds = workflowDurationFromMetadata(historyEvent.compact_metadata);
     if (workflowDurationSeconds) {
+      workflowDurationSecondsByMessageId[workflowAnchorMessageId] = workflowDurationSeconds;
+    }
+  } else if (workflowAnchorMessageId && currentTurnHasAssistant) {
+    const workflowDurationSeconds = workflowDurationFromMetadata(historyEvent.compact_metadata);
+    if (workflowDurationSeconds !== null) {
+      workflowEvents = finishFinalAnswerStep(workflowEvents.length ? workflowEvents : initialWorkflowEvents());
+      workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
       workflowDurationSecondsByMessageId[workflowAnchorMessageId] = workflowDurationSeconds;
     }
   }
@@ -1930,6 +1949,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       status: event.has_tool_uses === true ? "processing" : "ready",
       statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
       artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
+      todoCollapsed: isFinalAnswer && state.todoMarkdown.trim() ? true : state.todoCollapsed,
     };
   }
 

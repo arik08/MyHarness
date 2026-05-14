@@ -19,6 +19,7 @@ const themeOptions: Array<{ id: ThemeId; label: string }> = [
 ];
 
 const historyTitleMaxLength = 26;
+const historyTitleCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
 
 export function Sidebar() {
   const { state, dispatch } = useAppState();
@@ -517,11 +518,12 @@ export function Sidebar() {
   const currentTheme = themeOptions.find((item) => item.id === state.themeId) || themeOptions[0];
   const sidebarLabel = state.sidebarCollapsed ? "사이드바 열기" : "사이드바 닫기";
   const activeHistoryValue = state.activeHistoryId || state.sessionId || "";
+  const activeHistoryDeleted = Boolean(activeHistoryValue && state.deletedHistoryIds.includes(activeHistoryValue));
   const visibleHistory = state.history.filter((item) => !isCurrentLiveHistoryItem(item, state.sessionId));
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
   const activeHistoryDescription = currentConversationHistoryTitle(state);
   const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
-  const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !hasActiveHistoryItem && (state.busy || activeHistoryDescription)
+  const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !activeHistoryDeleted && !hasActiveHistoryItem && (state.busy || activeHistoryDescription)
     ? [
         {
           value: activeHistoryValue,
@@ -677,7 +679,7 @@ export function Sidebar() {
           {state.historyLoading && !renderedHistory.length ? (
             <p className="empty">대화 내역을 불러오는 중...</p>
           ) : sortedRenderedHistory.length ? (
-            sortedRenderedHistory.slice(0, 20).map((item) => {
+            sortedRenderedHistory.map((item) => {
               const label = item.description || item.label;
               const displayLabel = formatHistoryTitle(label);
               const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
@@ -854,8 +856,26 @@ function currentConversationHistoryTitle(state: ReturnType<typeof useAppState>["
   ))?.text.replace(/\s+/g, " ").trim() || "";
 }
 
+function historyTitleForSort(item: HistoryItem) {
+  return (item.description || item.label || item.value || "").trim();
+}
+
+function compareHistoryTitle(left: HistoryItem, right: HistoryItem) {
+  return (
+    historyTitleCollator.compare(historyTitleForSort(left), historyTitleForSort(right))
+    || left.value.localeCompare(right.value, "ko")
+  );
+}
+
 function sortPinnedHistory(items: HistoryItem[]) {
-  return [...items].sort((left, right) => Number(right.pinned === true) - Number(left.pinned === true));
+  return [...items].sort((left, right) => {
+    const byPinned = Number(right.pinned === true) - Number(left.pinned === true);
+    if (byPinned) return byPinned;
+    if (left.pinned === true && right.pinned === true) {
+      return compareHistoryTitle(left, right);
+    }
+    return 0;
+  });
 }
 
 function RuntimePicker({
