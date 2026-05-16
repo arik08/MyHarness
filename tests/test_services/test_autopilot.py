@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
@@ -36,6 +37,39 @@ def test_autopilot_enqueue_creates_layout_and_context(tmp_path: Path) -> None:
     assert "Add repo autopilot queue" in context
 
 
+def test_autopilot_loads_legacy_ohmo_source_as_manual_idea(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = RepoAutopilotStore(repo)
+    payload = {
+        "version": 1,
+        "updated_at": 1,
+        "cards": [
+            {
+                "id": "ap-legacy",
+                "fingerprint": "legacy",
+                "title": "Legacy task",
+                "body": "",
+                "source_kind": "ohmo_request",
+                "source_ref": "",
+                "status": "queued",
+                "score": 0,
+                "score_reasons": [],
+                "labels": [],
+                "metadata": {},
+                "created_at": 1,
+                "updated_at": 1,
+            }
+        ],
+    }
+    store.registry_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    card = store.get_card("ap-legacy")
+
+    assert card is not None
+    assert card.source_kind == "manual_idea"
+
+
 def test_autopilot_pick_next_prefers_highest_score(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -46,7 +80,7 @@ def test_autopilot_pick_next_prefers_highest_score(tmp_path: Path) -> None:
         body="candidate",
     )
     store.enqueue_card(
-        source_kind="ohmo_request",
+        source_kind="manual_idea",
         title="Fix production issue",
         body="urgent bug in channel bridge",
     )
@@ -54,7 +88,7 @@ def test_autopilot_pick_next_prefers_highest_score(tmp_path: Path) -> None:
     next_card = store.pick_next_card()
 
     assert next_card is not None
-    assert next_card.source_kind == "ohmo_request"
+    assert next_card.source_kind == "manual_idea"
 
 
 def test_autopilot_scan_claude_code_candidates(tmp_path: Path) -> None:

@@ -8118,12 +8118,134 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   font-weight: 760;
 }
 
+.user-stats-daily-chart {
+  position: relative;
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  height: 166px;
+  overflow-x: auto;
+  padding: 16px 16px 12px;
+  background:
+    linear-gradient(to top, color-mix(in srgb, var(--line) 62%, transparent) 1px, transparent 1px) 0 24px / 100% 32px,
+    color-mix(in srgb, var(--panel-raised) 70%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.user-stats-daily-chart::after {
+  position: absolute;
+  right: 16px;
+  bottom: 30px;
+  left: 16px;
+  height: 1px;
+  background: color-mix(in srgb, var(--ink) 22%, var(--line));
+  content: "";
+}
+
+.user-stats-daily-bar,
+.modal-card .user-stats-daily-chart .user-stats-daily-bar {
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex: 1 0 38px;
+  grid-template-rows: 18px 104px 18px;
+  gap: 4px;
+  justify-items: center;
+  max-width: 54px;
+  min-width: 38px;
+  min-height: 0;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+.user-stats-daily-bar:hover,
+.user-stats-daily-bar:focus-visible {
+  color: var(--ink);
+}
+
+.user-stats-daily-bar.is-selected {
+  color: var(--ink);
+}
+
+.user-stats-daily-count,
+.user-stats-daily-date {
+  max-width: 100%;
+  overflow: visible;
+  font-size: 11px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.user-stats-daily-count {
+  color: color-mix(in srgb, var(--muted) 78%, var(--ink));
+}
+
+.user-stats-daily-column {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  width: 100%;
+  height: 104px;
+}
+
+.user-stats-daily-fill {
+  width: min(24px, 64%);
+  min-height: 6px;
+  background: color-mix(in srgb, var(--accent) 68%, var(--muted));
+  border-radius: 4px 4px 2px 2px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 24%, transparent);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.user-stats-daily-bar:hover .user-stats-daily-fill,
+.user-stats-daily-bar:focus-visible .user-stats-daily-fill {
+  background: color-mix(in srgb, var(--accent) 78%, var(--ink));
+  transform: translateY(-1px);
+}
+
+.user-stats-daily-bar.is-selected .user-stats-daily-fill {
+  background: color-mix(in srgb, var(--accent) 82%, var(--ink));
+}
+
+.user-stats-daily-bar.is-selected .user-stats-daily-date {
+  color: var(--ink);
+  font-weight: 760;
+}
+
+.user-stats-day-detail {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.user-stats-day-detail h3 {
+  margin: 0 0 10px;
+}
+
 .user-stats-workspace-list {
   display: grid;
   gap: 8px;
   max-height: min(220px, 30dvh);
   overflow: auto;
   padding-right: 2px;
+}
+
+.user-stats-workspace-list.is-empty {
+  max-height: none;
+  overflow: visible;
+}
+
+.user-stats-workspace-list.is-empty .settings-helper {
+  margin: 0;
+  padding: 8px 0 2px;
 }
 
 .user-stats-workspace-row {

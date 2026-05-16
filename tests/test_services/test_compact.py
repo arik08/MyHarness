@@ -287,7 +287,7 @@ async def test_compact_conversation_runs_hooks_and_preserves_carryover_state(tmp
                     "Look into issue #98",
                     "Confirm issue #98 and fix the logger formatting bug",
                 ],
-                "active_artifacts": [str(image_path), "src/myharness/channels/impl/matrix.py:398"],
+                "active_artifacts": [str(image_path), "src/myharness/ui/runtime.py:398"],
                 "verified_state": ["Issue #98 is about logger placeholder formatting"],
                 "next_step": "Patch the logger formatting and rerun focused tests",
             },

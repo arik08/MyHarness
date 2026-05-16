@@ -31,7 +31,6 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = normalize(join(root, "../.."));
 const webRoot = normalize(root);
 const webDistRoot = normalize(join(root, "dist"));
-const assetsRoot = normalize(join(repoRoot, "assets"));
 const vendorRoot = normalize(join(root, "node_modules"));
 const playgroundRoot = normalize(join(repoRoot, "Playground"));
 const appConfigRoot = normalize(join(repoRoot, ".myharness"));
@@ -395,8 +394,6 @@ function resolvePath(url) {
             ? join(vendorRoot, "katex/dist/katex.min.css")
             : pathname.startsWith("/vendor/katex/fonts/")
               ? join(vendorRoot, "katex/dist/fonts", pathname.replace("/vendor/katex/fonts/", ""))
-      : relativePath.startsWith("assets/")
-        ? join(repoRoot, relativePath)
         : join(root, relativePath);
   const normalized = normalize(filePath);
 
@@ -405,7 +402,6 @@ function resolvePath(url) {
     !normalized.startsWith(webRoot) &&
     normalized !== webDistRoot &&
     !normalized.startsWith(webDistRoot) &&
-    !normalized.startsWith(assetsRoot) &&
     !normalized.startsWith(vendorRoot)
   ) {
     return null;
@@ -2822,6 +2818,7 @@ function createEmptyUserStats(clientId = "", clientAddress = "") {
     latestConversationAt: null,
     ipBreakdown: [],
     dailyBreakdown: [],
+    dailyIpBreakdown: [],
     currentWorkspaceName: "",
     currentWorkspaceConversationCount: 0,
     workspaceBreakdown: [],
@@ -2882,14 +2879,27 @@ async function listWorkspaceSessionStatFiles(workspace) {
 function appendWebUsageStats(stats, webUsage, clientAddress = "") {
   const today = localDateKey();
   const dailyMap = new Map();
+  const dailyIpMap = new Map();
   const ipItems = Object.values(webUsage.byIp || {}).map((entry) => {
     const daily = entry?.daily && typeof entry.daily === "object" ? entry.daily : {};
     const todayStats = daily[today] && typeof daily[today] === "object" ? daily[today] : {};
     for (const [date, day] of Object.entries(daily)) {
+      const visits = Number(day?.visits || 0);
       const current = dailyMap.get(date) || { date, visitCount: 0, activeIpCount: 0 };
-      current.visitCount += Number(day?.visits || 0);
-      current.activeIpCount += Number(day?.visits || 0) > 0 ? 1 : 0;
+      current.visitCount += visits;
+      current.activeIpCount += visits > 0 ? 1 : 0;
       dailyMap.set(date, current);
+      if (visits > 0) {
+        const ip = String(entry?.ip || "");
+        const currentIps = dailyIpMap.get(date) || [];
+        currentIps.push({
+          ip,
+          visitCount: visits,
+          firstSeenAt: Number(day?.firstSeenAt || 0) || null,
+          lastSeenAt: Number(day?.lastSeenAt || 0) || null,
+        });
+        dailyIpMap.set(date, currentIps);
+      }
     }
     return {
       ip: String(entry?.ip || ""),
@@ -2915,6 +2925,13 @@ function appendWebUsageStats(stats, webUsage, clientAddress = "") {
   stats.dailyBreakdown = [...dailyMap.values()]
     .sort((left, right) => right.date.localeCompare(left.date))
     .slice(0, 14);
+  stats.dailyIpBreakdown = stats.dailyBreakdown.map((entry) => ({
+    date: entry.date,
+    ipBreakdown: (dailyIpMap.get(entry.date) || [])
+      .filter((item) => item.ip)
+      .sort((left, right) => right.visitCount - left.visitCount || left.ip.localeCompare(right.ip))
+      .slice(0, 50),
+  }));
 
   const currentIpStats = stats.ipBreakdown.find((entry) => entry.ip === clientAddress);
   stats.currentIpVisitCount = currentIpStats?.visitCount || 0;

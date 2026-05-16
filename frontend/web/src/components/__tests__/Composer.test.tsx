@@ -813,6 +813,26 @@ describe("Composer", () => {
     expect(screen.getByText("(완료) 조사")).toBeTruthy();
   });
 
+  it("hides a checklist from a different chat session", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-current",
+          activeHistoryId: "session-old",
+          todoMarkdown: "- [x] 이전 세션 작업\n- [x] 완료",
+          todoSessionId: "session-current",
+          todoCollapsed: false,
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    expect(screen.queryByText("작업 목록")).toBeNull();
+    expect(screen.queryByText("(완료) 이전 세션 작업")).toBeNull();
+  });
+
   it("renders backend questions inline directly above the composer input", async () => {
     const user = userEvent.setup();
     render(

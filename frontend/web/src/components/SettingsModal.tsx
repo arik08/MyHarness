@@ -435,12 +435,29 @@ function UserStatsSettings({ onBack }: { onBack: () => void }) {
   const { state } = useAppState();
   const [stats, setStats] = useState<UserStats | null>(null);
   const [error, setError] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
 
   useEffect(() => {
     void readUserStats({ clientId: state.clientId, workspaceName: state.workspaceName, workspacePath: state.workspacePath })
       .then(setStats)
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, [state.clientId, state.workspaceName, state.workspacePath]);
+
+  useEffect(() => {
+    const dates = (stats?.dailyBreakdown || []).map((item) => item.date || "").filter(Boolean);
+    if (!dates.length) {
+      setSelectedDate("");
+      return;
+    }
+    if (!selectedDate || !dates.includes(selectedDate)) {
+      setSelectedDate(dates[0]);
+    }
+  }, [selectedDate, stats]);
+
+  const dailyBreakdown = stats?.dailyBreakdown || [];
+  const chartDailyBreakdown = dailyBreakdown.slice(0, 14).reverse();
+  const maxDailyActiveIpCount = Math.max(1, ...dailyBreakdown.map((item) => Number(item.activeIpCount || 0)));
+  const selectedDailyIpBreakdown = (stats?.dailyIpBreakdown || []).find((item) => item.date === selectedDate)?.ipBreakdown || [];
 
   return (
     <>
@@ -460,29 +477,43 @@ function UserStatsSettings({ onBack }: { onBack: () => void }) {
             <StatsMetric label="현재 프로젝트 대화" value={formatNumber(stats.currentWorkspaceConversationCount)} helper={stats.currentWorkspaceName || state.workspaceName || "현재 프로젝트"} />
           </div>
           <div className="user-stats-breakdown">
-            <h3>IP별 접속</h3>
-            <div className="user-stats-workspace-list">
-              {(stats.ipBreakdown || []).slice(0, 12).map((item) => (
-                <div className="user-stats-workspace-row" key={`${item.ip}-${item.lastSeenAt}`}>
-                  <strong>{item.ip || "-"}</strong>
-                  <small>{`누적 ${formatNumber(item.visitCount)}회 / 오늘 ${formatNumber(item.todayVisitCount)}회 / 활성 세션 ${formatNumber(item.activeSessionCount)}개`}</small>
-                  <span>{formatStatsDate(item.lastSeenAt)}</span>
-                </div>
-              ))}
-              {!(stats.ipBreakdown || []).length ? <p className="settings-helper">아직 기록된 접속이 없습니다.</p> : null}
-            </div>
-          </div>
-          <div className="user-stats-breakdown">
             <h3>일자별 DAU</h3>
-            <div className="user-stats-workspace-list">
-              {(stats.dailyBreakdown || []).slice(0, 14).map((item) => (
-                <div className="user-stats-workspace-row" key={item.date || "date"}>
-                  <strong>{item.date || "-"}</strong>
-                  <small>{`활성 IP ${formatNumber(item.activeIpCount)}개`}</small>
-                  <span>{`${formatNumber(item.visitCount)}회 접속`}</span>
-                </div>
-              ))}
-              {!(stats.dailyBreakdown || []).length ? <p className="settings-helper">아직 일자별 기록이 없습니다.</p> : null}
+            <div className="user-stats-daily-chart" role="list" aria-label="날짜별 DAU">
+              {chartDailyBreakdown.map((item) => {
+                const date = item.date || "";
+                const activeIpCount = Number(item.activeIpCount || 0);
+                const barHeight = Math.max(6, Math.round((activeIpCount / maxDailyActiveIpCount) * 100));
+                return (
+                  <button
+                    type="button"
+                    className={`user-stats-daily-bar${date === selectedDate ? " is-selected" : ""}`}
+                    key={date || "date"}
+                    onClick={() => setSelectedDate(date)}
+                    aria-pressed={date === selectedDate}
+                    role="listitem"
+                  >
+                    <span className="user-stats-daily-count">{formatNumber(activeIpCount)}</span>
+                    <span className="user-stats-daily-column">
+                      <span className="user-stats-daily-fill" style={{ height: `${barHeight}%` }} />
+                    </span>
+                    <span className="user-stats-daily-date">{date.slice(5).replace("-", ".") || "-"}</span>
+                  </button>
+                );
+              })}
+              {!dailyBreakdown.length ? <p className="settings-helper">아직 일자별 기록이 없습니다.</p> : null}
+            </div>
+            <div className="user-stats-day-detail">
+              <h3>{selectedDate ? `${selectedDate} IP별 접속횟수` : "날짜를 선택하세요"}</h3>
+              <div className={`user-stats-workspace-list${selectedDailyIpBreakdown.length ? "" : " is-empty"}`}>
+                {selectedDailyIpBreakdown.map((item) => (
+                  <div className="user-stats-workspace-row" key={`${selectedDate}-${item.ip}`}>
+                    <strong>{item.ip || "-"}</strong>
+                    <small>{`${formatNumber(item.visitCount)}회 접속`}</small>
+                    <span>{formatStatsDate(item.lastSeenAt)}</span>
+                  </div>
+                ))}
+                {selectedDate && !selectedDailyIpBreakdown.length ? <p className="settings-helper">선택한 날짜의 IP별 접속 기록이 없습니다.</p> : null}
+              </div>
             </div>
           </div>
         </>

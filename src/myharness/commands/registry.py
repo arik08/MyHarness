@@ -479,14 +479,13 @@ def _create_autopilot_commands() -> list[SlashCommand]:
                 return CommandResult(
                     message=(
                         "사용법: /autopilot add "
-                        "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
+                        "[idea|issue|pr|claude] TITLE :: DETAILS"
                     )
                 )
             source_kind = "manual_idea"
             source_map = {
                 "idea": "manual_idea",
                 "manual": "manual_idea",
-                "ohmo": "ohmo_request",
                 "issue": "github_issue",
                 "pr": "github_pr",
                 "claude": "claude_code_candidate",
@@ -502,7 +501,7 @@ def _create_autopilot_commands() -> list[SlashCommand]:
                 return CommandResult(
                     message=(
                         "사용법: /autopilot add "
-                        "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
+                        "[idea|issue|pr|claude] TITLE :: DETAILS"
                     )
                 )
             card, created = store.enqueue_card(
@@ -608,7 +607,7 @@ def _create_autopilot_commands() -> list[SlashCommand]:
             message=(
                 "사용법: /autopilot "
                 "[status|list [STATUS]|show ID|next|context|journal [LIMIT]|"
-                "add [idea|ohmo|issue|pr|claude] TITLE :: DETAILS|"
+                "add [idea|issue|pr|claude] TITLE :: DETAILS|"
                 "accept ID|start ID|complete ID [NOTE]|fail ID [NOTE]|reject ID [NOTE]|"
                 "run-next|tick|install-cron|export-dashboard [OUTPUT]|"
                 "scan [issues|prs|claude-code|all] [LIMIT]]"
@@ -628,7 +627,7 @@ def _create_repo_commands() -> list[SlashCommand]:
             return CommandResult(message="사용법: /ship TITLE :: DETAILS")
         store = RepoAutopilotStore(context.cwd)
         card, _ = store.enqueue_card(
-            source_kind="ohmo_request",
+            source_kind="manual_idea",
             title=title.strip(),
             body=body.strip(),
         )
@@ -644,7 +643,7 @@ def _create_repo_commands() -> list[SlashCommand]:
             )
         )
 
-    return [SlashCommand("ship", "ohmo 기반 저장소 작업을 큐에 넣고 실행합니다", _ship_handler)]
+    return [SlashCommand("ship", "저장소 작업을 큐에 넣고 실행합니다", _ship_handler)]
 
 
 def create_default_command_registry(

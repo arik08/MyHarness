@@ -71,6 +71,7 @@ export function useBackendSession() {
           type: "session_started",
           sessionId: liveSession.sessionId,
           clientId: state.clientId,
+          busy: liveSession.busy,
         });
 
         if (liveSession.workspace) {
@@ -83,7 +84,6 @@ export function useBackendSession() {
           });
         }
 
-        dispatch({ type: "set_busy", value: liveSession.busy });
         return;
       }
 

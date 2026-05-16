@@ -1,12 +1,10 @@
-# OpenHarness and ohmo
+# OpenHarness
 
-`oh` - OpenHarness / `ohmo`
+`oh` - OpenHarness
 
 [English](README.md) / [Simplified Chinese](README.zh-CN.md)
 
 **OpenHarness**는 도구 사용, 스킬, 메모리, 멀티 에이전트 조율을 위한 가벼운 에이전트 실행 인프라입니다.
-
-**ohmo**는 OpenHarness 위에서 동작하는 개인 AI 에이전트입니다. 단순 챗봇이 아니라 긴 세션 동안 코드 작성, 테스트 실행, 브랜치 작업, PR 생성 같은 실제 작업을 수행하는 것을 목표로 합니다.
 
 바로가기:
 
@@ -40,8 +38,6 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
   <img src="https://img.shields.io/badge/Engine-06B6D4?style=for-the-badge&logo=lightning&logoColor=white" alt="Engine" />
 </div>
 
-<img src="assets/scene-agentloop.png" width="140">
-
 <p align="center"><strong>• Streaming Tool-Call Cycle</strong></p>
 <p align="center"><strong>• API Retry with Exponential Backoff</strong></p>
 <p align="center"><strong>• Parallel Tool Execution</strong></p>
@@ -55,8 +51,6 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
 <div align="center">
   <img src="https://img.shields.io/badge/43+_Tools-10B981?style=for-the-badge&logo=toolbox&logoColor=white" alt="Toolkit" />
 </div>
-
-<img src="assets/scene-toolkit.png" width="140">
 
 <p align="center"><strong>• 43 Tools (File, Shell, Search, Web, MCP)</strong></p>
 <p align="center"><strong>• On-Demand Skill Loading (.md)</strong></p>
@@ -72,8 +66,6 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
   <img src="https://img.shields.io/badge/Persistent-8B5CF6?style=for-the-badge&logo=brain&logoColor=white" alt="Context" />
 </div>
 
-<img src="assets/scene-context.png" width="140">
-
 <p align="center"><strong>• Project Instruction Discovery & Injection</strong></p>
 <p align="center"><strong>• Context Compression (Auto-Compact)</strong></p>
 <p align="center"><strong>• MEMORY.md Persistent Memory</strong></p>
@@ -87,8 +79,6 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
 <div align="center">
   <img src="https://img.shields.io/badge/Permissions-F59E0B?style=for-the-badge&logo=shield&logoColor=white" alt="Governance" />
 </div>
-
-<img src="assets/scene-governance.png" width="140">
 
 <p align="center"><strong>• Multi-Level Permission Modes</strong></p>
 <p align="center"><strong>• Path-Level & Command Rules</strong></p>
@@ -104,8 +94,6 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
   <img src="https://img.shields.io/badge/Multi--Agent-EC4899?style=for-the-badge&logo=network&logoColor=white" alt="Swarm" />
 </div>
 
-<img src="assets/scene-swarm.png" width="140">
-
 <p align="center"><strong>• Subagent Spawning & Delegation</strong></p>
 <p align="center"><strong>• Team Registry & Task Management</strong></p>
 <p align="center"><strong>• Background Task Lifecycle</strong></p>
@@ -120,10 +108,6 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
 ## 🤔 What is an Agent Harness?
 
 An **Agent Harness** is the complete infrastructure that wraps around an LLM to make it a functional agent. The model provides intelligence; the harness provides **hands, eyes, memory, and safety boundaries**.
-
-<p align="center">
-  <img src="assets/harness-equation.png" alt="Harness = Tools + Knowledge + Observation + Action + Permissions" width="700">
-</p>
 
 OpenHarness is an open-source Python implementation designed for **researchers, builders, and the community**:
 
@@ -219,10 +203,6 @@ oh
 # On Windows PowerShell, use: openh
 ```
 
-<p align="center">
-  <img src="assets/landing.png" alt="OpenHarness Landing Screen" width="700">
-</p>
-
 ### Windows 웹 실행기
 
 이 저장소에는 로컬 웹 UI를 실행하는 더블클릭용 배치 파일이 포함되어 있습니다.
@@ -272,18 +252,6 @@ npm install
 set PORT=4174
 run_openharness_web.bat
 ```
-
-### 4. Set up ohmo (Personal Agent)
-
-Want an AI agent that works for you from Feishu / Slack / Telegram / Discord?
-
-```bash
-ohmo init             # initialize ~/.ohmo workspace
-ohmo config           # configure channels and provider
-ohmo gateway start    # start the gateway — ohmo is now live in your chat app
-```
-
-ohmo runs on your existing **Claude Code subscription** or **Codex subscription** — no extra API key needed.
 
 ### Non-Interactive Mode (Pipes & Scripts)
 
@@ -652,64 +620,6 @@ Advanced:    -d/--debug, --mcp-config, --bare
 Subcommands: oh setup | oh provider | oh auth | oh mcp | oh plugin
 ```
 
-### 🧑‍💼 ohmo Personal Agent
-
-`ohmo` is a personal-agent app built on top of OpenHarness. It is packaged alongside `oh`, with its own workspace and gateway:
-
-```bash
-# Initialize personal workspace
-ohmo init
-
-# Configure gateway channels and pick a provider profile
-ohmo config
-
-# Run the personal agent
-ohmo
-
-# Run the gateway in foreground
-ohmo gateway run
-
-# Check or restart the gateway
-ohmo gateway status
-ohmo gateway restart
-```
-
-Key concepts:
-
-- `~/.ohmo/`
-  - personal workspace root
-- `soul.md`
-  - long-term agent personality and behavior
-- `identity.md`
-  - who `ohmo` is
-- `user.md`
-  - user profile and preferences
-- `BOOTSTRAP.md`
-  - first-run landing ritual
-- `memory/`
-  - personal memory
-- `gateway.json`
-  - selected provider profile and channel configuration
-
-`ohmo config` uses the same workflow language as `oh setup`, so you can point the personal-agent gateway at:
-
-- `Anthropic-Compatible API`
-- `Claude Subscription`
-- `OpenAI-Compatible API`
-- `Codex Subscription`
-- `GitHub Copilot`
-
-`ohmo init` creates the home workspace once. After that, use `ohmo config` to update provider and channel settings; if the gateway is already running, the config flow can restart it for you.
-
-Currently `ohmo init` / `ohmo config` can guide channel setup for:
-
-- Telegram
-- Slack
-- Discord
-- Feishu
-
----
-
 ## 📊 Test Results
 
 | Suite | Tests | Status |
@@ -807,8 +717,6 @@ $my-skill review this component
 
 `$<skill-name>`으로 시작하는 요청은 해당 턴에서 그 스킬을 강제로 사용합니다. 백엔드는 선택된 `SKILL.md` 내용을 필수 지침으로 요청에 직접 주입하므로, 자동 선택에만 맡기는 것보다 강하게 동작합니다.
 
-`ohmo`는 ohmo 워크스페이스 안의 `skills` 폴더도 함께 로드합니다. 특정 ohmo 워크스페이스에서만 쓸 스킬은 그 위치에 넣으세요.
-
 ### 플러그인 추가
 
 `.openharness/plugins/my-plugin/.claude-plugin/plugin.json` 파일을 만듭니다.
@@ -876,8 +784,6 @@ MIT — see [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <img src="assets/logo.png" alt="OpenHarness" width="48">
-  <br>
   <strong>Oh my Harness!</strong>
   <br>
   <em>The model is the agent. The code is the harness.</em>

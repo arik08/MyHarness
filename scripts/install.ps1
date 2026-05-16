@@ -261,7 +261,6 @@ Write-Step "Verifying installation"
 $OhPath = "$VenvBinDir\oh.exe"
 $MyhPath = "$VenvBinDir\myh.exe"
 $MyharnessPath = "$VenvBinDir\myharness.exe"
-$OhmoPath = "$VenvBinDir\ohmo.exe"
 
 # Pick the best available launcher. Prefer the full MyHarness command when
 # present, otherwise fall back to 'myh', then 'oh' (which collides
@@ -279,7 +278,7 @@ if (Test-Path $MyharnessPath) {
     $LauncherExe = $OhPath
 }
 
-if ($LauncherExe -and (Test-Path $OhmoPath)) {
+if ($LauncherExe) {
     $OhVersion = & $LauncherExe --version 2>&1
     Write-Success "Installation successful!"
     Write-Host ""
@@ -290,7 +289,6 @@ if ($LauncherExe -and (Test-Path $OhmoPath)) {
     } elseif (Test-Path $OhPath) {
         Write-Host "  'oh' is also installed, but PowerShell may resolve it to Out-Host first." -ForegroundColor Yellow
     }
-    Write-Host "  ohmo is ready" -ForegroundColor Green
 } else {
     # Try module execution
     $ModuleVersion = python -m myharness --version 2>&1
@@ -326,6 +324,5 @@ if ($Launcher -eq "myharness") {
     Write-Host "    3. Launch (PowerShell):     myharness"
     Write-Host "       Note: 'oh' may collide with the built-in Out-Host alias in PowerShell."
 }
-Write-Host "    4. Launch ohmo:             ohmo"
-Write-Host "    5. Docs:                    https://github.com/HKUDS/MyHarness"
+Write-Host "    4. Docs:                    https://github.com/HKUDS/MyHarness"
 Write-Host ""

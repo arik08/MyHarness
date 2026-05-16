@@ -89,6 +89,10 @@ export type UserStats = {
   currentWorkspaceName?: string;
   ipBreakdown?: Array<{ ip?: string; visitCount?: number; todayVisitCount?: number; activeSessionCount?: number; lastSeenAt?: number }>;
   dailyBreakdown?: Array<{ date?: string; activeIpCount?: number; visitCount?: number }>;
+  dailyIpBreakdown?: Array<{
+    date?: string;
+    ipBreakdown?: Array<{ ip?: string; visitCount?: number; firstSeenAt?: number | null; lastSeenAt?: number | null }>;
+  }>;
 };
 
 export function readUserStats(params: { clientId: string; workspaceName: string; workspacePath: string }) {

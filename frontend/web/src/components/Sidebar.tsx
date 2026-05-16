@@ -126,7 +126,6 @@ export function Sidebar() {
     }
     window.dispatchEvent(new Event("myharness:saveMessageScroll"));
     dispatch({ type: "begin_history_restore", sessionId: nextHistoryId });
-    dispatch({ type: "set_busy", value: true });
     try {
       let targetSessionId = state.sessionId;
       const liveSessions = await listLiveSessions({
@@ -141,17 +140,16 @@ export function Sidebar() {
           type: "session_started",
           sessionId: liveSession.sessionId,
           clientId: state.clientId,
+          busy: liveSession.busy,
         });
         if (liveSession.workspace) {
           dispatch({ type: "set_workspace", workspace: liveSession.workspace });
         }
         if (liveSession.busy) {
-          dispatch({ type: "set_busy", value: true });
           dispatch({ type: "finish_history_restore" });
           return;
         }
         if (liveSession.savedSessionId) {
-          dispatch({ type: "set_busy", value: true });
           await sendBackendRequest(liveSession.sessionId, state.clientId, {
             type: "apply_select_command",
             command: "resume",

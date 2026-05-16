@@ -999,12 +999,26 @@ describe("appReducer", () => {
   });
 
   it("stores todo markdown from backend updates", () => {
-    const next = appReducer(initialAppState, {
+    const next = appReducer({ ...initialAppState, sessionId: "session-1" }, {
       type: "backend_event",
       event: { type: "todo_update", todo_markdown: "- [ ] 조사\n- [x] 정리" },
     });
 
     expect(next.todoMarkdown).toContain("조사");
+    expect(next.todoSessionId).toBe("session-1");
+  });
+
+  it("scopes todo markdown to the active restored history session", () => {
+    const next = appReducer(
+      { ...initialAppState, sessionId: "live-session", activeHistoryId: "saved-session" },
+      {
+        type: "backend_event",
+        event: { type: "todo_update", todo_markdown: "- [ ] 복원 세션 작업" },
+      },
+    );
+
+    expect(next.todoMarkdown).toContain("복원 세션 작업");
+    expect(next.todoSessionId).toBe("saved-session");
   });
 
   it("preserves and resets todo collapsed state like the legacy checklist", () => {
@@ -1022,6 +1036,21 @@ describe("appReducer", () => {
     expect(collapsed.todoCollapsed).toBe(true);
     expect(updated.todoCollapsed).toBe(true);
     expect(dismissed.todoCollapsed).toBe(false);
+    expect(dismissed.todoSessionId).toBeNull();
+  });
+
+  it("collapses the todo checklist when every checklist item is completed", () => {
+    const shown = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "todo_update", todo_markdown: "- [ ] 조사\n- [x] 정리" },
+    });
+    const completed = appReducer(shown, {
+      type: "backend_event",
+      event: { type: "todo_update", todo_markdown: "- [x] 조사\n- [x] 정리" },
+    });
+
+    expect(shown.todoCollapsed).toBe(false);
+    expect(completed.todoCollapsed).toBe(true);
   });
 
   it("collapses the todo checklist when the final assistant answer completes", () => {

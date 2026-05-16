@@ -897,6 +897,33 @@ test("defaults to shared workspaces when listening on LAN interfaces", async (t)
   assert.equal(payload.scope.mode, "shared");
 });
 
+test("user stats include clickable daily IP visit breakdown", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  await fetch(`${app.baseUrl}/`, { headers: { "x-forwarded-for": "10.0.0.7" } });
+  await fetch(`${app.baseUrl}/`, { headers: { "x-forwarded-for": "10.0.0.7" } });
+  await fetch(`${app.baseUrl}/`, { headers: { "x-forwarded-for": "10.0.0.8" } });
+
+  const response = await fetch(`${app.baseUrl}/api/user-stats?clientId=client-stats`, {
+    headers: { "x-forwarded-for": "10.0.0.7" },
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.todayVisitCount, 3);
+  assert.equal(payload.dailyActiveIpCount, 2);
+  assert.equal(payload.currentIpTodayVisitCount, 2);
+
+  const today = payload.dailyBreakdown?.[0]?.date;
+  assert.ok(today);
+  const day = payload.dailyIpBreakdown?.find((item) => item.date === today);
+  assert.deepEqual(day?.ipBreakdown?.map((item) => [item.ip, item.visitCount]), [
+    ["10.0.0.7", 2],
+    ["10.0.0.8", 1],
+  ]);
+});
+
 test("dev launcher backend entry redirects page visits to Vite on the same host", async (t) => {
   const app = await startWebServer({
     env: {

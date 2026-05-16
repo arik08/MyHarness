@@ -110,6 +110,7 @@ export type AppState = {
   workflowDurationSecondsByMessageId: Record<string, number>;
   workflowInputBuffers: Record<string, string>;
   todoMarkdown: string;
+  todoSessionId: string | null;
   todoCollapsed: boolean;
   swarmTeammates: SwarmTeammateSnapshot[];
   swarmNotifications: SwarmNotificationSnapshot[];

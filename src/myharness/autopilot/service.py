@@ -41,7 +41,6 @@ from myharness.swarm.worktree import WorktreeManager
 from myharness.utils.fs import atomic_write_text
 
 _SOURCE_BASE_SCORES: dict[RepoTaskSource, int] = {
-    "ohmo_request": 100,
     "manual_idea": 80,
     "github_issue": 75,
     "github_pr": 85,
@@ -1906,7 +1905,18 @@ class RepoAutopilotStore:
             payload = json.loads(self._registry_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return RepoAutopilotRegistry(updated_at=time.time(), cards=[])
+        self._normalize_legacy_registry_payload(payload)
         return RepoAutopilotRegistry.model_validate(payload)
+
+    def _normalize_legacy_registry_payload(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        cards = payload.get("cards")
+        if not isinstance(cards, list):
+            return
+        for card in cards:
+            if isinstance(card, dict) and card.get("source_kind") == "ohmo_request":
+                card["source_kind"] = "manual_idea"
 
     def _save_registry(self, registry: RepoAutopilotRegistry) -> None:
         registry.updated_at = time.time()
@@ -1955,7 +1965,7 @@ class RepoAutopilotStore:
             if str(card.metadata.get("review_decision", "")).upper() == "APPROVED":
                 score += 20
                 reasons.append("approved review state")
-        if card.source_kind in {"ohmo_request", "manual_idea"}:
+        if card.source_kind == "manual_idea":
             score += 10
             reasons.append("direct user-driven input")
         if any(hint in text for hint in _URGENT_HINTS) or labels.intersection(

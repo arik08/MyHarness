@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clampSidebarWidth, Sidebar } from "../Sidebar";
+import { Composer } from "../Composer";
+import { StatusPill } from "../StatusPill";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { deleteHistory, toggleHistoryPin } from "../../api/history";
@@ -799,6 +801,42 @@ describe("Sidebar", () => {
     expect(restoringRow?.classList.contains("active")).toBe(false);
     expect(document.querySelectorAll(".history-item.busy")).toHaveLength(1);
     expect(screen.queryByText("진행 중인 대화")).toBeNull();
+  });
+
+  it("keeps the composer in send mode and delays restore status while a saved history item is restoring", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          clientId: "client-1",
+          busy: false,
+          status: "ready",
+          statusText: "준비됨",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        }}
+      >
+        <Sidebar />
+        <StatusPill />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+
+    expect(screen.getByRole("button", { name: "메시지 보내기" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "작업 중단" })).toBeNull();
+    expect(document.querySelector("#readyPill")?.textContent).toBe("준비됨");
+    await waitFor(() => expect(document.querySelector("#readyPill")?.textContent).toBe("대화 불러오는 중"), {
+      timeout: 800,
+    });
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
+      type: "apply_select_command",
+      command: "resume",
+      value: "session-old",
+    }));
   });
 
   it("restores a live saved session snapshot when the current session is idle", async () => {

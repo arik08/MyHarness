@@ -25,22 +25,19 @@ warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 step()    { echo -e "\n${BOLD}${BLUE}==>${RESET}${BOLD} $*${RESET}"; }
 
-WITH_CHANNELS=false
 GLOBAL_VENV=false
 
 for arg in "$@"; do
     case "$arg" in
-        --with-channels) WITH_CHANNELS=true ;;
         --global-venv) GLOBAL_VENV=true ;;
         --help|-h)
-            echo "Usage: $0 [--with-channels] [--global-venv]"
+            echo "Usage: $0 [--global-venv]"
             echo ""
             echo "Installs the current checkout in editable mode and"
-            echo "registers oh/ohmo in ~/.local/bin."
+            echo "registers oh/myharness in ~/.local/bin."
             echo ""
             echo "  default         use ./ .myharness-venv inside the current repo"
             echo "  --global-venv   use ~/.myharness-venv but still install the current repo"
-            echo "  --with-channels deprecated compatibility flag; common IM deps install by default"
             exit 0
             ;;
         *)
@@ -96,11 +93,6 @@ step "Installing current checkout in editable mode"
 python -m pip install -e "$REPO_ROOT" --quiet
 success "Installed MyHarness from ${REPO_ROOT}"
 
-if [ "$WITH_CHANNELS" = true ]; then
-    step "Channel dependencies"
-    info "--with-channels is no longer required; common IM channel dependencies are installed by default."
-fi
-
 step "Installing React terminal dependencies (optional)"
 if command -v node >/dev/null 2>&1; then
     NODE_MAJOR=$(node --version 2>&1 | grep -oE '[0-9]+' | head -1)
@@ -120,9 +112,8 @@ step "Registering global commands"
 
 mkdir -p "$BIN_DIR"
 ln -snf "$VENV_DIR/bin/oh" "$BIN_DIR/oh"
-ln -snf "$VENV_DIR/bin/ohmo" "$BIN_DIR/ohmo"
 ln -snf "$VENV_DIR/bin/myharness" "$BIN_DIR/myharness"
-success "Linked oh/ohmo into ${BIN_DIR}"
+success "Linked oh/myharness into ${BIN_DIR}"
 
 ensure_path_in_file() {
     local rc_file="$1"
@@ -168,7 +159,7 @@ echo -e "${BOLD}${GREEN}Developer install complete.${RESET}"
 echo ""
 echo "  Repo root:           $REPO_ROOT"
 echo "  Virtual environment: $VENV_DIR"
-echo "  Command links:       $BIN_DIR/oh , $BIN_DIR/ohmo"
+echo "  Command links:       $BIN_DIR/oh , $BIN_DIR/myharness"
 echo ""
 echo "  If this shell does not see the commands yet, run one of:"
 echo "    bash: source ~/.bashrc"

@@ -20,7 +20,7 @@ const defaultAppSettings: AppSettings = {
 export type AppAction =
   | { type: "backend_event"; event: BackendEvent; sessionId?: string }
   | { type: "append_message"; message: Omit<ChatMessage, "id">; skipHistory?: boolean }
-  | { type: "session_started"; sessionId: string; clientId?: string }
+  | { type: "session_started"; sessionId: string; clientId?: string; busy?: boolean }
   | { type: "session_replaced"; sessionId: string; workspace?: Workspace }
   | { type: "set_theme"; themeId: ThemeId }
   | { type: "set_sidebar_collapsed"; value: boolean }
@@ -266,6 +266,7 @@ export const initialAppState: AppState = {
   workflowDurationSecondsByMessageId: {},
   workflowInputBuffers: {},
   todoMarkdown: "",
+  todoSessionId: null,
   todoCollapsed: false,
   swarmTeammates: [],
   swarmNotifications: [],
@@ -1296,6 +1297,19 @@ function backendModalKeysForState(state: AppState) {
   return Array.from(new Set([state.sessionId, state.activeHistoryId].filter((value): value is string => Boolean(value))));
 }
 
+function currentTodoSessionId(state: AppState) {
+  return state.activeHistoryId || state.sessionId || null;
+}
+
+function isCompletedTodoMarkdown(markdown: string) {
+  const checklistItems = String(markdown || "")
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*[-*]\s+\[([ xX])\]\s+.+$/)?.[1])
+    .filter((mark): mark is string => Boolean(mark));
+
+  return checklistItems.length > 0 && checklistItems.every((mark) => mark.toLowerCase() === "x");
+}
+
 function rememberCurrentBackendModal(state: AppState) {
   const keys = backendModalKeysForState(state);
   if (!keys.length || state.modal?.kind !== "backend") {
@@ -1532,6 +1546,7 @@ function reduceHistoryRestoreEvent(
   }
   const restoredWorkflowAnchorMessageId = hasRestorableWorkflowEvents(workflowEvents) ? workflowAnchorMessageId : null;
   const restoredWorkflowEvents = restoredWorkflowAnchorMessageId ? workflowEvents : [];
+  const stillRestoring = state.restoringHistory || Boolean(state.pendingHistoryId);
   return {
     ...state,
     activeHistoryId: String(historyEvent.value || state.pendingHistoryId || state.activeHistoryId || "").trim() || null,
@@ -1551,8 +1566,8 @@ function reduceHistoryRestoreEvent(
     pendingFreshChat: false,
     preserveMessagesOnNextClearTranscript: false,
     busy: false,
-    status: "ready",
-    statusText: "준비됨",
+    status: stillRestoring ? "processing" : "ready",
+    statusText: stillRestoring ? "대화 불러오는 중" : "준비됨",
   };
 }
 
@@ -1803,6 +1818,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       workflowDurationSecondsByMessageId: {},
       workflowInputBuffers: {},
       todoMarkdown: "",
+      todoSessionId: null,
       workflowEvents: [],
       workflowDurationSeconds: null,
       workflowStartedAtMs: null,
@@ -1843,6 +1859,8 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       restoringHistory: false,
       pendingFreshChat: false,
       preserveMessagesOnNextClearTranscript: false,
+      status: state.busy ? state.status : "ready",
+      statusText: state.busy ? state.statusText : "준비됨",
     };
   }
 
@@ -1973,10 +1991,12 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
 
   if (event.type === "todo_update") {
     const todoMarkdown = String(event.todo_markdown || "");
+    const hasTodo = Boolean(todoMarkdown.trim());
     return {
       ...state,
       todoMarkdown,
-      todoCollapsed: todoMarkdown.trim() ? state.todoCollapsed : false,
+      todoSessionId: hasTodo ? currentTodoSessionId(state) : null,
+      todoCollapsed: hasTodo ? state.todoCollapsed || isCompletedTodoMarkdown(todoMarkdown) : false,
     };
   }
 
@@ -2140,6 +2160,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
               history: historyBase,
             }, pendingFirstUserText)
           : historyBase;
+        const busy = action.busy === true;
         return {
         ...state,
         sessionId: action.sessionId,
@@ -2150,8 +2171,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         history,
         historyReadOnly: false,
         pendingFreshChat: false,
-        status: "ready",
-        statusText: "준비됨",
+        busy,
+        status: busy ? "processing" : "ready",
+        statusText: busy ? "응답 진행 중" : "준비됨",
       };
       }
 
@@ -2217,6 +2239,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         backendModalsBySessionId,
         swarmPopupOpen: false,
         todoMarkdown: "",
+        todoSessionId: null,
         todoCollapsed: false,
         swarmTeammates: [],
         swarmNotifications: [],
@@ -2250,7 +2273,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, composer: { ...state.composer, draft: action.value } };
 
     case "set_busy":
-      return { ...state, busy: action.value };
+      return action.value
+        ? {
+            ...state,
+            busy: true,
+            status: "processing",
+            statusText: state.statusText === "준비됨" || state.statusText === "연결 중" ? "응답 진행 중" : state.statusText,
+          }
+        : { ...state, busy: false };
 
     case "set_chat_title": {
       const title = normalizeChatTitle(action.value);
@@ -2375,6 +2405,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         activeArtifact: null,
         activeArtifactPayload: null,
         todoMarkdown: "",
+        todoSessionId: null,
         todoCollapsed: false,
         swarmTeammates: [],
         swarmNotifications: [],
@@ -2391,6 +2422,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const backendModalsBySessionId = rememberCurrentBackendModal(state);
         return {
         ...state,
+        busy: false,
+        status: "processing",
+        statusText: "대화 불러오는 중",
         pendingHistoryId: action.sessionId,
         restoringHistory: true,
         historyReadOnly: false,
@@ -2407,7 +2441,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
 
     case "finish_history_restore":
-      return { ...state, pendingHistoryId: null, restoringHistory: false };
+      return {
+        ...state,
+        pendingHistoryId: null,
+        restoringHistory: false,
+        status: state.busy ? state.status : "ready",
+        statusText: state.busy ? state.statusText : "준비됨",
+      };
 
     case "set_artifacts":
       return { ...state, artifacts: action.artifacts };
@@ -2544,13 +2584,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, todoCollapsed: !state.todoCollapsed };
 
     case "dismiss_todo":
-      return { ...state, todoMarkdown: "", todoCollapsed: false };
+      return { ...state, todoMarkdown: "", todoSessionId: null, todoCollapsed: false };
 
     case "clear_workflow":
       return { ...state, workflowEvents: [], workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowDurationSeconds: null, workflowStartedAtMs: null };
 
     case "clear_messages":
-      return { ...state, messages: [], workflowAnchorMessageId: null, workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowInputBuffers: {}, todoMarkdown: "", todoCollapsed: false, workflowEvents: [], workflowDurationSeconds: null, workflowStartedAtMs: null };
+      return { ...state, messages: [], workflowAnchorMessageId: null, workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowInputBuffers: {}, todoMarkdown: "", todoSessionId: null, todoCollapsed: false, workflowEvents: [], workflowDurationSeconds: null, workflowStartedAtMs: null };
 
     case "backend_event":
       return reduceBackendEvent(state, action);

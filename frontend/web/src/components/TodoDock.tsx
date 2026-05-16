@@ -26,7 +26,12 @@ type TodoDockProps = {
 
 export function TodoDock({ variant = "dock" }: TodoDockProps) {
   const { state, dispatch } = useAppState();
+  const activeTodoSessionId = state.activeHistoryId || state.sessionId || null;
   const items = useMemo(() => parseTodoMarkdown(state.todoMarkdown), [state.todoMarkdown]);
+
+  if (state.todoSessionId && state.todoSessionId !== activeTodoSessionId) {
+    return null;
+  }
 
   if (!state.todoMarkdown.trim() || !items.length) {
     return null;
