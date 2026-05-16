@@ -5,14 +5,22 @@ title MyHarness Web Dev
 
 cd /d "%~dp0"
 
+set "MYHARNESS_LOCAL_ENV=%CD%\myharness.local.env"
+if exist "%MYHARNESS_LOCAL_ENV%" call :load_local_env "%MYHARNESS_LOCAL_ENV%"
+
 if "%PORT%"=="" set "PORT=4273"
-if "%MYHARNESS_WEB_PORT%"=="" (
-  if "%VITE_PORT%"=="" (
-    set "MYHARNESS_WEB_PORT=4173"
+if "%MYHARNESS_DEV_PORT%"=="" (
+  if "%MYHARNESS_WEB_PORT%"=="" (
+    if "%VITE_PORT%"=="" (
+      set "MYHARNESS_DEV_PORT=4173"
+    ) else (
+      set "MYHARNESS_DEV_PORT=%VITE_PORT%"
+    )
   ) else (
-    set "MYHARNESS_WEB_PORT=%VITE_PORT%"
+    set "MYHARNESS_DEV_PORT=%MYHARNESS_WEB_PORT%"
   )
 )
+set "MYHARNESS_WEB_PORT=%MYHARNESS_DEV_PORT%"
 if "%HOST%"=="" set "HOST=0.0.0.0"
 if "%MYHARNESS_CONFIG_DIR%"=="" set "MYHARNESS_CONFIG_DIR=%CD%\.myharness"
 if "%MYHARNESS_DATA_DIR%"=="" set "MYHARNESS_DATA_DIR=%MYHARNESS_CONFIG_DIR%\data"
@@ -27,14 +35,14 @@ echo ============================================================
 echo   MyHarness Web Dev
 echo ============================================================
 echo.
-echo   Preferred React dev UI: http://127.0.0.1:%MYHARNESS_WEB_PORT%
+echo   Preferred React dev UI: http://127.0.0.1:%MYHARNESS_DEV_PORT%
 echo   Backend/dev entry: http://localhost:%PORT%
 echo   Other PCs: use http://THIS_PC_IP:%PORT% to enter dev mode
 echo   Config:       %MYHARNESS_CONFIG_DIR%
 echo   Logs:         %MYHARNESS_LOGS_DIR%
 echo.
 echo   This starts both the backend server and Vite HMR dev server.
-echo   If the preferred React port is unavailable, the launcher will pick another port.
+echo   Backend PORT must be unique. If the preferred React port is unavailable, the launcher will pick another port.
 echo   Open the React dev UI URL printed below while developing.
 echo   Press Q or Ctrl+C in this window to stop both servers.
 echo   Press R in this window to restart both servers.
@@ -140,8 +148,6 @@ if not exist "frontend\web\node_modules\.package-lock.json" (
 
 call :free_port "%PORT%" "backend"
 if errorlevel 1 exit /b 1
-call :free_port "%MYHARNESS_WEB_PORT%" "Vite dev"
-if errorlevel 1 exit /b 1
 
 echo [INFO] Starting development servers...
 echo.
@@ -165,15 +171,34 @@ for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass
 )
 if "%MYHARNESS_PORT_PID%"=="" exit /b 0
 echo [INFO] Port %CHECK_PORT% for %PORT_LABEL% is already in use by PID %MYHARNESS_PORT_PID%.
-echo [INFO] Closing the existing process...
-taskkill /PID %MYHARNESS_PORT_PID% /T /F >nul 2>nul
-timeout /t 1 /nobreak >nul
-powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-NetTCPConnection -LocalPort ([int]'%CHECK_PORT%') -State Listen -ErrorAction SilentlyContinue) { exit 0 } exit 1" >nul 2>nul
-if not errorlevel 1 (
-  echo.
-  echo [ERROR] Port %CHECK_PORT% is still in use after trying to close PID %MYHARNESS_PORT_PID%.
-  pause
-  exit /b 1
+if /i "%MYHARNESS_CLOSE_PORT_PROCESS%"=="1" (
+  echo [INFO] MYHARNESS_CLOSE_PORT_PROCESS=1, closing the existing process...
+  taskkill /PID %MYHARNESS_PORT_PID% /T /F >nul 2>nul
+  timeout /t 1 /nobreak >nul
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-NetTCPConnection -LocalPort ([int]'%CHECK_PORT%') -State Listen -ErrorAction SilentlyContinue) { exit 0 } exit 1" >nul 2>nul
+  if not errorlevel 1 (
+    echo.
+    echo [ERROR] Port %CHECK_PORT% is still in use after trying to close PID %MYHARNESS_PORT_PID%.
+    pause
+    exit /b 1
+  )
+  exit /b 0
+)
+echo.
+echo [ERROR] Port %CHECK_PORT% for %PORT_LABEL% is already in use.
+echo To run copies side-by-side, edit this folder's myharness.local.env:
+echo   PORT=4274
+echo   MYHARNESS_DEV_PORT=4174
+echo Then run run_myharness_web_dev.bat again.
+echo.
+echo To intentionally close the process on this port, set MYHARNESS_CLOSE_PORT_PROCESS=1.
+echo.
+pause
+exit /b 1
+
+:load_local_env
+for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%~1") do (
+  if not "%%~A"=="" if not "%%~B"=="" if not defined %%~A set "%%~A=%%~B"
 )
 exit /b 0
 

@@ -75,6 +75,8 @@ export type AppState = {
   appSettings: AppSettings;
   themeId: ThemeId;
   sidebarCollapsed: boolean;
+  sidebarWidth: number;
+  sidebarResizing: boolean;
   commands: CommandItem[];
   skills: SkillItem[];
   workspaceName: string;

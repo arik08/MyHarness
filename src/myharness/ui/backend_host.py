@@ -1586,7 +1586,13 @@ class ReactBackendHost:
         if name not in plugins:
             await self._emit(BackendEvent(type="error", message=f"알 수 없는 플러그인입니다: {name}"))
             return
-        set_project_plugin_enabled(self._bundle.cwd, name, enabled is not False, settings)
+        set_project_plugin_enabled(
+            self._bundle.cwd,
+            name,
+            enabled is not False,
+            settings,
+            reset_skill_names=[skill.name for skill in plugins[name].skills],
+        )
         await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
         await self._emit(self._status_snapshot())
 

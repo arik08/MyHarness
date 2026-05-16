@@ -5,6 +5,9 @@ title MyHarness Web Backend
 
 cd /d "%~dp0"
 
+set "MYHARNESS_LOCAL_ENV=%CD%\myharness.local.env"
+if exist "%MYHARNESS_LOCAL_ENV%" call :load_local_env "%MYHARNESS_LOCAL_ENV%"
+
 if "%PORT%"=="" set "PORT=4273"
 if "%HOST%"=="" set "HOST=0.0.0.0"
 set "MYHARNESS_URL=http://localhost:%PORT%"
@@ -168,17 +171,29 @@ for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass
 
 if not "%MYHARNESS_PORT_PID%"=="" (
   echo [INFO] Port %PORT% is already in use by PID %MYHARNESS_PORT_PID%.
-  echo [INFO] Closing the existing process and starting MyHarness fresh...
-  taskkill /PID %MYHARNESS_PORT_PID% /T /F >nul 2>nul
-  timeout /t 1 /nobreak >nul
+  if /i "%MYHARNESS_CLOSE_PORT_PROCESS%"=="1" (
+    echo [INFO] MYHARNESS_CLOSE_PORT_PROCESS=1, closing the existing process and starting MyHarness fresh...
+    taskkill /PID %MYHARNESS_PORT_PID% /T /F >nul 2>nul
+    timeout /t 1 /nobreak >nul
 
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-NetTCPConnection -LocalPort ([int]$env:PORT) -State Listen -ErrorAction SilentlyContinue) { exit 0 } exit 1" >nul 2>nul
-  if not errorlevel 1 (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-NetTCPConnection -LocalPort ([int]$env:PORT) -State Listen -ErrorAction SilentlyContinue) { exit 0 } exit 1" >nul 2>nul
+    if not errorlevel 1 (
+      echo.
+      echo [ERROR] Port %PORT% is still in use after trying to close PID %MYHARNESS_PORT_PID%.
+      echo Try running this launcher as Administrator, or use another port:
+      echo   edit myharness.local.env and set PORT=4274
+      echo.
+      pause
+      exit /b 1
+    )
+  ) else (
     echo.
-    echo [ERROR] Port %PORT% is still in use after trying to close PID %MYHARNESS_PORT_PID%.
-    echo Try running this launcher as Administrator, or use another port:
-    echo   set PORT=4174
-    echo   run_myharness_web.bat
+    echo [ERROR] Port %PORT% is already in use. Another MyHarness copy may be running.
+    echo To run copies side-by-side, edit this folder's myharness.local.env:
+    echo   PORT=4274
+    echo Then run run_myharness_web.bat again.
+    echo.
+    echo To intentionally close the process on this port, set MYHARNESS_CLOSE_PORT_PROCESS=1.
     echo.
     pause
     exit /b 1
@@ -202,6 +217,12 @@ echo.
 echo [INFO] Server stopped with exit code %EXIT_CODE%.
 pause
 exit /b %EXIT_CODE%
+
+:load_local_env
+for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%~1") do (
+  if not "%%~A"=="" if not "%%~B"=="" if not defined %%~A set "%%~A=%%~B"
+)
+exit /b 0
 
 :find_bootstrap_python
 set "MYHARNESS_BOOTSTRAP_PYTHON="

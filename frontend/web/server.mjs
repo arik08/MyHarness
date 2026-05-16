@@ -59,7 +59,7 @@ const host = process.env.HOST || "0.0.0.0";
 let effectiveHost = host;
 const devUiRedirectEnabled = normalizeBooleanEnv(process.env.MYHARNESS_DEV_UI_REDIRECT);
 const devUiRedirectPort = normalizeOptionalPort(
-  process.env.MYHARNESS_DEV_UI_PORT || process.env.MYHARNESS_WEB_PORT || process.env.VITE_PORT,
+  process.env.MYHARNESS_DEV_UI_PORT || process.env.MYHARNESS_DEV_PORT || process.env.MYHARNESS_WEB_PORT || process.env.VITE_PORT,
 );
 let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.MYHARNESS_WORKSPACE_SCOPE);
 let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
@@ -4843,6 +4843,17 @@ server.on("error", (error) => {
     effectiveHost = fallbackHost;
     setImmediate(() => server.listen(port, effectiveHost));
     return;
+  }
+  if (error?.code === "EADDRINUSE") {
+    writeRuntimeLog("server_listen_port_in_use", {
+      host: effectiveHost,
+      port,
+      error: errorPayload(error),
+    });
+    console.error(`[ERROR] Port ${port} is already in use.`);
+    console.error("Edit this folder's myharness.local.env and set another PORT, for example:");
+    console.error("  PORT=4274");
+    process.exit(1);
   }
   throw error;
 });

@@ -150,12 +150,12 @@ describe("CommandHelpMessage", () => {
     expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("비활성");
   });
 
-  it("groups plugin-owned skills together under their plugin", () => {
+  it("allows individual plugin-owned skill toggles and syncs them from the plugin toggle", async () => {
+    const user = userEvent.setup();
     const helpText = [
       "사용 가능한 스킬:",
       "- using-superpowers [plugin] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
       "- writing-skills [plugin] [활성]: 새 스킬을 만듭니다.",
-      "- review [project] [활성]: Review checklist",
       "",
       "플러그인:",
       "- superpowers [활성]: Superpowers skills",
@@ -182,6 +182,84 @@ describe("CommandHelpMessage", () => {
               source: "plugin:superpowers",
               enabled: true,
             },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /using-superpowers/ }));
+
+    expect(sendBackendRequest).toHaveBeenCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_skill_enabled", value: "using-superpowers", enabled: false },
+    );
+    expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("비활성");
+    expect(screen.getByRole("button", { name: /writing-skills/ }).textContent).toContain("활성");
+
+    await user.click(screen.getByRole("button", { name: /^superpowers/ }));
+
+    expect(sendBackendRequest).toHaveBeenLastCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_plugin_enabled", value: "superpowers", enabled: false },
+    );
+    expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("비활성");
+    expect(screen.getByRole("button", { name: /writing-skills/ }).textContent).toContain("비활성");
+
+    await user.click(screen.getByRole("button", { name: /^superpowers/ }));
+
+    expect(sendBackendRequest).toHaveBeenLastCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_plugin_enabled", value: "superpowers", enabled: true },
+    );
+    expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("활성");
+    expect(screen.getByRole("button", { name: /writing-skills/ }).textContent).toContain("활성");
+  });
+
+  it("groups plugin-owned skills together under their plugin", () => {
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- deploy-helper [plugin] [활성]: 배포를 돕습니다.",
+      "- using-superpowers [plugin] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
+      "- writing-skills [plugin] [활성]: 새 스킬을 만듭니다.",
+      "- review [project] [활성]: Review checklist",
+      "",
+      "플러그인:",
+      "- superpowers [활성]: Superpowers skills",
+      "- deploy [활성]: Deploy skills",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            {
+              name: "using-superpowers",
+              description: "스킬을 찾고 사용하는 방식을 정합니다.",
+              source: "plugin:superpowers",
+              enabled: true,
+            },
+            {
+              name: "writing-skills",
+              description: "새 스킬을 만듭니다.",
+              source: "plugin:superpowers",
+              enabled: true,
+            },
+            {
+              name: "deploy-helper",
+              description: "배포를 돕습니다.",
+              source: "plugin:deploy",
+              enabled: true,
+            },
             { name: "review", description: "Review checklist", source: "project", enabled: true },
           ],
         }}
@@ -194,9 +272,26 @@ describe("CommandHelpMessage", () => {
     expect(superpowersGroup.textContent).toContain("using-superpowers");
     expect(superpowersGroup.textContent).toContain("writing-skills");
     expect(superpowersGroup.textContent).not.toContain("review");
+    expect(superpowersGroup.getAttribute("data-skill-group-tone")).toBe("1");
+    expect(screen.getByText("Superpowers skills").closest("button")?.getAttribute("data-skill-group-tone")).toBe("1");
+
+    const deployGroup = screen.getByRole("group", { name: /deploy 플러그인 스킬/ });
+    expect(deployGroup.textContent).toContain("deploy-helper");
+    expect(deployGroup.getAttribute("data-skill-group-tone")).toBe("2");
+    expect(screen.getByText("Deploy skills").closest("button")?.getAttribute("data-skill-group-tone")).toBe("2");
+
+    const pluginGroupNames = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(pluginGroupNames.filter((name): name is string => Boolean(name))).toEqual([
+      "일반 스킬",
+      "superpowers 플러그인 스킬",
+      "deploy 플러그인 스킬",
+    ]);
 
     const standaloneGroup = screen.getByRole("group", { name: "일반 스킬" });
     expect(standaloneGroup.className).toContain("skill-plugin-group");
+    expect(standaloneGroup.getAttribute("data-skill-group-tone")).toBe("0");
     expect(standaloneGroup.textContent).toContain("review");
     expect(standaloneGroup.textContent).not.toContain("using-superpowers");
   });

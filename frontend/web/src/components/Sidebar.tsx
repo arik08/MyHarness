@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode, RefObject } from "react";
+import type { CSSProperties, ReactNode, RefObject, PointerEvent as ReactPointerEvent } from "react";
 import { useAppState } from "../state/app-state";
 import { deleteHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
@@ -20,6 +20,14 @@ const themeOptions: Array<{ id: ThemeId; label: string }> = [
 
 const historyTitleMaxLength = 26;
 const historyTitleCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
+const sidebarMinWidth = 268;
+const sidebarMaxWidth = 520;
+const sidebarVisibleContentMinWidth = 300;
+
+export function clampSidebarWidth(value: number, windowWidth: number) {
+  const viewportMax = Math.max(sidebarMinWidth, windowWidth - sidebarVisibleContentMinWidth);
+  return Math.max(sidebarMinWidth, Math.min(sidebarMaxWidth, viewportMax, value));
+}
 
 export function Sidebar() {
   const { state, dispatch } = useAppState();
@@ -304,6 +312,51 @@ export function Sidebar() {
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     }
+  }
+
+  function beginSidebarResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    const startWidth = state.sidebarWidth || sidebarMinWidth;
+    dispatch({ type: "set_sidebar_resizing", value: true });
+    try {
+      handle.setPointerCapture(event.pointerId);
+    } catch {
+      // Some test/browser paths do not support pointer capture for this event.
+    }
+    let finished = false;
+    const finishResize = () => {
+      if (finished) return;
+      finished = true;
+      dispatch({ type: "set_sidebar_resizing", value: false });
+      try {
+        if (handle.hasPointerCapture(event.pointerId)) {
+          handle.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // Pointer capture may already be gone if the browser canceled the pointer.
+      }
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+      window.removeEventListener("mouseup", finishResize);
+      window.removeEventListener("blur", finishResize);
+    };
+    const onMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.buttons === 0) {
+        finishResize();
+        return;
+      }
+      const next = clampSidebarWidth(startWidth + moveEvent.clientX - startX, window.innerWidth);
+      dispatch({ type: "set_sidebar_width", value: Math.round(next) });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+    window.addEventListener("mouseup", finishResize);
+    window.addEventListener("blur", finishResize);
   }
 
   async function toggleRuntimePicker() {
@@ -827,6 +880,15 @@ export function Sidebar() {
           <small>Model: {state.model} · Effort: {state.effort || "none"}</small>
         </div>
       </button>
+      {!state.sidebarCollapsed ? (
+        <button
+          className="sidebar-resize-handle"
+          type="button"
+          aria-label="사이드바 너비 조절"
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={beginSidebarResize}
+        />
+      ) : null}
     </aside>
   );
 }

@@ -80,3 +80,26 @@ def test_project_toggle_writes_portable_json(tmp_path: Path, monkeypatch):
             "global-plugin": False,
         },
     }
+
+
+def test_plugin_toggle_can_reset_owned_skill_overrides(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    workspace = tmp_path / "workspace"
+    settings = load_settings()
+
+    set_project_skill_enabled(workspace, "Using-Superpowers", False, settings)
+    set_project_plugin_enabled(
+        workspace,
+        "superpowers",
+        False,
+        settings,
+        reset_skill_names=["using-superpowers", "writing-skills"],
+    )
+
+    payload = json.loads(get_project_preferences_path(workspace).read_text(encoding="utf-8"))
+    assert payload == {
+        "version": 1,
+        "disabled_skills": [],
+        "disabled_mcp_servers": [],
+        "enabled_plugins": {"superpowers": False},
+    }

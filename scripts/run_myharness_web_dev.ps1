@@ -31,6 +31,10 @@ function Stop-ChildProcess {
     }
 }
 
+function Test-ClosePortProcessEnabled {
+    return $env:MYHARNESS_CLOSE_PORT_PROCESS -eq "1"
+}
+
 function Stop-ListeningPort {
     param(
         [Parameter(Mandatory = $true)][int]$Port,
@@ -47,7 +51,11 @@ function Stop-ListeningPort {
         return
     }
 
-    Write-Host "[INFO] Port $Port for $Label is already in use by PID $ownerPid. Closing the existing process..."
+    if (-not (Test-ClosePortProcessEnabled)) {
+        throw "Port $Port for $Label is already in use by PID $ownerPid. Edit this folder's myharness.local.env and choose another PORT/MYHARNESS_DEV_PORT, or set MYHARNESS_CLOSE_PORT_PROCESS=1 to intentionally close that process."
+    }
+
+    Write-Host "[INFO] Port $Port for $Label is already in use by PID $ownerPid. MYHARNESS_CLOSE_PORT_PROCESS=1, closing the existing process..."
     Stop-ProcessTree -ProcessId $ownerPid
     Start-Sleep -Milliseconds 500
 
@@ -78,7 +86,10 @@ function Test-CanListenOnPort {
 }
 
 function Get-RequestedVitePort {
-    $rawPort = if ($env:MYHARNESS_WEB_PORT) {
+    $rawPort = if ($env:MYHARNESS_DEV_PORT) {
+        $env:MYHARNESS_DEV_PORT
+    }
+    elseif ($env:MYHARNESS_WEB_PORT) {
         $env:MYHARNESS_WEB_PORT
     }
     elseif ($env:VITE_PORT) {
@@ -92,11 +103,11 @@ function Get-RequestedVitePort {
         $port = [int]$rawPort
     }
     catch {
-        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_WEB_PORT to a number from 1 to 65535."
+        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_DEV_PORT to a number from 1 to 65535."
     }
 
     if ($port -lt 1 -or $port -gt 65535) {
-        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_WEB_PORT to a number from 1 to 65535."
+        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_DEV_PORT to a number from 1 to 65535."
     }
 
     return $port
@@ -105,12 +116,11 @@ function Get-RequestedVitePort {
 function Resolve-VitePort {
     param([Parameter(Mandatory = $true)][int]$PreferredPort)
 
-    Stop-ListeningPort -Port $PreferredPort -Label "Vite dev"
     if (Test-CanListenOnPort -HostAddress "0.0.0.0" -Port $PreferredPort) {
         return $PreferredPort
     }
 
-    Write-Host "[WARN] Vite dev port $PreferredPort is unavailable or reserved. Searching for the next usable port..."
+    Write-Host "[WARN] Vite dev port $PreferredPort is unavailable. Searching for the next usable port..."
     $lastPort = [Math]::Min(65535, $PreferredPort + 200)
     for ($candidate = $PreferredPort + 1; $candidate -le $lastPort; $candidate++) {
         if (Test-CanListenOnPort -HostAddress "0.0.0.0" -Port $candidate) {
@@ -228,6 +238,7 @@ $backendPort = if ($env:PORT) { [int]$env:PORT } else { 4273 }
 $preferredVitePort = Get-RequestedVitePort
 Stop-ListeningPort -Port $backendPort -Label "backend"
 $script:VitePort = Resolve-VitePort -PreferredPort $preferredVitePort
+$env:MYHARNESS_DEV_PORT = [string]$script:VitePort
 $env:MYHARNESS_WEB_PORT = [string]$script:VitePort
 $env:VITE_PORT = [string]$script:VitePort
 

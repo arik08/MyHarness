@@ -19,7 +19,10 @@ type ToggleEntry = {
 type SkillPluginGroup = {
   plugin: ToggleEntry;
   items: ToggleEntry[];
+  toneIndex: number;
 };
+
+const SKILL_GROUP_TONE_COUNT = 6;
 
 const koSkillDescriptionsByName: Record<string, string> = {
   "brainstorming": "창의적 작업, 기능 생성, 컴포넌트 구축, 기능 추가, 동작 수정처럼 구현 전에 의도와 요구사항, 설계를 먼저 탐색해야 할 때 사용합니다.",
@@ -240,7 +243,18 @@ function pluginNameFromSkillSource(source: string) {
   return match?.[1]?.trim().toLowerCase() || "";
 }
 
-function groupSkillsByPlugin(items: ToggleEntry[], plugins: ToggleEntry[]) {
+function pluginToneIndexByName(plugins: ToggleEntry[]) {
+  return new Map(plugins.map((plugin, index) => [
+    plugin.name.toLowerCase(),
+    (index + 1) % SKILL_GROUP_TONE_COUNT,
+  ]));
+}
+
+function groupSkillsByPlugin(
+  items: ToggleEntry[],
+  plugins: ToggleEntry[],
+  pluginToneByName: Map<string, number>,
+) {
   const pluginByName = new Map(plugins.map((plugin) => [plugin.name.toLowerCase(), plugin]));
   const standalone: ToggleEntry[] = [];
   const groups = new Map<string, SkillPluginGroup>();
@@ -258,12 +272,24 @@ function groupSkillsByPlugin(items: ToggleEntry[], plugins: ToggleEntry[]) {
       description: "Plugin",
       source: "plugin",
     };
-    const group = groups.get(pluginName) || { plugin, items: [] };
+    const group = groups.get(pluginName) || {
+      plugin,
+      items: [],
+      toneIndex: pluginToneByName.get(pluginName) ?? (groups.size + 1) % SKILL_GROUP_TONE_COUNT,
+    };
     group.items.push(item);
     groups.set(pluginName, group);
   }
 
-  return { standalone, groups: [...groups.values()] };
+  const orderedGroups = plugins
+    .map((plugin) => groups.get(plugin.name.toLowerCase()))
+    .filter((group): group is SkillPluginGroup => Boolean(group));
+  const listedPluginNames = new Set(plugins.map((plugin) => plugin.name.toLowerCase()));
+  const unlistedGroups = [...groups.entries()]
+    .filter(([pluginName]) => !listedPluginNames.has(pluginName))
+    .map(([, group]) => group);
+
+  return { standalone, groups: [...orderedGroups, ...unlistedGroups] };
 }
 
 function mergeSkillState(
@@ -323,6 +349,10 @@ export function CommandHelpMessage({ text }: { text: string }) {
     () => new Map(pluginItems.map((item) => [item.name.toLowerCase(), item.enabled])),
     [pluginItems],
   );
+  const pluginToneByName = useMemo(
+    () => pluginToneIndexByName(pluginItems),
+    [pluginItems],
+  );
   const skillItems = useMemo(
     () => mergeSkillState(parsed.skills, state.skills, pluginEnabledByName).map((item) => ({
       ...item,
@@ -331,8 +361,8 @@ export function CommandHelpMessage({ text }: { text: string }) {
     [parsed.skills, pluginEnabledByName, state.skills, toggleOverrides],
   );
   const groupedSkillItems = useMemo(
-    () => groupSkillsByPlugin(skillItems, pluginItems),
-    [pluginItems, skillItems],
+    () => groupSkillsByPlugin(skillItems, pluginItems, pluginToneByName),
+    [pluginItems, pluginToneByName, skillItems],
   );
 
   const describeCommand = (name: string, fallback: string) =>
@@ -360,7 +390,18 @@ export function CommandHelpMessage({ text }: { text: string }) {
         ? `skill:${name.toLowerCase()}`
         : "";
     if (overrideKey) {
-      setToggleOverrides((current) => ({ ...current, [overrideKey]: !enabled }));
+      setToggleOverrides((current) => {
+        const next = { ...current, [overrideKey]: !enabled };
+        if (requestType === "set_plugin_enabled") {
+          const pluginName = name.toLowerCase();
+          for (const skill of skillItems) {
+            if (pluginNameFromSkillSource(skill.source) === pluginName) {
+              next[`skill:${skill.name.toLowerCase()}`] = !enabled;
+            }
+          }
+        }
+        return next;
+      });
     }
     try {
       await sendBackendRequest(state.sessionId, state.clientId, { type: requestType, value: name, enabled: !enabled });
@@ -414,6 +455,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
           label="플러그인"
           items={pluginItems}
           emptyText="발견된 플러그인이 없습니다"
+          toneForItem={(item) => pluginToneByName.get(item.name.toLowerCase())}
           onToggle={(item) => void toggleItem("set_plugin_enabled", item.name, item.enabled)}
         />
       ) : null}
@@ -462,7 +504,7 @@ function SkillCatalog({
       {hasItems ? (
         <div className="skill-catalog-groups">
           {standaloneItems.length ? (
-            <section className="skill-plugin-group" role="group" aria-label="일반 스킬">
+            <section className="skill-plugin-group" data-skill-group-tone="0" role="group" aria-label="일반 스킬">
               <div className="skill-section-header">
                 <strong>일반 스킬</strong>
                 <span>{standaloneItems.length}개</span>
@@ -473,6 +515,7 @@ function SkillCatalog({
           {pluginGroups.map((group) => (
             <section
               className={`skill-plugin-group${group.plugin.enabled ? "" : " disabled"}`}
+              data-skill-group-tone={group.toneIndex}
               role="group"
               aria-label={`${group.plugin.name} 플러그인 스킬`}
               key={`plugin-group:${group.plugin.name}`}
@@ -501,11 +544,13 @@ function ToggleCatalog({
   label,
   items,
   emptyText,
+  toneForItem,
   onToggle,
 }: {
   label: string;
   items: ToggleEntry[];
   emptyText: string;
+  toneForItem?: (item: ToggleEntry) => number | undefined;
   onToggle: (item: ToggleEntry) => void;
 }) {
   return (
@@ -515,7 +560,7 @@ function ToggleCatalog({
         <span className="command-count">{items.length ? `${items.length}개` : "0개"}</span>
       </summary>
       {items.length ? (
-        <ToggleGrid label={label} items={items} onToggle={onToggle} />
+        <ToggleGrid label={label} items={items} toneForItem={toneForItem} onToggle={onToggle} />
       ) : (
         <div className="command-grid skill-grid">
           <span className="skill-pill-description">{emptyText}</span>
@@ -528,30 +573,36 @@ function ToggleCatalog({
 function ToggleGrid({
   label,
   items,
+  toneForItem,
   onToggle,
 }: {
   label: string;
   items: ToggleEntry[];
+  toneForItem?: (item: ToggleEntry) => number | undefined;
   onToggle: (item: ToggleEntry) => void;
 }) {
   return (
     <div className="command-grid skill-grid">
-      {items.map((item) => (
-        <button
-          className={`command-pill skill-toggle-pill${item.enabled ? "" : " disabled"}`}
-          type="button"
-          aria-pressed={item.enabled}
-          data-tooltip={catalogTooltip(item, label)}
-          key={`${label}:${item.name}`}
-          onClick={() => onToggle(item)}
-        >
-          <span className="skill-pill-header">
-            <strong>{item.name}</strong>
-            <small>{item.enabled ? "활성" : "비활성"}</small>
-          </span>
-          <span className="skill-pill-description">{item.description || item.source || label}</span>
-        </button>
-      ))}
+      {items.map((item) => {
+        const toneIndex = toneForItem?.(item);
+        return (
+          <button
+            className={`command-pill skill-toggle-pill${toneIndex === undefined ? "" : " skill-tone-scope"}${item.enabled ? "" : " disabled"}`}
+            type="button"
+            aria-pressed={item.enabled}
+            data-skill-group-tone={toneIndex}
+            data-tooltip={catalogTooltip(item, label)}
+            key={`${label}:${item.name}`}
+            onClick={() => onToggle(item)}
+          >
+            <span className="skill-pill-header">
+              <strong>{item.name}</strong>
+              <small>{item.enabled ? "활성" : "비활성"}</small>
+            </span>
+            <span className="skill-pill-description">{item.description || item.source || label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

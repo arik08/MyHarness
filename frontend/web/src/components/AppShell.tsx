@@ -13,9 +13,11 @@ export function AppShell() {
     "app-shell",
     state.sidebarCollapsed ? "sidebar-collapsed" : "",
     state.artifactPanelOpen ? "artifact-open" : "",
+    state.sidebarResizing ? "resizing-sidebar" : "",
     state.artifactResizing ? "resizing-artifact" : "",
   ].filter(Boolean).join(" ");
   const style = {
+    "--sidebar-track-width": !state.sidebarCollapsed && state.sidebarWidth ? `${state.sidebarWidth}px` : undefined,
     "--artifact-panel-width": state.artifactPanelWidth ? `${state.artifactPanelWidth}px` : undefined,
   } as CSSProperties;
 
@@ -31,6 +33,12 @@ export function AppShell() {
   useEffect(() => {
     localStorage.setItem("myharness:sidebarCollapsed", state.sidebarCollapsed ? "1" : "0");
   }, [state.sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!state.sidebarCollapsed && state.sidebarWidth) {
+      localStorage.setItem("myharness:sidebarWidth", String(state.sidebarWidth));
+    }
+  }, [state.sidebarCollapsed, state.sidebarWidth]);
 
   useEffect(() => {
     if (!state.artifactPanelWidth) {

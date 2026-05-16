@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from pydantic import BaseModel, Field
 
@@ -105,12 +105,26 @@ def set_project_mcp_enabled(cwd: str | Path, name: str, enabled: bool, settings:
     return save_project_preferences(cwd, preferences)
 
 
-def set_project_plugin_enabled(cwd: str | Path, name: str, enabled: bool, settings: Settings) -> ProjectPreferences:
+def set_project_plugin_enabled(
+    cwd: str | Path,
+    name: str,
+    enabled: bool,
+    settings: Settings,
+    *,
+    reset_skill_names: Iterable[str] | None = None,
+) -> ProjectPreferences:
     """Persist one plugin enablement value in project preferences."""
     preferences = effective_project_preferences(cwd, settings)
     clean_name = str(name or "").strip()
     if clean_name:
         preferences.enabled_plugins[clean_name] = bool(enabled)
+    reset_names = {_normalize_name(skill_name) for skill_name in reset_skill_names or () if _normalize_name(skill_name)}
+    if reset_names:
+        preferences.disabled_skills = [
+            skill_name
+            for skill_name in preferences.disabled_skills
+            if _normalize_name(skill_name) not in reset_names
+        ]
     return save_project_preferences(cwd, preferences)
 
 

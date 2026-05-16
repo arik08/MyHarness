@@ -24,6 +24,8 @@ export type AppAction =
   | { type: "session_replaced"; sessionId: string; workspace?: Workspace }
   | { type: "set_theme"; themeId: ThemeId }
   | { type: "set_sidebar_collapsed"; value: boolean }
+  | { type: "set_sidebar_width"; value: number }
+  | { type: "set_sidebar_resizing"; value: boolean }
   | { type: "set_draft"; value: string }
   | { type: "set_busy"; value: boolean }
   | { type: "set_chat_title"; value: string }
@@ -112,6 +114,11 @@ function initialSidebarCollapsed() {
     return stored === "1";
   }
   return isNarrowViewport();
+}
+
+function initialSidebarWidth() {
+  const value = Number(loadLocalStorageValue("myharness:sidebarWidth") || 0);
+  return Number.isFinite(value) && value >= 268 ? Math.min(value, 520) : 268;
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number) {
@@ -224,6 +231,8 @@ export const initialAppState: AppState = {
   appSettings: loadAppSettings(),
   themeId: initialThemeId(),
   sidebarCollapsed: initialSidebarCollapsed(),
+  sidebarWidth: initialSidebarWidth(),
+  sidebarResizing: false,
   commands: [],
   skills: [],
   workspaceName: "",
@@ -2230,6 +2239,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         sidebarCollapsed: action.value,
         runtimePicker: action.value ? { ...state.runtimePicker, open: false, loading: false, error: "" } : state.runtimePicker,
       };
+
+    case "set_sidebar_width":
+      return { ...state, sidebarWidth: action.value };
+
+    case "set_sidebar_resizing":
+      return { ...state, sidebarResizing: action.value };
 
     case "set_draft":
       return { ...state, composer: { ...state.composer, draft: action.value } };

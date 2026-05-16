@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Sidebar } from "../Sidebar";
+import { clampSidebarWidth, Sidebar } from "../Sidebar";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { deleteHistory, toggleHistoryPin } from "../../api/history";
@@ -106,6 +106,53 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "새 대화" }).getAttribute("data-tooltip")).toBe("새 대화");
     expect(screen.getByRole("button", { name: "새 대화" }).getAttribute("data-tooltip-placement")).toBe("right");
     expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
+  });
+
+  it("resizes the expanded sidebar without going below the current default width", () => {
+    function SidebarResizeState() {
+      const { state } = useAppState();
+      return <output aria-label="sidebar resize state">{`${state.sidebarResizing}:${state.sidebarWidth}`}</output>;
+    }
+
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sidebarWidth: 268 }}>
+        <Sidebar />
+        <SidebarResizeState />
+      </AppStateProvider>,
+    );
+
+    const handle = screen.getByRole("button", { name: "사이드바 너비 조절" });
+    act(() => {
+      const down = new MouseEvent("pointerdown", { bubbles: true, clientX: 268 });
+      Object.defineProperty(down, "buttons", { value: 1 });
+      Object.defineProperty(down, "pointerId", { value: 1 });
+      fireEvent(handle, down);
+    });
+    expect(screen.getByLabelText("sidebar resize state").textContent).toBe("true:268");
+
+    act(() => {
+      const move = new MouseEvent("pointermove", { bubbles: true, clientX: 358 });
+      Object.defineProperty(move, "buttons", { value: 1 });
+      window.dispatchEvent(move);
+    });
+    expect(screen.getByLabelText("sidebar resize state").textContent).toBe("true:358");
+
+    act(() => {
+      const move = new MouseEvent("pointermove", { bubbles: true, clientX: 120 });
+      Object.defineProperty(move, "buttons", { value: 1 });
+      window.dispatchEvent(move);
+    });
+    expect(screen.getByLabelText("sidebar resize state").textContent).toBe("true:268");
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    });
+    expect(screen.getByLabelText("sidebar resize state").textContent).toBe("false:268");
+  });
+
+  it("keeps the current sidebar width as the minimum resize width", () => {
+    expect(clampSidebarWidth(120, 1440)).toBe(268);
+    expect(clampSidebarWidth(420, 1440)).toBe(420);
   });
 
   it("sends subagent_model when the runtime picker is scoped to Sub", async () => {

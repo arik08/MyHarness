@@ -58,8 +58,8 @@ function sameArtifactHistoryState(nextState: Record<string, unknown>) {
     && String(current.path || "") === String(nextState.path || "");
 }
 
-export function clampArtifactPanelWidth(value: number, options: { windowWidth: number; sidebarCollapsed: boolean }) {
-  const sidebarWidth = options.sidebarCollapsed ? collapsedSidebarWidth : desktopSidebarWidth;
+export function clampArtifactPanelWidth(value: number, options: { windowWidth: number; sidebarCollapsed: boolean; sidebarWidth?: number }) {
+  const sidebarWidth = options.sidebarCollapsed ? collapsedSidebarWidth : Math.max(desktopSidebarWidth, options.sidebarWidth || desktopSidebarWidth);
   const maxWidth = Math.max(artifactPanelMinWidth, options.windowWidth - sidebarWidth - visibleChatMinWidth);
   return Math.min(Math.max(value, artifactPanelMinWidth), maxWidth);
 }
@@ -800,6 +800,7 @@ export function ArtifactPanel() {
       const next = clampArtifactPanelWidth(startWidth + startX - moveEvent.clientX, {
         windowWidth: window.innerWidth,
         sidebarCollapsed: state.sidebarCollapsed,
+        sidebarWidth: state.sidebarWidth,
       });
       dispatch({ type: "set_artifact_panel_width", value: Math.round(next) });
     };
