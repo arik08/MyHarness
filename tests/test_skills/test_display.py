@@ -30,6 +30,27 @@ def test_program_skill_description_is_translated_by_name():
     assert translate_skill_description("commit", description) == "작업 내용을 깔끔하고 구조화된 git 커밋으로 정리해야 할 때 사용합니다."
 
 
+def test_frontend_design_display_scope_prioritizes_homepages_not_reports():
+    translated = translate_skill_description("frontend-design", "Create distinctive frontend interfaces.")
+
+    assert "홈페이지" in translated
+    assert "랜딩 페이지" in translated
+    assert "앱 UI" in translated
+    assert "HTML 보고서" in translated
+    assert "`visual-artifact`" in translated
+    assert "`html-a4-landscape-report`" in translated
+
+
+def test_ui_design_essence_display_scope_is_supporting_guardrail():
+    translated = translate_skill_description("ui-design-essence", "Visual UI design standards.")
+
+    assert "보조 가드레일" in translated
+    assert "주 생성 스킬" in translated
+    assert "`visual-artifact`" in translated
+    assert "`html-a4-landscape-report`" in translated
+    assert "`frontend-design`" in translated
+
+
 def test_learned_skill_description_uses_korean_fallback():
     description = "Use when MyHarness sees this repeated verified failure pattern: web_search: No search results found."
 

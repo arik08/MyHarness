@@ -784,7 +784,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
 
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
       type: "apply_select_command",
@@ -795,12 +795,18 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("message-texts").textContent).toBe("현재 화면 질문");
     expect(screen.getByTestId("active-history").textContent).toBe("");
     expect(screen.getByTestId("pending-history").textContent).toBe("session-old");
-    const restoringRow = Array.from(document.querySelectorAll(".history-item.busy"))
-      .find((item) => item.textContent?.includes("이전 대화"));
+    expect(document.querySelector(".history-item.busy")).toBeNull();
+    expect(screen.queryByText("진행 중인 대화")).toBeNull();
+
+    const restoringRow = await waitFor(() => {
+      const row = Array.from(document.querySelectorAll(".history-item.busy"))
+        .find((item) => item.textContent?.includes("이전 대화"));
+      expect(row).toBeTruthy();
+      return row;
+    }, { timeout: 800 });
     expect(restoringRow?.textContent).toContain("이전 대화");
     expect(restoringRow?.classList.contains("active")).toBe(false);
     expect(document.querySelectorAll(".history-item.busy")).toHaveLength(1);
-    expect(screen.queryByText("진행 중인 대화")).toBeNull();
   });
 
   it("keeps the composer in send mode and delays restore status while a saved history item is restoring", async () => {

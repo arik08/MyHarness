@@ -1,11 +1,20 @@
 ---
 name: ui-design-essence
-description: Visual UI design standards for creating or improving pages, components, dashboards, reports, prototypes, landing pages, and HTML previews. Use when designing frontend/UI work, polishing visual hierarchy, choosing style direction, creating design tokens, avoiding generic AI-looking interfaces, or reviewing UI for consistency, responsiveness, accessibility, density, and purposeful motion.
+description: Design-quality guardrails for UI and visual artifacts. Use as a supporting skill when polishing or reviewing visual hierarchy, design tokens, density, responsiveness, accessibility, and purposeful motion for pages, components, dashboards, reports, prototypes, landing pages, or HTML previews. Do not use as the primary creator for HTML reports, A4/PDF reports, homepages, or app UIs; pair it with visual-artifact, html-a4-landscape-report, frontend-design, or the relevant primary skill.
 ---
 
 # UI Design Essence
 
-Use this skill when creating or improving visual UI. Do not make a generic good-looking UI; choose a clear point of view and execute it precisely.
+Use this skill as a design-quality guardrail when polishing or reviewing visual UI and visual artifacts. It should sharpen hierarchy, tokens, density, responsiveness, accessibility, and motion without changing the requested artifact type.
+
+This is usually a supporting skill, not the primary creator:
+
+- Use `frontend-design` as the primary skill for homepages, landing pages, marketing/product sites, branded websites, app UI, prototypes, demos, and game UI.
+- Use `visual-artifact` as the primary skill for scrolling HTML reports, dashboards, infographics, timelines, visual summaries, and report-style browser artifacts.
+- Use `html-a4-landscape-report` together with `visual-artifact` for fixed-page A4 landscape reports.
+- Use this skill after or alongside those skills when the work needs better visual hierarchy, consistent tokens, density tuning, responsiveness, accessibility, or generic-AI-UI cleanup.
+
+Do not make a generic good-looking UI; preserve the artifact type and improve the design decisions inside that type.
 
 ## Start with a design direction
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "UI Design Essence"
-  short_description: "Focused UI direction and tokens"
-  default_prompt: "Use UI Design Essence to design or improve this interface with a clear direction, token system, hierarchy, restrained density, one signature detail, and the requested artifact format preserved."
+  short_description: "UI quality guardrails and polish"
+  default_prompt: "Use UI Design Essence as a supporting design-quality pass: preserve the requested artifact type while improving hierarchy, tokens, density, responsiveness, accessibility, motion, and generic-AI-UI issues."

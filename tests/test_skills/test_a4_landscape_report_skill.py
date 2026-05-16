@@ -21,6 +21,7 @@ def test_a4_landscape_report_skill_is_program_local_and_discoverable(tmp_path, m
     assert "landscape" in skill.description
     assert "section.page" in skill.content
     assert "Page Plan" in skill.content
+    assert "together with `visual-artifact`" in skill.content
 
 
 def test_visual_artifact_routes_a4_landscape_requests_to_specific_skill():
@@ -29,6 +30,8 @@ def test_visual_artifact_routes_a4_landscape_requests_to_specific_skill():
     assert "html-a4-landscape-report" in skill_text
     assert "A4 landscape" in skill_text or "A4 가로" in skill_text
     assert "only when the user explicitly asks" in skill_text
+    assert "use both this skill and `html-a4-landscape-report`" in skill_text
+    assert "let `html-a4-landscape-report` own the page-based layout workflow" in skill_text
 
 
 def test_visual_artifact_preserves_general_scrolling_report_design():
@@ -60,9 +63,9 @@ def test_a4_landscape_report_skill_default_prompt_mentions_skill_name():
     assert "$html-a4-landscape-report" in openai_yaml
 
 
-def test_base_prompt_treats_a4_landscape_html_as_page_based_report():
+def test_base_prompt_does_not_duplicate_a4_landscape_skill_rules():
     prompt = get_base_system_prompt()
 
-    assert "A4 landscape" in prompt
-    assert "section.page" in prompt
-    assert "slide deck" in prompt
+    assert "A4 landscape" not in prompt
+    assert "section.page" not in prompt
+    assert "Page Plan" not in prompt

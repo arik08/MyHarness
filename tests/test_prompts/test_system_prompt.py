@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from myharness.prompts.environment import EnvironmentInfo
 from myharness.prompts.system_prompt import build_system_prompt
 
@@ -126,51 +128,37 @@ def test_build_system_prompt_discourages_repeated_clarification_rounds():
     assert "(1/N)" in prompt
 
 
-def test_build_system_prompt_guides_chat_html_rendering_and_report_charts():
+def test_build_system_prompt_guides_chat_html_rendering_without_visual_report_rules():
     env = _make_env()
     prompt = build_system_prompt(env=env)
 
     assert "MyHarness can render fenced `html` code blocks directly in the chat" in prompt
     assert "MyHarness can render fenced `mermaid` code blocks in chat and Markdown artifact previews" in prompt
     assert "use Mermaid for flowcharts, sequence diagrams, state diagrams, and other compact process diagrams" in prompt
-    assert "For standalone HTML reports or web reports, use Mermaid when workflow, architecture, sequence, or dependency diagrams" in prompt
-    assert "include Mermaid via CDN only when the HTML artifact needs it" in prompt
-    assert "research, investigate, compare, analyze, summarize sources" in prompt
-    assert "default to a standalone HTML web report under `outputs/`" in prompt
-    assert "PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, slides" in prompt
-    assert "honor that requested format instead" in prompt
     assert "quick charts, small data views" in prompt
     assert "Do not force inline HTML for every answer" in prompt
-    assert "HTML report or 리포트" in prompt
-    assert "do not ask them to choose the layout, style, or report archetype" in prompt
-    assert "Choose a business-appropriate visual concept yourself" in prompt
-    assert "instead of reusing the same card-grid template" in prompt
-    assert "editorial briefing" in prompt
-    assert "intelligence dossier" in prompt
-    assert "polished web-native report composition" in prompt
-    assert "strong section rhythm" in prompt
-    assert "visual anchors" in prompt
-    assert "prefer ECharts via CDN" in prompt
-    assert "Only when the user explicitly asks for an A4 landscape" in prompt
-    assert "actively consider restrained semantic icons" in prompt
-    assert "Lucide or inline SVG" in prompt
-    assert "do not force icons into every card or paragraph" in prompt
-    assert "business-style HTML reports, dashboards, and charts" in prompt
-    assert "restrained and work-focused but not bland" in prompt
-    assert "Avoid oversized border-radius" in prompt
-    assert "usually around 4-8px radius" in prompt
-    assert "feels designed rather than like a generic white document" in prompt
     assert "self-contained, compact, readable in a constrained iframe" in prompt
 
+    assert "default to a standalone HTML web report under `outputs/`" in prompt
+    assert "long report, 장문보고서, 긴 보고서, 대보고서" in prompt
+    assert "For standalone HTML reports or web reports, use Mermaid when workflow, architecture, sequence, or dependency diagrams" not in prompt
+    assert "polished web-native report composition" not in prompt
+    assert "prefer ECharts via CDN" not in prompt
+    assert "Only when the user explicitly asks for an A4 landscape" not in prompt
+    assert "actively consider restrained semantic icons" not in prompt
+    assert "business-style HTML reports, dashboards, and charts" not in prompt
 
-def test_build_system_prompt_defaults_pasted_source_report_requests_to_html_artifacts():
+def test_build_system_prompt_defaults_report_requests_to_html_artifacts():
     env = _make_env()
     prompt = build_system_prompt(env=env)
 
+    assert "report, long report, 장문보고서, 긴 보고서, 대보고서" in prompt
     assert "pasted site, article, document, transcript, or source text" in prompt
     assert "보고서로 작성해줘" in prompt
     assert "create a standalone HTML report under `outputs/`" in prompt
     assert "Do not put the full report body only in the chat" in prompt
+    assert "PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, slides" in prompt
+    assert "honor that requested format instead" in prompt
 
 
 def test_build_system_prompt_guides_interactive_3d_html_artifacts():
@@ -201,26 +189,50 @@ def test_build_system_prompt_guides_high_fidelity_3d_html_artifacts():
     assert "Do not present a simple low-poly proxy as high fidelity" in prompt
 
 
-def test_build_system_prompt_rejects_yellowed_report_palettes():
+def test_visual_artifact_rejects_yellowed_report_palettes():
     env = _make_env()
     prompt = build_system_prompt(env=env)
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
-    assert "Avoid yellowed report palettes" in prompt
-    assert "aged paper, parchment, sepia" in prompt
-    assert "cream/beige/yellowed document" in prompt
-    assert "appropriate non-yellowed palette" in prompt
-    assert "all-white/all-gray surfaces" in prompt
+    assert "Avoid yellowed report palettes" not in prompt
+    assert "Avoid yellowed report palettes" in skill_text
+    assert "aged paper, parchment, sepia" in skill_text
+    assert "cream/beige/yellowed document" in skill_text
+    assert "appropriate non-yellowed palette" in skill_text
+    assert "all-white/all-gray surfaces" in skill_text
 
 
-def test_build_system_prompt_includes_default_report_chart_palette():
+def test_visual_artifact_includes_default_report_chart_palette():
     env = _make_env()
     prompt = build_system_prompt(env=env)
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
-    assert "Default report chart palette" in prompt
-    assert "#3288bd, #66c2a5, #e6f598, #d53e4f" in prompt
-    assert "#9e0142, #f46d43, #fdae61, #fee08b, #abdda4, #5e4fa2" in prompt
-    assert "first choices are not mandatory" in prompt
-    assert "avoid dull default chart palettes" in prompt
+    assert "Default report chart palette" not in prompt
+    assert "#3288bd`, `#66c2a5`, `#e6f598`, `#d53e4f" in skill_text
+    assert "#9e0142`, `#f46d43`, `#fdae61`, `#fee08b`, `#abdda4`, `#5e4fa2" in skill_text
+    assert "Use a few colors intentionally" in skill_text
+
+
+def test_visual_artifact_contains_report_design_rules_and_routes_a4_to_a4_skill():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "do not ask the user to choose a layout, style, or report archetype" not in prompt
+    assert "Do not ask the user to choose a layout, style, or report archetype" in skill_text
+    assert "polished scrolling web report" in skill_text
+    assert "web-native report composition" in skill_text
+    assert "ECharts" in skill_text
+    assert "Lucide or similar icon sets" in skill_text
+    assert "For standalone HTML reports or web reports, use Mermaid" in skill_text
+    assert "use both this skill and `html-a4-landscape-report`" in skill_text
+    assert "let `html-a4-landscape-report` own the page-based layout workflow" in skill_text
 
 
 def test_build_system_prompt_prefers_existing_files_and_batched_edits():
@@ -232,7 +244,8 @@ def test_build_system_prompt_prefers_existing_files_and_batched_edits():
     assert "Treat requests such as" in prompt
     assert "Search for and read the likely existing file" in prompt
     assert "small tweak, bug fix, style change, text change, or behavior change" in prompt
-    assert "standalone preview, demo, script, report, or sample" in prompt
+    assert "standalone preview, demo, script, or sample" in prompt
+    assert "standalone preview, demo, script, report, or sample" not in prompt
     assert "Avoid `index.html` for newly created artifacts whenever possible" in prompt
     assert "too generic for users and future AI sessions" in prompt
     assert "Do not reuse a generic file such as `index.html`" in prompt

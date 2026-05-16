@@ -19,6 +19,7 @@ const themeOptions: Array<{ id: ThemeId; label: string }> = [
 ];
 
 const historyTitleMaxLength = 26;
+const historyRestoreSpinnerDelayMs = 500;
 const historyTitleCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
 const sidebarMinWidth = 268;
 const sidebarMaxWidth = 520;
@@ -40,6 +41,7 @@ export function Sidebar() {
   const [editingHistoryTitle, setEditingHistoryTitle] = useState("");
   const [deletingHistoryId, setDeletingHistoryId] = useState("");
   const [expandedHistoryActionId, setExpandedHistoryActionId] = useState("");
+  const [visiblePendingHistoryId, setVisiblePendingHistoryId] = useState<string | null>(null);
   const [runtimePickerGeometry, setRuntimePickerGeometry] = useState<RuntimePickerGeometry>({
     left: null,
     top: null,
@@ -413,6 +415,19 @@ export function Sidebar() {
   }
 
   useEffect(() => {
+    const pendingHistoryId = state.pendingHistoryId;
+    if (!pendingHistoryId) {
+      setVisiblePendingHistoryId(null);
+      return undefined;
+    }
+    setVisiblePendingHistoryId(null);
+    const timeoutId = window.setTimeout(() => {
+      setVisiblePendingHistoryId(pendingHistoryId);
+    }, historyRestoreSpinnerDelayMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [state.pendingHistoryId]);
+
+  useEffect(() => {
     if (!state.runtimePicker.open) return;
     function handlePointerDown(event: MouseEvent) {
       const target = event.target as Node | null;
@@ -736,7 +751,7 @@ export function Sidebar() {
               const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
               const editing = editingHistoryId === item.value;
               const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
-              const isPendingRestore = state.pendingHistoryId === item.value;
+              const isPendingRestore = state.pendingHistoryId === item.value && visiblePendingHistoryId === item.value;
               const isActiveBusy = isActive && state.busy && (!state.pendingHistoryId || isPendingRestore);
               const isBusy = isActiveBusy || isPendingRestore || (item.live === true && item.busy === true);
               const isDeleting = deletingHistoryId === item.value;

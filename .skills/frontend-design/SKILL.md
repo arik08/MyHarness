@@ -1,12 +1,25 @@
 ---
 name: frontend-design
-description: Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.
+description: Create distinctive, production-grade frontend interfaces with high design quality. Consider this skill for homepage, landing page, marketing site, product site, branded website, app UI, prototype, demo, game UI, or frontend component work where art direction, interaction, imagery, and page composition are central. Do not use it for HTML reports, research briefs, analytical documents, A4/PDF reports, or dense business artifacts unless the user explicitly asks for homepage/landing-style treatment; use visual-artifact or html-a4-landscape-report for those report deliverables.
 license: Complete terms in LICENSE.txt
 ---
 
 This skill guides creation of distinctive, production-grade frontend interfaces that avoid generic "AI slop" aesthetics. Implement real working code with exceptional attention to aesthetic details and creative choices.
 
 The user provides frontend requirements: a component, page, application, or interface to build. They may include context about the purpose, audience, or technical constraints.
+
+## Use For
+
+- Homepages, landing pages, marketing sites, product/brand pages, launch pages, and editorial-style websites.
+- App UI, prototypes, demos, game UI, and frontend components where interaction design and visual art direction are central.
+- Visual redesigns of web UI when the user is asking for a product/site experience rather than a report document.
+
+## Do Not Use For
+
+- HTML reports, research briefs, company analyses, market reports, analytical dashboards-as-documents, A4/PDF reports, or dense business artifacts.
+- Use `visual-artifact` for scrolling HTML reports, dashboards, infographics, visual summaries, timelines, and report-style browser artifacts.
+- Use `html-a4-landscape-report` together with `visual-artifact` for fixed-page A4 landscape report requests.
+- If the user references a brand/site style while asking for a report, borrow only the surface language through `design-md` or `visual-artifact`; do not turn the report into a homepage.
 
 ## Design Thinking
 

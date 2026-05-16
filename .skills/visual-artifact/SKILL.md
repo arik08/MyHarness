@@ -10,17 +10,17 @@ Create browser-native visual deliverables that are polished enough to screenshot
 ## Default output
 
 - Prefer one self-contained `.html` file with inline CSS and JS.
-- When the user asks for research, investigation, comparison, analysis, source review, or a similar information-gathering task followed by "write/create a report" and does not specify a format, treat the deliverable as an HTML web report. Explicit format requests such as PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, or slides override this default.
+- For MyHarness single-file previews, keep CSS and app code in the HTML file when practical so the file card can open it directly; relative external files can break in `iframe srcdoc` previews.
 - If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use the target to plan content depth, but do not crowd the page with walls of prose, cramped tables, or repetitive cards just to hit a length. Preserve visual rhythm with section summaries, charts, callouts, and source notes.
-- Use a short purpose-specific kebab-case filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it.
-- Keep dependencies minimal. Use no CDN when CSS/SVG is enough; use CDN libraries when they materially improve the result.
+- Use a short purpose-specific filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it. Prefer concise readable Korean filenames with underscores for Korean-facing reports/previews; use English kebab-case or snake_case for code-heavy demos, games, or English-facing artifacts.
+- Keep dependencies minimal. Use no CDN when CSS/SVG is enough; consider CDN libraries such as ECharts, Mermaid, Three.js, Lucide, Chart.js, Tailwind, React, or ReactDOM only when they materially improve a standalone preview/report or avoid unnecessary build setup.
 - Make the artifact readable in a constrained iframe and in a normal browser window.
 - Do not include secrets or unsanitized user-provided HTML.
 
 ## Decide the artifact type
 
 - **Executive/report page**: structured findings, tables, charts, recommendations, sources in a polished scrolling web report.
-- **A4 landscape page report**: only when the user explicitly asks for A4 landscape, A4 가로, 가로형 A4, printable horizontal PDF, or a fixed-page report, use `html-a4-landscape-report` instead of the general scrolling report workflow.
+- **A4 landscape page report**: only when the user explicitly asks for A4 landscape, A4 가로, 가로형 A4, printable horizontal PDF, or a fixed-page report, use this skill for the visual direction and use `html-a4-landscape-report` together with it for fixed-page structure, density limits, table splitting, and overflow QA.
 - **Dashboard**: KPI cards, charts, filters/toggles if useful, data table.
 - **Infographic/one-pager**: strong story flow, big numbers, compact sections, print/capture-ready layout.
 - **Slide-like HTML**: 16:9 sections, keyboard or scroll navigation only if useful.
@@ -58,8 +58,10 @@ quarterly trends, sources, or a report:
 - Restrained does not mean all-white, gray, or template-like. Give each report a coherent visual system with a few distinctive accents, chart colors, rules, tags, or background bands that match the topic.
 - Avoid oversized radii, pill-heavy cards, excessive gradients, and bloated padding unless requested.
 - Prefer 4–8px radius for panels/cards/buttons.
+- Avoid yellowed report palettes. Unless the user explicitly asks for that look, do not make reports feel like aged paper, parchment, sepia, or a cream/beige/yellowed document. Choose an appropriate non-yellowed palette for the subject instead of defaulting to all-white/all-gray surfaces.
 - Avoid arbitrary pastel flooding across large cards, quadrants, table cells, or sections just to label categories. This is a caution against noisy decoration, not a ban on color. For business reports, use color with intent: section bands, pale fills with crisp accents, chart marks, left/top borders, small tags, icons, or callouts. Use stronger color when it supports quantitative intensity, status severity, selected state, brand tone, or a deliberately infographic-style artifact.
 - Use exact tables for exact values; use charts for trends, comparisons, proportions, timelines, or distributions.
+- For standalone HTML reports or web reports, use Mermaid when workflow, architecture, sequence, or dependency diagrams would explain the subject better than prose or a table. In self-contained HTML artifacts, include Mermaid via CDN only when the HTML artifact needs it; do not add Mermaid for ordinary numeric charts where ECharts, SVG, canvas, or tables are clearer.
 - For report-like artifacts, actively consider restrained semantic icons for section markers, KPIs, risks, recommendations, and action items when they improve scanning. Keep icons small, consistent, and businesslike; avoid childish, toy-like, emoji-heavy, or purely decorative icon use. Do not force icons into every card or paragraph.
 - Prefer this default color palette for charts, categorical accents, heat scales, and report highlights unless the user provides a brand palette or the artifact clearly needs another scheme: `#3288bd`, `#66c2a5`, `#e6f598`, `#d53e4f`, `#9e0142`, `#f46d43`, `#fdae61`, `#fee08b`, `#abdda4`, `#5e4fa2`. Use a few colors intentionally; avoid turning every section into a rainbow.
 - For Mermaid process maps and dense diagrams, use semantic color groups so the reader can scan the system at a glance: blue for standards/requests/reports, teal for operations/market/planning, orange for investment/CAPEX/strategic decisions, red for risk/issues, and purple for governance/approval. Prefer pale fills with crisp colored borders and readable dark text; use stronger fills only for start/end, warnings, or key status nodes. In flowcharts, add `classDef` styles and assign classes by meaning instead of leaving all nodes the same color.
@@ -87,7 +89,7 @@ quarterly trends, sources, or a report:
 ## Capture-friendly conventions
 
 - For presentation-style output, include a `.stage` or `.slide` layout with 16:9 ratio when appropriate.
-- For A4 landscape HTML, use `html-a4-landscape-report`; treat it as a page-based slide deck with `section.page`, a Page Plan, density limits, and overflow QA.
+- For A4 landscape HTML, use both this skill and `html-a4-landscape-report`; keep visual direction here, and let `html-a4-landscape-report` own the page-based layout workflow.
 - For reports, make A4/Letter print behavior explicit with sensible page breaks.
 - Avoid content that depends on hover-only interactions for core meaning.
 - Keep animations subtle and disable or simplify them for print.
