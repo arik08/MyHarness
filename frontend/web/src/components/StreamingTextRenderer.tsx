@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import type { AppSettings } from "../types/ui";
 import { isStandaloneHtmlDocument, MarkdownMessage } from "./MarkdownMessage";
 
@@ -465,25 +466,84 @@ function HtmlStreamPending({ text }: { text: string }) {
   );
 }
 
-function MermaidStreamPending() {
+function usePendingDots(enabled: boolean) {
+  const [dotCount, setDotCount] = useState(() => (enabled ? 1 : 3));
+
+  useEffect(() => {
+    if (!enabled) {
+      setDotCount(3);
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setDotCount((current) => (current >= 3 ? 1 : current + 1));
+    }, 700);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+
+  return ".".repeat(dotCount);
+}
+
+function PendingStatusBox({
+  className,
+  label,
+  animatedDots = false,
+  icon,
+}: {
+  className: string;
+  label: string;
+  animatedDots?: boolean;
+  icon: ReactNode;
+}) {
+  const dots = usePendingDots(animatedDots);
   return (
-    <div className="markdown-body react-markdown stream-live-text mermaid-stream-pending" role="status">
-      <div className="mermaid-stream-pending-box">
-        <span className="mermaid-stream-pending-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24">
-            <path d="M4 7h6"></path>
-            <path d="M14 7h6"></path>
-            <path d="M10 7h4"></path>
-            <path d="M7 7v5"></path>
-            <path d="M17 7v5"></path>
-            <path d="M7 12h10"></path>
-            <path d="M12 12v5"></path>
-            <path d="M9 17h6"></path>
-          </svg>
+    <div className={`markdown-body react-markdown stream-live-text ${className}`} role="status">
+      <div className="stream-pending-box mermaid-stream-pending-box">
+        <span className="stream-pending-icon mermaid-stream-pending-icon" aria-hidden="true">
+          {icon}
         </span>
-        <span>다이어그램 작성 중...</span>
+        <span>{label}{dots}</span>
       </div>
     </div>
+  );
+}
+
+function MermaidStreamPending() {
+  return (
+    <PendingStatusBox
+      className="mermaid-stream-pending"
+      label="다이어그램 작성 중"
+      icon={(
+        <svg viewBox="0 0 24 24">
+          <path d="M4 7h6"></path>
+          <path d="M14 7h6"></path>
+          <path d="M10 7h4"></path>
+          <path d="M7 7v5"></path>
+          <path d="M17 7v5"></path>
+          <path d="M7 12h10"></path>
+          <path d="M12 12v5"></path>
+          <path d="M9 17h6"></path>
+        </svg>
+      )}
+    />
+  );
+}
+
+function TableStreamPending() {
+  return (
+    <PendingStatusBox
+      className="markdown-table-stream-pending"
+      label="표 작성 중"
+      animatedDots
+      icon={(
+        <svg viewBox="0 0 24 24">
+          <path d="M4 6h16"></path>
+          <path d="M4 12h16"></path>
+          <path d="M4 18h16"></path>
+          <path d="M8 6v12"></path>
+          <path d="M15 6v12"></path>
+        </svg>
+      )}
+    />
   );
 }
 
@@ -527,7 +587,9 @@ function StreamingMarkdownMessage({
         <HtmlStreamPending text={liveTail} />
       ) : liveTailFenceLanguage === "mermaid" || liveTailFenceLanguage === "mmd" ? (
         <MermaidStreamPending />
-      ) : liveTailHasIncompleteFence || liveTailHasStreamingTable ? (
+      ) : liveTailHasStreamingTable ? (
+        <TableStreamPending />
+      ) : liveTailHasIncompleteFence ? (
         <div className="markdown-body react-markdown stream-live-text">
           <StreamingPlainText text={liveTail} />
         </div>

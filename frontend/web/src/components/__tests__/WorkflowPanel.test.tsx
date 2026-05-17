@@ -107,4 +107,21 @@ describe("WorkflowPanel", () => {
     expect(document.querySelector(".workflow-activity-status")).toBeNull();
     expect(screen.getByText("응답 작성")).toBeTruthy();
   });
+
+  it("shows request and planning detail text on parent rows", () => {
+    render(
+      <AppStateProvider>
+        <WorkflowPanel
+          events={[
+            { id: "request", toolName: "", title: "요청 이해", detail: "요청 확인 · 경쟁사 이슈를 조사합니다.", status: "done", level: "parent" },
+            { id: "plan", toolName: "", title: "작업 계획 수립", detail: "글로벌 철강 생산량과 저탄소 전환 기준으로 보겠습니다.", status: "done", level: "parent", role: "planning" },
+            { id: "final", toolName: "", title: "응답 작성", detail: "답변 본문을 작성하고 있습니다.", status: "running", level: "parent", role: "final" },
+          ]}
+        />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("요청 확인 · 경쟁사 이슈를 조사합니다.")).toBeTruthy();
+    expect(screen.getByText("글로벌 철강 생산량과 저탄소 전환 기준으로 보겠습니다.")).toBeTruthy();
+  });
 });

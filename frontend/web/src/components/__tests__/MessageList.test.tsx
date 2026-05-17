@@ -399,6 +399,28 @@ describe("MessageList", () => {
     expect(screen.getByText("요약 + 표 + 주요 근거")).toBeTruthy();
   });
 
+  it("keeps wiki-link tag lists as code instead of workflow diagrams", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "개념 페이지",
+          "",
+          "```",
+          "[knowledge-management, llm, wiki]",
+          "[[rag]]",
+          "[[obsidian]]",
+          "[[zettelkasten]]",
+          "[[knowledge-graph]]",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(document.querySelector(".assistant-workflow-diagram")).toBeNull();
+    expect(document.querySelector(".markdown-body pre")).toBeTruthy();
+    expect(document.querySelector(".markdown-body pre")?.textContent).toContain("[[knowledge-graph]]");
+  });
+
   it("keeps an incomplete streaming workflow fence as plain live text instead of a flashing code block", () => {
     render(
       <StreamingAssistantMessage
@@ -839,7 +861,7 @@ describe("MessageList", () => {
     expect(workflowText).not.toContain("방금");
     expect(workflowText).not.toContain("이제 작업 결과를 정리");
     expect(document.querySelector(".workflow-narration")).toBeNull();
-    expect(document.body.textContent || "").not.toContain("진행 방향을 정했습니다");
+    expect(document.body.textContent || "").toContain("진행 방향을 정했습니다");
     expect(document.body.textContent || "").not.toContain("작업 실행을 마쳤습니다");
     expect(document.body.textContent || "").toContain("파일 확인index.html");
   });
@@ -876,7 +898,7 @@ describe("MessageList", () => {
     expect(workflowText.match(/확인한 맥락을 바탕으로 실제 작업을 진행/g) || []).toHaveLength(0);
   });
 
-  it("keeps completed parent labels visible without generated explanations", () => {
+  it("keeps request and planning details visible while hiding other generated parent explanations", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -897,7 +919,8 @@ describe("MessageList", () => {
     const workflowText = document.querySelector(".workflow-message")?.textContent || "";
     expect(workflowText).toContain("요청 이해");
     expect(workflowText).toContain("작업 계획 수립");
-    expect(workflowText).not.toContain("사용자 요청을 확인했습니다");
+    expect(workflowText).toContain("사용자 요청을 확인했습니다");
+    expect(workflowText).toContain("진행 방향을 정했습니다");
     expect(workflowText).not.toContain("요청을 기준으로 필요한 맥락과 검증 기준을 정리");
     expect(workflowText).not.toContain("최종 답변을 작성했습니다");
   });
@@ -1797,6 +1820,57 @@ describe("MessageList", () => {
     expect(screen.getByText("-- <div>5x</div>").className).toContain("removed");
     expect(screen.getByText("++ <div>3x</div>").className).toContain("added");
     expect(document.querySelectorAll(".workflow-diff-line")).toHaveLength(6);
+  });
+
+  it("renders separate edit previews for repeated edits to the same file", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "보고서를 계속 고쳐줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "file_edit",
+              title: "file_edit",
+              detail: "outputs/report.html",
+              status: "done",
+              level: "child",
+              toolInput: {
+                path: "outputs/report.html",
+                old_str: "<h1>Old headline</h1>",
+                new_str: "<h1>New headline</h1>",
+              },
+            },
+            {
+              id: "workflow-2",
+              toolName: "file_edit",
+              title: "file_edit",
+              detail: "outputs/report.html",
+              status: "done",
+              level: "child",
+              toolInput: {
+                path: "outputs/report.html",
+                old_str: "<p>Short body</p>",
+                new_str: "<p>Expanded body</p>",
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getAllByText("수정 완료 - report.html")).toHaveLength(2);
+    expect(screen.getByText("-- <h1>Old headline</h1>").className).toContain("removed");
+    expect(screen.getByText("++ <h1>New headline</h1>").className).toContain("added");
+    expect(screen.getByText("-- <p>Short body</p>").className).toContain("removed");
+    expect(screen.getByText("++ <p>Expanded body</p>").className).toContain("added");
+    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(2);
   });
 
   it("renders apply_patch previews as colored diff rows", () => {
@@ -3129,7 +3203,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".stream-live-text")?.textContent).not.toContain("**전력기기 산업이 AI 시대의 숨은 수혜 산업이다**");
   });
 
-  it("keeps a trailing streaming markdown table as raw text until the answer completes", () => {
+  it("keeps a trailing streaming markdown table behind a pending status until the answer completes", () => {
     const tableMarkdown = [
       "| 항목 | 값 |",
       "| --- | --- |",
@@ -3155,9 +3229,10 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.querySelector(".stream-live-text pre")).toBeNull();
+    expect(document.querySelector(".markdown-table-stream-pending")).toBeTruthy();
     expect(document.querySelector(".markdown-body table")).toBeNull();
-    expect(document.body.textContent || "").toContain("| 항목 | 값 |");
+    expect(document.body.textContent || "").toContain("표 작성 중.");
+    expect(document.body.textContent || "").not.toContain("| 항목 | 값 |");
 
     rerender(
       <AppStateProvider
@@ -3204,12 +3279,13 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.querySelector(".stream-live-text pre")).toBeNull();
+    expect(document.querySelector(".markdown-table-stream-pending")).toBeTruthy();
     expect(document.querySelector(".markdown-body table")).toBeNull();
-    expect(document.body.textContent || "").toContain(partialRow);
+    expect(document.body.textContent || "").toContain("표 작성 중.");
+    expect(document.body.textContent || "").not.toContain(partialRow);
   });
 
-  it("keeps a trailing streaming markdown table with a final newline as raw text", () => {
+  it("keeps a trailing streaming markdown table with a final newline behind a pending status", () => {
     const tableMarkdown = [
       "| 항목 | 값 |",
       "| --- | --- |",
@@ -3236,9 +3312,49 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.querySelector(".stream-live-text pre")).toBeNull();
+    expect(document.querySelector(".markdown-table-stream-pending")).toBeTruthy();
     expect(document.querySelector(".markdown-body table")).toBeNull();
-    expect(document.body.textContent || "").toContain("| 항목 | 값 |");
+    expect(document.body.textContent || "").toContain("표 작성 중.");
+    expect(document.body.textContent || "").not.toContain("| 항목 | 값 |");
+  });
+
+  it("animates the streaming markdown table pending dots slowly", () => {
+    vi.useFakeTimers();
+    const tableMarkdown = [
+      "| 항목 | 값 |",
+      "| --- | --- |",
+      "| A | 1 |",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamStartBufferMs: 0,
+            streamRevealDurationMs: 0,
+          },
+          messages: [
+            { id: "assistant-1", role: "assistant", text: tableMarkdown },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".markdown-table-stream-pending")?.textContent || "").toContain("표 작성 중.");
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(document.querySelector(".markdown-table-stream-pending")?.textContent || "").toContain("표 작성 중..");
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(document.querySelector(".markdown-table-stream-pending")?.textContent || "").toContain("표 작성 중...");
+    vi.useRealTimers();
   });
 
   it("keeps an already rendered streaming table mounted while later content streams", () => {

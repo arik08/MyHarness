@@ -339,6 +339,14 @@ function assistantStreamingText(currentText: string, nextChunkOrSnapshot: string
   return `${currentText}${nextChunkOrSnapshot}`;
 }
 
+function removePendingAssistantMessage(messages: ChatMessage[]): ChatMessage[] {
+  const last = messages[messages.length - 1];
+  if (last?.role === "assistant" && last.isComplete !== true) {
+    return messages.slice(0, -1);
+  }
+  return messages;
+}
+
 function appendErrorMessage(messages: ChatMessage[], message: string): ChatMessage[] {
   const text = normalizeVisibleText(message).trim() || "응답 생성 중 오류가 발생했습니다.";
   const last = messages[messages.length - 1];
@@ -832,19 +840,23 @@ function appendWorkflowEvent(events: WorkflowEvent[], event: Omit<WorkflowEvent,
   return [...events, { id: nextId(), ...event }];
 }
 
-function updateWorkflowEventByRole(events: WorkflowEvent[], role: WorkflowEvent["role"], patch: Partial<Omit<WorkflowEvent, "id">>) {
-  const index = events.findIndex((event) => event.role === role);
-  if (index < 0) {
-    return events;
-  }
-  return events.map((event, currentIndex) => currentIndex === index ? { ...event, ...patch } : event);
+function isDefaultPlanningDetail(detail: string) {
+  return new Set([
+    "필요한 맥락과 진행 방향을 정리합니다.",
+    "진행 방향을 정했습니다.",
+  ]).has(compactWorkflowDetail(detail));
 }
 
 function completePlanning(events: WorkflowEvent[]) {
-  return updateWorkflowEventByRole(events, "planning", {
-    status: "done",
-    detail: "진행 방향을 정했습니다.",
-  });
+  return events.map((event) => (
+    event.role === "planning"
+      ? {
+          ...event,
+          status: "done" as const,
+          detail: isDefaultPlanningDetail(event.detail) ? "진행 방향을 정했습니다." : event.detail,
+        }
+      : event
+  ));
 }
 
 function removeWorkflowEventsByRole(events: WorkflowEvent[], role: WorkflowEvent["role"]) {
@@ -1565,8 +1577,15 @@ function reduceHistoryRestoreEvent(
     if (type === "assistant") {
       const text = String(record.text || "");
       if (text.trim()) {
-        messages.push(createMessage({ role: "assistant", text, isComplete: isFinalRestoredAssistantAnswer(historyEvents, index) }));
-        currentTurnHasAssistant = true;
+        if (isFinalRestoredAssistantAnswer(historyEvents, index)) {
+          messages.push(createMessage({ role: "assistant", text, isComplete: true }));
+          currentTurnHasAssistant = true;
+        } else {
+          workflowEvents = applyWorkflowProgressNote(
+            completePlanning(removeWorkflowEventsByRole(workflowEvents.length ? workflowEvents : initialWorkflowEvents(), "final")),
+            text,
+          );
+        }
       }
       continue;
     }
@@ -2131,16 +2150,18 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const value = normalizeVisibleText(String(event.message || ""));
     const last = state.messages[state.messages.length - 1];
     const isFinalAnswer = event.has_tool_uses !== true;
-    const messages = value
-      ? last?.role === "assistant" && last.isComplete !== true
-        ? [
-            ...state.messages.slice(0, -1),
-            { ...last, text: assistantCompletionText(last.text, value), isComplete: isFinalAnswer },
-          ]
-        : appendMessage(state.messages, { role: "assistant", text: value, isComplete: isFinalAnswer })
-      : isFinalAnswer && last?.role === "assistant"
-        ? [...state.messages.slice(0, -1), { ...last, isComplete: true }]
-        : state.messages;
+    const messages = isFinalAnswer
+      ? value
+        ? last?.role === "assistant" && last.isComplete !== true
+          ? [
+              ...state.messages.slice(0, -1),
+              { ...last, text: assistantCompletionText(last.text, value), isComplete: true },
+            ]
+          : appendMessage(state.messages, { role: "assistant", text: value, isComplete: true })
+        : last?.role === "assistant"
+          ? [...state.messages.slice(0, -1), { ...last, isComplete: true }]
+          : state.messages
+      : removePendingAssistantMessage(state.messages);
     return {
       ...state,
       busy: event.has_tool_uses === true,
@@ -2149,7 +2170,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         ? finishFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())
         : value
           ? applyWorkflowProgressNote(
-              completePlanning(removeWorkflowEventsByRole(state.workflowEvents, "final")),
+              completePlanning(removeWorkflowEventsByRole(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), "final")),
               value,
             )
           : removeWorkflowEventsByRole(state.workflowEvents, "final"),

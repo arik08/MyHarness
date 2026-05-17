@@ -949,7 +949,7 @@ function parseWorkflowDiagram(source: string) {
 function looksLikeWorkflowDiagram(source: string) {
   const text = String(source || "");
   const nodeCount = (text.match(/\[[^\]]+\]/g) || []).length;
-  return nodeCount >= 2 && (/[→↔]|->|=>|├|┐|┘/.test(text) || nodeCount >= 3);
+  return nodeCount >= 2 && /[→↔]|->|=>|├|┐|┘/.test(text);
 }
 
 function createWorkflowDiagram(source: string) {

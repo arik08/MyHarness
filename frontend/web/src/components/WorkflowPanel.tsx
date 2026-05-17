@@ -656,7 +656,8 @@ function WorkflowStep({
     : compactWorkflowOutputDetail(event, baseDetail);
   const visibleGeneratedDetail = isGeneratedWorkflowDetail(visibleDetail);
   const parentStep = event.level !== "child" && !event.toolName;
-  const renderedDetail = parentStep && visibleGeneratedDetail ? "" : visibleDetail;
+  const keepGeneratedParentDetail = event.title === "요청 이해" || event.role === "planning";
+  const renderedDetail = parentStep && visibleGeneratedDetail && !keepGeneratedParentDetail ? "" : visibleDetail;
   const statusDetailText = showNarration
     ? narration || ""
     : showCompactToolDetail || showQuietParentDetail
@@ -866,12 +867,14 @@ function useStaggeredWorkflowEvents(events: WorkflowEvent[], enabled: boolean) {
 }
 
 function workflowPreviewDedupeKey(event: WorkflowEvent, source: WorkflowPreviewSource) {
+  if (source.kind === "diff") {
+    return "";
+  }
   const pathKey = workflowOutputPathKey(source.path);
   if (!pathKey) {
     return "";
   }
-  const toolKey = event.toolName.toLowerCase().includes("edit") || source.kind === "diff" ? "edit" : "write";
-  return `${toolKey}:${pathKey}`;
+  return `write:${pathKey}`;
 }
 
 function chooseWorkflowPreviewEvent(previous: WorkflowPreviewEvent, next: WorkflowPreviewEvent) {

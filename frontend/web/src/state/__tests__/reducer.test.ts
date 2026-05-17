@@ -246,14 +246,14 @@ describe("appReducer", () => {
     expect(completed.messages[0].isComplete).toBe(true);
   });
 
-  it("does not mark tool-use assistant completions as final answers", () => {
+  it("moves tool-use assistant completions into workflow progress", () => {
     const completed = appReducer(initialAppState, {
       type: "backend_event",
       event: { type: "assistant_complete", message: "도구 호출 준비", has_tool_uses: true },
     });
 
-    expect(completed.messages[0].text).toBe("도구 호출 준비");
-    expect(completed.messages[0].isComplete).toBe(false);
+    expect(completed.messages).toHaveLength(0);
+    expect(completed.workflowEvents.find((event) => event.role === "planning")?.detail).toBe("도구 호출 준비");
     expect(completed.busy).toBe(true);
   });
 
@@ -268,9 +268,34 @@ describe("appReducer", () => {
     });
 
     expect(streaming.messages.map((message) => [message.role, message.text, message.isComplete])).toEqual([
-      ["assistant", "도구 호출 준비", false],
       ["assistant", "최종 답변", undefined],
     ]);
+  });
+
+  it("removes streamed tool-use handoff text from the chat body", () => {
+    const withUser = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: "올해 철강 경쟁사 이슈 정리" } },
+    });
+    const streaming = appReducer(withUser, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "해외 경쟁사는 생산량과 저탄소 전환 기준으로 보겠습니다." },
+    });
+    const handoff = appReducer(streaming, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "해외 경쟁사는 생산량과 저탄소 전환 기준으로 보겠습니다.",
+        has_tool_uses: true,
+      },
+    });
+
+    expect(handoff.messages.map((message) => [message.role, message.text])).toEqual([
+      ["user", "올해 철강 경쟁사 이슈 정리"],
+    ]);
+    expect(handoff.workflowEvents.find((event) => event.role === "planning")?.detail).toBe(
+      "해외 경쟁사는 생산량과 저탄소 전환 기준으로 보겠습니다.",
+    );
   });
 
   it("starts a fresh assistant message when a new answer streams after a completed answer", () => {
@@ -387,9 +412,8 @@ describe("appReducer", () => {
       },
     });
 
-    expect(next.messages).toHaveLength(2);
+    expect(next.messages).toHaveLength(1);
     expect(next.messages[0].text).toBe("랜딩 페이지에 작업 가능한 샘플 프롬프트 제안 필요");
-    expect(next.messages[1].text).toBe("도구 호출 준비");
   });
 
   it("restores regular backend user transcript when reconnecting to a live answer", () => {
@@ -1166,11 +1190,10 @@ describe("appReducer", () => {
 
     expect(busy.messages.map((message) => [message.role, message.text])).toEqual([
       ["user", "첫 질문"],
-      ["assistant", "첫 답변"],
       ["user", "후속 질문"],
     ]);
-    expect(busy.messages[1].isComplete).toBe(false);
     const restoredWorkflowEvents = Object.values(busy.workflowEventsByMessageId).flat();
+    expect(restoredWorkflowEvents.find((event) => event.role === "planning")?.detail).toBe("첫 답변");
     const shellEvent = restoredWorkflowEvents.find((event) => event.toolName === "shell_command");
     expect(shellEvent?.status).toBe("done");
     expect(shellEvent?.output).toBe("passed");
@@ -1679,6 +1702,9 @@ describe("appReducer", () => {
     });
 
     const planningEvent = toolPending.workflowEvents.find((event) => event.role === "planning");
+    expect(toolPending.messages.map((message) => [message.role, message.text])).toEqual([
+      ["user", "진행 표시를 더 구체적으로 만들어줘"],
+    ]);
     expect(planningEvent?.detail).toContain("workflow reducer");
     expect(toolPending.workflowEvents.some((event) => event.role === "waiting")).toBe(false);
     expect(toolPending.workflowEvents.some((event) => event.role === "final")).toBe(false);
