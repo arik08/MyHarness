@@ -378,6 +378,33 @@ describe("Sidebar", () => {
     expect(actionButton).toBeNull();
   });
 
+  it("uses the current conversation title for the active busy history row", () => {
+    const { container } = render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-session-active",
+          activeHistoryId: "saved-session-active",
+          chatTitle: "YouTube 영상 설명",
+          busy: true,
+          history: [{
+            value: "saved-session-active",
+            label: "진행 중인 채팅",
+            description: "새 대화",
+            pending: true,
+          }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const busyItem = container.querySelector(".history-item.busy");
+
+    expect(busyItem?.textContent).toContain("YouTube 영상 설명");
+    expect(busyItem?.textContent).not.toContain("새 대화");
+  });
+
   it("shows compact chat history titles that fit the sidebar", () => {
     render(
       <AppStateProvider
@@ -989,6 +1016,40 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "새 대화 작업 더보기" })).toBeTruthy();
     expect(startSession).not.toHaveBeenCalled();
     expect(restartSession).not.toHaveBeenCalled();
+  });
+
+  it("deletes an immediately saved new chat through the backend queue", async () => {
+    const { container } = render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          clientId: "client-1",
+          busy: false,
+          messages: [{ id: "message-1", role: "user", text: "이전 질문" }],
+        }}
+      >
+        <Sidebar />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(1));
+    const newChatId = String((vi.mocked(sendBackendRequest).mock.calls[0][2] as { value?: string }).value);
+
+    await userEvent.click(screen.getByRole("button", { name: "새 대화 작업 더보기" }));
+    await userEvent.click(screen.getByRole("button", { name: "새 대화 삭제" }));
+
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(sendBackendRequest).mock.calls[1]).toEqual([
+      "session-active",
+      "client-1",
+      { type: "delete_session", value: newChatId },
+    ]);
+    expect(deleteHistory).not.toHaveBeenCalled();
+    expect(container.querySelector(".history-item .history-title")?.textContent || "").not.toBe("새 대화");
+    expect(screen.getByTestId("active-history").textContent).toBe("");
   });
 
   it("keeps the newly saved chat in history when another session is opened", async () => {

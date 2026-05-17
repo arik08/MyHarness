@@ -6,7 +6,7 @@ import type { AppState, ChatMessage } from "../types/ui";
 const nearBottomPx = 96;
 const streamingRejoinBottomPx = 260;
 const scrollStorageKey = "myharness:scrollPositions";
-const maxStreamFollowLeadPx = 220;
+const maxStreamFollowLeadPx = 360;
 export const messageBottomFollowEvent = "myharness:followMessageBottom";
 
 function easeInOutCubic(progress: number) {
@@ -71,6 +71,9 @@ export function useMessageAutoFollow({
   const autoScrollUntilRef = useRef(0);
   const userScrollIntentUntilRef = useRef(0);
   const scrollSaveTimerRef = useRef(0);
+  const wasLastAssistantStreamingRef = useRef(false);
+  const wasActiveWorkflowGrowingRef = useRef(false);
+  const wasRestoringHistoryRef = useRef(state.restoringHistory);
   const streamScrollDurationMsRef = useRef(state.appSettings.streamScrollDurationMs);
   const streamFollowLeadPxRef = useRef(0);
   const isLastAssistantStreaming = state.busy && lastMessage?.role === "assistant" && !lastMessage.isComplete;
@@ -142,6 +145,8 @@ export function useMessageAutoFollow({
       ? Math.max(start, container.scrollHeight - container.clientHeight)
       : start;
     let followVelocity = 0;
+    let lastRawTarget = bufferedTarget;
+    let targetStableMs = 0;
     const settleMs = Math.max(140, Math.min(520, duration * 0.35));
     autoScrollUntilRef.current = Date.now() + duration + settleMs;
 
@@ -155,32 +160,35 @@ export function useMessageAutoFollow({
         const rawTarget = Math.max(0, liveContainer.scrollHeight - liveContainer.clientHeight);
         const elapsed = Math.min(64, Math.max(0, now - previousFrameAt));
         previousFrameAt = now;
+        if (Math.abs(rawTarget - lastRawTarget) > 0.5) {
+          lastRawTarget = rawTarget;
+          targetStableMs = 0;
+        } else {
+          targetStableMs += elapsed;
+        }
         const liveDuration = Math.max(1, streamScrollDurationMsRef.current);
         const liveLeadPx = Math.max(0, Math.min(maxStreamFollowLeadPx, streamFollowLeadPxRef.current));
         const leadRatio = liveLeadPx / maxStreamFollowLeadPx;
-        const targetMs = Math.max(70, Math.min(520, liveDuration * (0.2 - leadRatio * 0.06)));
+        const targetMs = Math.max(90, Math.min(720, liveDuration * (0.34 - leadRatio * 0.12)));
         const targetBlend = elapsed > 0 ? 1 - Math.exp(-elapsed / targetMs) : 0;
-        bufferedTarget += (Math.max(rawTarget, bufferedTarget, liveContainer.scrollTop) - bufferedTarget) * targetBlend;
+        const anticipatoryTarget = Math.min(rawTarget, liveContainer.scrollTop + liveLeadPx * (0.45 + leadRatio * 0.35));
+        bufferedTarget += (Math.max(rawTarget, bufferedTarget, anticipatoryTarget, liveContainer.scrollTop) - bufferedTarget) * targetBlend;
         const dt = elapsed / 1000;
         const distance = bufferedTarget - liveContainer.scrollTop;
-        const responseMs = Math.max(120, Math.min(900, liveDuration * (0.3 - leadRatio * 0.08)));
-        const omega = (1000 / responseMs) * 2.6;
+        const responseMs = Math.max(180, Math.min(980, liveDuration * (0.46 - leadRatio * 0.16)));
+        const omega = (1000 / responseMs) * 2.25;
         const acceleration = distance * omega * omega - followVelocity * 2 * omega;
-        const maxAcceleration = Math.max(16000, Math.min(42000, liveContainer.clientHeight * (84 + leadRatio * 28)));
+        const maxAcceleration = Math.max(12000, Math.min(42000, liveContainer.clientHeight * (58 + leadRatio * 34)));
         const boundedAcceleration = Math.max(-maxAcceleration, Math.min(maxAcceleration, acceleration));
         followVelocity += boundedAcceleration * dt;
-        const maxVelocity = Math.max(420, Math.min(4600, liveContainer.clientHeight * (4.6 + leadRatio * 1.1) + Math.abs(distance) * (4.8 + leadRatio)));
+        const maxVelocity = Math.max(360, Math.min(4200, liveContainer.clientHeight * (3.4 + leadRatio * 1.4) + Math.abs(distance) * (2.8 + leadRatio * 1.0)));
         followVelocity = Math.max(0, Math.min(maxVelocity, followVelocity));
-        const snapDistance = Math.max(8, Math.min(18, liveContainer.clientHeight * 0.06));
-        const glideVelocity = Math.max(140, Math.min(260, liveContainer.clientHeight * (0.85 + leadRatio * 0.2)));
-        if (distance > snapDistance && followVelocity > glideVelocity * 0.45) {
-          followVelocity = Math.max(glideVelocity, followVelocity);
-        }
         const nextTop = liveContainer.scrollTop + followVelocity * dt;
         liveContainer.scrollTop = Math.max(liveContainer.scrollTop, Math.min(rawTarget, nextTop));
         const remaining = rawTarget - liveContainer.scrollTop;
-        const snapThreshold = Math.max(3, Math.min(8, followVelocity * dt * 1.35));
-        if (remaining > 0 && remaining <= snapThreshold) {
+        const snapThreshold = Math.max(2, Math.min(5, followVelocity * dt));
+        const canSettle = targetStableMs > Math.max(220, Math.min(760, liveDuration * 0.46));
+        if (canSettle && remaining > 0 && remaining <= snapThreshold) {
           liveContainer.scrollTop = rawTarget;
           bufferedTarget = rawTarget;
           followVelocity = 0;
@@ -246,7 +254,25 @@ export function useMessageAutoFollow({
 
   useEffect(() => {
     const container = messagesRef.current;
-    if (!container || !autoFollowRef.current || state.restoringHistory || state.historyReadOnly) {
+    if (!container || state.historyReadOnly) {
+      wasLastAssistantStreamingRef.current = isLastAssistantStreaming;
+      wasActiveWorkflowGrowingRef.current = isActiveWorkflowGrowing;
+      return;
+    }
+    if (state.restoringHistory) {
+      wasRestoringHistoryRef.current = true;
+      return;
+    }
+    const restoredIntoGrowingTail = wasRestoringHistoryRef.current && shouldFollowGrowingTail;
+    wasRestoringHistoryRef.current = false;
+    const assistantStreamingStarted = isLastAssistantStreaming && !wasLastAssistantStreamingRef.current;
+    const workflowGrowingStarted = isActiveWorkflowGrowing && !wasActiveWorkflowGrowingRef.current;
+    wasLastAssistantStreamingRef.current = isLastAssistantStreaming;
+    wasActiveWorkflowGrowingRef.current = isActiveWorkflowGrowing;
+    if ((assistantStreamingStarted || workflowGrowingStarted || restoredIntoGrowingTail) && Date.now() > userScrollIntentUntilRef.current) {
+      autoFollowRef.current = true;
+    }
+    if (!autoFollowRef.current) {
       return;
     }
     container.style.setProperty("--stream-follow-lead", `${streamFollowLeadPx}px`);

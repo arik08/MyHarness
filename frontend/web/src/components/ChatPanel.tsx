@@ -3,6 +3,7 @@ import { MessageList } from "./MessageList";
 import { StatusPill } from "./StatusPill";
 import { SwarmButton } from "./SwarmButton";
 import { useAppState } from "../state/app-state";
+import { currentConversationTitle } from "../state/selectors";
 import { sendBackendRequest } from "../api/messages";
 import { useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
@@ -12,6 +13,7 @@ export function ChatPanel() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const titleCommitRef = useRef(false);
+  const conversationTitle = currentConversationTitle(state);
 
   function closeArtifactPanelFromChat(event: MouseEvent<HTMLElement>) {
     if (!state.artifactPanelOpen) {
@@ -29,7 +31,7 @@ export function ChatPanel() {
   }
 
   function startTitleEdit() {
-    setTitleDraft(state.chatTitle);
+    setTitleDraft(conversationTitle);
     setEditingTitle(true);
   }
 
@@ -57,7 +59,7 @@ export function ChatPanel() {
       return;
     }
     titleCommitRef.current = true;
-    const previousTitle = state.chatTitle;
+    const previousTitle = conversationTitle;
     const nextTitle = titleDraft.trim();
     setEditingTitle(false);
     if (commit && nextTitle) {
@@ -113,7 +115,7 @@ export function ChatPanel() {
             </div>
           ) : (
             <button className="chat-title" type="button" onClick={startTitleEdit}>
-              <span>{displayTitle(state.chatTitle)}</span>
+              <span>{displayTitle(conversationTitle)}</span>
             </button>
           )}
         </div>

@@ -9,7 +9,7 @@ const appSettingsKey = "myharness:appSettings";
 const defaultAppSettings: AppSettings = {
   streamScrollDurationMs: 2000,
   streamStartBufferMs: 180,
-  streamFollowLeadPx: 60,
+  streamFollowLeadPx: 140,
   streamRevealDurationMs: 420,
   downloadMode: "browser",
   downloadFolderPath: "",
@@ -129,7 +129,7 @@ function normalizeAppSettings(value: Partial<AppSettings> = {}): AppSettings {
   return {
     streamScrollDurationMs: clampNumber(value.streamScrollDurationMs, defaultAppSettings.streamScrollDurationMs, 0, 5000),
     streamStartBufferMs: clampNumber(value.streamStartBufferMs, defaultAppSettings.streamStartBufferMs, 0, 2000),
-    streamFollowLeadPx: clampNumber(value.streamFollowLeadPx, defaultAppSettings.streamFollowLeadPx, 0, 220),
+    streamFollowLeadPx: clampNumber(value.streamFollowLeadPx, defaultAppSettings.streamFollowLeadPx, 0, 360),
     streamRevealDurationMs: clampNumber(value.streamRevealDurationMs, defaultAppSettings.streamRevealDurationMs, 0, 2000),
     downloadMode: value.downloadMode === "folder" || value.downloadMode === "ask" ? value.downloadMode : "browser",
     downloadFolderPath: String(value.downloadFolderPath || ""),
@@ -490,7 +490,6 @@ function hasRestorableWorkflowEvents(events: WorkflowEvent[]) {
     || event.role === "purpose"
     || event.role === "activity"
     || event.role === "final"
-    || event.role === "waiting"
   ));
 }
 
@@ -873,56 +872,64 @@ function purposeCopy(purpose: WorkflowEvent["purpose"]) {
   return { title: "작업 실행", running: "필요한 변경이나 명령을 실행하고 있습니다.", done: "작업 실행을 마쳤습니다." };
 }
 
-function workflowChildDetail(event: WorkflowEvent) {
-  return truncateWorkflowDetail(workflowDetailFromInput(event.toolInput) || event.detail, 150);
-}
-
-function workflowPurposeDetailFromChildren(
-  purpose: WorkflowEvent["purpose"],
-  status: WorkflowEventStatus,
-  children: WorkflowEvent[],
-) {
-  const copy = purposeCopy(purpose);
-  if (!children.length) {
-    return status === "running" ? copy.running : copy.done;
-  }
-  const latestRunning = [...children].reverse().find((item) => item.status === "running");
-  const latest = latestRunning || children[children.length - 1];
-  const title = workflowTitle(latest.toolName || latest.title);
-  const detail = workflowChildDetail(latest);
-  const suffix = detail ? ` · ${detail}` : "";
-  if (status === "running") {
-    return `${title} 진행 중${suffix}`;
-  }
-  if (status === "error") {
-    return `${title} 오류${suffix}`;
-  }
-  if (status === "warning") {
-    return `${title} 확인 필요${suffix}`;
-  }
-  const prefix = children.length > 1
-    ? `${children.length.toLocaleString()}개 작업 완료 · 마지막: ${title}`
-    : `${title} 완료`;
-  return `${prefix}${suffix}`;
-}
-
-function appendWorkflowNoteEvent(events: WorkflowEvent[], detail: string) {
+function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
   const cleanDetail = truncateWorkflowDetail(detail, 220);
   if (!cleanDetail) {
     return events;
   }
-  const latest = events[events.length - 1];
-  if (latest?.role === "waiting" && compactWorkflowDetail(latest.detail) === cleanDetail) {
+  const runningChild = [...events].reverse().find((event) => (
+    event.level === "child" && event.status === "running" && Boolean(event.groupId)
+  ));
+  if (runningChild?.groupId) {
+    const purposeIndex = events.findIndex((event) => event.role === "purpose" && event.groupId === runningChild.groupId);
+    if (purposeIndex !== -1) {
+      if (compactWorkflowDetail(events[purposeIndex].detail) === cleanDetail) {
+        return events;
+      }
+      return events.map((event, index) => index === purposeIndex ? mergeWorkflowEventPatch(event, { detail: cleanDetail }) : event);
+    }
+  }
+  const targetRoles = new Set(["purpose", "activity", "planning", "final"]);
+  const targetIndex = events
+    .map((event, index) => ({ event, index }))
+    .reverse()
+    .find(({ event }) => Boolean(event.role) && targetRoles.has(event.role!) && event.level !== "child")?.index ?? -1;
+  if (targetIndex === -1) {
     return events;
   }
-  return appendWorkflowEvent(events, {
-    toolName: "",
-    title: "진행 메모",
-    detail: cleanDetail,
-    status: "done",
-    level: "parent",
-    role: "waiting",
-  });
+  if (compactWorkflowDetail(events[targetIndex].detail) === cleanDetail) {
+    return events;
+  }
+  return events.map((event, index) => index === targetIndex ? mergeWorkflowEventPatch(event, { detail: cleanDetail }) : event);
+}
+
+function genericPurposeDetails(purpose: WorkflowEvent["purpose"]) {
+  const copy = purposeCopy(purpose);
+  return new Set([
+    copy.running,
+    copy.done,
+    "작업 중 문제가 발생했습니다.",
+    "일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.",
+    "일부 단계에서 확인이 필요합니다.",
+  ]);
+}
+
+function isAutoPurposeSummary(detail: string, purpose: WorkflowEvent["purpose"]) {
+  const cleanDetail = compactWorkflowDetail(detail);
+  if (!cleanDetail || genericPurposeDetails(purpose).has(cleanDetail)) {
+    return true;
+  }
+  return /^(?:.+ 진행 중|.+ 완료|.+ 오류|.+ 확인 필요)(?: · .*)?$/.test(cleanDetail)
+    || /^\d+개 작업 완료 · 마지막:/.test(cleanDetail);
+}
+
+function purposeFallbackDetail(purpose: WorkflowEvent["purpose"], status: WorkflowEventStatus) {
+  const copy = purposeCopy(purpose);
+  if (status === "running") return copy.running;
+  if (status === "error") return "작업 중 문제가 발생했습니다.";
+  if (status === "warning" && purpose === "info") return "일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.";
+  if (status === "warning") return "일부 단계에서 확인이 필요합니다.";
+  return copy.done;
 }
 
 function isRecoverableToolError(toolName: string) {
@@ -973,20 +980,32 @@ function refreshPurposeEvents(events: WorkflowEvent[]) {
     const hasError = children.some((item) => item.status === "error");
     const hasWarning = children.some((item) => item.status === "warning");
     const status = hasError ? "error" as const : hasRunning ? "running" as const : hasWarning ? "warning" as const : "done" as const;
+    const currentDetail = compactWorkflowDetail(event.detail);
     return {
       ...event,
       status,
-      detail: workflowPurposeDetailFromChildren(event.purpose, status, children),
+      detail: isAutoPurposeSummary(currentDetail, event.purpose)
+        ? purposeFallbackDetail(event.purpose, status)
+        : currentDetail,
     };
   });
 }
 
 function startActivityStep(events: WorkflowEvent[]): WorkflowEvent[] {
-  if (events.some((event) => event.role === "activity" && event.status === "running")) {
-    return events;
-  }
   if (events.some((event) => event.level === "child" && event.status === "running")) {
     return events;
+  }
+  const existingActivityIndex = events
+    .map((event, index) => ({ event, index }))
+    .reverse()
+    .find(({ event }) => event.role === "activity")?.index ?? -1;
+  if (existingActivityIndex !== -1) {
+    return events.map((event, index) => index === existingActivityIndex
+      ? mergeWorkflowEventPatch(event, {
+          status: "running",
+          detail: "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
+        })
+      : event);
   }
   return appendWorkflowEvent(events, {
     toolName: "",
@@ -998,6 +1017,14 @@ function startActivityStep(events: WorkflowEvent[]): WorkflowEvent[] {
   });
 }
 
+function completeActivityStep(events: WorkflowEvent[], detail = "다음 작업을 정했습니다."): WorkflowEvent[] {
+  return events.map((event) => (
+    event.role === "activity" && event.status === "running"
+      ? mergeWorkflowEventPatch(event, { status: "done", detail })
+      : event
+  ));
+}
+
 function answerDraftDetail(characterCount = 0) {
   return characterCount > 0
     ? `답변 본문을 작성하고 있습니다. ${characterCount.toLocaleString()}자 수신 중입니다.`
@@ -1005,7 +1032,7 @@ function answerDraftDetail(characterCount = 0) {
 }
 
 function startFinalAnswerStep(events: WorkflowEvent[], characterCount = 0): WorkflowEvent[] {
-  let next = completePlanning(removeWorkflowEventsByRole(events, "activity"));
+  let next = completePlanning(completeActivityStep(events, "최종 답변 작성으로 넘어갑니다."));
   const existing = next.find((event) => event.role === "final");
   if (existing) {
     return next.map((event) => event.role === "final" ? {
@@ -1027,7 +1054,7 @@ function startFinalAnswerStep(events: WorkflowEvent[], characterCount = 0): Work
 }
 
 function finishFinalAnswerStep(events: WorkflowEvent[], status: WorkflowEventStatus = "done", detail = "최종 답변을 작성했습니다."): WorkflowEvent[] {
-  let next = completePlanning(removeWorkflowEventsByRole(events, "activity"));
+  let next = completePlanning(completeActivityStep(events, "최종 답변 작성으로 넘어갔습니다."));
   const existing = next.find((event) => event.role === "final");
   if (!existing) {
     next = appendWorkflowEvent(next, {
@@ -1108,17 +1135,41 @@ function updateLatestWorkflowEvent(
 }
 
 function mergeWorkflowEventPatch(event: WorkflowEvent, patch: Partial<Omit<WorkflowEvent, "id" | "toolName">>) {
+  const detailLog = workflowDetailLogForPatch(event, patch);
   if (patch.toolInput && event.toolInput) {
     return {
       ...event,
       ...patch,
+      detailLog,
       toolInput: {
         ...event.toolInput,
         ...patch.toolInput,
       },
     };
   }
-  return { ...event, ...patch };
+  return { ...event, ...patch, detailLog };
+}
+
+function workflowDetailLogForPatch(event: WorkflowEvent, patch: Partial<Omit<WorkflowEvent, "id" | "toolName">>) {
+  if (typeof patch.detail !== "string") {
+    return event.detailLog;
+  }
+  const previous = compactWorkflowDetail(event.detail);
+  const next = compactWorkflowDetail(patch.detail);
+  if (!previous || !next || workflowDetailLogKey(previous) === workflowDetailLogKey(next)) {
+    return event.detailLog;
+  }
+  const existing = event.detailLog || [];
+  if (existing.some((item) => workflowDetailLogKey(item) === workflowDetailLogKey(previous))) {
+    return existing;
+  }
+  return [...existing, previous].slice(-5);
+}
+
+function workflowDetailLogKey(value: string) {
+  return compactWorkflowDetail(value)
+    .replace(/\b\d+\s*초\s*경과\b/g, "{elapsed}")
+    .replace(/\b\d+\s*seconds?\s*elapsed\b/gi, "{elapsed}");
 }
 
 function workflowSnapshotMap(state: AppState) {
@@ -1265,6 +1316,7 @@ function ensureSavedNewChatHistoryItem(state: AppState, sessionId: string) {
       workspace: state.workspacePath || state.workspaceName
         ? { name: state.workspaceName, path: state.workspacePath, scope: state.workspaceScope }
         : null,
+      pending: true,
     },
     ...state.history,
   ];
@@ -1587,7 +1639,7 @@ function reduceHistoryRestoreEvent(
       }, { toolCallIndex });
       if (!nextEvents) {
         const purpose = ensurePurposeEvent(
-          completePlanning(removeWorkflowEventsByRole(workflowEvents.length ? workflowEvents : initialWorkflowEvents(), "activity")),
+          completePlanning(completeActivityStep(workflowEvents.length ? workflowEvents : initialWorkflowEvents())),
           workflowToolName,
         );
         nextEvents = appendWorkflowEvent(purpose.events, {
@@ -1703,7 +1755,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
     const toolCallIndex = backendToolCallIndex(event);
     const detail = workflowToolDetail(state.skills, toolName, toolInput);
     const purpose = ensurePurposeEvent(
-      completePlanning(removeWorkflowEventsByRole(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), "activity")),
+      completePlanning(completeActivityStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())),
       toolName,
     );
     const command = isShellTool(toolName) ? commandFromToolInput(toolInput) : "";
@@ -1764,7 +1816,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
     }, { toolCallIndex });
     if (!workflowEvents) {
       const purpose = ensurePurposeEvent(
-        completePlanning(removeWorkflowEventsByRole(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), "activity")),
+        completePlanning(completeActivityStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())),
         workflowToolName,
       );
       workflowEvents = appendWorkflowEvent(purpose.events, {
@@ -1951,10 +2003,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
   if (event.type === "status") {
     const text = String(event.message || event.value || "");
     const workflowEvents = state.workflowAnchorMessageId && state.workflowEvents.length
-      ? appendWorkflowNoteEvent(
-          completePlanning(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents()),
-          text,
-        )
+      ? applyWorkflowProgressNote(state.workflowEvents, text)
       : state.workflowEvents;
     return {
       ...state,
@@ -2098,7 +2147,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       workflowEvents: isFinalAnswer
         ? finishFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())
         : value
-          ? appendWorkflowNoteEvent(
+          ? applyWorkflowProgressNote(
               completePlanning(removeWorkflowEventsByRole(state.workflowEvents, "final")),
               value,
             )
@@ -2524,9 +2573,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "delete_history_local": {
       const deletedHistoryIds = rememberDeletedHistoryId(state.deletedHistoryIds, action.sessionId);
+      const deletesActiveHistory = action.sessionId === state.activeHistoryId;
       return {
         ...state,
         deletedHistoryIds,
+        activeHistoryId: deletesActiveHistory ? null : state.activeHistoryId,
+        chatTitle: deletesActiveHistory ? "MyHarness" : state.chatTitle,
+        pendingFreshChat: deletesActiveHistory ? false : state.pendingFreshChat,
         history: removeDeletedHistoryRows(state.history, deletedHistoryIds),
       };
     }

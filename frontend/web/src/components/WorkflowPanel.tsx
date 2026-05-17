@@ -612,6 +612,21 @@ function workflowRows(events: WorkflowEvent[]): WorkflowRow[] {
   return rows;
 }
 
+function isWorkflowActivityEvent(event: WorkflowEvent) {
+  return event.role === "activity";
+}
+
+function latestWorkflowActivityStatusEvent(events: WorkflowEvent[]) {
+  const activityIndex = events.map((event, index) => ({ event, index }))
+    .reverse()
+    .find(({ event }) => isWorkflowActivityEvent(event))?.index ?? -1;
+  if (activityIndex === -1) {
+    return null;
+  }
+  const finalStarted = events.slice(activityIndex + 1).some((event) => event.role === "final");
+  return finalStarted ? null : events[activityIndex];
+}
+
 function WorkflowStep({
   event,
   detail,
@@ -639,6 +654,11 @@ function WorkflowStep({
   const visibleDetail = todoTool
     ? todoWorkflowDetail(event.status, detail)
     : compactWorkflowOutputDetail(event, baseDetail);
+  const statusDetailText = showNarration
+    ? narration || ""
+    : showCompactToolDetail || showQuietParentDetail
+      ? visibleDetail
+      : `${statusLabel(event.status)}${visibleDetail ? ` · ${visibleDetail}` : ""}`;
 
   useLayoutEffect(() => {
     if (!animate) {
@@ -661,15 +681,40 @@ function WorkflowStep({
       <span className="workflow-copy">
         <strong>{title}</strong>
         {showStatusDetail ? (
-          <small className={showToolDetailLine ? "workflow-tool-detail" : undefined}>
-            {showNarration ? narration : showCompactToolDetail || showQuietParentDetail ? visibleDetail : (
-              <>
-                {statusLabel(event.status)}
-                {visibleDetail ? ` · ${visibleDetail}` : ""}
-              </>
-            )}
+          <small className={showToolDetailLine ? "workflow-tool-detail" : "workflow-status-detail"}>
+            {statusDetailText}
           </small>
         ) : null}
+      </span>
+    </div>
+  );
+}
+
+function WorkflowActivityStatus({
+  event,
+  detail,
+  rawDetail,
+  narration,
+}: {
+  event: WorkflowEvent;
+  detail: string;
+  rawDetail?: string;
+  narration?: string;
+}) {
+  const baseDetail = compactToolDetail(rawDetail ?? detail);
+  const visibleDetail = compactWorkflowOutputDetail(event, baseDetail);
+  const statusDetailText = narration || visibleDetail || statusLabel(event.status);
+
+  return (
+    <div
+      className={`workflow-activity-status ${event.status}`}
+      data-workflow-role={event.role}
+      aria-live={event.status === "running" ? "polite" : undefined}
+    >
+      <span className="workflow-activity-dot" aria-hidden="true" />
+      <span className="workflow-activity-copy">
+        <strong>{event.title || "다음 판단 중"}</strong>
+        <small>{statusDetailText}</small>
       </span>
     </div>
   );
@@ -688,10 +733,13 @@ function workflowPurposeNarrationDetail(event: WorkflowEvent) {
   const genericDetails = new Set([
     "필요한 자료와 맥락을 확인하고 있습니다.",
     "필요한 정보를 확인했습니다.",
+    "필요한 맥락과 진행 방향을 정리합니다.",
+    "진행 방향을 정했습니다.",
     "결과를 확인하고 있습니다.",
     "결과를 확인했습니다.",
     "필요한 변경이나 명령을 실행하고 있습니다.",
     "작업 실행을 마쳤습니다.",
+    "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
     "작업 중 문제가 발생했습니다.",
     "일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.",
     "일부 단계에서 확인이 필요합니다.",
@@ -706,9 +754,17 @@ function workflowNarrationForEvent(event: WorkflowEvent) {
       : "";
   }
   if (event.role === "activity") {
+    const detailNarration = workflowPurposeNarrationDetail(event);
+    if (detailNarration) {
+      return detailNarration;
+    }
     return "도구 결과를 읽고 다음 단계를 판단하고 있습니다. 바로 마무리할 수 있는지, 추가 확인이 필요한지 가볍게 점검하는 중입니다.";
   }
   if (event.role === "planning") {
+    const detailNarration = workflowPurposeNarrationDetail(event);
+    if (detailNarration) {
+      return detailNarration;
+    }
     return "요청을 기준으로 필요한 맥락과 검증 기준을 정리하고 있습니다. 먼저 어디를 확인해야 할지 잡아보겠습니다.";
   }
   if (event.role !== "purpose") {
@@ -1017,11 +1073,18 @@ export function WorkflowPanel({
     ),
     [events],
   );
-  const rows = useMemo(() => workflowRows(visibleEvents), [visibleEvents]);
+  const visibleTimelineEvents = useMemo(
+    () => visibleEvents.filter((event) => !isWorkflowActivityEvent(event)),
+    [visibleEvents],
+  );
+  const latestVisibleActivityEvent = useMemo(
+    () => latestWorkflowActivityStatusEvent(visibleEvents),
+    [visibleEvents],
+  );
+  const rows = useMemo(() => workflowRows(visibleTimelineEvents), [visibleTimelineEvents]);
   const narrationByEventId = useMemo(() => {
     const next: Record<string, string> = {};
-    for (const row of rows) {
-      const event = row.type === "group" ? row.parent : row.event;
+    for (const event of visibleEvents) {
       const narration = workflowNarrationForEvent(event);
       if (!narration) {
         continue;
@@ -1029,7 +1092,7 @@ export function WorkflowPanel({
       next[event.id] = narration;
     }
     return next;
-  }, [rows]);
+  }, [visibleEvents]);
   const hasOutputPreview = outputPreviewEvents.length > 0;
   const displayedDurationSeconds = totalDurationSeconds ?? liveTotalDurationSeconds;
   const latestVisibleEventId = visibleEvents.at(-1)?.id || "";
@@ -1115,6 +1178,14 @@ export function WorkflowPanel({
                 )}
               </Fragment>
             ))}
+            {latestVisibleActivityEvent ? (
+              <WorkflowActivityStatus
+                event={latestVisibleActivityEvent}
+                detail={eventDetail(latestVisibleActivityEvent)}
+                rawDetail={latestVisibleActivityEvent.detail}
+                narration={narrationByEventId[latestVisibleActivityEvent.id]}
+              />
+            ) : null}
           </div>
           {outputPreviewEvents.length ? (
             <div className="workflow-output-list">

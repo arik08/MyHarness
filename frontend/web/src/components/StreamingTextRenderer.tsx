@@ -1,45 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
 import type { AppSettings } from "../types/ui";
 import { isStandaloneHtmlDocument, MarkdownMessage } from "./MarkdownMessage";
 
 const StableMarkdownMessage = memo(MarkdownMessage);
-const streamRevealWipePercent = 180;
-
-type SegmenterLike = {
-  segment(input: string): Iterable<{ segment: string; isWordLike?: boolean }>;
-};
-
-type SegmenterConstructor = new (
-  locales?: string | string[],
-  options?: { granularity?: "grapheme" | "word" | "sentence" },
-) => SegmenterLike;
-
-function createWordSegmenter() {
-  try {
-    const Segmenter = (Intl as typeof Intl & { Segmenter?: SegmenterConstructor }).Segmenter;
-    return Segmenter ? new Segmenter(undefined, { granularity: "word" }) : null;
-  } catch {
-    return null;
-  }
-}
-
-const wordSegmenter = createWordSegmenter();
-
-function streamSegmentBoundaries(text: string) {
-  if (!wordSegmenter) {
-    return [];
-  }
-  const boundaries: Array<{ index: number; natural: boolean }> = [];
-  let cursor = 0;
-  for (const part of wordSegmenter.segment(text)) {
-    cursor += Array.from(part.segment).length;
-    if (cursor > 0) {
-      boundaries.push({ index: cursor, natural: Boolean(part.isWordLike) || /[\s,.;:!?。！？…)\]}]/u.test(part.segment) });
-    }
-  }
-  return boundaries;
-}
 
 function useStreamingText(
   targetText: string,
@@ -47,7 +10,9 @@ function useStreamingText(
   startBufferMs: number,
   revealDurationMs: number,
 ) {
-  const [visibleText, setVisibleText] = useState(targetText);
+  const [visibleText, setVisibleText] = useState(() => (
+    visuallyStreaming && Math.max(0, startBufferMs) > 0 ? "" : targetText
+  ));
   const visibleTextRef = useRef(visibleText);
   const pendingTextRef = useRef("");
   const flushTimerRef = useRef<number | null>(null);
@@ -55,7 +20,6 @@ function useStreamingText(
   const frameFallbackTimerRef = useRef<number | null>(null);
   const lastFrameAtRef = useRef<number | null>(null);
   const revealBudgetRef = useRef(0);
-  const revealFromRef = useRef<number | null>(visuallyStreaming && targetText ? 0 : null);
   const displayStartedRef = useRef(false);
   const startBufferMsRef = useRef(startBufferMs);
   const revealDurationMsRef = useRef(revealDurationMs);
@@ -92,7 +56,6 @@ function useStreamingText(
     clearFlushTimer();
     clearAnimationFrame();
     pendingTextRef.current = "";
-    revealFromRef.current = null;
     displayStartedRef.current = false;
   }
 
@@ -104,14 +67,18 @@ function useStreamingText(
     return Math.max(0, Math.min(2000, revealDurationMsRef.current));
   }
 
-  function visibleTextLength() {
-    return Array.from(visibleTextRef.current).length;
+  function normalizedRefillBufferMs() {
+    const initialBufferMs = normalizedStartBufferMs();
+    if (initialBufferMs <= 0) {
+      return 0;
+    }
+    return Math.max(32, Math.min(120, Math.round(initialBufferMs * 0.45)));
   }
 
   function streamingRevealRate(pendingLength: number) {
     const duration = Math.max(80, normalizedRevealDurationMs());
-    const baseCharsPerMs = Math.max(0.045, Math.min(0.74, 104 / duration));
-    const backlogBoost = 1 + Math.min(2.5, pendingLength / 540);
+    const baseCharsPerMs = Math.max(0.018, Math.min(0.12, 34 / duration));
+    const backlogBoost = 1 + Math.min(1.8, pendingLength / 720);
     return baseCharsPerMs * backlogBoost;
   }
 
@@ -120,34 +87,13 @@ function useStreamingText(
     if (!pendingChars.length) {
       return 0;
     }
-    const maxFrameChars = Math.round(Math.max(4, Math.min(32, 5 + Math.floor(pendingChars.length / 80))));
+    const maxFrameChars = pendingChars.length >= 900 ? 4 : pendingChars.length >= 420 ? 3 : pendingChars.length >= 160 ? 2 : 1;
     const limit = Math.min(pendingChars.length, Math.max(1, Math.min(maxFrameChars, desiredCount)));
     if (pendingChars.length <= limit) {
       return pendingChars.length;
     }
 
-    const lookahead = Math.min(pendingChars.length, limit + Math.max(4, Math.round(maxFrameChars * 0.35)));
-    const minimumNaturalBoundary = Math.max(1, limit - 3);
-    const boundaries = streamSegmentBoundaries(pendingText);
-    let naturalBoundary = 0;
-    for (let index = boundaries.length - 1; index >= 0; index -= 1) {
-      const boundary = boundaries[index];
-      if (boundary.natural && boundary.index >= minimumNaturalBoundary && boundary.index <= lookahead) {
-        naturalBoundary = boundary.index;
-        break;
-      }
-    }
-    if (naturalBoundary) {
-      return naturalBoundary;
-    }
-
-    let bestBoundary = 0;
-    for (let index = Math.max(2, limit); index <= lookahead; index += 1) {
-      if (/[\s,.;:!?。！？…)]/u.test(pendingChars[index - 1] || "")) {
-        bestBoundary = index;
-      }
-    }
-    return bestBoundary || Math.min(pendingChars.length, Math.max(limit, Math.min(maxFrameChars, desiredCount + 1)));
+    return limit;
   }
 
   function scheduleFlush() {
@@ -159,7 +105,15 @@ function useStreamingText(
       return;
     }
     if (displayStartedRef.current) {
-      scheduleRevealFrame();
+      const delay = normalizedRefillBufferMs();
+      if (delay <= 0) {
+        scheduleRevealFrame();
+        return;
+      }
+      flushTimerRef.current = window.setTimeout(() => {
+        flushTimerRef.current = null;
+        scheduleRevealFrame();
+      }, delay);
       return;
     }
     const delay = normalizedStartBufferMs();
@@ -199,7 +153,6 @@ function useStreamingText(
       return;
     }
     displayStartedRef.current = true;
-    revealFromRef.current = visibleTextLength();
     visibleTextRef.current = `${visibleTextRef.current}${pendingTextRef.current}`;
     pendingTextRef.current = "";
     revealBudgetRef.current = 0;
@@ -222,23 +175,22 @@ function useStreamingText(
     lastFrameAtRef.current = timestamp;
     revealBudgetRef.current += elapsedMs * streamingRevealRate(Array.from(pendingText).length);
     if (revealBudgetRef.current < 1) {
-      scheduleFlush();
+      scheduleRevealFrame();
       return;
     }
     const pendingChars = Array.from(pendingText);
     const revealCount = smoothRevealCount(pendingText, Math.floor(revealBudgetRef.current));
     if (revealCount <= 0) {
-      scheduleFlush();
+      scheduleRevealFrame();
       return;
     }
     revealBudgetRef.current = Math.max(0, revealBudgetRef.current - revealCount);
     const nextText = pendingChars.slice(0, revealCount).join("");
     pendingTextRef.current = pendingChars.slice(revealCount).join("");
-    revealFromRef.current = visibleTextLength();
     visibleTextRef.current = `${visibleTextRef.current}${nextText}`;
     setVisibleText(visibleTextRef.current);
     if (pendingTextRef.current) {
-      scheduleFlush();
+      scheduleRevealFrame();
     } else {
       lastFrameAtRef.current = null;
       revealBudgetRef.current = 0;
@@ -278,7 +230,6 @@ function useStreamingText(
       }
       resetRevealLoop();
       if (visibleTextRef.current !== targetText) {
-        revealFromRef.current = null;
         visibleTextRef.current = targetText;
         setVisibleText(targetText);
       }
@@ -292,7 +243,7 @@ function useStreamingText(
     }
 
     if (targetText.startsWith(queuedText)) {
-      pendingTextRef.current = targetText.slice(queuedText.length);
+      pendingTextRef.current = `${pendingTextRef.current}${targetText.slice(queuedText.length)}`;
       scheduleFlush();
       return;
     }
@@ -304,7 +255,6 @@ function useStreamingText(
     }
 
     resetRevealLoop();
-    revealFromRef.current = targetText ? 0 : null;
     visibleTextRef.current = targetText;
     setVisibleText(targetText);
   }, [targetText, visuallyStreaming, startBufferMs, revealDurationMs]);
@@ -315,46 +265,7 @@ function useStreamingText(
 
   return {
     visibleText: snapCompletedReplacement ? targetText : visibleText,
-    revealFrom: snapCompletedReplacement ? null : revealFromRef.current,
     revealing: !snapCompletedReplacement && (visuallyStreaming || visibleText !== targetText || Boolean(pendingTextRef.current)),
-  };
-}
-
-function splitStreamingMarkdown(text: string) {
-  const source = String(text || "").replace(/\r\n/g, "\n");
-  let stableBoundary = 0;
-  let position = 0;
-  let inFence = false;
-  let fenceMarker = "";
-
-  for (const match of source.matchAll(/[^\n]*(?:\n|$)/g)) {
-    const rawLine = match[0];
-    if (!rawLine) {
-      break;
-    }
-    const lineEnd = position + rawLine.length;
-    const lineText = rawLine.endsWith("\n") ? rawLine.slice(0, -1) : rawLine;
-    const fence = lineText.match(/^ {0,3}(`{3,}|~{3,})/);
-
-    if (fence) {
-      const marker = fence[1];
-      if (!inFence) {
-        inFence = true;
-        fenceMarker = marker;
-      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
-        inFence = false;
-        stableBoundary = lineEnd;
-      }
-    } else if (!inFence && lineText.trim() === "") {
-      stableBoundary = lineEnd;
-    }
-
-    position = lineEnd;
-  }
-
-  return {
-    prefix: source.slice(0, stableBoundary).trimEnd(),
-    liveTail: source.slice(stableBoundary),
   };
 }
 
@@ -404,6 +315,44 @@ function splitStableMarkdownChunks(text: string) {
   return chunks;
 }
 
+function splitStreamingMarkdown(text: string) {
+  const source = String(text || "").replace(/\r\n/g, "\n");
+  let stableBoundary = 0;
+  let position = 0;
+  let inFence = false;
+  let fenceMarker = "";
+
+  for (const match of source.matchAll(/[^\n]*(?:\n|$)/g)) {
+    const rawLine = match[0];
+    if (!rawLine) {
+      break;
+    }
+    const lineEnd = position + rawLine.length;
+    const lineText = rawLine.endsWith("\n") ? rawLine.slice(0, -1) : rawLine;
+    const fence = lineText.match(/^ {0,3}(`{3,}|~{3,})/);
+
+    if (fence) {
+      const marker = fence[1];
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker;
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false;
+        stableBoundary = lineEnd;
+      }
+    } else if (!inFence && lineText.trim() === "") {
+      stableBoundary = lineEnd;
+    }
+
+    position = lineEnd;
+  }
+
+  return {
+    prefix: source.slice(0, stableBoundary).trimEnd(),
+    liveTail: source.slice(stableBoundary),
+  };
+}
+
 function stableChunkHash(text: string) {
   let hash = 0;
   for (let index = 0; index < text.length; index += 1) {
@@ -412,98 +361,48 @@ function stableChunkHash(text: string) {
   return (hash >>> 0).toString(36);
 }
 
-function markdownTableCells(line: string) {
-  const trimmed = line.trim();
-  if (!trimmed.includes("|")) {
-    return [];
-  }
-  return trimmed.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+function StreamingPlainText({ text }: { text: string }) {
+  return <p>{text}</p>;
 }
 
-function isMarkdownTableRow(line: string) {
-  const cells = markdownTableCells(line);
-  return cells.length >= 2 && cells.some(Boolean);
-}
-
-function isMarkdownTableDivider(line: string) {
-  const cells = markdownTableCells(line);
-  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-}
-
-function isIncompleteWorkflowFence(text: string) {
+function incompleteFenceLanguage(text: string) {
   const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
   const lines = source.split("\n");
   const firstLine = lines[0] || "";
   const fence = firstLine.match(/^(`{3,}|~{3,})\s*([A-Za-z0-9_-]+)?/);
   if (!fence) {
-    return false;
-  }
-  const marker = fence[1];
-  const closed = lines.slice(1).some((line) => {
-    const close = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    return Boolean(close && close[1][0] === marker[0] && close[1].length >= marker.length);
-  });
-  if (closed) {
-    return false;
-  }
-  const language = String(fence[2] || "").toLowerCase();
-  const body = lines.slice(1).join("\n");
-  const hasWorkflowNodeSyntax = /\[(?![ xX]\])[^\]\n]{1,120}\]/.test(body);
-  const hasWorkflowNodes = /\[[^\]]+\]/.test(body) && (/->|=>|→|↔/.test(body) || (body.match(/\[[^\]]+\]/g) || []).length >= 2);
-  return language === "workflow" || hasWorkflowNodes || (!language && hasWorkflowNodeSyntax);
-}
-
-function isIncompleteMermaidFence(text: string) {
-  const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
-  const lines = source.split("\n");
-  const firstLine = lines[0] || "";
-  const fence = firstLine.match(/^(`{3,}|~{3,})\s*([A-Za-z0-9_-]+)?/);
-  if (!fence) {
-    return false;
-  }
-  const language = String(fence[2] || "").toLowerCase();
-  if (language !== "mermaid" && language !== "mmd") {
-    return false;
+    return "";
   }
   const marker = fence[1];
   const closed = lines.slice(1).some((line) => {
     const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
     return Boolean(close && close[1][0] === marker[0] && close[1].length >= marker.length);
   });
-  return !closed;
+  return closed ? "" : String(fence[2] || "").toLowerCase();
 }
 
-function isStructuredLiveMarkdown(text: string) {
-  const source = String(text || "").replace(/\r\n/g, "\n");
-  const trimmed = source.trimStart();
-  if (isIncompleteWorkflowFence(trimmed) || isIncompleteMermaidFence(trimmed)) {
-    return false;
-  }
-  if (/^(`{3,}|~{3,})\s*(html?|[A-Za-z0-9_-]+)?/i.test(trimmed)) {
-    return true;
-  }
+function pendingHtmlSourceLength(text: string) {
+  const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
   const lines = source.split("\n");
-  for (let index = 1; index < lines.length; index += 1) {
-    if (isMarkdownTableRow(lines[index - 1]) && isMarkdownTableDivider(lines[index])) {
-      return true;
-    }
-  }
-  return false;
+  return Math.max(0, lines.slice(1).join("\n").length);
 }
 
-function StreamingPlainText({ text, revealFrom = null }: { text: string; revealFrom?: number | null }) {
-  if (revealFrom === null || revealFrom < 0) {
-    return <p>{text}</p>;
-  }
-  const chars = Array.from(text);
-  const localStart = Math.max(0, Math.min(chars.length, revealFrom));
-  const before = chars.slice(0, localStart).join("");
-  const revealText = chars.slice(localStart).join("");
+function HtmlStreamPending({ text }: { text: string }) {
+  const sourceLength = pendingHtmlSourceLength(text);
+  const label = sourceLength > 0 ? "차트 미리보기 준비 중" : "차트 미리보기 대기 중";
   return (
-    <p>
-      {before}
-      {revealText ? <span className="stream-reveal-sentence">{revealText}</span> : null}
-    </p>
+    <div className="markdown-body react-markdown stream-live-text">
+      <div className="workflow-output-preview html-stream-preview" data-html-preview-pending="true">
+        <div className="workflow-output-title">
+          <span className="workflow-output-label">{label}</span>
+          <span className="workflow-output-line-count">{sourceLength.toLocaleString()}자</span>
+        </div>
+        <div className="workflow-output-body html-preview-pending-body">
+          <span className="html-preview-spinner" aria-hidden="true"></span>
+          <span>소스를 받은 뒤 바로 렌더링합니다.</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -532,22 +431,19 @@ function MermaidStreamPending() {
 function StreamingMarkdownMessage({
   text,
   complete = false,
-  revealFrom = null,
 }: {
   text: string;
   complete?: boolean;
-  revealFrom?: number | null;
 }) {
+  const normalizedText = String(text || "").replace(/\r\n/g, "\n");
   const { prefix, liveTail } = useMemo(() => {
     if (complete) {
-      return { prefix: String(text || "").replace(/\r\n/g, "\n").trimEnd(), liveTail: "" };
+      return { prefix: normalizedText.trimEnd(), liveTail: "" };
     }
-    return splitStreamingMarkdown(text);
-  }, [complete, text]);
+    return splitStreamingMarkdown(normalizedText);
+  }, [complete, normalizedText]);
+  const liveTailFenceLanguage = incompleteFenceLanguage(liveTail);
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
-  const renderLiveTailAsMarkdown = isStructuredLiveMarkdown(liveTail);
-  const liveTailIsPendingMermaid = isIncompleteMermaidFence(liveTail.trimStart());
-  const liveTailRevealFrom = revealFrom === null ? null : Math.max(0, revealFrom - Array.from(prefix).length);
   let chunkCursor = 0;
   const chunkOccurrences = new Map<string, number>();
 
@@ -566,15 +462,13 @@ function StreamingMarkdownMessage({
           />
         );
       })}
-      {liveTail && liveTailIsPendingMermaid ? (
+      {liveTailFenceLanguage === "html" || liveTailFenceLanguage === "htm" ? (
+        <HtmlStreamPending text={liveTail} />
+      ) : liveTailFenceLanguage === "mermaid" || liveTailFenceLanguage === "mmd" ? (
         <MermaidStreamPending />
-      ) : liveTail && renderLiveTailAsMarkdown ? (
-        <div className="stream-live-text">
-          <MarkdownMessage text={liveTail} revealFrom={liveTailRevealFrom} deferIncompleteTables />
-        </div>
       ) : liveTail ? (
         <div className="markdown-body react-markdown stream-live-text">
-          <StreamingPlainText text={liveTail} revealFrom={liveTailRevealFrom} />
+          <StreamingPlainText text={liveTail} />
         </div>
       ) : null}
     </div>
@@ -592,7 +486,7 @@ export function StreamingTextRenderer({
   streaming: boolean;
   onVisibleTextChange?: () => void;
 }) {
-  const { visibleText, revealFrom, revealing } = useStreamingText(
+  const { visibleText, revealing } = useStreamingText(
     text,
     streaming,
     settings.streamStartBufferMs,
@@ -605,19 +499,11 @@ export function StreamingTextRenderer({
     }
   }, [revealing, onVisibleTextChange, visibleText]);
 
-  const revealStyle = revealing
-    ? {
-        "--stream-reveal-duration": `${Math.max(0, Math.min(2000, settings.streamRevealDurationMs))}ms`,
-        "--stream-reveal-wipe": `${streamRevealWipePercent}%`,
-      } as CSSProperties
-    : undefined;
-
   return (
-    <div className={revealing ? "react-streaming-text streaming-text" : undefined} style={revealStyle}>
+    <div className={revealing ? "react-streaming-text streaming-text" : undefined}>
       <StreamingMarkdownMessage
         text={revealing ? visibleText : text}
         complete={!revealing}
-        revealFrom={revealing ? revealFrom : null}
       />
     </div>
   );

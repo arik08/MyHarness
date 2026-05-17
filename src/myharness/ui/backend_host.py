@@ -2095,9 +2095,12 @@ class ReactBackendHost:
             return
         deleted = self._bundle.session_backend.delete_by_id(self._bundle.cwd, session_id)
         if self._bundle.session_id == session_id:
+            self._bundle.engine.clear()
             new_session_id = self._start_new_saved_session()
             deleted = True
+            await self._emit(BackendEvent(type="clear_transcript"))
             await self._emit(BackendEvent(type="active_session", value=new_session_id))
+            await self._emit(BackendEvent(type="session_title", message="MyHarness"))
         if not deleted:
             await self._emit(BackendEvent(type="error", message=f"세션을 찾을 수 없습니다: {session_id}"))
             return

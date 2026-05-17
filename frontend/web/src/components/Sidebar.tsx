@@ -4,6 +4,7 @@ import { useAppState } from "../state/app-state";
 import { deleteHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
 import { sendBackendRequest, sendMessage } from "../api/messages";
+import { currentConversationHistoryTitle, currentConversationTitle } from "../state/selectors";
 import type { HistoryItem, Workspace } from "../types/backend";
 import type { RuntimePickerOption } from "../types/ui";
 import type { ThemeId } from "../types/ui";
@@ -227,6 +228,11 @@ export function Sidebar() {
     try {
       if (item.live && item.liveSessionId) {
         await shutdownSession(item.liveSessionId, state.clientId);
+      } else if (item.pending && state.sessionId) {
+        await sendBackendRequest(state.sessionId, state.clientId, {
+          type: "delete_session",
+          value: sessionId,
+        });
       } else {
         const workspace = item.workspace || null;
         await deleteHistory(
@@ -612,6 +618,7 @@ export function Sidebar() {
   const activeHistoryDeleted = Boolean(activeHistoryValue && state.deletedHistoryIds.includes(activeHistoryValue));
   const visibleHistory = state.history.filter((item) => !isCurrentLiveHistoryItem(item, state.sessionId));
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
+  const conversationTitle = currentConversationTitle(state);
   const activeHistoryDescription = currentConversationHistoryTitle(state);
   const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
   const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !activeHistoryDeleted && !hasActiveHistoryItem && (state.pendingFreshChat || state.busy || activeHistoryDescription)
@@ -773,11 +780,13 @@ export function Sidebar() {
             <p className="empty">대화 내역을 불러오는 중...</p>
           ) : sortedRenderedHistory.length ? (
             sortedRenderedHistory.map((item) => {
-              const label = item.description || item.label;
-              const displayLabel = formatHistoryTitle(label);
-              const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
               const editing = editingHistoryId === item.value;
               const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
+              const label = isActive && conversationTitle !== "MyHarness"
+                ? conversationTitle
+                : item.description || item.label;
+              const displayLabel = formatHistoryTitle(label);
+              const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
               const isPendingRestore = state.pendingHistoryId === item.value && visiblePendingHistoryId === item.value;
               const isActiveBusy = isActive && state.busy && (!state.pendingHistoryId || isPendingRestore);
               const isBusy = isActiveBusy || isPendingRestore || (item.live === true && item.busy === true);
@@ -951,15 +960,6 @@ function compactHistoryTitle(title: string) {
     return normalized;
   }
   return `${normalized.slice(0, historyTitleMaxLength).trimEnd()}...`;
-}
-
-function currentConversationHistoryTitle(state: ReturnType<typeof useAppState>["state"]) {
-  if (state.chatTitle && state.chatTitle !== "MyHarness") {
-    return state.chatTitle;
-  }
-  return state.messages.find((message) => (
-    message.role === "user" && !message.kind && !/^\/\S*/.test(message.text.trim())
-  ))?.text.replace(/\s+/g, " ").trim() || "";
 }
 
 function historyTitleForSort(item: HistoryItem) {

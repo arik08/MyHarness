@@ -221,13 +221,13 @@ function BehaviorSettings({ onBack }: { onBack: () => void }) {
       <SettingsHeader title="스트리밍 출력">답변이 스트리밍될 때 표시와 스크롤 흐름을 조절합니다.</SettingsHeader>
       <section className="setting-section">
         <div className="setting-section-header"><h3>텍스트 표시</h3><p>들쑥날쑥 들어오는 조각을 화면에서 고르게 보여주는 흐름입니다.</p></div>
-        <NumericSetting label="시작 버퍼" helper="첫 표시 전 텍스트를 잠깐 모아 끊김을 줄입니다." min={0} max={2000} step={10} value={settings.streamStartBufferMs} onChange={(value) => update({ streamStartBufferMs: value })} />
-        <NumericSetting label="표시 시간" helper="새 텍스트가 한 번에 드러나는 속도입니다." min={0} max={2000} step={20} value={settings.streamRevealDurationMs} onChange={(value) => update({ streamRevealDurationMs: value })} />
+        <NumericSetting label="시작 버퍼" helper="첫 표시와 잠깐 멈춘 뒤 재개 시 텍스트를 모아 끊김을 줄입니다." min={0} max={2000} step={10} value={settings.streamStartBufferMs} onChange={(value) => update({ streamStartBufferMs: value })} />
+        <NumericSetting label="표시 시간" helper="버퍼에 쌓인 텍스트를 프레임마다 순차적으로 풀어내는 기준 속도입니다." min={0} max={2000} step={20} value={settings.streamRevealDurationMs} onChange={(value) => update({ streamRevealDurationMs: value })} />
       </section>
       <section className="setting-section">
         <div className="setting-section-header"><h3>세로 스크롤 따라가기</h3><p>답변이 길어질 때 아래쪽으로 따라가는 흐름을 조절합니다.</p></div>
         <NumericSetting label="따라가기 시간" helper="아래로 따라가는 애니메이션 시간입니다." min={0} max={5000} step={100} value={settings.streamScrollDurationMs} onChange={(value) => update({ streamScrollDurationMs: value })} />
-        <NumericSetting label="따라가기 앞섬" helper="답변 꼬리 아래 여백을 얼마나 미리 확보할지 조절합니다." min={0} max={220} step={5} value={settings.streamFollowLeadPx} onChange={(value) => update({ streamFollowLeadPx: value })} />
+        <NumericSetting label="따라가기 앞섬" helper="가로 스트리밍 꼬리가 잘 보이도록 화면을 답변보다 조금 먼저 아래로 보냅니다." min={0} max={360} step={5} value={settings.streamFollowLeadPx} onChange={(value) => update({ streamFollowLeadPx: value })} />
       </section>
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>

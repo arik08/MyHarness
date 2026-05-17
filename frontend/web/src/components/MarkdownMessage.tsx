@@ -1509,7 +1509,7 @@ function replaceMermaidPreviewPlaceholders(root: HTMLElement | null) {
   });
 }
 
-function enhanceMarkdownRoot(root: HTMLElement | null, revealFrom: number | null) {
+function enhanceMarkdownRoot(root: HTMLElement | null) {
   replaceMermaidPreviewPlaceholders(root);
   replaceHtmlPreviewPlaceholders(root);
   enhanceWorkflowDiagrams(root);
@@ -1518,7 +1518,6 @@ function enhanceMarkdownRoot(root: HTMLElement | null, revealFrom: number | null
   enhanceCodeBlocks(root);
   enhancePromptTokens(root);
   enhanceCompanyColumnRowspans(root);
-  revealRenderedText(root, revealFrom);
 }
 
 function markdownRootForNode(node: Node | null) {
@@ -1546,7 +1545,7 @@ function enhanceMarkdownRootsFromMutations(mutations: MutationRecord[]) {
       }
     });
   }
-  roots.forEach((root) => enhanceMarkdownRoot(root, null));
+  roots.forEach((root) => enhanceMarkdownRoot(root));
 }
 
 function ensureMarkdownEnhancementObserver() {
@@ -1559,7 +1558,7 @@ function ensureMarkdownEnhancementObserver() {
     }
     markdownEnhancementObserver = new MutationObserver(enhanceMarkdownRootsFromMutations);
     markdownEnhancementObserver.observe(document.body, { childList: true, subtree: true });
-    document.querySelectorAll<HTMLElement>(".markdown-body").forEach((root) => enhanceMarkdownRoot(root, null));
+    document.querySelectorAll<HTMLElement>(".markdown-body").forEach((root) => enhanceMarkdownRoot(root));
   };
   if (document.body) {
     start();
@@ -1688,60 +1687,11 @@ async function handleCodeCopyClick(event: MouseEvent<HTMLDivElement>) {
   }
 }
 
-function revealRenderedText(root: HTMLElement | null, revealFrom: number | null) {
-  if (!root || revealFrom === null || revealFrom < 0) {
-    return;
-  }
-  root.querySelectorAll<HTMLElement>(".stream-reveal-sentence").forEach((span) => {
-    if (span.isConnected) {
-      span.replaceWith(document.createTextNode(span.textContent || ""));
-    }
-  });
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      return parent?.closest(".stream-reveal-sentence, .code-copy, .mermaid-chart, .html-render-preview, .assistant-workflow-diagram")
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  const replacements: Array<{ node: Text; chars: string[]; localStart: number }> = [];
-  let cursor = 0;
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text;
-    const chars = Array.from(node.nodeValue || "");
-    const nextCursor = cursor + chars.length;
-    if (nextCursor > revealFrom) {
-      replacements.push({ node, chars, localStart: Math.max(0, revealFrom - cursor) });
-    }
-    cursor = nextCursor;
-  }
-
-  for (const replacement of replacements) {
-    const fragment = document.createDocumentFragment();
-    const before = replacement.chars.slice(0, replacement.localStart).join("");
-    const revealText = replacement.chars.slice(replacement.localStart).join("");
-    if (before) {
-      fragment.append(document.createTextNode(before));
-    }
-    if (revealText) {
-      const span = document.createElement("span");
-      span.className = "stream-reveal-sentence";
-      span.textContent = revealText;
-      fragment.append(span);
-    }
-    replacement.node.replaceWith(fragment);
-  }
-}
-
 export function MarkdownMessage({
   text,
-  revealFrom = null,
   deferIncompleteTables = false,
 }: {
   text: string;
-  revealFrom?: number | null;
   deferIncompleteTables?: boolean;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -1765,10 +1715,10 @@ export function MarkdownMessage({
 
   useLayoutEffect(() => {
     ensureMarkdownEnhancementObserver();
-    enhanceMarkdownRoot(ref.current, revealFrom);
-    const frame = window.requestAnimationFrame(() => enhanceMarkdownRoot(ref.current, null));
+    enhanceMarkdownRoot(ref.current);
+    const frame = window.requestAnimationFrame(() => enhanceMarkdownRoot(ref.current));
     return () => window.cancelAnimationFrame(frame);
-  }, [html, revealFrom]);
+  }, [html]);
 
   return (
     <div

@@ -1138,6 +1138,7 @@ describe("appReducer", () => {
     expect(started.pendingFreshChat).toBe(false);
     expect(started.history[0].value).toBe("abcdef123456");
     expect(started.history[0].description).toBe("새 대화");
+    expect(started.history[0].pending).toBe(true);
     expect(restoringOld.history.some((item) => item.value === "abcdef123456")).toBe(true);
   });
 
@@ -1565,13 +1566,21 @@ describe("appReducer", () => {
   });
 
   it("tracks tool workflow lifecycle", () => {
-    const started = appReducer(initialAppState, {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "테스트를 실행해줘" },
+    });
+    const started = appReducer(active, {
       type: "backend_event",
       event: { type: "tool_started", tool_name: "shell_command", tool_input: { command: "npm test" } },
     });
     const progressed = appReducer(started, {
       type: "backend_event",
       event: { type: "tool_progress", tool_name: "shell_command", message: "테스트 실행 중" },
+    });
+    const reported = appReducer(started, {
+      type: "backend_event",
+      event: { type: "status", message: "테스트 스크립트 실행 결과를 확인하고 있습니다." },
     });
     const completed = appReducer(progressed, {
       type: "backend_event",
@@ -1580,18 +1589,59 @@ describe("appReducer", () => {
 
     const shellEvent = completed.workflowEvents.find((event) => event.toolName === "shell_command");
     const startedPurpose = started.workflowEvents.find((event) => event.role === "purpose");
+    const reportedPurpose = reported.workflowEvents.find((event) => event.role === "purpose");
     const completedPurpose = completed.workflowEvents.find((event) => event.role === "purpose");
     expect(started.busy).toBe(true);
     expect(progressed.busy).toBe(true);
     expect(completed.busy).toBe(true);
     expect(completed.workflowEvents.map((event) => event.title)).toContain("작업 실행");
-    expect(startedPurpose?.detail).toContain("명령 실행 진행 중");
-    expect(startedPurpose?.detail).toContain("npm test");
-    expect(completedPurpose?.detail).toContain("명령 실행 완료");
-    expect(completedPurpose?.detail).toContain("pass");
+    expect(startedPurpose?.detail).toBe("필요한 변경이나 명령을 실행하고 있습니다.");
+    expect(startedPurpose?.detail).not.toContain("npm test");
+    expect(reportedPurpose?.detail).toBe("테스트 스크립트 실행 결과를 확인하고 있습니다.");
+    expect(reported.workflowEvents.some((event) => event.role === "waiting")).toBe(false);
+    expect(completedPurpose?.detail).toBe("작업 실행을 마쳤습니다.");
+    expect(completedPurpose?.detail).not.toContain("npm test");
+    expect(completedPurpose?.detail).not.toContain("pass");
     expect(shellEvent?.status).toBe("done");
     expect(shellEvent?.detail).toContain("pass");
     expect(completed.artifactRefreshKey).toBe(progressed.artifactRefreshKey);
+  });
+
+  it("keeps interim workflow judgments and replaced details as visible history", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "자료를 확인하고 정리해줘" },
+    });
+    const firstStarted = appReducer(active, {
+      type: "backend_event",
+      event: { type: "tool_started", tool_name: "web_fetch", tool_input: { url: "https://example.com/a" } },
+    });
+    const firstCompleted = appReducer(firstStarted, {
+      type: "backend_event",
+      event: { type: "tool_completed", tool_name: "web_fetch", output: "first result" },
+    });
+    const secondStarted = appReducer(firstCompleted, {
+      type: "backend_event",
+      event: { type: "tool_started", tool_name: "web_search", tool_input: { query: "second" } },
+    });
+    const noted = appReducer(secondStarted, {
+      type: "backend_event",
+      event: { type: "status", message: "추가 검색 결과를 비교하고 있습니다." },
+    });
+    const secondCompleted = appReducer(secondStarted, {
+      type: "backend_event",
+      event: { type: "tool_completed", tool_name: "web_search", output: "second result" },
+    });
+
+    const activityEvent = secondStarted.workflowEvents.find((event) => event.role === "activity");
+    const purposeEvent = noted.workflowEvents.find((event) => event.role === "purpose" && event.purpose === "info");
+
+    expect(activityEvent?.status).toBe("done");
+    expect(activityEvent?.detail).toBe("다음 작업을 정했습니다.");
+    expect(activityEvent?.detailLog?.[0]).toContain("도구 결과를 읽고");
+    expect(purposeEvent?.detail).toBe("추가 검색 결과를 비교하고 있습니다.");
+    expect(purposeEvent?.detailLog?.length).toBeGreaterThan(0);
+    expect(secondCompleted.workflowEvents.filter((event) => event.role === "activity")).toHaveLength(1);
   });
 
   it("anchors workflow progress to the actual user request and status notes", () => {
@@ -1604,13 +1654,13 @@ describe("appReducer", () => {
       event: { type: "status", message: "히스토리 목록 갱신 경로를 확인하고 있습니다." },
     });
 
-    const noteEvent = noted.workflowEvents.find((event) => event.role === "waiting");
+    const planningEvent = noted.workflowEvents.find((event) => event.role === "planning");
     expect(noted.workflowEvents[0].detail).toContain("새 대화 직후 히스토리 목록");
-    expect(noteEvent?.title).toBe("진행 메모");
-    expect(noteEvent?.detail).toBe("히스토리 목록 갱신 경로를 확인하고 있습니다.");
+    expect(planningEvent?.detail).toBe("히스토리 목록 갱신 경로를 확인하고 있습니다.");
+    expect(noted.workflowEvents.some((event) => event.role === "waiting")).toBe(false);
   });
 
-  it("keeps assistant progress text as a workflow note when tools follow", () => {
+  it("folds assistant progress text into the active workflow stage when tools follow", () => {
     const active = appReducer(initialAppState, {
       type: "append_message",
       message: { role: "user", text: "진행 표시를 더 구체적으로 만들어줘" },
@@ -1628,9 +1678,9 @@ describe("appReducer", () => {
       },
     });
 
-    const noteEvent = toolPending.workflowEvents.find((event) => event.role === "waiting");
-    expect(noteEvent?.title).toBe("진행 메모");
-    expect(noteEvent?.detail).toContain("workflow reducer");
+    const planningEvent = toolPending.workflowEvents.find((event) => event.role === "planning");
+    expect(planningEvent?.detail).toContain("workflow reducer");
+    expect(toolPending.workflowEvents.some((event) => event.role === "waiting")).toBe(false);
     expect(toolPending.workflowEvents.some((event) => event.role === "final")).toBe(false);
   });
 
@@ -1797,8 +1847,8 @@ describe("appReducer", () => {
 
     expect(fetchStep?.status).toBe("warning");
     expect(purpose?.status).toBe("warning");
-    expect(purpose?.detail).toContain("web_fetch 확인 필요");
-    expect(purpose?.detail).toContain("403 Forbidden");
+    expect(purpose?.detail).toBe("일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.");
+    expect(fetchStep?.detail).toContain("403 Forbidden");
   });
 
   it("keeps the header status compact for web tools and answer streaming", () => {

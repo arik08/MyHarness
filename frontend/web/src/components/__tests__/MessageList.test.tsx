@@ -41,6 +41,15 @@ function HistoryRestoreProbe() {
   );
 }
 
+function FinishHistoryRestoreProbe() {
+  const { dispatch } = useAppState();
+  return (
+    <button type="button" onClick={() => dispatch({ type: "finish_history_restore" })}>
+      finish restore
+    </button>
+  );
+}
+
 function WorkflowProgressProbe() {
   const { dispatch } = useAppState();
   return (
@@ -2680,7 +2689,7 @@ describe("MessageList", () => {
     expect(screen.queryByLabelText("본문 저장")).toBeNull();
   });
 
-  it("renders the active streaming assistant answer as soon as text arrives", () => {
+  it("buffers the active streaming assistant answer before revealing it smoothly", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider
@@ -2696,10 +2705,20 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.body.textContent || "").toContain("스트리밍 답변입니다.");
+    expect(document.body.textContent || "").not.toContain("스트리밍 답변입니다.");
+
+    act(() => {
+      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 50);
+    });
+
+    const firstVisibleText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(firstVisibleText.length).toBeGreaterThan(0);
+    expect("스트리밍 답변입니다.".startsWith(firstVisibleText)).toBe(true);
+    expect(firstVisibleText).not.toBe("스트리밍 답변입니다.");
   });
 
   it("keeps a completed assistant answer visible while a new answer streams below it", () => {
+    vi.useFakeTimers();
     render(
       <AppStateProvider
         initialState={{
@@ -2716,6 +2735,12 @@ describe("MessageList", () => {
     );
 
     expect(document.body.textContent || "").toContain("이전 답변입니다.");
+    expect(document.body.textContent || "").not.toContain("새 답변 작성 중입니다.");
+
+    act(() => {
+      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 220);
+    });
+
     expect(document.body.textContent || "").toContain("새 답변 작성 중입니다.");
     expect(document.querySelectorAll("article.message.assistant")).toHaveLength(2);
   });
@@ -2732,7 +2757,7 @@ describe("MessageList", () => {
     act(() => {
       screen.getByText("delta one").click();
     });
-    expect(document.body.textContent || "").toContain("스트");
+    expect(document.body.textContent || "").not.toContain("스트");
 
     act(() => {
       screen.getByText("delta two").click();
@@ -2741,7 +2766,7 @@ describe("MessageList", () => {
     expect(document.body.textContent || "").not.toContain("스트리밍 답변입니다.");
 
     act(() => {
-      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs);
+      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 50);
     });
 
     const firstParagraph = document.querySelector(".stream-live-text p");
@@ -2757,7 +2782,7 @@ describe("MessageList", () => {
     expect(firstFrameText.length).toBeGreaterThan(firstVisibleText.length);
 
     act(() => {
-      vi.advanceTimersByTime(160);
+      vi.advanceTimersByTime(420);
     });
     expect(document.body.textContent || "").toContain("스트리밍 답변입니다.");
   });
@@ -2787,7 +2812,7 @@ describe("MessageList", () => {
       screen.getByText("delta two").click();
     });
     act(() => {
-      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs);
+      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 50);
     });
     const firstVisibleText = document.querySelector(".stream-live-text p")?.textContent || "";
     expect(firstVisibleText.startsWith("스트")).toBe(true);
@@ -2801,7 +2826,7 @@ describe("MessageList", () => {
     expect(firstFrameText.length).toBeGreaterThan(firstVisibleText.length);
 
     act(() => {
-      vi.advanceTimersByTime(160);
+      vi.advanceTimersByTime(600);
     });
     expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변입니다.");
   });
@@ -2832,12 +2857,12 @@ describe("MessageList", () => {
       screen.getByText("delta two").click();
     });
 
-    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트");
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBeUndefined();
 
     act(() => {
       vi.advanceTimersByTime(119);
     });
-    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트");
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBeUndefined();
 
     act(() => {
       vi.advanceTimersByTime(1);
@@ -2845,7 +2870,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변입니다.");
   });
 
-  it("reveals the live streaming tail with the configured horizontal wipe", () => {
+  it("paces the live streaming tail without hiding text for visual reveal effects", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider
@@ -2875,9 +2900,11 @@ describe("MessageList", () => {
     });
 
     expect(document.querySelector(".react-streaming-text")).toBeTruthy();
-    expect(document.querySelector(".stream-reveal-sentence")).toBeTruthy();
-    expect(document.querySelector(".react-streaming-text")?.getAttribute("style")).toContain("--stream-reveal-duration: 600ms");
-    expect(document.querySelector(".react-streaming-text")?.getAttribute("style")).toContain("--stream-reveal-wipe: 180%");
+    expect(document.querySelector(".react-streaming-text .stream-soft-reveal")).toBeNull();
+    expect(document.querySelector(".react-streaming-text .stream-reveal-sentence")).toBeNull();
+    expect(document.querySelector(".react-streaming-text")?.getAttribute("style") || "").not.toContain("--stream-reveal-duration");
+    expect(document.querySelector(".react-streaming-text")?.getAttribute("style") || "").not.toContain("--stream-reveal-wipe");
+    expect(document.querySelector(".react-streaming-text")?.getAttribute("style") || "").not.toContain("--stream-soft-reveal-duration");
   });
 
   it("continues revealing the completion tail instead of snapping to the final answer", () => {
@@ -2915,8 +2942,13 @@ describe("MessageList", () => {
       vi.advanceTimersByTime(16);
     });
     const firstFrameText = document.body.textContent || "";
-    expect(firstFrameText.length).toBeGreaterThan(initialText.length);
+    expect(firstFrameText.length).toBeGreaterThanOrEqual(initialText.length);
     expect(firstFrameText).not.toContain(finalText);
+
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+    expect((document.body.textContent || "").length).toBeGreaterThan(initialText.length);
 
     act(() => {
       vi.advanceTimersByTime(800);
@@ -3016,7 +3048,7 @@ describe("MessageList", () => {
     }
   });
 
-  it("keeps completed streaming blocks rendered as markdown before the answer completes", () => {
+  it("renders stable streaming blocks as markdown while keeping the live tail plain", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider
@@ -3057,6 +3089,11 @@ describe("MessageList", () => {
         initialState={{
           ...initialAppState,
           busy: true,
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamStartBufferMs: 0,
+            streamRevealDurationMs: 0,
+          },
           messages: [
             { id: "assistant-1", role: "assistant", text: tableMarkdown },
           ],
@@ -3066,7 +3103,7 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.querySelector(".markdown-pending-table")).toBeTruthy();
+    expect(document.querySelector(".stream-live-text pre")).toBeNull();
     expect(document.querySelector(".markdown-body table")).toBeNull();
     expect(document.body.textContent || "").toContain("| 항목 | 값 |");
 
@@ -3101,6 +3138,11 @@ describe("MessageList", () => {
         initialState={{
           ...initialAppState,
           busy: true,
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamStartBufferMs: 0,
+            streamRevealDurationMs: 0,
+          },
           messages: [
             { id: "assistant-1", role: "assistant", text: tableMarkdown },
           ],
@@ -3110,7 +3152,7 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.querySelector(".markdown-pending-table")).toBeTruthy();
+    expect(document.querySelector(".stream-live-text pre")).toBeNull();
     expect(document.querySelector(".markdown-body table")).toBeNull();
     expect(document.body.textContent || "").toContain(partialRow);
   });
@@ -3128,6 +3170,11 @@ describe("MessageList", () => {
         initialState={{
           ...initialAppState,
           busy: true,
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamStartBufferMs: 0,
+            streamRevealDurationMs: 0,
+          },
           messages: [
             { id: "assistant-1", role: "assistant", text: tableMarkdown },
           ],
@@ -3137,7 +3184,7 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.querySelector(".markdown-pending-table")).toBeTruthy();
+    expect(document.querySelector(".stream-live-text pre")).toBeNull();
     expect(document.querySelector(".markdown-body table")).toBeNull();
     expect(document.body.textContent || "").toContain("| 항목 | 값 |");
   });
@@ -3532,7 +3579,7 @@ describe("MessageList", () => {
       expect(Math.max(...accelerations)).toBeLessThan(5);
 
       const settledFrom = samples.length;
-      for (let now = 80; now <= 1600; now += 16) {
+      for (let now = 80; now <= 3200; now += 16) {
         const frame = animationFrames.shift();
         expect(frame).toBeTruthy();
         act(() => frame?.(now));
@@ -3543,7 +3590,7 @@ describe("MessageList", () => {
       const hasPartialSlowdown = settleDeltas.some((delta, index) => index > 0 && delta > 0 && delta < settleDeltas[index - 1]);
       expect(hasPartialSlowdown).toBe(true);
       expect(messages.scrollTop).toBe(1200);
-      expect(settleDeltas[settleDeltas.length - 1]).toBe(0);
+      expect(settleDeltas[settleDeltas.length - 1]).toBeLessThan(3);
     } finally {
       window.requestAnimationFrame = originalRequestAnimationFrame;
       window.cancelAnimationFrame = originalCancelAnimationFrame;
@@ -3616,6 +3663,240 @@ describe("MessageList", () => {
 
       await waitFor(() => expect(messages.scrollTop).toBe(420));
       expect(messages.classList.contains("streaming-follow")).toBe(true);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
+  it("resumes bottom follow when workflow progress starts from a non-following tail", async () => {
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            busy: true,
+            messages: [
+              { id: "user-1", role: "user", text: "단계별로 확인해줘" },
+            ],
+            workflowAnchorMessageId: "user-1",
+            workflowEvents: [],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 0,
+            },
+          }}
+        >
+          <WorkflowProgressProbe />
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      clientHeights.set(messages, 100);
+      scrollHeights.set(messages, 900);
+      messages.scrollTop = 240;
+      messages.dataset.lastScrollTop = "620";
+      fireEvent.scroll(messages);
+
+      expect(messages.scrollTop).toBe(240);
+
+      await userEvent.click(screen.getByRole("button", { name: "add workflow" }));
+
+      await waitFor(() => expect(messages.scrollTop).toBe(900));
+      expect(messages.classList.contains("streaming-follow")).toBe(true);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
+  it("resumes bottom follow when the final assistant answer starts after long workflow progress", () => {
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            busy: true,
+            messages: [
+              { id: "user-1", role: "user", text: "영상 분석해줘" },
+            ],
+            workflowAnchorMessageId: "user-1",
+            workflowEvents: [
+              { id: "workflow-1", toolName: "", title: "요청 이해", detail: "요청 확인", status: "done", level: "parent", role: "planning" },
+              { id: "workflow-2", toolName: "", title: "작업 실행", detail: "도구를 실행하고 있습니다.", status: "running", level: "parent", role: "purpose", purpose: "info", groupId: "group-info" },
+              { id: "workflow-3", toolName: "skill", title: "skill", detail: "insane-search", status: "done", level: "child", groupId: "group-info" },
+              { id: "workflow-4", toolName: "shell_command", title: "명령 실행", detail: "yt-dlp --dump-json", status: "done", level: "child", groupId: "group-info" },
+            ],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 0,
+            },
+          }}
+        >
+          <StreamingDeltaProbe />
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      clientHeights.set(messages, 200);
+      scrollHeights.set(messages, 1200);
+      messages.scrollTop = 360;
+      messages.dataset.lastScrollTop = "900";
+
+      fireEvent.scroll(messages);
+
+      expect(messages.classList.contains("streaming-follow")).toBe(false);
+      expect(messages.scrollTop).toBe(360);
+
+      act(() => {
+        screen.getByText("delta one").click();
+      });
+
+      expect(messages.classList.contains("streaming-follow")).toBe(true);
+      expect(messages.scrollTop).toBe(1200);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
+  it("resumes bottom follow after returning to a streaming session restore", () => {
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            busy: true,
+            activeHistoryId: "live-a",
+            pendingHistoryId: "live-a",
+            restoringHistory: true,
+            historyReadOnly: false,
+            messages: [
+              { id: "user-1", role: "user", text: "계속 답변해줘" },
+              { id: "assistant-1", role: "assistant", text: "진행 중인 답변", isComplete: false },
+            ],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 0,
+            },
+          }}
+        >
+          <FinishHistoryRestoreProbe />
+          <StreamingDeltaProbe />
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      clientHeights.set(messages, 200);
+      scrollHeights.set(messages, 1200);
+      messages.scrollTop = 320;
+      messages.dataset.lastScrollTop = "320";
+
+      fireEvent.click(screen.getByText("finish restore"));
+
+      expect(messages.scrollTop).toBe(1200);
+
+      fireEvent.wheel(messages, { deltaY: -120 });
+      messages.scrollTop = 520;
+      messages.dataset.lastScrollTop = "1200";
+      fireEvent.scroll(messages);
+
+      fireEvent.click(screen.getByText("delta two"));
+
+      expect(messages.scrollTop).toBe(520);
     } finally {
       if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
       if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);

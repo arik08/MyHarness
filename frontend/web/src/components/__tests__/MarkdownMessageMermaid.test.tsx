@@ -286,7 +286,7 @@ describe("MarkdownMessage Mermaid rendering", () => {
     expect(screen.getByText("Ready")).toBeTruthy();
   });
 
-  it("keeps rendered mermaid svg intact when reveal effects rerun", async () => {
+  it("keeps rendered mermaid svg intact when markdown enhancement reruns", async () => {
     const text = [
       "```mermaid",
       "flowchart LR",
@@ -295,10 +295,10 @@ describe("MarkdownMessage Mermaid rendering", () => {
       "",
       "Done",
     ].join("\n");
-    const { rerender } = render(<MarkdownMessage text={text} revealFrom={null} />);
+    const { rerender } = render(<MarkdownMessage text={text} />);
 
     await waitFor(() => expect(document.querySelector(".mermaid-chart svg")).toBeTruthy());
-    rerender(<MarkdownMessage text={text} revealFrom={0} />);
+    rerender(<MarkdownMessage text={text} />);
 
     await waitFor(() => expect(document.querySelector(".mermaid-chart svg")).toBeTruthy());
     expect(document.querySelector(".mermaid-chart .stream-reveal-sentence")).toBeNull();
@@ -306,22 +306,22 @@ describe("MarkdownMessage Mermaid rendering", () => {
     expect(screen.getByText("Ready")).toBeTruthy();
   });
 
-  it("does not nest streaming reveal spans when markdown enhancement reruns", async () => {
-    const { container, rerender } = render(<MarkdownMessage text="첫 문장입니다." revealFrom={0} />);
+  it("does not create streaming reveal spans when markdown enhancement reruns", async () => {
+    const { container, rerender } = render(<MarkdownMessage text="첫 문장입니다." />);
 
-    expect(container.querySelector(".stream-reveal-sentence")).toBeTruthy();
+    expect(container.querySelector(".stream-reveal-sentence")).toBeNull();
 
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     });
-    rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." revealFrom={7} />);
+    rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." />);
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     });
 
     const revealCount = container.querySelectorAll(".stream-reveal-sentence").length;
     expect(container.querySelector(".stream-reveal-sentence .stream-reveal-sentence")).toBeNull();
-    expect(revealCount).toBeGreaterThan(0);
+    expect(revealCount).toBe(0);
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     });
@@ -345,9 +345,9 @@ describe("MarkdownMessage Mermaid rendering", () => {
     }) as typeof window.cancelAnimationFrame;
 
     try {
-      const { rerender, unmount } = render(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." revealFrom={0} />);
-      rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." revealFrom={4} />);
-      rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." revealFrom={8} />);
+      const { rerender, unmount } = render(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." />);
+      rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다. 셋째 문장입니다." />);
+      rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다. 셋째 문장입니다. 넷째 문장입니다." />);
 
       expect(frames.size).toBe(1);
       unmount();

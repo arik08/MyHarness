@@ -408,12 +408,18 @@ async def test_runtime_bang_prefix_runs_shell_shortcut_without_llm(tmp_path, mon
 @pytest.mark.asyncio
 async def test_delete_current_session_rotates_saved_session_id(tmp_path):
     backend = FakeSessionBackend(deleted=False)
+    clear_calls = 0
+
+    def _clear():
+        nonlocal clear_calls
+        clear_calls += 1
+
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = SimpleNamespace(
         cwd=tmp_path,
         session_backend=backend,
         session_id="current123",
-        engine=SimpleNamespace(tool_metadata={"session_id": "current123"}),
+        engine=SimpleNamespace(tool_metadata={"session_id": "current123"}, clear=_clear),
     )
     events: list[BackendEvent] = []
 
@@ -425,9 +431,12 @@ async def test_delete_current_session_rotates_saved_session_id(tmp_path):
     await host._handle_delete_session("current123")
 
     assert backend.deleted_ids == ["current123"]
+    assert clear_calls == 1
     assert host._bundle.session_id != "current123"
     assert host._bundle.engine.tool_metadata["session_id"] == host._bundle.session_id
+    assert any(event.type == "clear_transcript" for event in events)
     assert any(event.type == "active_session" and event.value == host._bundle.session_id for event in events)
+    assert any(event.type == "session_title" and event.message == "MyHarness" for event in events)
     assert not any(event.type == "error" for event in events)
 
 
