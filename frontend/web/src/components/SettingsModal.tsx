@@ -80,9 +80,9 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
           <strong>스트리밍 출력</strong>
           <small>{streamingSettingsLabel(state.appSettings)}</small>
         </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("output-tokens")} disabled={!localBrowserHost}>
+        <button type="button" className="settings-row" onClick={() => onSelect("output-tokens")}>
           <strong>모델별 출력 토큰</strong>
-          <small>{localBrowserHost ? "GPT-5.5 / 5.4 / 5.4 mini" : serverOnlyLabel}</small>
+          <small>GPT-5.5 / 5.4 / 5.4 mini</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("download")}>
           <strong>파일 저장경로</strong>
@@ -137,7 +137,7 @@ function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack:
 }
 
 function isServerHostSettingsView(view: SettingsView) {
-  return view === "shell" || view === "yolo" || view === "workspace" || view === "learned-skills" || view === "pgpt" || view === "output-tokens";
+  return view === "shell" || view === "yolo" || view === "workspace" || view === "learned-skills" || view === "pgpt";
 }
 
 function ServerHostOnlySettings({ onBack }: { onBack: () => void }) {

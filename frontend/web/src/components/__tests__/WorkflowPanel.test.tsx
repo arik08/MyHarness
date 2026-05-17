@@ -108,6 +108,76 @@ describe("WorkflowPanel", () => {
     expect(screen.getByText("응답 작성")).toBeTruthy();
   });
 
+  it("does not keep a completed activity status active while a file write is still running", () => {
+    render(
+      <AppStateProvider>
+        <WorkflowPanel
+          events={[
+            {
+              id: "judging",
+              toolName: "",
+              title: "다음 단계 검토 중",
+              detail: "다음 작업을 정했습니다.",
+              status: "done",
+              level: "parent",
+              role: "activity",
+            },
+            {
+              id: "write",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "outputs/report.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/report.html",
+                content: "<html><body>작성 중</body></html>",
+              },
+            },
+          ]}
+        />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".workflow-activity-status")).toBeNull();
+    expect(screen.getByText("작성 중인 결과물 - report.html")).toBeTruthy();
+  });
+
+  it("does not keep a stale running activity status active after later concrete work starts", () => {
+    render(
+      <AppStateProvider>
+        <WorkflowPanel
+          events={[
+            {
+              id: "judging",
+              toolName: "",
+              title: "다음 단계 검토 중",
+              detail: "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
+              status: "running",
+              level: "parent",
+              role: "activity",
+            },
+            {
+              id: "write",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "outputs/report.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                path: "outputs/report.html",
+                content: "<html><body>작성 중</body></html>",
+              },
+            },
+          ]}
+        />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".workflow-activity-status")).toBeNull();
+    expect(screen.getByText("작성 중인 결과물 - report.html")).toBeTruthy();
+  });
+
   it("shows request and planning detail text on parent rows", () => {
     render(
       <AppStateProvider>

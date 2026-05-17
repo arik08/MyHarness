@@ -93,6 +93,47 @@ function formatWorkflowContentCount(text: string) {
   return `${formatWorkflowTokenCount(estimateTextTokens(text))} (${lines.toLocaleString()}줄)`;
 }
 
+function workflowDiffLineChangeKind(line: string) {
+  if (line.startsWith("++ ") || /^\+(?!\+\+|\s*$)/.test(line)) {
+    return "added";
+  }
+  if (line.startsWith("-- ") || /^-(?!--|\s*$)/.test(line)) {
+    return "removed";
+  }
+  return null;
+}
+
+function workflowDiffLineText(line: string) {
+  if (line.startsWith("++ ") || line.startsWith("-- ")) {
+    return line.slice(3);
+  }
+  if (/^[+-](?![+-]|\s*$)/.test(line)) {
+    return line.slice(1);
+  }
+  return line;
+}
+
+function formatWorkflowDiffCount(text: string) {
+  const stats = {
+    removed: { lines: 0, text: [] as string[] },
+    added: { lines: 0, text: [] as string[] },
+  };
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const kind = workflowDiffLineChangeKind(line);
+    if (!kind) {
+      continue;
+    }
+    stats[kind].lines += 1;
+    stats[kind].text.push(workflowDiffLineText(line));
+  }
+  const removedTokens = estimateTextTokens(stats.removed.text.join("\n"));
+  const addedTokens = estimateTextTokens(stats.added.text.join("\n"));
+  return [
+    `삭제 ${formatWorkflowTokenCount(removedTokens)} (${stats.removed.lines.toLocaleString()}줄)`,
+    `추가 ${formatWorkflowTokenCount(addedTokens)} (${stats.added.lines.toLocaleString()}줄)`,
+  ].join(", ");
+}
+
 function formatWorkflowLongReportCount(event: WorkflowEvent, fallbackText: string) {
   const runningUsageTokens = workflowLongReportInputUsageTokens(event.toolInput);
   if (runningUsageTokens !== null && runningUsageTokens > 0) {
@@ -314,12 +355,6 @@ function workflowOutputPathKey(path: string) {
   return String(path || "").trim().replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
 }
 
-function workflowEventOutputPathKey(event: WorkflowEvent) {
-  const input = event.toolInput || {};
-  const patch = workflowPatchPreview(input);
-  return workflowOutputPathKey(workflowInputValue(input, ["file_path", "path"]).value || workflowPatchPath(patch));
-}
-
 function mergeWorkflowOutputEvents(previous: WorkflowEvent, next: WorkflowEvent) {
   return {
     ...previous,
@@ -331,18 +366,34 @@ function mergeWorkflowOutputEvents(previous: WorkflowEvent, next: WorkflowEvent)
   };
 }
 
-function dedupeRunningWorkflowOutputEvents(events: WorkflowEvent[]) {
+function chooseWorkflowOutputTimelineEvent(previous: WorkflowEvent, next: WorkflowEvent) {
+  if (next.status !== previous.status) {
+    if (next.status !== "running") {
+      return mergeWorkflowOutputEvents(previous, next);
+    }
+    if (previous.status === "running") {
+      return mergeWorkflowOutputEvents(previous, next);
+    }
+    return previous;
+  }
+  return mergeWorkflowOutputEvents(previous, next);
+}
+
+function workflowOutputTimelineDedupeKey(event: WorkflowEvent) {
+  const source = isWorkflowOutputTool(event.toolName) ? workflowPreviewSource(event) : null;
+  const pathKey = source?.kind === "content" ? workflowOutputPathKey(source.path) : "";
+  return pathKey ? `${event.toolName.toLowerCase()}:${pathKey}` : "";
+}
+
+function dedupeWorkflowOutputEvents(events: WorkflowEvent[]) {
   const indexesByKey = new Map<string, number>();
   const nextEvents: WorkflowEvent[] = [];
   for (const event of events) {
-    const pathKey = event.status === "running" && isWorkflowOutputTool(event.toolName)
-      ? workflowEventOutputPathKey(event)
-      : "";
-    const key = pathKey ? `${event.toolName.toLowerCase()}:${pathKey}` : "";
+    const key = workflowOutputTimelineDedupeKey(event);
     if (key) {
       const existingIndex = indexesByKey.get(key);
       if (existingIndex !== undefined) {
-        nextEvents[existingIndex] = mergeWorkflowOutputEvents(nextEvents[existingIndex], event);
+        nextEvents[existingIndex] = chooseWorkflowOutputTimelineEvent(nextEvents[existingIndex], event);
         continue;
       }
       indexesByKey.set(key, nextEvents.length);
@@ -474,10 +525,11 @@ export function webInvestigationSummary(events: WorkflowEvent[]) {
 }
 
 function workflowDiffLineClassName(line: string) {
-  if (line.startsWith("++ ") || /^\+(?!\+\+|\s*$)/.test(line)) {
+  const changeKind = workflowDiffLineChangeKind(line);
+  if (changeKind === "added") {
     return "workflow-diff-line added";
   }
-  if (line.startsWith("-- ") || /^-(?!--|\s*$)/.test(line)) {
+  if (changeKind === "removed") {
     return "workflow-diff-line removed";
   }
   if (line.startsWith("@@") || line.startsWith("*** ")) {
@@ -548,11 +600,8 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
   const prefix = source.kind === "diff"
     ? done ? "수정 완료" : "수정 미리보기"
     : done ? "작성 완료" : "작성 중인 결과물";
-  const changedLines = source.kind === "diff"
-    ? source.content.split(/\r?\n/).filter((line) => workflowDiffLineClassName(line).includes("added") || workflowDiffLineClassName(line).includes("removed")).length
-    : 0;
   const count = source.kind === "diff"
-    ? `${formatWorkflowTokenCount(estimateTextTokens(source.content))} (${changedLines.toLocaleString()}줄)`
+    ? formatWorkflowDiffCount(source.content)
     : isLongReportWorkflowTool(event.toolName)
       ? formatWorkflowLongReportCount(event, source.content)
       : formatWorkflowContentCount(source.content);
@@ -616,15 +665,29 @@ function isWorkflowActivityEvent(event: WorkflowEvent) {
   return event.role === "activity";
 }
 
-function latestWorkflowActivityStatusEvent(events: WorkflowEvent[]) {
-  const activityIndex = events.map((event, index) => ({ event, index }))
+function latestWorkflowActivityStatusEvent(visibleEvents: WorkflowEvent[], allEvents: WorkflowEvent[] = visibleEvents) {
+  const activityIndex = visibleEvents.map((event, index) => ({ event, index }))
     .reverse()
     .find(({ event }) => isWorkflowActivityEvent(event))?.index ?? -1;
   if (activityIndex === -1) {
     return null;
   }
-  const finalStarted = events.slice(activityIndex + 1).some((event) => event.role === "final");
-  return finalStarted ? null : events[activityIndex];
+  const activityEvent = visibleEvents[activityIndex];
+  const activityIndexInAll = allEvents.findIndex((event) => event.id === activityEvent.id);
+  const laterEvents = activityIndexInAll === -1 ? [] : allEvents.slice(activityIndexInAll + 1);
+  const finalStarted = laterEvents.some((event) => event.role === "final");
+  if (finalStarted) {
+    return null;
+  }
+  const laterWorkRunning = laterEvents.some((event) => event.status === "running" && !isWorkflowActivityEvent(event) && event.role !== "purpose");
+  if (laterWorkRunning) {
+    return null;
+  }
+  const otherWorkRunning = allEvents.some((event) => event.id !== activityEvent.id && event.status === "running" && !isWorkflowActivityEvent(event));
+  if (activityEvent.status === "done" && otherWorkRunning) {
+    return null;
+  }
+  return activityEvent;
 }
 
 function WorkflowStep({
@@ -986,7 +1049,7 @@ export function WorkflowPanel({
 } = {}) {
   const { state } = useAppState();
   const rawEvents = eventOverride || state.workflowEvents;
-  const events = useMemo(() => dedupeRunningWorkflowOutputEvents(rawEvents), [rawEvents]);
+  const events = useMemo(() => dedupeWorkflowOutputEvents(rawEvents), [rawEvents]);
   const isActiveWorkflow = !eventOverride || eventOverride === state.workflowEvents;
   const animateActiveWorkflow = state.busy && !state.restoringHistory && isActiveWorkflow;
   const visibleEvents = useStaggeredWorkflowEvents(events, animateActiveWorkflow);
@@ -1055,8 +1118,8 @@ export function WorkflowPanel({
     [visibleEvents],
   );
   const latestVisibleActivityEvent = useMemo(
-    () => latestWorkflowActivityStatusEvent(visibleEvents),
-    [visibleEvents],
+    () => latestWorkflowActivityStatusEvent(visibleEvents, events),
+    [events, visibleEvents],
   );
   const rows = useMemo(() => workflowRows(visibleTimelineEvents), [visibleTimelineEvents]);
   const hasOutputPreview = outputPreviewEvents.length > 0;

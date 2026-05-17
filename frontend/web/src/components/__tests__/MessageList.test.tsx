@@ -160,6 +160,31 @@ function StreamingCompleteProbe({ answer }: { answer: string }) {
   );
 }
 
+function ToolUseHandoffProbe() {
+  const { dispatch } = useAppState();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        dispatch({
+          type: "backend_event",
+          event: { type: "assistant_delta", message: "가정값은 검토용 예시값으로 두고 모델을 만들겠습니다." },
+        });
+        dispatch({
+          type: "backend_event",
+          event: {
+            type: "assistant_complete",
+            message: "가정값은 검토용 예시값으로 두고 모델을 만들겠습니다.",
+            has_tool_uses: true,
+          },
+        });
+      }}
+    >
+      handoff to tools
+    </button>
+  );
+}
+
 describe("MessageList", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -1733,6 +1758,7 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
+    expect(document.querySelectorAll(".workflow-step.child")).toHaveLength(1);
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html><h1>Done</h1>");
     expect(document.querySelector(".workflow-list .workflow-step.child strong")?.textContent).toBe("파일 작성");
     expect(document.querySelector(".workflow-list .workflow-step.child small")?.textContent).toBe("완료 · live.html");
@@ -1781,7 +1807,9 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
+    expect(document.querySelectorAll(".workflow-step.child")).toHaveLength(1);
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html><h1>Done</h1>");
+    expect(document.querySelector(".workflow-list .workflow-step.child small")?.textContent).toBe("완료 · 파일 작업 완료 · live.html");
   });
 
   it("renders edit previews as colored diff rows", () => {
@@ -1815,7 +1843,7 @@ describe("MessageList", () => {
     );
 
     expect(screen.getByText("수정 완료 - super-ai-worm-game.html")).toBeTruthy();
-    expect(screen.getByText(/\d+ 토큰 \(6줄\)/)).toBeTruthy();
+    expect(screen.getByText(/삭제 \d+ 토큰 \(3줄\), 추가 \d+ 토큰 \(3줄\)/)).toBeTruthy();
     expect(screen.queryByText("6줄 변경")).toBeNull();
     expect(screen.getByText("-- <div>5x</div>").className).toContain("removed");
     expect(screen.getByText("++ <div>3x</div>").className).toContain("added");
@@ -1909,6 +1937,7 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("report.html");
+    expect(screen.getByText(/삭제 \d+ 토큰 \(1줄\), 추가 \d+ 토큰 \(1줄\)/)).toBeTruthy();
     expect(document.querySelector(".workflow-list")?.textContent || "").not.toContain("outputs/report.html");
     expect(screen.getByText("-<h1>Old</h1>").className).toContain("removed");
     expect(screen.getByText("+<h1>New</h1>").className).toContain("added");
@@ -2780,6 +2809,28 @@ describe("MessageList", () => {
     expect(screen.queryByText("답변 완료")).toBeNull();
     expect(screen.queryByLabelText("원문 복사")).toBeNull();
     expect(screen.queryByLabelText("본문 저장")).toBeNull();
+  });
+
+  it("keeps visible tool-use handoff text in the chat body", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "user-1", role: "user", text: "투자수익성 모델을 엑셀로 만들어줘" },
+          ],
+          workflowAnchorMessageId: "user-1",
+        }}
+      >
+        <ToolUseHandoffProbe />
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "handoff to tools" }));
+
+    expect(screen.getByText("가정값은 검토용 예시값으로 두고 모델을 만들겠습니다.")).toBeTruthy();
+    expect(document.querySelector(".react-streaming-text")).toBeNull();
   });
 
   it("buffers the active streaming assistant answer before revealing it smoothly", () => {

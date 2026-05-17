@@ -339,10 +339,17 @@ function assistantStreamingText(currentText: string, nextChunkOrSnapshot: string
   return `${currentText}${nextChunkOrSnapshot}`;
 }
 
-function removePendingAssistantMessage(messages: ChatMessage[]): ChatMessage[] {
+function completePendingAssistantMessage(messages: ChatMessage[], completedText = ""): ChatMessage[] {
   const last = messages[messages.length - 1];
   if (last?.role === "assistant" && last.isComplete !== true) {
-    return messages.slice(0, -1);
+    const text = assistantCompletionText(last.text, completedText);
+    if (!text.trim()) {
+      return messages.slice(0, -1);
+    }
+    return [
+      ...messages.slice(0, -1),
+      { ...last, text, isComplete: true },
+    ];
   }
   return messages;
 }
@@ -2161,7 +2168,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         : last?.role === "assistant"
           ? [...state.messages.slice(0, -1), { ...last, isComplete: true }]
           : state.messages
-      : removePendingAssistantMessage(state.messages);
+      : completePendingAssistantMessage(state.messages, value);
     return {
       ...state,
       busy: event.has_tool_uses === true,

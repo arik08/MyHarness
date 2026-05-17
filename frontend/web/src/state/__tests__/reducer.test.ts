@@ -272,7 +272,7 @@ describe("appReducer", () => {
     ]);
   });
 
-  it("removes streamed tool-use handoff text from the chat body", () => {
+  it("keeps streamed tool-use handoff text visible in the chat body", () => {
     const withUser = appReducer(initialAppState, {
       type: "backend_event",
       event: { type: "transcript_item", item: { role: "user", text: "올해 철강 경쟁사 이슈 정리" } },
@@ -290,8 +290,9 @@ describe("appReducer", () => {
       },
     });
 
-    expect(handoff.messages.map((message) => [message.role, message.text])).toEqual([
-      ["user", "올해 철강 경쟁사 이슈 정리"],
+    expect(handoff.messages.map((message) => [message.role, message.text, message.isComplete])).toEqual([
+      ["user", "올해 철강 경쟁사 이슈 정리", undefined],
+      ["assistant", "해외 경쟁사는 생산량과 저탄소 전환 기준으로 보겠습니다.", true],
     ]);
     expect(handoff.workflowEvents.find((event) => event.role === "planning")?.detail).toBe(
       "해외 경쟁사는 생산량과 저탄소 전환 기준으로 보겠습니다.",
@@ -1683,7 +1684,7 @@ describe("appReducer", () => {
     expect(noted.workflowEvents.some((event) => event.role === "waiting")).toBe(false);
   });
 
-  it("folds assistant progress text into the active workflow stage when tools follow", () => {
+  it("keeps streamed assistant progress text visible when tools follow", () => {
     const active = appReducer(initialAppState, {
       type: "append_message",
       message: { role: "user", text: "진행 표시를 더 구체적으로 만들어줘" },
@@ -1702,8 +1703,9 @@ describe("appReducer", () => {
     });
 
     const planningEvent = toolPending.workflowEvents.find((event) => event.role === "planning");
-    expect(toolPending.messages.map((message) => [message.role, message.text])).toEqual([
-      ["user", "진행 표시를 더 구체적으로 만들어줘"],
+    expect(toolPending.messages.map((message) => [message.role, message.text, message.isComplete])).toEqual([
+      ["user", "진행 표시를 더 구체적으로 만들어줘", undefined],
+      ["assistant", "먼저 workflow reducer와 렌더링 컴포넌트를 확인하겠습니다.", true],
     ]);
     expect(planningEvent?.detail).toContain("workflow reducer");
     expect(toolPending.workflowEvents.some((event) => event.role === "waiting")).toBe(false);

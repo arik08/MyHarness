@@ -4046,7 +4046,9 @@ async function handleSettingsApi(request, response, pathname) {
 
   if (settingsRoute && request.method === "POST") {
     await writeApiJsonResult(response, async () => {
-      requireLocalAdminRequest(request, settingsAdminMessage);
+      if (pathname !== "/api/settings/output-tokens") {
+        requireLocalAdminRequest(request, settingsAdminMessage);
+      }
       const body = await readJson(request);
       return settingsRoute.write(body, request);
     }, settingsRoute.writeError, true);

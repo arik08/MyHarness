@@ -5224,8 +5224,12 @@ a:focus-visible {
 }
 
 .workflow-activity-status.done .workflow-activity-spinner {
-  border-color: color-mix(in srgb, var(--success) 26%, transparent);
-  border-top-color: var(--success);
+  width: 7px;
+  height: 7px;
+  margin-top: 7px;
+  background: var(--success);
+  border: 0;
+  animation: none;
 }
 
 .workflow-activity-status.warning .workflow-activity-spinner {

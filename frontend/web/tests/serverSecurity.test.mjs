@@ -989,6 +989,26 @@ test("output token settings expose official model caps and save valid values", a
   assert.equal(settings.model_output_token_limits["gpt-5.4-mini"], 32000);
 });
 
+test("output token settings can be saved from forwarded remote clients", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const saveResponse = await fetch(`${app.baseUrl}/api/settings/output-tokens`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": "203.0.113.20",
+    },
+    body: JSON.stringify({ values: { "gpt-5.5": 52000 } }),
+  });
+  const saved = await saveResponse.json();
+  const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+
+  assert.equal(saveResponse.status, 200);
+  assert.equal(saved.values["gpt-5.5"], 52000);
+  assert.equal(settings.model_output_token_limits["gpt-5.5"], 52000);
+});
+
 test("output token settings reject values above official model caps", async (t) => {
   const app = await startWebServer();
   t.after(() => app.stop());
