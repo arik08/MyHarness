@@ -447,6 +447,7 @@ describe("MarkdownMessage Mermaid rendering", () => {
   });
 
   it("does not render an incomplete streaming mermaid fence before it closes", async () => {
+    vi.useFakeTimers();
     const incompleteMermaid = [
       "```mermaid",
       "flowchart LR",
@@ -462,9 +463,22 @@ describe("MarkdownMessage Mermaid rendering", () => {
 
     expect(document.querySelector(".mermaid-chart")).toBeNull();
     expect(document.querySelector(".mermaid-stream-pending")).toBeTruthy();
-    expect(document.body.textContent || "").toContain("다이어그램 작성 중...");
+    expect(document.querySelector(".mermaid-stream-pending")?.textContent || "").toContain("다이어그램 작성 중.");
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(document.querySelector(".mermaid-stream-pending")?.textContent || "").toContain("다이어그램 작성 중..");
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(document.querySelector(".mermaid-stream-pending")?.textContent || "").toContain("다이어그램 작성 중...");
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(document.querySelector(".mermaid-stream-pending")?.textContent || "").toContain("다이어그램 작성 중.");
     expect(document.body.textContent || "").not.toContain("```mermaid");
     expect(document.body.textContent || "").not.toContain("flowchart LR");
+    vi.useRealTimers();
 
     rerender(
       <StreamingAssistantMessage

@@ -512,6 +512,7 @@ function MermaidStreamPending() {
     <PendingStatusBox
       className="mermaid-stream-pending"
       label="다이어그램 작성 중"
+      animatedDots
       icon={(
         <svg viewBox="0 0 24 24">
           <path d="M4 7h6"></path>
