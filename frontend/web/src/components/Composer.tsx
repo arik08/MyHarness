@@ -124,6 +124,8 @@ export function Composer() {
   const composerBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const activeSuggestionRef = useRef<HTMLButtonElement | null>(null);
+  const composerHeightRef = useRef(0);
+  const composerFollowFrameRef = useRef(0);
   const submittingRef = useRef(false);
   const draft = state.composer.draft;
   const hasPayload = Boolean(draft.trim() || state.composer.attachments.length || state.composer.pastedTexts.length);
@@ -184,15 +186,32 @@ export function Composer() {
       const height = composerRect && Number.isFinite(composerRect.top)
         ? Math.ceil(Math.max(0, composerRect.bottom - composerRect.top))
         : Math.ceil(composerRef.current?.getBoundingClientRect().height || 0);
+      const chatPanel = composerRef.current?.closest(".chat-panel");
+      const messages = chatPanel?.querySelector<HTMLElement>(".messages") ?? document.querySelector<HTMLElement>(".messages");
+      const remaining = messages
+        ? messages.scrollHeight - messages.clientHeight - messages.scrollTop
+        : Number.POSITIVE_INFINITY;
+      const wasFollowingTail = Boolean(messages && (
+        messages.classList.contains("streaming-follow") || remaining <= 160
+      ));
+      const previousHeight = composerHeightRef.current;
+      const heightChanged = previousHeight > 0 && height > 0 && Math.abs(height - previousHeight) > 1;
       if (height > 0) {
         document.documentElement.style.setProperty("--composer-stack-height", `${height}px`);
+        composerHeightRef.current = height;
       }
 
-      const chatPanel = composerRef.current?.closest(".chat-panel");
       const rect = chatPanel?.getBoundingClientRect();
       if (rect) {
         document.documentElement.style.setProperty("--chat-panel-left", `${Math.round(rect.left)}px`);
         document.documentElement.style.setProperty("--chat-panel-width", `${Math.round(rect.width)}px`);
+      }
+
+      if (heightChanged && wasFollowingTail && !composerFollowFrameRef.current) {
+        composerFollowFrameRef.current = window.requestAnimationFrame(() => {
+          composerFollowFrameRef.current = 0;
+          window.dispatchEvent(new Event(messageBottomFollowEvent));
+        });
       }
     }
 
@@ -204,8 +223,14 @@ export function Composer() {
     if (composerBoxRef.current) observer.observe(composerBoxRef.current);
     const chatPanel = composerRef.current?.closest(".chat-panel");
     if (chatPanel) observer.observe(chatPanel);
-    return () => observer.disconnect();
-  }, [isMultiline, state.composer.attachments.length, state.composer.pastedTexts.length]);
+    return () => {
+      observer.disconnect();
+      if (composerFollowFrameRef.current) {
+        window.cancelAnimationFrame(composerFollowFrameRef.current);
+        composerFollowFrameRef.current = 0;
+      }
+    };
+  }, [isMultiline, state.composer.attachments.length, state.composer.pastedTexts.length, state.todoCollapsed, state.todoMarkdown]);
 
   function fullLine() {
     const pasted = state.composer.pastedTexts.map((text, index) => `[붙여넣은 텍스트 ${index + 1}]\n${text}`).join("\n\n");

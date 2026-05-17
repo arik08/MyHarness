@@ -1690,9 +1690,11 @@ async function handleCodeCopyClick(event: MouseEvent<HTMLDivElement>) {
 export function MarkdownMessage({
   text,
   deferIncompleteTables = false,
+  className = "",
 }: {
   text: string;
   deferIncompleteTables?: boolean;
+  className?: string;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const html = useMemo(() => {
@@ -1723,7 +1725,7 @@ export function MarkdownMessage({
   return (
     <div
       ref={setRootRef}
-      className="markdown-body react-markdown"
+      className={`markdown-body react-markdown${className ? ` ${className}` : ""}`}
       onClick={(event) => void handleCodeCopyClick(event)}
       dangerouslySetInnerHTML={{ __html: html || "<p></p>" }}
     />

@@ -381,6 +381,65 @@ function incompleteFenceLanguage(text: string) {
   return closed ? "" : String(fence[2] || "").toLowerCase();
 }
 
+function hasIncompleteFence(text: string) {
+  const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
+  const lines = source.split("\n");
+  const firstLine = lines[0] || "";
+  const fence = firstLine.match(/^(`{3,}|~{3,})/);
+  if (!fence) {
+    return false;
+  }
+  const marker = fence[1];
+  return !lines.slice(1).some((line) => {
+    const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+    return Boolean(close && close[1][0] === marker[0] && close[1].length >= marker.length);
+  });
+}
+
+function markdownTableCells(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) {
+    return [];
+  }
+  const withoutEdges = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  return withoutEdges.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableRow(line: string) {
+  const cells = markdownTableCells(line);
+  return cells.length >= 2 && cells.some(Boolean);
+}
+
+function isMarkdownTableDivider(line: string) {
+  const cells = markdownTableCells(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function isPossibleStreamingTableContinuation(line: string) {
+  const trimmed = String(line || "").trim();
+  return Boolean(trimmed && trimmed.includes("|"));
+}
+
+function hasStreamingMarkdownTable(text: string) {
+  const source = String(text || "").replace(/\r\n/g, "\n");
+  const lines = source.split("\n");
+  for (let index = 1; index < lines.length; index += 1) {
+    if (!isMarkdownTableRow(lines[index - 1]) || !isMarkdownTableDivider(lines[index])) {
+      continue;
+    }
+    let cursor = index + 1;
+    while (cursor < lines.length && isMarkdownTableRow(lines[cursor])) {
+      cursor += 1;
+    }
+    const trailingLines = lines.slice(cursor);
+    const hasOnlyTrailingBlankLines = trailingLines.every((line) => line.trim() === "");
+    return cursor >= lines.length
+      || hasOnlyTrailingBlankLines
+      || isPossibleStreamingTableContinuation(lines[cursor] || "");
+  }
+  return false;
+}
+
 function pendingHtmlSourceLength(text: string) {
   const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
   const lines = source.split("\n");
@@ -443,6 +502,8 @@ function StreamingMarkdownMessage({
     return splitStreamingMarkdown(normalizedText);
   }, [complete, normalizedText]);
   const liveTailFenceLanguage = incompleteFenceLanguage(liveTail);
+  const liveTailHasIncompleteFence = hasIncompleteFence(liveTail);
+  const liveTailHasStreamingTable = hasStreamingMarkdownTable(liveTail);
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
   let chunkCursor = 0;
   const chunkOccurrences = new Map<string, number>();
@@ -466,10 +527,12 @@ function StreamingMarkdownMessage({
         <HtmlStreamPending text={liveTail} />
       ) : liveTailFenceLanguage === "mermaid" || liveTailFenceLanguage === "mmd" ? (
         <MermaidStreamPending />
-      ) : liveTail ? (
+      ) : liveTailHasIncompleteFence || liveTailHasStreamingTable ? (
         <div className="markdown-body react-markdown stream-live-text">
           <StreamingPlainText text={liveTail} />
         </div>
+      ) : liveTail ? (
+        <StableMarkdownMessage text={liveTail} deferIncompleteTables className="stream-live-text" />
       ) : null}
     </div>
   );

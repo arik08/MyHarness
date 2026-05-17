@@ -654,11 +654,16 @@ function WorkflowStep({
   const visibleDetail = todoTool
     ? todoWorkflowDetail(event.status, detail)
     : compactWorkflowOutputDetail(event, baseDetail);
+  const visibleGeneratedDetail = isGeneratedWorkflowDetail(visibleDetail);
+  const parentStep = event.level !== "child" && !event.toolName;
+  const renderedDetail = parentStep && visibleGeneratedDetail ? "" : visibleDetail;
   const statusDetailText = showNarration
     ? narration || ""
     : showCompactToolDetail || showQuietParentDetail
-      ? visibleDetail
-      : `${statusLabel(event.status)}${visibleDetail ? ` · ${visibleDetail}` : ""}`;
+      ? renderedDetail
+      : `${statusLabel(event.status)}${renderedDetail ? ` · ${renderedDetail}` : ""}`;
+  const showParentStatusOnly = parentStep && !renderedDetail && !showNarration;
+  const shouldShowStatusDetail = showStatusDetail && !showParentStatusOnly;
 
   useLayoutEffect(() => {
     if (!animate) {
@@ -680,7 +685,7 @@ function WorkflowStep({
       <span className="workflow-dot" aria-hidden="true" />
       <span className="workflow-copy">
         <strong>{title}</strong>
-        {showStatusDetail ? (
+        {shouldShowStatusDetail ? (
           <small className={showToolDetailLine ? "workflow-tool-detail" : "workflow-status-detail"}>
             {statusDetailText}
           </small>
@@ -703,7 +708,8 @@ function WorkflowActivityStatus({
 }) {
   const baseDetail = compactToolDetail(rawDetail ?? detail);
   const visibleDetail = compactWorkflowOutputDetail(event, baseDetail);
-  const statusDetailText = narration || visibleDetail || statusLabel(event.status);
+  const renderedDetail = isGeneratedWorkflowDetail(visibleDetail) ? "" : visibleDetail;
+  const statusDetailText = narration || renderedDetail || statusLabel(event.status);
   const title = event.status === "done" && (!event.title || event.title === "다음 단계 검토 중")
     ? "다음 단계 결정 완료"
     : event.title || "다음 단계 검토 중";
@@ -727,13 +733,14 @@ function compactToolDetail(value: string) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function activeWorkflowCount(events: WorkflowEvent[]) {
-  return events.filter((event) => event.status === "running" && event.role !== "purpose").length;
-}
-
-function workflowPurposeNarrationDetail(event: WorkflowEvent) {
-  const detail = compactDetail(event.detail);
-  const genericDetails = new Set([
+function isGeneratedWorkflowDetail(value: string) {
+  const detail = compactDetail(value);
+  if (!detail) {
+    return false;
+  }
+  return new Set([
+    "요청 확인",
+    "사용자 요청을 확인했습니다.",
     "필요한 자료와 맥락을 확인하고 있습니다.",
     "필요한 정보를 확인했습니다.",
     "필요한 맥락과 진행 방향을 정리합니다.",
@@ -746,48 +753,12 @@ function workflowPurposeNarrationDetail(event: WorkflowEvent) {
     "작업 중 문제가 발생했습니다.",
     "일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.",
     "일부 단계에서 확인이 필요합니다.",
-  ]);
-  return detail && !genericDetails.has(detail) ? detail : "";
+    "최종 답변을 작성했습니다.",
+  ]).has(detail) || detail.startsWith("요청 확인 · ");
 }
 
-function workflowNarrationForEvent(event: WorkflowEvent) {
-  if (event.role === "final") {
-    return event.status === "running"
-      ? "이제 작업 결과를 정리하고 있습니다. 무엇을 바꿨고 어떻게 확인했는지 짧게 묶어드리겠습니다."
-      : "";
-  }
-  if (event.role === "activity") {
-    const detailNarration = workflowPurposeNarrationDetail(event);
-    if (detailNarration) {
-      return detailNarration;
-    }
-    return "도구 결과를 읽고 다음 단계를 판단하고 있습니다. 바로 마무리할 수 있는지, 추가 확인이 필요한지 가볍게 점검하는 중입니다.";
-  }
-  if (event.role === "planning") {
-    const detailNarration = workflowPurposeNarrationDetail(event);
-    if (detailNarration) {
-      return detailNarration;
-    }
-    return "요청을 기준으로 필요한 맥락과 검증 기준을 정리하고 있습니다. 먼저 어디를 확인해야 할지 잡아보겠습니다.";
-  }
-  if (event.role !== "purpose") {
-    return "";
-  }
-
-  const detailNarration = workflowPurposeNarrationDetail(event);
-  if (detailNarration) {
-    return detailNarration;
-  }
-
-  const purpose = event.purpose;
-
-  if (purpose === "info") {
-    return "필요한 파일과 실행 결과를 훑으면서 판단 근거를 모으고 있습니다. 아직 변경은 적용하지 않고, 어디를 건드려야 하는지 확인하는 중입니다.";
-  }
-  if (purpose === "verification") {
-    return "변경 결과가 의도대로 동작하는지 확인하고 있습니다. 오류나 깨진 화면이 없는지 검증한 뒤 마무리하겠습니다.";
-  }
-  return "확인한 맥락을 바탕으로 실제 작업을 진행하고 있습니다. 범위가 벗어나지 않도록 관련 부분만 좁게 손보는 중입니다.";
+function activeWorkflowCount(events: WorkflowEvent[]) {
+  return events.filter((event) => event.status === "running" && event.role !== "purpose").length;
 }
 
 function quietCompletedStep(event: WorkflowEvent, latestVisibleEventId: string) {
@@ -1085,17 +1056,6 @@ export function WorkflowPanel({
     [visibleEvents],
   );
   const rows = useMemo(() => workflowRows(visibleTimelineEvents), [visibleTimelineEvents]);
-  const narrationByEventId = useMemo(() => {
-    const next: Record<string, string> = {};
-    for (const event of visibleEvents) {
-      const narration = workflowNarrationForEvent(event);
-      if (!narration) {
-        continue;
-      }
-      next[event.id] = narration;
-    }
-    return next;
-  }, [visibleEvents]);
   const hasOutputPreview = outputPreviewEvents.length > 0;
   const displayedDurationSeconds = totalDurationSeconds ?? liveTotalDurationSeconds;
   const latestVisibleEventId = visibleEvents.at(-1)?.id || "";
@@ -1152,7 +1112,6 @@ export function WorkflowPanel({
                       rawDetail={row.parent.detail}
                       animate={animateActiveWorkflow}
                       quietDone={quietCompletedStep(row.parent, latestVisibleEventId)}
-                      narration={narrationByEventId[row.parent.id]}
                     />
                     {row.children.length ? (
                       <div className="workflow-children" role="group" aria-label={`${row.parent.title} 하위 단계`}>
@@ -1176,7 +1135,6 @@ export function WorkflowPanel({
                     rawDetail={row.event.detail}
                     animate={animateActiveWorkflow}
                     quietDone={quietCompletedStep(row.event, latestVisibleEventId)}
-                    narration={narrationByEventId[row.event.id]}
                   />
                 )}
               </Fragment>
@@ -1186,7 +1144,6 @@ export function WorkflowPanel({
                 event={latestVisibleActivityEvent}
                 detail={eventDetail(latestVisibleActivityEvent)}
                 rawDetail={latestVisibleActivityEvent.detail}
-                narration={narrationByEventId[latestVisibleActivityEvent.id]}
               />
             ) : null}
           </div>

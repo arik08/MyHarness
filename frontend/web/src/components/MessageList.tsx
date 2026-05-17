@@ -5,6 +5,7 @@ import type { AppState, ChatMessage, WorkflowEvent } from "../types/ui";
 import { AssistantActions } from "./AssistantActions";
 import { AssistantArtifactContent } from "./AssistantArtifactCards";
 import { CommandHelpMessage, isCommandCatalog } from "./CommandHelpMessage";
+import { StarterPrompts } from "./StarterPrompts";
 import { UserMessageText } from "./UserMessageText";
 import { WebInvestigationSources, webInvestigationSummary, WorkflowPanel } from "./WorkflowPanel";
 
@@ -97,6 +98,7 @@ export function MessageList() {
           <span className="welcome-mark">MH</span>
           <h2>무엇을 도와드릴까요?</h2>
           <p>업무에 필요한 조사, 정리, 코드 작업을 도와드릴 준비가 되어 있습니다.</p>
+          <StarterPrompts />
         </div>
         <WorkflowPanel onVisibleProgressChange={handleVisibleWorkflowProgressChange} />
       </section>

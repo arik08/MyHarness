@@ -260,6 +260,22 @@ describe("MessageList", () => {
     expect(document.querySelector(".markdown-body")?.textContent).toContain("~~취소선~~");
   });
 
+  it("renders strong emphasis after quote markers and punctuation", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "결론적으로, 영상의 산업 방향성은 꽤 타당하지만 표현은 상당히 자극적입니다.",
+          ">> **전력기기 산업이 AI 시대의 숨은 수혜 산업이다**라는 메시지는 참고할 만합니다.",
+          "문장?**한국 기업이 세계를 완전히 장악했다**는 표현은 보정이 필요합니다.",
+        ].join("\n")}
+      />,
+    );
+
+    expect(document.querySelector("blockquote strong")?.textContent).toBe("전력기기 산업이 AI 시대의 숨은 수혜 산업이다");
+    expect([...document.querySelectorAll(".markdown-body strong")].map((node) => node.textContent)).toContain("한국 기업이 세계를 완전히 장악했다");
+    expect(document.querySelector(".markdown-body")?.textContent).not.toContain("**전력기기 산업이 AI 시대의 숨은 수혜 산업이다**");
+  });
+
   it("merges consecutive rows in markdown tables by company column", () => {
     render(
       <MarkdownMessage
@@ -637,7 +653,7 @@ describe("MessageList", () => {
 
     const group = document.querySelector('[data-workflow-group-id="group-info"]');
     expect(group).toBeTruthy();
-    expect(group?.querySelector('[data-workflow-role="purpose"]')?.textContent || "").toContain("판단 근거를 모으고 있습니다");
+    expect(group?.querySelector('[data-workflow-role="purpose"]')?.textContent || "").not.toContain("판단 근거를 모으고 있습니다");
     expect(group?.querySelector('[data-workflow-role="purpose"]')?.textContent).toContain("정보 수집");
     const childTitles = [...(group?.querySelectorAll(".workflow-children .workflow-step.child strong") || [])]
       .map((node) => node.textContent);
@@ -645,7 +661,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-count")?.textContent).toBe("4개 기록 · 1개 실행 중");
   });
 
-  it("renders a natural workflow narration for active verification work", () => {
+  it("does not invent natural workflow narration for active verification work", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider
@@ -673,7 +689,7 @@ describe("MessageList", () => {
     const narration = document.querySelector('[data-workflow-role="purpose"]')?.textContent || "";
     expect(narration).toContain("결과 검증");
     expect(narration).not.toContain("방금");
-    expect(narration).toContain("오류나 깨진 화면이 없는지 검증");
+    expect(narration).not.toContain("오류나 깨진 화면이 없는지 검증");
   });
 
   it("stagger-reveals active workflow rows instead of showing a web tool batch at once", () => {
@@ -778,14 +794,14 @@ describe("MessageList", () => {
     expect(articles[0].textContent || "").toContain("조사해줘");
     expect(articles[1].classList.contains("workflow-message")).toBe(true);
     expect(articles[1].textContent || "").toContain("응답 작성");
-    expect(articles[1].textContent || "").toContain("응답 작성이제 작업 결과를 정리");
+    expect(articles[1].textContent || "").not.toContain("이제 작업 결과를 정리");
     expect(articles[1].querySelector(".workflow-narration")).toBeNull();
-    expect(articles[1].textContent || "").toContain("응답 작성이제 작업 결과를 정리");
+    expect(articles[1].textContent || "").toContain("답변 본문을 작성하고 있습니다");
     expect(articles[2].classList.contains("workflow-message")).toBe(false);
     expect(articles[2].classList.contains("assistant")).toBe(true);
   });
 
-  it("keeps every workflow narration in the process instead of only the latest one", () => {
+  it("keeps workflow structure without generated narration in the process", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider
@@ -814,18 +830,21 @@ describe("MessageList", () => {
     });
 
     const workflowText = document.querySelector(".workflow-message")?.textContent || "";
-    expect(workflowText).toContain("작업 계획 수립요청을 기준으로");
-    expect(workflowText).toContain("정보 수집필요한 파일과 실행 결과를 훑으면서");
-    expect(workflowText).toContain("작업 실행확인한 맥락을 바탕으로 실제 작업을 진행");
+    expect(workflowText).toContain("작업 계획 수립");
+    expect(workflowText).not.toContain("작업 계획 수립요청을 기준으로");
+    expect(workflowText).toContain("정보 수집");
+    expect(workflowText).not.toContain("필요한 파일과 실행 결과를 훑으면서");
+    expect(workflowText).toContain("작업 실행");
+    expect(workflowText).not.toContain("확인한 맥락을 바탕으로 실제 작업을 진행");
     expect(workflowText).not.toContain("방금");
-    expect(workflowText).toContain("응답 작성이제 작업 결과를 정리");
+    expect(workflowText).not.toContain("이제 작업 결과를 정리");
     expect(document.querySelector(".workflow-narration")).toBeNull();
     expect(document.body.textContent || "").not.toContain("진행 방향을 정했습니다");
     expect(document.body.textContent || "").not.toContain("작업 실행을 마쳤습니다");
     expect(document.body.textContent || "").toContain("파일 확인index.html");
   });
 
-  it("shows generated workflow narration for each repeated parent category", () => {
+  it("does not show generated workflow narration for repeated parent categories", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -853,11 +872,11 @@ describe("MessageList", () => {
     expect(workflowText.match(/작업 실행:/g) || []).toHaveLength(0);
     expect(workflowText.match(/정보 수집/g) || []).toHaveLength(2);
     expect(workflowText.match(/작업 실행/g) || []).toHaveLength(2);
-    expect(workflowText.match(/필요한 파일과 실행 결과를 훑으면서/g) || []).toHaveLength(2);
-    expect(workflowText.match(/확인한 맥락을 바탕으로 실제 작업을 진행/g) || []).toHaveLength(2);
+    expect(workflowText.match(/필요한 파일과 실행 결과를 훑으면서/g) || []).toHaveLength(0);
+    expect(workflowText.match(/확인한 맥락을 바탕으로 실제 작업을 진행/g) || []).toHaveLength(0);
   });
 
-  it("keeps completed parent explanations visible on every workflow record", () => {
+  it("keeps completed parent labels visible without generated explanations", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -878,9 +897,9 @@ describe("MessageList", () => {
     const workflowText = document.querySelector(".workflow-message")?.textContent || "";
     expect(workflowText).toContain("요청 이해");
     expect(workflowText).toContain("작업 계획 수립");
-    expect(workflowText).toContain("사용자 요청을 확인했습니다");
-    expect(workflowText).toContain("요청을 기준으로 필요한 맥락과 검증 기준을 정리");
-    expect(workflowText).toContain("완료 · 최종 답변을 작성했습니다");
+    expect(workflowText).not.toContain("사용자 요청을 확인했습니다");
+    expect(workflowText).not.toContain("요청을 기준으로 필요한 맥락과 검증 기준을 정리");
+    expect(workflowText).not.toContain("최종 답변을 작성했습니다");
   });
 
   it("flattens multiline completed tool details into one compact line", () => {
@@ -3075,6 +3094,39 @@ describe("MessageList", () => {
     expect(document.querySelector(".react-streaming-text strong")?.textContent).toBe("완료된 요약");
     const liveTail = document.querySelector(".stream-live-text p")?.firstChild;
     expect(liveTail?.textContent).toBe("현재 문장을 쓰는 중");
+  });
+
+  it("renders completed inline markdown in the streaming live tail", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamStartBufferMs: 0,
+            streamRevealDurationMs: 0,
+          },
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: [
+                "결론적으로, 영상의 산업 방향성은 꽤 타당하지만 표현은 상당히 자극적입니다.",
+                ">> **전력기기 산업이 AI 시대의 숨은 수혜 산업이다**라는 메시지는 참고할 만합니다.",
+                "문장?**한국 기업이 세계를 완전히 장악했다**는 표현은 보정이 필요합니다.",
+              ].join("\n"),
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".stream-live-text blockquote strong")?.textContent).toBe("전력기기 산업이 AI 시대의 숨은 수혜 산업이다");
+    expect([...document.querySelectorAll(".stream-live-text strong")].map((node) => node.textContent)).toContain("한국 기업이 세계를 완전히 장악했다");
+    expect(document.querySelector(".stream-live-text")?.textContent).not.toContain("**전력기기 산업이 AI 시대의 숨은 수혜 산업이다**");
   });
 
   it("keeps a trailing streaming markdown table as raw text until the answer completes", () => {

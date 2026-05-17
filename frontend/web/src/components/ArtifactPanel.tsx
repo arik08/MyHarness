@@ -95,7 +95,18 @@ function formatAiEditElapsed(seconds: number) {
 
 function meaningfulAiEditStatusText(value: string) {
   const text = String(value || "").trim();
-  if (!text || text === "준비됨" || text === "연결 중") return "";
+  if (
+    !text
+    || text === "준비됨"
+    || text === "연결 중"
+    || text === "응답 진행 중"
+    || text === "응답 작성 중"
+    || text === "도구 실행 준비 중"
+    || text === "도구 결과 검토 중"
+    || text === "도구 결과 확인 중"
+  ) {
+    return "";
+  }
   return text;
 }
 

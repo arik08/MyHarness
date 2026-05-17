@@ -41,6 +41,7 @@ quarterly trends, sources, or a report:
 - Avoid nav menus, sign-up buttons, pricing blocks, testimonials, "features" funnels, and generic
   landing-page conversion sections unless explicitly requested.
 - Put exact numbers in tables and chart labels; use charts for trend cognition.
+- For analysis requests, actively consider adding a compact Mermaid `flowchart` when causal logic, process steps, decision paths, stakeholder relationships, system flow, or issue-to-action structure would make the analysis easier to scan. This is recommended, not mandatory; skip it when prose, a table, or a numeric chart communicates the point more clearly.
 - For financial/company reports, include a compact source note area and make uncertainty explicit.
 
 ## Visual direction

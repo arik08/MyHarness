@@ -63,6 +63,31 @@ describe("Composer", () => {
     expect(screen.queryByRole("button", { name: "이미지 첨부" })).toBeNull();
   });
 
+  it("fills the composer from a starter prompt without native title tooltips", async () => {
+    const user = userEvent.setup();
+    const expectedPrompt = "[조사 주제]에 대해 최신 자료를 조사하고, 핵심 쟁점·시장/산업 영향·시사점을 포함한 HTML 보고서로 작성해줘. 표와 차트가 필요하면 함께 넣어줘.";
+
+    render(
+      <AppStateProvider>
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const starterButtons = document.querySelectorAll<HTMLButtonElement>(".starter-prompt-button");
+    expect(starterButtons).toHaveLength(9);
+
+    const firstButton = screen.getByRole("button", { name: /보고서 작성\s+주제 조사 보고서/ });
+    expect(firstButton.getAttribute("title")).toBeNull();
+    expect(firstButton.getAttribute("data-tooltip")).toBe(expectedPrompt);
+
+    await user.click(firstButton);
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...") as HTMLTextAreaElement;
+    await waitFor(() => expect(input.value).toBe(expectedPrompt));
+    expect(document.activeElement).toBe(input);
+  });
+
   it("renders long pasted text with the legacy tray chip", () => {
     render(
       <AppStateProvider>
@@ -766,6 +791,94 @@ describe("Composer", () => {
 
     expect(screen.getByLabelText("작업 체크리스트")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "작업 목록 펼치기 1/2" })).toBeNull();
+  });
+
+  it("keeps the message tail pinned when the expanded checklist changes composer height", async () => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    function AddTodoProbe() {
+      dispatch = useAppState().dispatch;
+      return <button type="button" onClick={() => dispatch({ type: "backend_event", event: { type: "todo_update", todo_markdown: "- [x] 조사\n- [ ] 작성" } })}>add todo</button>;
+    }
+
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("messages") ? 900 : originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("messages") ? 160 : originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRectMock() {
+      if (this.classList?.contains("composer")) {
+        const hasTodo = Boolean(this.querySelector(".todo-checklist-dock"));
+        return {
+          x: 0,
+          y: hasTodo ? 520 : 640,
+          top: hasTodo ? 520 : 640,
+          right: 800,
+          bottom: 700,
+          left: 0,
+          width: 800,
+          height: hasTodo ? 180 : 60,
+          toJSON: () => ({}),
+        };
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            sessionId: "session-1",
+            clientId: "client-1",
+            messages: [
+              { id: "user-1", role: "user", text: "보고서 작성해줘" },
+              { id: "assistant-1", role: "assistant", text: "진행 중입니다.", isComplete: false },
+            ],
+          }}
+        >
+          <AddTodoProbe />
+          <MessageList />
+          <Composer />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      messages.scrollTop = 740;
+      messages.dataset.lastScrollTop = "740";
+
+      act(() => {
+        dispatch({ type: "backend_event", event: { type: "todo_update", todo_markdown: "- [x] 조사\n- [ ] 작성" } });
+      });
+
+      await waitFor(() => expect(messages.scrollTop).toBe(900));
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
   });
 
   it("does not render the AI team button inside the composer controls", () => {

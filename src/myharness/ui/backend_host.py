@@ -78,6 +78,8 @@ _LONG_REPORT_PROGRESS_INTERVAL_SECONDS = 2.0
 _LONG_REPORT_PROGRESS_READ_LIMIT = 0
 _LONG_REPORT_PROGRESS_DISPLAY_LIMIT = 0
 _SWARM_STATUS_INTERVAL_SECONDS = 2.0
+_ASSISTANT_PROGRESS_OPEN = "<myharness-progress>"
+_ASSISTANT_PROGRESS_CLOSE = "</myharness-progress>"
 _SWARM_STRAGGLER_MIN_SECONDS = 10 * 60
 _SWARM_STRAGGLER_PEER_FACTOR = 3.0
 _SWARM_STRAGGLER_WAVE_WINDOW_SECONDS = 15 * 60
@@ -114,6 +116,80 @@ _SWARM_DELEGATION_HINT = (
     "After spawning workers, briefly tell the user the workflow shape and which workers started in the current wave. "
     "Do not present final research conclusions until worker results are available."
 )
+
+
+class _AssistantProgressFilter:
+    """Extract same-stream progress JSON markers from assistant text."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def feed(self, text: str) -> tuple[str, list[str]]:
+        self._buffer += text
+        return self._drain(final=False)
+
+    def flush(self) -> tuple[str, list[str]]:
+        return self._drain(final=True)
+
+    def strip(self, text: str) -> tuple[str, list[str]]:
+        self._buffer = text
+        return self._drain(final=True)
+
+    def _drain(self, *, final: bool) -> tuple[str, list[str]]:
+        visible_parts: list[str] = []
+        progress_messages: list[str] = []
+        while self._buffer:
+            start = self._buffer.find(_ASSISTANT_PROGRESS_OPEN)
+            if start < 0:
+                if final:
+                    visible_parts.append(self._buffer)
+                    self._buffer = ""
+                    break
+                keep = _assistant_progress_prefix_keep(self._buffer)
+                emit_len = len(self._buffer) - keep
+                if emit_len > 0:
+                    visible_parts.append(self._buffer[:emit_len])
+                    self._buffer = self._buffer[emit_len:]
+                break
+            if start > 0:
+                visible_parts.append(self._buffer[:start])
+                self._buffer = self._buffer[start:]
+            after_open = len(_ASSISTANT_PROGRESS_OPEN)
+            end = self._buffer.find(_ASSISTANT_PROGRESS_CLOSE, after_open)
+            if end < 0:
+                if final:
+                    visible_parts.append(self._buffer)
+                    self._buffer = ""
+                break
+            raw_payload = self._buffer[after_open:end].strip()
+            message = _assistant_progress_message(raw_payload)
+            if message:
+                progress_messages.append(message)
+            self._buffer = self._buffer[end + len(_ASSISTANT_PROGRESS_CLOSE):]
+        return "".join(visible_parts), progress_messages
+
+
+def _assistant_progress_message(raw_payload: str) -> str:
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    message = str(payload.get("message") or payload.get("detail") or "").strip()
+    return " ".join(message.split())
+
+
+def _assistant_progress_prefix_keep(text: str) -> int:
+    max_keep = min(len(text), len(_ASSISTANT_PROGRESS_OPEN) - 1)
+    for size in range(max_keep, 0, -1):
+        if _ASSISTANT_PROGRESS_OPEN.startswith(text[-size:]):
+            return size
+    return 0
+
+
+def _strip_assistant_progress_markers(text: str) -> tuple[str, list[str]]:
+    return _AssistantProgressFilter().strip(text)
 
 
 def _tool_progress_delays(tool_name: str) -> tuple[float, float]:
@@ -1079,6 +1155,15 @@ class ReactBackendHost:
             )
 
         tool_progress_tasks: dict[str, asyncio.Task[None]] = {}
+        assistant_progress_filter = _AssistantProgressFilter()
+        assistant_progress_seen: set[str] = set()
+
+        async def _emit_assistant_progress(messages: list[str]) -> None:
+            for message in messages:
+                if message in assistant_progress_seen:
+                    continue
+                assistant_progress_seen.add(message)
+                await self._emit(BackendEvent(type="status", message=message))
 
         def _tool_progress_key(tool_name: str, tool_call_id: str | None, tool_call_index: int | None) -> str:
             if tool_call_id:
@@ -1147,7 +1232,10 @@ class ReactBackendHost:
 
         async def _render_event(event: StreamEvent) -> None:
             if isinstance(event, AssistantTextDelta):
-                await self._emit(BackendEvent(type="assistant_delta", message=event.text))
+                visible_text, progress_messages = assistant_progress_filter.feed(event.text)
+                await _emit_assistant_progress(progress_messages)
+                if visible_text:
+                    await self._emit(BackendEvent(type="assistant_delta", message=visible_text))
                 return
             if isinstance(event, ToolInputDelta):
                 await self._emit(
@@ -1173,11 +1261,17 @@ class ReactBackendHost:
                 )
                 return
             if isinstance(event, AssistantTurnComplete):
+                remaining_text, progress_messages = assistant_progress_filter.flush()
+                await _emit_assistant_progress(progress_messages)
+                if remaining_text:
+                    await self._emit(BackendEvent(type="assistant_delta", message=remaining_text))
+                complete_text, complete_progress_messages = _strip_assistant_progress_markers(event.message.text.strip())
+                await _emit_assistant_progress(complete_progress_messages)
                 await self._emit(
                     BackendEvent(
                         type="assistant_complete",
-                        message=event.message.text.strip(),
-                        item=TranscriptItem(role="assistant", text=event.message.text.strip()),
+                        message=complete_text.strip(),
+                        item=TranscriptItem(role="assistant", text=complete_text.strip()),
                         has_tool_uses=bool(event.message.tool_uses),
                     )
                 )

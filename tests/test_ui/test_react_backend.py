@@ -13,6 +13,7 @@ from myharness.api.client import ApiMessageCompleteEvent
 from myharness.api.usage import UsageSnapshot
 from myharness.engine.stream_events import (
     AssistantTextDelta,
+    AssistantTurnComplete,
     CompactProgressEvent,
     ToolExecutionCompleted,
     ToolExecutionStarted,
@@ -1074,6 +1075,53 @@ async def test_backend_host_emits_title_before_answer_stream(tmp_path, monkeypat
     event_types = [event.type for event in events]
     assert event_types.index("session_title") < event_types.index("assistant_delta")
     assert next(event for event in events if event.type == "session_title").message == "서울 피자 맛집 추천"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_extracts_same_stream_progress_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del bundle, line, print_system, clear_output
+        marker = '<myharness-progress>{"message":"검색 결과에서 포스코와 경쟁사 후보를 추려보고 있습니다."}</myharness-progress>'
+        await render_event(AssistantTextDelta(text="답변 앞\n" + marker[:40]))
+        await render_event(AssistantTextDelta(text=marker[40:] + "\n답변 뒤"))
+        await render_event(
+            AssistantTurnComplete(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text=f"답변 앞\n{marker}\n답변 뒤")],
+                ),
+                usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            )
+        )
+        return True
+
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line("포스코 경쟁사 조사해줘")
+    finally:
+        await close_runtime(host._bundle)
+
+    statuses = [event.message for event in events if event.type == "status"]
+    assistant_text = "".join(event.message or "" for event in events if event.type == "assistant_delta")
+    complete = next(event for event in events if event.type == "assistant_complete")
+
+    assert statuses.count("검색 결과에서 포스코와 경쟁사 후보를 추려보고 있습니다.") == 1
+    assert assistant_text == "답변 앞\n\n답변 뒤"
+    assert "<myharness-progress>" not in (complete.message or "")
+    assert complete.message == "답변 앞\n\n답변 뒤"
 
 
 @pytest.mark.asyncio
