@@ -44,6 +44,11 @@ async function openHelpSection(user: ReturnType<typeof userEvent.setup>, label: 
   await user.click(summary as HTMLElement);
 }
 
+function expectHelpSectionIcon(label: string) {
+  const summary = screen.getByText(label).closest("summary");
+  expect(summary?.querySelector(".command-summary-label svg")).toBeTruthy();
+}
+
 describe("CommandHelpMessage", () => {
   beforeEach(() => {
     vi.mocked(sendBackendRequest).mockClear();
@@ -98,6 +103,7 @@ describe("CommandHelpMessage", () => {
     for (const label of ["스킬", "MCP", "플러그인", "사용 가능한 명령어"]) {
       const details = screen.getByText(label).closest("details") as HTMLDetailsElement | null;
       expect(details?.open).toBe(false);
+      expectHelpSectionIcon(label);
     }
   });
 
@@ -130,6 +136,8 @@ describe("CommandHelpMessage", () => {
     expect(screen.queryByText(/5줄 이상 긴 글/)).toBeNull();
     expect(screen.queryByText(/현재 프로젝트 파일과 산출물을 찾아/)).toBeNull();
     expect(screen.queryByText(/스킬, MCP, 플러그인을 검색해/)).toBeNull();
+    expectHelpSectionIcon("입력 단축키");
+    expectHelpSectionIcon("알아두면 좋은 기능");
 
     const shortcutDetails = screen.getByText("입력 단축키").closest("details") as HTMLDetailsElement | null;
     const featureDetails = screen.getByText("알아두면 좋은 기능").closest("details") as HTMLDetailsElement | null;
@@ -284,6 +292,81 @@ describe("CommandHelpMessage", () => {
     expect(superpowers.textContent).not.toContain("agentic skills");
     expect(superpowers.getAttribute("data-tooltip")).toContain("에이전트 스킬 프레임워크");
     expect(superpowers.getAttribute("data-tooltip")).not.toContain("software development methodology");
+  });
+
+  it("orders executive demo plugins after the existing preferred plugins", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "플러그인:",
+      "- superpowers [활성]: Superpowers skills",
+      "- 경영기획본부 [활성]: 전략, ESG, 투자, 사업, 재무, 산업가스 스킬",
+      "- claude-for-legal-lite [활성]: Legal review skills",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    const { container } = render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1" }}>
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "플러그인");
+    const pluginCard = Array.from(container.querySelectorAll("details.command-card"))
+      .find((card) => card.querySelector("summary")?.textContent?.includes("플러그인"));
+    const pluginNames = Array.from(pluginCard?.querySelectorAll("button.skill-toggle-pill strong") ?? [])
+      .map((node) => node.textContent);
+    expect(pluginNames).toEqual([
+      "superpowers",
+      "claude-for-legal-lite",
+      "경영기획본부",
+    ]);
+  });
+
+  it("marks executive demo plugin skills as virtual skills", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- 경영기획-전략-시나리오 [plugin:경영기획본부] [활성]: 중장기 전략 시나리오를 정리합니다.",
+      "",
+      "플러그인:",
+      "- 경영기획본부 [활성]: 전략과 사업계획 관리",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            {
+              name: "경영기획-전략-시나리오",
+              description: "중장기 전략 시나리오를 정리합니다.",
+              source: "plugin:경영기획본부",
+              enabled: true,
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "스킬");
+    await openHelpSection(user, "플러그인");
+    const virtualSkill = screen.getByRole("button", { name: /경영기획-전략-시나리오/ });
+    expect(virtualSkill.textContent).toContain("[가상스킬]");
+    expect(virtualSkill.closest("[data-skill-group-tone]")?.getAttribute("data-skill-group-tone")).toBe("virtual");
+    expect(screen.getAllByRole("button", { name: /경영기획본부/ }).some((button) => (
+      button.textContent?.includes("[가상스킬]")
+    ))).toBe(true);
+    expect(screen.getAllByRole("button", { name: /경영기획본부/ }).some((button) => (
+      button.getAttribute("data-skill-group-tone") === "virtual"
+    ))).toBe(true);
   });
 
   it("shows POSCO demo MCP connectors when no MCP servers are configured", async () => {
@@ -554,5 +637,17 @@ describe("CommandHelpMessage", () => {
     expect(standaloneGroup.getAttribute("data-skill-group-tone")).toBe("0");
     expect(standaloneGroup.textContent).toContain("review");
     expect(standaloneGroup.textContent).not.toContain("using-superpowers");
+
+    const collapseStandalone = screen.getByRole("button", { name: "일반 스킬 접기" });
+    expect(collapseStandalone.getAttribute("aria-expanded")).toBe("true");
+    await user.click(collapseStandalone);
+    expect(standaloneGroup.className).toContain("collapsed");
+    expect(standaloneGroup.textContent).not.toContain("review");
+
+    const expandStandalone = screen.getByRole("button", { name: "일반 스킬 펼치기" });
+    expect(expandStandalone.getAttribute("aria-expanded")).toBe("false");
+    await user.click(expandStandalone);
+    expect(standaloneGroup.className).not.toContain("collapsed");
+    expect(standaloneGroup.textContent).toContain("review");
   });
 });

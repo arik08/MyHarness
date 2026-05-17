@@ -29,6 +29,7 @@ class FrontendRequest(BaseModel):
         "queue_line",
         "permission_response",
         "question_response",
+        "start_new_session",
         "list_sessions",
         "delete_session",
         "refresh_skills",

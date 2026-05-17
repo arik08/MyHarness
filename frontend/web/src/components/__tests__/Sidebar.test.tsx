@@ -960,8 +960,8 @@ describe("Sidebar", () => {
     expect(restartSession).not.toHaveBeenCalled();
   });
 
-  it("switches an idle new chat immediately without restarting the backend", async () => {
-    render(
+  it("saves an idle new chat immediately without restarting the backend", async () => {
+    const { container } = render(
       <AppStateProvider
         initialState={{
           ...initialAppState,
@@ -978,10 +978,48 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
 
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(sendBackendRequest).mock.calls[0][2] as { type?: string; value?: string };
     expect(screen.getByTestId("message-count").textContent).toBe("0");
-    expect(screen.getByTestId("pending-fresh-chat").textContent).toBe("yes");
+    expect(screen.getByTestId("pending-fresh-chat").textContent).toBe("no");
+    expect(screen.getByTestId("active-history").textContent).toBe(payload.value);
+    expect(payload.type).toBe("start_new_session");
+    expect(payload.value).toMatch(/^[0-9a-f]{12}$/);
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("새 대화");
+    expect(screen.getByRole("button", { name: "새 대화 작업 더보기" })).toBeTruthy();
     expect(startSession).not.toHaveBeenCalled();
     expect(restartSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps the newly saved chat in history when another session is opened", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          clientId: "client-1",
+          busy: false,
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "saved-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+          messages: [{ id: "message-1", role: "user", text: "이전 질문" }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByText("새 대화").some((node) => node.classList.contains("history-title"))).toBe(true);
+    expect(vi.mocked(sendBackendRequest).mock.calls[1][2]).toEqual({
+      type: "apply_select_command",
+      command: "resume",
+      value: "saved-old",
+    });
   });
 
   it("keeps the restart action as an explicit backend restart", async () => {

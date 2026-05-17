@@ -28,7 +28,7 @@ export function downloadModeLabel(settings: AppSettings, localBrowserHost = isLo
 }
 
 export function streamingSettingsLabel(settings: AppSettings) {
-  return `따라가기 ${settings.streamScrollDurationMs} ms / 버퍼 ${settings.streamStartBufferMs} ms / 앞섬 ${settings.streamFollowLeadPx}px`;
+  return `표시 ${settings.streamRevealDurationMs} ms / 버퍼 ${settings.streamStartBufferMs} ms / 스크롤 ${settings.streamScrollDurationMs} ms / 앞섬 ${settings.streamFollowLeadPx}px`;
 }
 
 export function formatNumber(value: unknown) {

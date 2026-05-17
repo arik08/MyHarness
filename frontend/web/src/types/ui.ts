@@ -28,6 +28,24 @@ export type ChatMessage = {
   };
 };
 
+export type LiveSessionView = {
+  activeHistoryId: string | null;
+  chatTitle: string;
+  messages: ChatMessage[];
+  workflowAnchorMessageId: string | null;
+  workflowEventsByMessageId: Record<string, WorkflowEvent[]>;
+  workflowDurationSecondsByMessageId: Record<string, number>;
+  workflowInputBuffers: Record<string, string>;
+  workflowEvents: WorkflowEvent[];
+  workflowDurationSeconds: number | null;
+  workflowStartedAtMs: number | null;
+  todoMarkdown: string;
+  todoSessionId: string | null;
+  todoCollapsed: boolean;
+  swarmTeammates: SwarmTeammateSnapshot[];
+  swarmNotifications: SwarmNotificationSnapshot[];
+};
+
 export type WorkflowEventStatus = "running" | "done" | "error" | "warning";
 
 export type WorkflowEvent = {
@@ -104,6 +122,7 @@ export type AppState = {
   artifactResizing: boolean;
   modal: ModalState | null;
   backendModalsBySessionId: Record<string, Extract<ModalState, { kind: "backend" }>>;
+  liveSessionViewsBySessionId: Record<string, LiveSessionView>;
   messages: ChatMessage[];
   workflowAnchorMessageId: string | null;
   workflowEventsByMessageId: Record<string, WorkflowEvent[]>;
@@ -127,7 +146,6 @@ export type AppSettings = {
   streamStartBufferMs: number;
   streamFollowLeadPx: number;
   streamRevealDurationMs: number;
-  streamRevealWipePercent: number;
   downloadMode: "browser" | "ask" | "folder";
   downloadFolderPath: string;
   shell: "auto" | "powershell" | "git-bash" | "cmd";

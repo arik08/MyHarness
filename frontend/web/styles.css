@@ -5530,11 +5530,38 @@ a:focus-visible {
   text-overflow: ellipsis;
 }
 
+.command-summary-label {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 8px;
+}
+
+.command-summary-label svg {
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  color: color-mix(in srgb, var(--icon-muted) 82%, var(--muted));
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.command-summary-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+}
+
 .command-card summary::-webkit-details-marker {
   display: none;
 }
 
 .command-count {
+  flex: 0 0 auto;
   color: var(--faint);
   font-size: 12px;
   font-weight: 560;
@@ -5609,6 +5636,11 @@ a:focus-visible {
 .skill-plugin-group[data-skill-group-tone="5"],
 .skill-tone-scope[data-skill-group-tone="5"] {
   --skill-group-accent: #be123c;
+}
+
+.skill-plugin-group[data-skill-group-tone="virtual"],
+.skill-tone-scope[data-skill-group-tone="virtual"] {
+  --skill-group-accent: var(--accent);
 }
 
 .skill-plugin-group.disabled {

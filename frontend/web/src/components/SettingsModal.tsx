@@ -77,7 +77,7 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
           <small>{state.systemPrompt ? "사용자 프롬프트 적용 중" : "기본값"}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("behavior")}>
-          <strong>스트리밍 스크롤</strong>
+          <strong>스트리밍 출력</strong>
           <small>{streamingSettingsLabel(state.appSettings)}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("output-tokens")} disabled={!localBrowserHost}>
@@ -218,12 +218,11 @@ function BehaviorSettings({ onBack }: { onBack: () => void }) {
 
   return (
     <>
-      <SettingsHeader title="스트리밍 스크롤">답변이 스트리밍될 때 표시와 스크롤 흐름을 조절합니다.</SettingsHeader>
+      <SettingsHeader title="스트리밍 출력">답변이 스트리밍될 때 표시와 스크롤 흐름을 조절합니다.</SettingsHeader>
       <section className="setting-section">
-        <div className="setting-section-header"><h3>가로 스트리밍 표시</h3><p>텍스트가 좌에서 우로 표시되는 흐름을 조절합니다.</p></div>
-        <NumericSetting label="버퍼 시간" helper="첫 표시 전 텍스트를 잠깐 모으는 시간입니다." min={0} max={2000} step={10} value={settings.streamStartBufferMs} onChange={(value) => update({ streamStartBufferMs: value })} />
-        <NumericSetting label="닦아내기 시간" helper="새 텍스트가 드러나는 애니메이션 시간입니다." min={0} max={2000} step={20} value={settings.streamRevealDurationMs} onChange={(value) => update({ streamRevealDurationMs: value })} />
-        <NumericSetting label="닦아내기 폭" helper="좌에서 우로 움직이는 마스크 폭입니다." min={100} max={400} step={10} value={settings.streamRevealWipePercent} onChange={(value) => update({ streamRevealWipePercent: value })} />
+        <div className="setting-section-header"><h3>텍스트 표시</h3><p>들쑥날쑥 들어오는 조각을 화면에서 고르게 보여주는 흐름입니다.</p></div>
+        <NumericSetting label="시작 버퍼" helper="첫 표시 전 텍스트를 잠깐 모아 끊김을 줄입니다." min={0} max={2000} step={10} value={settings.streamStartBufferMs} onChange={(value) => update({ streamStartBufferMs: value })} />
+        <NumericSetting label="표시 시간" helper="새 텍스트가 한 번에 드러나는 속도입니다." min={0} max={2000} step={20} value={settings.streamRevealDurationMs} onChange={(value) => update({ streamRevealDurationMs: value })} />
       </section>
       <section className="setting-section">
         <div className="setting-section-header"><h3>세로 스크롤 따라가기</h3><p>답변이 길어질 때 아래쪽으로 따라가는 흐름을 조절합니다.</p></div>

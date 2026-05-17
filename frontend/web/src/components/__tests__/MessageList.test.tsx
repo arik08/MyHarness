@@ -2856,7 +2856,6 @@ describe("MessageList", () => {
             ...initialAppState.appSettings,
             streamStartBufferMs: 0,
             streamRevealDurationMs: 600,
-            streamRevealWipePercent: 400,
           },
         }}
       >
@@ -2878,7 +2877,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".react-streaming-text")).toBeTruthy();
     expect(document.querySelector(".stream-reveal-sentence")).toBeTruthy();
     expect(document.querySelector(".react-streaming-text")?.getAttribute("style")).toContain("--stream-reveal-duration: 600ms");
-    expect(document.querySelector(".react-streaming-text")?.getAttribute("style")).toContain("--stream-reveal-wipe: 400%");
+    expect(document.querySelector(".react-streaming-text")?.getAttribute("style")).toContain("--stream-reveal-wipe: 180%");
   });
 
   it("continues revealing the completion tail instead of snapping to the final answer", () => {

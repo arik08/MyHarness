@@ -1,5 +1,5 @@
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
-import type { AppSettings, AppState, ArtifactPayload, ChatMessage, ModalState, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
+import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { normalizeArtifactPath } from "../utils/artifacts";
 import { isLiveOnlyHistoryItem } from "../utils/history";
 
@@ -11,7 +11,6 @@ const defaultAppSettings: AppSettings = {
   streamStartBufferMs: 180,
   streamFollowLeadPx: 60,
   streamRevealDurationMs: 420,
-  streamRevealWipePercent: 180,
   downloadMode: "browser",
   downloadFolderPath: "",
   shell: "auto",
@@ -41,7 +40,7 @@ export type AppAction =
   | { type: "set_history"; history: HistoryItem[] }
   | { type: "delete_history_local"; sessionId: string }
   | { type: "set_history_loading"; value: boolean }
-  | { type: "begin_new_chat" }
+  | { type: "begin_new_chat"; sessionId?: string }
   | { type: "begin_history_restore"; sessionId: string }
   | { type: "finish_history_restore" }
   | { type: "set_artifacts"; artifacts: ArtifactSummary[] }
@@ -132,7 +131,6 @@ function normalizeAppSettings(value: Partial<AppSettings> = {}): AppSettings {
     streamStartBufferMs: clampNumber(value.streamStartBufferMs, defaultAppSettings.streamStartBufferMs, 0, 2000),
     streamFollowLeadPx: clampNumber(value.streamFollowLeadPx, defaultAppSettings.streamFollowLeadPx, 0, 220),
     streamRevealDurationMs: clampNumber(value.streamRevealDurationMs, defaultAppSettings.streamRevealDurationMs, 0, 2000),
-    streamRevealWipePercent: clampNumber(value.streamRevealWipePercent, defaultAppSettings.streamRevealWipePercent, 100, 400),
     downloadMode: value.downloadMode === "folder" || value.downloadMode === "ask" ? value.downloadMode : "browser",
     downloadFolderPath: String(value.downloadFolderPath || ""),
     shell: value.shell === "powershell" || value.shell === "git-bash" || value.shell === "cmd" ? value.shell : "auto",
@@ -260,6 +258,7 @@ export const initialAppState: AppState = {
   artifactResizing: false,
   modal: null,
   backendModalsBySessionId: {},
+  liveSessionViewsBySessionId: {},
   messages: [],
   workflowAnchorMessageId: null,
   workflowEventsByMessageId: {},
@@ -330,6 +329,16 @@ function assistantCompletionText(streamedText: string, completedText: string) {
   return completedText;
 }
 
+function assistantStreamingText(currentText: string, nextChunkOrSnapshot: string) {
+  if (!currentText || !nextChunkOrSnapshot) {
+    return currentText || nextChunkOrSnapshot;
+  }
+  if (nextChunkOrSnapshot === currentText || nextChunkOrSnapshot.startsWith(currentText)) {
+    return nextChunkOrSnapshot;
+  }
+  return `${currentText}${nextChunkOrSnapshot}`;
+}
+
 function appendErrorMessage(messages: ChatMessage[], message: string): ChatMessage[] {
   const text = normalizeVisibleText(message).trim() || "응답 생성 중 오류가 발생했습니다.";
   const last = messages[messages.length - 1];
@@ -346,6 +355,19 @@ function isShellTool(toolName: string) {
 
 function compactWorkflowDetail(value: string) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function truncateWorkflowDetail(value: string, maxLength = 160) {
+  const compact = compactWorkflowDetail(value);
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function workflowRequestDetail(requestText = "") {
+  const detail = truncateWorkflowDetail(requestText, 140);
+  return detail ? `요청 확인 · ${detail}` : "사용자 요청을 확인했습니다.";
 }
 
 function commandFromToolInput(input?: Record<string, unknown> | null) {
@@ -440,13 +462,13 @@ function isFinalRestoredAssistantAnswer(historyEvents: Array<Record<string, unkn
   return true;
 }
 
-function initialWorkflowEvents(): WorkflowEvent[] {
+function initialWorkflowEvents(requestText = ""): WorkflowEvent[] {
   return [
     {
       id: nextId(),
       toolName: "",
       title: "요청 이해",
-      detail: "사용자 요청을 확인했습니다.",
+      detail: workflowRequestDetail(requestText),
       status: "done",
       level: "parent",
     },
@@ -468,6 +490,7 @@ function hasRestorableWorkflowEvents(events: WorkflowEvent[]) {
     || event.role === "purpose"
     || event.role === "activity"
     || event.role === "final"
+    || event.role === "waiting"
   ));
 }
 
@@ -850,11 +873,56 @@ function purposeCopy(purpose: WorkflowEvent["purpose"]) {
   return { title: "작업 실행", running: "필요한 변경이나 명령을 실행하고 있습니다.", done: "작업 실행을 마쳤습니다." };
 }
 
-function warningDetailForPurpose(purpose: WorkflowEvent["purpose"]) {
-  if (purpose === "info") {
-    return "일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.";
+function workflowChildDetail(event: WorkflowEvent) {
+  return truncateWorkflowDetail(workflowDetailFromInput(event.toolInput) || event.detail, 150);
+}
+
+function workflowPurposeDetailFromChildren(
+  purpose: WorkflowEvent["purpose"],
+  status: WorkflowEventStatus,
+  children: WorkflowEvent[],
+) {
+  const copy = purposeCopy(purpose);
+  if (!children.length) {
+    return status === "running" ? copy.running : copy.done;
   }
-  return "일부 단계에서 확인이 필요합니다.";
+  const latestRunning = [...children].reverse().find((item) => item.status === "running");
+  const latest = latestRunning || children[children.length - 1];
+  const title = workflowTitle(latest.toolName || latest.title);
+  const detail = workflowChildDetail(latest);
+  const suffix = detail ? ` · ${detail}` : "";
+  if (status === "running") {
+    return `${title} 진행 중${suffix}`;
+  }
+  if (status === "error") {
+    return `${title} 오류${suffix}`;
+  }
+  if (status === "warning") {
+    return `${title} 확인 필요${suffix}`;
+  }
+  const prefix = children.length > 1
+    ? `${children.length.toLocaleString()}개 작업 완료 · 마지막: ${title}`
+    : `${title} 완료`;
+  return `${prefix}${suffix}`;
+}
+
+function appendWorkflowNoteEvent(events: WorkflowEvent[], detail: string) {
+  const cleanDetail = truncateWorkflowDetail(detail, 220);
+  if (!cleanDetail) {
+    return events;
+  }
+  const latest = events[events.length - 1];
+  if (latest?.role === "waiting" && compactWorkflowDetail(latest.detail) === cleanDetail) {
+    return events;
+  }
+  return appendWorkflowEvent(events, {
+    toolName: "",
+    title: "진행 메모",
+    detail: cleanDetail,
+    status: "done",
+    level: "parent",
+    role: "waiting",
+  });
 }
 
 function isRecoverableToolError(toolName: string) {
@@ -901,14 +969,14 @@ function refreshPurposeEvents(events: WorkflowEvent[]) {
     if (event.role !== "purpose" || !event.groupId) return event;
     const children = events.filter((item) => item.groupId === event.groupId && item.role !== "purpose");
     if (!children.length) return event;
-    const copy = purposeCopy(event.purpose);
     const hasRunning = children.some((item) => item.status === "running");
     const hasError = children.some((item) => item.status === "error");
     const hasWarning = children.some((item) => item.status === "warning");
+    const status = hasError ? "error" as const : hasRunning ? "running" as const : hasWarning ? "warning" as const : "done" as const;
     return {
       ...event,
-      status: hasError ? "error" as const : hasRunning ? "running" as const : hasWarning ? "warning" as const : "done" as const,
-      detail: hasError ? "작업 중 문제가 발생했습니다." : hasRunning ? copy.running : hasWarning ? warningDetailForPurpose(event.purpose) : copy.done,
+      status,
+      detail: workflowPurposeDetailFromChildren(event.purpose, status, children),
     };
   });
 }
@@ -1182,6 +1250,26 @@ function ensureLiveHistoryItem(state: AppState, userText: string) {
   ];
 }
 
+function ensureSavedNewChatHistoryItem(state: AppState, sessionId: string) {
+  const cleanSessionId = sessionId.trim();
+  if (!cleanSessionId) return state.history;
+  if (state.deletedHistoryIds.includes(cleanSessionId)) return state.history;
+  if (state.history.some((item) => item.value === cleanSessionId)) {
+    return state.history;
+  }
+  return [
+    {
+      value: cleanSessionId,
+      label: "진행 중인 채팅",
+      description: "새 대화",
+      workspace: state.workspacePath || state.workspaceName
+        ? { name: state.workspaceName, path: state.workspacePath, scope: state.workspaceScope }
+        : null,
+    },
+    ...state.history,
+  ];
+}
+
 function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type: "ready" | "state_snapshot" }>): AppState {
   const snapshot = event.state || {};
   const provider = String(snapshot.provider || state.provider);
@@ -1333,6 +1421,48 @@ function backendModalForSession(
   return backendModalsBySessionId[sessionId] || null;
 }
 
+function liveSessionViewKeysForState(state: AppState) {
+  return Array.from(new Set([state.sessionId, state.activeHistoryId].filter((value): value is string => Boolean(value))));
+}
+
+function currentLiveSessionView(state: AppState): LiveSessionView {
+  return {
+    activeHistoryId: state.activeHistoryId,
+    chatTitle: state.chatTitle,
+    messages: state.messages,
+    workflowAnchorMessageId: state.workflowAnchorMessageId,
+    workflowEventsByMessageId: state.workflowEventsByMessageId,
+    workflowDurationSecondsByMessageId: state.workflowDurationSecondsByMessageId,
+    workflowInputBuffers: state.workflowInputBuffers,
+    workflowEvents: state.workflowEvents,
+    workflowDurationSeconds: state.workflowDurationSeconds,
+    workflowStartedAtMs: state.workflowStartedAtMs,
+    todoMarkdown: state.todoMarkdown,
+    todoSessionId: state.todoSessionId,
+    todoCollapsed: state.todoCollapsed,
+    swarmTeammates: state.swarmTeammates,
+    swarmNotifications: state.swarmNotifications,
+  };
+}
+
+function rememberCurrentLiveSessionView(state: AppState) {
+  if (!state.sessionId || state.historyReadOnly || (!state.messages.length && !state.workflowEvents.length)) {
+    return state.liveSessionViewsBySessionId;
+  }
+  const view = currentLiveSessionView(state);
+  return liveSessionViewKeysForState(state).reduce(
+    (next, key) => ({ ...next, [key]: view }),
+    state.liveSessionViewsBySessionId,
+  );
+}
+
+function liveSessionViewForSession(
+  liveSessionViewsBySessionId: AppState["liveSessionViewsBySessionId"],
+  sessionId: string,
+) {
+  return liveSessionViewsBySessionId[sessionId] || null;
+}
+
 function isResumeSelectModal(modal: ModalState | null) {
   if (modal?.kind !== "backend") {
     return false;
@@ -1421,6 +1551,7 @@ function reduceHistoryRestoreEvent(
         toolCallIndex,
         toolInput,
       });
+      workflowEvents = refreshPurposeEvents(workflowEvents);
       workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
       continue;
     }
@@ -1603,7 +1734,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
       status: "processing",
       statusText: label,
       workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
-      workflowEvents: startedWorkflowEvents,
+      workflowEvents: refreshPurposeEvents(startedWorkflowEvents),
     };
   }
 
@@ -1819,9 +1950,16 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
 
   if (event.type === "status") {
     const text = String(event.message || event.value || "");
+    const workflowEvents = state.workflowAnchorMessageId && state.workflowEvents.length
+      ? appendWorkflowNoteEvent(
+          completePlanning(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents()),
+          text,
+        )
+      : state.workflowEvents;
     return {
       ...state,
       statusText: text || state.statusText,
+      workflowEvents,
     };
   }
 
@@ -1892,7 +2030,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         workflowAnchorMessageId: message.id,
         workflowEventsByMessageId: workflowSnapshotMap(state),
         workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
-        workflowEvents: initialWorkflowEvents(),
+        workflowEvents: initialWorkflowEvents(text),
         workflowDurationSeconds: null,
         workflowStartedAtMs: Date.now(),
       };
@@ -1925,7 +2063,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         workflowEvents,
         messages: [
           ...state.messages.slice(0, -1),
-          { ...last, text: `${last.text}${value}` },
+          { ...last, text: assistantStreamingText(last.text, value) },
         ],
       };
     }
@@ -1959,7 +2097,12 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       messages,
       workflowEvents: isFinalAnswer
         ? finishFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())
-        : removeWorkflowEventsByRole(state.workflowEvents, "final"),
+        : value
+          ? appendWorkflowNoteEvent(
+              completePlanning(removeWorkflowEventsByRole(state.workflowEvents, "final")),
+              value,
+            )
+          : removeWorkflowEventsByRole(state.workflowEvents, "final"),
       status: event.has_tool_uses === true ? "processing" : "ready",
       statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
       artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
@@ -2135,6 +2278,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "session_started":
       {
         const backendModalsBySessionId = rememberCurrentBackendModal(state);
+        const liveSessionViewsBySessionId = rememberCurrentLiveSessionView(state);
         const historyBase = removeLiveHistoryRowsForSession(state.history, action.sessionId);
         const pendingFirstUserText = state.pendingFreshChat
           ? state.messages.find((message) => message.role === "user" && !message.kind)?.text || ""
@@ -2148,16 +2292,34 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             }, pendingFirstUserText)
           : historyBase;
         const busy = action.busy === true;
+        const restoredLiveView = busy ? liveSessionViewForSession(liveSessionViewsBySessionId, action.sessionId) : null;
         return {
         ...state,
         sessionId: action.sessionId,
         clientId: action.clientId || state.clientId,
         modal: backendModalForSession(backendModalsBySessionId, action.sessionId),
         backendModalsBySessionId,
+        liveSessionViewsBySessionId,
         swarmPopupOpen: false,
         history,
         historyReadOnly: false,
         pendingFreshChat: false,
+        preserveMessagesOnNextClearTranscript: restoredLiveView ? true : state.preserveMessagesOnNextClearTranscript,
+        activeHistoryId: restoredLiveView?.activeHistoryId ?? state.activeHistoryId,
+        chatTitle: restoredLiveView?.chatTitle ?? state.chatTitle,
+        messages: restoredLiveView?.messages ?? state.messages,
+        workflowAnchorMessageId: restoredLiveView?.workflowAnchorMessageId ?? state.workflowAnchorMessageId,
+        workflowEventsByMessageId: restoredLiveView?.workflowEventsByMessageId ?? state.workflowEventsByMessageId,
+        workflowDurationSecondsByMessageId: restoredLiveView?.workflowDurationSecondsByMessageId ?? state.workflowDurationSecondsByMessageId,
+        workflowInputBuffers: restoredLiveView?.workflowInputBuffers ?? state.workflowInputBuffers,
+        workflowEvents: restoredLiveView?.workflowEvents ?? state.workflowEvents,
+        workflowDurationSeconds: restoredLiveView?.workflowDurationSeconds ?? state.workflowDurationSeconds,
+        workflowStartedAtMs: restoredLiveView?.workflowStartedAtMs ?? state.workflowStartedAtMs,
+        todoMarkdown: restoredLiveView?.todoMarkdown ?? state.todoMarkdown,
+        todoSessionId: restoredLiveView?.todoSessionId ?? state.todoSessionId,
+        todoCollapsed: restoredLiveView?.todoCollapsed ?? state.todoCollapsed,
+        swarmTeammates: restoredLiveView?.swarmTeammates ?? state.swarmTeammates,
+        swarmNotifications: restoredLiveView?.swarmNotifications ?? state.swarmNotifications,
         busy,
         status: busy ? "processing" : "ready",
         statusText: busy ? "응답 진행 중" : "준비됨",
@@ -2185,7 +2347,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           workflowAnchorMessageId: message.id,
           workflowEventsByMessageId: workflowSnapshotMap(state),
           workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
-          workflowEvents: initialWorkflowEvents(),
+          workflowEvents: initialWorkflowEvents(action.message.text),
           workflowDurationSeconds: null,
           workflowStartedAtMs: Date.now(),
         };
@@ -2199,6 +2361,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "session_replaced":
       {
         const backendModalsBySessionId = rememberCurrentBackendModal(state);
+        const liveSessionViewsBySessionId = rememberCurrentLiveSessionView(state);
         return {
         ...state,
         sessionId: action.sessionId,
@@ -2224,6 +2387,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         artifactRefreshKey: state.artifactRefreshKey + 1,
         modal: backendModalForSession(backendModalsBySessionId, action.sessionId),
         backendModalsBySessionId,
+        liveSessionViewsBySessionId,
         swarmPopupOpen: false,
         todoMarkdown: "",
         todoSessionId: null,
@@ -2370,9 +2534,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "set_history_loading":
       return { ...state, historyLoading: action.value };
 
-    case "begin_new_chat":
+    case "begin_new_chat": {
+      const savedSessionId = String(action.sessionId || "").trim();
       return {
         ...state,
+        liveSessionViewsBySessionId: rememberCurrentLiveSessionView(state),
         chatTitle: "MyHarness",
         busy: false,
         status: state.sessionId ? "ready" : state.status,
@@ -2382,11 +2548,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         workflowEventsByMessageId: {},
         workflowDurationSecondsByMessageId: {},
         workflowInputBuffers: {},
-        activeHistoryId: null,
+        activeHistoryId: savedSessionId || null,
         pendingHistoryId: null,
         restoringHistory: false,
         historyReadOnly: false,
-        pendingFreshChat: Boolean(state.sessionId),
+        pendingFreshChat: Boolean(state.sessionId && !savedSessionId),
         preserveMessagesOnNextClearTranscript: false,
         artifactPanelOpen: false,
         activeArtifact: null,
@@ -2402,13 +2568,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         workflowStartedAtMs: null,
         modal: null,
         backendModalsBySessionId: rememberCurrentBackendModal(state),
+        history: savedSessionId ? ensureSavedNewChatHistoryItem(state, savedSessionId) : state.history,
       };
+    }
 
     case "begin_history_restore":
       {
         const backendModalsBySessionId = rememberCurrentBackendModal(state);
+        const liveSessionViewsBySessionId = rememberCurrentLiveSessionView(state);
         return {
         ...state,
+        liveSessionViewsBySessionId,
         busy: false,
         status: "processing",
         statusText: "대화 불러오는 중",

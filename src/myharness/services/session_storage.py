@@ -38,23 +38,40 @@ _PERSISTED_TOOL_METADATA_KEYS = (
 _TITLE_STOPWORDS = {
     "about",
     "and",
+    "describe",
+    "explain",
     "game",
     "know",
     "latest",
     "let",
+    "link",
     "me",
     "of",
     "overview",
+    "page",
     "story",
+    "summarize",
+    "summary",
     "table",
     "tables",
     "tell",
+    "that",
     "the",
+    "these",
+    "this",
+    "those",
+    "url",
+    "video",
     "with",
 }
 
 _KOREAN_COMMAND_VERB_RE = re.compile(
     r"(?:정의|분석|조사|정리|작성|생성|제작|만들|구현|수정|고치|고쳐|점검|확인|설치|업데이트|추가|추천|바꾸|바꿔|정하|정해|합치|합쳐|열|저장)"
+)
+_TITLE_URL_RE = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+")
+_GENERIC_LINK_REFERENCE_RE = re.compile(
+    r"^(?:이|그|저|요)?\s*(?:내용|영상|링크|페이지|자료|글|문서|사이트)"
+    r"(?:\s*(?:설명|요약|정리|분석|봐|읽|알려|해줘|해주세요|줘|해달라|해|좀))*$"
 )
 
 
@@ -106,6 +123,43 @@ def _title_tokens(text: str) -> set[str]:
         if len(alpha) >= 3 and alpha not in _TITLE_STOPWORDS:
             tokens.add(alpha)
     return tokens
+
+
+def _text_without_title_urls(text: str) -> str:
+    return " ".join(_TITLE_URL_RE.sub(" ", str(text or "")).split()).strip()
+
+
+def _url_context_session_title(original_text: str, request_text: str) -> str:
+    urls = _TITLE_URL_RE.findall(str(original_text or ""))
+    if not urls:
+        return ""
+
+    lower_urls = " ".join(url.lower() for url in urls)
+    subject = "웹페이지"
+    if "youtube." in lower_urls or "youtu.be" in lower_urls:
+        subject = "YouTube 영상"
+    elif "영상" in request_text:
+        subject = "영상"
+    elif "문서" in request_text:
+        subject = "문서"
+    elif "글" in request_text:
+        subject = "웹 글"
+
+    action = ""
+    if re.search(r"설명|explain|describe", request_text, flags=re.IGNORECASE):
+        action = "설명"
+    elif re.search(r"요약|summar", request_text, flags=re.IGNORECASE):
+        action = "요약"
+    elif re.search(r"분석|analy", request_text, flags=re.IGNORECASE):
+        action = "분석"
+    elif re.search(r"정리", request_text):
+        action = "정리"
+
+    return f"{subject} {action}".strip()
+
+
+def _is_generic_link_reference_title(title: str) -> bool:
+    return bool(_GENERIC_LINK_REFERENCE_RE.fullmatch(" ".join(str(title or "").split())))
 
 
 def _trim_title(text: str, limit: int = 34) -> str:
@@ -174,29 +228,36 @@ def fallback_session_title_from_user_text(text: str) -> str:
     if not clean or clean.startswith("The user explicitly selected the `"):
         return ""
 
-    korean_title = _korean_fallback_session_title(clean)
+    title_text = _text_without_title_urls(clean) or clean
+    url_title = _url_context_session_title(clean, title_text)
+
+    korean_title = _korean_fallback_session_title(title_text)
     if korean_title:
+        if url_title and _is_generic_link_reference_title(korean_title):
+            return _trim_title(url_title)
         return korean_title
+    if url_title:
+        return _trim_title(url_title)
 
     topic = ""
-    story_like = bool(re.search(r"\bstor(?:y|ies)\b", clean, flags=re.IGNORECASE))
+    story_like = bool(re.search(r"\bstor(?:y|ies)\b", title_text, flags=re.IGNORECASE))
     match = re.search(
         r"(?i)\b(?:story|stories|overview|info|information)\b.*?\b(?:of|about)\b\s+(.+)$",
-        clean,
+        title_text,
     )
     if not match:
-        match = re.search(r"(?i)\b(?:of|about)\b\s+(.+)$", clean)
+        match = re.search(r"(?i)\b(?:of|about)\b\s+(.+)$", title_text)
     if match:
         topic = match.group(1)
         topic = re.sub(r"(?i)\s+(?:with|in)\s+tables?\b.*$", "", topic)
         topic = re.sub(r"(?i)^game\s*,?\s*", "", topic)
 
     if not topic:
-        korean = re.match(r"(.+?)(?:에\s*대해|에\s*대해서|관련|설명|정리)", clean)
+        korean = re.match(r"(.+?)(?:에\s*대해|에\s*대해서|관련|설명|정리)", title_text)
         if korean:
             topic = korean.group(1)
 
-    title = (topic or clean).strip(" .,!?:;\"'`“”‘’")
+    title = (topic or title_text).strip(" .,!?:;\"'`“”‘’")
     if story_like and title and "story" not in title.lower() and "스토리" not in title:
         title = f"{title} Story"
     return _trim_title(title, limit=64)
@@ -224,7 +285,7 @@ def title_echoes_first_user(title: str, first_user_text: str) -> bool:
 
 def title_matches_first_user(title: str, first_user_text: str) -> bool:
     title = strip_internal_message_text(title)
-    first_user_text = strip_internal_message_text(first_user_text)
+    first_user_text = _text_without_title_urls(strip_internal_message_text(first_user_text))
     if not title or not first_user_text:
         return True
     required = _title_tokens(first_user_text)

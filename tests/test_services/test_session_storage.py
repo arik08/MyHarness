@@ -17,6 +17,7 @@ from myharness.services.session_storage import (
     load_session_by_id,
     load_session_snapshot,
     save_session_snapshot,
+    title_matches_first_user,
     title_echoes_first_user,
 )
 
@@ -350,6 +351,20 @@ def test_korean_first_clause_title_counts_as_prompt_echo():
 
 def test_korean_recommendation_prompt_fallback_title():
     assert fallback_session_title_from_user_text("서울 피자 맛집 추천해줘") == "서울 피자 맛집 추천"
+
+
+def test_url_prompt_fallback_title_uses_link_context_not_url_prefix():
+    prompt = "https://www.youtube.com/watch?v=LLTRqeHpY_U\n이 내용 설명해줘"
+
+    assert fallback_session_title_from_user_text(prompt) == "YouTube 영상 설명"
+
+
+def test_url_prompt_accepts_generated_conversation_title():
+    prompt = "https://www.youtube.com/watch?v=LLTRqeHpY_U\n이 내용 설명해줘"
+    generated = "꿈꾸는 AI와 메모리 설명"
+
+    assert title_matches_first_user(generated, prompt) is True
+    assert display_summary_for_first_user(generated, prompt) == generated
 
 
 def test_list_session_snapshots_uses_clean_display_summary(tmp_path: Path, monkeypatch):

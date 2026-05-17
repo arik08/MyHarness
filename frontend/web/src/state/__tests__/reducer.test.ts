@@ -1120,6 +1120,27 @@ describe("appReducer", () => {
     expect(next.restoringHistory).toBe(true);
   });
 
+  it("keeps an immediately saved new chat row when switching away", () => {
+    const started = appReducer(
+      {
+        ...initialAppState,
+        sessionId: "web-session",
+        workspaceName: "Default",
+        workspacePath: "C:/demo",
+        history: [{ value: "saved-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        messages: [{ id: "message-1", role: "user", text: "이전 질문" }],
+      },
+      { type: "begin_new_chat", sessionId: "abcdef123456" },
+    );
+    const restoringOld = appReducer(started, { type: "begin_history_restore", sessionId: "saved-old" });
+
+    expect(started.activeHistoryId).toBe("abcdef123456");
+    expect(started.pendingFreshChat).toBe(false);
+    expect(started.history[0].value).toBe("abcdef123456");
+    expect(started.history[0].description).toBe("새 대화");
+    expect(restoringOld.history.some((item) => item.value === "abcdef123456")).toBe(true);
+  });
+
   it("rebuilds visible chat from restored history snapshots", () => {
     const busy = appReducer(
       {
@@ -1266,6 +1287,73 @@ describe("appReducer", () => {
     expect(restored.messages.map((message) => message.text)).toEqual(["저장된 질문", "저장된 답변"]);
     expect(restored.activeHistoryId).toBe("saved-session");
     expect(restored.pendingHistoryId).toBeNull();
+  });
+
+  it("restores a busy live session view when returning from another history session", () => {
+    const activeUser = appReducer(
+      {
+        ...initialAppState,
+        sessionId: "live-a",
+        activeHistoryId: "saved-a",
+        chatTitle: "진행 중 질문",
+      },
+      {
+        type: "append_message",
+        message: { role: "user", text: "보고서 작성해줘" },
+      },
+    );
+    const activeStreaming = appReducer(activeUser, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "초안 작성 중" },
+      sessionId: "live-a",
+    });
+    const restoringOther = appReducer(activeStreaming, { type: "begin_history_restore", sessionId: "saved-b" });
+    const otherSession = appReducer(restoringOther, {
+      type: "session_started",
+      sessionId: "live-b",
+      clientId: "client-1",
+    });
+    const restoredOther = appReducer(otherSession, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        value: "saved-b",
+        history_events: [
+          { type: "user", text: "다른 질문" },
+          { type: "assistant", text: "다른 답변" },
+        ],
+      },
+      sessionId: "live-b",
+    });
+    const returning = appReducer(restoredOther, { type: "begin_history_restore", sessionId: "saved-a" });
+    const reattached = appReducer(returning, {
+      type: "session_started",
+      sessionId: "live-a",
+      clientId: "client-1",
+      busy: true,
+    });
+
+    expect(reattached.messages.map((message) => message.text)).toEqual(["보고서 작성해줘", "초안 작성 중"]);
+    expect(reattached.activeHistoryId).toBe("saved-a");
+    expect(reattached.busy).toBe(true);
+
+    const afterReplayClear = appReducer(reattached, {
+      type: "backend_event",
+      event: { type: "clear_transcript" } as any,
+      sessionId: "live-a",
+    });
+    const afterReplayUser = appReducer(afterReplayClear, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: "보고서 작성해줘" } },
+      sessionId: "live-a",
+    });
+    const afterReplayDelta = appReducer(afterReplayUser, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "초안 작성 중 최신 문장" },
+      sessionId: "live-a",
+    });
+
+    expect(afterReplayDelta.messages.map((message) => message.text)).toEqual(["보고서 작성해줘", "초안 작성 중 최신 문장"]);
   });
 
   it("restores swarm status from history snapshots", () => {
@@ -1491,13 +1579,59 @@ describe("appReducer", () => {
     });
 
     const shellEvent = completed.workflowEvents.find((event) => event.toolName === "shell_command");
+    const startedPurpose = started.workflowEvents.find((event) => event.role === "purpose");
+    const completedPurpose = completed.workflowEvents.find((event) => event.role === "purpose");
     expect(started.busy).toBe(true);
     expect(progressed.busy).toBe(true);
     expect(completed.busy).toBe(true);
     expect(completed.workflowEvents.map((event) => event.title)).toContain("작업 실행");
+    expect(startedPurpose?.detail).toContain("명령 실행 진행 중");
+    expect(startedPurpose?.detail).toContain("npm test");
+    expect(completedPurpose?.detail).toContain("명령 실행 완료");
+    expect(completedPurpose?.detail).toContain("pass");
     expect(shellEvent?.status).toBe("done");
     expect(shellEvent?.detail).toContain("pass");
     expect(completed.artifactRefreshKey).toBe(progressed.artifactRefreshKey);
+  });
+
+  it("anchors workflow progress to the actual user request and status notes", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "새 대화 직후 히스토리 목록이 비는 문제를 고쳐줘" },
+    });
+    const noted = appReducer(active, {
+      type: "backend_event",
+      event: { type: "status", message: "히스토리 목록 갱신 경로를 확인하고 있습니다." },
+    });
+
+    const noteEvent = noted.workflowEvents.find((event) => event.role === "waiting");
+    expect(noted.workflowEvents[0].detail).toContain("새 대화 직후 히스토리 목록");
+    expect(noteEvent?.title).toBe("진행 메모");
+    expect(noteEvent?.detail).toBe("히스토리 목록 갱신 경로를 확인하고 있습니다.");
+  });
+
+  it("keeps assistant progress text as a workflow note when tools follow", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "진행 표시를 더 구체적으로 만들어줘" },
+    });
+    const streaming = appReducer(active, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "먼저 workflow reducer와 렌더링 컴포넌트를 확인하겠습니다." },
+    });
+    const toolPending = appReducer(streaming, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "먼저 workflow reducer와 렌더링 컴포넌트를 확인하겠습니다.",
+        has_tool_uses: true,
+      },
+    });
+
+    const noteEvent = toolPending.workflowEvents.find((event) => event.role === "waiting");
+    expect(noteEvent?.title).toBe("진행 메모");
+    expect(noteEvent?.detail).toContain("workflow reducer");
+    expect(toolPending.workflowEvents.some((event) => event.role === "final")).toBe(false);
   });
 
   it("uses the Korean skill snapshot description in workflow progress", () => {
@@ -1663,7 +1797,8 @@ describe("appReducer", () => {
 
     expect(fetchStep?.status).toBe("warning");
     expect(purpose?.status).toBe("warning");
-    expect(purpose?.detail).toBe("일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.");
+    expect(purpose?.detail).toContain("web_fetch 확인 필요");
+    expect(purpose?.detail).toContain("403 Forbidden");
   });
 
   it("keeps the header status compact for web tools and answer streaming", () => {

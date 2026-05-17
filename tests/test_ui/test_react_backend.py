@@ -33,7 +33,7 @@ from myharness.ui.backend_host import (
     _tool_progress_message,
     run_backend_host,
 )
-from myharness.ui.protocol import BackendEvent
+from myharness.ui.protocol import BackendEvent, FrontendRequest
 from myharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 
 
@@ -137,6 +137,15 @@ def test_long_report_progress_usage_reads_sidecar_state(tmp_path):
         "usage_output_tokens": 5678,
         "usage_total_tokens": 6912,
     }
+
+
+def test_frontend_request_accepts_start_new_session():
+    request = FrontendRequest.model_validate_json(
+        '{"type":"start_new_session","value":"abcdef123456"}'
+    )
+
+    assert request.type == "start_new_session"
+    assert request.value == "abcdef123456"
 
 
 def test_long_report_progress_uses_less_aggressive_preview_updates():
@@ -1248,6 +1257,45 @@ async def test_backend_host_persists_user_edited_session_title(tmp_path, monkeyp
     assert snapshot["summary"] == "내가 정한 제목"
     assert snapshot["tool_metadata"]["session_title_user_edited"] is True
     assert any(event.type == "session_title" and event.message == "내가 정한 제목" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_backend_host_starts_empty_saved_session_immediately(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        host._bundle.engine.load_messages([
+            ConversationMessage.from_user_text("이전 대화가 새 대화에 섞이면 안 됨")
+        ])
+        host._history_events = [{"type": "user", "text": "이전 대화"}]
+
+        await host._handle_start_new_session("abcdef123456")
+        snapshot = host._bundle.session_backend.load_by_id(host._bundle.cwd, "abcdef123456")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert snapshot is not None
+    assert snapshot["session_id"] == "abcdef123456"
+    assert snapshot["summary"] == "새 대화"
+    assert snapshot["messages"] == []
+    assert snapshot["history_events"] == []
+    assert host._bundle.session_id == "abcdef123456"
+    assert host._bundle.engine.messages == []
+    assert host._history_events == []
+    assert any(event.type == "clear_transcript" for event in events)
+    assert any(event.type == "active_session" and event.value == "abcdef123456" for event in events)
+    assert any(event.type == "session_title" and event.message == "새 대화" for event in events)
 
 
 @pytest.mark.asyncio

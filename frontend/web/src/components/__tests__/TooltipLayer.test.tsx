@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { act } from "react";
+import { act, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipLayer } from "../TooltipLayer";
 
@@ -109,5 +109,59 @@ describe("TooltipLayer", () => {
     fireEvent.focusIn(screen.getByRole("button", { name: "Help" }));
 
     expect(screen.getByRole("tooltip").textContent).toBe("전체 설명");
+  });
+
+  it("refreshes visible tooltip text when the hovered target data-tooltip changes", async () => {
+    vi.useFakeTimers();
+
+    function DynamicTooltipButton() {
+      const [theme, setTheme] = useState("Claude");
+      return (
+        <button
+          type="button"
+          data-tooltip={`테마: ${theme}`}
+          onClick={() => setTheme("POSCO")}
+          ref={(node) => {
+            if (!node) {
+              return;
+            }
+            node.getBoundingClientRect = () => ({
+              bottom: 46,
+              height: 34,
+              left: 40,
+              right: 74,
+              top: 12,
+              width: 34,
+              x: 40,
+              y: 12,
+              toJSON: () => ({}),
+            });
+          }}
+        >
+          theme
+        </button>
+      );
+    }
+
+    render(
+      <div>
+        <DynamicTooltipButton />
+        <TooltipLayer />
+      </div>,
+    );
+
+    const button = screen.getByRole("button", { name: "theme" });
+    fireEvent.pointerOver(button);
+    act(() => {
+      vi.advanceTimersByTime(260);
+    });
+    expect(screen.getByRole("tooltip").textContent).toBe("테마: Claude");
+
+    fireEvent.click(button);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("tooltip").textContent).toBe("테마: POSCO");
   });
 });

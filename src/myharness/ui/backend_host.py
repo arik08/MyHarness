@@ -82,6 +82,7 @@ _SWARM_STRAGGLER_MIN_SECONDS = 10 * 60
 _SWARM_STRAGGLER_PEER_FACTOR = 3.0
 _SWARM_STRAGGLER_WAVE_WINDOW_SECONDS = 15 * 60
 _SWARM_TASK_TYPES = {"local_agent", "remote_agent", "in_process_teammate"}
+_SAVED_SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _SESSION_TITLE_SOURCE_PROMPT = "prompt"
 _SESSION_TITLE_SOURCE_CONVERSATION = "conversation"
 _SWARM_DELEGATION_HINT = (
@@ -659,6 +660,9 @@ class ReactBackendHost:
                                 attachments=request.attachments,
                             )
                         )
+                    continue
+                if request.type == "start_new_session":
+                    await self._handle_start_new_session(request.value or "")
                     continue
                 if request.type == "list_sessions":
                     await self._handle_list_sessions()
@@ -1469,12 +1473,22 @@ class ReactBackendHost:
         ):
             self._bundle.engine.tool_metadata.pop(key, None)
 
-    def _start_new_saved_session(self) -> str:
-        session_id = uuid4().hex[:12]
+    def _start_new_saved_session(self, session_id: str | None = None) -> str:
+        requested_id = str(session_id or "").strip().lower()
+        session_id = requested_id if _SAVED_SESSION_ID_RE.fullmatch(requested_id) else uuid4().hex[:12]
         self._reset_session_scoped_metadata()
         self._set_saved_session_id(session_id)
         self._history_events = []
         return session_id
+
+    async def _handle_start_new_session(self, session_id: str) -> None:
+        assert self._bundle is not None
+        self._bundle.engine.clear()
+        new_session_id = self._start_new_saved_session(session_id)
+        self._save_empty_session_snapshot("새 대화")
+        await self._emit(BackendEvent(type="clear_transcript"))
+        await self._emit(BackendEvent(type="active_session", value=new_session_id))
+        await self._emit(BackendEvent(type="session_title", message="새 대화"))
 
     def _restore_session_tool_metadata(self, snapshot: dict[str, object]) -> None:
         assert self._bundle is not None

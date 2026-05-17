@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import { useAppState } from "../state/app-state";
 import type { SkillItem } from "../types/backend";
+import { Icon, type IconName } from "./ArtifactIcons";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 type CommandEntry = {
@@ -19,7 +20,7 @@ type ToggleEntry = {
 type SkillPluginGroup = {
   plugin: ToggleEntry;
   items: ToggleEntry[];
-  toneIndex: number;
+  toneIndex: number | string;
 };
 
 type HelpIntroSection = {
@@ -29,7 +30,13 @@ type HelpIntroSection = {
 };
 
 const SKILL_GROUP_TONE_COUNT = 6;
-const preferredPluginOrder = ["superpowers", "claude-for-legal-lite"];
+const VIRTUAL_SKILL_TONE = "virtual";
+const preferredPluginOrder = [
+  "superpowers",
+  "claude-for-legal-lite",
+  "경영기획본부",
+];
+const virtualSkillPluginNames = new Set(["경영기획본부"]);
 const introSectionTitles = new Set(["입력 단축키", "알아두면 좋은 기능"]);
 
 const demoMcpItems: ToggleEntry[] = [
@@ -115,17 +122,34 @@ const koPluginDescriptionsByName: Record<string, string> = {
   "claude-for-legal-lite": "사용자가 제공한 문서와 로컬 playbook을 바탕으로 계약, 개인정보, 법무 검토를 지원합니다.",
 };
 
-function displaySkillDescription(name: string, description: string) {
+function withVirtualSkillBadge(description: string, source = "") {
+  const pluginName = pluginNameFromSkillSource(source);
+  const text = String(description || "").trim();
+  if (!virtualSkillPluginNames.has(pluginName) || text.startsWith("[가상스킬]")) {
+    return text;
+  }
+  return `[가상스킬] ${text}`;
+}
+
+function isVirtualSkillPluginName(name: string) {
+  return virtualSkillPluginNames.has(String(name || "").trim());
+}
+
+function displaySkillDescription(name: string, description: string, source = "") {
   const normalizedName = String(name || "").trim().replace(/^\$/, "").toLowerCase();
   if (normalizedName.startsWith("learned-")) {
     return "MyHarness가 반복적으로 확인한 실패 또는 해결 패턴을 다시 만났을 때 참고하는 자동 학습 스킬입니다.";
   }
-  return koSkillDescriptionsByName[normalizedName] || description;
+  return withVirtualSkillBadge(koSkillDescriptionsByName[normalizedName] || description, source);
 }
 
 function displayPluginDescription(name: string, description: string) {
   const normalizedName = String(name || "").trim().toLowerCase();
-  return koPluginDescriptionsByName[normalizedName] || description;
+  const text = koPluginDescriptionsByName[normalizedName] || description;
+  if (!isVirtualSkillPluginName(name) || text.startsWith("[가상스킬]")) {
+    return text;
+  }
+  return `[가상스킬] ${text}`;
 }
 
 export function isCommandCatalog(text: string) {
@@ -216,11 +240,12 @@ function parseSkillCatalog(text: string): ToggleEntry[] {
       const match = line.match(/^-\s+(.+?)(?:\s+\[([^\]]+)\])?\s+\[(enabled|disabled|활성|비활성)\]\s*:\s*(.*)$/i);
       if (!match) return null;
       const name = match[1].trim();
+      const source = (match[2] || "skill").trim();
       return {
         name,
-        source: (match[2] || "skill").trim(),
+        source,
         enabled: ["enabled", "활성"].includes(match[3].toLowerCase()),
-        description: displaySkillDescription(name, (match[4] || "").trim()),
+        description: displaySkillDescription(name, (match[4] || "").trim(), source),
       };
     })
     .filter((item): item is ToggleEntry => Boolean(item));
@@ -358,7 +383,7 @@ function pluginNameFromSkillSource(source: string) {
 function pluginToneIndexByName(plugins: ToggleEntry[]) {
   return new Map(plugins.map((plugin, index) => [
     plugin.name.toLowerCase(),
-    (index + 1) % SKILL_GROUP_TONE_COUNT,
+    isVirtualSkillPluginName(plugin.name) ? VIRTUAL_SKILL_TONE : (index + 1) % SKILL_GROUP_TONE_COUNT,
   ]));
 }
 
@@ -378,7 +403,7 @@ function orderPluginsForHelp(plugins: ToggleEntry[]) {
 function groupSkillsByPlugin(
   items: ToggleEntry[],
   plugins: ToggleEntry[],
-  pluginToneByName: Map<string, number>,
+  pluginToneByName: Map<string, number | string>,
 ) {
   const pluginByName = new Map(plugins.map((plugin) => [plugin.name.toLowerCase(), plugin]));
   const standalone: ToggleEntry[] = [];
@@ -434,7 +459,7 @@ function mergeSkillState(
     return {
       ...item,
       enabled: pluginEnabled === false ? false : snapshot.enabled !== false,
-      description: displaySkillDescription(snapshot.name || item.name, snapshot.description || item.description),
+      description: displaySkillDescription(snapshot.name || item.name, snapshot.description || item.description, source),
       source,
     };
   });
@@ -445,6 +470,25 @@ function catalogTooltip(item: ToggleEntry, fallback: string) {
     item.name,
     item.description || item.source || fallback,
   ].filter(Boolean).join("\n");
+}
+
+function helpSummaryIconName(label: string): IconName {
+  if (label === "입력 단축키") return "keyboard";
+  if (label === "알아두면 좋은 기능") return "sparkles";
+  if (label === "스킬") return "ai";
+  if (label === "MCP") return "network";
+  if (label === "플러그인") return "plug";
+  if (label === "사용 가능한 명령어") return "terminal";
+  return "comment";
+}
+
+function HelpSummaryTitle({ label }: { label: string }) {
+  return (
+    <span className="command-summary-label">
+      <Icon name={helpSummaryIconName(label)} />
+      <span className="command-summary-text">{label}</span>
+    </span>
+  );
 }
 
 export function CommandHelpMessage({ text }: { text: string }) {
@@ -572,7 +616,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
           {parsed.introSections.map((section) => (
             <details className="command-card command-intro-card" key={section.title}>
               <summary>
-                <span>{section.title}</span>
+                <HelpSummaryTitle label={section.title} />
                 <span className="command-count">{section.itemCount ? `${section.itemCount}개` : "열기"}</span>
               </summary>
               <div className="command-intro-body">
@@ -614,7 +658,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
       ) : null}
       <details className="command-card">
         <summary>
-          <span>사용 가능한 명령어</span>
+          <HelpSummaryTitle label="사용 가능한 명령어" />
           <span className="command-count">{parsed.commands.length ? `${parsed.commands.length}개` : "열기"}</span>
         </summary>
         <div className="command-grid">
@@ -650,21 +694,39 @@ function SkillCatalog({
   onPluginToggle: (item: ToggleEntry) => void;
 }) {
   const hasItems = standaloneItems.length > 0 || pluginGroups.length > 0;
+  const [standaloneCollapsed, setStandaloneCollapsed] = useState(false);
   return (
     <details className="command-card skill-card">
       <summary>
-        <span>{label}</span>
+        <HelpSummaryTitle label={label} />
         <span className="command-count">{itemCount ? `${itemCount}개` : "0개"}</span>
       </summary>
       {hasItems ? (
         <div className="skill-catalog-groups">
           {standaloneItems.length ? (
-            <section className="skill-plugin-group" data-skill-group-tone="0" role="group" aria-label="일반 스킬">
-              <div className="skill-section-header">
-                <strong>일반 스킬</strong>
+            <section
+              className={`skill-plugin-group${standaloneCollapsed ? " collapsed" : ""}`}
+              data-skill-group-tone="0"
+              role="group"
+              aria-label="일반 스킬"
+            >
+              <button
+                className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
+                type="button"
+                aria-expanded={!standaloneCollapsed}
+                aria-label={standaloneCollapsed ? "일반 스킬 펼치기" : "일반 스킬 접기"}
+                data-tooltip={`일반 스킬\n클릭하면 일반 스킬 목록을 ${standaloneCollapsed ? "펼칩니다." : "접습니다."}`}
+                onClick={() => setStandaloneCollapsed((current) => !current)}
+              >
+                <span>
+                  <strong>일반 스킬</strong>
+                  <small>{standaloneCollapsed ? "접힘" : "열림"}</small>
+                </span>
                 <span>{standaloneItems.length}개</span>
-              </div>
-              <ToggleGrid label={label} items={standaloneItems} onToggle={onToggle} />
+              </button>
+              {standaloneCollapsed ? null : (
+                <ToggleGrid label={label} items={standaloneItems} onToggle={onToggle} />
+              )}
             </section>
           ) : null}
           {pluginGroups.map((group) => (
@@ -729,13 +791,13 @@ function ToggleCatalog({
   label: string;
   items: ToggleEntry[];
   emptyText: string;
-  toneForItem?: (item: ToggleEntry) => number | undefined;
+  toneForItem?: (item: ToggleEntry) => number | string | undefined;
   onToggle: (item: ToggleEntry) => void;
 }) {
   return (
     <details className="command-card skill-card">
       <summary>
-        <span>{label}</span>
+        <HelpSummaryTitle label={label} />
         <span className="command-count">{items.length ? `${items.length}개` : "0개"}</span>
       </summary>
       {items.length ? (
@@ -757,7 +819,7 @@ function ToggleGrid({
 }: {
   label: string;
   items: ToggleEntry[];
-  toneForItem?: (item: ToggleEntry) => number | undefined;
+  toneForItem?: (item: ToggleEntry) => number | string | undefined;
   onToggle: (item: ToggleEntry) => void;
 }) {
   return (

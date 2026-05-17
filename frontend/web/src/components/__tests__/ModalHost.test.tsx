@@ -55,6 +55,19 @@ describe("ModalHost download settings", () => {
     expect(options).toEqual(["브라우저 다운로드", "매번 저장 위치 선택", "지정 폴더에 자동 저장"]);
     expect(mode.value).toBe("browser");
   });
+
+  it("shows only active streaming output controls", async () => {
+    renderDownloadSettingsModal();
+
+    await userEvent.click(screen.getByRole("button", { name: /스트리밍 출력/ }));
+
+    expect(screen.getByRole("heading", { name: "스트리밍 출력" })).toBeTruthy();
+    expect(screen.getByRole("spinbutton", { name: /시작 버퍼/ })).toBeTruthy();
+    expect(screen.getByRole("spinbutton", { name: /표시 시간/ })).toBeTruthy();
+    expect(screen.getByRole("spinbutton", { name: /따라가기 시간/ })).toBeTruthy();
+    expect(screen.getByRole("spinbutton", { name: /따라가기 앞섬/ })).toBeTruthy();
+    expect(screen.queryByText("닦아내기 폭")).toBeNull();
+  });
 });
 
 describe("ModalHost task output", () => {

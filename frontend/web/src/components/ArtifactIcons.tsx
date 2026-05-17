@@ -1,4 +1,4 @@
-export type IconName = "source" | "preview" | "copy" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star" | "chevron-up" | "chevron-down";
+export type IconName = "source" | "preview" | "copy" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star" | "chevron-up" | "chevron-down" | "keyboard" | "sparkles" | "network" | "plug" | "terminal";
 
 export function Icon({ name }: { name: IconName }) {
   if (name === "source") {
@@ -166,6 +166,57 @@ export function Icon({ name }: { name: IconName }) {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24">
         <path d="m6 9 6 6 6-6" />
+      </svg>
+    );
+  }
+  if (name === "keyboard") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="M7 9h.01" />
+        <path d="M11 9h.01" />
+        <path d="M15 9h.01" />
+        <path d="M7 13h.01" />
+        <path d="M11 13h6" />
+      </svg>
+    );
+  }
+  if (name === "sparkles") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M12 3l1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4Z" />
+        <path d="M5 15l.7 2.1L8 18l-2.3.9L5 21l-.7-2.1L2 18l2.3-.9Z" />
+        <path d="M18 13l.8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8Z" />
+      </svg>
+    );
+  }
+  if (name === "network") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <circle cx="12" cy="5" r="2.5" />
+        <circle cx="6" cy="18" r="2.5" />
+        <circle cx="18" cy="18" r="2.5" />
+        <path d="m11 7.3-4 8.4" />
+        <path d="m13 7.3 4 8.4" />
+        <path d="M8.5 18h7" />
+      </svg>
+    );
+  }
+  if (name === "plug") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M9 2v6" />
+        <path d="M15 2v6" />
+        <path d="M7 8h10v4a5 5 0 0 1-10 0Z" />
+        <path d="M12 17v5" />
+      </svg>
+    );
+  }
+  if (name === "terminal") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="m4 7 6 5-6 5" />
+        <path d="M12 19h8" />
       </svg>
     );
   }

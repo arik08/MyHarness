@@ -26,7 +26,7 @@ function findTooltipTarget(target: EventTarget | null) {
 
 function getTooltipState(target: HTMLElement): TooltipState | null {
   const text = target.dataset.tooltip?.trim();
-  if (!text) {
+  if (!text || target.getAttribute("aria-disabled") === "true") {
     return null;
   }
   const rect = target.getBoundingClientRect();
@@ -56,6 +56,12 @@ export function TooltipLayer() {
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const targetRef = useRef<HTMLElement | null>(null);
   const showTimerRef = useRef<number | null>(null);
+  const mutationObserverRef = useRef<MutationObserver | null>(null);
+  const tooltipVisibleRef = useRef(false);
+
+  useEffect(() => {
+    tooltipVisibleRef.current = Boolean(tooltip);
+  }, [tooltip]);
 
   useEffect(() => {
     function clearShowTimer() {
@@ -65,9 +71,31 @@ export function TooltipLayer() {
       }
     }
 
+    function disconnectTooltipObserver() {
+      mutationObserverRef.current?.disconnect();
+      mutationObserverRef.current = null;
+    }
+
+    function observeTooltipTarget(target: HTMLElement | null) {
+      disconnectTooltipObserver();
+      if (!target || typeof MutationObserver === "undefined") {
+        return;
+      }
+      mutationObserverRef.current = new MutationObserver(() => {
+        if (tooltipVisibleRef.current) {
+          refreshTooltip();
+        }
+      });
+      mutationObserverRef.current.observe(target, {
+        attributeFilter: ["aria-disabled", "data-tooltip", "data-tooltip-placement"],
+        attributes: true,
+      });
+    }
+
     function showForTarget(target: HTMLElement | null, immediate = false) {
       clearShowTimer();
       targetRef.current = target;
+      observeTooltipTarget(target);
       if (!target) {
         setTooltip(null);
         return;
@@ -87,6 +115,7 @@ export function TooltipLayer() {
 
     function hideTooltip() {
       clearShowTimer();
+      disconnectTooltipObserver();
       targetRef.current = null;
       setTooltip(null);
     }
@@ -97,7 +126,12 @@ export function TooltipLayer() {
         hideTooltip();
         return;
       }
-      setTooltip(getTooltipState(target));
+      const nextTooltip = getTooltipState(target);
+      if (!nextTooltip) {
+        hideTooltip();
+        return;
+      }
+      setTooltip(nextTooltip);
     }
 
     function handlePointerOver(event: PointerEvent) {
@@ -151,6 +185,7 @@ export function TooltipLayer() {
       document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", refreshTooltip);
       window.removeEventListener("scroll", refreshTooltip, true);
+      disconnectTooltipObserver();
       clearShowTimer();
     };
   }, []);

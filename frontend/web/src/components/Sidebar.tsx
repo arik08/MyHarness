@@ -25,6 +25,19 @@ const sidebarMinWidth = 268;
 const sidebarMaxWidth = 520;
 const sidebarVisibleContentMinWidth = 300;
 
+function createSavedSessionId() {
+  const randomUuid = globalThis.crypto?.randomUUID?.().replace(/-/g, "").toLowerCase();
+  if (randomUuid && randomUuid.length >= 12) {
+    return randomUuid.slice(0, 12);
+  }
+  const bytes = new Uint8Array(6);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  if (bytes.some((byte) => byte !== 0)) {
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`.slice(0, 12).padEnd(12, "0");
+}
+
 export function clampSidebarWidth(value: number, windowWidth: number) {
   const viewportMax = Math.max(sidebarMinWidth, windowWidth - sidebarVisibleContentMinWidth);
   return Math.max(sidebarMinWidth, Math.min(sidebarMaxWidth, viewportMax, value));
@@ -52,7 +65,19 @@ export function Sidebar() {
     const nextWorkspace = workspace || (state.workspacePath ? { name: state.workspaceName, path: state.workspacePath } : undefined);
     if (!workspace && state.sessionId && !state.busy) {
       window.dispatchEvent(new Event("myharness:saveMessageScroll"));
-      dispatch({ type: "begin_new_chat" });
+      const nextSessionId = createSavedSessionId();
+      dispatch({ type: "begin_new_chat", sessionId: nextSessionId });
+      try {
+        await sendBackendRequest(state.sessionId, state.clientId, {
+          type: "start_new_session",
+          value: nextSessionId,
+        });
+      } catch (error) {
+        dispatch({
+          type: "open_modal",
+          modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
       return;
     }
     try {
@@ -589,15 +614,17 @@ export function Sidebar() {
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
   const activeHistoryDescription = currentConversationHistoryTitle(state);
   const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
-  const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !activeHistoryDeleted && !hasActiveHistoryItem && (state.busy || activeHistoryDescription)
+  const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !activeHistoryDeleted && !hasActiveHistoryItem && (state.pendingFreshChat || state.busy || activeHistoryDescription)
     ? [
         {
           value: activeHistoryValue,
           label: "진행 중",
-          description: activeHistoryDescription || "진행 중인 대화",
+          description: activeHistoryDescription || (state.pendingFreshChat ? "새 대화" : "진행 중인 대화"),
           workspace: state.workspacePath || state.workspaceName
             ? { name: state.workspaceName, path: state.workspacePath }
             : null,
+          live: state.pendingFreshChat ? true : undefined,
+          liveSessionId: state.pendingFreshChat ? activeHistoryValue : undefined,
         },
         ...visibleHistory,
       ]
@@ -757,6 +784,8 @@ export function Sidebar() {
               const isDeleting = deletingHistoryId === item.value;
               const actionsExpanded = expandedHistoryActionId === item.value;
               const canPin = !isLiveOnlyHistoryItem(item);
+              const canDelete = !isCurrentLiveHistoryItem(item, state.sessionId);
+              const showActions = !isBusy && !isDeleting && (canDelete || canPin);
               return (
                 <div
                   className={`history-item${isActive ? " active" : ""}${isBusy ? " busy" : ""}${isDeleting ? " deleting" : ""}${item.pinned ? " pinned" : ""}${actionsExpanded ? " actions-open" : ""}`}
@@ -797,27 +826,29 @@ export function Sidebar() {
                     </button>
                   )}
                   <span className="history-busy-spinner" aria-hidden="true" />
-                  {!isBusy && !isDeleting ? (
+                  {showActions ? (
                     actionsExpanded ? (
                       <>
-                        <button
-                          className="history-delete"
-                          type="button"
-                          aria-label={`${label} 삭제`}
-                          data-tooltip="기록 삭제"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void removeHistory(item);
-                          }}
-                        >
-                          <svg aria-hidden="true" viewBox="0 0 24 24">
-                            <path d="M10 11v6" />
-                            <path d="M14 11v6" />
-                            <path d="M4 7h16" />
-                            <path d="M6 7l1 14h10l1-14" />
-                            <path d="M9 7V4h6v3" />
-                          </svg>
-                        </button>
+                        {canDelete ? (
+                          <button
+                            className="history-delete"
+                            type="button"
+                            aria-label={`${label} 삭제`}
+                            data-tooltip="기록 삭제"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void removeHistory(item);
+                            }}
+                          >
+                            <svg aria-hidden="true" viewBox="0 0 24 24">
+                              <path d="M10 11v6" />
+                              <path d="M14 11v6" />
+                              <path d="M4 7h16" />
+                              <path d="M6 7l1 14h10l1-14" />
+                              <path d="M9 7V4h6v3" />
+                            </svg>
+                          </button>
+                        ) : null}
                         {canPin ? (
                           <button
                             className="history-pin"
