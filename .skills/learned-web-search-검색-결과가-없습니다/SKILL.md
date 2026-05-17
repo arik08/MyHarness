@@ -1,16 +1,24 @@
 ---
 name: learned-web-search-검색-결과가-없습니다
-description: Use when MyHarness sees this repeated verified failure pattern: web_search: 검색 결과가 없습니다.
+description: >
+  Use when Korean or localized web_search returns no results but the evidence
+  may exist under another wording, language, or direct source.
 ---
 
 # learned-web-search-검색-결과가-없습니다
 
-This skill was generated automatically from a repeated, verified MyHarness failure pattern.
+Automatically learned guidance, generalized from prior Korean no-result searches.
 
 ## When To Use
-- Use when MyHarness sees this repeated verified failure pattern: web_search: 검색 결과가 없습니다.
+- Use for Korean/localized `web_search` no-result responses.
 
-## Process
-1. Read `references/learned-patterns.md` for the concrete observed pattern.
-2. Apply the verified corrective path before retrying the failed approach.
-3. Keep new evidence concise and avoid storing raw transcripts or secrets.
+## Generalized Lesson
+- Korean no-result searches often need bilingual terms, official Korean/English site names, or direct-source access.
+- The exact historical company/source is only an example.
+
+## Recommended Next Step
+- Retry with Korean and English variants, remove over-specific filters, or search/fetch the official source directly.
+- For news/company sources, try RSS, newsroom pages, investor relations pages, or source-specific public endpoints.
+
+## Avoid
+- Do not infer that the topic has no coverage from one Korean no-result query.

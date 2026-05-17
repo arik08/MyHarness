@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import textwrap
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,7 @@ from myharness.skills.loader import get_program_skills_dirs
 MAX_TRACKED_FAILURES = 20
 MAX_TRACKED_LEARNED_SKILLS = 12
 MAX_EVIDENCE_BLOCKS_PER_SKILL = 8
+YOUTUBE_TRANSCRIPT_SIGNATURE = "youtube-transcript-yt-dlp"
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+"),
@@ -117,6 +119,16 @@ def analyze_learning_candidate(metadata: dict[str, object] | None) -> LearningCa
     ).hexdigest()[:16]
     slug = _slugify(f"learned-{signature}")[:60]
     confidence = min(0.95, 0.65 + (count * 0.1))
+    specialized = _specialized_candidate(
+        signature=signature,
+        summary=summary,
+        verified_summary=verified_summary,
+        evidence_hash=evidence_hash,
+        confidence=confidence,
+    )
+    if specialized is not None:
+        return specialized
+
     return LearningCandidate(
         skill_name=slug,
         trigger_description=(
@@ -211,16 +223,25 @@ def _render_skill(candidate: LearningCandidate) -> str:
     return (
         "---\n"
         f"name: {candidate.skill_name}\n"
-        f"description: {candidate.trigger_description}\n"
+        f"description: >\n{_indent_wrapped(candidate.trigger_description)}\n"
         "---\n\n"
         f"# {candidate.skill_name}\n\n"
         "This skill was generated automatically from a repeated, verified MyHarness failure pattern.\n\n"
+        "## Generalization Rules\n"
+        "- Treat stored evidence as examples, not as the only trigger.\n"
+        "- Prefer reusable failure classes such as platform, tool, status code, file type, or workflow step over exact URLs, paths, prompts, or IDs.\n"
+        "- Reuse an existing helper script, skill, API route, or validator before assembling a new one-off command.\n"
+        "- If the verified work is only inspection and not a real corrective path, treat the lesson as low-confidence and diagnose first.\n\n"
         "## When To Use\n"
         f"- {candidate.trigger_description}\n\n"
         "## Process\n"
         "1. Read `references/learned-patterns.md` for the concrete observed pattern.\n"
         "2. Apply the verified corrective path before retrying the failed approach.\n"
         "3. Keep new evidence concise and avoid storing raw transcripts or secrets.\n"
+        "\n## Recommended Next Step\n"
+        f"- {candidate.do_next_time}\n"
+        "\n## Avoid\n"
+        f"- {candidate.avoid_next_time}\n"
     )
 
 
@@ -279,6 +300,9 @@ def _normalized_failure_signature(
 ) -> str | None:
     tool_slug = _slugify(tool_name.strip().lower())
     normalized_output = " ".join(output.lower().split())
+    command = str(tool_input.get("command") or "").lower()
+    if "yt-dlp" in command and _contains_youtube_url(command):
+        return YOUTUBE_TRANSCRIPT_SIGNATURE
     if tool_slug == "web-search" and (
         "no search results found" in normalized_output
         or "검색 결과가 없습니다" in normalized_output
@@ -291,6 +315,45 @@ def _normalized_failure_signature(
         if status and domain:
             return f"{tool_slug}-{status}-{_slugify(domain)}"[:80]
     return None
+
+
+def _contains_youtube_url(value: str) -> bool:
+    return "youtube.com/" in value or "youtu.be/" in value
+
+
+def _specialized_candidate(
+    *,
+    signature: str,
+    summary: str,
+    verified_summary: str,
+    evidence_hash: str,
+    confidence: float,
+) -> LearningCandidate | None:
+    if signature != YOUTUBE_TRANSCRIPT_SIGNATURE:
+        return None
+    return LearningCandidate(
+        skill_name="learned-youtube-transcript-yt-dlp",
+        trigger_description=(
+            "Use when a YouTube link needs transcript/subtitle extraction or a yt-dlp "
+            "YouTube subtitle command failed."
+        ),
+        lesson=(
+            "Repeated one-off yt-dlp/Python command assembly for YouTube transcripts "
+            f"was observed and then resolved. Last failure: {_redact(summary)[:180]}"
+        ),
+        do_next_time=(
+            "Run the reusable helper first: "
+            'py -3 .skills/insane-search/scripts/youtube_transcript.py "URL" --json. '
+            f"Verified path: {verified_summary}"
+        ),
+        avoid_next_time=(
+            "Do not rebuild a long yt-dlp plus inline Python command for each YouTube URL "
+            "unless the reusable helper itself fails."
+        ),
+        evidence_hash=evidence_hash,
+        confidence=confidence,
+        failure_signature=signature,
+    )
 
 
 def _extract_http_status(output: str) -> str | None:
@@ -364,3 +427,8 @@ def _redact(value: str) -> str:
     text = re.sub(r"C:\\Users\\[^\\\s]+", r"C:\\Users\\[USER]", text, flags=re.IGNORECASE)
     text = re.sub(r"/home/[^/\s]+", "/home/[USER]", text)
     return " ".join(text.split())
+
+
+def _indent_wrapped(value: str) -> str:
+    lines = textwrap.wrap(value.strip(), width=88) or [""]
+    return "\n".join(f"  {line}" for line in lines)

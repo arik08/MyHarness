@@ -704,6 +704,9 @@ function WorkflowActivityStatus({
   const baseDetail = compactToolDetail(rawDetail ?? detail);
   const visibleDetail = compactWorkflowOutputDetail(event, baseDetail);
   const statusDetailText = narration || visibleDetail || statusLabel(event.status);
+  const title = event.status === "done" && (!event.title || event.title === "다음 단계 검토 중")
+    ? "다음 단계 결정 완료"
+    : event.title || "다음 단계 검토 중";
 
   return (
     <div
@@ -711,9 +714,9 @@ function WorkflowActivityStatus({
       data-workflow-role={event.role}
       aria-live={event.status === "running" ? "polite" : undefined}
     >
-      <span className="workflow-activity-dot" aria-hidden="true" />
+      <span className="workflow-activity-spinner" aria-hidden="true" />
       <span className="workflow-activity-copy">
-        <strong>{event.title || "다음 판단 중"}</strong>
+        <strong>{title}</strong>
         <small>{statusDetailText}</small>
       </span>
     </div>

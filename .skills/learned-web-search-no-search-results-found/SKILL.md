@@ -1,16 +1,24 @@
 ---
 name: learned-web-search-no-search-results-found
-description: Use when MyHarness sees this repeated verified failure pattern: web_search: No search results found.
+description: >
+  Use when web_search returns no results and the task still needs external
+  evidence.
 ---
 
 # learned-web-search-no-search-results-found
 
-This skill was generated automatically from a repeated, verified MyHarness failure pattern.
+Automatically learned guidance, generalized from prior no-result searches.
 
 ## When To Use
-- Use when MyHarness sees this repeated verified failure pattern: web_search: No search results found.
+- Use for `web_search` no-result responses in any language.
 
-## Process
-1. Read `references/learned-patterns.md` for the concrete observed pattern.
-2. Apply the verified corrective path before retrying the failed approach.
-3. Keep new evidence concise and avoid storing raw transcripts or secrets.
+## Generalized Lesson
+- No results for one wording is not a factual absence. Generalize by source type and query strategy.
+- Try alternate language, official site search, domain-specific search, registry/API lookup, RSS/feed, or direct known-source fetch.
+
+## Recommended Next Step
+- Reformulate the query with fewer constraints and source-specific terms.
+- If the user named a site/source, fetch that source directly or use a platform-specific endpoint before giving up.
+
+## Avoid
+- Do not repeat near-identical queries or conclude that the information does not exist from a single no-result response.

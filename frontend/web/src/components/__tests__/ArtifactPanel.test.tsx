@@ -1466,6 +1466,142 @@ describe("ArtifactPanel", () => {
     expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("New headline");
   });
 
+  it("keeps the AI edit progress panel scrolled to new workflow events without moving after user scrolls up", async () => {
+    const user = userEvent.setup();
+    let sendBackendEvent: ((event: BackendEvent) => void) | null = null;
+    function BackendEventProbe() {
+      const { dispatch } = useAppState();
+      sendBackendEvent = (event: BackendEvent) => dispatch({ type: "backend_event", event, sessionId: "session-a" });
+      return null;
+    }
+
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            clientId: "client-a",
+            sessionId: "session-a",
+            workspacePath: "C:/repo",
+            workspaceName: "repo",
+            activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+            activeArtifactPayload: {
+              kind: "html",
+              content: "<html><body><h1>Old headline</h1><p>Old body</p></body></html>",
+            },
+          }}
+        >
+          <ArtifactPanel />
+          <BackendEventProbe />
+        </AppStateProvider>,
+      );
+
+      await user.click(screen.getByRole("button", { name: "본문 수정" }));
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", {
+          data: {
+            type: artifactAiSelectionMessage,
+            path: "outputs/report.html",
+            selection: {
+              text: "Old headline",
+              html: "<h1>Old headline</h1>",
+              start: 0,
+              end: 12,
+              before: "",
+              after: "Old body",
+              instruction: "Make it clearer",
+            },
+          },
+        }));
+      });
+
+      await user.click(screen.getByRole("button", { name: "AI 자동편집" }));
+
+      await waitFor(() => expect(document.querySelector(".artifact-ai-comments.with-progress")).toBeTruthy());
+      await waitFor(() => expect(document.querySelector(".artifact-ai-progress")).toBeTruthy());
+      const overlay = document.querySelector(".artifact-ai-comments.with-progress") as HTMLElement;
+      const progress = document.querySelector(".artifact-ai-progress") as HTMLElement;
+      clientHeights.set(overlay, 120);
+      clientHeights.set(progress, 80);
+      scrollHeights.set(overlay, 300);
+      scrollHeights.set(progress, 360);
+      overlay.scrollTop = 0;
+      progress.scrollTop = 0;
+
+      scrollHeights.set(overlay, 540);
+      scrollHeights.set(progress, 760);
+      act(() => {
+        sendBackendEvent?.({
+          type: "tool_started",
+          tool_name: "edit_file",
+          tool_call_index: 0,
+          tool_input: {
+            path: "outputs/report.html",
+            old_str: "Old headline",
+            new_str: "New headline",
+          },
+        });
+      });
+
+      await waitFor(() => expect(progress.scrollTop).toBe(760));
+      expect(overlay.scrollTop).toBe(540);
+
+      fireEvent.wheel(progress, { deltaY: -40 });
+      progress.scrollTop = 100;
+      fireEvent.scroll(progress);
+      scrollHeights.set(overlay, 720);
+      scrollHeights.set(progress, 960);
+      act(() => {
+        sendBackendEvent?.({
+          type: "tool_started",
+          tool_name: "edit_file",
+          tool_call_index: 1,
+          tool_input: {
+            path: "outputs/second-report.html",
+            old_str: "Second headline",
+            new_str: "Better headline",
+          },
+        });
+      });
+
+      await waitFor(() => expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("second-report.html"));
+      expect(progress.scrollTop).toBe(100);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
   it("keeps the AI edit overlay in an explicit streaming wait state until live progress arrives", async () => {
     let sendBackendEvent: ((event: BackendEvent) => void) | null = null;
     function BackendEventProbe() {

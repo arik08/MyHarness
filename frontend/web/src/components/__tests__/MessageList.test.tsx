@@ -1010,7 +1010,7 @@ describe("MessageList", () => {
               { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
               { id: "workflow-2", toolName: "", title: "작업 계획 수립", detail: "진행 방향을 정했습니다.", status: "done", level: "parent" },
               { id: "workflow-3", toolName: "shell_command", title: "명령 실행", detail: "npm test", status: "done", level: "child" },
-              { id: "workflow-4", toolName: "", title: "다음 판단 중", detail: "도구 결과를 보고 다음 단계를 정합니다.", status: "done", level: "parent" },
+              { id: "workflow-4", toolName: "", title: "다음 단계 검토 중", detail: "도구 결과를 보고 다음 단계를 정합니다.", status: "done", level: "parent" },
               { id: "workflow-5", toolName: "", title: "최종 답변", detail: "최종 답변을 작성했습니다.", status: "done", level: "parent" },
             ],
           },
@@ -3414,6 +3414,146 @@ describe("MessageList", () => {
 
       expect(messages.scrollTop).toBe(720);
       expect(messages.classList.contains("streaming-follow")).toBe(false);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
+  it("does not rejoin bottom follow after a single upward mouse wheel notch near the tail", () => {
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            busy: true,
+            messages: [
+              { id: "assistant-1", role: "assistant", text: "스트리밍 중", isComplete: false },
+            ],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 0,
+            },
+          }}
+        >
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      clientHeights.set(messages, 200);
+      scrollHeights.set(messages, 1000);
+      messages.scrollTop = 720;
+      messages.dataset.lastScrollTop = "720";
+
+      fireEvent.wheel(messages, { deltaY: -1 });
+      fireEvent.scroll(messages);
+
+      expect(messages.scrollTop).toBe(720);
+      expect(messages.classList.contains("streaming-follow")).toBe(false);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
+  it("rejoins bottom follow when the user scrolls downward near the streaming tail", () => {
+    const scrollHeights = new WeakMap<Element, number>();
+    const clientHeights = new WeakMap<Element, number>();
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return scrollHeights.get(this) ?? originalScrollHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return clientHeights.get(this) ?? originalClientHeight?.get?.call(this) ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            busy: true,
+            messages: [
+              { id: "assistant-1", role: "assistant", text: "스트리밍 중", isComplete: false },
+            ],
+            appSettings: {
+              ...initialAppState.appSettings,
+              streamScrollDurationMs: 0,
+            },
+          }}
+        >
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const messages = document.querySelector(".messages") as HTMLElement;
+      clientHeights.set(messages, 200);
+      scrollHeights.set(messages, 1000);
+      messages.scrollTop = 520;
+      messages.dataset.lastScrollTop = "520";
+
+      fireEvent.wheel(messages, { deltaY: -1 });
+      fireEvent.scroll(messages);
+      expect(messages.scrollTop).toBe(520);
+      expect(messages.classList.contains("streaming-follow")).toBe(false);
+
+      fireEvent.wheel(messages, { deltaY: 1 });
+      messages.scrollTop = 560;
+      fireEvent.scroll(messages);
+
+      expect(messages.scrollTop).toBe(1000);
+      expect(messages.classList.contains("streaming-follow")).toBe(true);
     } finally {
       if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
       if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);

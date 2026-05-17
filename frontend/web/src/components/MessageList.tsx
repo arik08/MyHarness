@@ -114,8 +114,8 @@ export function MessageList() {
       onWheel={(event) => {
         handleWheel(event.currentTarget, event.deltaY);
       }}
-      onPointerDown={handlePointerIntent}
-      onTouchStart={handlePointerIntent}
+      onPointerDown={(event) => handlePointerIntent(event.button)}
+      onTouchStart={() => handlePointerIntent()}
     >
       {state.messages.map((message, messageIndex) => {
         const commandCatalog = isCommandCatalog(message.text);

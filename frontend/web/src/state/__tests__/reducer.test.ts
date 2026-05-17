@@ -936,7 +936,7 @@ describe("appReducer", () => {
       "작업 계획 수립",
       "작업 실행",
       "skill",
-      "다음 판단 중",
+      "다음 단계 검토 중",
     ]);
     expect(next.workflowEvents.find((event) => event.toolName === "skill")?.status).toBe("done");
   });

@@ -1,16 +1,23 @@
 ---
 name: learned-web-fetch-web-fetch-failed-client-error-403-forbidde
-description: Use when MyHarness sees this repeated verified failure pattern: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://investor.oracle.com/financials/default.aspx'
+description: >
+  Use when direct web_fetch hits 403 Forbidden on a needed source.
 ---
 
 # learned-web-fetch-web-fetch-failed-client-error-403-forbidde
 
-This skill was generated automatically from a repeated, verified MyHarness failure pattern.
+Automatically learned guidance, generalized from prior 403 web-fetch failures.
 
 ## When To Use
-- Use when MyHarness sees this repeated verified failure pattern: web_fetch: web_fetch failed: Client error '403 Forbidden' for url 'https://investor.oracle.com/financials/default.aspx'
+- Use for 403 Forbidden responses from direct `web_fetch`, especially when the user requested that source or it is central to the answer.
 
-## Process
-1. Read `references/learned-patterns.md` for the concrete observed pattern.
-2. Apply the verified corrective path before retrying the failed approach.
-3. Keep new evidence concise and avoid storing raw transcripts or secrets.
+## Generalized Lesson
+- The exact blocked URL in the evidence is incidental. Generalize by platform and source type.
+- For encyclopedic sources, try official APIs, mirrors, or Jina Reader where appropriate. For investor/media/product pages, look for official PDFs, RSS, API endpoints, or `insane-search`.
+
+## Recommended Next Step
+- Invoke `insane-search` for blocked central sources, or switch to a source-specific public endpoint when one exists.
+- Verify that the fetched alternative actually contains the needed content before citing or summarizing it.
+
+## Avoid
+- Do not treat a local output file inspection as evidence that the original web source was successfully fetched.

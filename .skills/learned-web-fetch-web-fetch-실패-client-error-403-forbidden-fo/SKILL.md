@@ -1,16 +1,24 @@
 ---
 name: learned-web-fetch-web-fetch-실패-client-error-403-forbidden-fo
-description: Use when MyHarness sees this repeated verified failure pattern: web_fetch: web_fetch 실패: Client error '403 Forbidden' for url 'https://openai.com/index/gpt-4/'
+description: >
+  Use when direct fetch of an official product, model, or vendor page is blocked
+  and the answer needs current source-backed content.
 ---
 
 # learned-web-fetch-web-fetch-실패-client-error-403-forbidden-fo
 
-This skill was generated automatically from a repeated, verified MyHarness failure pattern.
+Automatically learned guidance, generalized from prior official-page 403 failures.
 
 ## When To Use
-- Use when MyHarness sees this repeated verified failure pattern: web_fetch: web_fetch 실패: Client error '403 Forbidden' for url 'https://openai.com/index/gpt-4/'
+- Use for blocked official pages such as product announcements, model pages, vendor blogs, docs, or release notes.
 
-## Process
-1. Read `references/learned-patterns.md` for the concrete observed pattern.
-2. Apply the verified corrective path before retrying the failed approach.
-3. Keep new evidence concise and avoid storing raw transcripts or secrets.
+## Generalized Lesson
+- The exact historical page is only an example. A blocked official page needs a verified alternate official route, not a saved local artifact or a guessed summary.
+- For OpenAI-related pages, prefer official OpenAI docs/sites and current verification.
+
+## Recommended Next Step
+- Try official docs/search, source-specific APIs, Jina Reader where suitable, or `insane-search` when the source is central.
+- Confirm that the alternate source contains the same claim before using it.
+
+## Avoid
+- Do not answer from a previously generated report as if it were the primary source.

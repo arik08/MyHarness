@@ -114,15 +114,15 @@ description: >
 
 사용자가 YouTube 링크를 보내며 "자막 받아서 분석", "영상 내용 분석", "요약", "정리"를 요청하면 YouTube 페이지를 브라우저로 직접 열려고 하지 말고 `yt-dlp` 메타데이터와 자막 URL을 우선 사용한다.
 
-1. 먼저 자막 존재 여부를 확인한다.
+1. 먼저 재사용 스크립트를 사용한다. 임시 redirection, heredoc, 긴 `python -c` 조합을 새로 만들지 않는다.
    ```bash
-   yt-dlp --list-subs "URL"
+   py -3 .skills/insane-search/scripts/youtube_transcript.py "URL" --json
    ```
-2. `ko-orig`, `ko`, `en` 순서로 자막/자동생성 자막을 우선 선택한다. `--list-subs` 출력에서 `Available automatic captions`만 있어도 분석 가능하다.
-3. 자막이 있으면 `--dump-json --skip-download`로 메타데이터를 받고, `automatic_captions` 또는 `subtitles`의 `json3`/`vtt` URL을 읽어 텍스트로 정리한 뒤 분석한다. 파일 저장이 필요하면 shell redirection/heredoc 대신 전용 파일 도구나 Python 파일 쓰기를 사용한다.
-4. **자막도 자동생성 자막도 없으면 영상 내용을 추측하지 말고, "자막 또는 자동생성 자막이 없어 영상 내용 분석은 할 수 없습니다"라고 답한다.** 제목·설명·썸네일만으로 본문 분석한 것처럼 말하지 않는다.
+2. 스크립트는 `ko-orig`, `ko`, `en` 순서로 `subtitles`와 `automatic_captions`를 확인하고, `json3`/`vtt`/`srv*` 자막을 텍스트로 정리한다. 분석에는 이 출력의 `title`, `duration`, `caption_language`, `transcript`를 사용한다.
+3. `ok=false`이고 `reason`이 `NO_CAPTIONS` 또는 `EMPTY_CAPTIONS`이면 영상 내용을 추측하지 말고, "자막 또는 자동생성 자막이 없어 영상 내용 분석은 할 수 없습니다"라고 답한다. 제목·설명·썸네일만으로 본문 분석한 것처럼 말하지 않는다.
+4. 스크립트 자체가 실패할 때만 `yt-dlp --list-subs "URL"`로 자막 존재 여부를 진단한다.
 
-실전 Python 패턴:
+스크립트가 없거나 수정 중일 때만 쓰는 수동 Python 패턴:
 ```bash
 python - <<'PY'
 import html, json, re, subprocess, urllib.request

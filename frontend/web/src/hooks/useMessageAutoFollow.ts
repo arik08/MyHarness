@@ -3,8 +3,8 @@ import type { Dispatch } from "react";
 import type { AppAction } from "../state/reducer";
 import type { AppState, ChatMessage } from "../types/ui";
 
-const nearBottomPx = 96;
-const streamingRejoinBottomPx = 260;
+const nearBottomPx = 140;
+const streamingRejoinBottomPx = 360;
 const scrollStorageKey = "myharness:scrollPositions";
 const maxStreamFollowLeadPx = 360;
 export const messageBottomFollowEvent = "myharness:followMessageBottom";
@@ -70,6 +70,7 @@ export function useMessageAutoFollow({
   const tailFollowActiveRef = useRef(false);
   const autoScrollUntilRef = useRef(0);
   const userScrollIntentUntilRef = useRef(0);
+  const userScrollUpIntentUntilRef = useRef(0);
   const scrollSaveTimerRef = useRef(0);
   const wasLastAssistantStreamingRef = useRef(false);
   const wasActiveWorkflowGrowingRef = useRef(false);
@@ -235,10 +236,15 @@ export function useMessageAutoFollow({
     const currentTop = container.scrollTop;
     const previousTop = Number(container.dataset.lastScrollTop);
     const movedUp = Number.isFinite(previousTop) && currentTop < previousTop - 2;
+    const movedDown = Number.isFinite(previousTop) && currentTop > previousTop + 2;
     const userScrolling = Date.now() <= userScrollIntentUntilRef.current;
+    if (movedDown) {
+      userScrollUpIntentUntilRef.current = 0;
+    }
+    const userScrollingUp = Date.now() <= userScrollUpIntentUntilRef.current;
     const remaining = container.scrollHeight - container.clientHeight - container.scrollTop;
     const threshold = shouldFollowGrowingTail ? Math.max(nearBottomPx, streamingRejoinBottomPx + streamFollowLeadPxRef.current) : nearBottomPx;
-    if (movedUp) {
+    if (movedUp || userScrollingUp) {
       stopAutoFollow(container);
     } else if (remaining <= threshold) {
       resumeAutoFollow(container);
@@ -313,6 +319,7 @@ export function useMessageAutoFollow({
       }
       autoFollowRef.current = true;
       userScrollIntentUntilRef.current = 0;
+      userScrollUpIntentUntilRef.current = 0;
       scrollMessagesToBottom({ smooth: false, duration: 0 });
       window.requestAnimationFrame(() => {
         scrollMessagesToBottom({ smooth: false, duration: 0 });
@@ -341,11 +348,18 @@ export function useMessageAutoFollow({
     handleWheel(container: HTMLElement, deltaY: number) {
       userScrollIntentUntilRef.current = Date.now() + 900;
       if (deltaY < 0) {
+        userScrollUpIntentUntilRef.current = Date.now() + 900;
         stopAutoFollow(container);
+      } else if (deltaY > 0) {
+        userScrollUpIntentUntilRef.current = 0;
       }
     },
-    handlePointerIntent() {
+    handlePointerIntent(button?: number) {
       userScrollIntentUntilRef.current = Date.now() + 900;
+      if (button === 1) {
+        userScrollUpIntentUntilRef.current = Date.now() + 900;
+        stopAutoFollow();
+      }
     },
     handleVisibleTextChange() {
       if (!autoFollowRef.current || state.restoringHistory || state.historyReadOnly) {

@@ -1,16 +1,24 @@
 ---
 name: learned-category-bash
-description: Use when MyHarness sees this repeated verified failure pattern: bash input=python posco_sentiment_tmp.py: N 92
+description: >
+  Use when repeated shell command failures point to a workflow mismatch, not a
+  command that should be retried verbatim.
 ---
 
 # learned-category-bash
 
-This skill was generated automatically from a repeated, verified MyHarness failure pattern.
+Automatically learned guidance, generalized from prior shell-command failures.
 
 ## When To Use
-- Use when MyHarness sees this repeated verified failure pattern: bash input=python posco_sentiment_tmp.py: N 92
+- Use for repeated shell or command-line failures where the successful path came from changing the workflow, data source, launcher, or validation route.
 
-## Process
-1. Read `references/learned-patterns.md` for the concrete observed pattern.
-2. Apply the verified corrective path before retrying the failed approach.
-3. Keep new evidence concise and avoid storing raw transcripts or secrets.
+## Generalized Lesson
+- Do not memorize the exact failing command. Identify why the shell path was wrong: wrong launcher, wrong working directory, missing dependency, blocked source, stale temporary file, or an analysis path that should use an API/source-specific helper.
+- Prefer an existing reusable script, project command, or source-specific fetch path over rebuilding a one-off shell command.
+
+## Recommended Next Step
+- Re-check the goal and choose the stable workflow first. On this Windows repo, prefer `py -3` for Python scripts and project-provided helpers when available.
+- If the prior evidence only shows that a different source was fetched successfully, treat it as a source-selection lesson rather than a shell syntax lesson.
+
+## Avoid
+- Do not rerun an exact temporary command just because it appeared in a learned evidence block.

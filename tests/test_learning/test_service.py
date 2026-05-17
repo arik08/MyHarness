@@ -122,6 +122,37 @@ def test_web_fetch_signature_uses_status_and_domain_not_path():
     assert candidate.failure_signature == "web-fetch-403-example-com"
 
 
+def test_youtube_yt_dlp_failures_create_reusable_transcript_skill(tmp_path: Path):
+    metadata: dict[str, object] = {
+        "recent_verified_work": [
+            "Ran command py -3 .skills/insane-search/scripts/youtube_transcript.py URL --json"
+        ]
+    }
+    for video_id in ("uqdwML8VzUY", "I9nDOSGfwZg"):
+        remember_tool_failure(
+            metadata,
+            tool_name="cmd",
+            tool_input={
+                "command": (
+                    "yt-dlp --dump-json --skip-download "
+                    f'"https://www.youtube.com/watch?v={video_id}"'
+                )
+            },
+            tool_output="WARNING: [youtube] No supported JavaScript runtime could be found",
+        )
+
+    candidate = analyze_learning_candidate(metadata)
+    assert candidate is not None
+    assert candidate.failure_signature == "youtube-transcript-yt-dlp"
+    assert candidate.skill_name == "learned-youtube-transcript-yt-dlp"
+    assert "youtube_transcript.py" in candidate.do_next_time
+
+    result = persist_learning_candidate(candidate, skills_dir=tmp_path / ".skills")
+    skill_text = result.skill_path.read_text(encoding="utf-8")
+    assert "description: >" in skill_text
+    assert "reusable helper" in skill_text
+
+
 def test_unhelpful_verified_work_does_not_create_candidate():
     metadata: dict[str, object] = {
         "recent_verified_work": [

@@ -1002,6 +1002,7 @@ function startActivityStep(events: WorkflowEvent[]): WorkflowEvent[] {
   if (existingActivityIndex !== -1) {
     return events.map((event, index) => index === existingActivityIndex
       ? mergeWorkflowEventPatch(event, {
+          title: "다음 단계 검토 중",
           status: "running",
           detail: "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
         })
@@ -1009,7 +1010,7 @@ function startActivityStep(events: WorkflowEvent[]): WorkflowEvent[] {
   }
   return appendWorkflowEvent(events, {
     toolName: "",
-    title: "다음 판단 중",
+    title: "다음 단계 검토 중",
     detail: "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
     status: "running",
     level: "parent",
@@ -1020,7 +1021,7 @@ function startActivityStep(events: WorkflowEvent[]): WorkflowEvent[] {
 function completeActivityStep(events: WorkflowEvent[], detail = "다음 작업을 정했습니다."): WorkflowEvent[] {
   return events.map((event) => (
     event.role === "activity" && event.status === "running"
-      ? mergeWorkflowEventPatch(event, { status: "done", detail })
+      ? mergeWorkflowEventPatch(event, { title: "다음 단계 결정 완료", status: "done", detail })
       : event
   ));
 }

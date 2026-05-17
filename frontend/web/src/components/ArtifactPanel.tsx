@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent, WheelEvent as ReactWheelEvent } from "react";
 import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary } from "../types/backend";
@@ -34,6 +34,7 @@ const projectFileCategories = [
 ];
 const projectFileCategoryValues = new Set(projectFileCategories.map(([value]) => value));
 const projectFilePinnedKeyPrefix = "myharness:projectFilePins";
+const aiEditProgressBottomFollowPx = 180;
 type ArtifactPanelHistoryView = "list" | "detail" | "fullscreen";
 
 function isArtifactHistoryState(value: unknown) {
@@ -343,6 +344,11 @@ export function ArtifactPanel() {
   const lastArtifactRefreshKeyRef = useRef(state.artifactRefreshKey);
   const aiEditCompletionRefreshKeyRef = useRef<number | null>(null);
   const openArtifactRequestRef = useRef(0);
+  const aiEditCommentsRef = useRef<HTMLDivElement | null>(null);
+  const aiEditProgressRef = useRef<HTMLDivElement | null>(null);
+  const aiEditProgressAutoFollowRef = useRef(true);
+  const aiEditProgressUserUpIntentRef = useRef(false);
+  const aiEditProgressScrollTopsRef = useRef<WeakMap<HTMLElement, number>>(new WeakMap());
   const projectFilePinnedStorage = useMemo(
     () => projectFilePinnedStorageKey(state.workspacePath, state.workspaceName),
     [state.workspaceName, state.workspacePath],
@@ -446,6 +452,88 @@ export function ArtifactPanel() {
     const timer = window.setInterval(() => setAiEditProgressNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [aiEditProgressStartedAt, showAiEditProgress]);
+
+  function aiEditScrollRemaining(container: HTMLElement) {
+    return Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
+  }
+
+  function rememberAiEditScrollTop(container: HTMLElement) {
+    aiEditProgressScrollTopsRef.current.set(container, container.scrollTop);
+  }
+
+  function scrollAiEditProgressToBottom() {
+    const containers = [aiEditCommentsRef.current, aiEditProgressRef.current].filter((item): item is HTMLDivElement => Boolean(item));
+    for (const container of containers) {
+      container.scrollTop = container.scrollHeight;
+      rememberAiEditScrollTop(container);
+    }
+  }
+
+  function handleAiEditProgressScroll(event: ReactUIEvent<HTMLDivElement>) {
+    const container = event.currentTarget;
+    const previousTop = aiEditProgressScrollTopsRef.current.get(container);
+    const currentTop = container.scrollTop;
+    const remaining = aiEditScrollRemaining(container);
+    if (previousTop !== undefined && currentTop < previousTop - 1) {
+      aiEditProgressAutoFollowRef.current = false;
+      aiEditProgressUserUpIntentRef.current = true;
+    } else if (
+      previousTop !== undefined
+      && currentTop > previousTop + 1
+      && remaining <= aiEditProgressBottomFollowPx
+    ) {
+      aiEditProgressAutoFollowRef.current = true;
+      aiEditProgressUserUpIntentRef.current = false;
+    } else if (remaining <= 2 && !aiEditProgressUserUpIntentRef.current) {
+      aiEditProgressAutoFollowRef.current = true;
+    }
+    rememberAiEditScrollTop(container);
+  }
+
+  function handleAiEditProgressWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    if (event.deltaY < 0) {
+      aiEditProgressAutoFollowRef.current = false;
+      aiEditProgressUserUpIntentRef.current = true;
+    } else if (event.deltaY > 0) {
+      aiEditProgressUserUpIntentRef.current = false;
+    }
+  }
+
+  function handleAiEditProgressPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 1) return;
+    aiEditProgressAutoFollowRef.current = false;
+    aiEditProgressUserUpIntentRef.current = true;
+  }
+
+  useLayoutEffect(() => {
+    if (!showAiEditProgress || aiEditOverlayCollapsed) {
+      aiEditProgressAutoFollowRef.current = true;
+      aiEditProgressUserUpIntentRef.current = false;
+      return;
+    }
+    const progress = aiEditProgressRef.current;
+    const comments = aiEditCommentsRef.current;
+    if (!progress && !comments) return;
+    const nearBottom = [comments, progress]
+      .filter((item): item is HTMLDivElement => Boolean(item))
+      .every((container) => aiEditScrollRemaining(container) <= aiEditProgressBottomFollowPx);
+    if (!aiEditProgressAutoFollowRef.current && !aiEditProgressUserUpIntentRef.current && nearBottom) {
+      aiEditProgressAutoFollowRef.current = true;
+    }
+    if (!aiEditProgressAutoFollowRef.current) return;
+    scrollAiEditProgressToBottom();
+  }, [
+    aiEditComments.length,
+    aiEditOverlayCollapsed,
+    aiEditProgressNow,
+    aiEditStatus,
+    aiEditTargetPath,
+    showAiEditProgress,
+    state.busy,
+    state.statusText,
+    state.workflowEvents,
+    submittingAiEdit,
+  ]);
 
   useEffect(() => {
     if (!versionMenuOpen) return;
@@ -1199,7 +1287,14 @@ export function ArtifactPanel() {
         </div>
       </div>
       {active && canEditHtmlPreview && (aiEditComments.length > 0 || aiEditStatus) ? (
-        <div className={`artifact-ai-comments${showAiEditProgress ? " with-progress" : ""}${aiEditOverlayCollapsed ? " collapsed" : ""}`} aria-label="AI 수정 의견">
+        <div
+          className={`artifact-ai-comments${showAiEditProgress ? " with-progress" : ""}${aiEditOverlayCollapsed ? " collapsed" : ""}`}
+          aria-label="AI 수정 의견"
+          ref={aiEditCommentsRef}
+          onScroll={handleAiEditProgressScroll}
+          onWheel={handleAiEditProgressWheel}
+          onPointerDown={handleAiEditProgressPointerDown}
+        >
           {aiEditOverlayCollapsed ? (
             <>
               <span className="artifact-ai-comment-index">{aiEditComments.length || 1}</span>
@@ -1280,7 +1375,16 @@ export function ArtifactPanel() {
                 <span>{submittingAiEdit ? "요청 중" : "AI 자동편집"}</span>
               </button>
               {showAiEditProgress ? (
-                <div className="artifact-ai-progress" aria-label="AI 자동편집 진행 과정" role="status" aria-live="polite">
+                <div
+                  className="artifact-ai-progress"
+                  aria-label="AI 자동편집 진행 과정"
+                  role="status"
+                  aria-live="polite"
+                  ref={aiEditProgressRef}
+                  onScroll={handleAiEditProgressScroll}
+                  onWheel={handleAiEditProgressWheel}
+                  onPointerDown={handleAiEditProgressPointerDown}
+                >
                   <WorkflowPanel
                     events={aiEditProgressEvents}
                     durationSeconds={aiEditLiveProgressEvents.length ? state.workflowDurationSeconds : aiEditElapsedSeconds}

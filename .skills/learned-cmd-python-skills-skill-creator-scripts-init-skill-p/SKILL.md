@@ -1,16 +1,24 @@
 ---
 name: learned-cmd-python-skills-skill-creator-scripts-init-skill-p
-description: Use when MyHarness sees this repeated verified failure pattern: cmd input=python .skills/skill-creator/scripts/init_skill.py ui-design-essence --path .skills --interface 'display_name=UI Design Essence' --interface 'short_de
+description: >
+  Use when creating or editing a local skill and the init command output is not
+  enough to prove the skill is loadable.
 ---
 
 # learned-cmd-python-skills-skill-creator-scripts-init-skill-p
 
-This skill was generated automatically from a repeated, verified MyHarness failure pattern.
+Automatically learned guidance, generalized from prior skill-creation command checks.
 
 ## When To Use
-- Use when MyHarness sees this repeated verified failure pattern: cmd input=python .skills/skill-creator/scripts/init_skill.py ui-design-essence --path .skills --interface 'display_name=UI Design Essence' --interface 'short_de
+- Use for local MyHarness skill creation, generated skill edits, or frontmatter/interface changes.
 
-## Process
-1. Read `references/learned-patterns.md` for the concrete observed pattern.
-2. Apply the verified corrective path before retrying the failed approach.
-3. Keep new evidence concise and avoid storing raw transcripts or secrets.
+## Generalized Lesson
+- Skill creation is not complete when the init command prints a success-looking line. The skill must be validated and, when practical, loaded by the registry.
+- The exact historical skill name is only an example.
+
+## Recommended Next Step
+- Use the project skill tooling, then run the quick validator against the actual skill directory.
+- Prefer `py -3` on this Windows machine when invoking Python scripts.
+
+## Avoid
+- Do not edit generated skill YAML/frontmatter without validating it afterward.
