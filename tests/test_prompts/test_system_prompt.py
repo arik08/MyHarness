@@ -159,6 +159,7 @@ def test_build_system_prompt_defaults_report_requests_to_html_artifacts():
     assert "pasted site, article, document, transcript, or source text" in prompt
     assert "보고서로 작성해줘" in prompt
     assert "create a standalone HTML report under `outputs/`" in prompt
+    assert "aim for roughly 10,000 substantive body tokens by default" in prompt
     assert "Do not put the full report body only in the chat" in prompt
     assert "PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, slides" in prompt
     assert "honor that requested format instead" in prompt

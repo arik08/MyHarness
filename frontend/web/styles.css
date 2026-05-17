@@ -5194,6 +5194,12 @@ a:focus-visible {
   border-radius: 7px;
 }
 
+:root:not([data-theme]) .workflow-activity-status {
+  background: color-mix(in srgb, var(--sidebar-hover) 54%, var(--panel) 46%);
+  border-color: color-mix(in srgb, var(--line) 82%, var(--sidebar-hover) 18%);
+  border-left-color: color-mix(in srgb, var(--line-strong) 72%, var(--sidebar-hover) 28%);
+}
+
 .workflow-activity-status.done {
   background: color-mix(in srgb, var(--success) 5%, transparent);
   border-color: color-mix(in srgb, var(--success) 20%, var(--line));
@@ -5221,6 +5227,11 @@ a:focus-visible {
   border-top-color: var(--accent);
   border-radius: 999px;
   animation: todoSpinner 0.82s linear infinite;
+}
+
+:root:not([data-theme]) .workflow-activity-spinner {
+  border-color: color-mix(in srgb, var(--line-strong) 38%, transparent);
+  border-top-color: color-mix(in srgb, var(--icon-muted) 74%, var(--line-strong) 26%);
 }
 
 .workflow-activity-status.done .workflow-activity-spinner {
@@ -6227,7 +6238,9 @@ a:focus-visible {
   position: relative;
   min-width: 0;
   max-width: 100%;
+  max-height: min(640px, 68vh);
   overflow: auto;
+  overscroll-behavior: contain;
   margin: 16px 0 20px;
   padding: 36px 10px 10px;
   background: color-mix(in srgb, var(--panel-raised) 96%, var(--accent-soft) 4%);

@@ -25,7 +25,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
   const [saving, setSaving] = useState(false);
   const text = message.text.trim();
 
-  if (!message.isComplete || !text) {
+  if (message.suppressActions || !message.isComplete || !text) {
     return null;
   }
 

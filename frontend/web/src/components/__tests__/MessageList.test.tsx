@@ -2831,6 +2831,9 @@ describe("MessageList", () => {
 
     expect(screen.getByText("가정값은 검토용 예시값으로 두고 모델을 만들겠습니다.")).toBeTruthy();
     expect(document.querySelector(".react-streaming-text")).toBeNull();
+    expect(screen.queryByText("답변 완료")).toBeNull();
+    expect(screen.queryByLabelText("원문 복사")).toBeNull();
+    expect(screen.queryByLabelText("본문 저장")).toBeNull();
   });
 
   it("buffers the active streaming assistant answer before revealing it smoothly", () => {

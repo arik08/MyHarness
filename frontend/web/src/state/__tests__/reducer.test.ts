@@ -673,6 +673,46 @@ describe("appReducer", () => {
     ]);
   });
 
+  it("uses the active profile id to select runtime picker models for client sessions", () => {
+    const ready = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "ready",
+        state: {
+          provider: "openai_codex",
+          active_profile: "codex",
+          provider_label: "Codex Subscription",
+          model: "gpt-5.5",
+        },
+      },
+    });
+    const opened = appReducer(ready, { type: "open_runtime_picker" });
+    const next = appReducer(opened, {
+      type: "backend_event",
+      event: {
+        type: "select_request",
+        modal: {
+          command: "runtime-picker",
+          runtime_options: {
+            providers: [
+              { value: "codex", label: "Codex Subscription", active: false },
+            ],
+            models_by_provider: {
+              codex: [
+                { value: "gpt-5.5", label: "gpt-5.5" },
+                { value: "gpt-5.4", label: "gpt-5.4" },
+              ],
+            },
+            efforts: [],
+          },
+        },
+      },
+    });
+
+    expect(next.runtimePicker.selectedProvider).toBe("codex");
+    expect(next.runtimePicker.models.map((option) => option.value)).toEqual(["gpt-5.5", "gpt-5.4"]);
+  });
+
   it("closes stale resume selection modals when the history list changes", () => {
     const next = appReducer(
       {

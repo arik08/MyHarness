@@ -124,8 +124,10 @@ def _build_long_report_section() -> str:
             "Ordinary report requests may still require standalone files. If the user asks for a report, long report, "
             "장문보고서, 긴 보고서, 대보고서, or a report based on pasted text, a site, article, document, transcript, "
             "research, investigation, comparison, analysis, or source summary and does not name another format, create "
-            "a standalone HTML report under `outputs/` rather than putting the full report body only in the chat. Keep "
-            "that single coherent artifact within the 20,000-token cap.",
+            "a standalone HTML report under `outputs/` rather than putting the full report body only in the chat. For "
+            "ordinary report requests with no explicit length, aim for roughly 10,000 substantive body tokens by default, "
+            "unless the user asks for a shorter artifact, the source material is too thin to support that length, or "
+            "another active limit makes that impossible. Keep that single coherent artifact within the 20,000-token cap.",
         ]
     )
 

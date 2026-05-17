@@ -21,6 +21,7 @@ export type ChatMessage = {
   toolName?: string;
   isError?: boolean;
   isComplete?: boolean;
+  suppressActions?: boolean;
   terminal?: {
     command: string;
     output?: string;

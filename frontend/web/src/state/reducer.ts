@@ -339,7 +339,7 @@ function assistantStreamingText(currentText: string, nextChunkOrSnapshot: string
   return `${currentText}${nextChunkOrSnapshot}`;
 }
 
-function completePendingAssistantMessage(messages: ChatMessage[], completedText = ""): ChatMessage[] {
+function completePendingAssistantMessage(messages: ChatMessage[], completedText = "", suppressActions = false): ChatMessage[] {
   const last = messages[messages.length - 1];
   if (last?.role === "assistant" && last.isComplete !== true) {
     const text = assistantCompletionText(last.text, completedText);
@@ -348,7 +348,7 @@ function completePendingAssistantMessage(messages: ChatMessage[], completedText 
     }
     return [
       ...messages.slice(0, -1),
-      { ...last, text, isComplete: true },
+      { ...last, text, isComplete: true, suppressActions: suppressActions || last.suppressActions },
     ];
   }
   return messages;
@@ -1397,11 +1397,12 @@ function runtimeEffortValueForScope(state: AppState, scope = state.runtimePicker
 function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string, unknown>) {
   const subagentModel = String(runtimeOptions.subagent_model || state.subagentModel || "").trim() || state.subagentModel;
   const subagentEffort = String(runtimeOptions.subagent_effort || state.subagentEffort || "").trim() || state.subagentEffort;
+  const activeProviderProfile = String(state.activeProfile || state.provider || "").trim();
   const providers = activeRuntimeOptions(
     (Array.isArray(runtimeOptions.providers) ? runtimeOptions.providers : [])
       .map((option) => normalizeRuntimeOption(option as Record<string, unknown>))
       .filter((option): option is NonNullable<typeof option> => Boolean(option)),
-    state.provider,
+    activeProviderProfile,
   );
   const rawModels = runtimeOptions.models_by_provider && typeof runtimeOptions.models_by_provider === "object"
     ? runtimeOptions.models_by_provider as Record<string, unknown>
@@ -1415,7 +1416,11 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
       state.runtimePicker.agentScope === "sub" ? subagentModel : state.model,
     ),
   ]));
-  const selectedProvider = providers.find((option) => option.active)?.value || state.provider || providers[0]?.value || "";
+  const selectedProvider = providers.find((option) => option.active)?.value
+    || (modelsByProvider[activeProviderProfile] ? activeProviderProfile : "")
+    || state.provider
+    || providers[0]?.value
+    || "";
   const models = modelsByProvider[selectedProvider] || [];
   const efforts = activeRuntimeOptions(
     (Array.isArray(runtimeOptions.efforts) ? runtimeOptions.efforts : [])
@@ -2168,7 +2173,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         : last?.role === "assistant"
           ? [...state.messages.slice(0, -1), { ...last, isComplete: true }]
           : state.messages
-      : completePendingAssistantMessage(state.messages, value);
+      : completePendingAssistantMessage(state.messages, value, true);
     return {
       ...state,
       busy: event.has_tool_uses === true,

@@ -218,6 +218,7 @@ def test_build_runtime_system_prompt_keeps_report_limits_from_overriding_html_ar
     assert "Ordinary report requests may still require standalone files" in prompt
     assert "장문보고서, 긴 보고서, 대보고서" in prompt
     assert "create a standalone HTML report under `outputs/`" in prompt
+    assert "aim for roughly 10,000 substantive body tokens by default" in prompt
     assert "should be answered directly" not in prompt
 
 
