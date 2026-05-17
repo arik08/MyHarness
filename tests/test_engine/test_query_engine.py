@@ -507,7 +507,8 @@ async def test_query_engine_surfaces_retry_status_events(tmp_path: Path):
 
     events = [event async for event in engine.submit_message("hello")]
 
-    assert any(isinstance(event, StatusEvent) and "retrying in 1.5s" in event.message for event in events)
+    retry_events = [event for event in events if isinstance(event, StatusEvent)]
+    assert any("연결이 잠시 끊겨 재시도합니다" in event.message for event in retry_events)
     assert isinstance(events[-1], AssistantTurnComplete)
 
 

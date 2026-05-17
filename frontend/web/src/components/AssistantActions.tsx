@@ -3,6 +3,7 @@ import { saveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ChatMessage } from "../types/ui";
 import { artifactName } from "../utils/artifacts";
+import { copyTextToClipboard } from "../utils/clipboard";
 
 function answerFileName(title: string, text: string) {
   const source = title.trim() && title.trim() !== "MyHarness"
@@ -15,30 +16,6 @@ function answerFileName(title: string, text: string) {
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
   return `outputs/${clean || "answer"}.md`;
-}
-
-async function copyTextToClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Fall through to the selection-based copy path.
-    }
-  }
-  const textArea = document.createElement("textarea");
-  textArea.value = text;
-  textArea.setAttribute("readonly", "");
-  textArea.style.position = "fixed";
-  textArea.style.top = "-1000px";
-  textArea.style.opacity = "0";
-  document.body.append(textArea);
-  textArea.select();
-  const copied = document.execCommand("copy");
-  textArea.remove();
-  if (!copied) {
-    throw new Error("복사에 실패했습니다.");
-  }
 }
 
 export function AssistantActions({ message, children }: { message: ChatMessage; children?: ReactNode }) {

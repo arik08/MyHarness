@@ -329,6 +329,35 @@ describe("MarkdownMessage Mermaid rendering", () => {
     expect(container.querySelectorAll(".stream-reveal-sentence")).toHaveLength(revealCount);
   });
 
+  it("does not leave uncancelled enhancement frames during rapid reveal rerenders", () => {
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    const originalCancelAnimationFrame = window.cancelAnimationFrame;
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrameId = 1;
+    window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      const id = nextFrameId;
+      nextFrameId += 1;
+      frames.set(id, callback);
+      return id;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = ((id: number) => {
+      frames.delete(id);
+    }) as typeof window.cancelAnimationFrame;
+
+    try {
+      const { rerender, unmount } = render(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." revealFrom={0} />);
+      rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." revealFrom={4} />);
+      rerender(<MarkdownMessage text="첫 문장입니다. 다음 문장입니다." revealFrom={8} />);
+
+      expect(frames.size).toBe(1);
+      unmount();
+      expect(frames.size).toBe(0);
+    } finally {
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+      window.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
+  });
+
   it("opens rendered mermaid charts in a zoomable and pannable viewer", async () => {
     render(
       <MarkdownMessage

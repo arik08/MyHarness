@@ -339,18 +339,6 @@ function appendErrorMessage(messages: ChatMessage[], message: string): ChatMessa
   return appendMessage(messages, { role: "system", text, isError: true });
 }
 
-function appendStatusMessage(messages: ChatMessage[], message: string): ChatMessage[] {
-  const text = normalizeVisibleText(message).trim();
-  if (!text) {
-    return messages;
-  }
-  const last = messages[messages.length - 1];
-  if (last?.role === "system" && !last.isError && last.text === text) {
-    return messages;
-  }
-  return appendMessage(messages, { role: "system", text });
-}
-
 function isShellTool(toolName: string) {
   const lower = toolName.toLowerCase();
   return lower === "cmd" || lower === "bash" || lower.includes("shell_command");
@@ -1834,7 +1822,6 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     return {
       ...state,
       statusText: text || state.statusText,
-      messages: event.quiet === true ? state.messages : appendStatusMessage(state.messages, text),
     };
   }
 

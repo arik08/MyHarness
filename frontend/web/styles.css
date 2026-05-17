@@ -5479,7 +5479,7 @@ a:focus-visible {
   min-width: 0;
   width: 100%;
   max-width: 100%;
-  max-height: min(64vh, 680px);
+  max-height: min(calc(64vh + 50px), 730px);
   overflow-x: hidden;
   overflow-y: auto;
   padding-right: 2px;
@@ -5487,30 +5487,26 @@ a:focus-visible {
 }
 
 .command-help-intro {
+  display: grid;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
-  padding: 2px 12px 0;
+  padding: 0;
   color: var(--muted);
   font-size: 13px;
   overflow-x: hidden;
 }
 
-.command-help-intro p {
+.command-intro-card summary {
+  min-height: 34px;
+}
+
+.command-intro-body {
+  padding: 0 12px 8px;
+}
+
+.command-intro-body p {
   margin: 0 0 6px;
-}
-
-.command-help-intro p:has(> strong:only-child) {
-  margin: 10px 0 7px;
-}
-
-.command-help-intro p:first-child:has(> strong:only-child) {
-  margin-top: 0;
-}
-
-.command-help-intro p > strong:only-child {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 760;
 }
 
 .command-card summary {
@@ -5661,6 +5657,30 @@ a:focus-visible {
 .skill-plugin-group.disabled .plugin-skill-header small {
   background: var(--sidebar-hover);
   color: var(--faint);
+}
+
+.skill-plugin-group.collapsed .skill-section-header {
+  margin-bottom: 0;
+}
+
+.skill-plugin-group-trigger {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.skill-plugin-group-trigger:hover strong,
+.skill-plugin-group-trigger:focus-visible strong {
+  color: var(--ink);
+}
+
+.skill-plugin-group-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--skill-group-accent) 42%, transparent);
+  outline-offset: 3px;
 }
 
 .command-pill {

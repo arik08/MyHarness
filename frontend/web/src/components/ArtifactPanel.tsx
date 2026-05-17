@@ -13,6 +13,7 @@ import {
   isRootProjectFileCandidatePath,
   normalizeProjectFilePath,
 } from "../utils/artifacts";
+import { copyTextToClipboard } from "../utils/clipboard";
 import { Icon, type IconName } from "./ArtifactIcons";
 import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload } from "./ArtifactPreview";
 import { WorkflowPanel } from "./WorkflowPanel";
@@ -816,7 +817,7 @@ export function ArtifactPanel() {
     const text = canSave ? draftContentForActive : String(payload.content ?? payload.dataUrl ?? "");
     if (!canSave && !text) return;
     try {
-      await navigator.clipboard.writeText(text);
+      await copyTextToClipboard(text);
       setCopyLabel("복사됨");
       window.setTimeout(() => setCopyLabel("복사"), 1400);
     } catch (error) {

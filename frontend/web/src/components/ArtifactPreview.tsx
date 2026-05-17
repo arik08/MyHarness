@@ -1752,7 +1752,6 @@ export function ArtifactPreview({
   const htmlEditSessionAssetBaseUrlRef = useRef("");
   const htmlEditWasDraftDirtyRef = useRef(false);
   const htmlScrollPositionsRef = useRef(new Map<string, { x: number; y: number }>());
-  const shouldOmitCompletedHtmlSource = sourceMode && kind === "html" && payloadHasContent && !draftDirty;
   useEffect(() => {
     function handleFrameScrollMessage(event: MessageEvent) {
       if (
@@ -1800,13 +1799,6 @@ export function ArtifactPreview({
   useEffect(() => {
     htmlEditWasDraftDirtyRef.current = Boolean(draftDirty);
   }, [draftDirty]);
-  if (shouldOmitCompletedHtmlSource) {
-    return (
-      <div className="artifact-file artifact-html-source-omitted">
-        <p className="artifact-empty">완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.</p>
-      </div>
-    );
-  }
   if (sourceMode && payloadHasContent && (kind === "html" || isSourceCodeArtifact(artifact))) {
     return <HighlightedArtifactSource artifact={artifact} content={kind === "html" ? htmlDraftContent : sourceContent} />;
   }

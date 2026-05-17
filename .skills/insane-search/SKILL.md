@@ -110,6 +110,58 @@ description: >
 |--------|------|------|
 | YouTube/Vimeo/Twitch/TikTok/SoundCloud 등 1,858개 | `yt-dlp --dump-json` | [media.md](references/media.md) |
 
+#### YouTube 링크 + 자막 기반 분석 요청
+
+사용자가 YouTube 링크를 보내며 "자막 받아서 분석", "영상 내용 분석", "요약", "정리"를 요청하면 YouTube 페이지를 브라우저로 직접 열려고 하지 말고 `yt-dlp` 메타데이터와 자막 URL을 우선 사용한다.
+
+1. 먼저 자막 존재 여부를 확인한다.
+   ```bash
+   yt-dlp --list-subs "URL"
+   ```
+2. `ko-orig`, `ko`, `en` 순서로 자막/자동생성 자막을 우선 선택한다. `--list-subs` 출력에서 `Available automatic captions`만 있어도 분석 가능하다.
+3. 자막이 있으면 `--dump-json --skip-download`로 메타데이터를 받고, `automatic_captions` 또는 `subtitles`의 `json3`/`vtt` URL을 읽어 텍스트로 정리한 뒤 분석한다. 파일 저장이 필요하면 shell redirection/heredoc 대신 전용 파일 도구나 Python 파일 쓰기를 사용한다.
+4. **자막도 자동생성 자막도 없으면 영상 내용을 추측하지 말고, "자막 또는 자동생성 자막이 없어 영상 내용 분석은 할 수 없습니다"라고 답한다.** 제목·설명·썸네일만으로 본문 분석한 것처럼 말하지 않는다.
+
+실전 Python 패턴:
+```bash
+python - <<'PY'
+import html, json, re, subprocess, urllib.request
+url = "URL"
+p = subprocess.run(['yt-dlp', '--dump-json', '--skip-download', url], capture_output=True, text=True, encoding='utf-8', timeout=120)
+data = json.loads(p.stdout)
+caps = data.get('subtitles') or {}
+auto = data.get('automatic_captions') or {}
+tracks = caps.get('ko-orig') or caps.get('ko') or auto.get('ko-orig') or auto.get('ko') or caps.get('en') or auto.get('en')
+if not tracks:
+    raise SystemExit('NO_CAPTIONS')
+t = next((x for x in tracks if x.get('ext') == 'json3'), None) or next((x for x in tracks if x.get('ext') == 'vtt'), tracks[0])
+raw = urllib.request.urlopen(t['url'], timeout=60).read().decode('utf-8', 'replace')
+if t.get('ext') == 'json3':
+    obj = json.loads(raw)
+    parts = []
+    for ev in obj.get('events', []):
+        txt = ''.join(s.get('utf8', '') for s in ev.get('segs') or []).strip()
+        if txt:
+            parts.append(re.sub(r'\s+', ' ', txt))
+else:
+    parts = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith(('WEBVTT', 'Kind:', 'Language:')) or '-->' in line:
+            continue
+        line = html.unescape(re.sub(r'<[^>]+>', '', line)).strip()
+        if line:
+            parts.append(line)
+clean = []
+for x in parts:
+    if not clean or clean[-1] != x:
+        clean.append(x)
+print('TITLE:', data.get('title'))
+print('DURATION:', data.get('duration'))
+print('\n'.join(clean))
+PY
+```
+
 ### 학술/레지스트리
 
 | 플랫폼 | 방법 | 상세 |
@@ -254,8 +306,10 @@ curl -sL "https://syndication.twitter.com/srv/timeline-profile/screen-name/{hand
 # Hacker News
 curl -sL "https://hacker-news.firebaseio.com/v0/topstories.json?limitToFirst=10&orderBy=%22%24key%22"
 
-# YouTube 자막
-yt-dlp --write-sub --write-auto-sub --sub-lang "en,ko" --skip-download -o "/tmp/%(id)s" "URL"
+# YouTube 자막/자동자막 확인 후 분석
+yt-dlp --list-subs "URL"
+# 자막이 있으면 --dump-json의 subtitles/automatic_captions URL(json3/vtt)을 읽어 텍스트화한다.
+# 자막/자동생성 자막이 모두 없으면 영상 내용은 분석 불가라고 답한다.
 ```
 
 ## No-Site-Name Rule

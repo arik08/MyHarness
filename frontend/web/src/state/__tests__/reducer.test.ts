@@ -126,7 +126,7 @@ describe("appReducer", () => {
     expect(answerEvent?.detail).toContain("수신 중");
   });
 
-  it("keeps status progress messages in the transcript instead of replacing them", () => {
+  it("updates status text without adding progress rows to the transcript", () => {
     const first = appReducer(initialAppState, {
       type: "backend_event",
       event: { type: "status", message: "맥락을 확인하고 있습니다." },
@@ -137,13 +137,10 @@ describe("appReducer", () => {
     });
 
     expect(second.statusText).toBe("관련 파일을 읽고 있습니다.");
-    expect(second.messages.map((message) => [message.role, message.text])).toEqual([
-      ["system", "맥락을 확인하고 있습니다."],
-      ["system", "관련 파일을 읽고 있습니다."],
-    ]);
+    expect(second.messages).toHaveLength(0);
   });
 
-  it("deduplicates repeated status progress messages", () => {
+  it("keeps repeated status progress out of the transcript", () => {
     const first = appReducer(initialAppState, {
       type: "backend_event",
       event: { type: "status", message: "관련 파일을 읽고 있습니다." },
@@ -153,7 +150,8 @@ describe("appReducer", () => {
       event: { type: "status", message: "관련 파일을 읽고 있습니다." },
     });
 
-    expect(duplicate.messages).toHaveLength(1);
+    expect(duplicate.statusText).toBe("관련 파일을 읽고 있습니다.");
+    expect(duplicate.messages).toHaveLength(0);
   });
 
   it("updates status text without adding transcript rows for quiet status heartbeats", () => {

@@ -451,7 +451,7 @@ describe("ArtifactPanel", () => {
     expect((source as HTMLTextAreaElement).value).toContain("# 분석 결과");
   });
 
-  it("omits completed HTML source mode in the right preview and omits the redundant back action", async () => {
+  it("shows completed HTML source mode in the right preview and omits the redundant back action", async () => {
     vi.mocked(listProjectFiles).mockResolvedValueOnce({
       scope: "default",
       files: [
@@ -507,8 +507,9 @@ describe("ArtifactPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
 
     expect(screen.queryByLabelText("report.html 원문")).toBeNull();
-    expect(document.querySelector(".artifact-source code.language-html")).toBeNull();
-    expect(screen.getByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeTruthy();
+    const code = document.querySelector(".artifact-source code.language-html");
+    expect(code?.textContent || "").toContain("<h1>Hello</h1>");
+    expect(screen.queryByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeNull();
   });
 
   it("shows direct edit actions only for HTML artifacts", () => {
@@ -961,8 +962,65 @@ describe("ArtifactPanel", () => {
     expect((await screen.findByTitle("report.html") as HTMLIFrameElement).srcdoc).not.toContain("Preview");
 
     await userEvent.click(sourceButton);
-    expect(document.querySelector(".artifact-source code")).toBeNull();
-    expect(screen.getByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeTruthy();
+    const code = document.querySelector(".artifact-source code.language-html");
+    expect(code).toBeTruthy();
+    expect(code?.textContent || "").toBe("");
+    expect(screen.queryByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeNull();
+  });
+
+  it("falls back to selection copy for HTML artifacts when Clipboard API is unavailable", async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+    const copiedText: string[] = [];
+    const execCommand = vi.fn((command: string) => {
+      copiedText.push((document.querySelector("textarea") as HTMLTextAreaElement | null)?.value || "");
+      return command === "copy";
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            clientId: "client-a",
+            sessionId: "session-a",
+            workspacePath: "C:/repo",
+            workspaceName: "repo",
+            artifacts: [{ path: "outputs/report.html", name: "report.html", kind: "html", size: 64 }],
+            activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 64 },
+            activeArtifactPayload: { kind: "html", content: "<!doctype html><html><body><h1>Preview</h1></body></html>" },
+          }}
+        >
+          <ArtifactPanel />
+        </AppStateProvider>,
+      );
+
+      expect(await screen.findByTitle("report.html")).toBeTruthy();
+      await userEvent.click(screen.getByRole("button", { name: "소스코드 복사" }));
+
+      await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+      expect(copiedText).toEqual(["<!doctype html><html><body><h1>Preview</h1></body></html>"]);
+      expect(screen.getByRole("button", { name: "복사됨" })).toBeTruthy();
+    } finally {
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+      if (originalExecCommand) {
+        Object.defineProperty(document, "execCommand", originalExecCommand);
+      } else {
+        Reflect.deleteProperty(document, "execCommand");
+      }
+    }
   });
 
   it("saves restored history artifacts through their resolved workspace", async () => {
@@ -1844,8 +1902,10 @@ describe("ArtifactPanel", () => {
     actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
     await waitFor(() => expect(screen.queryByRole("button", { name: "편집 취소" })).toBeNull());
     await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
-    expect(screen.getByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeTruthy();
-    expect(document.querySelector(".artifact-source code")?.textContent || "").not.toContain("Changed");
+    expect(screen.queryByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeNull();
+    const code = document.querySelector(".artifact-source code.language-html");
+    expect(code?.textContent || "").toContain("Preview");
+    expect(code?.textContent || "").not.toContain("Changed");
   });
 
   it("shows streaming HTML source instead of a blank frame while the style block is incomplete", () => {

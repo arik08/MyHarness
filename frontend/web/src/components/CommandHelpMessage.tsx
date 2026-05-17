@@ -22,7 +22,54 @@ type SkillPluginGroup = {
   toneIndex: number;
 };
 
+type HelpIntroSection = {
+  title: string;
+  body: string;
+  itemCount: number;
+};
+
 const SKILL_GROUP_TONE_COUNT = 6;
+const preferredPluginOrder = ["superpowers", "claude-for-legal-lite"];
+const introSectionTitles = new Set(["입력 단축키", "알아두면 좋은 기능"]);
+
+const demoMcpItems: ToggleEntry[] = [
+  {
+    name: "posco-email",
+    enabled: true,
+    description: "[연결필요] POSCO 메일 데이터 연동 후 조직 커뮤니케이션, 요청, 회신 이력을 조회할 수 있습니다.",
+    source: "mcp-demo",
+  },
+  {
+    name: "posco-calender",
+    enabled: true,
+    description: "[연결필요] POSCO 일정 데이터 연동 후 회의, 보고 일정, 주요 업무 마일스톤을 참조할 수 있습니다.",
+    source: "mcp-demo",
+  },
+  {
+    name: "posco-ecm",
+    enabled: true,
+    description: "[연결필요] ECM 권한 연동 후 사내 문서, 보고서, 결재 자료, 첨부 파일 같은 비정형 문서를 검색할 수 있습니다.",
+    source: "mcp-demo",
+  },
+  {
+    name: "posco-datalake",
+    enabled: true,
+    description: "[연결필요] 데이터레이크 접근 권한과 보안 승인을 마친 뒤 경영/생산/재무 테이블 같은 정형 데이터를 조회할 수 있습니다.",
+    source: "mcp-demo",
+  },
+  {
+    name: "posco-ontology",
+    enabled: true,
+    description: "[연결필요] POSCO 업무 온톨로지와 기준정보를 연결하면 조직, 설비, 제품, 프로세스 맥락을 참조할 수 있습니다.",
+    source: "mcp-demo",
+  },
+  {
+    name: "posco-plm",
+    enabled: true,
+    description: "[연결필요] 포스코 투자관리시스템 연동 후 투자 과제, 예산, 승인, 진행 현황을 조회할 수 있습니다.",
+    source: "mcp-demo",
+  },
+];
 
 const koSkillDescriptionsByName: Record<string, string> = {
   "brainstorming": "창의적 작업, 기능 생성, 컴포넌트 구축, 기능 추가, 동작 수정처럼 구현 전에 의도와 요구사항, 설계를 먼저 탐색해야 할 때 사용합니다.",
@@ -39,11 +86,14 @@ const koSkillDescriptionsByName: Record<string, string> = {
   "plan": "코딩 전에 구현 계획을 설계해야 할 때 사용합니다.",
   "playwright-capture": "Playwright/Chromium으로 HTML 페이지를 렌더링하고 스크린샷이나 PDF로 내보낼 때 사용합니다.",
   "polish": "출시 전 MyHarness UI의 최종 다듬기와 QA가 필요할 때 사용합니다.",
+  "pptx-writer": "PowerPoint, PPT/PPTX, 슬라이드 덱, 임원 보고용 발표자료를 만들거나 읽고, 편집하고, 분석하고, 변환하거나 품질을 점검할 때 사용합니다.",
   "receiving-code-review": "코드 리뷰 피드백을 받은 뒤 제안을 구현하기 전에 사용합니다.",
   "requesting-code-review": "작업 완료, 주요 기능 구현, 병합 전 단계에서 코드 리뷰가 필요할 때 사용합니다.",
   "review": "버그, 보안 문제, 품질 이슈를 찾기 위해 코드를 검토할 때 사용합니다.",
   "simplify": "코드를 더 단순하고 유지보수하기 쉽게 리팩터링할 때 사용합니다.",
   "skill-creator": "효과적인 스킬을 만들거나 기존 스킬을 업데이트하는 절차를 안내합니다.",
+  "skill-evaluator": "Agent Skill, Codex Skill, MyHarness 스킬이나 .skills/**/SKILL.md 폴더의 발동 조건, 안전성, 리소스 구조, UI 메타데이터, 이름 충돌, 유지보수성, 활성화 준비 상태를 검토할 때 사용합니다.",
+  "spreadsheet-analyst": "엑셀·스프레드시트 파일이 핵심 입력 또는 산출물일 때 사용합니다. XLSX, XLSM, CSV, TSV 생성·읽기·편집·검수·정리·변환, 수식·서식·차트·표·피벗·데이터 검증·업무 보고서 작성에 사용합니다.",
   "subagent-driven-development": "현재 세션에서 독립 작업이 포함된 구현 계획을 실행할 때 사용합니다.",
   "systematic-debugging": "버그, 테스트 실패, 예기치 않은 동작을 만났을 때 수정안을 제안하기 전에 사용합니다.",
   "tailwind-design-system": "Tailwind CSS v4 기반 디자인 시스템, CSS-first 테마, variant 컴포넌트, v3→v4 마이그레이션 작업에 사용합니다.",
@@ -60,12 +110,22 @@ const koSkillDescriptionsByName: Record<string, string> = {
   "writing-skills": "새 스킬을 만들거나 기존 스킬을 편집하거나 배포 전 스킬 동작을 검증할 때 사용합니다.",
 };
 
+const koPluginDescriptionsByName: Record<string, string> = {
+  "superpowers": "계획 수립, TDD, 디버깅, 협업 워크플로를 지원하는 에이전트 스킬 프레임워크입니다.",
+  "claude-for-legal-lite": "사용자가 제공한 문서와 로컬 playbook을 바탕으로 계약, 개인정보, 법무 검토를 지원합니다.",
+};
+
 function displaySkillDescription(name: string, description: string) {
   const normalizedName = String(name || "").trim().replace(/^\$/, "").toLowerCase();
   if (normalizedName.startsWith("learned-")) {
     return "MyHarness가 반복적으로 확인한 실패 또는 해결 패턴을 다시 만났을 때 참고하는 자동 학습 스킬입니다.";
   }
   return koSkillDescriptionsByName[normalizedName] || description;
+}
+
+function displayPluginDescription(name: string, description: string) {
+  const normalizedName = String(name || "").trim().toLowerCase();
+  return koPluginDescriptionsByName[normalizedName] || description;
 }
 
 export function isCommandCatalog(text: string) {
@@ -172,7 +232,7 @@ function parseMcpCatalog(text: string): ToggleEntry[] {
     .replace(/^(MCP servers:|MCP 서버:)\s*/i, "")
     .trim();
   if (!source || source === "(no MCP servers configured)" || source === "(설정된 MCP 서버가 없습니다)") {
-    return [];
+    return demoMcpItems;
   }
   return source
     .split(/\r?\n/)
@@ -209,17 +269,69 @@ function parsePluginCatalog(text: string): ToggleEntry[] {
       return {
         name: match[1].trim(),
         enabled: ["enabled", "활성"].includes(match[2].toLowerCase()),
-        description: (match[3] || "Plugin").trim(),
+        description: displayPluginDescription(match[1].trim(), (match[3] || "Plugin").trim()),
         source: "plugin",
       };
     })
     .filter((item): item is ToggleEntry => Boolean(item));
 }
 
-function formatHelpIntro(text: string) {
+function normalizeHelpIntro(text: string) {
+  const featureTips = [
+    "알아두면 좋은 기능:",
+    "- 채팅 입력란에 이미지를 붙여넣으면 첨부 이미지로 전송되고, 첨부 칩에서 바로 미리볼 수 있습니다.",
+    "- 20줄을 초과한 긴 글은 입력창 위에 접힌 항목으로 표시되고, 전송 시 원문 전체가 그대로 포함됩니다.",
+    "- 에이전트가 만든 HTML, Markdown, CSV, 이미지, PDF 산출물은 답변 카드나 오른쪽 패널에서 바로 미리볼 수 있습니다.",
+    "- Shift+Tab으로 계획모드를 켜고 꺼도 작성 중인 초안, 이미지 첨부, 긴 붙여넣기 내용은 유지됩니다.",
+    "- 체크리스트가 생기면 입력창 옆 아이콘으로 접고 펼치며 진행 상황을 확인할 수 있습니다.",
+  ].join("\n");
   return String(text || "")
-    .replace(/^입력 단축키:\s*$/gm, "**입력 단축키**")
-    .replace(/^자주 쓰는 기능:\s*$/gm, "**자주 쓰는 기능**");
+    .replace(
+      /^자주 쓰는 기능:\s*\r?\n-\s*채팅 입력란에 이미지를 복사한 뒤 붙여넣으면 이미지가 첨부됩니다\.\s*\r?\n-\s*5줄 이상 긴 글을 붙여넣거나 입력하면 하나의 그룹으로 묶어 표시하고, 원문은 그대로 전송됩니다\./gm,
+      featureTips,
+    )
+    .replace(/^\s*-\s*@를 입력하면 현재 프로젝트 파일과 산출물을 찾아 프롬프트에 첨부하거나 참조할 수 있습니다\.\s*$/gm, "")
+    .replace(/^\s*-\s*\$를 입력하면 스킬, MCP, 플러그인을 검색해 필요한 작업 능력을 바로 선택할 수 있습니다\.\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+function countMarkdownListItems(body: string) {
+  return String(body || "")
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith("- "))
+    .length;
+}
+
+function parseHelpIntroSections(text: string): HelpIntroSection[] {
+  const normalized = normalizeHelpIntro(text).trim();
+  if (!normalized) return [];
+
+  const sections: HelpIntroSection[] = [];
+  let current: { title: string; lines: string[] } | null = null;
+
+  const pushCurrent = () => {
+    if (!current) return;
+    const body = current.lines.join("\n").trim();
+    sections.push({
+      title: current.title,
+      body,
+      itemCount: countMarkdownListItems(body),
+    });
+  };
+
+  for (const line of normalized.split(/\r?\n/)) {
+    const title = line.trim().replace(/:$/, "");
+    if (introSectionTitles.has(title)) {
+      pushCurrent();
+      current = { title, lines: [] };
+      continue;
+    }
+    if (current) {
+      current.lines.push(line);
+    }
+  }
+  pushCurrent();
+  return sections;
 }
 
 function optimisticSkillSnapshot(skills: SkillItem[], items: ToggleEntry[], name: string, enabled: boolean): SkillItem[] {
@@ -248,6 +360,19 @@ function pluginToneIndexByName(plugins: ToggleEntry[]) {
     plugin.name.toLowerCase(),
     (index + 1) % SKILL_GROUP_TONE_COUNT,
   ]));
+}
+
+function orderPluginsForHelp(plugins: ToggleEntry[]) {
+  return plugins
+    .map((plugin, index) => ({ plugin, index }))
+    .sort((left, right) => {
+      const leftRank = preferredPluginOrder.indexOf(left.plugin.name.toLowerCase());
+      const rightRank = preferredPluginOrder.indexOf(right.plugin.name.toLowerCase());
+      const normalizedLeftRank = leftRank >= 0 ? leftRank : preferredPluginOrder.length;
+      const normalizedRightRank = rightRank >= 0 ? rightRank : preferredPluginOrder.length;
+      return normalizedLeftRank - normalizedRightRank || left.index - right.index;
+    })
+    .map(({ plugin }) => plugin);
 }
 
 function groupSkillsByPlugin(
@@ -309,7 +434,7 @@ function mergeSkillState(
     return {
       ...item,
       enabled: pluginEnabled === false ? false : snapshot.enabled !== false,
-      description: snapshot.description || item.description,
+      description: displaySkillDescription(snapshot.name || item.name, snapshot.description || item.description),
       source,
     };
   });
@@ -326,9 +451,10 @@ export function CommandHelpMessage({ text }: { text: string }) {
   const { state, dispatch } = useAppState();
   const [toggleOverrides, setToggleOverrides] = useState<Record<string, boolean>>({});
   const parsed = useMemo(() => {
+    const intro = splitCommandCatalog(text).intro;
     const commands = parseCommandCatalog(text);
     return {
-      intro: splitCommandCatalog(text).intro,
+      introSections: parseHelpIntroSections(intro),
       commands,
       skills: parseSkillCatalog(text),
       mcps: parseMcpCatalog(text),
@@ -339,10 +465,10 @@ export function CommandHelpMessage({ text }: { text: string }) {
     };
   }, [text]);
   const pluginItems = useMemo(
-    () => parsed.plugins.map((item) => ({
+    () => orderPluginsForHelp(parsed.plugins.map((item) => ({
       ...item,
       enabled: toggleOverrides[`plugin:${item.name.toLowerCase()}`] ?? item.enabled,
-    })),
+    }))),
     [parsed.plugins, toggleOverrides],
   );
   const pluginEnabledByName = useMemo(
@@ -359,6 +485,13 @@ export function CommandHelpMessage({ text }: { text: string }) {
       enabled: toggleOverrides[`skill:${item.name.toLowerCase()}`] ?? item.enabled,
     })),
     [parsed.skills, pluginEnabledByName, state.skills, toggleOverrides],
+  );
+  const mcpItems = useMemo(
+    () => parsed.mcps.map((item) => ({
+      ...item,
+      enabled: toggleOverrides[`mcp:${item.name.toLowerCase()}`] ?? item.enabled,
+    })),
+    [parsed.mcps, toggleOverrides],
   );
   const groupedSkillItems = useMemo(
     () => groupSkillsByPlugin(skillItems, pluginItems, pluginToneByName),
@@ -382,13 +515,19 @@ export function CommandHelpMessage({ text }: { text: string }) {
     }
   };
 
-  const toggleItem = async (requestType: string, name: string, enabled: boolean) => {
-    if (!state.sessionId) return;
+  const toggleItem = async (
+    requestType: string,
+    name: string,
+    enabled: boolean,
+    options: { localOnly?: boolean } = {},
+  ) => {
     const overrideKey = requestType === "set_plugin_enabled"
       ? `plugin:${name.toLowerCase()}`
       : requestType === "set_skill_enabled"
         ? `skill:${name.toLowerCase()}`
-        : "";
+        : requestType === "set_mcp_enabled"
+          ? `mcp:${name.toLowerCase()}`
+          : "";
     if (overrideKey) {
       setToggleOverrides((current) => {
         const next = { ...current, [overrideKey]: !enabled };
@@ -403,6 +542,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
         return next;
       });
     }
+    if (options.localOnly || !state.sessionId) return;
     try {
       await sendBackendRequest(state.sessionId, state.clientId, { type: requestType, value: name, enabled: !enabled });
       if (requestType === "set_skill_enabled") {
@@ -427,9 +567,19 @@ export function CommandHelpMessage({ text }: { text: string }) {
 
   return (
     <div className="command-help-stack">
-      {parsed.intro ? (
+      {parsed.introSections.length ? (
         <div className="command-help-intro">
-          <MarkdownMessage text={formatHelpIntro(parsed.intro)} />
+          {parsed.introSections.map((section) => (
+            <details className="command-card command-intro-card" key={section.title}>
+              <summary>
+                <span>{section.title}</span>
+                <span className="command-count">{section.itemCount ? `${section.itemCount}개` : "열기"}</span>
+              </summary>
+              <div className="command-intro-body">
+                <MarkdownMessage text={section.body} />
+              </div>
+            </details>
+          ))}
         </div>
       ) : null}
       {parsed.hasSkills ? (
@@ -440,14 +590,17 @@ export function CommandHelpMessage({ text }: { text: string }) {
           itemCount={skillItems.length}
           emptyText="사용 가능한 커스텀 스킬이 없습니다"
           onToggle={(item) => void toggleItem("set_skill_enabled", item.name, item.enabled)}
+          onPluginToggle={(item) => void toggleItem("set_plugin_enabled", item.name, item.enabled)}
         />
       ) : null}
       {parsed.hasMcps ? (
         <ToggleCatalog
           label="MCP"
-          items={parsed.mcps}
+          items={mcpItems}
           emptyText="설정된 MCP 서버가 없습니다"
-          onToggle={(item) => void toggleItem("set_mcp_enabled", item.name, item.enabled)}
+          onToggle={(item) => void toggleItem("set_mcp_enabled", item.name, item.enabled, {
+            localOnly: item.source === "mcp-demo",
+          })}
         />
       ) : null}
       {parsed.hasPlugins ? (
@@ -459,7 +612,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
           onToggle={(item) => void toggleItem("set_plugin_enabled", item.name, item.enabled)}
         />
       ) : null}
-      <details className="command-card" open>
+      <details className="command-card">
         <summary>
           <span>사용 가능한 명령어</span>
           <span className="command-count">{parsed.commands.length ? `${parsed.commands.length}개` : "열기"}</span>
@@ -486,6 +639,7 @@ function SkillCatalog({
   itemCount,
   emptyText,
   onToggle,
+  onPluginToggle,
 }: {
   label: string;
   standaloneItems: ToggleEntry[];
@@ -493,10 +647,11 @@ function SkillCatalog({
   itemCount: number;
   emptyText: string;
   onToggle: (item: ToggleEntry) => void;
+  onPluginToggle: (item: ToggleEntry) => void;
 }) {
   const hasItems = standaloneItems.length > 0 || pluginGroups.length > 0;
   return (
-    <details className="command-card skill-card" open>
+    <details className="command-card skill-card">
       <summary>
         <span>{label}</span>
         <span className="command-count">{itemCount ? `${itemCount}개` : "0개"}</span>
@@ -514,20 +669,44 @@ function SkillCatalog({
           ) : null}
           {pluginGroups.map((group) => (
             <section
-              className={`skill-plugin-group${group.plugin.enabled ? "" : " disabled"}`}
+              className={`skill-plugin-group${group.plugin.enabled ? "" : " disabled collapsed"}`}
               data-skill-group-tone={group.toneIndex}
               role="group"
               aria-label={`${group.plugin.name} 플러그인 스킬`}
               key={`plugin-group:${group.plugin.name}`}
             >
-              <div className="skill-section-header plugin-skill-header">
-                <span>
-                  <strong>{group.plugin.name}</strong>
-                  <small>{group.plugin.enabled ? "활성" : "비활성"}</small>
-                </span>
-                <span>{group.items.length}개</span>
-              </div>
-              <ToggleGrid label={group.plugin.name} items={group.items} onToggle={onToggle} />
+              {group.plugin.enabled ? (
+                <button
+                  className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
+                  type="button"
+                  aria-label={`${group.plugin.name} 플러그인 비활성화`}
+                  data-tooltip={`${group.plugin.name}\n클릭하면 플러그인을 비활성화하고 스킬 목록을 접습니다.`}
+                  onClick={() => onPluginToggle(group.plugin)}
+                >
+                  <span>
+                    <strong>{group.plugin.name}</strong>
+                    <small>활성</small>
+                  </span>
+                  <span>{group.items.length}개</span>
+                </button>
+              ) : (
+                <button
+                  className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
+                  type="button"
+                  aria-label={`${group.plugin.name} 플러그인 활성화`}
+                  data-tooltip={`${group.plugin.name}\n클릭하면 플러그인을 활성화합니다.`}
+                  onClick={() => onPluginToggle(group.plugin)}
+                >
+                  <span>
+                    <strong>{group.plugin.name}</strong>
+                    <small>비활성</small>
+                  </span>
+                  <span>{group.items.length}개</span>
+                </button>
+              )}
+              {group.plugin.enabled ? (
+                <ToggleGrid label={group.plugin.name} items={group.items} onToggle={onToggle} />
+              ) : null}
             </section>
           ))}
         </div>
@@ -554,7 +733,7 @@ function ToggleCatalog({
   onToggle: (item: ToggleEntry) => void;
 }) {
   return (
-    <details className="command-card skill-card" open>
+    <details className="command-card skill-card">
       <summary>
         <span>{label}</span>
         <span className="command-count">{items.length ? `${items.length}개` : "0개"}</span>
