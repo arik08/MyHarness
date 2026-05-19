@@ -15,6 +15,7 @@ from myharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
     ApiRetryEvent,
+    ApiStreamEvent,
     ApiTextDeltaEvent,
     ApiToolCallDeltaEvent,
     SupportsStreamingMessages,
@@ -62,6 +63,8 @@ MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
 MAX_AUTO_CONTINUATIONS = 4
+PROVIDER_STREAM_IDLE_FIRST_SECONDS = 7.0
+PROVIDER_STREAM_IDLE_REPEAT_SECONDS = 10.0
 CONTINUATION_PROMPT = (
     "Continue the previous assistant response exactly where it stopped. "
     "Do not restart, summarize, or mention that you are continuing. "
@@ -195,6 +198,54 @@ def _format_internal_steering_prompt(text: str) -> str:
         "Use it as execution guidance, but do not mention the note itself to the user.\n"
         f"{text.strip()}"
     )
+
+
+def _provider_stream_idle_message(context: QueryContext) -> str:
+    metadata = context.tool_metadata or {}
+    active_profile = str(metadata.get("active_profile") or "").strip().lower()
+    provider = str(metadata.get("provider") or "").strip().lower()
+    label = "P-GPT" if "pgpt" in active_profile or "p-gpt" in active_profile else "Provider"
+    if label == "Provider" and provider:
+        label = "Provider"
+    return f"{label} 응답 생성 중 · 파일 미리보기는 도구 입력을 받는 즉시 표시됩니다."
+
+
+async def _stream_provider_events_with_idle_status(
+    context: QueryContext,
+    request: ApiMessageRequest,
+) -> AsyncIterator[ApiStreamEvent | StatusEvent]:
+    queue: asyncio.Queue[ApiStreamEvent | BaseException | None] = asyncio.Queue()
+
+    async def _produce() -> None:
+        try:
+            async for event in context.api_client.stream_message(request):
+                await queue.put(event)
+        except BaseException as exc:
+            await queue.put(exc)
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(_produce())
+    timeout = max(0.0, PROVIDER_STREAM_IDLE_FIRST_SECONDS)
+    repeat = max(0.0, PROVIDER_STREAM_IDLE_REPEAT_SECONDS)
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=timeout or None)
+            except asyncio.TimeoutError:
+                yield StatusEvent(message=_provider_stream_idle_message(context))
+                timeout = repeat
+                continue
+            if item is None:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            timeout = repeat
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 async def _drain_steering_messages(
@@ -673,16 +724,18 @@ async def run_query(
         stop_reason: str | None = None
 
         try:
-            async for event in context.api_client.stream_message(
-                ApiMessageRequest(
-                    model=context.model,
-                    messages=messages,
-                    system_prompt=context.system_prompt,
-                    max_tokens=context.max_tokens,
-                    tools=context.tool_registry.to_api_schema(),
-                    reasoning_effort=context.reasoning_effort,
-                )
-            ):
+            request = ApiMessageRequest(
+                model=context.model,
+                messages=messages,
+                system_prompt=context.system_prompt,
+                max_tokens=context.max_tokens,
+                tools=context.tool_registry.to_api_schema(),
+                reasoning_effort=context.reasoning_effort,
+            )
+            async for event in _stream_provider_events_with_idle_status(context, request):
+                if isinstance(event, StatusEvent):
+                    yield event, None
+                    continue
                 if isinstance(event, ApiTextDeltaEvent):
                     yield AssistantTextDelta(text=event.text), None
                     continue

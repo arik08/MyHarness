@@ -105,6 +105,8 @@ def test_build_system_prompt_plans_substantial_tasks_first():
     assert '<myharness-progress>{"message":"specific user-facing progress note"}</myharness-progress>' in prompt
     assert "fit in about two compact UI lines" in prompt
     assert "Do not use generic filler" in prompt
+    assert "Do not emit a progress marker or ordinary assistant text immediately before a file-writing or file-editing tool call" in prompt
+    assert "stream the tool arguments into the workflow output preview" in prompt
     assert "3+ files" in prompt
     assert "broad refactors" in prompt
     assert "Do not add a checklist or progress marker for tiny, obvious, or purely informational tasks" in prompt

@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import httpx
 
 import pytest
 
-from myharness.api.client import ApiMessageRequest
+import myharness.api.openai_client as openai_client_module
+from myharness.api.client import (
+    ApiMessageCompleteEvent,
+    ApiMessageRequest,
+    ApiTextDeltaEvent,
+    ApiToolCallDeltaEvent,
+)
 from myharness.api.openai_client import (
     OpenAICompatibleClient,
     _convert_messages_to_openai,
@@ -254,6 +261,45 @@ class _FakeOpenAIClient:
         self.chat = _FakeChat()
 
 
+class _FakeRawStreamResponse:
+    def __init__(self, lines: list[str], *, status_code: int = 200) -> None:
+        self.status_code = status_code
+        self._lines = lines
+        self.request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+
+    async def __aenter__(self) -> "_FakeRawStreamResponse":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def aread(self) -> bytes:
+        return b""
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+
+class _FakeRawAsyncClient:
+    def __init__(self, response: _FakeRawStreamResponse, sink: dict[str, Any]) -> None:
+        self._response = response
+        self._sink = sink
+
+    async def __aenter__(self) -> "_FakeRawAsyncClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def stream(self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any]):
+        self._sink["method"] = method
+        self._sink["url"] = url
+        self._sink["headers"] = headers
+        self._sink["json"] = json
+        return self._response
+
+
 @pytest.mark.asyncio
 async def test_openai_client_uses_full_base_url_path_for_requests():
     seen_urls: list[str] = []
@@ -322,6 +368,94 @@ def test_openai_client_retries_sdk_timeout_errors():
         pass
 
     assert OpenAICompatibleClient._is_retryable(APITimeoutError("read timed out")) is True
+
+
+@pytest.mark.asyncio
+async def test_pgpt_raw_stream_emits_tool_argument_deltas_and_diagnostics(monkeypatch, tmp_path):
+    sink: dict[str, Any] = {}
+    response = _FakeRawStreamResponse(
+        [
+            'data: {"choices":[{"delta":{"content":"준비 중\\n"}}]}',
+            "",
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"write_file","arguments":"{\\"path\\":\\"notes.md\\","}}]}}]}',
+            "",
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"content\\":\\"hello"}}]}}]}',
+            "",
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"}"}}]},"finish_reason":"tool_calls"}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ]
+    )
+    monkeypatch.setenv("MYHARNESS_LOGS_DIR", str(tmp_path))
+    monkeypatch.setattr(openai_client_module, "httpx", httpx, raising=False)
+    monkeypatch.setattr(openai_client_module.httpx, "AsyncClient", lambda *args, **kwargs: _FakeRawAsyncClient(response, sink))
+
+    client = OpenAICompatibleClient(
+        api_key="pgpt-token",
+        base_url="http://pgpt.posco.com/s0la01-gpt/v1",
+        raw_stream=True,
+        diagnostics_label="P-GPT",
+    )
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("write")],
+        tools=[{"name": "write_file", "description": "write", "input_schema": {"type": "object"}}],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert sink["url"] == "http://pgpt.posco.com/s0la01-gpt/v1/chat/completions"
+    assert sink["headers"]["Accept"] == "text/event-stream"
+    assert sink["headers"]["Cache-Control"] == "no-cache"
+    assert sink["json"]["stream"] is True
+    text_events = [event for event in events if isinstance(event, ApiTextDeltaEvent)]
+    assert [event.text for event in text_events] == ["준비 중\n"]
+    deltas = [event for event in events if isinstance(event, ApiToolCallDeltaEvent)]
+    assert [event.name for event in deltas] == ["write_file", "write_file", "write_file"]
+    assert "".join(event.arguments_delta for event in deltas) == '{"path":"notes.md","content":"hello"}'
+    complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
+    assert complete.message.tool_uses[0].input == {"path": "notes.md", "content": "hello"}
+
+    diagnostics = (tmp_path / "provider-stream-diagnostics.jsonl").read_text(encoding="utf-8")
+    assert "tool_delta" in diagnostics
+    assert "arguments_length" in diagnostics
+    assert "hello" not in diagnostics
+
+
+@pytest.mark.asyncio
+async def test_pgpt_raw_stream_accepts_final_message_tool_calls(monkeypatch):
+    sink: dict[str, Any] = {}
+    response = _FakeRawStreamResponse(
+        [
+            'data: {"choices":[{"message":{"tool_calls":[{"id":"call_final","type":"function","function":{"name":"write_file","arguments":"{\\"path\\":\\"final.md\\",\\"content\\":\\"done\\"}"}}]},"finish_reason":"tool_calls"}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ]
+    )
+    monkeypatch.setattr(openai_client_module, "httpx", httpx, raising=False)
+    monkeypatch.setattr(openai_client_module.httpx, "AsyncClient", lambda *args, **kwargs: _FakeRawAsyncClient(response, sink))
+
+    client = OpenAICompatibleClient(
+        api_key="pgpt-token",
+        base_url="http://pgpt.posco.com/s0la01-gpt/v1",
+        raw_stream=True,
+        diagnostics_label="P-GPT",
+    )
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("write")],
+        tools=[{"name": "write_file", "description": "write", "input_schema": {"type": "object"}}],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert not [event for event in events if isinstance(event, ApiToolCallDeltaEvent)]
+    complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
+    assert complete.message.tool_uses[0].id == "call_final"
+    assert complete.message.tool_uses[0].name == "write_file"
+    assert complete.message.tool_uses[0].input == {"path": "final.md", "content": "done"}
 
 
 

@@ -196,6 +196,7 @@ const backendIdleClientCloseMs = Math.max(
   10,
   Number(process.env.MYHARNESS_BACKEND_IDLE_CLIENT_CLOSE_MS || 30 * 60 * 1000),
 );
+const sseHeartbeatMs = Math.max(10, Number(process.env.MYHARNESS_SSE_HEARTBEAT_MS || 15_000));
 
 function errorPayload(error) {
   return {
@@ -3709,10 +3710,12 @@ function visibleSubmittedUserText(line, attachments = []) {
 }
 
 function writeSseEvent(client, event, id = null) {
+  client.socket?.setNoDelay?.(true);
   if (id !== null && id !== undefined) {
     client.write(`id: ${id}\n`);
   }
   client.write(`data: ${JSON.stringify(event)}\n\n`);
+  client.flush?.();
 }
 
 function emit(session, event) {
@@ -4335,11 +4338,21 @@ async function handleApi(request, response, pathname) {
     }
     response.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     });
+    response.socket?.setNoDelay?.(true);
+    response.flushHeaders?.();
     session.clients.add(response);
     cancelIdleClientClose(session);
+    const heartbeat = setInterval(() => {
+      if (!response.writableEnded && !response.destroyed) {
+        response.write(": heartbeat\n\n");
+        response.flush?.();
+      }
+    }, sseHeartbeatMs);
+    heartbeat.unref?.();
     const lastEventId = lastEventIdFromRequest(request, params);
     if (lastEventId && canReplayFromLastEventId(session.events, lastEventId)) {
       for (const entry of rawEventsAfterLastEventId(session.events, lastEventId)) {
@@ -4352,6 +4365,7 @@ async function handleApi(request, response, pathname) {
       }
     }
     request.on("close", () => {
+      clearInterval(heartbeat);
       session.clients.delete(response);
       scheduleIdleClientClose(session);
     });

@@ -95,6 +95,17 @@ class RetryThenSuccessApiClient:
         )
 
 
+class SlowFirstEventApiClient:
+    async def stream_message(self, request):
+        del request
+        await asyncio.sleep(0.04)
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="after wait")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
 class PromptTooLongThenSuccessApiClient:
     def __init__(self) -> None:
         self._calls = 0
@@ -225,6 +236,30 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
     assert engine.total_usage.input_tokens == 10
     assert engine.total_usage.output_tokens == 5
     assert len(engine.messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_engine_emits_provider_idle_status_before_first_stream_event(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    monkeypatch.setattr("myharness.engine.query.PROVIDER_STREAM_IDLE_FIRST_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr("myharness.engine.query.PROVIDER_STREAM_IDLE_REPEAT_SECONDS", 0.01, raising=False)
+    engine = QueryEngine(
+        api_client=SlowFirstEventApiClient(),
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="gpt-5.4",
+        system_prompt="system",
+        tool_metadata={"active_profile": "p-gpt", "provider": "openai"},
+    )
+
+    events = [event async for event in engine.submit_message("write a file")]
+
+    status_events = [event for event in events if isinstance(event, StatusEvent)]
+    assert status_events
+    assert "P-GPT 응답 생성 중" in status_events[0].message
+    assert "파일 미리보기" in status_events[0].message
+    assert isinstance(events[-1], AssistantTurnComplete)
 
 
 @pytest.mark.asyncio
