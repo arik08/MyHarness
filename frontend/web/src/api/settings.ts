@@ -87,7 +87,7 @@ export type UserStats = {
   activeIpSessionCount?: number;
   currentWorkspaceConversationCount?: number;
   currentWorkspaceName?: string;
-  ipBreakdown?: Array<{ ip?: string; visitCount?: number; todayVisitCount?: number; activeSessionCount?: number; lastSeenAt?: number }>;
+  ipBreakdown?: Array<{ ip?: string; visitCount?: number; todayVisitCount?: number; activeSessionCount?: number; firstSeenAt?: number | null; lastSeenAt?: number | null }>;
   dailyBreakdown?: Array<{ date?: string; activeIpCount?: number; visitCount?: number }>;
   dailyIpBreakdown?: Array<{
     date?: string;

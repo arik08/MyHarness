@@ -973,6 +973,25 @@ test("user stats include clickable daily IP visit breakdown", async (t) => {
   ]);
 });
 
+test("user stats preserve concurrent page visits in JSON storage", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const visits = Array.from({ length: 20 }, (_, index) =>
+    fetch(`${app.baseUrl}/`, { headers: { "x-forwarded-for": `10.0.1.${index % 4}` } }),
+  );
+  await Promise.all(visits);
+
+  const statsPath = join(app.configDir, "data", "web-usage-stats.json");
+  const stored = JSON.parse(await readFile(statsPath, "utf8"));
+
+  assert.equal(stored.totalVisits, 20);
+  assert.equal(
+    Object.values(stored.byIp || {}).reduce((total, entry) => total + Number(entry?.visitCount || 0), 0),
+    20,
+  );
+});
+
 test("dev launcher backend entry redirects page visits to Vite on the same host", async (t) => {
   const app = await startWebServer({
     env: {

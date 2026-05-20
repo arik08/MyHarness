@@ -64,6 +64,7 @@ let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.MYHARNESS_WORKS
 let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
+let webUsageStatsWriteQueue = Promise.resolve();
 let server = null;
 const aiEditHeartbeatIntervalMs = 15_000;
 const reservedWorkspaceNames = new Set([
@@ -2098,6 +2099,13 @@ async function writeJsonFile(path, payload) {
   await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+async function writeJsonFileAtomic(path, payload) {
+  await mkdir(dirname(path), { recursive: true });
+  const tmpPath = `${path}.${process.pid}.${Date.now()}-${crypto.randomUUID()}.tmp`;
+  await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await rename(tmpPath, path);
+}
+
 function normalizeWebUsageStats(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   const byIp = source.byIp && typeof source.byIp === "object" ? source.byIp : {};
@@ -2112,31 +2120,41 @@ async function readWebUsageStats() {
   return normalizeWebUsageStats(await readJsonFileIfExists(webUsageStatsPath));
 }
 
+function updateWebUsageStats(mutator) {
+  const next = webUsageStatsWriteQueue.then(async () => {
+    const stats = await readWebUsageStats();
+    await mutator(stats);
+    await writeJsonFileAtomic(webUsageStatsPath, stats);
+  });
+  webUsageStatsWriteQueue = next.catch(() => {});
+  return next;
+}
+
 async function recordWebVisit(request) {
   const ip = normalizeClientAddress(forwardedAddressFromRequest(request));
   const now = Date.now();
   const today = localDateKey(new Date(now));
-  const stats = await readWebUsageStats();
-  const ipStats = stats.byIp[ip] && typeof stats.byIp[ip] === "object"
-    ? stats.byIp[ip]
-    : { ip, firstSeenAt: now, lastSeenAt: null, visitCount: 0, daily: {} };
-  const daily = ipStats.daily && typeof ipStats.daily === "object" ? ipStats.daily : {};
-  const dayStats = daily[today] && typeof daily[today] === "object"
-    ? daily[today]
-    : { visits: 0, firstSeenAt: now, lastSeenAt: null };
+  await updateWebUsageStats(async (stats) => {
+    const ipStats = stats.byIp[ip] && typeof stats.byIp[ip] === "object"
+      ? stats.byIp[ip]
+      : { ip, firstSeenAt: now, lastSeenAt: null, visitCount: 0, daily: {} };
+    const daily = ipStats.daily && typeof ipStats.daily === "object" ? ipStats.daily : {};
+    const dayStats = daily[today] && typeof daily[today] === "object"
+      ? daily[today]
+      : { visits: 0, firstSeenAt: now, lastSeenAt: null };
 
-  stats.totalVisits += 1;
-  ipStats.ip = ip;
-  ipStats.firstSeenAt = Number(ipStats.firstSeenAt || now);
-  ipStats.lastSeenAt = now;
-  ipStats.visitCount = Number(ipStats.visitCount || 0) + 1;
-  dayStats.visits = Number(dayStats.visits || 0) + 1;
-  dayStats.firstSeenAt = Number(dayStats.firstSeenAt || now);
-  dayStats.lastSeenAt = now;
-  daily[today] = dayStats;
-  ipStats.daily = daily;
-  stats.byIp[ip] = ipStats;
-  await writeJsonFile(webUsageStatsPath, stats);
+    stats.totalVisits += 1;
+    ipStats.ip = ip;
+    ipStats.firstSeenAt = Number(ipStats.firstSeenAt || now);
+    ipStats.lastSeenAt = now;
+    ipStats.visitCount = Number(ipStats.visitCount || 0) + 1;
+    dayStats.visits = Number(dayStats.visits || 0) + 1;
+    dayStats.firstSeenAt = Number(dayStats.firstSeenAt || now);
+    dayStats.lastSeenAt = now;
+    daily[today] = dayStats;
+    ipStats.daily = daily;
+    stats.byIp[ip] = ipStats;
+  });
 }
 
 async function readWorkspaceScopeSettings(request = null) {
