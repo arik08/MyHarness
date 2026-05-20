@@ -411,6 +411,8 @@ type WorkflowRow =
 
 const workflowEventStaggerMs = 90;
 const workflowPlanningStaggerMs = 220;
+const workflowRunningPreviewFullRenderMaxChars = 80_000;
+const workflowRunningPreviewTailChars = 48_000;
 
 type WebInvestigationSource = {
   url: string;
@@ -538,6 +540,18 @@ function workflowDiffLineClassName(line: string) {
   return "workflow-diff-line";
 }
 
+function workflowVisiblePreviewContent(event: WorkflowEvent, content: string) {
+  if (event.status !== "running" || content.length <= workflowRunningPreviewFullRenderMaxChars) {
+    return content;
+  }
+  const start = Math.max(0, content.length - workflowRunningPreviewTailChars);
+  const nextLineStart = content.indexOf("\n", start);
+  if (nextLineStart >= 0 && nextLineStart < content.length - 1) {
+    return content.slice(nextLineStart + 1);
+  }
+  return content.slice(start);
+}
+
 function isWorkflowOutputTool(toolName: string) {
   const lower = toolName.toLowerCase();
   return lower !== "todo_write" && lower !== "todowrite" && (lower.includes("write") || lower.includes("edit") || lower.includes("patch"));
@@ -595,7 +609,7 @@ function workflowStepTitle(event: WorkflowEvent) {
 function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source: WorkflowPreviewSource }) {
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
-  const displayContent = source.content;
+  const displayContent = workflowVisiblePreviewContent(event, source.content);
   const fileName = workflowPreviewFileName(source.path);
   const prefix = source.kind === "diff"
     ? done ? "수정 완료" : "수정 미리보기"

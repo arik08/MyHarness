@@ -258,7 +258,7 @@ async def test_query_engine_emits_provider_idle_status_before_first_stream_event
     status_events = [event for event in events if isinstance(event, StatusEvent)]
     assert status_events
     assert "P-GPT 응답 생성 중" in status_events[0].message
-    assert "파일 미리보기" in status_events[0].message
+    assert "파일 미리보기" not in status_events[0].message
     assert isinstance(events[-1], AssistantTurnComplete)
 
 

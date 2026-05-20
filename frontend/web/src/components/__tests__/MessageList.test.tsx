@@ -1586,8 +1586,8 @@ describe("MessageList", () => {
     expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
   });
 
-  it("shows the full running write preview text", () => {
-    const hugeContent = `${"초반 내용\n".repeat(30000)}마지막 본문`;
+  it("shows the latest tail for huge running write previews while keeping full counts", () => {
+    const hugeContent = `문서 시작\n${"중간 내용\n".repeat(30000)}마지막 본문`;
 
     render(
       <AppStateProvider
@@ -1618,14 +1618,14 @@ describe("MessageList", () => {
     );
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
-    expect(body.textContent?.startsWith("초반 내용\n")).toBe(true);
+    expect(body.textContent).not.toContain("문서 시작");
     expect(body.textContent).toContain("마지막 본문");
-    expect(body.textContent).toBe(hugeContent);
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("30,001줄");
+    expect(body.textContent).not.toBe(hugeContent);
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("30,002줄");
   });
 
-  it("shows the full running long report file preview text", () => {
-    const hugeContent = `${"초반 분석 본문\n".repeat(12000)}마지막 장문 보고서 본문`;
+  it("shows the latest tail for huge running long report previews while keeping full counts", () => {
+    const hugeContent = `보고서 시작\n${"초반 분석 본문\n".repeat(12000)}마지막 장문 보고서 본문`;
 
     render(
       <AppStateProvider
@@ -1660,10 +1660,10 @@ describe("MessageList", () => {
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
     expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
-    expect(body.textContent?.startsWith("초반 분석 본문\n")).toBe(true);
+    expect(body.textContent).not.toContain("보고서 시작");
     expect(body.textContent).toContain("마지막 장문 보고서 본문");
-    expect(body.textContent).toBe(hugeContent);
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("12,001줄");
+    expect(body.textContent).not.toBe(hugeContent);
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("12,002줄");
   });
 
   it("renders one running write preview for duplicate same-path workflow events", () => {

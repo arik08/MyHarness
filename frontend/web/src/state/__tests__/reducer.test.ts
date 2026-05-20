@@ -2463,10 +2463,23 @@ describe("appReducer", () => {
 
   it("stores shell ui preferences in state", () => {
     const themed = appReducer(initialAppState, { type: "set_theme", themeId: "dark" });
-    const collapsed = appReducer(themed, { type: "set_sidebar_collapsed", value: true });
+    const collapsed = appReducer(themed, { type: "set_sidebar_collapsed", value: true, source: "manual" });
 
     expect(collapsed.themeId).toBe("dark");
     expect(collapsed.sidebarCollapsed).toBe(true);
+  });
+
+  it("tracks automatic and manual sidebar collapse reasons", () => {
+    const autoCollapsed = appReducer(initialAppState, { type: "set_sidebar_collapsed", value: true, source: "auto" });
+    const manualCollapsed = appReducer(initialAppState, { type: "set_sidebar_collapsed", value: true, source: "manual" });
+    const reopened = appReducer(manualCollapsed, { type: "set_sidebar_collapsed", value: false, source: "manual" });
+
+    expect(autoCollapsed.sidebarCollapsed).toBe(true);
+    expect(autoCollapsed.sidebarCollapseReason).toBe("auto");
+    expect(manualCollapsed.sidebarCollapsed).toBe(true);
+    expect(manualCollapsed.sidebarCollapseReason).toBe("manual");
+    expect(reopened.sidebarCollapsed).toBe(false);
+    expect(reopened.sidebarCollapseReason).toBeNull();
   });
 
   it("closes the runtime picker when the sidebar collapses", () => {
@@ -2474,9 +2487,10 @@ describe("appReducer", () => {
       ...initialAppState,
       runtimePicker: { ...initialAppState.runtimePicker, open: true, loading: true, error: "failed" },
     };
-    const collapsed = appReducer(openPicker, { type: "set_sidebar_collapsed", value: true });
+    const collapsed = appReducer(openPicker, { type: "set_sidebar_collapsed", value: true, source: "manual" });
 
     expect(collapsed.sidebarCollapsed).toBe(true);
+    expect(collapsed.sidebarCollapseReason).toBe("manual");
     expect(collapsed.runtimePicker.open).toBe(false);
     expect(collapsed.runtimePicker.loading).toBe(false);
     expect(collapsed.runtimePicker.error).toBe("");

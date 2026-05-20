@@ -512,7 +512,7 @@ a:focus-visible {
 }
 
 .app-shell.sidebar-collapsed {
-  --sidebar-track-width: 32px;
+  --sidebar-track-width: var(--sidebar-collapsed-track-width);
   grid-template-columns: var(--sidebar-track-width) minmax(0, 1fr);
 }
 
@@ -761,7 +761,7 @@ a:focus-visible {
   justify-content: center;
   gap: 0;
   min-height: 34px;
-  width: 32px;
+  width: var(--sidebar-collapsed-track-width);
 }
 
 .app-shell.sidebar-collapsed .brand,
@@ -781,7 +781,7 @@ a:focus-visible {
 }
 
 .app-shell.sidebar-collapsed .sidebar-toggle {
-  width: 32px;
+  width: var(--sidebar-collapsed-track-width);
   height: 34px;
   padding: 0;
   background: transparent;
@@ -1734,6 +1734,7 @@ a:focus-visible {
   grid-template-rows: 58px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--chat-bg, var(--panel));
 }
 
@@ -9326,28 +9327,27 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 }
 
 @media (max-width: 900px) {
-  .app-shell,
-  .app-shell.sidebar-collapsed {
-    grid-template-columns: 1fr;
+  .app-shell {
+    grid-template-columns: var(--sidebar-track-width) minmax(0, 1fr);
     min-height: 100dvh;
   }
 
-  .app-shell.artifact-open,
+  .app-shell.sidebar-collapsed,
   .app-shell.sidebar-collapsed.artifact-open {
-    grid-template-columns: 1fr;
+    grid-template-columns: var(--sidebar-track-width) minmax(0, 1fr);
   }
 
-  .app-shell.sidebar-collapsed .sidebar {
-    display: none;
+  .app-shell.artifact-open {
+    grid-template-columns: var(--sidebar-track-width) minmax(0, 1fr);
   }
 
   .app-shell:not(.sidebar-collapsed) .sidebar {
     display: flex;
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 32;
-    width: min(288px, calc(100vw - 40px));
-    box-shadow: 18px 0 42px rgba(0, 0, 0, 0.16);
+    position: relative;
+    inset: auto;
+    z-index: auto;
+    width: auto;
+    box-shadow: none;
   }
 
   .sidebar-mobile-toggle {

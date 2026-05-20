@@ -881,6 +881,101 @@ describe("Composer", () => {
     }
   });
 
+  it("keeps the composer stack height stable when only the chat panel width changes", async () => {
+    const originalResizeObserver = window.ResizeObserver;
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const observers: Array<{
+      callback: ResizeObserverCallback;
+      elements: Element[];
+    }> = [];
+    let composerHeight = 60;
+    let chatPanelWidth = 900;
+
+    class MockResizeObserver {
+      callback: ResizeObserverCallback;
+      elements: Element[] = [];
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        observers.push(this);
+      }
+
+      observe(element: Element) {
+        this.elements.push(element);
+      }
+
+      unobserve(element: Element) {
+        this.elements = this.elements.filter((item) => item !== element);
+      }
+
+      disconnect() {
+        this.elements = [];
+      }
+    }
+
+    window.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRectMock(this: HTMLElement) {
+      if (this.classList?.contains("composer")) {
+        return {
+          x: 0,
+          y: 640,
+          top: 640,
+          right: 800,
+          bottom: 640 + composerHeight,
+          left: 0,
+          width: 800,
+          height: composerHeight,
+          toJSON: () => ({}),
+        };
+      }
+      if (this.classList?.contains("chat-panel")) {
+        return {
+          x: 0,
+          y: 0,
+          top: 0,
+          right: chatPanelWidth,
+          bottom: 720,
+          left: 0,
+          width: chatPanelWidth,
+          height: 720,
+          toJSON: () => ({}),
+        };
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+
+    try {
+      render(
+        <AppStateProvider>
+          <main className="chat-panel">
+            <section className="messages" />
+            <Composer />
+          </main>
+        </AppStateProvider>,
+      );
+
+      expect(document.documentElement.style.getPropertyValue("--composer-stack-height")).toBe("60px");
+
+      composerHeight = 120;
+      chatPanelWidth = 520;
+      const chatPanel = document.querySelector(".chat-panel") as HTMLElement;
+      const chatPanelObserver = observers.find((observer) => observer.elements.includes(chatPanel));
+      expect(chatPanelObserver).toBeTruthy();
+
+      act(() => {
+        chatPanelObserver?.callback([{ target: chatPanel } as unknown as ResizeObserverEntry], chatPanelObserver as unknown as ResizeObserver);
+      });
+      await act(async () => {
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      });
+
+      expect(document.documentElement.style.getPropertyValue("--composer-stack-height")).toBe("60px");
+    } finally {
+      window.ResizeObserver = originalResizeObserver;
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
+  });
+
   it("does not render the AI team button inside the composer controls", () => {
     render(
       <AppStateProvider>

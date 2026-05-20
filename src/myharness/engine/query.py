@@ -207,7 +207,7 @@ def _provider_stream_idle_message(context: QueryContext) -> str:
     label = "P-GPT" if "pgpt" in active_profile or "p-gpt" in active_profile else "Provider"
     if label == "Provider" and provider:
         label = "Provider"
-    return f"{label} 응답 생성 중 · 파일 미리보기는 도구 입력을 받는 즉시 표시됩니다."
+    return f"{label} 응답 생성 중"
 
 
 async def _stream_provider_events_with_idle_status(

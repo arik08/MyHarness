@@ -8,6 +8,7 @@ import { currentConversationHistoryTitle, currentConversationTitle } from "../st
 import type { HistoryItem, Workspace } from "../types/backend";
 import type { RuntimePickerOption } from "../types/ui";
 import type { ThemeId } from "../types/ui";
+import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 import { isLiveOnlyHistoryItem } from "../utils/history";
 import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/runtimePreferences";
 
@@ -22,7 +23,7 @@ const themeOptions: Array<{ id: ThemeId; label: string }> = [
 const historyTitleMaxLength = 26;
 const historyRestoreSpinnerDelayMs = 500;
 const historyTitleCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
-const sidebarMinWidth = 268;
+const sidebarMinWidth = sidebarDefaultWidthPx;
 const sidebarMaxWidth = 520;
 const sidebarVisibleContentMinWidth = 300;
 
@@ -644,7 +645,7 @@ export function Sidebar() {
       aria-label="채팅 탐색"
       onClick={() => {
         if (state.sidebarCollapsed) {
-          dispatch({ type: "set_sidebar_collapsed", value: false });
+          dispatch({ type: "set_sidebar_collapsed", value: false, source: "manual" });
         }
       }}
     >
@@ -698,7 +699,7 @@ export function Sidebar() {
           data-tooltip={sidebarLabel}
           onClick={(event) => {
             event.stopPropagation();
-            dispatch({ type: "set_sidebar_collapsed", value: !state.sidebarCollapsed });
+            dispatch({ type: "set_sidebar_collapsed", value: !state.sidebarCollapsed, source: "manual" });
           }}
         >
           <svg aria-hidden="true" viewBox="0 0 24 24">

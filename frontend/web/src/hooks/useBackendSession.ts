@@ -4,6 +4,7 @@ import { listLiveSessions, startSession } from "../api/session";
 import { useAppState } from "../state/app-state";
 import type { SessionResponse } from "../types/backend";
 import { loadRuntimePreferences } from "../utils/runtimePreferences";
+import { createWorkflowEventCoalescer } from "./workflowEventCoalescer";
 
 const activeBackendSessionKey = "myharness:activeBackendSessionId";
 const pendingSessionStarts = new Map<string, Promise<SessionResponse>>();
@@ -133,12 +134,19 @@ export function useBackendSession() {
     });
 
     const sessionId = state.sessionId;
+    const coalescer = createWorkflowEventCoalescer((event) => {
+      dispatch({ type: "backend_event", event, sessionId });
+    });
     sourceRef.current = openBackendEvents(params, {
-      onEvent: (event) => dispatch({ type: "backend_event", event, sessionId }),
-      onError: () => dispatch({ type: "backend_event", event: { type: "error", message: "이벤트 연결 오류" }, sessionId }),
+      onEvent: (event) => coalescer.push(event),
+      onError: () => {
+        coalescer.flush();
+        dispatch({ type: "backend_event", event: { type: "error", message: "이벤트 연결 오류" }, sessionId });
+      },
     });
 
     return () => {
+      coalescer.flush();
       sourceRef.current?.close();
       sourceRef.current = null;
     };

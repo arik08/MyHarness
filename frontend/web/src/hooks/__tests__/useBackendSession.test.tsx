@@ -25,6 +25,12 @@ function Probe() {
       <output data-testid="workspace">{state.workspacePath}</output>
       <output data-testid="messages">{state.messages.map((message) => message.text).join("|")}</output>
       <output data-testid="workflow-anchor">{state.workflowAnchorMessageId || ""}</output>
+      <output data-testid="workflow-preview">
+        {state.workflowEvents
+          .map((event) => String(event.toolInput?.content || event.toolInput?.patch || ""))
+          .filter(Boolean)
+          .join("|")}
+      </output>
     </>
   );
 }
@@ -108,6 +114,52 @@ describe("useBackendSession", () => {
 
     expect(screen.getByTestId("messages").textContent).toBe("진행 중 질문|돌아와도 보이는 답변");
     expect(screen.getByTestId("workflow-anchor").textContent).toBeTruthy();
+  });
+
+  it("coalesces rapid streamed tool input events before updating workflow preview", async () => {
+    let eventHandlers: Parameters<typeof openBackendEvents>[1] | null = null;
+    vi.mocked(openBackendEvents).mockImplementation((_params, handlers) => {
+      eventHandlers = handlers;
+      return { close: vi.fn() } as unknown as EventSource;
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          clientId: "client-1",
+          sessionId: "session-a",
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(openBackendEvents).toHaveBeenCalled());
+    vi.useFakeTimers();
+
+    act(() => {
+      eventHandlers?.onEvent({
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        arguments_delta: "{\"path\":\"outputs/report.html\",\"content\":\"hello",
+      });
+      eventHandlers?.onEvent({
+        type: "tool_input_delta",
+        tool_name: "write_file",
+        tool_call_index: 0,
+        arguments_delta: " world",
+      });
+    });
+
+    expect(screen.getByTestId("workflow-preview").textContent).toBe("");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+
+    expect(screen.getByTestId("workflow-preview").textContent).toBe("hello world");
   });
 
   it("repairs a stale busy state when the live session has already completed", async () => {

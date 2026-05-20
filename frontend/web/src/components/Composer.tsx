@@ -125,7 +125,9 @@ export function Composer() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const activeSuggestionRef = useRef<HTMLButtonElement | null>(null);
   const composerHeightRef = useRef(0);
+  const composerMetricFrameRef = useRef(0);
   const composerFollowFrameRef = useRef(0);
+  const chatPanelMetricFrameRef = useRef(0);
   const submittingRef = useRef(false);
   const draft = state.composer.draft;
   const hasPayload = Boolean(draft.trim() || state.composer.attachments.length || state.composer.pastedTexts.length);
@@ -181,13 +183,17 @@ export function Composer() {
   }, [draft, state.composer.attachments.length, state.composer.pastedTexts.length]);
 
   useLayoutEffect(() => {
-    function updateComposerMetrics() {
+    function messagesContainer() {
+      const chatPanel = composerRef.current?.closest(".chat-panel");
+      return chatPanel?.querySelector<HTMLElement>(".messages") ?? document.querySelector<HTMLElement>(".messages");
+    }
+
+    function updateComposerStackHeight() {
       const composerRect = composerRef.current?.getBoundingClientRect();
       const height = composerRect && Number.isFinite(composerRect.top)
         ? Math.ceil(Math.max(0, composerRect.bottom - composerRect.top))
         : Math.ceil(composerRef.current?.getBoundingClientRect().height || 0);
-      const chatPanel = composerRef.current?.closest(".chat-panel");
-      const messages = chatPanel?.querySelector<HTMLElement>(".messages") ?? document.querySelector<HTMLElement>(".messages");
+      const messages = messagesContainer();
       const remaining = messages
         ? messages.scrollHeight - messages.clientHeight - messages.scrollTop
         : Number.POSITIVE_INFINITY;
@@ -201,12 +207,6 @@ export function Composer() {
         composerHeightRef.current = height;
       }
 
-      const rect = chatPanel?.getBoundingClientRect();
-      if (rect) {
-        document.documentElement.style.setProperty("--chat-panel-left", `${Math.round(rect.left)}px`);
-        document.documentElement.style.setProperty("--chat-panel-width", `${Math.round(rect.width)}px`);
-      }
-
       if (heightChanged && wasFollowingTail && !composerFollowFrameRef.current) {
         composerFollowFrameRef.current = window.requestAnimationFrame(() => {
           composerFollowFrameRef.current = 0;
@@ -215,22 +215,79 @@ export function Composer() {
       }
     }
 
-    updateComposerMetrics();
+    function scheduleComposerStackHeightUpdate() {
+      if (composerMetricFrameRef.current) {
+        window.cancelAnimationFrame(composerMetricFrameRef.current);
+      }
+      composerMetricFrameRef.current = window.requestAnimationFrame(() => {
+        composerMetricFrameRef.current = 0;
+        updateComposerStackHeight();
+      });
+    }
+
+    updateComposerStackHeight();
     if (!window.ResizeObserver) return;
 
-    const observer = new ResizeObserver(updateComposerMetrics);
+    const observer = new ResizeObserver(scheduleComposerStackHeightUpdate);
     if (composerRef.current) observer.observe(composerRef.current);
     if (composerBoxRef.current) observer.observe(composerBoxRef.current);
-    const chatPanel = composerRef.current?.closest(".chat-panel");
-    if (chatPanel) observer.observe(chatPanel);
     return () => {
       observer.disconnect();
+      if (composerMetricFrameRef.current) {
+        window.cancelAnimationFrame(composerMetricFrameRef.current);
+        composerMetricFrameRef.current = 0;
+      }
       if (composerFollowFrameRef.current) {
         window.cancelAnimationFrame(composerFollowFrameRef.current);
         composerFollowFrameRef.current = 0;
       }
     };
   }, [isMultiline, state.composer.attachments.length, state.composer.pastedTexts.length, state.todoCollapsed, state.todoMarkdown]);
+
+  useLayoutEffect(() => {
+    function updateChatPanelMetrics() {
+      const rect = composerRef.current?.closest(".chat-panel")?.getBoundingClientRect();
+      if (!rect) {
+        return;
+      }
+      document.documentElement.style.setProperty("--chat-panel-left", `${Math.round(rect.left)}px`);
+      document.documentElement.style.setProperty("--chat-panel-width", `${Math.round(rect.width)}px`);
+    }
+
+    function scheduleChatPanelMetricsUpdate() {
+      if (chatPanelMetricFrameRef.current) {
+        window.cancelAnimationFrame(chatPanelMetricFrameRef.current);
+      }
+      chatPanelMetricFrameRef.current = window.requestAnimationFrame(() => {
+        chatPanelMetricFrameRef.current = 0;
+        updateChatPanelMetrics();
+      });
+    }
+
+    updateChatPanelMetrics();
+    scheduleChatPanelMetricsUpdate();
+    if (!window.ResizeObserver) return;
+
+    const chatPanel = composerRef.current?.closest(".chat-panel");
+    if (!chatPanel) {
+      return () => {
+        if (chatPanelMetricFrameRef.current) {
+          window.cancelAnimationFrame(chatPanelMetricFrameRef.current);
+          chatPanelMetricFrameRef.current = 0;
+        }
+      };
+    }
+
+    const observer = new ResizeObserver(scheduleChatPanelMetricsUpdate);
+    observer.observe(chatPanel);
+    return () => {
+      observer.disconnect();
+      if (chatPanelMetricFrameRef.current) {
+        window.cancelAnimationFrame(chatPanelMetricFrameRef.current);
+        chatPanelMetricFrameRef.current = 0;
+      }
+    };
+  }, [state.artifactPanelOpen]);
 
   function fullLine() {
     const pasted = state.composer.pastedTexts.map((text, index) => `[붙여넣은 텍스트 ${index + 1}]\n${text}`).join("\n\n");

@@ -92,7 +92,7 @@ export function ChatPanel() {
             data-tooltip={state.sidebarCollapsed ? "사이드바 열기" : "사이드바 닫기"}
             onClick={(event) => {
               event.stopPropagation();
-              dispatch({ type: "set_sidebar_collapsed", value: !state.sidebarCollapsed });
+              dispatch({ type: "set_sidebar_collapsed", value: !state.sidebarCollapsed, source: "manual" });
             }}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24">

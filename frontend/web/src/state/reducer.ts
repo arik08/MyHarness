@@ -1,7 +1,8 @@
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
-import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
+import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { normalizeArtifactPath } from "../utils/artifacts";
 import { isLiveOnlyHistoryItem } from "../utils/history";
+import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 
 const clientSessionKey = "myharness:clientSessionId";
 const appSettingsKey = "myharness:appSettings";
@@ -22,7 +23,7 @@ export type AppAction =
   | { type: "session_started"; sessionId: string; clientId?: string; busy?: boolean }
   | { type: "session_replaced"; sessionId: string; workspace?: Workspace }
   | { type: "set_theme"; themeId: ThemeId }
-  | { type: "set_sidebar_collapsed"; value: boolean }
+  | { type: "set_sidebar_collapsed"; value: boolean; source?: Exclude<SidebarCollapseReason, null> }
   | { type: "set_sidebar_width"; value: number }
   | { type: "set_sidebar_resizing"; value: boolean }
   | { type: "set_draft"; value: string }
@@ -115,9 +116,16 @@ function initialSidebarCollapsed() {
   return isNarrowViewport();
 }
 
+function initialSidebarCollapseReason(collapsed: boolean): SidebarCollapseReason {
+  if (!collapsed) {
+    return null;
+  }
+  return loadLocalStorageValue("myharness:sidebarCollapsed") === "1" ? "manual" : "auto";
+}
+
 function initialSidebarWidth() {
   const value = Number(loadLocalStorageValue("myharness:sidebarWidth") || 0);
-  return Number.isFinite(value) && value >= 268 ? Math.min(value, 520) : 268;
+  return Number.isFinite(value) && value >= sidebarDefaultWidthPx ? Math.min(value, 520) : sidebarDefaultWidthPx;
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number) {
@@ -209,6 +217,8 @@ function initialClientSessionId() {
   return next;
 }
 
+const initialSidebarCollapsedValue = initialSidebarCollapsed();
+
 export const initialAppState: AppState = {
   sessionId: null,
   clientId: initialClientSessionId(),
@@ -228,7 +238,8 @@ export const initialAppState: AppState = {
   systemPrompt: loadLocalStorageValue("myharness:systemPrompt"),
   appSettings: loadAppSettings(),
   themeId: initialThemeId(),
-  sidebarCollapsed: initialSidebarCollapsed(),
+  sidebarCollapsed: initialSidebarCollapsedValue,
+  sidebarCollapseReason: initialSidebarCollapseReason(initialSidebarCollapsedValue),
   sidebarWidth: initialSidebarWidth(),
   sidebarResizing: false,
   commands: [],
@@ -2490,12 +2501,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "set_theme":
       return { ...state, themeId: action.themeId };
 
-    case "set_sidebar_collapsed":
+    case "set_sidebar_collapsed": {
+      const sidebarCollapseReason: SidebarCollapseReason = action.value ? action.source || "manual" : null;
       return {
         ...state,
         sidebarCollapsed: action.value,
+        sidebarCollapseReason,
         runtimePicker: action.value ? { ...state.runtimePicker, open: false, loading: false, error: "" } : state.runtimePicker,
       };
+    }
 
     case "set_sidebar_width":
       return { ...state, sidebarWidth: action.value };

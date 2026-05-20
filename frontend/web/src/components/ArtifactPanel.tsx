@@ -17,12 +17,10 @@ import { copyTextToClipboard } from "../utils/clipboard";
 import { Icon, type IconName } from "./ArtifactIcons";
 import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload } from "./ArtifactPreview";
 import { WorkflowPanel } from "./WorkflowPanel";
+import { sidebarAutoCollapseChatWidthPx, sidebarCollapsedTrackWidthPx, sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 
 const artifactHistoryMarker = "myharnessArtifactPanel";
 const artifactPanelMinWidth = 320;
-const visibleChatMinWidth = 300;
-const desktopSidebarWidth = 268;
-const collapsedSidebarWidth = 16;
 const projectFileCategories = [
   ["all", "전체"],
   ["web", "웹페이지"],
@@ -61,8 +59,8 @@ function sameArtifactHistoryState(nextState: Record<string, unknown>) {
 }
 
 export function clampArtifactPanelWidth(value: number, options: { windowWidth: number; sidebarCollapsed: boolean; sidebarWidth?: number }) {
-  const sidebarWidth = options.sidebarCollapsed ? collapsedSidebarWidth : Math.max(desktopSidebarWidth, options.sidebarWidth || desktopSidebarWidth);
-  const maxWidth = Math.max(artifactPanelMinWidth, options.windowWidth - sidebarWidth - visibleChatMinWidth);
+  const sidebarWidth = options.sidebarCollapsed ? sidebarCollapsedTrackWidthPx : Math.max(sidebarDefaultWidthPx, options.sidebarWidth || sidebarDefaultWidthPx);
+  const maxWidth = Math.max(artifactPanelMinWidth, options.windowWidth - sidebarWidth - sidebarAutoCollapseChatWidthPx);
   return Math.min(Math.max(value, artifactPanelMinWidth), maxWidth);
 }
 

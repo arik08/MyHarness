@@ -2617,6 +2617,6 @@ describe("ArtifactPanel", () => {
   });
 
   it("keeps enough chat width visible when the artifact panel is resized wide", () => {
-    expect(clampArtifactPanelWidth(1420, { windowWidth: 1200, sidebarCollapsed: false })).toBe(632);
+    expect(clampArtifactPanelWidth(1420, { windowWidth: 1200, sidebarCollapsed: false })).toBe(532);
   });
 });

@@ -67,6 +67,7 @@ export type WorkflowEvent = {
 };
 
 export type ThemeId = "light" | "posco" | "dark" | "mono" | "mono-orange";
+export type SidebarCollapseReason = "auto" | "manual" | null;
 
 export type ComposerState = {
   draft: string;
@@ -95,6 +96,7 @@ export type AppState = {
   appSettings: AppSettings;
   themeId: ThemeId;
   sidebarCollapsed: boolean;
+  sidebarCollapseReason: SidebarCollapseReason;
   sidebarWidth: number;
   sidebarResizing: boolean;
   commands: CommandItem[];
