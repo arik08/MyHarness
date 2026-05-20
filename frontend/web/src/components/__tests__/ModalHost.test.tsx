@@ -7,6 +7,7 @@ import { AppStateProvider } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { restartSession } from "../../api/session";
 import { deleteWorkspace } from "../../api/workspaces";
+import { readUserStats } from "../../api/settings";
 
 vi.mock("../../api/session", () => ({
   restartSession: vi.fn(),
@@ -15,6 +16,11 @@ vi.mock("../../api/session", () => ({
 vi.mock("../../api/workspaces", () => ({
   createWorkspace: vi.fn(),
   deleteWorkspace: vi.fn(),
+}));
+
+vi.mock("../../api/settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/settings")>()),
+  readUserStats: vi.fn(),
 }));
 
 describe("ModalHost remote access helpers", () => {
@@ -32,6 +38,10 @@ describe("ModalHost remote access helpers", () => {
 });
 
 describe("ModalHost download settings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   function renderDownloadSettingsModal() {
     render(
       <AppStateProvider
@@ -67,6 +77,57 @@ describe("ModalHost download settings", () => {
     expect(screen.getByRole("spinbutton", { name: /따라가기 시간/ })).toBeTruthy();
     expect(screen.getByRole("spinbutton", { name: /따라가기 앞섬/ })).toBeTruthy();
     expect(screen.queryByText("닦아내기 폭")).toBeNull();
+  });
+
+  it("keeps detailed user stats collapsed until requested", async () => {
+    vi.mocked(readUserStats).mockResolvedValue({
+      dailyActiveIpCount: 2,
+      todayVisitCount: 5,
+      totalVisitCount: 25,
+      viewerIp: "10.0.0.7",
+      currentIpTodayVisitCount: 3,
+      conversationCount: 4,
+      activeSessionCount: 1,
+      activeIpSessionCount: 1,
+      currentWorkspaceConversationCount: 2,
+      currentWorkspaceName: "Default",
+      ipBreakdown: [
+        {
+          ip: "10.0.0.7",
+          visitCount: 15,
+          todayVisitCount: 3,
+          firstSeenAt: 1777796334760,
+          lastSeenAt: 1778503290462,
+          activeSessionCount: 1,
+        },
+        {
+          ip: "10.0.0.8",
+          visitCount: 10,
+          todayVisitCount: 2,
+          firstSeenAt: 1777796334760,
+          lastSeenAt: 1778503290462,
+          activeSessionCount: 0,
+        },
+      ],
+      dailyBreakdown: [
+        { date: "2026-05-20", activeIpCount: 2, visitCount: 5 },
+        { date: "2026-05-19", activeIpCount: 1, visitCount: 20 },
+      ],
+      dailyIpBreakdown: [],
+    });
+    renderDownloadSettingsModal();
+
+    await userEvent.click(screen.getByRole("button", { name: /IP별 사용 통계/ }));
+    await screen.findByText("오늘 DAU");
+
+    expect(screen.queryByText("최근 14일 합계")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "상세 보기" }));
+
+    expect(screen.getByText("최근 14일 합계")).toBeTruthy();
+    expect(screen.getByText("IP별 상세")).toBeTruthy();
+    expect(screen.getByText("최다 접속 IP")).toBeTruthy();
+    expect(screen.getAllByText("10.0.0.7").length).toBeGreaterThan(0);
   });
 });
 

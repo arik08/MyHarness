@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable
@@ -193,6 +194,13 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             if not employee_no:
                 raise ValueError(_missing_auth_message(settings))
             api_key = build_pgpt_auth_token(api_key, employee_no, resolve_pgpt_company_code())
+            return OpenAICompatibleClient(
+                api_key=api_key,
+                base_url=settings.base_url,
+                timeout=settings.timeout,
+                raw_stream=_pgpt_raw_sse_enabled(),
+                diagnostics_label="P-GPT",
+            )
         return OpenAICompatibleClient(
             api_key=api_key,
             base_url=settings.base_url,
@@ -203,6 +211,11 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
         api_key=auth.value,
         base_url=settings.base_url,
     )
+
+
+def _pgpt_raw_sse_enabled() -> bool:
+    value = os.environ.get("MYHARNESS_PGPT_RAW_SSE", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _missing_auth_message(settings) -> str:

@@ -882,6 +882,55 @@ test("shuts down idle backend sessions after the event stream closes", async (t)
   assert.equal(live.sessions.some((session) => session.sessionId === created.sessionId), false);
 });
 
+test("event streams disable proxy buffering and send heartbeats", async (t) => {
+  const app = await startWebServer({
+    env: {
+      MYHARNESS_WORKSPACE_SCOPE: "ip",
+      MYHARNESS_SSE_HEARTBEAT_MS: "25",
+    },
+  });
+  t.after(() => app.stop());
+
+  const createdResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "client-sse-headers" }),
+  });
+  const created = await createdResponse.json();
+  assert.equal(createdResponse.status, 200);
+
+  const controller = new AbortController();
+  const eventsResponse = await fetch(
+    `${app.baseUrl}/api/events?session=${created.sessionId}&clientId=client-sse-headers`,
+    { signal: controller.signal },
+  );
+  assert.equal(eventsResponse.status, 200);
+  assert.equal(eventsResponse.headers.get("x-accel-buffering"), "no");
+  assert.match(eventsResponse.headers.get("cache-control") || "", /no-transform/);
+
+  const reader = eventsResponse.body?.getReader();
+  assert.ok(reader);
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const deadline = Date.now() + 800;
+  try {
+    while (Date.now() < deadline && !buffer.includes(": heartbeat")) {
+      const result = await Promise.race([
+        reader.read(),
+        sleep(Math.max(1, deadline - Date.now())).then(() => ({ timeout: true })),
+      ]);
+      if (result.timeout || result.done) {
+        break;
+      }
+      buffer += decoder.decode(result.value, { stream: true });
+    }
+    assert.match(buffer, /: heartbeat/);
+  } finally {
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  }
+});
+
 test("defaults to shared workspaces when listening on LAN interfaces", async (t) => {
   const app = await startWebServer({
     host: "0.0.0.0",
@@ -922,6 +971,25 @@ test("user stats include clickable daily IP visit breakdown", async (t) => {
     ["10.0.0.7", 2],
     ["10.0.0.8", 1],
   ]);
+});
+
+test("user stats preserve concurrent page visits in JSON storage", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const visits = Array.from({ length: 20 }, (_, index) =>
+    fetch(`${app.baseUrl}/`, { headers: { "x-forwarded-for": `10.0.1.${index % 4}` } }),
+  );
+  await Promise.all(visits);
+
+  const statsPath = join(app.configDir, "data", "web-usage-stats.json");
+  const stored = JSON.parse(await readFile(statsPath, "utf8"));
+
+  assert.equal(stored.totalVisits, 20);
+  assert.equal(
+    Object.values(stored.byIp || {}).reduce((total, entry) => total + Number(entry?.visitCount || 0), 0),
+    20,
+  );
 });
 
 test("dev launcher backend entry redirects page visits to Vite on the same host", async (t) => {

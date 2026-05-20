@@ -435,6 +435,7 @@ function UserStatsSettings({ onBack }: { onBack: () => void }) {
   const [stats, setStats] = useState<UserStats | null>(null);
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
+  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
     void readUserStats({ clientId: state.clientId, workspaceName: state.workspaceName, workspacePath: state.workspacePath })
@@ -457,6 +458,15 @@ function UserStatsSettings({ onBack }: { onBack: () => void }) {
   const chartDailyBreakdown = dailyBreakdown.slice(0, 14).reverse();
   const maxDailyActiveIpCount = Math.max(1, ...dailyBreakdown.map((item) => Number(item.activeIpCount || 0)));
   const selectedDailyIpBreakdown = (stats?.dailyIpBreakdown || []).find((item) => item.date === selectedDate)?.ipBreakdown || [];
+  const ipBreakdown = stats?.ipBreakdown || [];
+  const recentVisitCount = dailyBreakdown.reduce((total, item) => total + Number(item.visitCount || 0), 0);
+  const averageDailyVisits = dailyBreakdown.length ? Math.round(recentVisitCount / dailyBreakdown.length) : 0;
+  const busiestDay = dailyBreakdown.reduce<typeof dailyBreakdown[number] | null>((best, item) => (
+    !best || Number(item.visitCount || 0) > Number(best.visitCount || 0) ? item : best
+  ), null);
+  const topIp = ipBreakdown.reduce<typeof ipBreakdown[number] | null>((best, item) => (
+    !best || Number(item.visitCount || 0) > Number(best.visitCount || 0) ? item : best
+  ), null);
 
   return (
     <>
@@ -475,6 +485,42 @@ function UserStatsSettings({ onBack }: { onBack: () => void }) {
           <div className="user-stats-current">
             <StatsMetric label="현재 프로젝트 대화" value={formatNumber(stats.currentWorkspaceConversationCount)} helper={stats.currentWorkspaceName || state.workspaceName || "현재 프로젝트"} />
           </div>
+          <div className="user-stats-toggle-row">
+            <button
+              type="button"
+              className="user-stats-detail-toggle"
+              aria-expanded={showDetails}
+              onClick={() => setShowDetails((value) => !value)}
+            >
+              {showDetails ? "상세 접기" : "상세 보기"}
+            </button>
+          </div>
+          {showDetails ? (
+            <div className="user-stats-details">
+              <div className="user-stats-detail-grid">
+                <StatsMetric label="최근 14일 합계" value={formatNumber(recentVisitCount)} helper="표시 중인 일자 기준 접속" />
+                <StatsMetric label="일평균 접속" value={formatNumber(averageDailyVisits)} helper={`${formatNumber(dailyBreakdown.length)}일 기록 기준`} />
+                <StatsMetric label="최다 접속일" value={busiestDay?.date || "-"} helper={`${formatNumber(busiestDay?.visitCount)}회 접속`} />
+                <StatsMetric label="최다 접속 IP" value={topIp?.ip || "-"} helper={`${formatNumber(topIp?.visitCount)}회 접속`} />
+              </div>
+              <div className="user-stats-ip-detail">
+                <h3>IP별 상세</h3>
+                <div className={`user-stats-ip-table${ipBreakdown.length ? "" : " is-empty"}`}>
+                  {ipBreakdown.map((item) => (
+                    <div className="user-stats-ip-row" key={item.ip || "ip"}>
+                      <strong>{item.ip || "-"}</strong>
+                      <span>{formatNumber(item.visitCount)}회</span>
+                      <span>오늘 {formatNumber(item.todayVisitCount)}회</span>
+                      <span>첫 접속 {formatStatsDate(item.firstSeenAt)}</span>
+                      <span>최근 {formatStatsDate(item.lastSeenAt)}</span>
+                      <span>세션 {formatNumber(item.activeSessionCount)}</span>
+                    </div>
+                  ))}
+                  {!ipBreakdown.length ? <p className="settings-helper">아직 IP별 상세 기록이 없습니다.</p> : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
           <div className="user-stats-breakdown">
             <h3>일자별 DAU</h3>
             <div className="user-stats-daily-chart" role="list" aria-label="날짜별 DAU">

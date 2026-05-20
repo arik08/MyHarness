@@ -65,7 +65,7 @@ describe("Composer", () => {
 
   it("fills the composer from a starter prompt without native title tooltips", async () => {
     const user = userEvent.setup();
-    const expectedPrompt = "[조사 주제]에 대해 최신 자료를 조사하고, 핵심 쟁점·시장/산업 영향·시사점을 포함한 HTML 보고서로 작성해줘. 표와 차트가 필요하면 함께 넣어줘.";
+    const expectedPrompt = "[포스코 관련 국내외 언론기사 동향]에 대해 최근 3개월의 자료를 조사하고, 보고서로 작성해줘";
 
     render(
       <AppStateProvider>

@@ -6,9 +6,11 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 
+import httpx
 from openai import AsyncOpenAI
 
 from myharness.api.client import (
@@ -26,6 +28,7 @@ from myharness.api.errors import (
     RequestFailure,
 )
 from myharness.api.usage import UsageSnapshot
+from myharness.config.paths import get_logs_dir
 from myharness.engine.messages import (
     ConversationMessage,
     ContentBlock,
@@ -234,11 +237,23 @@ class OpenAICompatibleClient:
     so it can be used as a drop-in replacement in the agent loop.
     """
 
-    def __init__(self, api_key: str, *, base_url: str | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+        raw_stream: bool = False,
+        diagnostics_label: str | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._base_url = _normalize_openai_base_url(base_url)
+        self._timeout = timeout
+        self._raw_stream = raw_stream
+        self._diagnostics_label = diagnostics_label or ""
         kwargs: dict[str, Any] = {"api_key": api_key}
-        normalized_base_url = _normalize_openai_base_url(base_url)
-        if normalized_base_url:
-            kwargs["base_url"] = normalized_base_url
+        if self._base_url:
+            kwargs["base_url"] = self._base_url
         if timeout is not None:
             kwargs["timeout"] = timeout
         self._client = AsyncOpenAI(**kwargs)
@@ -249,7 +264,8 @@ class OpenAICompatibleClient:
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                async for event in self._stream_once(request):
+                stream_once = self._stream_raw_once if self._raw_stream else self._stream_once
+                async for event in stream_once(request):
                     yield event
                 return
             except MyHarnessApiError:
@@ -275,8 +291,7 @@ class OpenAICompatibleClient:
         if last_error is not None:
             raise self._translate_error(last_error) from last_error
 
-    async def _stream_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
-        """Single attempt: stream an OpenAI chat completion."""
+    def _completion_params(self, request: ApiMessageRequest) -> dict[str, Any]:
         safe_messages = sanitize_conversation_messages(request.messages)
         openai_messages = _convert_messages_to_openai(safe_messages, request.system_prompt)
         openai_tools = _convert_tools_to_openai(request.tools) if request.tools else None
@@ -295,6 +310,11 @@ class OpenAICompatibleClient:
             # tools are present – avoids triggering model-side thinking mode
             # that requires reasoning_content on every assistant message.
             params.pop("stream_options", None)
+        return params
+
+    async def _stream_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
+        """Single attempt: stream an OpenAI chat completion."""
+        params = self._completion_params(request)
 
         # Collect full response while streaming text deltas
         collected_content = ""
@@ -402,12 +422,266 @@ class OpenAICompatibleClient:
             stop_reason=finish_reason,
         )
 
+    async def _stream_raw_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
+        """Single attempt using a direct SSE reader for OpenAI-compatible providers."""
+        params = self._completion_params(request)
+        collected_content = ""
+        collected_reasoning = ""
+        collected_tool_calls: dict[int, dict[str, Any]] = {}
+        finish_reason: str | None = None
+        usage_data: dict[str, int] = {}
+        think_buf = ""
+        started_at = time.monotonic()
+        self._write_stream_diagnostic("request_start", model=request.model)
+
+        timeout_seconds = self._timeout or 600.0
+        timeout = httpx.Timeout(
+            timeout_seconds,
+            connect=min(timeout_seconds, 30.0),
+            write=min(timeout_seconds, 60.0),
+            pool=30.0,
+        )
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with client.stream(
+                "POST",
+                self._chat_completions_url(),
+                headers=self._raw_stream_headers(),
+                json=params,
+            ) as response:
+                if response.status_code >= 400:
+                    payload = await response.aread()
+                    message = payload.decode("utf-8", "replace") or f"HTTP {response.status_code}"
+                    raise httpx.HTTPStatusError(message, request=response.request, response=response)
+
+                async for payload in self._iter_raw_sse_payloads(response):
+                    self._capture_usage(payload, usage_data)
+                    choices = payload.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    for choice in choices:
+                        if not isinstance(choice, dict):
+                            continue
+                        choice_finish = choice.get("finish_reason")
+                        if isinstance(choice_finish, str) and choice_finish:
+                            finish_reason = choice_finish
+                        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+                        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+
+                        reasoning_piece = str(delta.get("reasoning_content") or "")
+                        if reasoning_piece:
+                            collected_reasoning += reasoning_piece
+                            self._write_stream_diagnostic(
+                                "reasoning_delta",
+                                elapsed_ms=self._elapsed_ms(started_at),
+                                text_length=len(reasoning_piece),
+                            )
+
+                        content_piece = delta.get("content")
+                        if isinstance(content_piece, str) and content_piece:
+                            think_buf += content_piece
+                            visible, think_buf = _strip_think_blocks(think_buf)
+                            if visible:
+                                collected_content += visible
+                                self._write_stream_diagnostic(
+                                    "text_delta",
+                                    elapsed_ms=self._elapsed_ms(started_at),
+                                    text_length=len(visible),
+                                )
+                                yield ApiTextDeltaEvent(text=visible)
+
+                        if isinstance(message.get("content"), str) and message.get("content") and not collected_content:
+                            collected_content = str(message["content"])
+
+                        for tc_delta in self._iter_tool_call_dicts(delta.get("tool_calls")):
+                            idx = tc_delta["index"]
+                            entry = collected_tool_calls.setdefault(
+                                idx,
+                                {"id": "", "name": "", "arguments": ""},
+                            )
+                            if tc_delta["id"]:
+                                entry["id"] = tc_delta["id"]
+                            if tc_delta["name"]:
+                                entry["name"] = tc_delta["name"]
+                            if tc_delta["arguments"]:
+                                entry["arguments"] += tc_delta["arguments"]
+                                self._write_stream_diagnostic(
+                                    "tool_delta",
+                                    elapsed_ms=self._elapsed_ms(started_at),
+                                    index=idx,
+                                    tool_name=entry["name"],
+                                    arguments_length=len(tc_delta["arguments"]),
+                                )
+                                yield ApiToolCallDeltaEvent(
+                                    index=idx,
+                                    name=entry["name"] or None,
+                                    arguments_delta=tc_delta["arguments"],
+                                )
+
+                        for tc_final in self._iter_tool_call_dicts(message.get("tool_calls")):
+                            idx = tc_final["index"]
+                            entry = collected_tool_calls.setdefault(
+                                idx,
+                                {"id": "", "name": "", "arguments": ""},
+                            )
+                            if tc_final["id"]:
+                                entry["id"] = tc_final["id"]
+                            if tc_final["name"]:
+                                entry["name"] = tc_final["name"]
+                            if tc_final["arguments"]:
+                                entry["arguments"] = tc_final["arguments"]
+                                self._write_stream_diagnostic(
+                                    "tool_final",
+                                    elapsed_ms=self._elapsed_ms(started_at),
+                                    index=idx,
+                                    tool_name=entry["name"],
+                                    arguments_length=len(tc_final["arguments"]),
+                                )
+
+        content: list[ContentBlock] = []
+        if collected_content:
+            content.append(TextBlock(text=collected_content))
+
+        for idx in sorted(collected_tool_calls.keys()):
+            tc = collected_tool_calls[idx]
+            if not tc["name"]:
+                continue
+            try:
+                args = json.loads(tc["arguments"])
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            content.append(ToolUseBlock(id=tc["id"], name=tc["name"], input=args))
+
+        final_message = ConversationMessage(role="assistant", content=content)
+        if collected_reasoning:
+            final_message._reasoning = collected_reasoning  # type: ignore[attr-defined]
+
+        self._write_stream_diagnostic(
+            "message_complete",
+            elapsed_ms=self._elapsed_ms(started_at),
+            text_length=len(collected_content),
+            tool_calls=len(collected_tool_calls),
+            finish_reason=finish_reason or "",
+        )
+        yield ApiMessageCompleteEvent(
+            message=final_message,
+            usage=UsageSnapshot(
+                input_tokens=usage_data.get("input_tokens", 0),
+                output_tokens=usage_data.get("output_tokens", 0),
+            ),
+            stop_reason=finish_reason,
+        )
+
+    def _chat_completions_url(self) -> str:
+        base_url = (self._base_url or "https://api.openai.com/v1").rstrip("/")
+        return f"{base_url}/chat/completions"
+
+    def _raw_stream_headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+
+    @staticmethod
+    async def _iter_raw_sse_payloads(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
+        data_lines: list[str] = []
+        async for line in response.aiter_lines():
+            if line == "":
+                if data_lines:
+                    payload = "\n".join(data_lines).strip()
+                    data_lines = []
+                    if payload and payload != "[DONE]":
+                        try:
+                            event = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(event, dict):
+                            yield event
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+                continue
+            stripped = line.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                try:
+                    event = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    yield event
+        if data_lines:
+            payload = "\n".join(data_lines).strip()
+            if payload and payload != "[DONE]":
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    return
+                if isinstance(event, dict):
+                    yield event
+
+    @staticmethod
+    def _iter_tool_call_dicts(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        calls: list[dict[str, Any]] = []
+        for position, item in enumerate(value):
+            if not isinstance(item, dict):
+                continue
+            function = item.get("function") if isinstance(item.get("function"), dict) else {}
+            raw_index = item.get("index", position)
+            index = raw_index if isinstance(raw_index, int) else position
+            calls.append(
+                {
+                    "index": index,
+                    "id": str(item.get("id") or ""),
+                    "name": str(function.get("name") or ""),
+                    "arguments": str(function.get("arguments") or ""),
+                }
+            )
+        return calls
+
+    @staticmethod
+    def _capture_usage(payload: dict[str, Any], usage_data: dict[str, int]) -> None:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return
+        usage_data.update(
+            {
+                "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+                "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+            }
+        )
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        return max(0, round((time.monotonic() - started_at) * 1000))
+
+    def _write_stream_diagnostic(self, event: str, **fields: Any) -> None:
+        if not self._raw_stream:
+            return
+        try:
+            payload = {
+                "ts": time.time(),
+                "provider": self._diagnostics_label or "openai-compatible",
+                "event": event,
+                **fields,
+            }
+            path = get_logs_dir() / "provider-stream-diagnostics.jsonl"
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception:
+            log.debug("failed to write provider stream diagnostic", exc_info=True)
+
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
         status = getattr(exc, "status_code", None)
+        if status is None and isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
         if status and status in {429, 500, 502, 503}:
             return True
-        if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        if isinstance(exc, (httpx.TimeoutException, httpx.TransportError, ConnectionError, TimeoutError, OSError)):
             return True
         marker = f"{exc.__class__.__name__} {exc}".lower()
         if any(term in marker for term in ("timeout", "timed out", "connection", "network")):
@@ -417,6 +691,8 @@ class OpenAICompatibleClient:
     @staticmethod
     def _translate_error(exc: Exception) -> MyHarnessApiError:
         status = getattr(exc, "status_code", None)
+        if status is None and isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
         msg = str(exc)
         if status == 401 or status == 403:
             return AuthenticationFailure(msg)
