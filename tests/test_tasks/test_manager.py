@@ -93,6 +93,7 @@ async def test_child_task_update_control_line_updates_parent_metadata(tmp_path: 
     assert updated.env["MYHARNESS_PARENT_TASK_ID"] == task.id
     assert updated.metadata["progress"] == "35"
     assert updated.metadata["status_note"] == "checking sources"
+    assert float(updated.metadata["status_note_updated_at"]) > 0
     assert visible == b"visible result\n"
 
 

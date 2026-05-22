@@ -8,13 +8,14 @@ import { MessageList } from "../MessageList";
 import { ModalHost } from "../ModalHost";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { cancelMessage, sendBackendRequest, sendMessage } from "../../api/messages";
+import { cancelMessage, sendBackendRequest, sendMessage, uploadClientAttachments } from "../../api/messages";
 import { startSession } from "../../api/session";
 
 vi.mock("../../api/messages", () => ({
   cancelMessage: vi.fn().mockResolvedValue({ ok: true }),
   sendBackendRequest: vi.fn().mockResolvedValue({ ok: true }),
   sendMessage: vi.fn().mockResolvedValue({ ok: true }),
+  uploadClientAttachments: vi.fn().mockResolvedValue({ attachments: [] }),
 }));
 
 vi.mock("../../api/session", () => ({
@@ -26,6 +27,8 @@ describe("Composer", () => {
     vi.mocked(cancelMessage).mockClear();
     vi.mocked(sendMessage).mockClear();
     vi.mocked(sendBackendRequest).mockClear();
+    vi.mocked(uploadClientAttachments).mockClear();
+    vi.mocked(uploadClientAttachments).mockResolvedValue({ attachments: [] });
     vi.mocked(startSession).mockClear();
     vi.mocked(startSession).mockResolvedValue({ sessionId: "session-new" });
     document.documentElement.style.removeProperty("--composer-stack-height");
@@ -61,6 +64,285 @@ describe("Composer", () => {
     );
 
     expect(screen.queryByRole("button", { name: "이미지 첨부" })).toBeNull();
+  });
+
+  it("opens the attached composer panel without native title tooltips", async () => {
+    const user = userEvent.setup();
+    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const toggle = screen.getByRole("button", { name: "입력 옵션 열기" });
+    expect(toggle.getAttribute("title")).toBeNull();
+    expect(toggle.getAttribute("data-tooltip")).toBe("첨부 및 출력 옵션");
+    expect(toggle.getAttribute("data-tooltip-placement")).toBe("left");
+
+    await user.click(toggle);
+
+    expect(screen.getByLabelText("입력 옵션").classList.contains("hidden")).toBe(false);
+    expect(screen.getByLabelText("입력 옵션").getAttribute("data-tooltip-top-boundary")).toBe("true");
+    expect(document.querySelector(".composer-box")?.classList.contains("with-panel")).toBe(true);
+    const attachButton = screen.getByRole("button", { name: "파일첨부" });
+    expect(attachButton.getAttribute("title")).toBeNull();
+    expect(attachButton.getAttribute("data-tooltip")).toBe("파일첨부");
+    expect(attachButton.getAttribute("data-tooltip-placement")).toBe("top");
+    expect(attachButton.textContent).toBe("");
+    const controlLabels = Array.from(document.querySelectorAll<HTMLElement>(".composer-control-label"));
+    expect(controlLabels.map((node) => node.textContent)).toEqual(["출력", "모드", "출력량"]);
+    expect(controlLabels.map((node) => node.getAttribute("data-tooltip-placement"))).toEqual(["top", "top", "top"]);
+    expect(controlLabels.map((node) => node.getAttribute("data-tooltip"))).toEqual([
+      "답변을 채팅에 표시할지 산출물로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다.",
+      "산출물을 만들 때 새로 생성할지 기존 산출물을 수정할지 정합니다.",
+      "산출물 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다. ~40k 이상은 먼저 개요와 작성 계획을 세운 뒤 섹션별로 나누어 작성하고 검토 후 합치는 방식으로 처리합니다.",
+    ]);
+    expect(Array.from(screen.getByLabelText("산출물 작업").querySelectorAll("button")).every((button) => !button.disabled)).toBe(true);
+    expect(screen.getByLabelText("출력 위치").querySelector("button")?.textContent).toBe("자동");
+    expect(screen.getByLabelText("출력 길이").querySelector("button")?.textContent).toBe("자동");
+    expect(screen.queryByRole("button", { name: "8k" })).toBeNull();
+    expect(screen.getByRole("button", { name: "16k" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "~20k" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "초장문" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "직접" })).toBeNull();
+    expect(screen.getByRole("button", { name: "~160k" })).toBeTruthy();
+    expect(stylesheet).toContain(".composer-expand-button.active {\n  color: var(--muted);");
+    expect(stylesheet).toContain("stroke-width: 2.45;");
+    expect(stylesheet).toContain(".composer-expand-button.active svg {\n  transform: translateY(-1px);");
+    expect(stylesheet).not.toContain(".composer-expand-button.active svg {\n  transform: rotate(45deg);");
+    expect(stylesheet).toContain("border-radius: 14px 14px 0 0;");
+    expect(stylesheet).not.toContain("0 -9px 26px color-mix(in srgb, var(--inverse) 7%, transparent)");
+  });
+
+  it("keeps the send payload unchanged when the panel is opened but not edited", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "기본 동작 확인");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.not.objectContaining({
+      composeOptions: expect.anything(),
+      attachmentRefs: expect.anything(),
+    }));
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "기본 동작 확인",
+      attachments: [],
+    }));
+  });
+
+  it("serializes artifact edit compose options with the active artifact path", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          activeArtifact: { path: "outputs/current-report.html", name: "current-report.html", kind: "html" },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "산출물" }));
+    await user.click(screen.getByRole("button", { name: "수정" }));
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "현재 보고서 다듬어줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      composeOptions: {
+        output_surface: "artifact",
+        artifact_action: "edit",
+        active_artifact_path: "outputs/current-report.html",
+      },
+    }));
+  });
+
+  it("keeps output auto while passing artifact output amount preferences", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "~40k" }));
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "대보고서 작성");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      composeOptions: {
+        length_preset: "extra_long",
+        target_output_tokens: 40000,
+      },
+    }));
+  });
+
+  it("keeps output auto while passing artifact mode preferences", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "생성" }));
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "필요하면 새 산출물로 만들어줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      composeOptions: {
+        artifact_action: "create",
+      },
+    }));
+  });
+
+  it("serializes extra-long output amount with explicit artifact output", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "산출물" }));
+    await user.click(screen.getByRole("button", { name: "~40k" }));
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "대보고서 작성");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      composeOptions: {
+        output_surface: "artifact",
+        artifact_action: "auto",
+        length_preset: "extra_long",
+        target_output_tokens: 40000,
+      },
+    }));
+  });
+
+  it("serializes 16k output amount with explicit artifact output", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "산출물" }));
+    await user.click(screen.getByRole("button", { name: "16k" }));
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "16k 정도로 답변해줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      composeOptions: {
+        output_surface: "artifact",
+        artifact_action: "auto",
+        length_preset: "extended",
+        target_output_tokens: 16000,
+      },
+    }));
+  });
+
+  it("keeps chat output from changing target token length", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "16k" }));
+    await user.click(screen.getByRole("button", { name: "생성" }));
+    await user.click(screen.getByRole("button", { name: "채팅" }));
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "채팅창에만 답해줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      composeOptions: {
+        output_surface: "chat",
+      },
+    }));
+  });
+
+  it("uploads client files, renders chips, removes them, and sends refs", async () => {
+    const user = userEvent.setup();
+    vi.mocked(uploadClientAttachments).mockResolvedValueOnce({
+      attachments: [
+        {
+          id: "upload-1",
+          name: "client-notes.pdf",
+          path: ".myharness/client-uploads/client/batch/client-notes.pdf",
+          size: 2048,
+          media_type: "application/pdf",
+        },
+      ],
+    });
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    const fileInput = document.querySelector<HTMLInputElement>(".composer-file-input");
+    expect(fileInput).toBeTruthy();
+
+    await user.upload(fileInput!, new File(["pdf"], "client-notes.pdf", { type: "application/pdf" }));
+
+    expect(uploadClientAttachments).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      files: expect.arrayContaining([expect.objectContaining({ name: "client-notes.pdf" })]),
+    }));
+    expect(screen.getByText("client-notes.pdf")).toBeTruthy();
+    expect(screen.getByText("2.0 KB")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "client-notes.pdf 삭제" }));
+    expect(screen.queryByText("client-notes.pdf")).toBeNull();
+
+    vi.mocked(uploadClientAttachments).mockResolvedValueOnce({
+      attachments: [
+        {
+          id: "upload-2",
+          name: "client-notes.pdf",
+          path: ".myharness/client-uploads/client/batch/client-notes.pdf",
+          size: 2048,
+          media_type: "application/pdf",
+        },
+      ],
+    });
+    await user.upload(fileInput!, new File(["pdf"], "client-notes.pdf", { type: "application/pdf" }));
+
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "이 파일 요약해줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(document.querySelector("article.message.user")?.textContent).toContain("[client-notes.pdf]");
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      attachmentRefs: [
+        expect.objectContaining({
+          name: "client-notes.pdf",
+          path: ".myharness/client-uploads/client/batch/client-notes.pdf",
+        }),
+      ],
+    }));
   });
 
   it("fills the composer from a starter prompt without native title tooltips", async () => {
@@ -113,6 +395,7 @@ describe("Composer", () => {
   });
 
   it("renders pasted images with the legacy thumbnail chip and preview modal", async () => {
+    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
     const file = new File(["image"], "pasted-image.png", { type: "image/png" });
     const item = { kind: "file", type: "image/png", getAsFile: () => file };
     const readerSpy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function readAsDataURLMock(this: FileReader) {
@@ -141,6 +424,8 @@ describe("Composer", () => {
     const image = await screen.findByRole("button", { name: "pasted-image.png" });
     expect(document.querySelector(".attachment-chip")).toBeTruthy();
     expect(document.querySelector(".react-attachment-chip")).toBeNull();
+    expect(stylesheet).toContain(".composer-box:has(.attachment-tray:not(.hidden)) {\n  align-items: end;\n  min-height: 84px;\n  padding: 8px 5px 6px 14px;\n  border-radius: 22px;");
+    expect(stylesheet).not.toContain(".composer-box:has(.attachment-tray:not(.hidden)) {\n  align-items: end;\n  min-height: 84px;\n  padding: 8px 5px 6px 14px;\n  border-radius: 28px;");
 
     await userEvent.click(image);
     expect(await screen.findByRole("dialog", { name: "pasted-image.png" })).toBeTruthy();
@@ -351,6 +636,7 @@ describe("Composer", () => {
 
   it("grows the input and composer frame for multiline drafts", async () => {
     const user = userEvent.setup();
+    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
     render(
       <AppStateProvider>
         <Composer />
@@ -367,6 +653,7 @@ describe("Composer", () => {
 
     expect(input.style.height).toBe("44px");
     expect(input.closest(".composer-box")?.classList.contains("multiline")).toBe(true);
+    expect(stylesheet).toContain(".composer-expand-button {\n  display: grid;\n  place-items: center;\n  align-self: end;");
   });
 
   it("focuses the message input when the composer background is clicked", () => {
@@ -787,6 +1074,9 @@ describe("Composer", () => {
     await user.type(input, "작성 중");
     await user.keyboard("{Shift>}{Tab}{/Shift}");
 
+    const planModeButton = screen.getByRole<HTMLButtonElement>("button", { name: "계획모드 전환" });
+    expect(planModeButton.getAttribute("aria-pressed")).toBe("true");
+    expect(planModeButton.classList.contains("hidden")).toBe(false);
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "메시지 보내기" }).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "작업 중단" })).toBeNull();
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ line: "/plan" }));

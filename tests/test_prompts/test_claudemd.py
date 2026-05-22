@@ -177,10 +177,16 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
     assert "fenced `workflow` block" not in prompt
     assert "Do not spawn serial downstream roles prematurely" in prompt
     assert "use at most 5 workers" in prompt
-    assert "narrow non-overlapping scope" in prompt
+    assert "non-overlapping scope" in prompt
+    assert "substantial analysis" in prompt
+    assert "intermediate tables" in prompt
+    assert "Act as the main orchestrator" in prompt
+    assert "send_message" in prompt
+    assert 'model="inherit"' in prompt
     assert "If most workers finish within a few minutes but one worker" in prompt
     assert "stop it with `task_stop`" in prompt
-    assert "spawn a narrower replacement or complete the remaining slice yourself" in prompt
+    assert "spawn a narrower replacement" in prompt
+    assert "complete the remaining slice yourself" in prompt
     assert "Do not let one lagging worker block the whole task" in prompt
     assert "/agents show TASK_ID" in prompt
     assert "Environment" in prompt
@@ -216,7 +222,7 @@ def test_build_runtime_system_prompt_lists_subagent_presets_without_bodies(tmp_p
     assert "generic worker" not in prompt
 
 
-def test_build_runtime_system_prompt_disables_split_report_generation(tmp_path: Path, monkeypatch):
+def test_build_runtime_system_prompt_guides_explicit_extra_long_report_generation(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     repo = tmp_path / "repo"
@@ -224,12 +230,13 @@ def test_build_runtime_system_prompt_disables_split_report_generation(tmp_path: 
 
     prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="80,000 토큰 HTML 보고서 작성")
 
-    assert "Report Generation Limits" in prompt
-    assert "20,000 tokens" in prompt
-    assert "Do not split a report into section-by-section model calls" in prompt
-    assert "Do not generate more than 20,000 tokens" in prompt
-    assert "write_long_report" not in prompt
-    assert "target_tokens" not in prompt
+    assert "Report Generation" in prompt
+    assert "below roughly 20,000 tokens" in prompt
+    assert "Use `write_long_report` only when" in prompt
+    assert "20k, 40k, 80k, 160k" in prompt
+    assert "outline" in prompt
+    assert "section" in prompt
+    assert "Do not generate more than 20,000 tokens" not in prompt
 
 
 def test_build_runtime_system_prompt_keeps_report_limits_from_overriding_html_artifacts(
@@ -271,6 +278,8 @@ def test_task_worker_prompt_skips_delegation_and_parent_task_queries(tmp_path: P
     assert "You are a **coordinator**." not in prompt
     assert "Do not use task_get, task_list, or task_output" in prompt
     assert "Use task_update only" in prompt
+    assert "compact JSON progress" in prompt
+    assert "generic still-working heartbeats" in prompt
     assert "chart, table, timeline, or comparison candidates" in prompt
     assert "Do not return raw unstyled HTML" in prompt
 

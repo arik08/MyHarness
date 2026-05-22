@@ -138,6 +138,39 @@ class EmptyAssistantApiClient:
         )
 
 
+class _WriteFileInput(BaseModel):
+    path: str
+    content: str = ""
+
+
+class _BlockedWriteFileTool(BaseTool):
+    name = "write_file"
+    description = "Writes a file if it is not blocked."
+    input_model = _WriteFileInput
+
+    async def execute(self, arguments: _WriteFileInput, context: ToolExecutionContext) -> ToolResult:
+        del arguments, context
+        return ToolResult(output="unexpected write")
+
+
+class _TaskOutputInput(BaseModel):
+    task_id: str
+
+
+class _AllowedTaskOutputTool(BaseTool):
+    name = "task_output"
+    description = "Reads task output."
+    input_model = _TaskOutputInput
+
+    def is_read_only(self, arguments: _TaskOutputInput) -> bool:
+        del arguments
+        return True
+
+    async def execute(self, arguments: _TaskOutputInput, context: ToolExecutionContext) -> ToolResult:
+        del arguments, context
+        return ToolResult(output="worker output")
+
+
 class TruncatedThenContinuedApiClient:
     def __init__(self) -> None:
         self.requests = []
@@ -1468,6 +1501,63 @@ class _NeverTool(BaseTool):
         del arguments, context
         await asyncio.Event().wait()
         return ToolResult(output="unreachable")
+
+
+@pytest.mark.asyncio
+async def test_query_engine_blocks_final_artifact_tool_when_async_agent_pending(tmp_path: Path):
+    registry = ToolRegistry()
+    registry.register(_BlockedWriteFileTool())
+    context = QueryContext(
+        api_client=StaticApiClient("unused"),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        max_tokens=1000,
+        tool_metadata={
+            "async_agent_tasks": [
+                {"task_id": "agent-1", "agent_id": "research@office", "notification_sent": False}
+            ]
+        },
+    )
+
+    result = await _execute_tool_call(
+        context,
+        "write_file",
+        "toolu_write",
+        {"path": "outputs/final_report.html", "content": "<html>final</html>"},
+    )
+
+    assert result.is_error is True
+    assert "pending worker" in result.content
+    assert "중단, 교체, relay, 또는 승계" in result.content
+    assert not (tmp_path / "outputs" / "final_report.html").exists()
+
+
+@pytest.mark.asyncio
+async def test_query_engine_allows_orchestration_tool_when_async_agent_pending(tmp_path: Path):
+    registry = ToolRegistry()
+    registry.register(_AllowedTaskOutputTool())
+    context = QueryContext(
+        api_client=StaticApiClient("unused"),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        max_tokens=1000,
+        tool_metadata={
+            "async_agent_tasks": [
+                {"task_id": "agent-1", "agent_id": "research@office", "notification_sent": False}
+            ]
+        },
+    )
+
+    result = await _execute_tool_call(context, "task_output", "toolu_task", {"task_id": "agent-1"})
+
+    assert result.is_error is False
+    assert result.content == "worker output"
 
 
 @pytest.mark.asyncio

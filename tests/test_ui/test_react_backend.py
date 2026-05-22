@@ -27,6 +27,9 @@ from myharness.ui.backend_host import (
     BackendHostConfig,
     ReactBackendHost,
     _detect_slow_swarm_teammate,
+    _detect_swarm_orchestration_checkpoint,
+    _detect_unresponsive_swarm_teammate,
+    _guard_premature_async_agent_final_response,
     _long_report_progress_path,
     _long_report_progress_usage_input,
     _progress_preview_content,
@@ -35,7 +38,7 @@ from myharness.ui.backend_host import (
     _tool_progress_message,
     run_backend_host,
 )
-from myharness.ui.protocol import BackendEvent, FrontendRequest
+from myharness.ui.protocol import BackendEvent, FrontendAttachment, FrontendComposeOptions, FrontendRequest
 from myharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 
 
@@ -148,6 +151,37 @@ def test_frontend_request_accepts_start_new_session():
 
     assert request.type == "start_new_session"
     assert request.value == "abcdef123456"
+
+
+def test_frontend_request_accepts_client_attachment_refs_and_compose_options():
+    request = FrontendRequest.model_validate(
+        {
+            "type": "submit_line",
+            "line": "",
+            "attachment_refs": [
+                {
+                    "id": "upload-1",
+                    "name": "source.pdf",
+                    "path": ".myharness/client-uploads/client/source.pdf",
+                    "size": 2048,
+                    "media_type": "application/pdf",
+                }
+            ],
+            "compose_options": {
+                "output_surface": "artifact",
+                "artifact_action": "edit",
+                "target_output_tokens": 40000,
+                "length_preset": "extra_long",
+                "active_artifact_path": "outputs/report.html",
+            },
+        }
+    )
+
+    assert request.attachment_refs[0].data == ""
+    assert request.attachment_refs[0].path == ".myharness/client-uploads/client/source.pdf"
+    assert request.compose_options is not None
+    assert request.compose_options.output_surface == "artifact"
+    assert request.compose_options.target_output_tokens == 40000
 
 
 def test_long_report_progress_uses_less_aggressive_preview_updates():
@@ -941,6 +975,97 @@ async def test_backend_host_uses_transcript_line_for_visible_user_message(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_backend_host_injects_client_attachment_refs_and_compose_options(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = SequencedApiClient(["done"])
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    original_max_tokens = host._bundle.engine.max_tokens
+
+    async def _emit(event):
+        host._record_history_event(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line(
+            "보고서 수정",
+            attachment_refs=[
+                FrontendAttachment(
+                    id="upload-1",
+                    name="source.pdf",
+                    path=".myharness/client-uploads/client/source.pdf",
+                    size=2048,
+                    media_type="application/pdf",
+                )
+            ],
+            compose_options=FrontendComposeOptions(
+                output_surface="artifact",
+                artifact_action="edit",
+                target_output_tokens=40000,
+                length_preset="extra_long",
+                active_artifact_path="outputs/report.html",
+            ),
+            emit_user_transcript=False,
+        )
+    finally:
+        await close_runtime(host._bundle)
+
+    assert client.requests
+    sent_text = "\n".join(message.text for message in client.requests[0].messages)
+    assert "The user attached local client files" in sent_text
+    assert "original client SSD paths are not available" in sent_text
+    assert "`.myharness/client-uploads/client/source.pdf`" in sent_text
+    assert "The user selected artifact output and asked to edit the active artifact `outputs/report.html`" in sent_text
+    assert "Target artifact length: about 40,000 output tokens." in sent_text
+    assert "`write_long_report`" in sent_text
+    assert client.requests[0].max_tokens == 40000
+    assert host._bundle.engine.max_tokens == original_max_tokens
+    assert host._history_events[0] == {"type": "user", "text": "보고서 수정 [file attachments: source.pdf]"}
+
+
+@pytest.mark.asyncio
+async def test_backend_host_applies_artifact_preferences_when_output_surface_is_auto(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = SequencedApiClient(["done"])
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    original_max_tokens = host._bundle.engine.max_tokens
+
+    async def _emit(event):
+        host._record_history_event(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line(
+            "필요하면 장문 산출물 작성",
+            compose_options=FrontendComposeOptions(
+                artifact_action="create",
+                target_output_tokens=40000,
+                length_preset="extra_long",
+            ),
+            emit_user_transcript=False,
+        )
+    finally:
+        await close_runtime(host._bundle)
+
+    assert client.requests
+    sent_text = "\n".join(message.text for message in client.requests[0].messages)
+    assert "The user left output surface on auto, but if you create an artifact" in sent_text
+    assert "Target artifact length: about 40,000 output tokens." in sent_text
+    assert "`write_long_report`" in sent_text
+    assert client.requests[0].max_tokens == original_max_tokens
+    assert host._bundle.engine.max_tokens == original_max_tokens
+
+
+@pytest.mark.asyncio
 async def test_backend_host_enqueues_completed_async_agent_notification(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     metadata = {
@@ -1198,9 +1323,13 @@ async def test_backend_host_steers_divided_work_to_swarm_agents(tmp_path, monkey
     assert "fenced `workflow` block" not in steering_lines[0]
     assert "Do not spawn serial downstream roles prematurely" in steering_lines[0]
     assert "at most 5 workers" in steering_lines[0]
-    assert "narrow non-overlapping scope" in steering_lines[0]
+    assert "non-overlapping scope" in steering_lines[0]
+    assert "substantial analysis" in steering_lines[0]
+    assert "intermediate tables" in steering_lines[0]
     assert "one worker" in steering_lines[0]
     assert "`task_stop`" in steering_lines[0]
+    assert "send_message" in steering_lines[0]
+    assert 'model="inherit"' in steering_lines[0]
     assert "Do not let one lagging worker block" in steering_lines[0]
     assert any(event.type == "status" and event.message == "역할을 나눠 진행하겠습니다." for event in events)
     assert not any(event.type == "status" and "지시" in (event.message or "") for event in events)
@@ -1252,6 +1381,422 @@ def test_detect_slow_swarm_teammate_flags_parallel_wave_straggler(tmp_path, monk
     assert slow["agent_id"] == "slow@office"
     assert slow["role"] == "검토 담당"
     assert slow["peer_count"] == 2
+
+
+def test_detect_swarm_orchestration_checkpoint_flags_running_wave(tmp_path, monkeypatch):
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_ORCHESTRATION_CHECKPOINT_SECONDS", 60)
+    now = 1_000.0
+    tasks = [
+        TaskRecord(
+            id="agent-research",
+            type="local_agent",
+            status="running",
+            description="research worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "research.log",
+            created_at=900.0,
+            started_at=900.0,
+            metadata={"agent_id": "research@office", "agent_role": "조사 담당"},
+        ),
+        TaskRecord(
+            id="agent-analysis",
+            type="local_agent",
+            status="running",
+            description="analysis worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "analysis.log",
+            created_at=910.0,
+            started_at=910.0,
+            metadata={"agent_id": "analysis@office", "agent_role": "분석 담당"},
+        ),
+    ]
+
+    checkpoint = _detect_swarm_orchestration_checkpoint(tasks, now=now, last_checkpoint_at=0.0)
+
+    assert checkpoint is not None
+    assert checkpoint["running_count"] == 2
+    assert checkpoint["completed_count"] == 0
+    assert checkpoint["oldest_running_seconds"] == 100.0
+    assert checkpoint["running_tasks"][0]["agent_id"] == "research@office"
+
+
+def test_swarm_orchestration_checkpoint_defaults_to_one_minute():
+    from myharness.ui import backend_host
+
+    assert backend_host._SWARM_ORCHESTRATION_CHECKPOINT_SECONDS == 60
+    assert backend_host._SWARM_NO_PROGRESS_SECONDS == 120
+
+
+def test_detect_unresponsive_swarm_teammate_flags_worker_without_output(tmp_path, monkeypatch):
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_NO_PROGRESS_SECONDS", 120)
+    now = 1_000.0
+    tasks = [
+        TaskRecord(
+            id="agent-silent",
+            type="local_agent",
+            status="running",
+            description="silent worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "silent.log",
+            created_at=800.0,
+            started_at=800.0,
+            metadata={"agent_id": "silent@office", "agent_role": "자료 확인"},
+        )
+    ]
+
+    silent = _detect_unresponsive_swarm_teammate(tasks, now=now, alerted_task_ids=set())
+
+    assert silent is not None
+    assert silent["task_id"] == "agent-silent"
+    assert silent["idle_seconds"] == 200.0
+
+
+def test_detect_unresponsive_swarm_teammate_uses_recent_status_note_timestamp(tmp_path, monkeypatch):
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_NO_PROGRESS_SECONDS", 120)
+    now = 1_000.0
+    tasks = [
+        TaskRecord(
+            id="agent-active",
+            type="local_agent",
+            status="running",
+            description="active worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "active.log",
+            created_at=800.0,
+            started_at=800.0,
+            metadata={"status_note_updated_at": "900"},
+        )
+    ]
+
+    silent = _detect_unresponsive_swarm_teammate(tasks, now=now, alerted_task_ids=set())
+
+    assert silent is None
+
+
+@pytest.mark.asyncio
+async def test_backend_host_probes_unresponsive_worker(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_NO_PROGRESS_SECONDS", 120)
+
+    tasks = [
+        TaskRecord(
+            id="agent-silent",
+            type="local_agent",
+            status="running",
+            description="silent worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "silent.log",
+            created_at=800.0,
+            started_at=800.0,
+            metadata={"agent_id": "silent@office", "agent_role": "자료 확인"},
+        )
+    ]
+
+    class _Manager:
+        def list_tasks(self):
+            return tasks
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    host._running = True
+    host._bundle.engine.tool_metadata["async_agent_tasks"] = [
+        {"task_id": "agent-silent", "agent_id": "silent@office", "notification_sent": False}
+    ]
+    captured: dict[str, str] = {}
+
+    async def _submit(*, status_message, line):
+        captured["status_message"] = status_message
+        captured["line"] = line
+
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _Manager())
+    monkeypatch.setattr("myharness.ui.backend_host.time.time", lambda: 1_000.0)
+    host._submit_internal_swarm_steering = _submit  # type: ignore[method-assign]
+    try:
+        await host._maybe_probe_unresponsive_swarm_teammate()
+    finally:
+        await close_runtime(host._bundle)
+
+    assert captured["status_message"] == "AI 팀 작업자 무응답을 점검합니다."
+    assert "`task_output`" in captured["line"]
+    assert "Do not send a reminder just to get a status update" in captured["line"]
+    assert "Use `send_message` only if" in captured["line"]
+
+
+def test_detect_swarm_orchestration_checkpoint_scopes_to_current_session_tasks(tmp_path, monkeypatch):
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_ORCHESTRATION_CHECKPOINT_SECONDS", 60)
+    now = 1_000.0
+    tasks = [
+        TaskRecord(
+            id="agent-current-1",
+            type="local_agent",
+            status="running",
+            description="current worker 1",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "current-1.log",
+            created_at=900.0,
+            started_at=900.0,
+        ),
+        TaskRecord(
+            id="agent-current-2",
+            type="local_agent",
+            status="running",
+            description="current worker 2",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "current-2.log",
+            created_at=900.0,
+            started_at=900.0,
+        ),
+        TaskRecord(
+            id="agent-old-completed",
+            type="local_agent",
+            status="completed",
+            description="old completed worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "old.log",
+            created_at=800.0,
+            started_at=800.0,
+            ended_at=850.0,
+        ),
+    ]
+
+    checkpoint = _detect_swarm_orchestration_checkpoint(
+        tasks,
+        now=now,
+        last_checkpoint_at=0.0,
+        task_ids={"agent-current-1", "agent-current-2"},
+    )
+
+    assert checkpoint is not None
+    assert checkpoint["running_count"] == 2
+    assert checkpoint["completed_count"] == 0
+    assert {item["task_id"] for item in checkpoint["running_tasks"]} == {"agent-current-1", "agent-current-2"}
+
+
+def test_detect_swarm_orchestration_checkpoint_respects_cooldown(tmp_path, monkeypatch):
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_ORCHESTRATION_CHECKPOINT_SECONDS", 60)
+    now = 1_000.0
+    tasks = [
+        TaskRecord(
+            id="agent-a",
+            type="local_agent",
+            status="running",
+            description="worker a",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "a.log",
+            created_at=900.0,
+            started_at=900.0,
+        ),
+        TaskRecord(
+            id="agent-b",
+            type="local_agent",
+            status="running",
+            description="worker b",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "b.log",
+            created_at=900.0,
+            started_at=900.0,
+        ),
+    ]
+
+    checkpoint = _detect_swarm_orchestration_checkpoint(tasks, now=now, last_checkpoint_at=970.0)
+
+    assert checkpoint is None
+
+
+def test_guard_premature_async_agent_final_response_suppresses_report_like_answer():
+    metadata = {
+        "async_agent_tasks": [
+            {
+                "task_id": "agent-1",
+                "agent_id": "research@office",
+                "notification_sent": False,
+            }
+        ]
+    }
+    text = "최종 보고서\n\n" + ("분석 결과입니다. " * 80)
+
+    guarded = _guard_premature_async_agent_final_response(text, metadata)
+
+    assert "최종 보고서" not in guarded
+    assert "아직 진행 중" in guarded
+    assert "send_message" in guarded
+
+
+def test_guard_premature_async_agent_final_response_keeps_short_progress_note():
+    metadata = {
+        "async_agent_tasks": [
+            {
+                "task_id": "agent-1",
+                "agent_id": "research@office",
+                "notification_sent": False,
+            }
+        ]
+    }
+    text = "조사 담당과 분석 담당을 시작했습니다. 완료되면 취합하겠습니다."
+
+    assert _guard_premature_async_agent_final_response(text, metadata) == text
+
+
+@pytest.mark.asyncio
+async def test_backend_host_buffers_pending_agent_final_report_stream(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    host._bundle.engine.tool_metadata["async_agent_tasks"] = [
+        {"task_id": "agent-1", "agent_id": "research@office", "notification_sent": False}
+    ]
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del bundle, line, print_system, clear_output
+        text = "최종 보고서\n\n" + ("분석 결과입니다. " * 80)
+        await render_event(AssistantTextDelta(text=text[:40]))
+        await render_event(AssistantTextDelta(text=text[40:]))
+        await render_event(
+            AssistantTurnComplete(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text=text)]),
+                usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            )
+        )
+        return True
+
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("보고서 작성해줘")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert not [event for event in events if event.type == "assistant_delta"]
+    complete = next(event for event in events if event.type == "assistant_complete")
+    assert "최종 보고서" not in (complete.message or "")
+    assert "아직 진행 중" in (complete.message or "")
+
+
+@pytest.mark.asyncio
+async def test_backend_host_emits_short_pending_agent_progress_only_on_complete(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    host._bundle.engine.tool_metadata["async_agent_tasks"] = [
+        {"task_id": "agent-1", "agent_id": "research@office", "notification_sent": False}
+    ]
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del bundle, line, print_system, clear_output
+        text = "조사 담당과 분석 담당을 시작했습니다. 완료되면 취합하겠습니다."
+        await render_event(AssistantTextDelta(text=text))
+        await render_event(
+            AssistantTurnComplete(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text=text)]),
+                usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            )
+        )
+        return True
+
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("팀으로 진행해줘")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert not [event for event in events if event.type == "assistant_delta"]
+    complete = next(event for event in events if event.type == "assistant_complete")
+    assert complete.message == "조사 담당과 분석 담당을 시작했습니다. 완료되면 취합하겠습니다."
+
+
+@pytest.mark.asyncio
+async def test_backend_host_checkpoint_includes_completed_payload_for_relay(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("myharness.ui.backend_host._SWARM_ORCHESTRATION_CHECKPOINT_SECONDS", 60)
+
+    tasks = [
+        TaskRecord(
+            id="agent-running-1",
+            type="local_agent",
+            status="running",
+            description="running worker 1",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "running-1.log",
+            created_at=900.0,
+            started_at=900.0,
+        ),
+        TaskRecord(
+            id="agent-running-2",
+            type="local_agent",
+            status="running",
+            description="running worker 2",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "running-2.log",
+            created_at=900.0,
+            started_at=900.0,
+        ),
+        TaskRecord(
+            id="agent-old",
+            type="local_agent",
+            status="running",
+            description="old unrelated worker",
+            cwd=str(tmp_path),
+            output_file=tmp_path / "old.log",
+            created_at=100.0,
+            started_at=100.0,
+        ),
+    ]
+
+    class _Manager:
+        def list_tasks(self):
+            return tasks
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    host._running = True
+    host._bundle.engine.tool_metadata["async_agent_tasks"] = [
+        {"task_id": "agent-running-1", "agent_id": "a", "notification_sent": False},
+        {"task_id": "agent-running-2", "agent_id": "b", "notification_sent": False},
+    ]
+    host._bundle.engine.tool_metadata["async_agent_completion_payloads"] = [
+        "<task-notification><task-id>done-worker</task-id><result>가격 데이터 정리 완료</result></task-notification>"
+    ]
+    captured: dict[str, str] = {}
+
+    async def _submit(*, status_message, line):
+        captured["status_message"] = status_message
+        captured["line"] = line
+
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _Manager())
+    monkeypatch.setattr("myharness.ui.backend_host.time.time", lambda: 1_000.0)
+    host._submit_internal_swarm_steering = _submit  # type: ignore[method-assign]
+    try:
+        await host._maybe_steer_swarm_orchestration_checkpoint()
+    finally:
+        await close_runtime(host._bundle)
+
+    assert captured["status_message"] == "AI 팀 중간점검을 진행합니다."
+    assert "가격 데이터 정리 완료" in captured["line"]
+    assert "relay" in captured["line"]
+    assert "agent-old" not in captured["line"]
 
 
 def test_detect_slow_swarm_teammate_ignores_already_alerted_task(tmp_path, monkeypatch):
@@ -2151,6 +2696,20 @@ def test_forced_mcp_line_accepts_middle_token_and_short_server_token():
     assert "Selected MCP server: sqlite_analysis" in middle_prompt
     assert "cars 데이터를  로 분석해줘" in middle_prompt
     assert "Selected MCP server: sqlite_analysis" in short_prompt
+
+
+def test_forced_mcp_line_accepts_display_name_without_sticky_followup():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._mcp_statuses_for_snapshot = lambda: [  # type: ignore[method-assign]
+        McpConnectionStatus(name="sqlite_analysis", state="connected", transport="stdio")
+    ]
+    host._skill_snapshots = lambda hide_learned=True: []  # type: ignore[method-assign]
+
+    first_prompt = host._line_with_forced_skill("Sqlite Analysis 이거로 뭐 조회 가능?")
+    followup_prompt = host._line_with_forced_skill("간단한 데이터 뽑아봐")
+
+    assert "Selected MCP server: sqlite_analysis" in first_prompt
+    assert followup_prompt == "간단한 데이터 뽑아봐"
 
 
 @pytest.mark.asyncio

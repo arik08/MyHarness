@@ -2,6 +2,78 @@
   color-scheme: light;
   --app: #ffffff;
   --panel: #ffffff;
+  --sidebar: #f9fafb;
+  --sidebar-hover: #f3f4f6;
+  --ink: #111827;
+  --muted: #4b5563;
+  --faint: #9ca3af;
+  --line: #e5e7eb;
+  --line-strong: #d1d5db;
+  --user: #f3f4f6;
+  --accent: #2563eb;
+  --accent-soft: #eff6ff;
+  --success: #047857;
+  --success-soft: #ecfdf5;
+  --warning: #b45309;
+  --warning-soft: #fffbeb;
+  --pin-star: #6b7280;
+  --pin-star-hover: #4b5563;
+  --shadow: 0 16px 44px rgba(17, 24, 39, 0.08);
+  --focus: rgba(37, 99, 235, 0.48);
+  --icon-muted: #6b7280;
+  --icon-hover: rgba(243, 244, 246, 0.92);
+  --tooltip-bg: #111;
+  --tooltip-ink: #fff;
+  --inverse: #111827;
+  --inverse-ink: #ffffff;
+  --panel-glass: rgba(255, 255, 255, 0.9);
+  --panel-raised: #ffffff;
+  --chat-bg: #ffffff;
+  --new-chat: #f3f4f6;
+  --new-chat-hover: #e5e7eb;
+  --composer-bg: rgba(255, 255, 255, 0.94);
+  --composer-border: rgba(209, 213, 219, 0.9);
+  --composer-shadow: 0 16px 42px rgba(17, 24, 39, 0.09), 0 3px 10px rgba(17, 24, 39, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.94);
+  --composer-fade: rgba(255, 255, 255, 1);
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --link: #1d4ed8;
+  --code-bg: #111827;
+  --code-ink: #f9fafb;
+  --code-border: rgba(229, 231, 235, 0.16);
+  --code-copy-bg: rgba(255, 255, 255, 0.1);
+  --code-copy-bg-hover: rgba(255, 255, 255, 0.16);
+  --code-copy-border: rgba(255, 255, 255, 0.24);
+  --code-copy-border-hover: rgba(255, 255, 255, 0.34);
+  --code-copy-ink: #f8f8f6;
+  --skill-token-bg: #f5f3ff;
+  --skill-token-ink: #6d28d9;
+  --skill-token-mark-bg: #7c3aed;
+  --skill-token-mark-ink: #fff;
+  --command-token-bg: #eff6ff;
+  --command-token-ink: #1d4ed8;
+  --command-token-mark-bg: #2563eb;
+  --command-token-mark-ink: #fff;
+  --send-button-bg: #111827;
+  --send-button-ink: #ffffff;
+  --stop-button-bg: var(--danger-soft);
+  --stop-button-ink: var(--danger);
+  --stop-button-border: rgba(220, 38, 38, 0.24);
+  --composer-stack-height: 64px;
+  --chat-panel-left: 0px;
+  --chat-panel-width: 100vw;
+  --chat-panel-min-width: 300px;
+  --artifact-panel-min-width: 320px;
+  --action-items-floating-reserve: min(34dvh, 300px);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+:root[data-theme="claude"] {
+  color-scheme: light;
+  --app: #ffffff;
+  --panel: #ffffff;
   --sidebar: #f7f7f5;
   --sidebar-hover: #eeeeeb;
   --ink: #33322f;
@@ -16,12 +88,12 @@
   --success-soft: #e3efe8;
   --warning: #9a6a22;
   --warning-soft: #f8ecd5;
+  --pin-star: #8f7252;
+  --pin-star-hover: #6f563c;
   --shadow: 0 14px 44px rgba(44, 42, 38, 0.09);
   --focus: rgba(217, 119, 87, 0.5);
   --icon-muted: #77736c;
   --icon-hover: rgba(238, 238, 235, 0.9);
-  --tooltip-bg: #111;
-  --tooltip-ink: #fff;
   --inverse: #33322f;
   --inverse-ink: #ffffff;
   --panel-glass: rgba(255, 255, 255, 0.9);
@@ -57,15 +129,6 @@
   --stop-button-bg: var(--danger-soft);
   --stop-button-ink: var(--danger);
   --stop-button-border: rgba(194, 75, 53, 0.28);
-  --composer-stack-height: 64px;
-  --chat-panel-left: 0px;
-  --chat-panel-width: 100vw;
-  --chat-panel-min-width: 300px;
-  --artifact-panel-min-width: 320px;
-  --action-items-floating-reserve: min(34dvh, 300px);
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
 }
 
 :root[data-theme="posco"] {
@@ -86,6 +149,8 @@
   --success-soft: #dff2ef;
   --warning: #7a5b15;
   --warning-soft: #f6ecd2;
+  --pin-star: #1e3a8a;
+  --pin-star-hover: #172554;
   --shadow: 0 16px 48px rgba(24, 60, 100, 0.13);
   --focus: rgba(0, 114, 188, 0.55);
   --icon-muted: #607793;
@@ -1259,7 +1324,7 @@ a:focus-visible {
   position: absolute;
   top: 50%;
   left: 4px;
-  color: #8f7252;
+  color: var(--pin-star);
   font-size: 12px;
   line-height: 1;
   transform: translateY(-50%);
@@ -1323,7 +1388,7 @@ a:focus-visible {
 
 .history-pin {
   right: 29px;
-  color: #8f7252;
+  color: var(--pin-star);
   opacity: 1;
 }
 
@@ -1349,7 +1414,7 @@ a:focus-visible {
 }
 
 .history-pin:hover {
-  color: #6f563c;
+  color: var(--pin-star-hover);
 }
 
 .history-more span {
@@ -3815,8 +3880,8 @@ a:focus-visible {
   align-items: center;
   column-gap: 12px;
   row-gap: 8px;
-  margin: -14px -14px 10px;
-  padding: 14px 14px 10px;
+  margin: -14px -14px 8px;
+  padding: 8px 14px;
   background: var(--panel);
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
@@ -4206,7 +4271,12 @@ a:focus-visible {
 }
 
 .project-file-pin.active {
-  color: #d97706;
+  color: var(--pin-star);
+}
+
+.project-file-pin.active:hover,
+.project-file-pin.active:focus-visible {
+  color: var(--pin-star-hover);
 }
 
 .project-file-delete:hover,
@@ -4845,14 +4915,46 @@ a:focus-visible {
   word-break: break-word;
 }
 
-.swarm-agent-card code {
-  display: block;
-  max-height: 42px;
-  overflow: hidden;
+.swarm-agent-progress {
+  display: grid;
+  gap: 4px;
   padding: 6px 7px;
   background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
   border: 1px solid var(--line);
   border-radius: 6px;
+}
+
+.swarm-agent-progress > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.swarm-agent-progress span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.1;
+}
+
+.swarm-agent-progress strong {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.swarm-agent-progress code {
+  display: block;
+  max-height: 42px;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: var(--muted);
   font-family: Consolas, "SFMono-Regular", "Liberation Mono", monospace;
   font-size: 11px;
@@ -6485,10 +6587,9 @@ a:focus-visible {
   min-height: 0;
   overflow: hidden;
   background:
-    linear-gradient(var(--line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--line) 1px, transparent 1px),
-    color-mix(in srgb, var(--panel-raised) 94%, var(--accent-soft) 6%);
-  background-size: 28px 28px;
+    radial-gradient(circle, color-mix(in srgb, var(--line-strong) 44%, transparent) 0 1px, transparent 1.2px),
+    color-mix(in srgb, var(--panel-raised) 86%, #9ca3af 14%);
+  background-size: 18px 18px, auto;
   cursor: grab;
   touch-action: none;
   -webkit-user-select: none;
@@ -7191,6 +7292,315 @@ a:focus-visible {
   display: none;
 }
 
+.composer-file-input {
+  display: none;
+}
+
+.composer-control-panel {
+  display: grid;
+  gap: 6px;
+  width: min(780px, calc(100% - 24px));
+  margin: 0 auto -5px;
+  padding: 8px 12px 13px;
+  background: color-mix(in srgb, var(--composer-bg) 94%, var(--panel) 6%);
+  border: 1px solid var(--composer-border);
+  border-bottom-color: color-mix(in srgb, var(--composer-border) 52%, transparent);
+  border-radius: 14px 14px 0 0;
+  box-shadow:
+    var(--composer-shadow),
+    0 0 5px 3px color-mix(in srgb, var(--composer-fade) 48%, transparent);
+  backdrop-filter: blur(9px) saturate(1.02);
+  pointer-events: auto;
+  transform-origin: bottom center;
+  animation: composerPanelRise 0.13s ease-out both;
+}
+
+.composer-control-panel.hidden {
+  display: none;
+}
+
+@keyframes composerPanelRise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scaleY(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+.composer-panel-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+}
+
+.composer-panel-controls::-webkit-scrollbar {
+  display: none;
+}
+
+.composer-panel-attach {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+}
+
+.composer-panel-attach svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.composer-panel-attach:hover,
+.composer-panel-attach:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 56%, transparent);
+  color: var(--accent);
+}
+
+.composer-panel-attach:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.composer-control-group {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+  min-width: 0;
+}
+
+.composer-control-group + .composer-control-group {
+  margin-left: 0;
+}
+
+.composer-attach-group {
+  flex: 1 1 28px;
+}
+
+.composer-attach-group:not(:has(.client-attachment-tray)) {
+  max-width: 28px;
+}
+
+.composer-control-group.disabled .composer-control-label {
+  color: var(--faint);
+}
+
+.composer-control-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 760;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.composer-control-label[data-tooltip] {
+  cursor: help;
+}
+
+.client-attachment-tray {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: 6px;
+  max-width: min(300px, 46vw);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.client-attachment-tray::-webkit-scrollbar {
+  display: none;
+}
+
+.client-attachment-chip {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  max-width: min(260px, 46vw);
+  min-height: 28px;
+  padding: 3px 5px 3px 6px;
+  background: color-mix(in srgb, var(--panel) 66%, transparent);
+  border: 1px solid color-mix(in srgb, var(--composer-border) 82%, transparent);
+  border-radius: 8px;
+}
+
+.client-attachment-chip img,
+.client-attachment-type {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+}
+
+.client-attachment-chip img {
+  object-fit: cover;
+  background: var(--inverse);
+}
+
+.client-attachment-type {
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent-soft) 76%, transparent);
+  color: var(--accent);
+  font-size: 8.5px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.client-attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.client-attachment-chip small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 680;
+  white-space: nowrap;
+}
+
+.client-attachment-remove {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0;
+  line-height: 0;
+}
+
+.client-attachment-remove::before,
+.client-attachment-remove::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 1.5px;
+  background: currentColor;
+  border-radius: 999px;
+  transform-origin: center;
+}
+
+.client-attachment-remove::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.client-attachment-remove::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.client-attachment-remove:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.composer-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 2px;
+  background: color-mix(in srgb, var(--panel) 54%, transparent);
+  border: 1px solid color-mix(in srgb, var(--composer-border) 76%, transparent);
+  border-radius: 8px;
+}
+
+.composer-segment button {
+  min-height: 22px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.composer-segment button.active {
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--panel) 28%);
+  color: var(--accent);
+}
+
+.composer-length-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 3px 3px;
+  background: color-mix(in srgb, var(--composer-border) 72%, transparent);
+}
+
+.composer-segment button.danger {
+  color: var(--muted);
+}
+
+.composer-segment button.danger.active {
+  background: color-mix(in srgb, var(--danger-soft) 76%, var(--panel) 24%);
+  color: var(--danger);
+}
+
+.composer-segment button.danger:hover,
+.composer-segment button.danger:focus-visible {
+  color: var(--danger);
+}
+
+.composer-segment.disabled {
+  background: color-mix(in srgb, var(--panel) 35%, transparent);
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.composer-segment button:disabled {
+  cursor: default;
+  color: var(--faint);
+}
+
+.composer-segment.disabled button.active,
+.composer-segment.disabled button:disabled.active {
+  background: color-mix(in srgb, var(--line) 36%, transparent);
+  color: var(--muted);
+}
+
+.composer-segment button:hover,
+.composer-segment button:focus-visible {
+  color: var(--ink);
+}
+
+.composer-segment button:disabled:hover,
+.composer-segment button:disabled:focus-visible {
+  color: var(--faint);
+}
+
 .plan-mode-indicator {
   display: flex;
   align-items: center;
@@ -7377,6 +7787,12 @@ a:focus-visible {
   --composer-input-max-height: 192px;
 }
 
+.composer-box.with-panel {
+  box-shadow:
+    var(--composer-shadow),
+    0 0 5px 3px color-mix(in srgb, var(--composer-fade) 48%, transparent);
+}
+
 .composer-box.multiline {
   border-radius: 22px;
   padding: 6px 4px 5px 16px;
@@ -7386,12 +7802,53 @@ a:focus-visible {
   align-items: end;
   min-height: 84px;
   padding: 8px 5px 6px 14px;
-  border-radius: 28px;
+  border-radius: 22px;
   row-gap: 8px;
 }
 
 .composer-box:has(.attachment-tray:not(.hidden)).multiline {
-  border-radius: 26px;
+  border-radius: 22px;
+}
+
+.composer-expand-button {
+  display: grid;
+  place-items: center;
+  align-self: end;
+  grid-column: 1;
+  width: 30px;
+  height: 30px;
+  margin: 0 0 0 -9px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--muted);
+  pointer-events: auto;
+}
+
+.composer-expand-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.45;
+  transform: translateY(-1px);
+  transition: transform 0.14s ease;
+}
+
+.composer-expand-button.active {
+  color: var(--muted);
+}
+
+.composer-expand-button.active svg {
+  transform: translateY(-1px);
+}
+
+.composer-expand-button:hover,
+.composer-expand-button:focus-visible {
+  color: var(--accent);
 }
 
 .composer-token-slot {
@@ -9418,6 +9875,10 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   .welcome,
   .composer-box {
     width: min(100% - 24px, 760px);
+  }
+
+  .composer-control-panel {
+    width: min(100% - 48px, 736px);
   }
 
   .todo-checklist-dock {

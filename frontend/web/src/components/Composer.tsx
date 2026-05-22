@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
-import { cancelMessage, sendMessage } from "../api/messages";
+import type { ChangeEvent, ClipboardEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
+import { cancelMessage, sendMessage, uploadClientAttachments } from "../api/messages";
+import type { ClientAttachmentRef, ComposeOptions } from "../api/messages";
 import { startSession } from "../api/session";
 import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
@@ -12,6 +13,17 @@ import { TodoDock } from "./TodoDock";
 
 const longPastedTextLineThreshold = 20;
 const maxImageBytes = 10 * 1024 * 1024;
+const outputTokenPresets = {
+  long: 10_000,
+  very_long: 12_000,
+  extended: 16_000,
+} as const;
+const extraLongTokenOptions = [40_000, 80_000, 160_000] as const;
+
+type OutputSurface = "default" | "chat" | "artifact";
+type ArtifactAction = "auto" | "create" | "edit";
+type LengthPreset = "default" | "long" | "very_long" | "extended" | "extra_long";
+type UploadedClientAttachment = ClientAttachmentRef & { previewUrl?: string };
 
 type Suggestion =
   | { kind: "command"; value: string; label: string; description: string }
@@ -43,18 +55,42 @@ function fileToAttachment(file: File): Promise<Attachment> {
   });
 }
 
-function visibleAttachmentNames(attachments: Attachment[]) {
-  return attachments
-    .map((attachment, index) => `[${attachment.name || `이미지 ${index + 1}`}]`)
+function visibleAttachmentNames(attachments: Attachment[], attachmentRefs: ClientAttachmentRef[] = []) {
+  return [
+    ...attachments.map((attachment, index) => attachment.name || `이미지 ${index + 1}`),
+    ...attachmentRefs.map((attachment, index) => attachment.name || `파일 ${index + 1}`),
+  ]
+    .filter(Boolean)
+    .map((name) => `[${name}]`)
     .join(" ");
 }
 
-function visibleUserMessageText(line: string, attachments: Attachment[]) {
-  const attachmentNames = visibleAttachmentNames(attachments);
+function visibleUserMessageText(line: string, attachments: Attachment[], attachmentRefs: ClientAttachmentRef[] = []) {
+  const attachmentNames = visibleAttachmentNames(attachments, attachmentRefs);
   if (!attachmentNames) {
     return line;
   }
   return [line, attachmentNames].filter(Boolean).join("\n");
+}
+
+function formatFileSize(bytes: number) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(value / 1024 / 1024).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+function fileTypeLabel(attachment: ClientAttachmentRef) {
+  const name = attachment.name || "";
+  const extension = name.includes(".") ? name.split(".").pop()?.toUpperCase() : "";
+  if (extension) return extension;
+  const mediaType = attachment.media_type || "";
+  return mediaType.includes("/") ? mediaType.split("/").pop()?.toUpperCase() || "FILE" : "FILE";
+}
+
+function isImageRef(attachment: ClientAttachmentRef) {
+  return String(attachment.media_type || "").toLowerCase().startsWith("image/");
 }
 
 function commandSuggestions(commands: CommandItem[], query: string): Suggestion[] {
@@ -141,19 +177,29 @@ export function Composer() {
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [isMultiline, setIsMultiline] = useState(false);
   const [cursorOffset, setCursorOffset] = useState(0);
+  const [expandedPanelOpen, setExpandedPanelOpen] = useState(false);
+  const [uploadedAttachments, setUploadedAttachments] = useState<UploadedClientAttachment[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [outputSurface, setOutputSurface] = useState<OutputSurface>("default");
+  const [artifactAction, setArtifactAction] = useState<ArtifactAction>("auto");
+  const [lengthPreset, setLengthPreset] = useState<LengthPreset>("default");
+  const [extraLongTarget, setExtraLongTarget] = useState<number>(40_000);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const composerBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const clientFileInputRef = useRef<HTMLInputElement | null>(null);
   const activeSuggestionRef = useRef<HTMLButtonElement | null>(null);
+  const uploadedAttachmentsRef = useRef<UploadedClientAttachment[]>([]);
   const composerHeightRef = useRef(0);
   const composerMetricFrameRef = useRef(0);
   const composerFollowFrameRef = useRef(0);
   const chatPanelMetricFrameRef = useRef(0);
   const submittingRef = useRef(false);
   const draft = state.composer.draft;
-  const hasPayload = Boolean(draft.trim() || state.composer.attachments.length || state.composer.pastedTexts.length);
-  const canSend = Boolean(state.sessionId && hasPayload && !state.busy);
-  const canSteer = Boolean(state.sessionId && state.busy && fullLine().trim() && state.composer.attachments.length === 0);
+  const hasPayload = Boolean(draft.trim() || state.composer.attachments.length || uploadedAttachments.length || state.composer.pastedTexts.length);
+  const hasAnyAttachment = Boolean(state.composer.attachments.length || uploadedAttachments.length);
+  const canSend = Boolean(state.sessionId && hasPayload && !state.busy && !uploadingFiles);
+  const canSteer = Boolean(state.sessionId && state.busy && fullLine().trim() && !hasAnyAttachment);
   const showStop = Boolean(state.busy && !canSteer);
   const suggestionToken = useMemo(() => activeSuggestionToken(draft, cursorOffset), [draft, cursorOffset]);
   const suggestions = useMemo(() => {
@@ -179,6 +225,22 @@ export function Composer() {
       submittingRef.current = false;
     }
   }, [state.busy]);
+
+  useEffect(() => {
+    uploadedAttachmentsRef.current = uploadedAttachments;
+  }, [uploadedAttachments]);
+
+  useEffect(() => () => {
+    for (const attachment of uploadedAttachmentsRef.current) {
+      if (attachment.previewUrl) {
+        URL.revokeObjectURL(attachment.previewUrl);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    resetExpandedPanel({ keepOpen: false });
+  }, [state.activeHistoryId]);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -268,7 +330,16 @@ export function Composer() {
         composerFollowFrameRef.current = 0;
       }
     };
-  }, [isMultiline, state.composer.attachments.length, state.composer.pastedTexts.length, state.todoCollapsed, state.todoMarkdown]);
+  }, [
+    expandedPanelOpen,
+    isMultiline,
+    lengthPreset,
+    state.composer.attachments.length,
+    state.composer.pastedTexts.length,
+    state.todoCollapsed,
+    state.todoMarkdown,
+    uploadedAttachments.length,
+  ]);
 
   useLayoutEffect(() => {
     function updateChatPanelMetrics() {
@@ -320,6 +391,101 @@ export function Composer() {
     return [draft.trim(), pasted].filter(Boolean).join("\n\n");
   }
 
+  function resetExpandedPanel(options: { keepOpen?: boolean } = {}) {
+    for (const attachment of uploadedAttachments) {
+      if (attachment.previewUrl) {
+        URL.revokeObjectURL(attachment.previewUrl);
+      }
+    }
+    setUploadedAttachments([]);
+    setUploadingFiles(false);
+    setOutputSurface("default");
+    setArtifactAction("auto");
+    setLengthPreset("default");
+    setExtraLongTarget(40_000);
+    if (!options.keepOpen) {
+      setExpandedPanelOpen(false);
+    }
+  }
+
+  function resolvedTargetOutputTokens() {
+    if (lengthPreset === "extra_long") {
+      return extraLongTarget;
+    }
+    if (lengthPreset === "default") {
+      return undefined;
+    }
+    return outputTokenPresets[lengthPreset];
+  }
+
+  function composeOptionsPayload(): ComposeOptions | undefined {
+    const options: ComposeOptions = {};
+    if (outputSurface !== "default") {
+      options.output_surface = outputSurface;
+    }
+    if (outputSurface !== "chat") {
+      if (outputSurface === "artifact" || artifactAction !== "auto") {
+        options.artifact_action = artifactAction;
+      }
+      if (lengthPreset !== "default") {
+        const targetOutputTokens = resolvedTargetOutputTokens();
+        options.length_preset = lengthPreset;
+        if (targetOutputTokens !== undefined) {
+          options.target_output_tokens = targetOutputTokens;
+        }
+      }
+      if (artifactAction === "edit" && state.activeArtifact?.path) {
+        options.active_artifact_path = state.activeArtifact.path;
+      }
+    }
+    return Object.keys(options).length ? options : undefined;
+  }
+
+  async function handleClientFileInput(event: ChangeEvent<HTMLInputElement>) {
+    const files = [...(event.currentTarget.files || [])];
+    event.currentTarget.value = "";
+    if (!files.length) return;
+    setUploadingFiles(true);
+    try {
+      const previews = new Map<string, string>();
+      for (const file of files) {
+        if (file.type.startsWith("image/")) {
+          previews.set(`${file.name}\u0000${file.size}\u0000${file.lastModified}`, URL.createObjectURL(file));
+        }
+      }
+      const result = await uploadClientAttachments({
+        sessionId: state.sessionId,
+        clientId: state.clientId,
+        workspacePath: state.workspacePath || undefined,
+        workspaceName: state.workspaceName || undefined,
+        files,
+      });
+      const nextAttachments = result.attachments.map((attachment, index) => {
+        const source = files[index];
+        const previewUrl = source
+          ? previews.get(`${source.name}\u0000${source.size}\u0000${source.lastModified}`)
+          : undefined;
+        return previewUrl ? { ...attachment, previewUrl } : attachment;
+      });
+      setUploadedAttachments((current) => [...current, ...nextAttachments]);
+      setExpandedPanelOpen(true);
+    } catch (error) {
+      dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
+    } finally {
+      setUploadingFiles(false);
+    }
+  }
+
+  function removeUploadedAttachment(index: number) {
+    setUploadedAttachments((current) => {
+      const target = current[index];
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return current.filter((_, itemIndex) => itemIndex !== index);
+    });
+  }
+
   async function addImageFile(file: File) {
     if (!file.type.startsWith("image/")) {
       dispatch({ type: "open_modal", modal: { kind: "error", message: "이미지 파일만 첨부할 수 있습니다." } });
@@ -347,6 +513,19 @@ export function Composer() {
         kind: "imagePreview",
         src: attachmentSrc(attachment),
         name: attachment.name || "이미지",
+        alt: attachment.name || "첨부 이미지",
+      },
+    });
+  }
+
+  function showUploadedAttachmentPreview(attachment: UploadedClientAttachment) {
+    if (!attachment.previewUrl) return;
+    dispatch({
+      type: "open_modal",
+      modal: {
+        kind: "imagePreview",
+        src: attachment.previewUrl,
+        name: attachment.name || "첨부 이미지",
         alt: attachment.name || "첨부 이미지",
       },
     });
@@ -392,6 +571,9 @@ export function Composer() {
   async function togglePlanMode() {
     if (!state.sessionId) return;
     const currentDraft = state.composer.draft;
+    const previousPermissionMode = state.permissionMode;
+    const nextPermissionMode = isPlanMode(previousPermissionMode) ? "full_auto" : "plan";
+    dispatch({ type: "set_permission_mode", value: nextPermissionMode });
     try {
       await sendMessage({
         sessionId: state.sessionId,
@@ -401,6 +583,7 @@ export function Composer() {
       });
       dispatch({ type: "set_draft", value: currentDraft });
     } catch (error) {
+      dispatch({ type: "set_permission_mode", value: previousPermissionMode });
       dispatch({
         type: "backend_event",
         event: { type: "error", message: error instanceof Error ? error.message : String(error) },
@@ -426,14 +609,16 @@ export function Composer() {
       return;
     }
     const line = fullLine();
-    if (!state.sessionId || !line && state.composer.attachments.length === 0) {
+    if (!state.sessionId || !line && !hasAnyAttachment) {
       return;
     }
 
     submittingRef.current = true;
-    const shellShortcut = line.trim().startsWith("!") && state.composer.attachments.length === 0;
+    const shellShortcut = line.trim().startsWith("!") && !hasAnyAttachment;
     const attachments = state.composer.attachments;
-    const visibleText = visibleUserMessageText(line, attachments);
+    const attachmentRefs = uploadedAttachments;
+    const composeOptions = composeOptionsPayload();
+    const visibleText = visibleUserMessageText(line, attachments, attachmentRefs);
     let targetSessionId = state.sessionId;
     const userMessage = shellShortcut
       ? {
@@ -442,10 +627,11 @@ export function Composer() {
           toolName: "shell-shortcut",
           terminal: { command: line.trim().slice(1).trim(), status: "running" as const },
         }
-      : { role: "user" as const, text: visibleText || "(이미지 첨부)" };
+      : { role: "user" as const, text: visibleText || "(파일 첨부)" };
     dispatch({ type: "set_busy", value: true });
     dispatch({ type: "append_message", message: userMessage, skipHistory: state.pendingFreshChat });
     dispatch({ type: "clear_composer" });
+    resetExpandedPanel();
 
     try {
       if (state.pendingFreshChat) {
@@ -469,6 +655,8 @@ export function Composer() {
         clientId: state.clientId,
         line,
         attachments,
+        attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+        composeOptions,
         suppressUserTranscript: true,
         systemPrompt: state.systemPrompt.trim() || undefined,
       });
@@ -483,14 +671,14 @@ export function Composer() {
   async function sendBusyLine(mode: "queue" | "steer") {
     if (!state.sessionId) return;
     const line = fullLine();
-    if (!line && state.composer.attachments.length === 0) {
+    if (!line && !hasAnyAttachment) {
       await cancelCurrent();
       return;
     }
-    if (state.composer.attachments.length > 0) {
+    if (hasAnyAttachment) {
       dispatch({
         type: "open_modal",
-        modal: { kind: "error", message: "진행 중인 답변에는 텍스트만 보낼 수 있습니다. 이미지는 답변이 끝난 뒤 보내주세요." },
+        modal: { kind: "error", message: "진행 중인 답변에는 텍스트만 보낼 수 있습니다. 첨부파일은 답변이 끝난 뒤 보내주세요." },
       });
       return;
     }
@@ -617,7 +805,163 @@ export function Composer() {
         ))}
       </div>
       <InlineQuestion />
-      <div className={`composer-box${isMultiline ? " multiline" : ""}`} ref={composerBoxRef} onMouseDown={handleComposerBoxMouseDown}>
+      {expandedPanelOpen ? (
+        <>
+          <input
+            ref={clientFileInputRef}
+            className="composer-file-input"
+            type="file"
+            multiple
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={handleClientFileInput}
+          />
+          <div className="composer-control-panel" aria-label="입력 옵션" data-tooltip-top-boundary="true">
+            <div className="composer-panel-controls">
+              <div className="composer-control-group composer-attach-group">
+                <button
+                  className="composer-panel-attach"
+                  type="button"
+                  aria-label={uploadingFiles ? "파일첨부 중" : "파일첨부"}
+                  data-tooltip="파일첨부"
+                  data-tooltip-placement="top"
+                  onClick={() => clientFileInputRef.current?.click()}
+                  disabled={uploadingFiles}
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="m21.4 11.1-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 1 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
+                  </svg>
+                </button>
+                {uploadedAttachments.length ? (
+                  <div className="client-attachment-tray" aria-label="첨부한 파일">
+                    {uploadedAttachments.map((attachment, index) => (
+                      <div className="client-attachment-chip" key={`${attachment.id}-${index}`}>
+                        {isImageRef(attachment) && attachment.previewUrl ? (
+                          <img
+                            src={attachment.previewUrl}
+                            alt={attachment.name || "첨부 이미지"}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => showUploadedAttachmentPreview(attachment)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                showUploadedAttachmentPreview(attachment);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <span className="client-attachment-type">{fileTypeLabel(attachment)}</span>
+                        )}
+                        <span className="client-attachment-name">{attachment.name || "첨부 파일"}</span>
+                        <small>{formatFileSize(attachment.size)}</small>
+                        <button className="client-attachment-remove" type="button" aria-label={`${attachment.name || "첨부 파일"} 삭제`} onClick={() => removeUploadedAttachment(index)}>
+                          x
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="composer-control-group">
+                <span
+                  className="composer-control-label"
+                  data-tooltip="답변을 채팅에 표시할지 산출물로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다."
+                  data-tooltip-placement="top"
+                >
+                  출력
+                </span>
+                <div className="composer-segment" aria-label="출력 위치">
+                  {([
+                    ["default", "자동"],
+                    ["chat", "채팅"],
+                    ["artifact", "산출물"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={outputSurface === value ? "active" : ""}
+                      aria-pressed={outputSurface === value}
+                      onClick={() => setOutputSurface(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="composer-control-group">
+                <span
+                  className="composer-control-label"
+                  data-tooltip="산출물을 만들 때 새로 생성할지 기존 산출물을 수정할지 정합니다."
+                  data-tooltip-placement="top"
+                >
+                  모드
+                </span>
+                <div className="composer-segment" aria-label="산출물 작업">
+                  {([
+                    ["auto", "자동"],
+                    ["create", "생성"],
+                    ["edit", "수정"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={artifactAction === value ? "active" : ""}
+                      aria-pressed={artifactAction === value}
+                      onClick={() => setArtifactAction(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="composer-control-group">
+                <span
+                  className="composer-control-label"
+                  data-tooltip="산출물 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다. ~40k 이상은 먼저 개요와 작성 계획을 세운 뒤 섹션별로 나누어 작성하고 검토 후 합치는 방식으로 처리합니다."
+                  data-tooltip-placement="top"
+                >
+                  출력량
+                </span>
+                <div className="composer-segment composer-length-segment" aria-label="출력 길이">
+                  {([
+                    ["default", "자동"],
+                    ["long", "10k"],
+                    ["very_long", "12k"],
+                    ["extended", "16k"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={lengthPreset === value ? "active" : ""}
+                      aria-pressed={lengthPreset === value}
+                      onClick={() => setLengthPreset(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <span className="composer-length-divider" aria-hidden="true" />
+                  {extraLongTokenOptions.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`danger${lengthPreset === "extra_long" && extraLongTarget === value ? " active" : ""}`}
+                      aria-pressed={lengthPreset === "extra_long" && extraLongTarget === value}
+                      onClick={() => {
+                        setLengthPreset("extra_long");
+                        setExtraLongTarget(value);
+                      }}
+                    >
+                      ~{value / 1000}k
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      ) : null}
+      <div className={`composer-box${isMultiline ? " multiline" : ""}${expandedPanelOpen ? " with-panel" : ""}`} ref={composerBoxRef} onMouseDown={handleComposerBoxMouseDown}>
         <div className={`attachment-tray${state.composer.attachments.length ? "" : " hidden"}`} id="attachmentTray" aria-label="첨부한 이미지">
           {state.composer.attachments.map((attachment, index) => (
             <div className="attachment-chip" key={`${attachment.name}-${index}`}>
@@ -641,6 +985,20 @@ export function Composer() {
             </div>
           ))}
         </div>
+        <button
+          className={`composer-expand-button${expandedPanelOpen ? " active" : ""}`}
+          type="button"
+          aria-label={expandedPanelOpen ? "입력 옵션 닫기" : "입력 옵션 열기"}
+          aria-expanded={expandedPanelOpen}
+          data-tooltip={expandedPanelOpen ? "입력 옵션 닫기" : "첨부 및 출력 옵션"}
+          data-tooltip-placement="left"
+          onClick={() => setExpandedPanelOpen((open) => !open)}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M12 5v14" />
+            <path d="M5 12h14" />
+          </svg>
+        </button>
         <textarea
           id="promptInput"
           ref={inputRef}

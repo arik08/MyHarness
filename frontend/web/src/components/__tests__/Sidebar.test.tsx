@@ -111,6 +111,22 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
   });
 
+  it("shows Light before POSCO in the theme cycle", async () => {
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, themeId: "light" }}>
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const themeButton = screen.getByRole("button", { name: "테마 전환: Light" });
+
+    expect(themeButton.getAttribute("data-tooltip")).toBe("테마: Light");
+
+    await userEvent.click(themeButton);
+
+    expect(screen.getByRole("button", { name: "테마 전환: POSCO" })).toBeTruthy();
+  });
+
   it("resizes the expanded sidebar without going below the current default width", () => {
     function SidebarResizeState() {
       const { state } = useAppState();

@@ -49,9 +49,51 @@ function isQuietCommandTurn(message: ChatMessage) {
   return message.role === "user" && /^\/help\b/i.test(message.text.trim());
 }
 
+function mergeLogText(existing: string, next: string) {
+  if (!existing) {
+    return next;
+  }
+  if (!next) {
+    return existing;
+  }
+  return `${existing}${existing.endsWith("\n") ? "" : "\n"}${next}`;
+}
+
+function isMergeableLogMessage(message: ChatMessage) {
+  return (
+    message.role === "log"
+    && !message.isError
+    && !message.terminal
+    && !isCommandCatalog(message.text)
+  );
+}
+
+type RenderMessageItem = {
+  message: ChatMessage;
+  originalIndex: number;
+};
+
+function mergeAdjacentLogMessages(messages: ChatMessage[]): RenderMessageItem[] {
+  const items: RenderMessageItem[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const previous = items.at(-1);
+    if (previous && isMergeableLogMessage(previous.message) && isMergeableLogMessage(message)) {
+      previous.message = {
+        ...previous.message,
+        text: mergeLogText(previous.message.text, message.text),
+      };
+      continue;
+    }
+    items.push({ message, originalIndex: index });
+  }
+  return items;
+}
+
 export function MessageList() {
   const { state, dispatch } = useAppState();
   const lastMessage = state.messages.at(-1);
+  const renderMessages = useMemo(() => mergeAdjacentLogMessages(state.messages), [state.messages]);
   const activeWorkflowFollowSignature = useMemo(
     () => state.workflowEvents.map((event) => [
       event.id,
@@ -119,13 +161,13 @@ export function MessageList() {
       onPointerDown={(event) => handlePointerIntent(event.button)}
       onTouchStart={() => handlePointerIntent()}
     >
-      {state.messages.map((message, messageIndex) => {
+      {renderMessages.map(({ message, originalIndex }) => {
         const commandCatalog = isCommandCatalog(message.text);
         const kindBadge = message.role === "user" ? messageKindBadge(message.kind) : null;
         const workflowEvents = workflowEventsForMessageId(state, message.id);
         const showWorkflowHere = workflowEvents.length > 0 && !isQuietCommandTurn(message);
         const answerWebSources = message.role === "assistant" && message.isComplete
-          ? webInvestigationSummary(webSourceEventsForAssistant(messageIndex))
+          ? webInvestigationSummary(webSourceEventsForAssistant(originalIndex))
           : { sources: [], queries: [] };
         return (
           <Fragment key={message.id}>

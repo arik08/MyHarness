@@ -26,7 +26,7 @@ from myharness.tools.path_display import display_tool_path
 
 
 DEFAULT_REPORT_TOKEN_CAP = 12_000
-REPORT_TOKEN_HARD_CAP = 20_000
+REPORT_TOKEN_HARD_CAP = 160_000
 IMPLIED_LONG_REPORT_TARGET_TOKENS = 18_000
 IMPLIED_EXTRA_LONG_REPORT_TARGET_TOKENS = REPORT_TOKEN_HARD_CAP
 
@@ -46,7 +46,7 @@ class LongReportToolInput(BaseModel):
         ge=0,
         le=REPORT_TOKEN_HARD_CAP,
         description=(
-            "Approximate desired report body length. Hard-capped at 20,000 tokens while split report generation is disabled."
+            "Approximate desired report body length for explicit extra-long artifact requests. Hard-capped at 160,000 tokens."
         ),
     )
     source_paths: list[str] = Field(default_factory=list, description="Optional local text files to use as source material")
@@ -58,13 +58,11 @@ class LongReportTool(BaseTool):
 
     name = "write_long_report"
     description = (
-        "Temporarily disabled from the default registry. "
-        "Generate a long Markdown or HTML report as a file instead of streaming the full report into chat. "
-        "Normal report requests should stay around 10,000-12,000 tokens. "
-        "A plain request to write long should stay around 15,000-18,000 tokens. "
-        "Do not exceed 20,000 tokens, including for excessive long requests such as 초장문, 대보고서, "
-        "아주아주 길게, 매우 디테일하게, 2-3x expansion, or numeric targets such as 80,000 tokens. "
-        "Set target_tokens only when the user gives or clearly implies a longer or excessive desired length. "
+        "Generate an explicitly requested extra-long Markdown or HTML report as a file instead of streaming it into chat. "
+        "Use this only when the user or MyHarness compose options clearly ask for an artifact around 20,000 tokens or more, "
+        "such as 초장문, 20k, 40k, 80k, 160k, 대보고서, or a numeric target above normal report length. "
+        "Normal report requests should still use a direct coherent artifact around 10,000-12,000 tokens. "
+        "Set target_tokens to the requested body length, up to the 160,000-token hard cap. "
         "The tool creates an outline, writes sections with lower per-call token caps, reviews the result, "
         "and returns only the output path and short summary."
     )
@@ -505,7 +503,7 @@ def _read_source_material(cwd: Path, source_paths: list[str]) -> str:
         except OSError:
             continue
         chunks.append(f"## Source: {raw_path}\n{text[:20_000]}")
-    return "\n\n".join(chunks)[:80_000]
+    return "\n\n".join(chunks)[:160_000]
 
 
 def _outline_prompt(arguments: LongReportToolInput, source_text: str, *, target_tokens: int) -> str:

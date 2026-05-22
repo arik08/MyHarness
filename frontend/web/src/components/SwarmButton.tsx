@@ -58,6 +58,14 @@ function displayOutputFor(teammate: SwarmTeammateSnapshot, status: SwarmStatus) 
   return isTerminalStatus(status) ? output.replace(/^\d{1,3}%\s*·\s*/, "").trim() : output;
 }
 
+function progressParts(output: string) {
+  const match = output.match(/^(\d{1,3})%\s*·\s*(.+)$/);
+  if (!match) {
+    return { percent: "", message: output };
+  }
+  return { percent: `${match[1]}%`, message: match[2].trim() };
+}
+
 function startedAtFor(teammate: SwarmTeammateSnapshot) {
   const value = teammate.startedAt ?? teammate.started_at;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -249,6 +257,7 @@ export function SwarmButton() {
             const model = modelFor(teammate);
             const prompt = promptFor(teammate);
             const output = displayOutputFor(teammate, status);
+            const progress = progressParts(output);
             return (
               <article className={`swarm-agent-card ${statusClass(status)}`} key={teammate.id || taskId || labelFor(teammate)}>
                 <div className="swarm-agent-main">
@@ -268,7 +277,15 @@ export function SwarmButton() {
                     {prompt ? <pre>{prompt}</pre> : null}
                   </details>
                 ) : null}
-                {output ? <code>{output}</code> : null}
+                {output ? (
+                  <div className="swarm-agent-progress" aria-label={`${labelFor(teammate)} 최근 진행`}>
+                    <div>
+                      <span>최근 진행</span>
+                      {progress.percent ? <strong>{progress.percent}</strong> : null}
+                    </div>
+                    <code>{progress.message}</code>
+                  </div>
+                ) : null}
                 {taskId ? (
                   <div className="swarm-agent-actions">
                     <button type="button" aria-label={`${taskId} 결과 보기`} onClick={() => void requestTaskOutput(teammate)}>

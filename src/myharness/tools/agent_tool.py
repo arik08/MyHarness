@@ -95,11 +95,20 @@ def _prompt_with_task_context(prompt: str) -> str:
         "You are a background teammate. Your task id is {task_id}. "
         "If you make meaningful progress, call `task_update` with that task id, "
         "a short Korean status_note, and progress when useful. "
-        "Keep interim progress brief. If this is source or web research, do not write "
-        "the final report yourself. Return concise source cards with each source's key "
-        "facts, short content summary, and relevance. Clearly mark the 3-5 sources the "
-        "main agent should read directly, with why each source is worth reading and any "
-        "uncertainty.\n\n"
+        "As part of your natural output flow, emit compact JSON progress via `task_update`; do not wait for the parent "
+        "to ask. Emit it when you learn something material, start a new phase, change direction, find a blocker, "
+        "or produce a handoff-ready fact. Do not emit progress after every tool call or for generic 'still working' "
+        "heartbeats. Keep these updates tiny and factual so progress costs very few output tokens. "
+        "Do the assigned slice at the depth requested: "
+        "small slices can return concise bullets, while substantial research or analysis "
+        "should include enough evidence, calculations, caveats, and structured tables for "
+        "the parent to synthesize reliably. If you are blocked, need a peer result, or find "
+        "information another worker should use, include a clear `blocked_on` or `handoff` note "
+        "for the parent orchestrator. If this is source or web research, do not write "
+        "the final report yourself unless asked. Return source cards with each source's key "
+        "facts, short content summary, relevance, and confidence. Clearly mark the strongest "
+        "sources the main agent should read directly, with why each source is worth reading "
+        "and any uncertainty.\n\n"
         f"{prompt}"
     )
 
@@ -183,8 +192,8 @@ class AgentToolInput(BaseModel):
     description: str = Field(description="Short role and task description for delegated work")
     prompt: str = Field(
         description=(
-            "Short, self-contained worker prompt. Give only the role, goal, needed inputs, "
-            "constraints, and output format; do not pass the full conversation unless required."
+            "Self-contained worker prompt. Give the role, goal, needed inputs, constraints, "
+            "expected depth, and output format; do not pass the full conversation unless required."
         )
     )
     subagent_type: str | None = Field(
@@ -205,9 +214,10 @@ class AgentTool(BaseTool):
 
     name = "agent"
     description = (
-        "Spawn a local background agent task with a narrow role-focused prompt. "
-        "For large source or web research, use workers to shortlist evidence and direct-read "
-        "recommendations; the main agent should read the strongest sources and synthesize."
+        "Spawn a local background agent task with a focused self-contained prompt. "
+        "Use small worker slices for quick checks, and larger coherent slices for substantial "
+        "research or analysis that need evidence, calculations, caveats, and structured handoff. "
+        "For a replacement that should use the main runtime model, pass model='inherit'."
     )
     input_model = AgentToolInput
 

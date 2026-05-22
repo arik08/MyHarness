@@ -84,6 +84,8 @@ _ASSISTANT_PROGRESS_CLOSE = "</myharness-progress>"
 _SWARM_STRAGGLER_MIN_SECONDS = 10 * 60
 _SWARM_STRAGGLER_PEER_FACTOR = 3.0
 _SWARM_STRAGGLER_WAVE_WINDOW_SECONDS = 15 * 60
+_SWARM_ORCHESTRATION_CHECKPOINT_SECONDS = 60
+_SWARM_NO_PROGRESS_SECONDS = 2 * 60
 _SWARM_TASK_TYPES = {"local_agent", "remote_agent", "in_process_teammate"}
 _SAVED_SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _SESSION_TITLE_SOURCE_PROMPT = "prompt"
@@ -99,21 +101,29 @@ _SWARM_DELEGATION_HINT = (
     "Do not use raw ASCII art or the old `workflow` fence for the workflow. "
     "Use the `agent` tool now only for the current independent wave of focused background workers. "
     "Do not spawn serial downstream roles prematurely: roles with unmet prerequisites wait until their inputs exist. "
-    "Optimize for speed: use at most 5 workers per wave, give each worker a narrow non-overlapping scope, "
-    "and ask for concise bullet findings rather than a full report. Prefer more workers only when they reduce wall-clock time. "
-    "For web/office research, tell each worker to check only the few most relevant sources needed for its role "
-    "and avoid duplicating the other workers' searches. "
-    "Tell each worker to report brief interim progress as it works, ideally with `task_update` status_note updates "
-    "or short progress lines, so the AI 팀 panel can stay fresh. "
+    "Keep each wave controlled: usually use at most 5 workers per wave, give each worker a non-overlapping scope, "
+    "and size the expected depth to the assignment. For quick slices, ask for concise bullets; for substantial analysis, "
+    "ask for enough evidence, calculations, caveats, and intermediate tables to support a reliable synthesis. "
+    "Prefer more workers only when they reduce wall-clock time. "
+    "For web/office research, tell each worker to check the relevant sources needed for its role and avoid duplicating "
+    "the other workers' searches. "
+    "Tell each worker to emit compact JSON progress via `task_update` as part of its natural output flow, without waiting "
+    "for the parent to ask. Progress should appear when the worker learns something material, starts a new phase, changes "
+    "direction, finds a blocker, or has a handoff-ready fact. Do not ask workers to report after every tool call or send "
+    "generic 'still working' heartbeats. Short progress lines are acceptable only when `task_update` is unavailable, so the "
+    "AI 팀 panel can stay fresh without extra reminder prompts. "
+    "Act as the main orchestrator while workers run: periodically inspect worker progress with `task_output`, relay useful findings "
+    "or missing prerequisites to other workers with `send_message`, and adjust the plan as evidence arrives. "
+    "Do not wait passively for every worker when partial results are enough to unblock the next step. "
     "After launching a parallel wave, watch for stragglers: if most workers finish within a few minutes but one worker "
-    "runs much longer, inspect it briefly, stop it with `task_stop`, and either spawn a narrower replacement or finish "
-    "that slice in the main agent. Do not let one lagging worker block the whole task. "
+    "runs much longer, inspect it briefly, stop it with `task_stop`, and either spawn a narrower replacement, spawn a stronger "
+    "replacement with `model=\"inherit\"`, or finish that slice in the main agent. Do not let one lagging worker block the whole task. "
     "For office/research tasks, use role names such as 조사, 정리, and 검토 only when they fit the actual workflow, "
     "and treat every label as a workflow node rather than a hard-coded stage. "
     "Use worker descriptions with visible role labels, such as `조사 담당: 전력 용량 출처 확인`, "
     "so the AI 팀 panel can show what each worker owns. "
-    "Give each worker a self-contained prompt, set team to `office`, and omit `subagent_type` "
-    "for office/research workers unless a specific non-code agent definition applies. "
+    "Give each worker a self-contained prompt, set team to `office`, and use a fitting preset `subagent_type` when one applies; "
+    "otherwise omit `subagent_type` for an ad-hoc worker. "
     "After spawning workers, briefly tell the user the workflow shape and which workers started in the current wave. "
     "Do not present final research conclusions until worker results are available."
 )
@@ -191,6 +201,95 @@ def _assistant_progress_prefix_keep(text: str) -> int:
 
 def _strip_assistant_progress_markers(text: str) -> tuple[str, list[str]]:
     return _AssistantProgressFilter().strip(text)
+
+
+def _format_file_size(value: object) -> str:
+    try:
+        size = int(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    if size <= 0:
+        return ""
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / 1024 / 1024:.1f} MB"
+
+
+def _format_client_attachment_note(attachment_refs: list[object]) -> str:
+    rows: list[str] = []
+    for index, item in enumerate(attachment_refs, start=1):
+        path = str(getattr(item, "path", "") or "").strip().replace("\\", "/")
+        if not path:
+            continue
+        name = str(getattr(item, "name", "") or Path(path).name or f"file-{index}").strip()
+        media_type = str(getattr(item, "media_type", "") or "").strip()
+        size = _format_file_size(getattr(item, "size", 0))
+        details = ", ".join(part for part in (media_type, size) if part)
+        suffix = f" ({details})" if details else ""
+        rows.append(f"- {name}: `{path}`{suffix}")
+    if not rows:
+        return ""
+    return "\n".join(
+        [
+            "# Client File Attachments",
+            "",
+            "The user attached local client files. Use these uploaded workspace copies; original client SSD paths are not available.",
+            *rows,
+        ]
+    )
+
+
+def _format_compose_options_note(options: object | None) -> str:
+    if options is None:
+        return ""
+    output_surface = str(getattr(options, "output_surface", "") or "").strip()
+    artifact_action = str(getattr(options, "artifact_action", "") or "").strip()
+    length_preset = str(getattr(options, "length_preset", "") or "").strip()
+    active_artifact_path = str(getattr(options, "active_artifact_path", "") or "").strip()
+    try:
+        target_output_tokens = int(getattr(options, "target_output_tokens", 0) or 0)
+    except (TypeError, ValueError):
+        target_output_tokens = 0
+    lines = ["# Compose Options", ""]
+    if output_surface == "chat":
+        lines.append("The user selected chat output. Prefer a Markdown answer in the conversation and avoid creating large files unless necessary.")
+    elif output_surface == "artifact":
+        if artifact_action == "create":
+            lines.append("The user selected artifact output and asked to create a new artifact. Save the result under `outputs/` with a meaningful filename.")
+        elif artifact_action == "edit":
+            target = f" `{active_artifact_path}`" if active_artifact_path else ""
+            lines.append(f"The user selected artifact output and asked to edit the active artifact{target}. Inspect the target before changing it.")
+        else:
+            lines.append("The user selected artifact output. Decide whether to create or edit an artifact, and save meaningful outputs under `outputs/`.")
+    elif artifact_action or target_output_tokens:
+        if artifact_action == "create":
+            lines.append("The user left output surface on auto, but if you create an artifact, prefer creating a new artifact under `outputs/`.")
+        elif artifact_action == "edit":
+            target = f" `{active_artifact_path}`" if active_artifact_path else ""
+            lines.append(f"The user left output surface on auto, but if you edit an artifact, inspect the active artifact{target} before changing it.")
+        else:
+            lines.append("The user left output surface on auto. Apply the following artifact preferences only if you decide to create or edit an artifact.")
+    if output_surface != "chat" and target_output_tokens:
+        lines.append(f"Target artifact length: about {target_output_tokens:,} output tokens.")
+    if output_surface != "chat" and (length_preset == "extra_long" or target_output_tokens >= 20_000):
+        lines.append(
+            "For report-style extra-long artifacts, use `write_long_report` explicitly: outline, section drafts, progress/preview writes, review, merge, and final artifact save."
+        )
+    return "\n".join(lines)
+
+
+def _compose_target_output_tokens(options: object | None) -> int:
+    if options is None:
+        return 0
+    output_surface = str(getattr(options, "output_surface", "") or "").strip()
+    if output_surface != "artifact":
+        return 0
+    try:
+        return max(0, int(getattr(options, "target_output_tokens", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _tool_progress_delays(tool_name: str) -> tuple[float, float]:
@@ -271,8 +370,66 @@ def _task_created_seconds(task, *, now: float) -> float:
     return float(created_at)
 
 
-def _detect_slow_swarm_teammate(tasks, *, now: float, alerted_task_ids: set[str]) -> dict[str, object] | None:
-    swarm_tasks = [task for task in tasks if getattr(task, "type", "") in _SWARM_TASK_TYPES]
+def _float_metadata_value(metadata: dict[str, object], key: str) -> float | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _task_last_activity_seconds(task, *, now: float) -> float:
+    metadata = getattr(task, "metadata", {}) if isinstance(getattr(task, "metadata", {}), dict) else {}
+    candidates = [
+        getattr(task, "started_at", None),
+        getattr(task, "created_at", None),
+        _float_metadata_value(metadata, "last_output_at"),
+        _float_metadata_value(metadata, "status_note_updated_at"),
+    ]
+    output_file = getattr(task, "output_file", None)
+    try:
+        if output_file is not None and Path(output_file).exists():
+            candidates.append(Path(output_file).stat().st_mtime)
+    except OSError:
+        pass
+    numeric = [float(value) for value in candidates if value is not None]
+    if not numeric:
+        return now
+    return max(numeric)
+
+
+def _current_async_agent_task_ids(metadata: dict[str, object] | None) -> set[str]:
+    if not isinstance(metadata, dict):
+        return set()
+    entries = metadata.get("async_agent_tasks")
+    if not isinstance(entries, list):
+        return set()
+    return {
+        task_id
+        for entry in entries
+        if isinstance(entry, dict)
+        for task_id in [str(entry.get("task_id") or "").strip()]
+        if task_id
+    }
+
+
+def _filter_current_async_agent_tasks(tasks, task_ids: set[str] | None):
+    if task_ids is None:
+        return list(tasks)
+    return [task for task in tasks if str(getattr(task, "id", "") or "") in task_ids]
+
+
+def _detect_slow_swarm_teammate(
+    tasks,
+    *,
+    now: float,
+    alerted_task_ids: set[str],
+    task_ids: set[str] | None = None,
+) -> dict[str, object] | None:
+    scoped_tasks = _filter_current_async_agent_tasks(tasks, task_ids)
+    swarm_tasks = [task for task in scoped_tasks if getattr(task, "type", "") in _SWARM_TASK_TYPES]
     running = [task for task in swarm_tasks if getattr(task, "status", "") == "running"]
     finished = [
         task
@@ -314,12 +471,95 @@ def _detect_slow_swarm_teammate(tasks, *, now: float, alerted_task_ids: set[str]
     return None
 
 
+def _detect_unresponsive_swarm_teammate(
+    tasks,
+    *,
+    now: float,
+    alerted_task_ids: set[str],
+    task_ids: set[str] | None = None,
+) -> dict[str, object] | None:
+    scoped_tasks = _filter_current_async_agent_tasks(tasks, task_ids)
+    running = [
+        task
+        for task in scoped_tasks
+        if getattr(task, "type", "") in _SWARM_TASK_TYPES and getattr(task, "status", "") == "running"
+    ]
+    for task in sorted(running, key=lambda item: _task_created_seconds(item, now=now)):
+        task_id = str(getattr(task, "id", "") or "")
+        if not task_id or task_id in alerted_task_ids:
+            continue
+        running_seconds = _task_duration_seconds(task, now=now)
+        if running_seconds < _SWARM_NO_PROGRESS_SECONDS:
+            continue
+        last_activity_at = _task_last_activity_seconds(task, now=now)
+        idle_seconds = max(0.0, now - last_activity_at)
+        if idle_seconds < _SWARM_NO_PROGRESS_SECONDS:
+            continue
+        metadata = getattr(task, "metadata", {}) if isinstance(getattr(task, "metadata", {}), dict) else {}
+        return {
+            "task_id": task_id,
+            "agent_id": str(metadata.get("agent_id") or task_id),
+            "role": str(metadata.get("agent_role") or getattr(task, "description", "") or task_id),
+            "running_seconds": running_seconds,
+            "idle_seconds": idle_seconds,
+        }
+    return None
+
+
+def _detect_swarm_orchestration_checkpoint(
+    tasks,
+    *,
+    now: float,
+    last_checkpoint_at: float,
+    task_ids: set[str] | None = None,
+) -> dict[str, object] | None:
+    if now - last_checkpoint_at < _SWARM_ORCHESTRATION_CHECKPOINT_SECONDS:
+        return None
+    scoped_tasks = _filter_current_async_agent_tasks(tasks, task_ids)
+    swarm_tasks = [task for task in scoped_tasks if getattr(task, "type", "") in _SWARM_TASK_TYPES]
+    running = [task for task in swarm_tasks if getattr(task, "status", "") == "running"]
+    if not running or len(swarm_tasks) < 2:
+        return None
+    oldest_running_seconds = max(_task_duration_seconds(task, now=now) for task in running)
+    if oldest_running_seconds < _SWARM_ORCHESTRATION_CHECKPOINT_SECONDS:
+        return None
+    completed = [task for task in swarm_tasks if getattr(task, "status", "") == "completed"]
+    running_tasks: list[dict[str, str]] = []
+    for task in sorted(running, key=lambda item: _task_created_seconds(item, now=now))[:5]:
+        metadata = getattr(task, "metadata", {}) if isinstance(getattr(task, "metadata", {}), dict) else {}
+        task_id = str(getattr(task, "id", "") or "")
+        running_tasks.append(
+            {
+                "task_id": task_id,
+                "agent_id": str(metadata.get("agent_id") or task_id),
+                "role": str(metadata.get("agent_role") or getattr(task, "description", "") or task_id),
+            }
+        )
+    return {
+        "running_count": len(running),
+        "completed_count": len(completed),
+        "oldest_running_seconds": oldest_running_seconds,
+        "running_tasks": running_tasks,
+    }
+
+
 def _store_async_agent_completion_payload(metadata: dict[str, object], payload: str) -> None:
     if not payload.strip():
         return
     bucket = metadata.setdefault("async_agent_completion_payloads", [])
     if isinstance(bucket, list):
         bucket.append(payload.strip())
+
+
+def _peek_async_agent_completion_payloads(metadata: dict[str, object], *, max_items: int = 3, max_chars: int = 2400) -> str:
+    bucket = metadata.get("async_agent_completion_payloads", [])
+    if not isinstance(bucket, list):
+        return ""
+    items = [str(item).strip() for item in bucket[-max_items:] if str(item).strip()]
+    text = "\n\n".join(items)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars - 3]}..."
 
 
 def _pop_async_agent_completion_payloads(metadata: dict[str, object]) -> str:
@@ -356,6 +596,41 @@ def _swarm_notifications_for_completed_agents(completed: list[dict[str, object]]
             }
         )
     return notifications
+
+
+_PREMATURE_ASYNC_FINAL_MARKERS = (
+    "보고서",
+    "최종",
+    "결론",
+    "요약",
+    "분석 결과",
+    "종합",
+    "recommendation",
+    "conclusion",
+    "final",
+    "report",
+)
+
+
+def _guard_premature_async_agent_final_response(text: str, tool_metadata: dict[str, object] | None) -> str:
+    """Suppress report-like final answers while async agents are still pending."""
+    if not pending_async_agent_entries(tool_metadata):
+        return text
+    stripped = text.strip()
+    if not stripped:
+        return (
+            "AI 팀 작업자가 아직 진행 중입니다. 중간 결과를 확인하면서 필요한 정보는 작업자에게 전달하고, "
+            "결과가 준비되면 한 번에 취합하겠습니다."
+        )
+    lowered = stripped.lower()
+    looks_final = len(stripped) > 900 or any(marker in lowered for marker in _PREMATURE_ASYNC_FINAL_MARKERS)
+    if not looks_final:
+        return stripped
+    return (
+        "AI 팀 작업자가 아직 진행 중이라 최종 산출물은 만들지 않겠습니다. "
+        "중간점검으로 작업자 출력과 막힌 지점을 확인하고, 필요한 정보는 `send_message`로 전달한 뒤 "
+        "결과가 준비되면 취합하겠습니다."
+    )
 
 
 def _truncate_progress_text(value: object, limit: int = 96) -> str:
@@ -664,6 +939,8 @@ class ReactBackendHost:
         self._swarm_emit_task: asyncio.Task[None] | None = None
         self._task_update_unregister: Callable[[], None] | None = None
         self._swarm_straggler_alerted_task_ids: set[str] = set()
+        self._swarm_no_progress_alerted_task_ids: set[str] = set()
+        self._swarm_orchestration_last_checkpoint_at = 0.0
 
     async def run(self) -> int:
         self._bundle = await build_runtime(
@@ -735,6 +1012,8 @@ class ReactBackendHost:
                                 type="submit_line",
                                 line=request.line or "",
                                 attachments=request.attachments,
+                                attachment_refs=request.attachment_refs,
+                                compose_options=request.compose_options,
                             )
                         )
                     continue
@@ -817,7 +1096,7 @@ class ReactBackendHost:
                     await self._emit(BackendEvent(type="error", message="Session is busy"))
                     continue
                 line = (request.line or "").strip()
-                if not line and not request.attachments:
+                if not line and not request.attachments and not request.attachment_refs:
                     continue
                 self._busy = True
                 try:
@@ -826,6 +1105,8 @@ class ReactBackendHost:
                             line,
                             transcript_line=request.transcript_line,
                             attachments=request.attachments,
+                            attachment_refs=request.attachment_refs,
+                            compose_options=request.compose_options,
                             emit_user_transcript=not request.suppress_user_transcript,
                             isolated_context=request.isolated_context,
                         )
@@ -927,38 +1208,15 @@ class ReactBackendHost:
                 )
                 return
             await asyncio.sleep(_SWARM_STATUS_INTERVAL_SECONDS)
+            await self._maybe_steer_swarm_orchestration_checkpoint()
+            await self._maybe_probe_unresponsive_swarm_teammate()
             await self._maybe_steer_slow_swarm_teammate()
             await self._emit(
                 BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[])
             )
 
-    async def _maybe_steer_slow_swarm_teammate(self) -> None:
-        if self._bundle is None or not self._running:
-            return
-        try:
-            tasks = get_task_manager().list_tasks()
-        except Exception:
-            return
-        slow = _detect_slow_swarm_teammate(
-            tasks,
-            now=time.time(),
-            alerted_task_ids=self._swarm_straggler_alerted_task_ids,
-        )
-        if slow is None:
-            return
-        task_id = str(slow["task_id"])
-        self._swarm_straggler_alerted_task_ids.add(task_id)
-        running_minutes = max(1, round(float(slow["running_seconds"]) / 60))
-        peer_minutes = max(1, round(float(slow["peer_seconds"]) / 60))
-        line = (
-            f"AI team worker {slow['agent_id']} ({slow['role']}, task_id={task_id}) "
-            f"has been running for about {running_minutes} minutes, while {slow['peer_count']} peer worker(s) "
-            f"from the same wave finished around {peer_minutes} minutes. "
-            "Briefly inspect its latest output if useful. If it is not clearly making fresh progress, use "
-            f"`task_stop(task_id=\"{task_id}\")`, then either spawn a narrower replacement or complete the remaining slice "
-            "in the main agent. Do not keep waiting on one lagging worker."
-        )
-        await self._emit(BackendEvent(type="status", message="느린 AI 팀 작업자를 감지했습니다."))
+    async def _submit_internal_swarm_steering(self, *, status_message: str, line: str) -> None:
+        await self._emit(BackendEvent(type="status", message=status_message))
         internal_line = format_internal_steering_update(line)
         if self._busy:
             await self._steering_queue.put(internal_line)
@@ -973,6 +1231,129 @@ class ReactBackendHost:
                 ),
                 suppress_user_transcript=True,
             )
+        )
+
+    async def _maybe_steer_swarm_orchestration_checkpoint(self) -> None:
+        if self._bundle is None or not self._running:
+            return
+        metadata = self._bundle.engine.tool_metadata
+        task_ids = _current_async_agent_task_ids(metadata)
+        if not task_ids:
+            return
+        now = time.time()
+        try:
+            tasks = get_task_manager().list_tasks()
+        except Exception:
+            return
+        checkpoint = _detect_swarm_orchestration_checkpoint(
+            tasks,
+            now=now,
+            last_checkpoint_at=self._swarm_orchestration_last_checkpoint_at,
+            task_ids=task_ids,
+        )
+        if checkpoint is None:
+            return
+        self._swarm_orchestration_last_checkpoint_at = now
+        running_labels = ", ".join(
+            f"{item['agent_id']} ({item['role']}, task_id={item['task_id']})"
+            for item in checkpoint["running_tasks"]
+        )
+        oldest_minutes = max(1, round(float(checkpoint["oldest_running_seconds"]) / 60))
+        completed_payloads = _peek_async_agent_completion_payloads(metadata)
+        completed_hint = (
+            f"Completed worker payloads already available:\n{completed_payloads}\n"
+            if completed_payloads.strip()
+            else ""
+        )
+        relay_hint = (
+            "If a completed worker produced facts or constraints that a running peer needs, relay the specific handoff "
+            "with `send_message` before deciding whether to replace anyone. "
+        )
+        line = (
+            f"AI team orchestration checkpoint: {checkpoint['running_count']} worker(s) still running, "
+            f"{checkpoint['completed_count']} completed, oldest running about {oldest_minutes} minutes. "
+            f"Running workers: {running_labels}. {completed_hint}"
+            "First inspect useful worker outputs with `task_output` and identify relay candidates. "
+            f"{relay_hint}"
+            "Then relay handoffs or missing prerequisites with `send_message`, and start any dependent next step that partial "
+            "results already unblock. If a worker appears blocked after relay, stop and replace it with a narrower prompt, "
+            "spawn a stronger replacement with `model=\"inherit\"`, or finish that slice in the main agent. Do not wait passively."
+        )
+        await self._submit_internal_swarm_steering(
+            status_message="AI 팀 중간점검을 진행합니다.",
+            line=line,
+        )
+
+    async def _maybe_probe_unresponsive_swarm_teammate(self) -> None:
+        if self._bundle is None or not self._running:
+            return
+        task_ids = _current_async_agent_task_ids(self._bundle.engine.tool_metadata)
+        if not task_ids:
+            return
+        try:
+            tasks = get_task_manager().list_tasks()
+        except Exception:
+            return
+        silent = _detect_unresponsive_swarm_teammate(
+            tasks,
+            now=time.time(),
+            alerted_task_ids=self._swarm_no_progress_alerted_task_ids,
+            task_ids=task_ids,
+        )
+        if silent is None:
+            return
+        task_id = str(silent["task_id"])
+        self._swarm_no_progress_alerted_task_ids.add(task_id)
+        idle_minutes = max(1, round(float(silent["idle_seconds"]) / 60))
+        running_minutes = max(1, round(float(silent["running_seconds"]) / 60))
+        line = (
+            f"AI team worker {silent['agent_id']} ({silent['role']}, task_id={task_id}) "
+            f"has been running for about {running_minutes} minutes with no visible output or `task_update` "
+            f"status for about {idle_minutes} minutes. First inspect its latest output with `task_output` and infer whether "
+            "it is still making progress from existing evidence. Do not send a reminder just to get a status update. "
+            "Use `send_message` only if the existing output suggests a concrete missing prerequisite, blocker, or relayable "
+            "handoff question. If it still has no useful progress after the next checkpoint, stop and replace it with a narrower prompt, "
+            "spawn a stronger replacement with `model=\"inherit\"`, or take over that slice in the main agent."
+        )
+        await self._submit_internal_swarm_steering(
+            status_message="AI 팀 작업자 무응답을 점검합니다.",
+            line=line,
+        )
+
+    async def _maybe_steer_slow_swarm_teammate(self) -> None:
+        if self._bundle is None or not self._running:
+            return
+        task_ids = _current_async_agent_task_ids(self._bundle.engine.tool_metadata)
+        if not task_ids:
+            return
+        try:
+            tasks = get_task_manager().list_tasks()
+        except Exception:
+            return
+        slow = _detect_slow_swarm_teammate(
+            tasks,
+            now=time.time(),
+            alerted_task_ids=self._swarm_straggler_alerted_task_ids,
+            task_ids=task_ids,
+        )
+        if slow is None:
+            return
+        task_id = str(slow["task_id"])
+        self._swarm_straggler_alerted_task_ids.add(task_id)
+        running_minutes = max(1, round(float(slow["running_seconds"]) / 60))
+        peer_minutes = max(1, round(float(slow["peer_seconds"]) / 60))
+        line = (
+            f"AI team worker {slow['agent_id']} ({slow['role']}, task_id={task_id}) "
+            f"has been running for about {running_minutes} minutes, while {slow['peer_count']} peer worker(s) "
+            f"from the same wave finished around {peer_minutes} minutes. "
+            "Briefly inspect its latest output and the completed peer outputs. Relay any missing prerequisite with `send_message` "
+            "if that can unblock it. If it is not clearly making fresh progress, use "
+            f"`task_stop(task_id=\"{task_id}\")`, then either spawn a narrower replacement, spawn a stronger replacement with "
+            "`model=\"inherit\"`, or complete the remaining slice in the main agent. Do not keep waiting on one lagging worker."
+        )
+        await self._submit_internal_swarm_steering(
+            status_message="느린 AI 팀 작업자를 감지했습니다.",
+            line=line,
         )
 
     async def _monitor_async_agents(self) -> None:
@@ -1083,13 +1464,15 @@ class ReactBackendHost:
                 if self._busy:
                     await self._queue_line_after_current(request.line or "")
                 else:
-                    await self._request_queue.put(
-                        FrontendRequest(
-                            type="submit_line",
-                            line=request.line or "",
-                            attachments=request.attachments,
+                        await self._request_queue.put(
+                            FrontendRequest(
+                                type="submit_line",
+                                line=request.line or "",
+                                attachments=request.attachments,
+                                attachment_refs=request.attachment_refs,
+                                compose_options=request.compose_options,
+                            )
                         )
-                    )
                 continue
             await self._request_queue.put(request)
 
@@ -1099,12 +1482,15 @@ class ReactBackendHost:
         *,
         transcript_line: str | None = None,
         attachments=None,
+        attachment_refs=None,
+        compose_options=None,
         quiet: bool = False,
         emit_user_transcript: bool = True,
         isolated_context: bool = False,
     ) -> bool:
         assert self._bundle is not None
         attachments = attachments or []
+        attachment_refs = attachment_refs or []
         image_blocks: list[ImageBlock] = []
         for item in attachments:
             media_type = str(getattr(item, "media_type", "") or getattr(item, "mediaType", "") or "").strip()
@@ -1112,8 +1498,23 @@ class ReactBackendHost:
             name = str(getattr(item, "name", "") or "")
             if media_type.startswith("image/") and data:
                 image_blocks.append(ImageBlock(media_type=media_type, data=data, source_path=name))
-        is_shell_shortcut = not image_blocks and line.lstrip().startswith("!")
+        client_attachment_refs = [
+            item
+            for item in attachment_refs
+            if str(getattr(item, "path", "") or "").strip()
+        ]
+        prompt_notes = [
+            note
+            for note in (
+                _format_client_attachment_note(client_attachment_refs),
+                _format_compose_options_note(compose_options),
+            )
+            if note
+        ]
+        is_shell_shortcut = not image_blocks and not client_attachment_refs and line.lstrip().startswith("!")
         effective_line = line if image_blocks or is_shell_shortcut else self._line_with_forced_skill(line)
+        if prompt_notes and not is_shell_shortcut:
+            effective_line = "\n\n".join(part for part in (effective_line.strip(), *prompt_notes) if part)
         effective_prompt: str | ConversationMessage = effective_line
         if image_blocks:
             content = []
@@ -1128,6 +1529,13 @@ class ReactBackendHost:
         transcript_text = transcript_line or line
         if image_blocks:
             suffix = f" [image attachments: {len(image_blocks)}]"
+            transcript_text = f"{transcript_text}{suffix}" if transcript_text else suffix.strip()
+        if client_attachment_refs:
+            names = ", ".join(
+                str(getattr(item, "name", "") or Path(str(getattr(item, "path", ""))).name)
+                for item in client_attachment_refs
+            )
+            suffix = f" [file attachments: {names or len(client_attachment_refs)}]"
             transcript_text = f"{transcript_text}{suffix}" if transcript_text else suffix.strip()
         is_internal_task_notification = (
             not emit_user_transcript
@@ -1231,12 +1639,35 @@ class ReactBackendHost:
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
+        assistant_delta_buffer: list[str] = []
+
+        def _has_pending_async_agents_for_current_session() -> bool:
+            if self._bundle is None:
+                return False
+            return bool(pending_async_agent_entries(self._bundle.engine.tool_metadata))
+
+        async def _emit_or_buffer_assistant_delta(text: str) -> None:
+            if not text:
+                return
+            if _has_pending_async_agents_for_current_session():
+                assistant_delta_buffer.append(text)
+                return
+            await self._emit(BackendEvent(type="assistant_delta", message=text))
+
+        async def _flush_buffered_assistant_delta() -> None:
+            if not assistant_delta_buffer:
+                return
+            text = "".join(assistant_delta_buffer)
+            assistant_delta_buffer.clear()
+            if text:
+                await self._emit(BackendEvent(type="assistant_delta", message=text))
+
         async def _render_event(event: StreamEvent) -> None:
             if isinstance(event, AssistantTextDelta):
                 visible_text, progress_messages = assistant_progress_filter.feed(event.text)
                 await _emit_assistant_progress(progress_messages)
                 if visible_text:
-                    await self._emit(BackendEvent(type="assistant_delta", message=visible_text))
+                    await _emit_or_buffer_assistant_delta(visible_text)
                 return
             if isinstance(event, ToolInputDelta):
                 await self._emit(
@@ -1265,9 +1696,19 @@ class ReactBackendHost:
                 remaining_text, progress_messages = assistant_progress_filter.flush()
                 await _emit_assistant_progress(progress_messages)
                 if remaining_text:
-                    await self._emit(BackendEvent(type="assistant_delta", message=remaining_text))
+                    await _emit_or_buffer_assistant_delta(remaining_text)
                 complete_text, complete_progress_messages = _strip_assistant_progress_markers(event.message.text.strip())
                 await _emit_assistant_progress(complete_progress_messages)
+                assert self._bundle is not None
+                pending_agents = _has_pending_async_agents_for_current_session()
+                complete_text = _guard_premature_async_agent_final_response(
+                    complete_text.strip(),
+                    self._bundle.engine.tool_metadata,
+                )
+                if not pending_agents:
+                    await _flush_buffered_assistant_delta()
+                else:
+                    assistant_delta_buffer.clear()
                 await self._emit(
                     BackendEvent(
                         type="assistant_complete",
@@ -1363,7 +1804,13 @@ class ReactBackendHost:
             if isolated_context
             else None
         )
+        original_max_tokens = self._bundle.engine.max_tokens
+        target_output_tokens = _compose_target_output_tokens(compose_options)
+        max_tokens_changed = False
         try:
+            if target_output_tokens:
+                self._bundle.engine.set_max_tokens(target_output_tokens)
+                max_tokens_changed = True
             if (
                 first_token != "/clear"
                 and not first_token.startswith("/")
@@ -1437,6 +1884,8 @@ class ReactBackendHost:
             )
             return should_continue
         finally:
+            if max_tokens_changed:
+                self._bundle.engine.set_max_tokens(original_max_tokens)
             await _stop_all_tool_progress()
             release_mutation_lock(self._bundle.engine.tool_metadata.pop("mutation_lock_token", None))
 
@@ -1808,20 +2257,56 @@ class ReactBackendHost:
         return canonical_name, user_request
 
     def _parse_forced_mcp_line(self, line: str) -> tuple[str, str] | None:
-        servers = {status.name.lower(): status.name for status in self._mcp_statuses_for_snapshot()}
+        statuses = self._mcp_statuses_for_snapshot()
+        servers = {
+            alias: status.name
+            for status in statuses
+            for alias in self._mcp_name_aliases(status.name)
+        }
         skills = {skill.name.lower() for skill in self._skill_snapshots()}
         for match in re.finditer(r"(?<!\S)\$(?:mcp:)?([A-Za-z0-9_.:-]+)(?!\S)", line):
             requested_name = match.group(1).strip()
             if not requested_name:
                 continue
-            canonical_name = servers.get(requested_name.lower())
+            canonical_name = servers.get(self._mcp_name_key(requested_name))
             if canonical_name is None:
                 continue
             if not match.group(0).lower().startswith("$mcp:") and requested_name.lower() in skills:
                 continue
             user_request = f"{line[:match.start()]}{line[match.end():]}".strip()
             return canonical_name, user_request
+        line_key = self._mcp_name_key(line)
+        for status in statuses:
+            aliases = self._mcp_name_aliases(status.name)
+            matched_alias = next((alias for alias in aliases if alias and alias in line_key), "")
+            if not matched_alias:
+                continue
+            display_alias = self._mcp_display_name(status.name)
+            user_request = re.sub(
+                re.escape(display_alias),
+                "",
+                line,
+                count=1,
+                flags=re.IGNORECASE,
+            ).strip()
+            if user_request == line.strip():
+                user_request = re.sub(re.escape(status.name), "", line, count=1, flags=re.IGNORECASE).strip()
+            return status.name, user_request
         return None
+
+    def _mcp_name_aliases(self, name: str) -> set[str]:
+        return {
+            self._mcp_name_key(name),
+            self._mcp_name_key(self._mcp_display_name(name)),
+            self._mcp_name_key(name.replace("_", " ")),
+            self._mcp_name_key(name.replace("-", " ")),
+        }
+
+    def _mcp_display_name(self, name: str) -> str:
+        return " ".join(part.capitalize() for part in re.split(r"[_-]+", name) if part)
+
+    def _mcp_name_key(self, value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.lower())
 
     async def _apply_select_command(self, command_name: str, value: str) -> bool:
         command = command_name.strip().lstrip("/").lower()

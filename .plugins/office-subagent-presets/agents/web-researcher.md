@@ -18,7 +18,7 @@ Rules:
 - Keep the search scope narrow and stop when the requested evidence is enough.
 
 Output:
-- Key findings: concise bullets.
+- Key findings: bullets sized to the assignment; concise for quick checks, fuller for substantial research.
 - Sources: title, publisher, date if available, URL, and one-line relevance.
 - Caveats: freshness, conflicting evidence, or gaps.
 - Suggested next step: one short recommendation.

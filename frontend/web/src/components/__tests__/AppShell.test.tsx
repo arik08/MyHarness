@@ -132,6 +132,28 @@ describe("AppShell sidebar auto collapse", () => {
     vi.restoreAllMocks();
   });
 
+  it("uses Light as the unscoped root theme and keeps Claude as the claude data theme", () => {
+    document.documentElement.dataset.theme = "dark";
+
+    const { rerender } = render(
+      <AppStateProvider key="light" initialState={{ ...initialAppState, themeId: "light" }}>
+        <AppShell />
+      </AppStateProvider>,
+    );
+
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(localStorage.getItem("myharness:theme")).toBe("light");
+
+    rerender(
+      <AppStateProvider key="claude" initialState={{ ...initialAppState, themeId: "claude" }}>
+        <AppShell />
+      </AppStateProvider>,
+    );
+
+    expect(document.documentElement.dataset.theme).toBe("claude");
+    expect(localStorage.getItem("myharness:theme")).toBe("claude");
+  });
+
   it("auto-collapses when the pure chat panel width reaches 400px", () => {
     localStorage.setItem("myharness:sidebarCollapsed", "0");
 

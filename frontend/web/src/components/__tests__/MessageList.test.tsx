@@ -2705,6 +2705,49 @@ describe("MessageList", () => {
     expect(document.querySelectorAll("article.message")).toHaveLength(1);
   });
 
+  it("renders adjacent plain log lines inside one message bubble", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "log-1", role: "log", text: "[05/23/26 03:59:12] INFO Processing request of type server.py:720" },
+            { id: "log-2", role: "log", text: "ListToolsRequest" },
+            { id: "log-3", role: "log", text: "INFO Processing request of type server.py:720" },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const articles = document.querySelectorAll("article.message.log");
+    expect(articles).toHaveLength(1);
+    expect(articles[0]?.textContent).toContain("[05/23/26 03:59:12] INFO Processing request of type server.py:720");
+    expect(articles[0]?.textContent).toContain("ListToolsRequest");
+    expect(articles[0]?.textContent).toContain("INFO Processing request of type server.py:720");
+  });
+
+  it("keeps log message boundaries when a normal chat message appears between them", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "log-1", role: "log", text: "before" },
+            { id: "assistant-1", role: "assistant", text: "answer", isComplete: true },
+            { id: "log-2", role: "log", text: "after" },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelectorAll("article.message.log")).toHaveLength(2);
+    expect(document.querySelectorAll("article.message")).toHaveLength(3);
+  });
+
   it("restores a clicked history session to its saved scroll position without bottom scrolling", async () => {
     localStorage.setItem("myharness:scrollPositions", JSON.stringify({ "session-old": 240 }));
 

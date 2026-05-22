@@ -11,7 +11,9 @@ type TooltipState = {
   target: HTMLElement;
   x: number;
   y: number;
-  placement: "top" | "bottom" | "right";
+  anchorX: number;
+  anchorY: number;
+  placement: "top" | "bottom" | "left" | "right";
 };
 
 function findTooltipTarget(target: EventTarget | null) {
@@ -26,29 +28,77 @@ function findTooltipTarget(target: EventTarget | null) {
   return tooltipTarget;
 }
 
+function topPlacementAnchorY(target: HTMLElement, rect: DOMRect) {
+  const boundary = target.closest<HTMLElement>("[data-tooltip-top-boundary]");
+  const boundaryTop = boundary?.getBoundingClientRect().top;
+  if (Number.isFinite(boundaryTop)) {
+    return Math.min(rect.top - gap, Number(boundaryTop) - gap);
+  }
+  return rect.top - gap;
+}
+
 function getTooltipState(target: HTMLElement): TooltipState | null {
   const text = target.dataset.tooltip?.trim();
   if (!text || target.getAttribute("aria-disabled") === "true") {
     return null;
   }
   const rect = target.getBoundingClientRect();
-  if (target.dataset.tooltipPlacement === "right") {
+  const requestedPlacement = target.dataset.tooltipPlacement;
+  if (requestedPlacement === "right") {
     return {
       text,
       target,
       x: rect.right + gap,
       y: rect.top + rect.height / 2,
+      anchorX: rect.right + gap,
+      anchorY: rect.top + rect.height / 2,
       placement: "right",
     };
   }
+  if (requestedPlacement === "left") {
+    return {
+      text,
+      target,
+      x: rect.left - gap,
+      y: rect.top + rect.height / 2,
+      anchorX: rect.left - gap,
+      anchorY: rect.top + rect.height / 2,
+      placement: "left",
+    };
+  }
+  if (requestedPlacement === "top") {
+    const anchorY = topPlacementAnchorY(target, rect);
+    return {
+      text,
+      target,
+      x: rect.left + rect.width / 2,
+      y: anchorY,
+      anchorX: rect.left + rect.width / 2,
+      anchorY,
+      placement: "top",
+    };
+  }
+  if (requestedPlacement === "bottom") {
+    return {
+      text,
+      target,
+      x: rect.left + rect.width / 2,
+      y: rect.bottom + gap,
+      anchorX: rect.left + rect.width / 2,
+      anchorY: rect.bottom + gap,
+      placement: "bottom",
+    };
+  }
   const yBelow = rect.bottom + gap;
-  const yAbove = rect.top - gap;
+  const yAbove = topPlacementAnchorY(target, rect);
   const placement = yBelow + 36 <= window.innerHeight ? "bottom" : "top";
   return {
     text,
     target,
     x: rect.left + rect.width / 2,
     y: placement === "bottom" ? yBelow : yAbove,
+    anchorX: rect.left + rect.width / 2,
+    anchorY: placement === "bottom" ? yBelow : yAbove,
     placement,
   };
 }
@@ -243,20 +293,24 @@ export function TooltipLayer() {
       return;
     }
     const rect = tooltipRef.current.getBoundingClientRect();
+    const anchorX = tooltip.anchorX;
+    const anchorY = tooltip.anchorY;
     const nextX = tooltip.placement === "right"
-      ? Math.min(Math.max(tooltip.x, edgePadding), window.innerWidth - edgePadding - rect.width)
+      ? Math.min(Math.max(anchorX, edgePadding), window.innerWidth - edgePadding - rect.width)
+      : tooltip.placement === "left"
+        ? Math.min(Math.max(anchorX - rect.width, edgePadding), window.innerWidth - edgePadding - rect.width)
       : Math.min(
-        Math.max(tooltip.x, edgePadding + rect.width / 2),
+        Math.max(anchorX, edgePadding + rect.width / 2),
         window.innerWidth - edgePadding - rect.width / 2,
       );
-    const nextY = tooltip.placement === "right"
+    const nextY = tooltip.placement === "right" || tooltip.placement === "left"
       ? Math.min(
-        Math.max(tooltip.y, edgePadding + rect.height / 2),
+        Math.max(anchorY, edgePadding + rect.height / 2),
         window.innerHeight - edgePadding - rect.height / 2,
       )
       : tooltip.placement === "top"
-        ? Math.max(edgePadding, tooltip.y - rect.height)
-        : Math.min(tooltip.y, window.innerHeight - edgePadding - rect.height);
+        ? Math.min(anchorY, window.innerHeight - edgePadding)
+        : Math.min(anchorY, window.innerHeight - edgePadding - rect.height);
     if (Math.abs(nextX - tooltip.x) > 0.5 || Math.abs(nextY - tooltip.y) > 0.5) {
       setTooltip({ ...tooltip, x: nextX, y: nextY });
     }
@@ -275,10 +329,10 @@ export function TooltipLayer() {
         left: tooltip.x,
         position: "fixed",
         top: tooltip.y,
-        transform: tooltip.placement === "right"
+        transform: tooltip.placement === "right" || tooltip.placement === "left"
           ? "translate(0, -50%)"
           : tooltip.placement === "top"
-            ? "translateX(-50%)"
+            ? "translate(-50%, -100%)"
             : "translate(-50%, 0)",
       }}
     >

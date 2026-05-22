@@ -117,6 +117,7 @@ async def test_task_update_tool_updates_metadata(tmp_path: Path, monkeypatch):
     assert task.description == "renamed task"
     assert task.metadata["progress"] == "60"
     assert task.metadata["status_note"] == "waiting on verification"
+    assert float(task.metadata["status_note_updated_at"]) > 0
 
 
 def test_task_update_tool_is_read_only_for_project_mutation_lock():

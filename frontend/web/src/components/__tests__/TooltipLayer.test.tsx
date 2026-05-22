@@ -96,6 +96,152 @@ describe("TooltipLayer", () => {
     expect(tooltip.style.transform).toBe("translate(0, -50%)");
   });
 
+  it("places left-positioned tooltips beside the target", () => {
+    vi.useFakeTimers();
+    render(
+      <div>
+        <button
+          type="button"
+          data-tooltip="입력 옵션 닫기"
+          data-tooltip-placement="left"
+          ref={(node) => {
+            if (!node) {
+              return;
+            }
+            node.getBoundingClientRect = () => ({
+              bottom: 126,
+              height: 30,
+              left: 120,
+              right: 150,
+              top: 96,
+              width: 30,
+              x: 120,
+              y: 96,
+              toJSON: () => ({}),
+            });
+          }}
+        >
+          plus
+        </button>
+        <TooltipLayer />
+      </div>,
+    );
+
+    fireEvent.pointerOver(screen.getByRole("button", { name: "plus" }));
+    act(() => {
+      vi.advanceTimersByTime(260);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toBe("입력 옵션 닫기");
+    expect(tooltip.style.top).toBe("111px");
+    expect(tooltip.style.transform).toBe("translate(0, -50%)");
+    expect(Number.parseFloat(tooltip.style.left)).toBeLessThan(120);
+  });
+
+  it("places top-positioned tooltips above the target", () => {
+    vi.useFakeTimers();
+    render(
+      <div>
+        <button
+          type="button"
+          data-tooltip="첨부 및 출력 옵션"
+          data-tooltip-placement="top"
+          ref={(node) => {
+            if (!node) {
+              return;
+            }
+            node.getBoundingClientRect = () => ({
+              bottom: 680,
+              height: 32,
+              left: 394,
+              right: 426,
+              top: 648,
+              width: 32,
+              x: 394,
+              y: 648,
+              toJSON: () => ({}),
+            });
+          }}
+        >
+          plus
+        </button>
+        <TooltipLayer />
+      </div>,
+    );
+
+    fireEvent.pointerOver(screen.getByRole("button", { name: "plus" }));
+    act(() => {
+      vi.advanceTimersByTime(260);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toBe("첨부 및 출력 옵션");
+    expect(tooltip.style.left).toBe("410px");
+    expect(tooltip.style.top).toBe("640px");
+    expect(tooltip.style.transform).toBe("translate(-50%, -100%)");
+  });
+
+  it("keeps top-positioned tooltips above a declared boundary", () => {
+    vi.useFakeTimers();
+    render(
+      <div
+        data-tooltip-top-boundary="true"
+        ref={(node) => {
+          if (!node) {
+            return;
+          }
+          node.getBoundingClientRect = () => ({
+            bottom: 590,
+            height: 80,
+            left: 320,
+            right: 760,
+            top: 510,
+            width: 440,
+            x: 320,
+            y: 510,
+            toJSON: () => ({}),
+          });
+        }}
+      >
+        <button
+          type="button"
+          data-tooltip="산출물 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다."
+          data-tooltip-placement="top"
+          ref={(node) => {
+            if (!node) {
+              return;
+            }
+            node.getBoundingClientRect = () => ({
+              bottom: 552,
+              height: 18,
+              left: 520,
+              right: 568,
+              top: 534,
+              width: 48,
+              x: 520,
+              y: 534,
+              toJSON: () => ({}),
+            });
+          }}
+        >
+          출력량
+        </button>
+        <TooltipLayer />
+      </div>,
+    );
+
+    fireEvent.pointerOver(screen.getByRole("button", { name: "출력량" }));
+    act(() => {
+      vi.advanceTimersByTime(260);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.style.left).toBe("544px");
+    expect(tooltip.style.top).toBe("502px");
+    expect(tooltip.style.transform).toBe("translate(-50%, -100%)");
+  });
+
   it("shows focus tooltips immediately", () => {
     render(
       <div>

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from myharness.state.app_state import AppState
 from myharness.bridge.manager import BridgeSessionRecord
@@ -15,9 +15,43 @@ from myharness.tasks.types import TaskRecord
 class FrontendAttachment(BaseModel):
     """Inline file attachment sent by the web frontend."""
 
-    media_type: str = Field(validation_alias=AliasChoices("media_type", "mediaType"))
-    data: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = ""
+    media_type: str = Field(default="", validation_alias=AliasChoices("media_type", "mediaType"))
+    data: str = ""
     name: str = ""
+    path: str = ""
+    size: int = 0
+
+
+class FrontendComposeOptions(BaseModel):
+    """Optional per-message composition hints sent only when the panel changes behavior."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    output_surface: Literal["chat", "artifact"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("output_surface", "outputSurface"),
+    )
+    artifact_action: Literal["auto", "create", "edit"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("artifact_action", "artifactAction"),
+    )
+    target_output_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        le=160_000,
+        validation_alias=AliasChoices("target_output_tokens", "targetOutputTokens"),
+    )
+    length_preset: Literal["default", "long", "very_long", "extended", "extra_long"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("length_preset", "lengthPreset"),
+    )
+    active_artifact_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("active_artifact_path", "activeArtifactPath"),
+    )
 
 
 class FrontendRequest(BaseModel):
@@ -57,6 +91,8 @@ class FrontendRequest(BaseModel):
     allowed: bool | None = None
     answer: str | None = None
     attachments: list[FrontendAttachment] = Field(default_factory=list)
+    attachment_refs: list[FrontendAttachment] = Field(default_factory=list)
+    compose_options: FrontendComposeOptions | None = None
     suppress_user_transcript: bool = False
     isolated_context: bool = False
 
@@ -293,6 +329,7 @@ def _format_permission_mode(raw: str) -> str:
 
 __all__ = [
     "BackendEvent",
+    "FrontendComposeOptions",
     "FrontendRequest",
     "PluginSnapshot",
     "SkillSnapshot",

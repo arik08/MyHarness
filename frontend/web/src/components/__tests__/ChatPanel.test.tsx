@@ -145,6 +145,7 @@ describe("ChatPanel", () => {
     expect(screen.queryByText("사무 작업 진행 현황")).toBeNull();
     expect(screen.getByText("조사")).toBeTruthy();
     expect(screen.getByText("데이터센터 산업 현황 조사")).toBeTruthy();
+    expect(screen.getByLabelText("조사 최근 진행").textContent).toContain("자료 수집 중");
     expect(screen.getByText("모델 gpt-5.4-mini")).toBeTruthy();
     await userEvent.click(screen.getByText("프롬프트"));
     expect(screen.getByText(/목표: 산업 현황만 확인/)).toBeTruthy();
@@ -273,6 +274,7 @@ describe("ChatPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "AI 팀 열기" }));
 
+    expect(screen.getByLabelText("조사 최근 진행").textContent).toContain("조사 결과 정리 완료");
     expect(screen.getByText("조사 결과 정리 완료")).toBeTruthy();
     expect(screen.queryByText(/50%/)).toBeNull();
   });

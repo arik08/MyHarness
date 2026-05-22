@@ -110,6 +110,10 @@ const artifactAiEditMaxBytes = 2 * 1024 * 1024;
 const chatHtmlPreviewMaxBytes = 2 * 1024 * 1024;
 const chatHtmlPreviewTtlMs = 10 * 60 * 1000;
 const chatHtmlPreviews = new Map();
+const clientAttachmentRootRel = ".myharness/client-uploads";
+const clientAttachmentMaxFiles = 10;
+const clientAttachmentMaxBytes = 32 * 1024 * 1024;
+const clientAttachmentTotalMaxBytes = 80 * 1024 * 1024;
 const artifactAssetWorkspaceTtlMs = 30 * 60 * 1000;
 const artifactAssetWorkspaces = new Map();
 const artifactTypes = {
@@ -471,6 +475,103 @@ async function readJson(request) {
     return {};
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+async function readRequestBuffer(request, maxBytes) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) {
+      const error = new Error("Uploaded files are too large");
+      error.status = 413;
+      throw error;
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function multipartBoundary(contentType) {
+  const match = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(String(contentType || ""));
+  return String(match?.[1] || match?.[2] || "").trim();
+}
+
+function parseHeaderParameters(value) {
+  const result = {};
+  for (const part of String(value || "").split(";").slice(1)) {
+    const separator = part.indexOf("=");
+    if (separator < 0) continue;
+    const key = part.slice(0, separator).trim().toLowerCase();
+    let item = part.slice(separator + 1).trim();
+    if (item.startsWith('"') && item.endsWith('"')) {
+      item = item.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    }
+    if (key) {
+      result[key] = item;
+    }
+  }
+  return result;
+}
+
+function parseMultipartFormData(buffer, contentType) {
+  const boundary = multipartBoundary(contentType);
+  if (!boundary) {
+    const error = new Error("Missing multipart boundary");
+    error.status = 400;
+    throw error;
+  }
+  const delimiter = Buffer.from(`--${boundary}`);
+  const headerSeparator = Buffer.from("\r\n\r\n");
+  const fields = new Map();
+  const files = [];
+  let cursor = buffer.indexOf(delimiter);
+  while (cursor >= 0) {
+    let partStart = cursor + delimiter.length;
+    if (buffer[partStart] === 45 && buffer[partStart + 1] === 45) {
+      break;
+    }
+    if (buffer[partStart] === 13 && buffer[partStart + 1] === 10) {
+      partStart += 2;
+    }
+    const next = buffer.indexOf(delimiter, partStart);
+    if (next < 0) {
+      break;
+    }
+    let part = buffer.subarray(partStart, next);
+    if (part.length >= 2 && part[part.length - 2] === 13 && part[part.length - 1] === 10) {
+      part = part.subarray(0, part.length - 2);
+    }
+    const headerEnd = part.indexOf(headerSeparator);
+    if (headerEnd >= 0) {
+      const rawHeaders = part.subarray(0, headerEnd).toString("utf8");
+      const headers = {};
+      for (const line of rawHeaders.split(/\r?\n/)) {
+        const separator = line.indexOf(":");
+        if (separator < 0) continue;
+        headers[line.slice(0, separator).trim().toLowerCase()] = line.slice(separator + 1).trim();
+      }
+      const disposition = String(headers["content-disposition"] || "");
+      const params = parseHeaderParameters(disposition);
+      const fieldName = String(params.name || "").trim();
+      if (fieldName) {
+        const data = part.subarray(headerEnd + headerSeparator.length);
+        if (Object.prototype.hasOwnProperty.call(params, "filename")) {
+          files.push({
+            fieldName,
+            filename: String(params.filename || ""),
+            media_type: String(headers["content-type"] || "application/octet-stream").trim(),
+            data,
+          });
+        } else {
+          fields.set(fieldName, data.toString("utf8"));
+        }
+      }
+    }
+    cursor = next;
+  }
+  return { fields, files };
 }
 
 function pruneChatHtmlPreviews() {
@@ -938,7 +1039,6 @@ function shareArtifactShell(payload, params) {
   const sourceUrl = shareSourceArtifactUrl(params, payload.path);
   const downloadUrl = shareDownloadArtifactUrl(params, payload.path);
   const safeName = escapeHtml(name);
-  const safeKind = escapeHtml(payload.kind || "file");
   const safeRawUrl = escapeHtml(rawUrl);
   const safeSourceUrl = escapeHtml(sourceUrl);
   const safeDownloadUrl = escapeHtml(downloadUrl);
@@ -972,7 +1072,6 @@ function shareArtifactShell(payload, params) {
     body{margin:0;min-height:100vh;display:flex;flex-direction:column}
     header{height:44px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px 0 14px;border-bottom:1px solid rgba(0,0,0,.1);background:#fff}
     h1{margin:0;font-size:14px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    small{color:#6b7280}
     a{color:inherit}
     .share-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
     .share-action{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid rgba(0,0,0,.12);border-radius:7px;background:transparent;color:inherit;cursor:pointer;text-decoration:none}
@@ -991,11 +1090,11 @@ function shareArtifactShell(payload, params) {
     body.source-mode .share-source{display:block}
     .share-download{flex:1;display:grid;place-items:center}
     .share-download a{padding:9px 12px;border:1px solid rgba(0,0,0,.18);border-radius:8px;text-decoration:none;background:#fff}
-    @media (prefers-color-scheme:dark){:root{background:#15171a;color:#f4f5f6}header,.share-text,.share-source,.share-frame,.share-download a{background:#1d2024;border-color:rgba(255,255,255,.14)}small{color:#a5abb3}.share-action{border-color:rgba(255,255,255,.14)}.share-action:hover,.share-action:focus-visible,.share-action.active{background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.5);color:#93c5fd}}
+    @media (prefers-color-scheme:dark){:root{background:#15171a;color:#f4f5f6}header,.share-text,.share-source,.share-frame,.share-download a{background:#1d2024;border-color:rgba(255,255,255,.14)}.share-action{border-color:rgba(255,255,255,.14)}.share-action:hover,.share-action:focus-visible,.share-action.active{background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.5);color:#93c5fd}}
   </style>
 </head>
 <body>
-  <header><h1>${safeName}</h1><div class="share-actions">${sourceActions}<a class="share-action" href="${safeDownloadUrl}" download="${safeName}" aria-label="다운로드" data-tooltip="다운로드"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg></a><small>${safeKind}</small></div></header>
+  <header><h1>${safeName}</h1><div class="share-actions">${sourceActions}<a class="share-action" href="${safeDownloadUrl}" download="${safeName}" aria-label="다운로드" data-tooltip="다운로드"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg></a></div></header>
   ${body}
   ${sourcePanel}
   <script>
@@ -1162,7 +1261,7 @@ function withDownloadedMermaidZoomBridge(content) {
 .myharness-mermaid-zoom-control:hover,.myharness-mermaid-zoom-control:focus-visible{border-color:rgba(37,99,235,.48);color:#1d4ed8;outline:none}
 .myharness-mermaid-zoom-control[data-tooltip]::after{position:absolute;top:calc(100% + 7px);left:50%;z-index:10000;max-width:220px;padding:5px 7px;border-radius:6px;background:rgba(17,24,39,.94);color:#fff;content:attr(data-tooltip);font:12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;opacity:0;pointer-events:none;transform:translate(-50%,2px);transition:opacity 120ms ease,transform 120ms ease;white-space:nowrap}
 .myharness-mermaid-zoom-control:hover::after,.myharness-mermaid-zoom-control:focus-visible::after{opacity:1;transform:translate(-50%,0)}
-.myharness-mermaid-zoom-viewport{flex:1;overflow:hidden;display:grid;place-items:center;cursor:grab}
+.myharness-mermaid-zoom-viewport{flex:1;overflow:hidden;display:grid;place-items:center;background:radial-gradient(circle,rgba(100,116,139,.24) 0 1px,transparent 1.2px),#eef0f2;background-size:18px 18px,auto;cursor:grab}
 .myharness-mermaid-zoom-viewport.dragging{cursor:grabbing}
 .myharness-mermaid-zoom-canvas{transform-origin:0 0;transition:transform 120ms ease}
 .myharness-mermaid-zoom-canvas svg{display:block;max-width:none;height:auto}
@@ -4100,13 +4199,156 @@ function normalizeAttachment(attachment) {
   };
 }
 
-function visibleSubmittedUserText(line, attachments = []) {
+function safeClientUploadSegment(value) {
+  const raw = String(value || "anonymous").trim() || "anonymous";
+  const slug = raw
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "client";
+  const hash = crypto.createHash("sha1").update(raw).digest("hex").slice(0, 10);
+  return `${slug}-${hash}`;
+}
+
+function safeClientAttachmentName(value) {
+  const name = basename(String(value || "attachment").replace(/\\/g, "/"))
+    .normalize("NFC")
+    .replace(/[<>:"/\\|?*\x00-\x1f\x7f]+/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, 160);
+  return name || "attachment";
+}
+
+function normalizeAttachmentRef(attachment) {
+  if (!attachment || typeof attachment !== "object") {
+    return null;
+  }
+  const path = normalizeProjectFilePath(attachment.path || attachment.rel || attachment.relativePath || "");
+  if (!path || path === clientAttachmentRootRel || !path.startsWith(`${clientAttachmentRootRel}/`)) {
+    return null;
+  }
+  const size = Math.max(0, Math.trunc(Number(attachment.size) || 0));
+  return {
+    id: String(attachment.id || crypto.randomUUID()),
+    name: safeClientAttachmentName(attachment.name || basename(path)),
+    path,
+    size,
+    media_type: String(attachment.media_type || attachment.mediaType || "application/octet-stream").trim(),
+  };
+}
+
+function normalizeComposeOptions(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const options = {};
+  const outputSurface = String(value.output_surface || value.outputSurface || "").trim().toLowerCase();
+  if (outputSurface === "chat" || outputSurface === "artifact") {
+    options.output_surface = outputSurface;
+  }
+  const artifactAction = String(value.artifact_action || value.artifactAction || "").trim().toLowerCase();
+  if (artifactAction === "auto" || artifactAction === "create" || artifactAction === "edit") {
+    options.artifact_action = artifactAction;
+  }
+  const lengthPreset = String(value.length_preset || value.lengthPreset || "").trim().toLowerCase();
+  if (["default", "long", "very_long", "extra_long"].includes(lengthPreset)) {
+    options.length_preset = lengthPreset;
+  }
+  const rawTarget = Number(value.target_output_tokens ?? value.targetOutputTokens ?? 0);
+  if (Number.isFinite(rawTarget) && rawTarget > 0) {
+    options.target_output_tokens = Math.max(1, Math.min(120_000, Math.trunc(rawTarget)));
+  }
+  const activeArtifactPath = normalizeProjectFilePath(value.active_artifact_path || value.activeArtifactPath || "");
+  if (activeArtifactPath) {
+    options.active_artifact_path = activeArtifactPath;
+  }
+  return Object.keys(options).length ? options : null;
+}
+
+async function saveClientAttachments(fields, files, scope) {
+  const params = new URLSearchParams();
+  for (const name of ["session", "clientId", "workspacePath", "workspaceName"]) {
+    const value = String(fields.get(name) || "").trim();
+    if (value) params.set(name, value);
+  }
+  const liveSession = params.get("session")
+    ? sessionFromIdForClient(params.get("session"), params.get("clientId"))
+    : null;
+  const session = liveSession || await workspaceTargetSessionFromRequest(params, "", scope);
+  const uploadFiles = files.filter((file) => file.fieldName === "files" || file.fieldName === "file");
+  if (!uploadFiles.length) {
+    throw new Error("No files were uploaded");
+  }
+  if (uploadFiles.length > clientAttachmentMaxFiles) {
+    throw new Error(`You can attach up to ${clientAttachmentMaxFiles} files at once`);
+  }
+  let totalBytes = 0;
+  for (const file of uploadFiles) {
+    const size = file.data?.length || 0;
+    totalBytes += size;
+    if (size <= 0) {
+      throw new Error("Uploaded file is empty");
+    }
+    if (size > clientAttachmentMaxBytes) {
+      const error = new Error("Each uploaded file must be 32MB or smaller");
+      error.status = 413;
+      throw error;
+    }
+  }
+  if (totalBytes > clientAttachmentTotalMaxBytes) {
+    const error = new Error("Uploaded files exceed the 80MB total limit");
+    error.status = 413;
+    throw error;
+  }
+
+  const bucket = safeClientUploadSegment(params.get("session") || params.get("clientId") || "pending");
+  const batch = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString("hex")}`;
+  const baseRel = `${clientAttachmentRootRel}/${bucket}/${batch}`;
+  const counts = new Map();
+  const attachments = [];
+  for (const file of uploadFiles) {
+    const safeName = safeClientAttachmentName(file.filename);
+    const currentCount = counts.get(safeName) || 0;
+    counts.set(safeName, currentCount + 1);
+    const storedName = currentCount
+      ? `${safeName.replace(/(\.[^.]*)?$/, `-${currentCount + 1}$1`)}`
+      : safeName;
+    const { target, rel } = workspaceRelativeTarget(session.workspace.path, `${baseRel}/${storedName}`);
+    if (rel !== clientAttachmentRootRel && !rel.startsWith(`${clientAttachmentRootRel}/`)) {
+      throw new Error("Attachment path must stay inside the client upload directory");
+    }
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, file.data);
+    attachments.push({
+      id: crypto.randomUUID(),
+      name: safeName,
+      path: rel,
+      size: file.data.length,
+      media_type: file.media_type || "application/octet-stream",
+    });
+  }
+  invalidateProjectFileCache(session.workspace.path);
+  return { workspace: session.workspace, attachments };
+}
+
+function visibleSubmittedUserText(line, attachments = [], attachmentRefs = []) {
   const cleanLine = String(line || "").trim();
-  const text = cleanLine || (attachments.length ? "(이미지 첨부)" : "");
-  if (!attachments.length) {
+  const text = cleanLine || (attachments.length || attachmentRefs.length ? "(파일 첨부)" : "");
+  if (!attachments.length && !attachmentRefs.length) {
     return text;
   }
-  const suffix = ` [image attachments: ${attachments.length}]`;
+  const parts = [];
+  if (attachments.length) {
+    parts.push(`image attachments: ${attachments.length}`);
+  }
+  if (attachmentRefs.length) {
+    const names = attachmentRefs
+      .map((attachment) => attachment.name || basename(attachment.path || "file"))
+      .filter(Boolean)
+      .join(", ");
+    parts.push(`file attachments: ${names || attachmentRefs.length}`);
+  }
+  const suffix = ` [${parts.join("; ")}]`;
   return text ? `${text}${suffix}` : suffix.trim();
 }
 
@@ -5055,6 +5297,18 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
+  if (request.method === "POST" && pathname === "/api/client-attachments") {
+    try {
+      const buffer = await readRequestBuffer(request, clientAttachmentTotalMaxBytes + 1024 * 1024);
+      const { fields, files } = parseMultipartFormData(buffer, request.headers["content-type"]);
+      const result = await saveClientAttachments(fields, files, workspaceScope);
+      json(response, 200, result);
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not upload client attachments" });
+    }
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/message") {
     const body = await readJson(request);
     try {
@@ -5067,13 +5321,20 @@ async function handleApi(request, response, pathname) {
       const attachments = Array.isArray(body.attachments)
         ? body.attachments.map(normalizeAttachment).filter(Boolean)
         : [];
+      const rawAttachmentRefs = Array.isArray(body.attachmentRefs)
+        ? body.attachmentRefs
+        : Array.isArray(body.attachment_refs)
+          ? body.attachment_refs
+          : [];
+      const attachmentRefs = rawAttachmentRefs.map(normalizeAttachmentRef).filter(Boolean);
+      const composeOptions = normalizeComposeOptions(body.composeOptions || body.compose_options);
       const deliveryMode = String(body.mode || "").trim().toLowerCase();
-      if (!line && attachments.length === 0) {
+      if (!line && attachments.length === 0 && attachmentRefs.length === 0) {
         json(response, 400, { error: "Message is empty" });
         return true;
       }
       if (session.busy) {
-        if (attachments.length > 0) {
+        if (attachments.length > 0 || attachmentRefs.length > 0) {
           json(response, 409, { error: "현재 대화가 응답 중이라 첨부파일은 보낼 수 없습니다. 답변이 끝난 뒤 다시 시도하세요." });
           return true;
         }
@@ -5091,15 +5352,20 @@ async function handleApi(request, response, pathname) {
         return true;
       }
       if (body.suppressUserTranscript === true && !line.startsWith("!")) {
-        rememberSuppressedUserTranscript(session.replayState, visibleSubmittedUserText(line, attachments));
+        rememberSuppressedUserTranscript(session.replayState, visibleSubmittedUserText(line, attachments, attachmentRefs));
       }
       session.busy = true;
-      const ok = sendBackend(session, {
+      const backendPayload = {
         type: "submit_line",
         line,
         attachments,
+        attachment_refs: attachmentRefs,
         suppress_user_transcript: body.suppressUserTranscript === true,
-      });
+      };
+      if (composeOptions) {
+        backendPayload.compose_options = composeOptions;
+      }
+      const ok = sendBackend(session, backendPayload);
       if (!ok) {
         session.busy = false;
       }

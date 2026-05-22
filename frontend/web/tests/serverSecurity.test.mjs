@@ -232,6 +232,49 @@ test("explains session limits as multi-user busy state", async (t) => {
   assert.match(secondPayload.error, /여러 명이 동시에 사용 중/);
 });
 
+test("uploads client attachments as sanitized workspace-relative copies", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `ClientUpload${Date.now().toString(36)}` }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  assert.equal(workspaceResponse.status, 200);
+  workspacePath = workspacePayload.workspace?.path || "";
+  assert.ok(workspacePath);
+
+  const form = new FormData();
+  form.set("clientId", "client-upload-test");
+  form.set("workspacePath", workspacePath);
+  form.append("files", new Blob(["hello from client"], { type: "text/plain" }), "../unsafe:name.txt");
+
+  const response = await fetch(`${app.baseUrl}/api/client-attachments`, {
+    method: "POST",
+    body: form,
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  const attachment = payload.attachments?.[0];
+  assert.ok(attachment);
+  assert.equal(attachment.name, "unsafe_name.txt");
+  assert.match(attachment.path, /^\.myharness\/client-uploads\//);
+  assert.equal(attachment.path.includes(".."), false);
+  assert.equal(/[<>:"\\|?*]/.test(attachment.path), false);
+  assert.equal(await readFile(join(workspacePath, attachment.path), "utf8"), "hello from client");
+});
+
 test("overwrites only HTML artifacts through the preview edit API", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
@@ -537,6 +580,7 @@ test("serves shared artifact links read-only from workspace-relative paths", asy
   assert.match(shell, /data-action="copy-source"/);
   assert.match(shell, /\/share\/artifact\/download\?/);
   assert.match(shell, /report\.html/);
+  assert.doesNotMatch(shell, /<small>html<\/small>/);
 
   const rawHtmlResponse = await fetch(`${app.baseUrl}/share/artifact/raw?${htmlParams.toString()}`);
   const rawHtml = await rawHtmlResponse.text();

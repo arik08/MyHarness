@@ -13,8 +13,9 @@ import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from
 import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/runtimePreferences";
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
-  { id: "light", label: "Claude" },
+  { id: "light", label: "Light" },
   { id: "posco", label: "POSCO" },
+  { id: "claude", label: "Claude" },
   { id: "dark", label: "Dark-Blue" },
   { id: "mono", label: "MonoChrome-Green" },
   { id: "mono-orange", label: "MonoChrome-Orange" },

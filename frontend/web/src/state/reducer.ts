@@ -30,6 +30,7 @@ export type AppAction =
   | { type: "set_sidebar_resizing"; value: boolean }
   | { type: "set_draft"; value: string }
   | { type: "set_busy"; value: boolean }
+  | { type: "set_permission_mode"; value: string }
   | { type: "set_chat_title"; value: string }
   | { type: "set_system_prompt"; value: string }
   | { type: "set_app_settings"; value: Partial<AppSettings> }
@@ -189,7 +190,10 @@ function isSlashCommandMessage(text: string) {
 
 function initialThemeId(): ThemeId {
   const value = loadLocalStorageValue("myharness:theme");
-  return value === "posco" || value === "dark" || value === "mono" || value === "mono-orange" ? value : "light";
+  if (value === "nexus") {
+    return "light";
+  }
+  return value === "claude" || value === "posco" || value === "dark" || value === "mono" || value === "mono-orange" ? value : "light";
 }
 
 function storedArtifactPanelWidth(key: string) {
@@ -461,7 +465,10 @@ function isNonConversationTranscriptItem(item: { role?: string; text?: string })
   const text = String(item.text || "").trim();
   if (!text) return true;
   if (role === "system" && text === "Conversation cleared.") return true;
-  if (role === "system" && ["Plan mode enabled.", "Plan mode disabled."].includes(text)) return true;
+  if (
+    role === "system"
+    && ["Plan mode enabled.", "Plan mode disabled.", "계획 모드를 켰습니다.", "계획 모드를 껐습니다."].includes(text)
+  ) return true;
   if (role === "system" && text.startsWith("Session restored")) return true;
   return false;
 }
@@ -2608,6 +2615,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             statusText: state.statusText === "준비됨" || state.statusText === "연결 중" ? "응답 진행 중" : state.statusText,
           }
         : { ...state, busy: false };
+
+    case "set_permission_mode":
+      return { ...state, permissionMode: action.value };
 
     case "set_chat_title": {
       const title = normalizeChatTitle(action.value);

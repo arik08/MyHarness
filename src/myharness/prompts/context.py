@@ -68,13 +68,21 @@ def _build_delegation_section() -> str:
             "Do not use raw ASCII art or the old `workflow` fence for the workflow.",
             "Spawn only the current independent wave. Do not spawn serial downstream roles prematurely; "
             "roles with unmet prerequisites wait until their inputs exist.",
-            "Keep delegated work fast: use at most 5 workers per wave, give each a narrow non-overlapping scope, "
-            "and ask for concise bullet findings instead of a full report. Prefer more workers only when they reduce wall-clock time.",
-            "Ask workers to publish brief interim progress with `task_update` status_note updates or short progress lines "
-            "so UI surfaces can show what each person is doing.",
+            "Keep each wave controlled: usually use at most 5 workers per wave, give each a non-overlapping scope, "
+            "and size the expected depth to the assignment. For quick slices, ask for concise bullets; for substantial analysis, "
+            "ask for enough evidence, calculations, caveats, and intermediate tables to support a reliable synthesis. "
+            "Prefer more workers only when they reduce wall-clock time.",
+            "Ask workers to emit compact JSON progress via `task_update` as part of their natural output flow, without "
+            "waiting for the parent to ask. Progress should appear when a worker learns something material, starts a new phase, "
+            "changes direction, finds a blocker, or has a handoff-ready fact. Do not ask workers to report after every tool call "
+            "or send generic 'still working' heartbeats. Short progress lines are acceptable only when `task_update` is unavailable.",
+            "Act as the main orchestrator while workers run: periodically inspect worker progress with `task_output`, "
+            "relay useful findings or missing prerequisites to other workers with `send_message`, and adjust the plan as evidence arrives. "
+            "Do not wait passively for every worker when partial results are enough to unblock the next step.",
             "After launching a parallel wave, watch completion times. If most workers finish within a few minutes but one worker "
             "runs much longer, briefly inspect that worker, stop it with `task_stop` if it is not clearly making fresh progress, "
-            "then either spawn a narrower replacement or complete the remaining slice yourself in the main agent. "
+            "then either spawn a narrower replacement, spawn a stronger replacement with `model=\"inherit\"`, "
+            "or complete the remaining slice yourself in the main agent. "
             "Do not let one lagging worker block the whole task.",
             "Give worker descriptions visible role labels, such as `조사 담당: 전력 용량 출처 확인`, "
             "so the AI 팀 panel can show what each worker owns.",
@@ -88,9 +96,12 @@ def _build_delegation_section() -> str:
             "- Inspect available presets with `/agents presets`.",
             "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
             "- Read worker output with `task_output(task_id=...)`.",
-            "- Stop a stalled worker with `task_stop(task_id=...)` before retrying with a narrower prompt.",
+            "- Stop a stalled worker with `task_stop(task_id=...)` before retrying with a narrower prompt, "
+            "a stronger inherited model, or main-agent execution.",
             "",
-            "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
+            "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help. "
+            "Do not make worker tasks artificially tiny when the user asks for substantial analysis; split by coherent workstream "
+            "and let each worker complete that slice thoroughly.",
         ]
     )
 
@@ -135,31 +146,37 @@ def _build_task_worker_section() -> str:
             "Do not use task_get, task_list, or task_output to inspect your own task or recover context. "
             "Those parent task records live in another process and are intentionally unavailable here.",
             "Use task_update only for brief progress updates when the prompt gives you a task id.",
+            "Emit compact JSON progress via task_update as part of your natural output flow; do not wait for the parent "
+            "to ask. Use it when you learn something material, start a new phase, change direction, find a blocker, "
+            "or have a handoff-ready fact. Do not emit progress after every tool call or for generic still-working heartbeats. "
+            "Keep these progress updates tiny and factual.",
+            "If you are blocked, need a peer's result, or find information another worker should use, say so clearly in your progress "
+            "or final output with a short `handoff` or `blocked_on` note for the parent orchestrator.",
             "For office, research, or analysis work that may feed a report, return chart, table, timeline, or comparison candidates "
             "with the specific numbers, labels, and source notes the parent should visualize.",
             "Do not return raw unstyled HTML unless the assignment explicitly asks for HTML code; prefer structured Markdown findings.",
-            "Return concise findings or the requested change summary when finished.",
+            "Return findings at the depth requested by the assignment. For small tasks, be concise; for substantial analysis, include "
+            "the evidence, calculations, assumptions, caveats, and structured tables needed by the parent to synthesize reliably.",
         ]
     )
 
 
 def _build_long_report_section() -> str:
-    """Build report length guidance while split report generation is disabled."""
+    """Build report length and artifact routing guidance."""
     return "\n".join(
         [
-            "# Report Generation Limits",
+            "# Report Generation",
             "",
-            "Temporary hotfix: split report generation is disabled. Do not split a report into section-by-section model calls, "
-            "continue short sections, review the draft, and later reassemble the pieces.",
-            "Do not generate more than 20,000 tokens for any report, even when the user asks for a numeric target above that limit "
-            "or requests very long, exhaustive, ultra-detailed, 초장문, 대보고서, or similar output.",
             "Ordinary report requests may still require standalone files. If the user asks for a report, long report, "
             "장문보고서, 긴 보고서, 대보고서, or a report based on pasted text, a site, article, document, transcript, "
             "research, investigation, comparison, analysis, or source summary and does not name another format, create "
             "a standalone HTML report under `outputs/` rather than putting the full report body only in the chat. For "
             "ordinary report requests with no explicit length, aim for roughly 10,000 substantive body tokens by default, "
             "unless the user asks for a shorter artifact, the source material is too thin to support that length, or "
-            "another active limit makes that impossible. Keep that single coherent artifact within the 20,000-token cap.",
+            "another active limit makes that impossible. Keep ordinary reports as one coherent artifact below roughly 20,000 tokens.",
+            "Use `write_long_report` only when the user or MyHarness compose options explicitly request an extra-long artifact "
+            "around 20,000 tokens or more, such as 초장문, 20k, 40k, 80k, 160k, or a large numeric target. In that flow, write an outline, "
+            "draft sections, save intermediate progress, review, merge, and return the final artifact path with a concise summary.",
         ]
     )
 

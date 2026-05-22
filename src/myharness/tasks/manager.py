@@ -147,8 +147,10 @@ class BackgroundTaskManager:
             note = status_note.strip()
             if note:
                 task.metadata["status_note"] = note
+                task.metadata["status_note_updated_at"] = str(time.time())
             else:
                 task.metadata.pop("status_note", None)
+                task.metadata.pop("status_note_updated_at", None)
         self._notify_update_listeners_nowait(task)
         return task
 
@@ -277,6 +279,7 @@ class BackgroundTaskManager:
             async with self._output_locks[task_id]:
                 with self._tasks[task_id].output_file.open("ab") as handle:
                     handle.write(visible_chunk)
+            self._tasks[task_id].metadata["last_output_at"] = str(time.time())
             await self._notify_update_listeners(self._tasks[task_id])
 
     def _filter_control_output(self, task_id: str, chunk: bytes) -> bytes:
@@ -322,8 +325,10 @@ class BackgroundTaskManager:
         status_note = str(data.get("status_note") or "").strip()
         if status_note:
             task.metadata["status_note"] = status_note
+            task.metadata["status_note_updated_at"] = str(time.time())
         elif "status_note" in data:
             task.metadata.pop("status_note", None)
+            task.metadata.pop("status_note_updated_at", None)
         self._notify_update_listeners_nowait(task)
 
     def _require_task(self, task_id: str) -> TaskRecord:

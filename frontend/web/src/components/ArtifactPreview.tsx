@@ -144,6 +144,10 @@ function iframeMermaidZoomBridge(content: string) {
   overflow: hidden;
   display: grid;
   place-items: center;
+  background:
+    radial-gradient(circle, rgba(100, 116, 139, 0.24) 0 1px, transparent 1.2px),
+    #eef0f2;
+  background-size: 18px 18px, auto;
   cursor: grab;
 }
 .myharness-mermaid-zoom-viewport.dragging {

@@ -101,6 +101,12 @@ describe("appReducer", () => {
     expect(next.workspaceName).toBe("Default");
   });
 
+  it("applies optimistic permission mode updates", () => {
+    const next = appReducer(initialAppState, { type: "set_permission_mode", value: "plan" });
+
+    expect(next.permissionMode).toBe("plan");
+  });
+
   it("stores swarm status snapshots from backend events", () => {
     const next = appReducer(initialAppState, {
       type: "backend_event",
@@ -270,6 +276,18 @@ describe("appReducer", () => {
 
     expect(completed.messages).toHaveLength(1);
     expect(completed.messages[0].text).toBe("최종 답변");
+    expect(completed.messages[0].isComplete).toBe(true);
+    expect(completed.busy).toBe(false);
+  });
+
+  it("shows assistant completion even when no delta streamed first", () => {
+    const completed = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "AI 팀 작업자가 아직 진행 중입니다." },
+    });
+
+    expect(completed.messages).toHaveLength(1);
+    expect(completed.messages[0].text).toBe("AI 팀 작업자가 아직 진행 중입니다.");
     expect(completed.messages[0].isComplete).toBe(true);
     expect(completed.busy).toBe(false);
   });
@@ -809,6 +827,19 @@ describe("appReducer", () => {
     const disabled = appReducer(enabled, {
       type: "backend_event",
       event: { type: "transcript_item", item: { role: "system", text: "Plan mode disabled." } },
+    });
+
+    expect(disabled.messages).toHaveLength(0);
+  });
+
+  it("hides localized plan mode status transcript items", () => {
+    const enabled = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "system", text: "계획 모드를 켰습니다." } },
+    });
+    const disabled = appReducer(enabled, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "system", text: "계획 모드를 껐습니다." } },
     });
 
     expect(disabled.messages).toHaveLength(0);

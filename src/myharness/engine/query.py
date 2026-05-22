@@ -65,6 +65,10 @@ MAX_TRACKED_VERIFIED_WORK = 10
 MAX_AUTO_CONTINUATIONS = 4
 PROVIDER_STREAM_IDLE_FIRST_SECONDS = 7.0
 PROVIDER_STREAM_IDLE_REPEAT_SECONDS = 10.0
+ASYNC_AGENT_FINALIZATION_BLOCK_MESSAGE = (
+    "아직 pending worker가 있습니다. 최종 산출물을 만들기 전에 `task_output`/`task_get`으로 worker 결과를 먼저 확인하거나, "
+    "필요하면 worker를 중단, 교체, relay, 또는 승계하세요."
+)
 CONTINUATION_PROMPT = (
     "Continue the previous assistant response exactly where it stopped. "
     "Do not restart, summarize, or mention that you are continuing. "
@@ -116,6 +120,111 @@ def _is_network_error_message(message: str) -> bool:
 def _is_output_truncated_stop_reason(stop_reason: str | None) -> bool:
     normalized = str(stop_reason or "").strip().lower()
     return normalized in {"length", "max_tokens", "max_completion_tokens", "incomplete"}
+
+
+def _current_async_agent_task_entries(tool_metadata: dict[str, object] | None) -> list[dict[str, object]]:
+    if not isinstance(tool_metadata, dict):
+        return []
+    value = tool_metadata.get("async_agent_tasks")
+    if not isinstance(value, list):
+        return []
+    return [entry for entry in value if isinstance(entry, dict) and str(entry.get("task_id") or "").strip()]
+
+
+def _has_pending_current_async_agent_tasks(tool_metadata: dict[str, object] | None) -> bool:
+    return any(not bool(entry.get("notification_sent")) for entry in _current_async_agent_task_entries(tool_metadata))
+
+
+_ASYNC_AGENT_FINALIZATION_ALLOWED_TOOLS = {
+    "agent",
+    "task_output",
+    "task_list",
+    "task_get",
+    "send_message",
+    "task_stop",
+    "task_update",
+    "read_file",
+    "grep",
+    "glob",
+    "web_search",
+    "web_fetch",
+    "list_mcp_resources",
+    "read_mcp_resource",
+    "tool_search",
+    "lsp",
+}
+
+_ASYNC_AGENT_ALWAYS_FINALIZING_TOOLS = {"write_file", "write_long_report"}
+_HUMAN_FACING_OUTPUT_EXTENSIONS = {".html", ".htm", ".md", ".docx", ".pptx", ".xlsx", ".pdf"}
+_HUMAN_FACING_OUTPUT_HINTS = (
+    "outputs/",
+    "outputs\\",
+    "report",
+    "dashboard",
+    "artifact",
+    "deliverable",
+    "보고서",
+    "대시보드",
+    "산출물",
+)
+_SHELL_WRITE_HINTS = (
+    ">",
+    "out-file",
+    "set-content",
+    "add-content",
+    "new-item",
+    "write_file",
+    "write-long-report",
+    "pandoc",
+    "python -c",
+    "py -3",
+    "node -e",
+)
+
+
+def _tool_input_path_values(tool_input: dict[str, object]) -> list[str]:
+    values: list[str] = []
+    for key in ("path", "file_path", "output_path", "destination", "target"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    return values
+
+
+def _looks_like_human_facing_output_path(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/").lower()
+    suffix = Path(normalized).suffix
+    return suffix in _HUMAN_FACING_OUTPUT_EXTENSIONS or any(hint in normalized for hint in _HUMAN_FACING_OUTPUT_HINTS)
+
+
+def _looks_like_finalizing_shell_command(command: str) -> bool:
+    normalized = command.strip().lower().replace("\\", "/")
+    if not normalized:
+        return False
+    has_output_target = any(ext in normalized for ext in _HUMAN_FACING_OUTPUT_EXTENSIONS) or any(
+        hint.replace("\\", "/") in normalized for hint in _HUMAN_FACING_OUTPUT_HINTS
+    )
+    has_write_action = any(hint in normalized for hint in _SHELL_WRITE_HINTS)
+    return has_output_target and has_write_action
+
+
+def _should_block_async_agent_finalization_tool(
+    tool_name: str,
+    tool_input: dict[str, object],
+    tool_metadata: dict[str, object] | None,
+) -> bool:
+    if not _has_pending_current_async_agent_tasks(tool_metadata):
+        return False
+    normalized_name = tool_name.strip().lower()
+    if normalized_name in _ASYNC_AGENT_FINALIZATION_ALLOWED_TOOLS:
+        return False
+    if normalized_name in _ASYNC_AGENT_ALWAYS_FINALIZING_TOOLS:
+        return True
+    if normalized_name in {"bash", "cmd"}:
+        return _looks_like_finalizing_shell_command(str(tool_input.get("command") or ""))
+    if normalized_name in {"edit_file", "notebook_edit"}:
+        return any(_looks_like_human_facing_output_path(path) for path in _tool_input_path_values(tool_input))
+    return False
 
 
 def _add_usage(left: UsageSnapshot, right: UsageSnapshot) -> UsageSnapshot:
@@ -942,6 +1051,13 @@ async def _execute_tool_call(
     tool_use_id: str,
     tool_input: dict[str, object],
 ) -> ToolResultBlock:
+    if _should_block_async_agent_finalization_tool(tool_name, tool_input, context.tool_metadata):
+        return ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=ASYNC_AGENT_FINALIZATION_BLOCK_MESSAGE,
+            is_error=True,
+        )
+
     if context.hook_executor is not None:
         pre_hooks = await context.hook_executor.execute(
             HookEvent.PRE_TOOL_USE,
