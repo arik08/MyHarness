@@ -76,6 +76,24 @@ const demoMcpItems: ToggleEntry[] = [
     description: "[연결필요] 포스코 투자관리시스템 연동 후 투자 과제, 예산, 승인, 진행 현황을 조회할 수 있습니다.",
     source: "mcp-demo",
   },
+  {
+    name: "posco-erp",
+    enabled: true,
+    description: "[연결필요] ERP/POSPIA 권한 연동 후 생산, 구매, 판매, 주문, 출하, 정산 같은 전사 기준 데이터를 조회할 수 있습니다.",
+    source: "mcp-demo",
+  },
+  {
+    name: "posco-mih",
+    enabled: true,
+    description: "[연결필요] MIH(Marketing Information Hub) 권한 연동 후 시장, 고객, 수요, 가격 같은 마케팅 정보를 조회할 수 있습니다.",
+    source: "mcp-demo",
+  },
+  {
+    name: "posco-gih",
+    enabled: true,
+    description: "[연결필요] GIH(Global Information Hub) 권한 연동 후 글로벌 시장 정보와 그룹 정보 플랫폼의 공유 자료를 조회할 수 있습니다.",
+    source: "mcp-demo",
+  },
 ];
 
 const koSkillDescriptionsByName: Record<string, string> = {

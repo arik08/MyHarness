@@ -33,6 +33,7 @@ _PERSISTED_TOOL_METADATA_KEYS = (
     "session_title_source",
     "session_title_user_edited",
     "workflow_duration_seconds",
+    "web_client_id",
 )
 
 _TITLE_STOPWORDS = {
@@ -392,14 +393,26 @@ def save_session_snapshot(
     }
     data = json.dumps(payload, indent=2) + "\n"
 
-    # Save as latest
-    latest_path = session_dir / "latest.json"
+    # Save as latest. Web sessions keep a tab/client-scoped latest pointer so
+    # simultaneous users in one project do not overwrite one shared pointer.
+    client_latest_name = _client_latest_file_name(tool_metadata)
+    latest_path = session_dir / (client_latest_name or "latest.json")
     atomic_write_text(latest_path, data)
 
     # Save by session ID
     atomic_write_text(session_path, data)
 
     return latest_path
+
+
+def _client_latest_file_name(tool_metadata: dict[str, object] | None) -> str:
+    if not isinstance(tool_metadata, dict):
+        return ""
+    raw = str(tool_metadata.get("web_client_id") or "").strip()
+    if not raw:
+        return ""
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
+    return f"latest-{safe[:80]}.json" if safe else ""
 
 
 def _sanitize_history_events(history_events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -601,12 +614,12 @@ def delete_session_by_id(cwd: str | Path, session_id: str) -> bool:
         session_path.unlink()
         deleted = True
 
-    latest_path = session_dir / "latest.json"
-    if latest_path.exists():
-        data = _load_snapshot_file(latest_path)
-        if data is not None and data.get("session_id") == session_id:
-            latest_path.unlink()
-            deleted = True
+    for latest_path in [session_dir / "latest.json", *session_dir.glob("latest-*.json")]:
+        if latest_path.exists():
+            data = _load_snapshot_file(latest_path)
+            if data is not None and data.get("session_id") == session_id:
+                latest_path.unlink()
+                deleted = True
 
     return deleted
 

@@ -79,6 +79,32 @@ describe("ModalHost download settings", () => {
     expect(screen.queryByText("닦아내기 폭")).toBeNull();
   });
 
+  it("keeps admin mode locked when the password is wrong", async () => {
+    renderDownloadSettingsModal();
+
+    await userEvent.click(screen.getByRole("button", { name: /Admin mode/ }));
+    await userEvent.type(screen.getByLabelText("Admin mode 비밀번호"), "000000");
+    await userEvent.click(screen.getByRole("button", { name: "Admin mode 진입" }));
+
+    expect(screen.getByText("비밀번호가 맞지 않습니다.")).toBeTruthy();
+  });
+
+  it("enables and disables admin mode with the configured password", async () => {
+    renderDownloadSettingsModal();
+
+    await userEvent.click(screen.getByRole("button", { name: /Admin mode/ }));
+    await userEvent.type(screen.getByLabelText("Admin mode 비밀번호"), "1");
+    await userEvent.click(screen.getByRole("button", { name: "Admin mode 진입" }));
+
+    expect(screen.getByText("관리자 모드 적용 중")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /Admin mode/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Admin mode 해제" }));
+    await userEvent.click(screen.getByRole("button", { name: "뒤로" }));
+
+    expect(screen.getByText("숨긴 히스토리와 완전 삭제 권한")).toBeTruthy();
+  });
+
   it("keeps detailed user stats collapsed until requested", async () => {
     vi.mocked(readUserStats).mockResolvedValue({
       dailyActiveIpCount: 2,

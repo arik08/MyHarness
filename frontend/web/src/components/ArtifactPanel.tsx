@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent, WheelEvent as ReactWheelEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent, WheelEvent as ReactWheelEvent } from "react";
 import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary } from "../types/backend";
@@ -16,11 +16,15 @@ import {
 import { copyTextToClipboard } from "../utils/clipboard";
 import { Icon, type IconName } from "./ArtifactIcons";
 import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload } from "./ArtifactPreview";
+import { showTooltipNowEvent } from "./TooltipLayer";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { sidebarAutoCollapseChatWidthPx, sidebarCollapsedTrackWidthPx, sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 
 const artifactHistoryMarker = "myharnessArtifactPanel";
 const artifactPanelMinWidth = 320;
+const shareCopyLabel = "공유 링크 복사";
+const shareCopiedLabel = "공유 링크 복사됨";
+const shareCopiedFeedbackMs = 1400;
 const projectFileCategories = [
   ["all", "전체"],
   ["web", "웹페이지"],
@@ -278,6 +282,51 @@ function downloadUrl(artifact: ArtifactSummary, state: ReturnType<typeof useAppS
   return `/api/artifact/download?${query.toString()}`;
 }
 
+function encodeReadableQueryValue(value: string) {
+  return encodeURIComponent(value)
+    .replace(/%2F/gi, "/")
+    .replace(/(?:%[0-9a-f]{2})+/gi, (segment) => {
+      try {
+        const decoded = decodeURIComponent(segment);
+        return /[^\x00-\x7F]/.test(decoded) ? decoded : segment.toUpperCase();
+      } catch {
+        return segment.toUpperCase();
+      }
+    });
+}
+
+function readableQuery(params: Array<[string, string]>) {
+  return params
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeReadableQueryValue(value)}`)
+    .join("&");
+}
+
+function artifactShareUrl(artifact: ArtifactSummary, state: ReturnType<typeof useAppState>["state"], baseUrl: string) {
+  const query: Array<[string, string]> = [["path", artifact.path]];
+  const workspaceName = artifact.workspace?.name || state.workspaceName;
+  const workspacePath = artifact.workspace?.path || state.workspacePath;
+  if (workspaceName) {
+    query.push(["workspace", workspaceName]);
+  } else if (workspacePath) {
+    query.push(["workspacePath", workspacePath]);
+  }
+  const base = String(baseUrl || window.location.origin).replace(/\/+$/, "");
+  return `${base}/share/artifact?${readableQuery(query)}`;
+}
+
+async function shareBaseUrl() {
+  try {
+    const response = await fetch("/api/share/base-url", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error("Could not read share URL");
+    }
+    const payload = await response.json() as { baseUrl?: string };
+    return String(payload.baseUrl || "").trim() || window.location.origin;
+  } catch {
+    return window.location.origin;
+  }
+}
+
 function ArtifactAction({
   label,
   icon,
@@ -288,7 +337,7 @@ function ArtifactAction({
 }: {
   label: string;
   icon: IconName;
-  onClick: () => void;
+  onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
   danger?: boolean;
   active?: boolean;
@@ -327,6 +376,7 @@ export function ArtifactPanel() {
   const [draftPath, setDraftPath] = useState("");
   const [draftUserEdited, setDraftUserEdited] = useState(false);
   const [copyLabel, setCopyLabel] = useState("복사");
+  const [shareLabel, setShareLabel] = useState(shareCopyLabel);
   const [sourceMode, setSourceMode] = useState(false);
   const [htmlEditMode, setHtmlEditMode] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -358,6 +408,8 @@ export function ArtifactPanel() {
   const aiEditProgressAutoFollowRef = useRef(true);
   const aiEditProgressUserUpIntentRef = useRef(false);
   const aiEditProgressScrollTopsRef = useRef<WeakMap<HTMLElement, number>>(new WeakMap());
+  const shareResetTimerRef = useRef<number | null>(null);
+  const shareBaseUrlRef = useRef("");
   const projectFilePinnedStorage = useMemo(
     () => projectFilePinnedStorageKey(state.workspacePath, state.workspaceName),
     [state.workspaceName, state.workspacePath],
@@ -380,6 +432,13 @@ export function ArtifactPanel() {
   }, [activeVersionInfo?.key, state.activeArtifact, state.artifacts]);
   const showVersionSwitcher = Boolean(state.activeArtifact && activeVersionArtifacts.length > 1);
   const showAiEditProgress = Boolean(aiEditStatus || submittingAiEdit || (state.busy && aiEditComments.length > 0));
+  function clearShareResetTimer() {
+    if (shareResetTimerRef.current !== null) {
+      window.clearTimeout(shareResetTimerRef.current);
+      shareResetTimerRef.current = null;
+    }
+  }
+
   function requestHistoryBack() {
     if (!state.artifactPanelOpen || !isArtifactHistoryState(history.state)) {
       return false;
@@ -575,8 +634,26 @@ export function ArtifactPanel() {
     setDraftPath(state.activeArtifact?.path || "");
     setDraftUserEdited(false);
     setCopyLabel("복사");
+    clearShareResetTimer();
+    setShareLabel(shareCopyLabel);
     setSourceMode(false);
   }, [state.activeArtifact?.path, state.activeArtifactPayload]);
+
+  useEffect(() => {
+    return () => clearShareResetTimer();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void shareBaseUrl().then((baseUrl) => {
+      if (!cancelled) {
+        shareBaseUrlRef.current = baseUrl;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!state.artifactPanelOpen) {
@@ -925,6 +1002,36 @@ export function ArtifactPanel() {
     }
   }
 
+  function showShareCopiedFeedback(target?: HTMLButtonElement | null) {
+    clearShareResetTimer();
+    if (target) {
+      target.dataset.tooltip = shareCopiedLabel;
+      target.setAttribute("aria-label", shareCopiedLabel);
+      window.dispatchEvent(new CustomEvent(showTooltipNowEvent, { detail: { target } }));
+    }
+    setShareLabel(shareCopiedLabel);
+  }
+
+  async function copyActiveArtifactShareLink(event?: ReactMouseEvent<HTMLButtonElement>) {
+    if (!active) return;
+    showShareCopiedFeedback(event?.currentTarget);
+    try {
+      const baseUrl = shareBaseUrlRef.current || window.location.origin;
+      await copyTextToClipboard(artifactShareUrl(active, state, baseUrl));
+      shareResetTimerRef.current = window.setTimeout(() => {
+        shareResetTimerRef.current = null;
+        setShareLabel(shareCopyLabel);
+      }, shareCopiedFeedbackMs);
+    } catch (error) {
+      clearShareResetTimer();
+      setShareLabel(shareCopyLabel);
+      dispatch({
+        type: "open_modal",
+        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  }
+
   async function saveHtmlDraft() {
     if (!active || !payload || !canEditHtmlPreview || !draftDirty) return;
     setSavingDraft(true);
@@ -932,6 +1039,7 @@ export function ArtifactPanel() {
       const saved = await overwriteArtifact({
         path: active.path,
         content: draftContentForActive,
+        expectedMtimeMs: payload.mtimeMs || active.mtimeMs,
         clientId: state.clientId,
         workspacePath: active.workspace?.path || payload.workspace?.path || state.workspacePath,
         workspaceName: active.workspace?.name || payload.workspace?.name || state.workspaceName,
@@ -1033,6 +1141,7 @@ export function ArtifactPanel() {
     const saved = await renameArtifact({
       path: artifact.path,
       name,
+      expectedMtimeMs: artifact.mtimeMs,
       sessionId: state.sessionId || undefined,
       clientId: state.clientId,
       workspacePath: artifact.workspace?.path || state.workspacePath,
@@ -1126,6 +1235,7 @@ export function ArtifactPanel() {
     try {
       await deleteArtifact({
         path: artifact.path,
+        expectedMtimeMs: artifact.mtimeMs,
         sessionId: state.sessionId || undefined,
         clientId: state.clientId,
         workspacePath: artifact.workspace?.path || state.workspacePath,
@@ -1157,8 +1267,14 @@ export function ArtifactPanel() {
   }
 
   async function organizeRootFiles(paths: string[]) {
+    const expectedMtimes = Object.fromEntries(
+      state.artifacts
+        .filter((artifact) => paths.includes(normalizeProjectFilePath(artifact.path)) && artifact.mtimeMs)
+        .map((artifact) => [normalizeProjectFilePath(artifact.path), Number(artifact.mtimeMs)]),
+    );
     await organizeProjectFiles({
       paths,
+      expectedMtimes,
       sessionId: state.sessionId || undefined,
       clientId: state.clientId,
       workspacePath: state.workspacePath,
@@ -1291,6 +1407,14 @@ export function ArtifactPanel() {
             </>
           ) : null}
           <ArtifactAction label={fullscreen ? "미리보기 축소" : "미리보기 확대"} icon={fullscreen ? "restore" : "fullscreen"} onClick={toggleFullscreen} />
+          {active ? (
+            <ArtifactAction
+              label={shareLabel}
+              icon="network"
+              onClick={(event) => void copyActiveArtifactShareLink(event)}
+              active={shareLabel === shareCopiedLabel}
+            />
+          ) : null}
           {active ? <ArtifactDownloadAction artifact={active} url={downloadUrl(active, state)} /> : null}
           <ArtifactAction label="닫기" icon="close" onClick={closePanel} />
         </div>

@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ChatPanel } from "./ChatPanel";
-import { ArtifactPanel } from "./ArtifactPanel";
+import { ArtifactPanel, clampArtifactPanelWidth } from "./ArtifactPanel";
 import { ModalHost } from "./ModalHost";
 import { Sidebar } from "./Sidebar";
 import { TooltipLayer } from "./TooltipLayer";
@@ -11,6 +11,8 @@ import {
   sidebarAutoCollapseChatWidthPx,
   sidebarCollapsedTrackWidthPx,
 } from "../layout/sidebarLayout";
+
+const sidebarTransitionMs = 220;
 
 type AppShellStyle = CSSProperties & {
   "--artifact-panel-width"?: string;
@@ -25,16 +27,22 @@ function measuredPanelWidth(selector: string) {
 
 export function AppShell() {
   const { state, dispatch } = useAppState();
+  const previousSidebarCollapsedRef = useRef(state.sidebarCollapsed);
+  const [sidebarTransitionHeld, setSidebarTransitionHeld] = useState(false);
+  const sidebarTransitionStarted = previousSidebarCollapsedRef.current !== state.sidebarCollapsed;
+  const sidebarTransitioning = sidebarTransitionStarted || sidebarTransitionHeld;
   useAutoSidebarCollapse(
     state.sidebarCollapsed,
     state.sidebarCollapseReason,
     state.sidebarWidth,
     state.artifactPanelOpen,
+    state.artifactResizing,
     dispatch,
   );
   const className = [
     "app-shell",
     state.sidebarCollapsed ? "sidebar-collapsed" : "",
+    sidebarTransitioning ? "sidebar-transitioning" : "",
     state.artifactPanelOpen ? "artifact-open" : "",
     state.sidebarResizing ? "resizing-sidebar" : "",
     state.artifactResizing ? "resizing-artifact" : "",
@@ -45,6 +53,48 @@ export function AppShell() {
     "--sidebar-track-width": !state.sidebarCollapsed && state.sidebarWidth ? `${state.sidebarWidth}px` : undefined,
     "--artifact-panel-width": state.artifactPanelWidth ? `${state.artifactPanelWidth}px` : undefined,
   };
+
+  useEffect(() => {
+    if (previousSidebarCollapsedRef.current === state.sidebarCollapsed) {
+      return undefined;
+    }
+    const wasCollapsed = previousSidebarCollapsedRef.current;
+    let releaseTimeoutId: number | null = null;
+    previousSidebarCollapsedRef.current = state.sidebarCollapsed;
+    const manuallyReopened = wasCollapsed && !state.sidebarCollapsed && state.sidebarCollapseReason === "manual";
+    if (
+      manuallyReopened
+      && state.artifactPanelOpen
+    ) {
+      const currentArtifactWidth = state.artifactPanelWidth || measuredPanelWidth(".artifact-panel");
+      const reclaimedSidebarWidth = Math.max(0, state.sidebarWidth - sidebarCollapsedTrackWidthPx);
+      if (currentArtifactWidth > 0 && reclaimedSidebarWidth > 0) {
+        dispatch({
+          type: "set_artifact_panel_width",
+          value: Math.round(clampArtifactPanelWidth(currentArtifactWidth - reclaimedSidebarWidth, {
+            windowWidth: window.innerWidth,
+            sidebarCollapsed: false,
+            sidebarWidth: state.sidebarWidth,
+          })),
+        });
+      }
+    }
+    if (manuallyReopened) {
+      releaseTimeoutId = window.setTimeout(() => {
+        dispatch({ type: "release_sidebar_manual_open" });
+      }, sidebarTransitionMs);
+    }
+    setSidebarTransitionHeld(true);
+    const timeoutId = window.setTimeout(() => {
+      setSidebarTransitionHeld(false);
+    }, sidebarTransitionMs);
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (releaseTimeoutId !== null) {
+        window.clearTimeout(releaseTimeoutId);
+      }
+    };
+  }, [dispatch, state.sidebarCollapsed]);
 
   useEffect(() => {
     if (state.themeId === "light") {
@@ -95,13 +145,26 @@ function useAutoSidebarCollapse(
   sidebarCollapseReason: ReturnType<typeof useAppState>["state"]["sidebarCollapseReason"],
   sidebarWidth: number,
   artifactPanelOpen: boolean,
+  artifactResizing: boolean,
   dispatch: ReturnType<typeof useAppState>["dispatch"],
 ) {
-  const sidebarStateRef = useRef({ sidebarCollapsed, sidebarCollapseReason, sidebarWidth, artifactPanelOpen });
+  const sidebarStateRef = useRef({
+    sidebarCollapsed,
+    sidebarCollapseReason,
+    sidebarWidth,
+    artifactPanelOpen,
+    artifactResizing,
+  });
 
   useEffect(() => {
-    sidebarStateRef.current = { sidebarCollapsed, sidebarCollapseReason, sidebarWidth, artifactPanelOpen };
-  }, [sidebarCollapsed, sidebarCollapseReason, sidebarWidth, artifactPanelOpen]);
+    sidebarStateRef.current = {
+      sidebarCollapsed,
+      sidebarCollapseReason,
+      sidebarWidth,
+      artifactPanelOpen,
+      artifactResizing,
+    };
+  }, [sidebarCollapsed, sidebarCollapseReason, sidebarWidth, artifactPanelOpen, artifactResizing]);
 
   useEffect(() => {
     function collapsedSidebarWidth() {

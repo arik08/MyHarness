@@ -94,6 +94,7 @@ export type AppState = {
   chatTitle: string;
   systemPrompt: string;
   appSettings: AppSettings;
+  adminMode: boolean;
   themeId: ThemeId;
   sidebarCollapsed: boolean;
   sidebarCollapseReason: SidebarCollapseReason;
@@ -106,7 +107,7 @@ export type AppState = {
   workspaceScope: WorkspaceScope;
   workspaces: Workspace[];
   history: HistoryItem[];
-  deletedHistoryIds: string[];
+  hiddenHistoryKeys: string[];
   historyLoading: boolean;
   historyRefreshKey: number;
   activeHistoryId: string | null;
@@ -183,6 +184,8 @@ export type ArtifactPayload = {
   workspace?: Workspace;
   mime?: string;
   size?: number;
+  mtimeMs?: number;
+  birthtimeMs?: number;
   content?: string;
   dataUrl?: string;
   assetBaseUrl?: string;

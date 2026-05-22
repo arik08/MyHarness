@@ -1,11 +1,12 @@
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { normalizeArtifactPath } from "../utils/artifacts";
-import { isLiveOnlyHistoryItem } from "../utils/history";
+import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
 import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 
 const clientSessionKey = "myharness:clientSessionId";
 const appSettingsKey = "myharness:appSettings";
+const hiddenHistoryKeysStorageKey = "myharness:hiddenHistoryKeys";
 
 const defaultAppSettings: AppSettings = {
   streamScrollDurationMs: 2000,
@@ -24,6 +25,7 @@ export type AppAction =
   | { type: "session_replaced"; sessionId: string; workspace?: Workspace }
   | { type: "set_theme"; themeId: ThemeId }
   | { type: "set_sidebar_collapsed"; value: boolean; source?: Exclude<SidebarCollapseReason, null> }
+  | { type: "release_sidebar_manual_open" }
   | { type: "set_sidebar_width"; value: number }
   | { type: "set_sidebar_resizing"; value: boolean }
   | { type: "set_draft"; value: string }
@@ -31,6 +33,7 @@ export type AppAction =
   | { type: "set_chat_title"; value: string }
   | { type: "set_system_prompt"; value: string }
   | { type: "set_app_settings"; value: Partial<AppSettings> }
+  | { type: "set_admin_mode"; value: boolean }
   | { type: "clear_composer" }
   | { type: "add_attachment"; attachment: { media_type: string; data: string; name: string } }
   | { type: "remove_attachment"; index: number }
@@ -39,7 +42,8 @@ export type AppAction =
   | { type: "set_workspaces"; workspaces: Workspace[]; scope?: WorkspaceScope }
   | { type: "set_workspace"; workspace: Workspace }
   | { type: "set_history"; history: HistoryItem[] }
-  | { type: "delete_history_local"; sessionId: string }
+  | { type: "hide_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
+  | { type: "delete_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "set_history_loading"; value: boolean }
   | { type: "begin_new_chat"; sessionId?: string }
   | { type: "begin_history_restore"; sessionId: string }
@@ -69,26 +73,17 @@ export type AppAction =
 
 function loadClientSessionId() {
   try {
-    return localStorage.getItem(clientSessionKey) || sessionStorage.getItem(clientSessionKey) || "";
+    return sessionStorage.getItem(clientSessionKey) || "";
   } catch {
-    try {
-      return sessionStorage.getItem(clientSessionKey) || "";
-    } catch {
-      return "";
-    }
+    return "";
   }
 }
 
 function saveClientSessionId(value: string) {
   try {
-    localStorage.setItem(clientSessionKey, value);
     sessionStorage.setItem(clientSessionKey, value);
   } catch {
-    try {
-      sessionStorage.setItem(clientSessionKey, value);
-    } catch {
-      // Embedded/private contexts may block web storage.
-    }
+    // Embedded/private contexts may block web storage.
   }
 }
 
@@ -156,6 +151,33 @@ function loadAppSettings(): AppSettings {
 function saveAppSettings(settings: AppSettings) {
   try {
     localStorage.setItem(appSettingsKey, JSON.stringify(settings));
+  } catch {
+    // Embedded/private contexts may block localStorage.
+  }
+}
+
+function normalizeHiddenHistoryKeys(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(new Set(
+    value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean),
+  )).slice(-500);
+}
+
+export function loadHiddenHistoryKeys() {
+  try {
+    return normalizeHiddenHistoryKeys(JSON.parse(localStorage.getItem(hiddenHistoryKeysStorageKey) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function saveHiddenHistoryKeys(keys: string[]) {
+  try {
+    localStorage.setItem(hiddenHistoryKeysStorageKey, JSON.stringify(normalizeHiddenHistoryKeys(keys)));
   } catch {
     // Embedded/private contexts may block localStorage.
   }
@@ -237,6 +259,7 @@ export const initialAppState: AppState = {
   chatTitle: "MyHarness",
   systemPrompt: loadLocalStorageValue("myharness:systemPrompt"),
   appSettings: loadAppSettings(),
+  adminMode: false,
   themeId: initialThemeId(),
   sidebarCollapsed: initialSidebarCollapsedValue,
   sidebarCollapseReason: initialSidebarCollapseReason(initialSidebarCollapsedValue),
@@ -249,7 +272,7 @@ export const initialAppState: AppState = {
   workspaceScope: { mode: "shared", name: "shared", root: "" },
   workspaces: [],
   history: [],
-  deletedHistoryIds: [],
+  hiddenHistoryKeys: loadHiddenHistoryKeys(),
   historyLoading: false,
   historyRefreshKey: 0,
   activeHistoryId: null,
@@ -1293,26 +1316,44 @@ function removeLiveHistoryRowsForSession(history: HistoryItem[], sessionId: stri
   return history.filter((item) => !isLiveOnlyHistoryItem(item, activeSessionId));
 }
 
-function rememberDeletedHistoryId(deletedHistoryIds: string[], sessionId: string) {
-  const cleanId = sessionId.trim();
-  if (!cleanId || deletedHistoryIds.includes(cleanId)) {
-    return deletedHistoryIds;
-  }
-  return [...deletedHistoryIds, cleanId].slice(-100);
+function historyVisibilityKeyFromAction(action: { sessionId: string; workspacePath?: string; workspaceName?: string }) {
+  return historyVisibilityKey(action.sessionId, action.workspacePath || "", action.workspaceName || "");
 }
 
-function removeDeletedHistoryRows(history: HistoryItem[], deletedHistoryIds: string[]) {
-  if (!deletedHistoryIds.length) {
+function rememberHiddenHistoryKey(hiddenHistoryKeys: string[], key: string) {
+  if (!key || hiddenHistoryKeys.includes(key)) {
+    return hiddenHistoryKeys;
+  }
+  return normalizeHiddenHistoryKeys([...hiddenHistoryKeys, key]);
+}
+
+function forgetHiddenHistoryKey(hiddenHistoryKeys: string[], key: string) {
+  if (!key || !hiddenHistoryKeys.includes(key)) {
+    return hiddenHistoryKeys;
+  }
+  return hiddenHistoryKeys.filter((item) => item !== key);
+}
+
+function removeHiddenHistoryRows(state: AppState, history: HistoryItem[]) {
+  if (state.adminMode || !state.hiddenHistoryKeys.length) {
     return history;
   }
-  const deletedIds = new Set(deletedHistoryIds);
-  return history.filter((item) => !deletedIds.has(item.value));
+  return history.filter((item) => !isHistoryItemHidden(item, state.hiddenHistoryKeys, state.workspacePath, state.workspaceName));
+}
+
+function visibleHistoryRows(state: AppState, history: HistoryItem[]) {
+  return removeLiveHistoryRowsForSession(removeHiddenHistoryRows(state, history), state.sessionId);
+}
+
+function isCurrentHistoryHidden(state: AppState, sessionId: string) {
+  const key = historyVisibilityKey(sessionId, state.workspacePath, state.workspaceName);
+  return Boolean(key && state.hiddenHistoryKeys.includes(key));
 }
 
 function ensureLiveHistoryItem(state: AppState, userText: string) {
   const sessionId = state.activeHistoryId || state.sessionId;
   if (!sessionId) return state.history;
-  if (state.deletedHistoryIds.includes(sessionId)) return state.history;
+  if (!state.adminMode && isCurrentHistoryHidden(state, sessionId)) return state.history;
   if (state.history.some((item) => item.value === sessionId)) {
     return state.history;
   }
@@ -1335,7 +1376,7 @@ function ensureLiveHistoryItem(state: AppState, userText: string) {
 function ensureSavedNewChatHistoryItem(state: AppState, sessionId: string) {
   const cleanSessionId = sessionId.trim();
   if (!cleanSessionId) return state.history;
-  if (state.deletedHistoryIds.includes(cleanSessionId)) return state.history;
+  if (!state.adminMode && isCurrentHistoryHidden(state, cleanSessionId)) return state.history;
   if (state.history.some((item) => item.value === cleanSessionId)) {
     return state.history;
   }
@@ -2260,7 +2301,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         : [];
       return {
         ...state,
-        history: removeLiveHistoryRowsForSession(removeDeletedHistoryRows(history, state.deletedHistoryIds), state.sessionId),
+        history: visibleHistoryRows(state, history),
         historyLoading: false,
         modal: state.modal?.kind === "backend" ? null : state.modal,
       };
@@ -2502,7 +2543,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, themeId: action.themeId };
 
     case "set_sidebar_collapsed": {
-      const sidebarCollapseReason: SidebarCollapseReason = action.value ? action.source || "manual" : null;
+      const sidebarCollapseReason: SidebarCollapseReason = action.value
+        ? action.source || "manual"
+        : action.source === "manual"
+          ? "manual"
+          : null;
       return {
         ...state,
         sidebarCollapsed: action.value,
@@ -2510,6 +2555,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         runtimePicker: action.value ? { ...state.runtimePicker, open: false, loading: false, error: "" } : state.runtimePicker,
       };
     }
+
+    case "release_sidebar_manual_open":
+      return !state.sidebarCollapsed && state.sidebarCollapseReason === "manual"
+        ? { ...state, sidebarCollapseReason: null }
+        : state;
 
     case "set_sidebar_width":
       return { ...state, sidebarWidth: action.value };
@@ -2552,6 +2602,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const appSettings = normalizeAppSettings({ ...state.appSettings, ...action.value });
       saveAppSettings(appSettings);
       return { ...state, appSettings };
+    }
+
+    case "set_admin_mode": {
+      const adminMode = action.value === true;
+      const nextState = { ...state, adminMode };
+      return {
+        ...nextState,
+        history: adminMode ? state.history : visibleHistoryRows(nextState, state.history),
+        historyRefreshKey: state.historyRefreshKey + 1,
+      };
     }
 
     case "clear_composer":
@@ -2614,21 +2674,45 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "set_history":
       return {
         ...state,
-        history: removeLiveHistoryRowsForSession(removeDeletedHistoryRows(action.history, state.deletedHistoryIds), state.sessionId),
+        history: visibleHistoryRows(state, action.history),
         historyLoading: false,
         modal: isResumeSelectModal(state.modal) ? null : state.modal,
       };
 
+    case "hide_history_local": {
+      const hiddenKey = historyVisibilityKeyFromAction(action);
+      const hiddenHistoryKeys = rememberHiddenHistoryKey(state.hiddenHistoryKeys, hiddenKey);
+      if (hiddenHistoryKeys !== state.hiddenHistoryKeys) {
+        saveHiddenHistoryKeys(hiddenHistoryKeys);
+      }
+      const hidesActiveHistory = action.sessionId === state.activeHistoryId;
+      const nextState = {
+        ...state,
+        hiddenHistoryKeys,
+        activeHistoryId: hidesActiveHistory ? null : state.activeHistoryId,
+        chatTitle: hidesActiveHistory ? "MyHarness" : state.chatTitle,
+        pendingFreshChat: hidesActiveHistory ? false : state.pendingFreshChat,
+      };
+      return {
+        ...nextState,
+        history: visibleHistoryRows(nextState, state.history),
+      };
+    }
+
     case "delete_history_local": {
-      const deletedHistoryIds = rememberDeletedHistoryId(state.deletedHistoryIds, action.sessionId);
+      const hiddenKey = historyVisibilityKeyFromAction(action);
+      const hiddenHistoryKeys = forgetHiddenHistoryKey(state.hiddenHistoryKeys, hiddenKey);
+      if (hiddenHistoryKeys !== state.hiddenHistoryKeys) {
+        saveHiddenHistoryKeys(hiddenHistoryKeys);
+      }
       const deletesActiveHistory = action.sessionId === state.activeHistoryId;
       return {
         ...state,
-        deletedHistoryIds,
+        hiddenHistoryKeys,
         activeHistoryId: deletesActiveHistory ? null : state.activeHistoryId,
         chatTitle: deletesActiveHistory ? "MyHarness" : state.chatTitle,
         pendingFreshChat: deletesActiveHistory ? false : state.pendingFreshChat,
-        history: removeDeletedHistoryRows(state.history, deletedHistoryIds),
+        history: state.history.filter((item) => item.value !== action.sessionId),
       };
     }
 

@@ -641,6 +641,31 @@ describe("Composer", () => {
     }));
   });
 
+  it("shows the multi-user busy explanation when the server rejects a send", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendMessage).mockRejectedValueOnce(
+      new Error("여러 명이 동시에 작업 중이라 서버가 바쁩니다. 다른 응답이 끝난 뒤 다시 시도하세요."),
+    );
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+        }}
+      >
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "보고서 작성해줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(await screen.findAllByText(/여러 명이 동시에 작업 중이라 서버가 바쁩니다/)).not.toHaveLength(0);
+  });
+
   it("starts a fresh backend only when sending after an idle new chat", async () => {
     const user = userEvent.setup();
     render(

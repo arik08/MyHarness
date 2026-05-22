@@ -9,7 +9,7 @@ import type { HistoryItem, Workspace } from "../types/backend";
 import type { RuntimePickerOption } from "../types/ui";
 import type { ThemeId } from "../types/ui";
 import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
-import { isLiveOnlyHistoryItem } from "../utils/history";
+import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
 import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/runtimePreferences";
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
@@ -227,22 +227,28 @@ export function Sidebar() {
     setExpandedHistoryActionId("");
     setDeletingHistoryId(sessionId);
     try {
+      const workspace = item.workspace || null;
+      const workspacePath = workspace?.path || state.workspacePath;
+      const workspaceName = workspace?.name || state.workspaceName;
       if (item.live && item.liveSessionId) {
         await shutdownSession(item.liveSessionId, state.clientId);
+        dispatch({ type: "delete_history_local", sessionId, workspacePath, workspaceName });
       } else if (item.pending && state.sessionId) {
-        await sendBackendRequest(state.sessionId, state.clientId, {
-          type: "delete_session",
-          value: sessionId,
-        });
+        if (state.adminMode) {
+          await sendBackendRequest(state.sessionId, state.clientId, {
+            type: "delete_session",
+            value: sessionId,
+          });
+          dispatch({ type: "delete_history_local", sessionId, workspacePath, workspaceName });
+        } else {
+          dispatch({ type: "hide_history_local", sessionId, workspacePath, workspaceName });
+        }
+      } else if (state.adminMode) {
+        await deleteHistory(sessionId, workspacePath, workspaceName);
+        dispatch({ type: "delete_history_local", sessionId, workspacePath, workspaceName });
       } else {
-        const workspace = item.workspace || null;
-        await deleteHistory(
-          sessionId,
-          workspace?.path || state.workspacePath,
-          workspace?.name || state.workspaceName,
-        );
+        dispatch({ type: "hide_history_local", sessionId, workspacePath, workspaceName });
       }
-      dispatch({ type: "delete_history_local", sessionId });
     } catch (error) {
       dispatch({
         type: "open_modal",
@@ -616,7 +622,8 @@ export function Sidebar() {
   const currentTheme = themeOptions.find((item) => item.id === state.themeId) || themeOptions[0];
   const sidebarLabel = state.sidebarCollapsed ? "사이드바 열기" : "사이드바 닫기";
   const activeHistoryValue = state.activeHistoryId || state.sessionId || "";
-  const activeHistoryDeleted = Boolean(activeHistoryValue && state.deletedHistoryIds.includes(activeHistoryValue));
+  const activeHistoryHiddenKey = historyVisibilityKey(activeHistoryValue, state.workspacePath, state.workspaceName);
+  const activeHistoryDeleted = Boolean(!state.adminMode && activeHistoryHiddenKey && state.hiddenHistoryKeys.includes(activeHistoryHiddenKey));
   const visibleHistory = state.history.filter((item) => !isCurrentLiveHistoryItem(item, state.sessionId));
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
   const conversationTitle = currentConversationTitle(state);
@@ -795,10 +802,11 @@ export function Sidebar() {
               const actionsExpanded = expandedHistoryActionId === item.value;
               const canPin = !isLiveOnlyHistoryItem(item);
               const canDelete = !isCurrentLiveHistoryItem(item, state.sessionId);
+              const isHidden = isHistoryItemHidden(item, state.hiddenHistoryKeys, state.workspacePath, state.workspaceName);
               const showActions = !isBusy && !isDeleting && (canDelete || canPin);
               return (
                 <div
-                  className={`history-item${isActive ? " active" : ""}${isBusy ? " busy" : ""}${isDeleting ? " deleting" : ""}${item.pinned ? " pinned" : ""}${actionsExpanded ? " actions-open" : ""}`}
+                  className={`history-item${isActive ? " active" : ""}${isBusy ? " busy" : ""}${isDeleting ? " deleting" : ""}${item.pinned ? " pinned" : ""}${isHidden ? " hidden-history" : ""}${actionsExpanded ? " actions-open" : ""}`}
                   key={item.value}
                 >
                   {editing ? (
@@ -832,6 +840,7 @@ export function Sidebar() {
                     >
                       {item.pinned ? <span className="history-pin-indicator" aria-hidden="true">★</span> : null}
                       <span className="history-title">{displayLabel}</span>
+                      {state.adminMode && isHidden ? <span className="history-hidden-badge">숨김</span> : null}
                       {detailLabel ? <small>{detailLabel}</small> : null}
                     </button>
                   )}
@@ -844,7 +853,7 @@ export function Sidebar() {
                             className="history-delete"
                             type="button"
                             aria-label={`${label} 삭제`}
-                            data-tooltip="기록 삭제"
+                            data-tooltip={item.live ? "세션 닫기" : state.adminMode ? "완전 삭제" : "목록에서 숨김"}
                             onClick={(event) => {
                               event.stopPropagation();
                               void removeHistory(item);

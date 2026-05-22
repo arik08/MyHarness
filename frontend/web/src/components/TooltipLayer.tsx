@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const gap = 8;
 const edgePadding = 8;
 const showDelayMs = 260;
+export const showTooltipNowEvent = "myharness:tooltip-show-now";
 
 type TooltipState = {
   text: string;
@@ -55,6 +57,8 @@ export function TooltipLayer() {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const targetRef = useRef<HTMLElement | null>(null);
+  const pointerTargetRef = useRef<HTMLElement | null>(null);
+  const focusTargetRef = useRef<HTMLElement | null>(null);
   const showTimerRef = useRef<number | null>(null);
   const mutationObserverRef = useRef<MutationObserver | null>(null);
   const tooltipVisibleRef = useRef(false);
@@ -84,6 +88,8 @@ export function TooltipLayer() {
       mutationObserverRef.current = new MutationObserver(() => {
         if (tooltipVisibleRef.current) {
           refreshTooltip();
+        } else if (target === pointerTargetRef.current || target === focusTargetRef.current) {
+          showForTarget(target, true);
         }
       });
       mutationObserverRef.current.observe(target, {
@@ -117,6 +123,8 @@ export function TooltipLayer() {
       clearShowTimer();
       disconnectTooltipObserver();
       targetRef.current = null;
+      pointerTargetRef.current = null;
+      focusTargetRef.current = null;
       setTooltip(null);
     }
 
@@ -135,7 +143,20 @@ export function TooltipLayer() {
     }
 
     function handlePointerOver(event: PointerEvent) {
-      showForTarget(findTooltipTarget(event.target));
+      const target = findTooltipTarget(event.target);
+      pointerTargetRef.current = target;
+      showForTarget(target);
+    }
+
+    function handlePointerActivate(event: PointerEvent | MouseEvent) {
+      const target = findTooltipTarget(event.target);
+      if (!target) {
+        return;
+      }
+      if ("pointerId" in event) {
+        pointerTargetRef.current = target;
+      }
+      showForTarget(target, true);
     }
 
     function handlePointerOut(event: PointerEvent) {
@@ -145,12 +166,19 @@ export function TooltipLayer() {
       }
       const related = event.relatedTarget instanceof Node ? event.relatedTarget : null;
       if (!related || !target.contains(related)) {
-        hideTooltip();
+        pointerTargetRef.current = null;
+        if (focusTargetRef.current?.isConnected) {
+          showForTarget(focusTargetRef.current, true);
+        } else {
+          hideTooltip();
+        }
       }
     }
 
     function handleFocusIn(event: FocusEvent) {
-      showForTarget(findTooltipTarget(event.target), true);
+      const target = findTooltipTarget(event.target);
+      focusTargetRef.current = target;
+      showForTarget(target, true);
     }
 
     function handleFocusOut(event: FocusEvent) {
@@ -160,7 +188,12 @@ export function TooltipLayer() {
       }
       const related = event.relatedTarget instanceof Node ? event.relatedTarget : null;
       if (!related || !target.contains(related)) {
-        hideTooltip();
+        focusTargetRef.current = null;
+        if (pointerTargetRef.current?.isConnected) {
+          showForTarget(pointerTargetRef.current, true);
+        } else {
+          hideTooltip();
+        }
       }
     }
 
@@ -170,19 +203,34 @@ export function TooltipLayer() {
       }
     }
 
+    function handleShowTooltipNow(event: Event) {
+      const target = (event as CustomEvent<{ target?: unknown }>).detail?.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      pointerTargetRef.current = target;
+      showForTarget(target, true);
+    }
+
     document.addEventListener("pointerover", handlePointerOver, true);
+    document.addEventListener("pointerdown", handlePointerActivate, true);
+    document.addEventListener("click", handlePointerActivate, true);
     document.addEventListener("pointerout", handlePointerOut, true);
     document.addEventListener("focusin", handleFocusIn, true);
     document.addEventListener("focusout", handleFocusOut, true);
     document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener(showTooltipNowEvent, handleShowTooltipNow);
     window.addEventListener("resize", refreshTooltip);
     window.addEventListener("scroll", refreshTooltip, true);
     return () => {
       document.removeEventListener("pointerover", handlePointerOver, true);
+      document.removeEventListener("pointerdown", handlePointerActivate, true);
+      document.removeEventListener("click", handlePointerActivate, true);
       document.removeEventListener("pointerout", handlePointerOut, true);
       document.removeEventListener("focusin", handleFocusIn, true);
       document.removeEventListener("focusout", handleFocusOut, true);
       document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener(showTooltipNowEvent, handleShowTooltipNow);
       window.removeEventListener("resize", refreshTooltip);
       window.removeEventListener("scroll", refreshTooltip, true);
       disconnectTooltipObserver();
@@ -218,7 +266,7 @@ export function TooltipLayer() {
     return null;
   }
 
-  return (
+  return createPortal(
     <div
       ref={tooltipRef}
       className="tooltip-layer"
@@ -235,6 +283,7 @@ export function TooltipLayer() {
       }}
     >
       {tooltip.text}
-    </div>
+    </div>,
+    document.body,
   );
 }

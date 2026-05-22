@@ -81,7 +81,7 @@ export function ChatPanel() {
   }
 
   return (
-    <main className="chat-panel" onClick={closeArtifactPanelFromChat}>
+    <main className="chat-panel" onDoubleClick={closeArtifactPanelFromChat}>
       <header className="chat-header">
         <div className="header-left">
           <button

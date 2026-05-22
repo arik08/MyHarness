@@ -38,7 +38,7 @@ function handleBackdropClick(event: MouseEvent<HTMLDivElement>, onDismiss: () =>
   }
 }
 
-type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt";
+type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt" | "admin";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [view, setView] = useState<SettingsView>("home");
@@ -100,6 +100,10 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
           <strong>IP별 사용 통계</strong>
           <small>DAU / 접속횟수 / IP별 집계</small>
         </button>
+        <button type="button" className={`settings-row${state.adminMode ? " active" : ""}`} onClick={() => onSelect("admin")}>
+          <strong>Admin mode</strong>
+          <small>{state.adminMode ? "관리자 모드 적용 중" : "숨긴 히스토리와 완전 삭제 권한"}</small>
+        </button>
         <button type="button" className="settings-row" onClick={() => onSelect("restart")}>
           <strong>터미널 세션 재시작</strong>
           <small>{state.sessionId ? "현재 세션 강제 재연결" : "새 세션 시작"}</small>
@@ -130,10 +134,64 @@ function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack:
   if (view === "shell") return <ShellSettings onBack={onBack} />;
   if (view === "yolo") return <YoloSettings onBack={onBack} />;
   if (view === "stats") return <UserStatsSettings onBack={onBack} />;
+  if (view === "admin") return <AdminModeSettings onBack={onBack} />;
   if (view === "restart") return <RestartSessionSettings onBack={onBack} onClose={onClose} />;
   if (view === "workspace") return <WorkspaceScopeSettings onBack={onBack} onClose={onClose} />;
   if (view === "learned-skills") return <LearnedSkillsSettings onBack={onBack} />;
   return <PgptSettingsForm onBack={onBack} />;
+}
+
+function AdminModeSettings({ onBack }: { onBack: () => void }) {
+  const { state, dispatch } = useAppState();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  function enableAdminMode() {
+    if (password !== "1") {
+      setError("비밀번호가 맞지 않습니다.");
+      return;
+    }
+    setError("");
+    dispatch({ type: "set_admin_mode", value: true });
+    onBack();
+  }
+
+  function disableAdminMode() {
+    setError("");
+    setPassword("");
+    dispatch({ type: "set_admin_mode", value: false });
+  }
+
+  return (
+    <>
+      <SettingsHeader title="Admin mode">숨긴 히스토리를 보고, 히스토리를 실제 파일에서 완전히 삭제할 수 있습니다.</SettingsHeader>
+      <form
+        className="admin-mode-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          enableAdminMode();
+        }}
+      >
+        <label className="setting-field">
+          <span className="setting-field-label">비밀번호</span>
+          <input
+            type="password"
+            value={password}
+            autoFocus={!state.adminMode}
+            aria-label="Admin mode 비밀번호"
+            onChange={(event) => setPassword(event.currentTarget.value)}
+          />
+          <small>{state.adminMode ? "현재 관리자 모드가 켜져 있습니다." : "관리자 모드는 현재 브라우저에서만 적용됩니다."}</small>
+        </label>
+        <div className="modal-actions">
+          <button type="button" onClick={onBack}>뒤로</button>
+          {state.adminMode ? <button type="button" onClick={disableAdminMode}>Admin mode 해제</button> : null}
+          <button type="submit" className="primary">Admin mode 진입</button>
+        </div>
+      </form>
+      <p className="workspace-error">{error}</p>
+    </>
+  );
 }
 
 function isServerHostSettingsView(view: SettingsView) {

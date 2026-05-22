@@ -26,6 +26,7 @@ export function listProjectFiles(params: {
 
 export function organizeProjectFiles(params: {
   paths: string[];
+  expectedMtimes?: Record<string, number>;
   sessionId?: string;
   clientId: string;
   workspacePath?: string;
@@ -33,6 +34,7 @@ export function organizeProjectFiles(params: {
 }) {
   return postJson<{ files: ArtifactSummary[] }>("/api/project-files/organize", {
     paths: params.paths,
+    expectedMtimes: params.expectedMtimes || {},
     session: params.sessionId || "",
     clientId: params.clientId,
     workspacePath: params.workspacePath || "",
@@ -69,6 +71,7 @@ export function saveArtifact(path: string, content: string, sessionId: string, c
 export function overwriteArtifact(params: {
   path: string;
   content: string;
+  expectedMtimeMs?: number;
   sessionId?: string;
   clientId: string;
   workspacePath?: string;
@@ -77,6 +80,7 @@ export function overwriteArtifact(params: {
   return putJson<{ artifact: ArtifactSummary; payload: ArtifactPayload }>("/api/artifact", {
     path: params.path,
     content: params.content,
+    expectedMtimeMs: params.expectedMtimeMs,
     session: params.sessionId || "",
     clientId: params.clientId,
     workspacePath: params.workspacePath || "",
@@ -87,6 +91,7 @@ export function overwriteArtifact(params: {
 export function renameArtifact(params: {
   path: string;
   name: string;
+  expectedMtimeMs?: number;
   sessionId?: string;
   clientId: string;
   workspacePath?: string;
@@ -95,6 +100,7 @@ export function renameArtifact(params: {
   return postJson<{ artifact: ArtifactSummary; payload: ArtifactPayload }>("/api/artifact/rename", {
     path: params.path,
     name: params.name,
+    expectedMtimeMs: params.expectedMtimeMs,
     session: params.sessionId || "",
     clientId: params.clientId,
     workspacePath: params.workspacePath || "",
@@ -120,9 +126,10 @@ export function aiEditArtifact(params: {
   });
 }
 
-export function deleteArtifact(params: { path: string; sessionId?: string; clientId: string; workspacePath?: string; workspaceName?: string }) {
+export function deleteArtifact(params: { path: string; expectedMtimeMs?: number; sessionId?: string; clientId: string; workspacePath?: string; workspaceName?: string }) {
   return deleteJson<{ deleted: boolean }>("/api/artifact", {
     path: params.path,
+    expectedMtimeMs: params.expectedMtimeMs,
     session: params.sessionId || "",
     clientId: params.clientId,
     workspacePath: params.workspacePath || "",

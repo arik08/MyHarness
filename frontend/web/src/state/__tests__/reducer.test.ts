@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { appReducer, initialAppState } from "../reducer";
+import { appReducer, initialAppState, loadHiddenHistoryKeys } from "../reducer";
+import { historyVisibilityKey } from "../../utils/history";
 
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
 
@@ -25,6 +26,54 @@ describe("appReducer", () => {
     expect(browser.appSettings.downloadMode).toBe("browser");
     expect(ask.appSettings.downloadMode).toBe("ask");
     expect(folder.appSettings.downloadMode).toBe("folder");
+  });
+
+  it("hides history rows in normal mode and persists the hidden key", () => {
+    localStorage.removeItem("myharness:hiddenHistoryKeys");
+    const historyItem = {
+      value: "session-hidden",
+      label: "5/3 10:00 2 msg",
+      description: "숨길 대화",
+      workspace: { name: "Default", path: "C:/demo" },
+    };
+    const key = historyVisibilityKey("session-hidden", "C:/demo", "Default");
+    const hidden = appReducer(
+      {
+        ...initialAppState,
+        workspaceName: "Default",
+        workspacePath: "C:/demo",
+        history: [historyItem],
+      },
+      { type: "hide_history_local", sessionId: "session-hidden", workspacePath: "C:/demo", workspaceName: "Default" },
+    );
+    const refreshed = appReducer(hidden, { type: "set_history", history: [historyItem] });
+
+    expect(hidden.hiddenHistoryKeys).toContain(key);
+    expect(loadHiddenHistoryKeys()).toContain(key);
+    expect(refreshed.history).toEqual([]);
+  });
+
+  it("shows hidden history rows in admin mode and filters them again when admin mode turns off", () => {
+    const historyItem = {
+      value: "session-hidden",
+      label: "5/3 10:00 2 msg",
+      description: "숨긴 대화",
+      workspace: { name: "Default", path: "C:/demo" },
+    };
+    const hiddenHistoryKeys = [historyVisibilityKey("session-hidden", "C:/demo", "Default")];
+    const normal = {
+      ...initialAppState,
+      workspaceName: "Default",
+      workspacePath: "C:/demo",
+      hiddenHistoryKeys,
+    };
+    const filtered = appReducer(normal, { type: "set_history", history: [historyItem] });
+    const admin = appReducer({ ...filtered, adminMode: true }, { type: "set_history", history: [historyItem] });
+    const lockedAgain = appReducer(admin, { type: "set_admin_mode", value: false });
+
+    expect(filtered.history).toEqual([]);
+    expect(admin.history.map((item) => item.value)).toEqual(["session-hidden"]);
+    expect(lockedAgain.history).toEqual([]);
   });
 
   it("applies ready snapshots", () => {
@@ -2479,7 +2528,11 @@ describe("appReducer", () => {
     expect(manualCollapsed.sidebarCollapsed).toBe(true);
     expect(manualCollapsed.sidebarCollapseReason).toBe("manual");
     expect(reopened.sidebarCollapsed).toBe(false);
-    expect(reopened.sidebarCollapseReason).toBeNull();
+    expect(reopened.sidebarCollapseReason).toBe("manual");
+
+    const released = appReducer(reopened, { type: "release_sidebar_manual_open" });
+    expect(released.sidebarCollapsed).toBe(false);
+    expect(released.sidebarCollapseReason).toBeNull();
   });
 
   it("closes the runtime picker when the sidebar collapses", () => {

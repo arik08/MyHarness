@@ -66,6 +66,7 @@ const protocolPrefix = "OHJSON:";
 const sessions = new Map();
 let webUsageStatsWriteQueue = Promise.resolve();
 let server = null;
+const workspaceMutationQueues = new Map();
 const aiEditHeartbeatIntervalMs = 15_000;
 const reservedWorkspaceNames = new Set([
   "CON",
@@ -187,6 +188,12 @@ const shellCommandTimeoutMs = 60_000;
 const shellOutputMaxChars = 24_000;
 const tokenCountMaxChars = 200_000;
 const modelOutputTokenDefault = 42_000;
+const maxActiveSessions = Math.max(1, Number(process.env.MYHARNESS_MAX_ACTIVE_SESSIONS || 20));
+const maxBusySessions = Math.max(1, Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS || 8));
+const currentSessionBusyMessage = "현재 대화가 응답 중입니다. 답변이 끝난 뒤 다시 시도하거나 텍스트로 이어서 지시하세요.";
+const clientResponseLimitMessage = "현재 브라우저에서 여러 작업이 동시에 진행 중입니다. 진행 중인 응답이 끝난 뒤 다시 시도하세요.";
+const serverResponseLimitMessage = "여러 명이 동시에 작업 중이라 서버가 바쁩니다. 다른 응답이 끝난 뒤 다시 시도하세요.";
+const activeSessionLimitMessage = "여러 명이 동시에 사용 중이라 열려 있는 작업 세션이 많습니다. 사용하지 않는 채팅을 닫고 다시 시도하세요.";
 const modelOutputTokenCaps = Object.freeze({
   "gpt-5.5": 128_000,
   "gpt-5.4": 128_000,
@@ -418,6 +425,41 @@ function json(response, status, payload) {
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(payload));
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function requestOrigin(request) {
+  const hostHeader = String(request.headers.host || "").trim() || `localhost:${port}`;
+  return `http://${hostHeader}`;
+}
+
+function publicBaseUrlForRequest(request) {
+  const configured = String(
+    process.env.MYHARNESS_SHARE_BASE_URL
+    || process.env.MYHARNESS_PUBLIC_URL
+    || process.env.MYHARNESS_LAN_URL
+    || "",
+  ).trim().replace(/\/+$/, "");
+  if (configured) {
+    return configured;
+  }
+  try {
+    const origin = new URL(requestOrigin(request));
+    if (isLoopbackAddress(origin.hostname)) {
+      return getLanUrl() || origin.origin;
+    }
+    return origin.origin;
+  } catch {
+    return getLanUrl() || `http://localhost:${port}`;
+  }
 }
 
 async function readJson(request) {
@@ -666,7 +708,7 @@ async function readArtifactAliases(workspacePath) {
 }
 
 async function writeArtifactAliases(workspacePath, aliases) {
-  await writeJsonFile(artifactAliasPath(workspacePath), {
+  await writeJsonFileAtomic(artifactAliasPath(workspacePath), {
     version: 1,
     aliases: normalizeArtifactAliasMap(aliases),
   });
@@ -742,6 +784,8 @@ async function readArtifactPreview(session, artifactPath) {
     workspace: session.workspace,
     mime: type.mime,
     size: info.size,
+    mtimeMs: info.mtimeMs,
+    birthtimeMs: info.birthtimeMs,
   };
   if (type.kind === "html") {
     payload.assetBaseUrl = artifactAssetBaseUrl(session, rel);
@@ -840,6 +884,262 @@ async function artifactDownloadTarget(session, artifactPath) {
     size: info.size,
     ext,
   };
+}
+
+function shareWorkspaceFromParams(params, scope = defaultWorkspaceScope()) {
+  return workspaceFromHistoryRequest({
+    workspacePath: params.get("workspacePath"),
+    workspaceName: params.get("workspace") || params.get("workspaceName"),
+  }, scope);
+}
+
+function shareSessionFromParams(params, scope = defaultWorkspaceScope()) {
+  return { workspace: shareWorkspaceFromParams(params, scope) };
+}
+
+function shareArtifactQuery(params, path) {
+  const query = new URLSearchParams();
+  const workspace = params.get("workspace") || params.get("workspaceName");
+  const workspacePath = params.get("workspacePath");
+  if (workspace) query.set("workspace", workspace);
+  if (workspacePath) query.set("workspacePath", workspacePath);
+  query.set("path", path);
+  return query.toString();
+}
+
+function shareRawArtifactUrl(params, path) {
+  return `/share/artifact/raw?${shareArtifactQuery(params, path)}`;
+}
+
+function shareSourceArtifactUrl(params, path) {
+  return `/share/artifact/source?${shareArtifactQuery(params, path)}`;
+}
+
+function shareDownloadArtifactUrl(params, path) {
+  return `/share/artifact/download?${shareArtifactQuery(params, path)}`;
+}
+
+function injectHtmlBase(content, baseHref) {
+  const safeBase = escapeHtml(baseHref);
+  const baseTag = `<base href="${safeBase}">`;
+  const value = String(content || "");
+  if (/<head(?:\s[^>]*)?>/i.test(value)) {
+    return value.replace(/<head(?:\s[^>]*)?>/i, (match) => `${match}${baseTag}`);
+  }
+  if (/<html(?:\s[^>]*)?>/i.test(value)) {
+    return value.replace(/<html(?:\s[^>]*)?>/i, (match) => `${match}<head>${baseTag}</head>`);
+  }
+  return `<!doctype html><html><head>${baseTag}</head><body>${value}</body></html>`;
+}
+
+function shareArtifactShell(payload, params) {
+  const name = payload.name || "artifact";
+  const rawUrl = shareRawArtifactUrl(params, payload.path);
+  const sourceUrl = shareSourceArtifactUrl(params, payload.path);
+  const downloadUrl = shareDownloadArtifactUrl(params, payload.path);
+  const safeName = escapeHtml(name);
+  const safeKind = escapeHtml(payload.kind || "file");
+  const safeRawUrl = escapeHtml(rawUrl);
+  const safeSourceUrl = escapeHtml(sourceUrl);
+  const safeDownloadUrl = escapeHtml(downloadUrl);
+  const canShowSource = payload.content !== undefined;
+  let body = "";
+  if (payload.kind === "html" || payload.kind === "pdf") {
+    body = `<iframe class="share-frame share-preview" src="${safeRawUrl}" title="${safeName}"></iframe>`;
+  } else if (payload.kind === "image") {
+    body = `<main class="share-image share-preview"><img src="${safeRawUrl}" alt="${safeName}"></main>`;
+  } else if (payload.content !== undefined) {
+    body = `<main class="share-text share-preview"><pre>${escapeHtml(payload.content)}</pre></main>`;
+  } else {
+    body = `<main class="share-download share-preview"><a href="${safeRawUrl}" download="${safeName}">파일 열기</a></main>`;
+  }
+  const sourcePanel = canShowSource
+    ? `<main class="share-source" aria-label="${safeName} 소스코드"><pre><code></code></pre></main>`
+    : "";
+  const sourceActions = canShowSource
+    ? `<button class="share-action" type="button" data-action="toggle-source" data-source-url="${safeSourceUrl}" aria-label="소스코드 확인" data-tooltip="소스코드 확인"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m10 8-4 4 4 4"></path><path d="m14 8 4 4-4 4"></path></svg></button>
+      <button class="share-action" type="button" data-action="copy-source" data-source-url="${safeSourceUrl}" aria-label="소스코드 복사" data-tooltip="소스코드 복사"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`
+    : "";
+  return `<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${safeName} - MyHarness</title>
+  <style>
+    :root{color-scheme:light dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7f8;color:#15171a}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;display:flex;flex-direction:column}
+    header{height:44px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px 0 14px;border-bottom:1px solid rgba(0,0,0,.1);background:#fff}
+    h1{margin:0;font-size:14px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    small{color:#6b7280}
+    a{color:inherit}
+    .share-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+    .share-action{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid rgba(0,0,0,.12);border-radius:7px;background:transparent;color:inherit;cursor:pointer;text-decoration:none}
+    .share-action:hover,.share-action:focus-visible,.share-action.active{border-color:rgba(37,99,235,.45);color:#2563eb;outline:none;background:rgba(37,99,235,.06)}
+    .share-action svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+    .share-action[data-tooltip]::after{position:absolute;top:calc(100% + 7px);right:0;z-index:10;max-width:220px;padding:5px 7px;border-radius:6px;background:rgba(17,24,39,.94);color:#fff;content:attr(data-tooltip);font:12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;opacity:0;pointer-events:none;transform:translateY(2px);transition:opacity 120ms ease,transform 120ms ease;white-space:nowrap}
+    .share-action:hover::after,.share-action:focus-visible::after{opacity:1;transform:translateY(0)}
+    .share-frame{width:100%;flex:1;border:0;background:#fff}
+    .share-image{flex:1;display:grid;place-items:center;padding:16px;overflow:auto}
+    .share-image img{max-width:100%;height:auto}
+    .share-text{flex:1;margin:0;padding:18px;overflow:auto;background:#fff}
+    .share-text pre{margin:0;white-space:pre-wrap;word-break:break-word;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
+    .share-source{display:none;flex:1;margin:0;padding:18px;overflow:auto;background:#fff}
+    .share-source pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
+    body.source-mode .share-preview{display:none}
+    body.source-mode .share-source{display:block}
+    .share-download{flex:1;display:grid;place-items:center}
+    .share-download a{padding:9px 12px;border:1px solid rgba(0,0,0,.18);border-radius:8px;text-decoration:none;background:#fff}
+    @media (prefers-color-scheme:dark){:root{background:#15171a;color:#f4f5f6}header,.share-text,.share-source,.share-frame,.share-download a{background:#1d2024;border-color:rgba(255,255,255,.14)}small{color:#a5abb3}.share-action{border-color:rgba(255,255,255,.14)}.share-action:hover,.share-action:focus-visible,.share-action.active{background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.5);color:#93c5fd}}
+  </style>
+</head>
+<body>
+  <header><h1>${safeName}</h1><div class="share-actions">${sourceActions}<a class="share-action" href="${safeDownloadUrl}" download="${safeName}" aria-label="다운로드" data-tooltip="다운로드"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg></a><small>${safeKind}</small></div></header>
+  ${body}
+  ${sourcePanel}
+  <script>
+    (() => {
+      const sourceButton = document.querySelector('[data-action="toggle-source"]');
+      const copyButton = document.querySelector('[data-action="copy-source"]');
+      const sourceCode = document.querySelector('.share-source code');
+      let sourceText = null;
+      async function loadSource(url) {
+        if (sourceText !== null) return sourceText;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) throw new Error("Source load failed");
+        sourceText = await response.text();
+        if (sourceCode) sourceCode.textContent = sourceText;
+        return sourceText;
+      }
+      async function copyText(text) {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.append(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      sourceButton?.addEventListener("click", async () => {
+        try {
+          await loadSource(sourceButton.dataset.sourceUrl || "");
+          const active = !document.body.classList.contains("source-mode");
+          document.body.classList.toggle("source-mode", active);
+          sourceButton.classList.toggle("active", active);
+          sourceButton.dataset.tooltip = active ? "미리보기" : "소스코드 확인";
+          sourceButton.setAttribute("aria-label", active ? "미리보기" : "소스코드 확인");
+        } catch {
+          sourceButton.dataset.tooltip = "소스코드 확인 실패";
+        }
+      });
+      copyButton?.addEventListener("click", async () => {
+        try {
+          await copyText(await loadSource(copyButton.dataset.sourceUrl || ""));
+          copyButton.classList.add("active");
+          copyButton.dataset.tooltip = "복사됨";
+          window.setTimeout(() => {
+            copyButton.classList.remove("active");
+            copyButton.dataset.tooltip = "소스코드 복사";
+          }, 1400);
+        } catch {
+          copyButton.dataset.tooltip = "복사 실패";
+        }
+      });
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+async function handleShare(request, response, pathname) {
+  if (request.method !== "GET") {
+    response.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
+    response.end("Method not allowed");
+    return true;
+  }
+  if (pathname !== "/share/artifact" && pathname !== "/share/artifact/raw" && pathname !== "/share/artifact/source" && pathname !== "/share/artifact/download") {
+    return false;
+  }
+  const params = new URL(request.url, `http://localhost:${port}`).searchParams;
+  try {
+    const session = shareSessionFromParams(params, defaultWorkspaceScope());
+    const artifactPath = params.get("path");
+    if (pathname === "/share/artifact/source") {
+      const payload = await readArtifactPreview(session, artifactPath);
+      if (payload.content === undefined) {
+        throw new Error("Artifact source is not available");
+      }
+      response.writeHead(200, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      });
+      response.end(payload.content);
+      return true;
+    }
+    if (pathname === "/share/artifact/download") {
+      const payload = await artifactDownloadTarget(session, artifactPath);
+      const encodedName = encodeURIComponent(payload.name).replace(/[!'()*]/g, (char) =>
+        `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+      );
+      const fallbackName = asciiHeaderFilename(payload.name);
+      const body = await readDownloadableArtifactBody(payload.target, payload.ext);
+      response.writeHead(200, {
+        "Content-Type": payload.mime,
+        "Content-Length": String(body?.length || payload.size),
+        "Content-Disposition": `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      });
+      if (body) {
+        response.end(body);
+      } else {
+        createReadStream(payload.target).pipe(response);
+      }
+      return true;
+    }
+    if (pathname === "/share/artifact/raw") {
+      const payload = await artifactDownloadTarget(session, artifactPath);
+      let body = null;
+      if (payload.ext === ".html" || payload.ext === ".htm") {
+        const htmlPayload = await readArtifactPreview(session, artifactPath);
+        body = injectHtmlBase(htmlPayload.content || "", htmlPayload.assetBaseUrl || "");
+      }
+      response.writeHead(200, {
+        "Content-Type": payload.mime,
+        "Cache-Control": "no-store",
+        "Content-Length": body === null ? payload.size : Buffer.byteLength(body, "utf8"),
+        "X-Content-Type-Options": "nosniff",
+      });
+      if (body === null) {
+        createReadStream(payload.target).pipe(response);
+      } else {
+        response.end(body);
+      }
+      return true;
+    }
+    const payload = await readArtifactPreview(session, artifactPath);
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(shareArtifactShell(payload, params));
+  } catch (error) {
+    response.writeHead(error?.code === "ENOENT" ? 404 : 400, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    response.end(error.message || "Could not open shared artifact");
+  }
+  return true;
 }
 
 function withDownloadedMermaidZoomBridge(content) {
@@ -1191,12 +1491,13 @@ async function workspaceTargetSessionFromRequest(params, artifactPath = "", scop
   return workspaceSessionFromRequest(params, artifactPath, scope);
 }
 
-async function deleteArtifactFile(session, artifactPath) {
+async function deleteArtifactFile(session, artifactPath, options = {}) {
   const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
   const info = await stat(target);
   if (!info.isFile()) {
     throw new Error("Artifact is not a file");
   }
+  assertExpectedMtime(info, options.expectedMtimeMs);
   await rm(target);
   invalidateProjectFileCache(session.workspace.path);
   return {
@@ -1348,12 +1649,24 @@ async function saveArtifactFile(session, artifactPath, content) {
     }
   }
   await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, String(content || ""), "utf8");
+  while (true) {
+    try {
+      await writeFile(target, String(content || ""), { encoding: "utf8", flag: "wx" });
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+      const nextRel = `${baseRel}-${index}${suffix}`;
+      ({ target, rel } = workspaceRelativeTarget(session.workspace.path, nextRel));
+      index += 1;
+    }
+  }
   invalidateProjectFileCache(session.workspace.path);
   return readArtifactMetadata(session, rel);
 }
 
-async function overwriteHtmlArtifactFile(session, artifactPath, content) {
+async function overwriteHtmlArtifactFile(session, artifactPath, content, options = {}) {
   const { target, rel } = workspaceRelativeTarget(session.workspace.path, artifactPath);
   const ext = extname(target).toLowerCase();
   if (ext !== ".html" && ext !== ".htm") {
@@ -1364,9 +1677,13 @@ async function overwriteHtmlArtifactFile(session, artifactPath, content) {
     if (!info.isFile()) {
       throw new Error("Artifact is not a file");
     }
+    assertExpectedMtime(info, options.expectedMtimeMs);
   } catch (error) {
     if (error?.code !== "ENOENT") {
       throw error;
+    }
+    if (normalizeExpectedMtime(options.expectedMtimeMs) !== null) {
+      throw conflictError("파일이 삭제되었거나 이동되었습니다. 새로고침 후 다시 시도하세요.");
     }
   }
   const value = String(content || "");
@@ -1399,11 +1716,12 @@ function validateArtifactFileName(value) {
   return name;
 }
 
-async function renameArtifactFile(session, artifactPath, nextName) {
+async function renameArtifactFile(session, artifactPath, nextName, options = {}) {
   const source = await resolveArtifactTarget(session, artifactPath);
   if (!source.info.isFile()) {
     throw new Error("Artifact is not a file");
   }
+  assertExpectedMtime(source.info, options.expectedMtimeMs);
   const fileName = validateArtifactFileName(nextName);
   const sourceDir = dirname(source.rel);
   const destinationRel = normalizeProjectFilePath(sourceDir === "." ? fileName : join(sourceDir, fileName));
@@ -1682,14 +2000,13 @@ async function submitAiArtifactEdit(session, artifactPath, comments) {
     comments: normalizedComments,
   });
   if (session.busy) {
-    const error = new Error("The current AI session is busy");
-    error.status = 409;
-    throw error;
+    throw httpError(409, currentSessionBusyMessage);
   }
   if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
-    const error = new Error("Concurrent response limit reached");
-    error.status = 429;
-    throw error;
+    throw httpError(429, clientResponseLimitMessage);
+  }
+  if (countBusySessions() >= maxBusySessions) {
+    throw httpError(429, serverResponseLimitMessage);
   }
   const { target: targetFile } = workspaceRelativeTarget(session.workspace.path, targetRel);
   session.busy = true;
@@ -1955,7 +2272,7 @@ async function collisionSafeOutputsPath(session, fileName, existingPaths) {
   }
 }
 
-async function organizeRootProjectFiles(session, paths = []) {
+async function organizeRootProjectFiles(session, paths = [], options = {}) {
   const requested = [...new Set((Array.isArray(paths) ? paths : []).map(normalizeProjectFilePath).filter(Boolean))];
   if (!requested.length) {
     return [];
@@ -1971,6 +2288,10 @@ async function organizeRootProjectFiles(session, paths = []) {
     if (!info.isFile()) {
       throw new Error(`Not a file: ${requestedPath}`);
     }
+    const expectedMtimeMs = options.expectedMtimes && typeof options.expectedMtimes === "object"
+      ? options.expectedMtimes[requestedPath] ?? options.expectedMtimes[rel]
+      : null;
+    assertExpectedMtime(info, expectedMtimeMs);
     const destinationRel = await collisionSafeOutputsPath(session, basename(target), existingPaths);
     const { target: destinationTarget } = workspaceRelativeTarget(session.workspace.path, destinationRel);
     await mkdir(dirname(destinationTarget), { recursive: true });
@@ -2104,6 +2425,57 @@ async function writeJsonFileAtomic(path, payload) {
   const tmpPath = `${path}.${process.pid}.${Date.now()}-${crypto.randomUUID()}.tmp`;
   await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   await rename(tmpPath, path);
+}
+
+function conflictError(message = "파일이 다른 사용자 또는 세션에서 변경되었습니다. 새로고침 후 다시 시도하세요.") {
+  const error = new Error(message);
+  error.status = 409;
+  return error;
+}
+
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function normalizeExpectedMtime(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function assertExpectedMtime(info, expectedMtimeMs) {
+  const expected = normalizeExpectedMtime(expectedMtimeMs);
+  if (expected === null) {
+    return;
+  }
+  if (Math.abs(Number(info.mtimeMs || 0) - expected) > 1) {
+    throw conflictError();
+  }
+}
+
+function mutationQueueKey(workspacePath) {
+  return normalize(String(workspacePath || ""));
+}
+
+async function withWorkspaceMutation(workspacePath, action) {
+  const key = mutationQueueKey(workspacePath);
+  const previous = workspaceMutationQueues.get(key) || Promise.resolve();
+  let release;
+  const next = new Promise((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.catch(() => {}).then(() => next);
+  workspaceMutationQueues.set(key, queued);
+  await previous.catch(() => {});
+  try {
+    return await action();
+  } finally {
+    release();
+    if (workspaceMutationQueues.get(key) === queued) {
+      workspaceMutationQueues.delete(key);
+    }
+  }
 }
 
 function normalizeWebUsageStats(payload) {
@@ -3070,19 +3442,52 @@ async function deleteWorkspaceHistoryItem(workspace, sessionId) {
       throw error;
     }
   }
-  const latestPath = join(sessionDir, "latest.json");
-  try {
-    const latest = JSON.parse(await readFile(latestPath, "utf8"));
-    if (String(latest.session_id || "latest") === cleanId || cleanId === "latest") {
-      await rm(latestPath);
-      deleted = true;
-    }
-  } catch (error) {
-    if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
-      throw error;
+  for (const latestPath of await latestSnapshotPaths(sessionDir)) {
+    try {
+      const latest = JSON.parse(await readFile(latestPath, "utf8"));
+      if (String(latest.session_id || "latest") === cleanId || cleanId === "latest") {
+        await rm(latestPath);
+        deleted = true;
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
+        throw error;
+      }
     }
   }
   return deleted;
+}
+
+async function latestSnapshotPaths(sessionDir) {
+  const paths = [join(sessionDir, "latest.json")];
+  try {
+    const entries = await readdir(sessionDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && /^latest-.+\.json$/i.test(entry.name)) {
+        paths.push(join(sessionDir, entry.name));
+      }
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return paths;
+}
+
+async function updateMatchingLatestSnapshots(sessionDir, sessionId, payload) {
+  for (const latestPath of await latestSnapshotPaths(sessionDir)) {
+    try {
+      const latest = JSON.parse(await readFile(latestPath, "utf8"));
+      if (String(latest.session_id || "") === sessionId) {
+        await writeJsonFileAtomic(latestPath, payload);
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
+        throw error;
+      }
+    }
+  }
 }
 
 async function updateWorkspaceHistoryTitle(workspace, sessionId, title) {
@@ -3103,19 +3508,8 @@ async function updateWorkspaceHistoryTitle(workspace, sessionId, title) {
     session_title: cleanTitle,
     session_title_user_edited: true,
   };
-  await writeJsonFile(target, payload);
-
-  const latestPath = join(sessionDir, "latest.json");
-  try {
-    const latest = JSON.parse(await readFile(latestPath, "utf8"));
-    if (String(latest.session_id || "") === cleanId) {
-      await writeJsonFile(latestPath, payload);
-    }
-  } catch (error) {
-    if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
-      throw error;
-    }
-  }
+  await writeJsonFileAtomic(target, payload);
+  await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
   return payload;
 }
 
@@ -3128,19 +3522,8 @@ async function updateWorkspaceHistoryPin(workspace, sessionId, pinned) {
   const target = join(sessionDir, `session-${cleanId}.json`);
   const payload = JSON.parse(await readFile(target, "utf8"));
   payload.pinned = pinned === true;
-  await writeJsonFile(target, payload);
-
-  const latestPath = join(sessionDir, "latest.json");
-  try {
-    const latest = JSON.parse(await readFile(latestPath, "utf8"));
-    if (String(latest.session_id || "") === cleanId) {
-      await writeJsonFile(latestPath, payload);
-    }
-  } catch (error) {
-    if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
-      throw error;
-    }
-  }
+  await writeJsonFileAtomic(target, payload);
+  await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
   return payload;
 }
 
@@ -3843,8 +4226,14 @@ async function createBackendSession(options = {}) {
   const workspace = await resolveSessionWorkspace(options);
   const clientId = String(options.clientId || "").trim();
   const clientAddress = normalizeClientAddress(options.clientAddress || "");
+  if ([...sessions.values()].filter((session) => !session.shuttingDown).length >= maxActiveSessions) {
+    throw httpError(429, activeSessionLimitMessage);
+  }
   if (clientId && countBusySessionsForClient(clientId) >= 3) {
-    throw new Error("Concurrent response limit reached");
+    throw httpError(429, clientResponseLimitMessage);
+  }
+  if (countBusySessions() >= maxBusySessions) {
+    throw httpError(429, serverResponseLimitMessage);
   }
   const python = backendPythonCommand();
   const args = [...python.args, "-m", "myharness", "--backend-only", "--cwd", workspace.path];
@@ -3852,6 +4241,9 @@ async function createBackendSession(options = {}) {
     ...process.env,
     PYTHONPATH: [join(repoRoot, "src"), process.env.PYTHONPATH].filter(Boolean).join(delimiter),
   };
+  if (clientId) {
+    env.MYHARNESS_WEB_CLIENT_ID = clientId;
+  }
 
   const permissionMode = options.permissionMode || await defaultPermissionMode();
   if (permissionMode) {
@@ -3966,6 +4358,16 @@ function countBusySessionsForClient(clientId) {
   let count = 0;
   for (const session of sessions.values()) {
     if (session.clientId === clientId && session.busy && !session.shuttingDown) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function countBusySessions() {
+  let count = 0;
+  for (const session of sessions.values()) {
+    if (session.busy && !session.shuttingDown) {
       count += 1;
     }
   }
@@ -4091,6 +4493,11 @@ async function handleSettingsApi(request, response, pathname) {
 async function handleApi(request, response, pathname) {
   const workspaceScope = workspaceScopeFromRequest(request);
   const clientAddress = normalizeClientAddress(forwardedAddressFromRequest(request));
+  if (request.method === "GET" && pathname === "/api/share/base-url") {
+    json(response, 200, { baseUrl: publicBaseUrlForRequest(request) });
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/token-count") {
     try {
       const body = await readJson(request);
@@ -4196,7 +4603,7 @@ async function handleApi(request, response, pathname) {
     try {
       const body = await readJson(request);
       const workspace = workspaceFromHistoryRequest(body, workspaceScope);
-      const deleted = await deleteWorkspaceHistoryItem(workspace, body.sessionId);
+      const deleted = await withWorkspaceMutation(workspace.path, () => deleteWorkspaceHistoryItem(workspace, body.sessionId));
       if (deleted) {
         detachDeletedSavedSession(workspace, body.sessionId);
       }
@@ -4211,7 +4618,7 @@ async function handleApi(request, response, pathname) {
     try {
       const body = await readJson(request);
       const workspace = workspaceFromHistoryRequest(body, workspaceScope);
-      const snapshot = await updateWorkspaceHistoryTitle(workspace, body.sessionId, body.title);
+      const snapshot = await withWorkspaceMutation(workspace.path, () => updateWorkspaceHistoryTitle(workspace, body.sessionId, body.title));
       json(response, 200, {
         ok: true,
         workspace,
@@ -4228,7 +4635,7 @@ async function handleApi(request, response, pathname) {
     try {
       const body = await readJson(request);
       const workspace = workspaceFromHistoryRequest(body, workspaceScope);
-      const snapshot = await updateWorkspaceHistoryPin(workspace, body.sessionId, body.pinned === true);
+      const snapshot = await withWorkspaceMutation(workspace.path, () => updateWorkspaceHistoryPin(workspace, body.sessionId, body.pinned === true));
       json(response, 200, {
         ok: true,
         workspace,
@@ -4249,7 +4656,7 @@ async function handleApi(request, response, pathname) {
       const session = await createBackendSession(options);
       json(response, 200, { sessionId: session.id, workspace: session.workspace });
     } catch (error) {
-      json(response, 400, { error: error.message || "Could not start session" });
+      json(response, error.status || 400, { error: error.message || "Could not start session" });
     }
     return true;
   }
@@ -4435,7 +4842,9 @@ async function handleApi(request, response, pathname) {
         json(response, 404, { error: "Unknown session" });
         return true;
       }
-      const payload = await overwriteHtmlArtifactFile(session, body.path, body.content);
+      const payload = await withWorkspaceMutation(session.workspace.path, () =>
+        overwriteHtmlArtifactFile(session, body.path, body.content, { expectedMtimeMs: body.expectedMtimeMs })
+      );
       json(response, 200, payload);
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not overwrite artifact" });
@@ -4456,7 +4865,9 @@ async function handleApi(request, response, pathname) {
         json(response, 404, { error: "Unknown session" });
         return true;
       }
-      const payload = await renameArtifactFile(session, body.path, body.name);
+      const payload = await withWorkspaceMutation(session.workspace.path, () =>
+        renameArtifactFile(session, body.path, body.name, { expectedMtimeMs: body.expectedMtimeMs })
+      );
       json(response, 200, payload);
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not rename artifact" });
@@ -4564,7 +4975,9 @@ async function handleApi(request, response, pathname) {
       if (body.workspacePath) params.set("workspacePath", body.workspacePath);
       if (body.workspaceName) params.set("workspaceName", body.workspaceName);
       const session = await workspaceTargetSessionFromRequest(params, body.path, workspaceScope);
-      const deleted = await deleteArtifactFile(session, body.path);
+      const deleted = await withWorkspaceMutation(session.workspace.path, () =>
+        deleteArtifactFile(session, body.path, { expectedMtimeMs: body.expectedMtimeMs })
+      );
       json(response, 200, { deleted });
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not delete artifact" });
@@ -4580,7 +4993,7 @@ async function handleApi(request, response, pathname) {
         json(response, 404, { error: "Unknown session" });
         return true;
       }
-      const artifact = await saveArtifactFile(session, body.path, body.content);
+      const artifact = await withWorkspaceMutation(session.workspace.path, () => saveArtifactFile(session, body.path, body.content));
       json(response, 200, { artifact });
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not save artifact" });
@@ -4632,7 +5045,9 @@ async function handleApi(request, response, pathname) {
       if (body.workspacePath) params.set("workspacePath", body.workspacePath);
       if (body.workspaceName) params.set("workspaceName", body.workspaceName);
       const session = await workspaceTargetSessionFromRequest(params, "", workspaceScope);
-      const files = await organizeRootProjectFiles(session, body.paths);
+      const files = await withWorkspaceMutation(session.workspace.path, () =>
+        organizeRootProjectFiles(session, body.paths, { expectedMtimes: body.expectedMtimes })
+      );
       json(response, 200, { workspace: session.workspace, files });
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not organize project files" });
@@ -4659,7 +5074,7 @@ async function handleApi(request, response, pathname) {
       }
       if (session.busy) {
         if (attachments.length > 0) {
-          json(response, 409, { error: "Attachments cannot be sent while the session is busy" });
+          json(response, 409, { error: "현재 대화가 응답 중이라 첨부파일은 보낼 수 없습니다. 답변이 끝난 뒤 다시 시도하세요." });
           return true;
         }
         const queued = deliveryMode === "queue" || deliveryMode === "queued";
@@ -4668,7 +5083,11 @@ async function handleApi(request, response, pathname) {
         return true;
       }
       if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
-        json(response, 429, { error: "Concurrent response limit reached" });
+        json(response, 429, { error: clientResponseLimitMessage });
+        return true;
+      }
+      if (countBusySessions() >= maxBusySessions) {
+        json(response, 429, { error: serverResponseLimitMessage });
         return true;
       }
       if (body.suppressUserTranscript === true && !line.startsWith("!")) {
@@ -4806,6 +5225,9 @@ server = createServer(async (request, response) => {
     }
   }
   if (pathname.startsWith("/api/") && (await handleApi(request, response, pathname))) {
+    return;
+  }
+  if (pathname.startsWith("/share/") && (await handleShare(request, response, pathname))) {
     return;
   }
 

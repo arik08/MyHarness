@@ -1,5 +1,5 @@
 export async function copyTextToClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
+  if (window.isSecureContext !== false && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       return;

@@ -1480,6 +1480,8 @@ class ReactBackendHost:
             return
         metadata["session_title"] = title
         metadata["session_title_source"] = _SESSION_TITLE_SOURCE_CONVERSATION
+        if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
+            metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
         if title != current_title:
             await self._emit(BackendEvent(type="session_title", message=title))
         self._bundle.session_backend.save_snapshot(
@@ -1600,6 +1602,8 @@ class ReactBackendHost:
         assert self._bundle is not None
         metadata = dict(self._bundle.engine.tool_metadata)
         metadata["session_title"] = title
+        if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
+            metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
         self._bundle.session_backend.save_snapshot(
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,
@@ -1613,6 +1617,9 @@ class ReactBackendHost:
 
     def _save_current_session_snapshot(self) -> None:
         assert self._bundle is not None
+        metadata = dict(self._bundle.engine.tool_metadata)
+        if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
+            metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
         self._bundle.session_backend.save_snapshot(
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,
@@ -1620,7 +1627,7 @@ class ReactBackendHost:
             messages=self._bundle.engine.messages,
             usage=self._bundle.engine.total_usage,
             session_id=self._bundle.session_id,
-            tool_metadata=self._bundle.engine.tool_metadata,
+            tool_metadata=metadata,
             history_events=self._history_events,
         )
 
@@ -2238,6 +2245,8 @@ class ReactBackendHost:
         metadata["session_title"] = title
         metadata["session_title_source"] = _SESSION_TITLE_SOURCE_CONVERSATION
         metadata["session_title_user_edited"] = True
+        if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
+            metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
         self._bundle.session_backend.save_snapshot(
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,

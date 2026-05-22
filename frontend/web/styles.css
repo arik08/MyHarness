@@ -556,6 +556,10 @@ a:focus-visible {
   transition: none;
 }
 
+.app-shell.artifact-open.sidebar-transitioning {
+  transition: grid-template-columns 0.18s ease;
+}
+
 .sidebar {
   display: flex;
   position: relative;
@@ -1214,6 +1218,10 @@ a:focus-visible {
   background: var(--sidebar-hover);
 }
 
+.history-item.hidden-history .history-open {
+  color: var(--muted);
+}
+
 .history-title {
   display: block;
   overflow: hidden;
@@ -1227,6 +1235,20 @@ a:focus-visible {
 
 .history-item small {
   display: none;
+}
+
+.history-hidden-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 3px;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.2;
 }
 
 .history-item.pinned .history-open {
@@ -2470,7 +2492,7 @@ a:focus-visible {
 }
 
 .tooltip-layer {
-  z-index: 1000;
+  z-index: 10000;
   width: max-content;
   max-width: min(360px, calc(100vw - 16px));
   padding: 7px 9px;
@@ -5617,11 +5639,12 @@ a:focus-visible {
 
 .workflow-diff-line {
   display: block;
-  min-width: max-content;
+  min-width: 0;
   padding: 1px 4px;
   border-radius: 4px;
   color: color-mix(in srgb, var(--muted) 84%, var(--ink));
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .workflow-diff-line.added {
@@ -9212,6 +9235,12 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   color: var(--ink);
   font-size: 15px;
   font-weight: 780;
+}
+
+.admin-mode-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .modal-actions {

@@ -11,6 +11,7 @@ import { deleteHistory, toggleHistoryPin } from "../../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../../api/session";
 import { sendBackendRequest } from "../../api/messages";
 import type { Workspace } from "../../types/backend";
+import { historyVisibilityKey } from "../../utils/history";
 
 vi.mock("../../api/session", () => ({
   restartSession: vi.fn(),
@@ -91,7 +92,7 @@ describe("Sidebar", () => {
     const pinButton = screen.getByRole("button", { name: "이전 대화 상단 고정" });
     const paths = Array.from(deleteButton.querySelectorAll("path")).map((path) => path.getAttribute("d"));
 
-    expect(deleteButton.getAttribute("data-tooltip")).toBe("기록 삭제");
+    expect(deleteButton.getAttribute("data-tooltip")).toBe("목록에서 숨김");
     expect(pinButton.getAttribute("data-tooltip")).toBe("상단 고정");
     expect(paths).toContain("M4 7h16");
     expect(paths).not.toContain("M6 6l12 12");
@@ -517,7 +518,7 @@ describe("Sidebar", () => {
     expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
-  it("deletes a saved history item from its own workspace", async () => {
+  it("hides a saved history item from its own workspace in normal mode", async () => {
     render(
       <AppStateProvider
         initialState={{
@@ -540,6 +541,43 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 삭제" }));
+
+    await waitFor(() => expect(screen.queryByText("이전 대화")).toBeNull());
+    expect(deleteHistory).not.toHaveBeenCalled();
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+  });
+
+  it("permanently deletes a hidden saved history item in admin mode", async () => {
+    const hiddenKey = historyVisibilityKey("session-old", "C:/other", "Other");
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          adminMode: true,
+          hiddenHistoryKeys: [hiddenKey],
+          sessionId: "session-active",
+          clientId: "client-1",
+          workspaceName: "Default",
+          workspacePath: "C:/current",
+          history: [{
+            value: "session-old",
+            label: "5/3 10:00 2 msg",
+            description: "이전 대화",
+            workspace: { name: "Other", path: "C:/other" },
+          }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("숨김")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
+    const deleteButton = screen.getByRole("button", { name: "이전 대화 삭제" });
+
+    expect(deleteButton.getAttribute("data-tooltip")).toBe("완전 삭제");
+
+    await userEvent.click(deleteButton);
 
     await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith("session-old", "C:/other", "Other"));
     expect(screen.queryByText("이전 대화")).toBeNull();
@@ -571,7 +609,8 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 삭제" }));
 
-    await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith("session-old", "C:/demo", "Default"));
+    await waitFor(() => expect(screen.queryByText("이전 대화")).toBeNull());
+    expect(deleteHistory).not.toHaveBeenCalled();
     expect(screen.queryByText("이전 대화")).toBeNull();
   });
 
@@ -609,7 +648,8 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "삭제된 대화 작업 더보기" }));
     await userEvent.click(screen.getByRole("button", { name: "삭제된 대화 삭제" }));
 
-    await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith("session-deleted", "C:/demo", "Default"));
+    await waitFor(() => expect(screen.queryByText("삭제된 대화")).toBeNull());
+    expect(deleteHistory).not.toHaveBeenCalled();
     expect(screen.queryByText("삭제된 대화")).toBeNull();
 
     act(() => {
@@ -1018,7 +1058,7 @@ describe("Sidebar", () => {
     expect(restartSession).not.toHaveBeenCalled();
   });
 
-  it("deletes an immediately saved new chat through the backend queue", async () => {
+  it("hides an immediately saved new chat without deleting it in normal mode", async () => {
     const { container } = render(
       <AppStateProvider
         initialState={{
@@ -1036,19 +1076,12 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(1));
-    const newChatId = String((vi.mocked(sendBackendRequest).mock.calls[0][2] as { value?: string }).value);
-
     await userEvent.click(screen.getByRole("button", { name: "새 대화 작업 더보기" }));
     await userEvent.click(screen.getByRole("button", { name: "새 대화 삭제" }));
 
-    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(sendBackendRequest).mock.calls[1]).toEqual([
-      "session-active",
-      "client-1",
-      { type: "delete_session", value: newChatId },
-    ]);
+    await waitFor(() => expect(container.querySelector(".history-item .history-title")?.textContent || "").not.toBe("새 대화"));
+    expect(sendBackendRequest).toHaveBeenCalledTimes(1);
     expect(deleteHistory).not.toHaveBeenCalled();
-    expect(container.querySelector(".history-item .history-title")?.textContent || "").not.toBe("새 대화");
     expect(screen.getByTestId("active-history").textContent).toBe("");
   });
 

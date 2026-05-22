@@ -393,6 +393,9 @@ describe("CommandHelpMessage", () => {
       "posco-datalake",
       "posco-ontology",
       "posco-plm",
+      "posco-erp",
+      "posco-mih",
+      "posco-gih",
     ]) {
       const connector = screen.getByRole("button", { name: new RegExp(name) });
       expect(connector.textContent).toContain("활성");
@@ -402,6 +405,9 @@ describe("CommandHelpMessage", () => {
     const emailConnector = screen.getByRole("button", { name: /posco-email/ });
     expect(screen.getByRole("button", { name: /posco-ecm/ }).textContent).toContain("비정형 문서");
     expect(screen.getByRole("button", { name: /posco-datalake/ }).textContent).toContain("정형 데이터");
+    expect(screen.getByRole("button", { name: /posco-erp/ }).textContent).toContain("전사 기준 데이터");
+    expect(screen.getByRole("button", { name: /posco-mih/ }).textContent).toContain("Marketing Information Hub");
+    expect(screen.getByRole("button", { name: /posco-gih/ }).textContent).toContain("Global Information Hub");
 
     await user.click(emailConnector);
     expect(emailConnector.textContent).toContain("비활성");

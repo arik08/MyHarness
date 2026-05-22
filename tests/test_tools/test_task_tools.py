@@ -288,7 +288,7 @@ async def test_agent_tool_routes_review_roles_to_stronger_gpt_model(tmp_path: Pa
     )
 
     assert result.is_error is False
-    assert captured["config"].model is None
+    assert captured["config"].model == "gpt-5.5"
     assert result.metadata["model"] == "inherit (gpt-5.5)"
     assert result.metadata["model_source"] == "main"
 

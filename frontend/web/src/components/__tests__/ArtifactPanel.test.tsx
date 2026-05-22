@@ -5,6 +5,8 @@ import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactPanel, clampArtifactPanelWidth } from "../ArtifactPanel";
 import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactHtmlEditMessage, artifactHtmlEditModeMessage } from "../ArtifactPreview";
+import { ModalHost } from "../ModalHost";
+import { TooltipLayer } from "../TooltipLayer";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../../api/artifacts";
@@ -527,8 +529,9 @@ describe("ArtifactPanel", () => {
     );
 
     let actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
-    expect(actions).toHaveLength(6);
+    expect(actions).toHaveLength(7);
     expect(actions[0].getAttribute("data-tooltip")).toBe("본문 수정");
+    expect(actions.some((button) => button.getAttribute("data-tooltip") === "공유 링크 복사")).toBe(true);
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "수정사항 반영")).toBe(false);
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "편집 취소")).toBe(false);
     expect(screen.queryByRole("button", { name: "AI 자동편집" })).toBeNull();
@@ -548,7 +551,8 @@ describe("ArtifactPanel", () => {
     );
 
     actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
-    expect(actions).toHaveLength(5);
+    expect(actions).toHaveLength(6);
+    expect(actions.some((button) => button.getAttribute("data-tooltip") === "공유 링크 복사")).toBe(true);
     expect(actions.some((button) => button.getAttribute("data-tooltip")?.includes("편집"))).toBe(false);
   });
 
@@ -895,6 +899,7 @@ describe("ArtifactPanel", () => {
       path: "outputs/report.html",
       content: "<html><body>Changed</body></html>",
       clientId: "client-a",
+      expectedMtimeMs: undefined,
       workspacePath: "C:/repo",
       workspaceName: "repo",
     }));
@@ -1010,6 +1015,313 @@ describe("ArtifactPanel", () => {
       expect(copiedText).toEqual(["<!doctype html><html><body><h1>Preview</h1></body></html>"]);
       expect(screen.getByRole("button", { name: "복사됨" })).toBeTruthy();
     } finally {
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+      if (originalExecCommand) {
+        Object.defineProperty(document, "execCommand", originalExecCommand);
+      } else {
+        Reflect.deleteProperty(document, "execCommand");
+      }
+    }
+  });
+
+  it("copies a LAN-friendly share link for the active artifact", async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalFetch = globalThis.fetch;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/share/base-url");
+      return new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            clientId: "client-a",
+            sessionId: "session-a",
+            workspacePath: "C:/repo",
+            workspaceName: "repo",
+            artifacts: [{ path: "outputs/포스코홀딩스_해외경쟁사_이슈분석_v1.html", name: "포스코홀딩스_해외경쟁사_이슈분석_v1.html", kind: "html", size: 64 }],
+            activeArtifact: { path: "outputs/포스코홀딩스_해외경쟁사_이슈분석_v1.html", name: "포스코홀딩스_해외경쟁사_이슈분석_v1.html", kind: "html", size: 64 },
+            activeArtifactPayload: { kind: "html", content: "<!doctype html><html><body><h1>Preview</h1></body></html>" },
+          }}
+        >
+          <ArtifactPanel />
+        </AppStateProvider>,
+      );
+
+      expect(await screen.findByTitle("포스코홀딩스_해외경쟁사_이슈분석_v1.html")).toBeTruthy();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/share/base-url", { cache: "no-store" }));
+      await userEvent.click(screen.getByRole("button", { name: "공유 링크 복사" }));
+
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+        "http://10.0.0.5:4273/share/artifact?path=outputs/포스코홀딩스_해외경쟁사_이슈분석_v1.html&workspace=repo",
+      ));
+      expect(screen.getByRole("button", { name: "공유 링크 복사됨" })).toBeTruthy();
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+    }
+  });
+
+  it("shows the share copied label immediately while the share URL request is still pending", async () => {
+    let resolveFetch: (response: Response) => void = () => {
+      throw new Error("share base URL request was not started");
+    };
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalFetch = globalThis.fetch;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/share/base-url");
+      return new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            clientId: "client-a",
+            workspaceName: "Default",
+            artifacts: [{ path: "outputs/report.html", name: "report.html", kind: "html", size: 64 }],
+            activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 64 },
+            activeArtifactPayload: { kind: "html", content: "<!doctype html><html><body><h1>Preview</h1></body></html>" },
+          }}
+        >
+          <ArtifactPanel />
+          <TooltipLayer />
+        </AppStateProvider>,
+      );
+
+      expect(screen.getByTitle("report.html")).toBeTruthy();
+      const shareButton = screen.getByRole("button", { name: "공유 링크 복사" });
+      await act(async () => {
+        fireEvent.pointerOver(shareButton);
+        fireEvent.click(shareButton);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByRole("button", { name: "공유 링크 복사됨" })).toBeTruthy();
+      expect(screen.getByRole("tooltip").textContent).toBe("공유 링크 복사됨");
+      expect(writeText).toHaveBeenCalledWith(
+        `${window.location.origin}/share/artifact?path=outputs/report.html&workspace=Default`,
+      );
+      resolveFetch(new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+    }
+  });
+
+  it("uses the prefetched share base URL so fallback copy stays inside the click activation", async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalIsSecureContext = Object.getOwnPropertyDescriptor(window, "isSecureContext");
+    const originalFetch = globalThis.fetch;
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+    let clickActivationActive = false;
+    const execCommand = vi.fn(() => clickActivationActive);
+    const writeText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+    Object.defineProperty(window, "isSecureContext", {
+      configurable: true,
+      value: false,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            clientId: "client-a",
+            workspaceName: "Default",
+            artifacts: [{ path: "outputs/report.html", name: "report.html", kind: "html", size: 64 }],
+            activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 64 },
+            activeArtifactPayload: { kind: "html", content: "<!doctype html><html><body><h1>Preview</h1></body></html>" },
+          }}
+        >
+          <ArtifactPanel />
+          <ModalHost />
+        </AppStateProvider>,
+      );
+
+      await screen.findByTitle("report.html");
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/share/base-url", { cache: "no-store" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      clickActivationActive = true;
+      fireEvent.click(screen.getByRole("button", { name: "공유 링크 복사" }));
+      clickActivationActive = false;
+
+      expect(execCommand).toHaveBeenCalledWith("copy");
+      expect(writeText).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "공유 링크 복사됨" })).toBeTruthy();
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalIsSecureContext) {
+        Object.defineProperty(window, "isSecureContext", originalIsSecureContext);
+      } else {
+        Reflect.deleteProperty(window, "isSecureContext");
+      }
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+      if (originalExecCommand) {
+        Object.defineProperty(document, "execCommand", originalExecCommand);
+      } else {
+        Reflect.deleteProperty(document, "execCommand");
+      }
+    }
+  });
+
+  it("resets the share copied label after a successful copy", async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalFetch = globalThis.fetch;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalSetTimeout = window.setTimeout;
+    let shareResetScheduled = false;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            clientId: "client-a",
+            workspaceName: "Default",
+            artifacts: [{ path: "outputs/report.html", name: "report.html", kind: "html", size: 64 }],
+            activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 64 },
+            activeArtifactPayload: { kind: "html", content: "<!doctype html><html><body><h1>Preview</h1></body></html>" },
+          }}
+        >
+          <ArtifactPanel />
+        </AppStateProvider>,
+      );
+
+      expect(screen.getByTitle("report.html")).toBeTruthy();
+      vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        if (timeout === 1400 && typeof handler === "function") {
+          shareResetScheduled = true;
+          handler(...args);
+        }
+        return originalSetTimeout(() => undefined, 0);
+      }) as typeof window.setTimeout);
+      fireEvent.click(screen.getByRole("button", { name: "공유 링크 복사" }));
+      expect(screen.getByRole("button", { name: "공유 링크 복사됨" })).toBeTruthy();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(writeText).toHaveBeenCalled();
+
+      expect(screen.getByRole("button", { name: "공유 링크 복사" })).toBeTruthy();
+      expect(shareResetScheduled).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+    }
+  });
+
+  it("restores the share label and opens an error modal when copying the share link fails", async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalFetch = globalThis.fetch;
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("clipboard denied")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            clientId: "client-a",
+            workspaceName: "Default",
+            artifacts: [{ path: "outputs/report.html", name: "report.html", kind: "html", size: 64 }],
+            activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html", size: 64 },
+            activeArtifactPayload: { kind: "html", content: "<!doctype html><html><body><h1>Preview</h1></body></html>" },
+          }}
+        >
+          <ArtifactPanel />
+          <ModalHost />
+        </AppStateProvider>,
+      );
+
+      await screen.findByTitle("report.html");
+      fireEvent.click(screen.getByRole("button", { name: "공유 링크 복사" }));
+      expect(screen.getByRole("button", { name: "공유 링크 복사됨" })).toBeTruthy();
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "공유 링크 복사" })).toBeTruthy());
+      expect(screen.getByRole("dialog").textContent).toContain("복사에 실패했습니다.");
+    } finally {
+      globalThis.fetch = originalFetch;
       if (originalClipboard) {
         Object.defineProperty(navigator, "clipboard", originalClipboard);
       } else {
@@ -2574,6 +2886,7 @@ describe("ArtifactPanel", () => {
       paths: ["root-report.html"],
       sessionId: "session-a",
       clientId: "client-a",
+      expectedMtimes: {},
       workspacePath: "C:/repo",
       workspaceName: "repo",
     }));

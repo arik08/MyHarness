@@ -150,22 +150,30 @@ def _resolve_agent_model(
     agent_def: Any,
     context: ToolExecutionContext,
 ) -> tuple[str | None, str, str]:
+    runtime_model = _runtime_model_from_context(context)
     explicit_model = (arguments.model or "").strip()
     if explicit_model:
+        if explicit_model.lower() == "inherit":
+            if runtime_model:
+                return runtime_model, f"inherit ({runtime_model})", "explicit"
+            return None, "inherit", "explicit"
         return explicit_model, explicit_model, "explicit"
     definition_model = (getattr(agent_def, "model", None) or "").strip() if agent_def else ""
     if definition_model:
+        if definition_model.lower() == "inherit":
+            if runtime_model:
+                return runtime_model, f"inherit ({runtime_model})", "definition"
+            return None, "inherit", "definition"
         return definition_model, definition_model, "definition"
-    runtime_model = _runtime_model_from_context(context)
     if _role_uses_main_model(arguments.description, arguments.prompt, arguments.subagent_type):
         if runtime_model:
-            return None, f"inherit ({runtime_model})", "main"
+            return runtime_model, f"inherit ({runtime_model})", "main"
         return None, "inherit", "main"
     subagent_model = _subagent_model_from_context(context)
     if subagent_model:
         return subagent_model, subagent_model, "subagent"
     if runtime_model:
-        return None, f"inherit ({runtime_model})", "inherit"
+        return runtime_model, f"inherit ({runtime_model})", "inherit"
     return None, "inherit", "inherit"
 
 

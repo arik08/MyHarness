@@ -164,4 +164,97 @@ describe("TooltipLayer", () => {
 
     expect(screen.getByRole("tooltip").textContent).toBe("테마: POSCO");
   });
+
+  it("keeps a hovered tooltip visible when a click briefly moves focus away", async () => {
+    vi.useFakeTimers();
+
+    function CopyButton() {
+      const [copied, setCopied] = useState(false);
+      return (
+        <button
+          type="button"
+          data-tooltip={copied ? "공유 링크 복사됨" : "공유 링크 복사"}
+          onClick={() => setCopied(true)}
+          ref={(node) => {
+            if (!node) {
+              return;
+            }
+            node.getBoundingClientRect = () => ({
+              bottom: 46,
+              height: 34,
+              left: 40,
+              right: 74,
+              top: 12,
+              width: 34,
+              x: 40,
+              y: 12,
+              toJSON: () => ({}),
+            });
+          }}
+        >
+          share
+        </button>
+      );
+    }
+
+    render(
+      <div>
+        <CopyButton />
+        <textarea aria-label="clipboard scratch" />
+        <TooltipLayer />
+      </div>,
+    );
+
+    const button = screen.getByRole("button", { name: "share" });
+    const scratch = screen.getByRole("textbox", { name: "clipboard scratch" });
+
+    fireEvent.pointerOver(button);
+    act(() => {
+      vi.advanceTimersByTime(260);
+    });
+    expect(screen.getByRole("tooltip").textContent).toBe("공유 링크 복사");
+
+    fireEvent.click(button);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.focusOut(button, { relatedTarget: scratch });
+
+    expect(screen.getByRole("tooltip").textContent).toBe("공유 링크 복사됨");
+  });
+
+  it("shows a changed hovered tooltip immediately without waiting for the hover delay", async () => {
+    vi.useFakeTimers();
+
+    function CopyButton() {
+      const [copied, setCopied] = useState(false);
+      return (
+        <button type="button" data-tooltip={copied ? "공유 링크 복사됨" : "공유 링크 복사"} onClick={() => setCopied(true)}>
+          share
+        </button>
+      );
+    }
+
+    render(
+      <div>
+        <CopyButton />
+        <TooltipLayer />
+      </div>,
+    );
+
+    const button = screen.getByRole("button", { name: "share" });
+    fireEvent.pointerOver(button);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    fireEvent.pointerDown(button);
+    expect(screen.getByRole("tooltip").textContent).toBe("공유 링크 복사");
+
+    fireEvent.click(button);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("tooltip").textContent).toBe("공유 링크 복사됨");
+  });
+
 });

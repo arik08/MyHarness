@@ -31,7 +31,7 @@ describe("ChatPanel", () => {
     vi.mocked(sendBackendRequest).mockClear();
   });
 
-  it("closes the artifact panel when the chat area is clicked", async () => {
+  it("keeps the artifact panel open when the chat area is clicked once", async () => {
     render(
       <AppStateProvider initialState={{ ...initialAppState, artifactPanelOpen: true }}>
         <ChatPanel />
@@ -42,6 +42,21 @@ describe("ChatPanel", () => {
     expect(screen.getByLabelText("artifact panel state").textContent).toBe("open");
 
     await userEvent.click(screen.getByRole("main"));
+
+    expect(screen.getByLabelText("artifact panel state").textContent).toBe("open");
+  });
+
+  it("closes the artifact panel when the chat area is double-clicked", async () => {
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, artifactPanelOpen: true }}>
+        <ChatPanel />
+        <ArtifactPanelState />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByLabelText("artifact panel state").textContent).toBe("open");
+
+    await userEvent.dblClick(screen.getByRole("main"));
 
     expect(screen.getByLabelText("artifact panel state").textContent).toBe("closed");
   });

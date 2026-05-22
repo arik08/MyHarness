@@ -208,6 +208,30 @@ test("rejects shell command requests without an owned active session", async (t)
   assert.match(payload.error, /active session/i);
 });
 
+test("explains session limits as multi-user busy state", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared", MYHARNESS_MAX_ACTIVE_SESSIONS: "1" },
+  });
+  t.after(() => app.stop());
+
+  const firstResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "limit-a" }),
+  });
+  assert.equal(firstResponse.status, 200);
+
+  const secondResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "limit-b" }),
+  });
+  const secondPayload = await secondResponse.json();
+
+  assert.equal(secondResponse.status, 429);
+  assert.match(secondPayload.error, /여러 명이 동시에 사용 중/);
+});
+
 test("overwrites only HTML artifacts through the preview edit API", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
@@ -476,6 +500,83 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
   assert.match(savedHtml, /myharness-mermaid-expand-button/);
 });
 
+test("serves shared artifact links read-only from workspace-relative paths", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rmWithRetry(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceName = `ShareLinks${Date.now().toString(36)}`;
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: workspaceName }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  assert.equal(workspaceResponse.status, 200);
+  workspacePath = workspacePayload.workspace?.path || "";
+  assert.ok(workspacePath);
+
+  await mkdir(join(workspacePath, "outputs"), { recursive: true });
+  await writeFile(join(workspacePath, "outputs", "report.html"), "<!doctype html><html><head></head><body>Shared HTML</body></html>", "utf8");
+  await writeFile(join(workspacePath, "outputs", "notes.md"), "# Shared Notes\n<script>blocked</script>", "utf8");
+  await writeFile(join(workspacePath, "outputs", "report.pdf"), "%PDF-1.4\n", "utf8");
+
+  const htmlParams = new URLSearchParams({ workspace: workspaceName, path: "outputs/report.html" });
+  const shellResponse = await fetch(`${app.baseUrl}/share/artifact?${htmlParams.toString()}`);
+  const shell = await shellResponse.text();
+  assert.equal(shellResponse.status, 200);
+  assert.match(shell, /<iframe[^>]+\/share\/artifact\/raw\?/);
+  assert.match(shell, /data-action="toggle-source"/);
+  assert.match(shell, /data-action="copy-source"/);
+  assert.match(shell, /\/share\/artifact\/download\?/);
+  assert.match(shell, /report\.html/);
+
+  const rawHtmlResponse = await fetch(`${app.baseUrl}/share/artifact/raw?${htmlParams.toString()}`);
+  const rawHtml = await rawHtmlResponse.text();
+  assert.equal(rawHtmlResponse.status, 200);
+  assert.match(rawHtmlResponse.headers.get("content-type") || "", /text\/html/);
+  assert.match(rawHtml, /<base href="\/api\/artifact\/asset\//);
+  assert.match(rawHtml, /Shared HTML/);
+
+  const sourceHtmlResponse = await fetch(`${app.baseUrl}/share/artifact/source?${htmlParams.toString()}`);
+  const sourceHtml = await sourceHtmlResponse.text();
+  assert.equal(sourceHtmlResponse.status, 200);
+  assert.match(sourceHtmlResponse.headers.get("content-type") || "", /text\/plain/);
+  assert.match(sourceHtml, /Shared HTML/);
+  assert.doesNotMatch(sourceHtml, /<base href=/);
+
+  const downloadHtmlResponse = await fetch(`${app.baseUrl}/share/artifact/download?${htmlParams.toString()}`);
+  const downloadHtml = await downloadHtmlResponse.text();
+  assert.equal(downloadHtmlResponse.status, 200);
+  assert.match(downloadHtmlResponse.headers.get("content-disposition") || "", /attachment/);
+  assert.match(downloadHtmlResponse.headers.get("content-disposition") || "", /report\.html/);
+  assert.match(downloadHtml, /Shared HTML/);
+
+  const textParams = new URLSearchParams({ workspace: workspaceName, path: "outputs/notes.md" });
+  const textResponse = await fetch(`${app.baseUrl}/share/artifact?${textParams.toString()}`);
+  const textShell = await textResponse.text();
+  assert.equal(textResponse.status, 200);
+  assert.match(textShell, /# Shared Notes/);
+  assert.match(textShell, /&lt;script&gt;blocked&lt;\/script&gt;/);
+
+  const pdfParams = new URLSearchParams({ workspace: workspaceName, path: "outputs/report.pdf" });
+  const rawPdfResponse = await fetch(`${app.baseUrl}/share/artifact/raw?${pdfParams.toString()}`);
+  assert.equal(rawPdfResponse.status, 200);
+  assert.match(rawPdfResponse.headers.get("content-type") || "", /application\/pdf/);
+
+  const outsideParams = new URLSearchParams({ workspace: workspaceName, path: "../outside.html" });
+  const outsideResponse = await fetch(`${app.baseUrl}/share/artifact?${outsideParams.toString()}`);
+  assert.equal(outsideResponse.status, 400);
+  assert.match(await outsideResponse.text(), /inside the current project/i);
+});
+
 test("renames artifacts and keeps old history links resolvable", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
@@ -734,6 +835,16 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
     }),
   );
   await writeFile(
+    join(sessionDir, "latest-client-zeta.json"),
+    JSON.stringify({
+      session_id: "zeta",
+      created_at: 200,
+      summary: "zeta pinned session",
+      messages: [],
+      message_count: 1,
+    }),
+  );
+  await writeFile(
     join(sessionDir, "session-alpha.json"),
     JSON.stringify({
       session_id: "alpha",
@@ -752,6 +863,8 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
   const pinZetaPayload = await pinZetaResponse.json();
   assert.equal(pinZetaResponse.status, 200);
   assert.equal(pinZetaPayload.pinned, true);
+  const latestClientZeta = JSON.parse(await readFile(join(sessionDir, "latest-client-zeta.json"), "utf8"));
+  assert.equal(latestClientZeta.pinned, true);
   const pinAlphaResponse = await fetch(`${app.baseUrl}/api/history/pin`, {
     method: "POST",
     headers: { "content-type": "application/json" },

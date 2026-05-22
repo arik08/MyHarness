@@ -22,11 +22,12 @@
 
 ## Code Graph MCP
 
-- `better-code-review-graph` MCP는 복잡한 코드 수정, 리팩터링, 버그 수정, 영향 범위 검토처럼 호출 관계 확인이 실제로 도움이 되는 경우에만 선택적으로 사용하세요.
-- 단일 컴포넌트·단일 파일·문구·설정 UI·테스트 보강처럼 범위가 좁은 작업은 `rg`, 실제 파일 확인, 타입체크/테스트/브라우저 확인을 우선하고 그래프 사용을 생략해도 됩니다.
-- 그래프를 사용할 때도 build/update부터 시작하지 말고, 기존 인덱스에 대해 `callers_of`, `callees_of`, `imports_of`, `importers_of`, `tests_for`, `impact` 같은 저비용 query를 먼저 시도하세요.
-- 단순 키워드 검색 결과만으로 아키텍처 결론을 내리지 말고, 그래프 query 결과가 유효한 경우에는 실제 파일 내용과 함께 확인하세요.
+- `better-code-review-graph` MCP의 기존 인덱스 조회는 부담이 작으므로 코드 수정, 리뷰, 리팩터링, 버그 조사, 영향 범위 검토에서는 무난하게 자주 사용하세요.
+- 여러 파일이 얽힌 작업, 기존 함수·컴포넌트·API의 사용처가 궁금한 작업, 프론트엔드-백엔드 계약이나 상태 흐름을 건드리는 작업에서는 `rg`만으로 결론내기 전에 그래프 query를 먼저 한 번 확인하세요.
+- 단일 파일 작업이라도 호출자, import 관계, 테스트 위치, 변경 여파가 조금이라도 애매하면 기존 인덱스에 대해 `callers_of`, `callees_of`, `imports_of`, `importers_of`, `tests_for`, `impact` 같은 저비용 query를 먼저 시도하세요.
+- 그래프 조회를 생략해도 되는 경우는 순수 문구 수정, 명백히 독립적인 스타일 한 줄 수정, 이미 열린 파일 안에서 완전히 국소적인 변경처럼 영향 범위가 자명한 작업으로 제한하세요.
+- 그래프를 사용할 때는 build/update부터 시작하지 말고, 기존 인덱스에 대한 읽기 query를 우선하세요. 단순 키워드 검색 결과만으로 아키텍처 결론을 내리지 말고, 그래프 query 결과가 유효한 경우에는 실제 파일 내용과 함께 확인하세요.
 - 그래프 결과가 없거나 오래됐다고 의심되어도, 작업 안전성이 그래프 최신성에 달려 있지 않다면 build/update로 시간을 쓰지 말고 파일 기반 확인으로 진행한 뒤 한계를 짧게 공유하세요.
 - graph build/update는 사용자가 명시적으로 요청했거나, 넓은 리팩터링처럼 최신 그래프 없이는 위험한 경우에만 실행하세요. 한 번 긴 timeout으로 실패하면 자동 재시도하지 말고, ignore 범위나 부분 생성 상태를 점검할 필요가 있다고 보고한 뒤 테스트/타입체크 같은 검증을 우선하세요.
 - graph build/update는 MCP tool call 경로가 Codex 앱의 120초 대기 제한에 걸릴 수 있으므로, 긴 timeout이 필요한 경우 MCP `graph` 호출 대신 `uvx --python 3.13 --from better-code-review-graph python -X utf8 -c "from better_code_review_graph.tools import build_or_update_graph; print(build_or_update_graph(full_rebuild=False, repo_root=r'C:\Users\user\Desktop\Documents\Python\MyHarness'))"`처럼 패키지 내부 함수를 직접 실행하세요. 600초 안에도 완료되지 않으면 해당 세션에서는 그래프를 쓰지 말고 파일 기반 확인으로 진행하세요.
-- 그래프 MCP는 보조 검토 도구입니다. 오래 걸리는 그래프 갱신이 구현, 테스트, 브라우저 확인을 막지 않게 하세요.
+- 그래프 MCP는 구현을 막는 장시간 갱신 작업이 아니라면 적극적인 사전 조회 도구로 취급하세요. 읽기 query는 부담이 작으므로 영향 범위 파악에 자주 활용하세요.
