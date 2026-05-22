@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from myharness.coordinator.agent_definitions import get_agent_definition
+from myharness.coordinator.agent_definitions import get_agent_definition, resolve_agent_system_prompt
 from myharness.coordinator.coordinator_mode import get_team_registry
 from myharness.hooks import HookEvent
 from myharness.swarm.types import TeammateSpawnConfig
@@ -264,7 +264,7 @@ class AgentTool(BaseTool):
             active_profile=_active_profile_from_context(context),
             effort=agent_effort,
             command=arguments.command,
-            system_prompt=agent_def.system_prompt if agent_def else None,
+            system_prompt=resolve_agent_system_prompt(agent_def),
             permissions=agent_def.permissions if agent_def else [],
             task_type=arguments.mode,
         )

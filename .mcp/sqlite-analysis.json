@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "sqlite_analysis": {
+      "type": "stdio",
+      "command": "py",
+      "args": [
+        "-3",
+        "C:\\Users\\Myeongcheol\\Desktop\\Documents\\Programing\\MyHarness\\.mcp\\sqlite_analysis_server.py"
+      ],
+      "cwd": "C:\\Users\\Myeongcheol\\Desktop\\Documents\\Programing\\MyHarness"
+    }
+  }
+}

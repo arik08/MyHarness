@@ -251,6 +251,32 @@ describe("Composer", () => {
     expect(screen.getByRole("option", { name: /\$skill-10/ })).toBeTruthy();
   });
 
+  it("shows configured MCP servers in dollar suggestions", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          mcpServers: [
+            { name: "sqlite_analysis", state: "connected", transport: "stdio", tool_count: 4, resource_count: 1 },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    await user.type(input, "$mcp:sq");
+
+    const option = screen.getByRole("option", { name: /\$mcp:sqlite_analysis/ });
+    expect(option.textContent).toContain("도구 4");
+
+    await user.keyboard("{Enter}");
+    expect(input).toHaveProperty("value", "$mcp:sqlite_analysis");
+  });
+
   it("shows skill suggestions when dollar is typed in the middle of the draft", async () => {
     const user = userEvent.setup();
     render(

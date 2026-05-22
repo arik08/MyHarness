@@ -56,6 +56,7 @@ from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
 from myharness.skills.types import SkillDefinition
 from myharness.tasks import get_task_manager
+from myharness.tools.mcp_tool import _sanitize_tool_segment
 from myharness.ui.async_agents import (
     format_completed_task_notifications,
     pending_async_agent_entries,
@@ -1712,6 +1713,9 @@ class ReactBackendHost:
         await self._emit(self._status_snapshot())
 
     def _line_with_forced_skill(self, line: str) -> str:
+        mcp_prompt = self._line_with_forced_mcp(line)
+        if mcp_prompt is not None:
+            return mcp_prompt
         parsed = self._parse_forced_skill_line(line)
         if parsed is None:
             return line
@@ -1731,6 +1735,37 @@ class ReactBackendHost:
             "```md\n"
             f"{skill.content.strip()}\n"
             "```\n\n"
+            f"User request:\n{request_text}"
+        )
+
+    def _line_with_forced_mcp(self, line: str) -> str | None:
+        parsed = self._parse_forced_mcp_line(line)
+        if parsed is None:
+            return None
+        server_name, user_request = parsed
+        status = next(
+            (item for item in self._mcp_statuses_for_snapshot() if item.name.lower() == server_name.lower()),
+            None,
+        )
+        if status is None or status.state == "disabled":
+            return None
+        request_text = user_request.strip() or "(No additional request was provided.)"
+        tool_names = [
+            f"mcp__{_sanitize_tool_segment(status.name)}__{_sanitize_tool_segment(tool.name)}"
+            for tool in status.tools
+        ]
+        tool_line = ", ".join(tool_names) if tool_names else "(tool list not available yet)"
+        list_tables_tool = next((name for name in tool_names if name.endswith("__list_tables")), "")
+        return (
+            f"The user explicitly selected the `{status.name}` MCP server with `$mcp:`. "
+            "Use this selected MCP server before answering whenever the request can be satisfied by it. "
+            "If the server exposes an appropriate tool, call that MCP tool first and base the answer on the result. "
+            "For questions about what data is available or what can be queried, call "
+            f"`{list_tables_tool or 'the selected MCP list_tables tool'}` first instead of relying only on generic MCP resource listing.\n\n"
+            f"Selected MCP server: {status.name}\n"
+            f"State: {status.state}\n"
+            f"Transport: {status.transport}\n"
+            f"Available selected MCP tools: {tool_line}\n\n"
             f"User request:\n{request_text}"
         )
 
@@ -1771,6 +1806,22 @@ class ReactBackendHost:
         if canonical_name is None:
             return None
         return canonical_name, user_request
+
+    def _parse_forced_mcp_line(self, line: str) -> tuple[str, str] | None:
+        servers = {status.name.lower(): status.name for status in self._mcp_statuses_for_snapshot()}
+        skills = {skill.name.lower() for skill in self._skill_snapshots()}
+        for match in re.finditer(r"(?<!\S)\$(?:mcp:)?([A-Za-z0-9_.:-]+)(?!\S)", line):
+            requested_name = match.group(1).strip()
+            if not requested_name:
+                continue
+            canonical_name = servers.get(requested_name.lower())
+            if canonical_name is None:
+                continue
+            if not match.group(0).lower().startswith("$mcp:") and requested_name.lower() in skills:
+                continue
+            user_request = f"{line[:match.start()]}{line[match.end():]}".strip()
+            return canonical_name, user_request
+        return None
 
     async def _apply_select_command(self, command_name: str, value: str) -> bool:
         command = command_name.strip().lstrip("/").lower()

@@ -13,6 +13,7 @@ from myharness.commands.registry import CommandContext, create_default_command_r
 from myharness.autopilot import RepoVerificationStep
 from myharness.config.paths import get_feedback_log_path, get_project_issue_file, get_project_pr_comments_file
 from myharness.config.settings import load_settings, save_settings, Settings
+from myharness.coordinator.agent_definitions import AgentDefinition
 from myharness.engine.messages import ConversationMessage, TextBlock
 from myharness.engine.query_engine import QueryEngine
 from myharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
@@ -994,6 +995,7 @@ async def test_agents_help_and_subagents_alias(tmp_path: Path, monkeypatch):
     agents_help_result = await agents_help_command.handler(agents_help_args, context)
     assert "서브에이전트 안내:" in agents_help_result.message
     assert 'subagent_type="worker"' in agents_help_result.message
+    assert "/agents presets" in agents_help_result.message
 
     subagents_command, subagents_args = registry.lookup("/subagents")
     assert subagents_command is not None
@@ -1004,6 +1006,35 @@ async def test_agents_help_and_subagents_alias(tmp_path: Path, monkeypatch):
     assert agents_command is not None
     agents_result = await agents_command.handler(agents_args, context)
     assert "서브에이전트 안내:" in agents_result.message
+
+
+@pytest.mark.asyncio
+async def test_agents_presets_lists_registered_subagent_types(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        registry_module,
+        "get_all_agent_definitions",
+        lambda: [
+            AgentDefinition(name="worker", description="generic worker", subagent_type="worker"),
+            AgentDefinition(
+                name="office-subagent-presets:cost-analyst",
+                description="cost analysis",
+                subagent_type="cost-analyst",
+                source="plugin",
+            ),
+        ],
+    )
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+
+    agents_command, agents_args = registry.lookup("/agents presets")
+    assert agents_command is not None
+    result = await agents_command.handler(agents_args, context)
+
+    assert "등록된 subagent preset:" in result.message
+    assert "cost-analyst (office-subagent-presets:cost-analyst) [plugin]: cost analysis" in result.message
+    assert "generic worker" not in result.message
 
 
 @pytest.mark.asyncio

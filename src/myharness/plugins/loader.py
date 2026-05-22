@@ -233,6 +233,28 @@ def _parse_frontmatter(content: str, path: Path) -> tuple[dict[str, Any], str]:
     return parsed, body.strip()
 
 
+def _read_frontmatter_header(path: Path) -> dict[str, Any]:
+    """Read only a markdown file's YAML frontmatter header."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            first = handle.readline()
+            if first.strip() != "---":
+                return {}
+            lines: list[str] = []
+            for line in handle:
+                if line.strip() == "---":
+                    try:
+                        parsed = yaml.safe_load("".join(lines)) or {}
+                    except yaml.YAMLError:
+                        logger.debug("Failed to parse frontmatter from %s", path, exc_info=True)
+                        return {}
+                    return parsed if isinstance(parsed, dict) else {}
+                lines.append(line)
+    except OSError:
+        logger.debug("Failed to read frontmatter from %s", path, exc_info=True)
+    return {}
+
+
 def _extract_description(frontmatter: dict[str, Any], body: str, *, fallback: str) -> str:
     description = frontmatter.get("description")
     if isinstance(description, str) and description.strip():
@@ -565,8 +587,7 @@ def _load_single_agent_file(
     if resolved in seen:
         return None
     seen.add(resolved)
-    content = file_path.read_text(encoding="utf-8")
-    frontmatter, body = _parse_agent_frontmatter(content)
+    frontmatter = _read_frontmatter_header(file_path)
 
     base_agent_name = str(frontmatter.get("name", "")).strip() or file_path.stem
     agent_name = ":".join([plugin_name, *namespace, base_agent_name])
@@ -630,7 +651,7 @@ def _load_single_agent_file(
     return AgentDefinition(
         name=agent_name,
         description=description,
-        system_prompt=body or None,
+        system_prompt=None,
         tools=tools,
         disallowed_tools=disallowed_tools,
         model=model,
@@ -649,7 +670,7 @@ def _load_single_agent_file(
         critical_system_reminder=critical_system_reminder,
         required_mcp_servers=required_mcp_servers,
         permissions=permissions,
-        filename=base_agent_name,
+        filename=file_path.stem,
         base_dir=str(file_path.parent),
         subagent_type=str(frontmatter.get("subagent_type", agent_name)),
         source="plugin",

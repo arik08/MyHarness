@@ -946,11 +946,35 @@ def get_all_agent_definitions() -> list[AgentDefinition]:
 
 
 def get_agent_definition(name: str) -> AgentDefinition | None:
-    """Return the agent definition for *name*, or ``None`` if not found."""
-    for agent in get_all_agent_definitions():
-        if agent.name == name:
+    """Return the agent definition for *name* or matching ``subagent_type``."""
+    normalized = name.strip()
+    agents = get_all_agent_definitions()
+    for agent in agents:
+        if agent.name == normalized:
+            return agent
+    for agent in agents:
+        if agent.subagent_type == normalized:
             return agent
     return None
+
+
+def resolve_agent_system_prompt(agent: AgentDefinition | None) -> str | None:
+    """Return an agent's system prompt, loading markdown body lazily if needed."""
+    if agent is None:
+        return None
+    if agent.system_prompt:
+        return agent.system_prompt
+    if not agent.base_dir or not agent.filename:
+        return None
+    path = Path(agent.base_dir) / f"{agent.filename}.md"
+    if not path.is_file():
+        return None
+    try:
+        _, body = _parse_agent_frontmatter(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.debug("Failed to resolve agent system prompt from %s", path, exc_info=True)
+        return None
+    return body or None
 
 
 def has_required_mcp_servers(agent: AgentDefinition, available_servers: list[str]) -> bool:

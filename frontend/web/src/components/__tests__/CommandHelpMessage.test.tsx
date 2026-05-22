@@ -418,6 +418,34 @@ describe("CommandHelpMessage", () => {
     expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
+  it("keeps POSCO demo MCP connectors visible with configured MCP servers", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "MCP 서버:",
+      "- sqlite_analysis [활성] (stdio, tools=4, resources=1)",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1" }}>
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "MCP");
+    const buttons = screen.getAllByRole("button");
+    const demoIndex = buttons.findIndex((button) => button.textContent?.includes("posco-email"));
+    const configuredIndex = buttons.findIndex((button) => button.textContent?.includes("sqlite_analysis"));
+    expect(demoIndex).toBeGreaterThanOrEqual(0);
+    expect(configuredIndex).toBeGreaterThanOrEqual(0);
+    expect(demoIndex).toBeLessThan(configuredIndex);
+    expect(buttons[configuredIndex].textContent).toContain("stdio");
+    expect(screen.getByRole("button", { name: /posco-email/ }).textContent).toContain("[연결필요]");
+    expect(screen.getByRole("button", { name: /posco-datalake/ }).textContent).toContain("정형 데이터");
+  });
+
   it("collapses plugin-owned skills in the help view when their plugin is toggled off", async () => {
     const user = userEvent.setup();
     const helpText = [

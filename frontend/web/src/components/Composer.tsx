@@ -4,7 +4,7 @@ import { cancelMessage, sendMessage } from "../api/messages";
 import { startSession } from "../api/session";
 import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
-import type { ArtifactSummary, Attachment, CommandItem, SkillItem } from "../types/backend";
+import type { ArtifactSummary, Attachment, CommandItem, McpServerItem, SkillItem } from "../types/backend";
 import { artifactDisplayName } from "../utils/artifacts";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { InlineQuestion } from "./InlineQuestion";
@@ -16,6 +16,7 @@ const maxImageBytes = 10 * 1024 * 1024;
 type Suggestion =
   | { kind: "command"; value: string; label: string; description: string }
   | { kind: "skill"; value: string; label: string; description: string }
+  | { kind: "mcp"; value: string; label: string; description: string }
   | { kind: "file"; value: string; label: string; description: string };
 
 type ActiveSuggestionToken = {
@@ -81,6 +82,26 @@ function skillSuggestions(skills: SkillItem[], query: string): Suggestion[] {
     }));
 }
 
+function mcpSuggestions(servers: McpServerItem[], query: string): Suggestion[] {
+  const normalized = query.replace(/^\$/, "").replace(/^mcp:/i, "").toLowerCase();
+  return servers
+    .filter((server) => server.state !== "disabled" && server.name.toLowerCase().includes(normalized))
+    .map((server) => {
+      const details = [
+        server.state || "configured",
+        server.transport,
+        Number.isFinite(server.tool_count) ? `도구 ${server.tool_count}` : "",
+        Number.isFinite(server.resource_count) ? `리소스 ${server.resource_count}` : "",
+      ].filter(Boolean);
+      return {
+        kind: "mcp",
+        value: `$mcp:${server.name}`,
+        label: `$mcp:${server.name}`,
+        description: details.join(" · ") || server.detail || "MCP 서버",
+      };
+    });
+}
+
 function fileSuggestions(artifacts: ArtifactSummary[], query: string): Suggestion[] {
   const normalized = query.replace(/^@/, "").toLowerCase();
   return artifacts
@@ -138,10 +159,15 @@ export function Composer() {
   const suggestions = useMemo(() => {
     if (!suggestionToken) return [];
     if (suggestionToken.trigger === "/") return commandSuggestions(state.commands, suggestionToken.query);
-    if (suggestionToken.trigger === "$") return skillSuggestions(state.skills, suggestionToken.query);
+    if (suggestionToken.trigger === "$") {
+      return [
+        ...skillSuggestions(state.skills, suggestionToken.query),
+        ...mcpSuggestions(state.mcpServers, suggestionToken.query),
+      ];
+    }
     if (suggestionToken.trigger === "@") return fileSuggestions(state.artifacts, suggestionToken.query);
     return [];
-  }, [state.artifacts, state.commands, state.skills, suggestionToken]);
+  }, [state.artifacts, state.commands, state.mcpServers, state.skills, suggestionToken]);
   const activeSuggestionIndex = suggestions.length ? Math.min(selectedSuggestionIndex, suggestions.length - 1) : 0;
 
   useEffect(() => {

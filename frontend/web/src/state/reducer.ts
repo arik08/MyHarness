@@ -267,6 +267,7 @@ export const initialAppState: AppState = {
   sidebarResizing: false,
   commands: [],
   skills: [],
+  mcpServers: [],
   workspaceName: "",
   workspacePath: "",
   workspaceScope: { mode: "shared", name: "shared", root: "" },
@@ -1299,6 +1300,31 @@ function normalizeSkills(skills: unknown[]): SkillItem[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function normalizeMcpServers(servers: unknown[]): AppState["mcpServers"] {
+  return servers
+    .map((server) => {
+      if (typeof server === "string") {
+        return { name: server, state: "configured" };
+      }
+      if (server && typeof server === "object") {
+        const raw = server as Record<string, unknown>;
+        const toolCount = Number(raw.tool_count);
+        const resourceCount = Number(raw.resource_count);
+        return {
+          name: String(raw.name || "").trim(),
+          state: String(raw.state || "configured").trim(),
+          detail: String(raw.detail || "").trim(),
+          transport: String(raw.transport || "").trim(),
+          tool_count: Number.isFinite(toolCount) ? toolCount : undefined,
+          resource_count: Number.isFinite(resourceCount) ? resourceCount : undefined,
+        };
+      }
+      return { name: "", state: "configured" };
+    })
+    .filter((server) => server.name)
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
 function normalizeChatTitle(value: string) {
   return value.trim() || "MyHarness";
 }
@@ -2039,9 +2065,12 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         ...next,
         commands: normalizeCommands(Array.isArray(event.commands) ? event.commands : []),
         skills: normalizeSkills(Array.isArray(event.skills) ? event.skills : []),
+        mcpServers: normalizeMcpServers(Array.isArray(event.mcp_servers) ? event.mcp_servers : []),
       };
     }
-    return next;
+    return Array.isArray(event.mcp_servers)
+      ? { ...next, mcpServers: normalizeMcpServers(event.mcp_servers) }
+      : next;
   }
 
   if (event.type === "skills_snapshot") {

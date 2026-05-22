@@ -9,7 +9,9 @@ from myharness.coordinator.agent_definitions import (
     AgentDefinition,
     _parse_agent_frontmatter,
     get_builtin_agent_definitions,
+    get_agent_definition,
     load_agents_dir,
+    resolve_agent_system_prompt,
 )
 
 
@@ -120,6 +122,41 @@ def test_builtin_provider_agnostic_agents_use_inherit_or_none():
             f"Built-in agent {name!r} sets model={agent.model!r}; "
             "provider-agnostic agents should use None or 'inherit'."
         )
+
+
+def test_get_agent_definition_matches_subagent_type(monkeypatch):
+    agents = [
+        AgentDefinition(
+            name="plugin-name:cost-analyst",
+            description="cost work",
+            subagent_type="cost-analyst",
+            source="plugin",
+        )
+    ]
+    monkeypatch.setattr(
+        "myharness.coordinator.agent_definitions.get_all_agent_definitions",
+        lambda: agents,
+    )
+
+    assert get_agent_definition("cost-analyst") is agents[0]
+    assert get_agent_definition("plugin-name:cost-analyst") is agents[0]
+
+
+def test_resolve_agent_system_prompt_loads_body_lazily(tmp_path):
+    md = tmp_path / "lazy.md"
+    md.write_text(
+        "---\nname: lazy\ndescription: lazy agent\n---\nLazy body.",
+        encoding="utf-8",
+    )
+    agent = AgentDefinition(
+        name="plugin:lazy",
+        description="lazy agent",
+        filename="lazy",
+        base_dir=str(tmp_path),
+        source="plugin",
+    )
+
+    assert resolve_agent_system_prompt(agent) == "Lazy body."
 # _parse_agent_frontmatter
 # ---------------------------------------------------------------------------
 

@@ -11,6 +11,7 @@ from myharness.config.paths import (
     get_project_pr_comments_file,
 )
 from myharness.config.settings import Settings
+from myharness.coordinator.agent_definitions import get_all_agent_definitions
 from myharness.coordinator.coordinator_mode import get_coordinator_system_prompt, is_coordinator_mode
 from myharness.memory import find_relevant_memories, load_memory_prompt
 from myharness.personalization.rules import load_local_rules
@@ -80,9 +81,11 @@ def _build_delegation_section() -> str:
             "",
             "Default pattern:",
             '- For coding implementation, spawn with `agent(description=..., prompt=..., subagent_type=\"worker\")`.',
-            '- For office/research/analysis workers, set `team=\"office\"` and omit `subagent_type` unless a specific non-code agent definition applies.',
+            "- For office/research/analysis workers, set `team=\"office\"`. If an available preset below fits, set "
+            "`subagent_type` to that preset route; otherwise omit `subagent_type` and create a focused ad-hoc worker prompt.",
             "- Inspect running or recorded workers with `/agents`.",
             "- Inspect one worker in detail with `/agents show TASK_ID`.",
+            "- Inspect available presets with `/agents presets`.",
             "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
             "- Read worker output with `task_output(task_id=...)`.",
             "- Stop a stalled worker with `task_stop(task_id=...)` before retrying with a narrower prompt.",
@@ -90,6 +93,35 @@ def _build_delegation_section() -> str:
             "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
         ]
     )
+
+
+def _build_subagent_presets_section() -> str | None:
+    """Build a compact catalog of subagent presets without agent prompt bodies."""
+    try:
+        agents = get_all_agent_definitions()
+    except Exception:
+        return None
+    rows = [
+        agent
+        for agent in agents
+        if agent.source != "builtin"
+        and agent.name not in {"general-purpose", "worker", "verification", "Explore", "Plan"}
+    ]
+    if not rows:
+        return None
+    lines = [
+        "# Available Subagent Presets",
+        "",
+        "Use these routes with `agent(..., team=\"office\", subagent_type=\"<route>\", prompt=\"...\")` "
+        "when the preset matches the delegated task. If none fit, omit `subagent_type` and write a self-contained ad-hoc worker prompt.",
+        "Each entry gives the route and a short when-to-use cue; the selected worker receives the full preset instructions separately.",
+        "",
+    ]
+    for agent in sorted(rows, key=lambda item: (item.source, item.subagent_type or item.name)):
+        route = agent.subagent_type or agent.name
+        description = " ".join(agent.description.split())
+        lines.append(f"- `{route}` — when to use: {description}")
+    return "\n".join(lines)
 
 
 def _build_task_worker_section() -> str:
@@ -176,6 +208,9 @@ def build_runtime_system_prompt(
         sections.append(_build_task_worker_section())
     elif not coordinator_mode:
         sections.append(_build_delegation_section())
+        subagent_presets_section = _build_subagent_presets_section()
+        if subagent_presets_section:
+            sections.append(subagent_presets_section)
         sections.append(_build_long_report_section())
 
     project_instructions = load_project_instructions_prompt(cwd)

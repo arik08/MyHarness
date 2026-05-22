@@ -20,6 +20,7 @@ from myharness.engine.stream_events import (
     ToolInputDelta,
 )
 from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.mcp.types import McpConnectionStatus, McpToolInfo
 from myharness.services.long_report_progress import write_long_report_progress_state
 from myharness.tasks.types import TaskRecord
 from myharness.ui.backend_host import (
@@ -2102,6 +2103,54 @@ async def test_backend_host_apply_subagent_effort_select_command_updates_tool_me
     assert metadata_effort == "high"
     user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
     assert user_event.item.text == "/subagent_effort"
+
+
+def test_forced_mcp_line_builds_selected_server_prompt():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._mcp_statuses_for_snapshot = lambda: [  # type: ignore[method-assign]
+        McpConnectionStatus(
+            name="sqlite_analysis",
+            state="connected",
+            transport="stdio",
+            tools=[
+                McpToolInfo(
+                    server_name="sqlite_analysis",
+                    name="list_tables",
+                    description="List tables",
+                    input_schema={"type": "object"},
+                ),
+                McpToolInfo(
+                    server_name="sqlite_analysis",
+                    name="query",
+                    description="Run SQL",
+                    input_schema={"type": "object"},
+                )
+            ],
+        )
+    ]
+    host._skill_snapshots = lambda hide_learned=True: []  # type: ignore[method-assign]
+
+    prompt = host._line_with_forced_skill("$mcp:sqlite_analysis cars 테이블 목록")
+
+    assert "explicitly selected the `sqlite_analysis` MCP server" in prompt
+    assert "mcp__sqlite_analysis__query" in prompt
+    assert "mcp__sqlite_analysis__list_tables" in prompt
+    assert "cars 테이블 목록" in prompt
+
+
+def test_forced_mcp_line_accepts_middle_token_and_short_server_token():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._mcp_statuses_for_snapshot = lambda: [  # type: ignore[method-assign]
+        McpConnectionStatus(name="sqlite_analysis", state="connected", transport="stdio")
+    ]
+    host._skill_snapshots = lambda hide_learned=True: []  # type: ignore[method-assign]
+
+    middle_prompt = host._line_with_forced_skill("cars 데이터를 $mcp:sqlite_analysis 로 분석해줘")
+    short_prompt = host._line_with_forced_skill("cars 데이터를 $sqlite_analysis 로 분석해줘")
+
+    assert "Selected MCP server: sqlite_analysis" in middle_prompt
+    assert "cars 데이터를  로 분석해줘" in middle_prompt
+    assert "Selected MCP server: sqlite_analysis" in short_prompt
 
 
 @pytest.mark.asyncio

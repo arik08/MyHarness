@@ -9,6 +9,7 @@ from myharness.config.paths import (
     get_project_issue_file,
     get_project_pr_comments_file,
 )
+from myharness.coordinator.agent_definitions import AgentDefinition
 from myharness.engine.messages import ConversationMessage, TextBlock
 from myharness.personalization import rules as personalization_rules
 from myharness.personalization.session_hook import update_rules_from_session
@@ -183,6 +184,36 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
     assert "Do not let one lagging worker block the whole task" in prompt
     assert "/agents show TASK_ID" in prompt
     assert "Environment" in prompt
+
+
+def test_build_runtime_system_prompt_lists_subagent_presets_without_bodies(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    monkeypatch.setattr(
+        "myharness.prompts.context.get_all_agent_definitions",
+        lambda: [
+            AgentDefinition(name="worker", description="generic worker", subagent_type="worker"),
+            AgentDefinition(
+                name="office-subagent-presets:cost-analyst",
+                description="Use for cost and margin analysis.",
+                subagent_type="cost-analyst",
+                source="plugin",
+                system_prompt="You are a cost analysis worker. This body must stay lazy.",
+            ),
+        ],
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="원가 분석해줘")
+
+    assert "Available Subagent Presets" in prompt
+    assert "`cost-analyst` — when to use: Use for cost and margin analysis." in prompt
+    assert 'subagent_type="<route>"' in prompt
+    assert "the selected worker receives the full preset instructions separately" in prompt
+    assert "omit `subagent_type` and write a self-contained ad-hoc worker prompt" in prompt
+    assert "You are a cost analysis worker" not in prompt
+    assert "generic worker" not in prompt
 
 
 def test_build_runtime_system_prompt_disables_split_report_generation(tmp_path: Path, monkeypatch):

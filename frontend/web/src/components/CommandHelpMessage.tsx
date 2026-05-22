@@ -277,7 +277,7 @@ function parseMcpCatalog(text: string): ToggleEntry[] {
   if (!source || source === "(no MCP servers configured)" || source === "(설정된 MCP 서버가 없습니다)") {
     return demoMcpItems;
   }
-  return source
+  const configuredItems = source
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
@@ -292,6 +292,11 @@ function parseMcpCatalog(text: string): ToggleEntry[] {
       };
     })
     .filter((item): item is ToggleEntry => Boolean(item));
+  const configuredNames = new Set(configuredItems.map((item) => item.name.toLowerCase()));
+  return [
+    ...demoMcpItems.filter((item) => !configuredNames.has(item.name.toLowerCase())),
+    ...configuredItems,
+  ];
 }
 
 function parsePluginCatalog(text: string): ToggleEntry[] {

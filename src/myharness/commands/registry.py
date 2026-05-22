@@ -37,6 +37,7 @@ from myharness.config.settings import (
     model_output_profile,
     save_settings,
 )
+from myharness.coordinator.agent_definitions import get_all_agent_definitions
 from myharness.engine.messages import ConversationMessage, sanitize_conversation_messages
 from myharness.engine.query_engine import QueryEngine
 from myharness.learning import get_default_learning_skills_dir
@@ -1010,6 +1011,7 @@ def create_default_command_registry(
             "서브에이전트 안내:\n"
             "- 백그라운드 작업이나 병렬 조사가 필요할 때 모델에게 에이전트 도구로 위임하라고 요청하세요.\n"
             '- 일반적인 작업자 형태는 subagent_type="worker"입니다.\n'
+            "- /agents presets 는 현재 등록된 subagent preset을 보여줍니다.\n"
             "- /agents 는 알려진 작업자 태스크를 나열합니다.\n"
             "- /agents show TASK_ID 는 특정 작업자의 출력과 메타데이터를 보여줍니다.\n"
             "- send_message(task_id=..., message=...) 로 생성된 작업자에게 후속 메시지를 보낼 수 있습니다.\n"
@@ -1019,6 +1021,22 @@ def create_default_command_registry(
             return CommandResult(
                 message=guide
             )
+        if tokens and tokens[0] in {"presets", "preset"}:
+            agents = sorted(get_all_agent_definitions(), key=lambda agent: (agent.source, agent.name))
+            rows = [
+                agent
+                for agent in agents
+                if agent.name not in {"general-purpose", "worker", "verification", "Explore", "Plan"}
+            ]
+            if not rows:
+                return CommandResult(message="등록된 subagent preset이 없습니다.")
+            lines = ["등록된 subagent preset:"]
+            for agent in rows:
+                source = f" [{agent.source}]" if agent.source != "builtin" else ""
+                route = agent.subagent_type or agent.name
+                name = route if route == agent.name else f"{route} ({agent.name})"
+                lines.append(f"- {name}{source}: {agent.description}")
+            return CommandResult(message="\n".join(lines))
         if tokens and tokens[0] == "show" and len(tokens) == 2:
             task = get_task_manager().get_task(tokens[1])
             if task is None or task.type not in {"local_agent", "remote_agent", "in_process_teammate"}:
