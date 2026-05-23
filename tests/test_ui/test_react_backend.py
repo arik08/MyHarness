@@ -107,23 +107,22 @@ def test_long_report_progress_infers_path_and_reads_streamed_file(tmp_path):
     assert "<h1>생성 중</h1>" in preview
 
 
-def test_long_report_progress_preview_keeps_full_raw_file_text(tmp_path):
+def test_long_report_progress_preview_uses_recent_file_tail(tmp_path):
     progress_path = "outputs/report.html"
     report_path = tmp_path / progress_path
     report_path.parent.mkdir(parents=True)
     report_path.write_text(
         "<!doctype html><html><head><style>.x{}</style></head><body>"
-        + "<p>초반 HTML 본문</p>" * 500
+        + "<p>초반 HTML 본문</p>" * 5_000
         + "<p>마지막 사람이 읽을 본문</p></body></html>",
         encoding="utf-8",
     )
 
     preview = _progress_preview_content("write_long_report", tmp_path, progress_path)
 
-    assert preview.startswith("<!doctype html>")
-    assert "<p>초반 HTML 본문</p>" in preview
+    assert preview.startswith("...\n")
     assert "마지막 사람이 읽을 본문" in preview
-    assert len(preview) == len(report_path.read_text(encoding="utf-8"))
+    assert len(preview) < len(report_path.read_text(encoding="utf-8"))
 
 
 def test_long_report_progress_usage_reads_sidecar_state(tmp_path):

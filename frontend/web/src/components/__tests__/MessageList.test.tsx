@@ -2366,7 +2366,7 @@ describe("MessageList", () => {
               id: "workflow-long-report-running",
               toolName: "write_long_report",
               title: "write_long_report",
-              detail: "파일 작업 중... 44초 경과 · outputs/cpu_주가_급등_분석_보고서.html",
+              detail: "3/8 섹션 작성 중 · 산업별 충격 비교 · 작성 98,234 토큰 · 44초 경과",
               status: "running",
               level: "child",
               toolInput: {
@@ -2385,6 +2385,8 @@ describe("MessageList", () => {
 
     expect(screen.getByText("작성 중인 결과물 - cpu_주가_급등_분석_보고서.html")).toBeTruthy();
     expect(screen.getByText("작성 사용량 98,234 토큰")).toBeTruthy();
+    expect(screen.getByText(/3\/8 섹션 작성 중 · 산업별 충격 비교/)).toBeTruthy();
+    expect(screen.queryByText(/섹션별 작성\/이어쓰기\/검토 후 병합 중/)).toBeNull();
     expect(screen.queryByText(/1,781 토큰/)).toBeNull();
   });
 

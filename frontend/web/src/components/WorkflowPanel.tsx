@@ -189,10 +189,6 @@ function workflowLongReportOutputPath(input: Record<string, unknown> | null | un
   return `outputs/${slugifyWorkflowReportTitle(input?.title)}_report${suffix}`;
 }
 
-function workflowElapsedDetail(detail: string) {
-  return String(detail || "").match(/(?:\d+분(?: \d+초)?|\d+초) 경과/)?.[0] || "";
-}
-
 function splitWorkflowPreviewLines(value: string) {
   const normalized = String(value || "").replace(/\r\n/g, "\n");
   return normalized ? normalized.split("\n") : [""];
@@ -294,9 +290,8 @@ function replaceLiteral(value: string, search: string, replacement: string) {
 
 function compactWorkflowOutputDetail(event: WorkflowEvent, detail: string) {
   if (isLongReportWorkflowTool(event.toolName)) {
-    const elapsed = workflowElapsedDetail(detail);
     if (event.status === "running") {
-      return ["섹션별 작성/이어쓰기/검토 후 병합 중", elapsed].filter(Boolean).join(" · ");
+      return compactDetail(detail) || "장문 보고서 생성 중";
     }
     return compactDetail(detail)
       .replace(/^장문 보고서를 생성했습니다:\s*/u, "생성 완료 · ")

@@ -1689,6 +1689,45 @@ describe("appReducer", () => {
     expect(writeEvents[0].toolInput?.content).toBe("<h1>Live</h1>");
   });
 
+  it("restores long report progress metadata and preview content from history tool progress", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "산업별 실업률 웹보고서 작성해줘" },
+          {
+            type: "tool_progress",
+            tool_name: "write_long_report",
+            tool_call_index: 0,
+            message: "2/5 섹션 작성 중 · 경기 침체 충격 · 작성 4,321 토큰 · 22초 경과",
+            tool_input: {
+              title: "산업별 실업률 보고서",
+              output_path: "outputs/unemployment_report.html",
+              output_format: "html",
+              section_index: 2,
+              section_total: 5,
+              document_written_tokens: 4321,
+              outline_sections: [
+                { title: "데이터 구조", intent: "기간과 산업 구성을 정리합니다." },
+                { title: "경기 침체 충격", intent: "2008-2010 상승 구간을 비교합니다." },
+              ],
+              content: "<section><h2>경기 침체 충격</h2><p>작성 중인 본문</p></section>",
+            },
+          },
+        ],
+      },
+    });
+
+    const reportEvents = restored.workflowEvents.filter((event) => event.toolName === "write_long_report");
+    expect(reportEvents).toHaveLength(1);
+    expect(reportEvents[0].status).toBe("running");
+    expect(reportEvents[0].detail).toContain("2/5 섹션 작성 중");
+    expect(reportEvents[0].toolInput?.section_index).toBe(2);
+    expect(reportEvents[0].toolInput?.content).toContain("작성 중인 본문");
+    expect(Array.isArray(reportEvents[0].toolInput?.outline_sections)).toBe(true);
+  });
+
   it("does not duplicate restored streamed previews when the matching tool start is replayed", () => {
     const restored = appReducer(initialAppState, {
       type: "backend_event",

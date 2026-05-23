@@ -1852,6 +1852,37 @@ function reduceHistoryRestoreEvent(
       workflowEvents = refreshPurposeEvents(nextEvents);
       continue;
     }
+    if (type === "tool_progress") {
+      const toolName = String(record.tool_name || "");
+      const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
+      const rawToolCallIndex = Number(record.tool_call_index);
+      const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+      const toolInput = recordOrNull(record.tool_input);
+      const detail = String(record.message || workflowDetailFromInput(toolInput) || "처리 중");
+      let nextEvents = updateLatestWorkflowEvent(workflowEvents, toolName, {
+        detail,
+        status: "running",
+        toolCallId,
+        toolCallIndex,
+        toolInput,
+      }, { toolCallId, toolCallIndex });
+      if (!nextEvents) {
+        const purpose = ensurePurposeEvent(completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()), toolName);
+        nextEvents = appendWorkflowEvent(purpose.events, {
+          toolName,
+          title: `${workflowTitle(toolName)} 중`,
+          detail,
+          status: "running",
+          level: "child",
+          groupId: purpose.groupId,
+          toolCallId,
+          toolCallIndex,
+          toolInput,
+        });
+      }
+      workflowEvents = refreshPurposeEvents(nextEvents);
+      continue;
+    }
     if (type === "tool_completed") {
       const toolName = String(record.tool_name || "");
       const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
