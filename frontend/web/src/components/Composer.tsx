@@ -408,6 +408,14 @@ export function Composer() {
     }
   }
 
+  function toggleExpandedPanel() {
+    if (expandedPanelOpen) {
+      resetExpandedPanel();
+      return;
+    }
+    setExpandedPanelOpen(true);
+  }
+
   function resolvedTargetOutputTokens() {
     if (lengthPreset === "extra_long") {
       return extraLongTarget;
@@ -539,8 +547,12 @@ export function Composer() {
 
     const input = inputRef.current;
     const replaceEnd = Math.max(suggestionToken.end, input?.selectionEnd ?? suggestionToken.end);
-    const nextDraft = `${draft.slice(0, suggestionToken.start)}${suggestion.value}${draft.slice(replaceEnd)}`;
-    const nextCursorOffset = suggestionToken.start + suggestion.value.length;
+    const suffix = draft.slice(replaceEnd);
+    const shouldSeparateMention = suggestionToken.trigger === "@" || suggestionToken.trigger === "$";
+    const spacer = shouldSeparateMention && !suffix.startsWith(" ") ? " " : "";
+    const cursorSpacerOffset = shouldSeparateMention && suffix.startsWith(" ") ? 1 : spacer.length;
+    const nextDraft = `${draft.slice(0, suggestionToken.start)}${suggestion.value}${spacer}${suffix}`;
+    const nextCursorOffset = suggestionToken.start + suggestion.value.length + cursorSpacerOffset;
     dispatch({ type: "set_draft", value: nextDraft });
     window.requestAnimationFrame(() => {
       const nextInput = inputRef.current;
@@ -580,6 +592,7 @@ export function Composer() {
         clientId: state.clientId,
         line: "/plan",
         attachments: [],
+        suppressUserTranscript: true,
       });
       dispatch({ type: "set_draft", value: currentDraft });
     } catch (error) {
@@ -816,6 +829,36 @@ export function Composer() {
             tabIndex={-1}
             onChange={handleClientFileInput}
           />
+          {uploadedAttachments.length ? (
+            <div className="composer-attachment-row" aria-label="첨부한 파일">
+              {uploadedAttachments.map((attachment, index) => (
+                <div className="client-attachment-chip" key={`${attachment.id}-${index}`}>
+                  {isImageRef(attachment) && attachment.previewUrl ? (
+                    <img
+                      src={attachment.previewUrl}
+                      alt={attachment.name || "첨부 이미지"}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => showUploadedAttachmentPreview(attachment)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          showUploadedAttachmentPreview(attachment);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <span className="client-attachment-type">{fileTypeLabel(attachment)}</span>
+                  )}
+                  <span className="client-attachment-name">{attachment.name || "첨부 파일"}</span>
+                  <small>{formatFileSize(attachment.size)}</small>
+                  <button className="client-attachment-remove" type="button" aria-label={`${attachment.name || "첨부 파일"} 삭제`} onClick={() => removeUploadedAttachment(index)}>
+                    x
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="composer-control-panel" aria-label="입력 옵션" data-tooltip-top-boundary="true">
             <div className="composer-panel-controls">
               <div className="composer-control-group composer-attach-group">
@@ -832,41 +875,11 @@ export function Composer() {
                     <path d="m21.4 11.1-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 1 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
                   </svg>
                 </button>
-                {uploadedAttachments.length ? (
-                  <div className="client-attachment-tray" aria-label="첨부한 파일">
-                    {uploadedAttachments.map((attachment, index) => (
-                      <div className="client-attachment-chip" key={`${attachment.id}-${index}`}>
-                        {isImageRef(attachment) && attachment.previewUrl ? (
-                          <img
-                            src={attachment.previewUrl}
-                            alt={attachment.name || "첨부 이미지"}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => showUploadedAttachmentPreview(attachment)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                showUploadedAttachmentPreview(attachment);
-                              }
-                            }}
-                          />
-                        ) : (
-                          <span className="client-attachment-type">{fileTypeLabel(attachment)}</span>
-                        )}
-                        <span className="client-attachment-name">{attachment.name || "첨부 파일"}</span>
-                        <small>{formatFileSize(attachment.size)}</small>
-                        <button className="client-attachment-remove" type="button" aria-label={`${attachment.name || "첨부 파일"} 삭제`} onClick={() => removeUploadedAttachment(index)}>
-                          x
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
               </div>
               <div className="composer-control-group">
                 <span
                   className="composer-control-label"
-                  data-tooltip="답변을 채팅에 표시할지 산출물로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다."
+                  data-tooltip="답변을 채팅에 표시할지 파일로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다."
                   data-tooltip-placement="top"
                 >
                   출력
@@ -875,7 +888,7 @@ export function Composer() {
                   {([
                     ["default", "자동"],
                     ["chat", "채팅"],
-                    ["artifact", "산출물"],
+                    ["artifact", "파일"],
                   ] as const).map(([value, label]) => (
                     <button
                       key={value}
@@ -892,12 +905,12 @@ export function Composer() {
               <div className="composer-control-group">
                 <span
                   className="composer-control-label"
-                  data-tooltip="산출물을 만들 때 새로 생성할지 기존 산출물을 수정할지 정합니다."
+                  data-tooltip="파일을 만들 때 새로 생성할지 기존 파일을 수정할지 정합니다."
                   data-tooltip-placement="top"
                 >
                   모드
                 </span>
-                <div className="composer-segment" aria-label="산출물 작업">
+                <div className="composer-segment" aria-label="파일 작업">
                   {([
                     ["auto", "자동"],
                     ["create", "생성"],
@@ -918,7 +931,7 @@ export function Composer() {
               <div className="composer-control-group">
                 <span
                   className="composer-control-label"
-                  data-tooltip="산출물 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다. ~40k 이상은 먼저 개요와 작성 계획을 세운 뒤 섹션별로 나누어 작성하고 검토 후 합치는 방식으로 처리합니다."
+                  data-tooltip="파일 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다. ~40k 이상은 먼저 개요와 작성 계획을 세운 뒤 섹션별로 나누어 작성하고 검토 후 합치는 방식으로 처리합니다."
                   data-tooltip-placement="top"
                 >
                   출력량
@@ -990,9 +1003,7 @@ export function Composer() {
           type="button"
           aria-label={expandedPanelOpen ? "입력 옵션 닫기" : "입력 옵션 열기"}
           aria-expanded={expandedPanelOpen}
-          data-tooltip={expandedPanelOpen ? "입력 옵션 닫기" : "첨부 및 출력 옵션"}
-          data-tooltip-placement="left"
-          onClick={() => setExpandedPanelOpen((open) => !open)}
+          onClick={toggleExpandedPanel}
         >
           <svg aria-hidden="true" viewBox="0 0 24 24">
             <path d="M12 5v14" />

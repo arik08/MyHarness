@@ -92,6 +92,11 @@ describe("ModalHost download settings", () => {
   it("enables and disables admin mode with the configured password", async () => {
     renderDownloadSettingsModal();
 
+    const adminShortcut = screen.getByRole("button", { name: "Admin mode" });
+    expect(adminShortcut.getAttribute("data-tooltip")).toBe("Admin Mode");
+    expect(screen.getByText("기본 모드").getAttribute("data-tooltip")).toBe("자주 바꾸는 동작과 연결 정보를 한 곳에서 관리합니다.");
+    expect(screen.queryByText("숨긴 히스토리와 완전 삭제 권한")).toBeNull();
+
     await userEvent.click(screen.getByRole("button", { name: /Admin mode/ }));
     await userEvent.type(screen.getByLabelText("Admin mode 비밀번호"), "1");
     await userEvent.click(screen.getByRole("button", { name: "Admin mode 진입" }));
@@ -102,7 +107,8 @@ describe("ModalHost download settings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Admin mode 해제" }));
     await userEvent.click(screen.getByRole("button", { name: "뒤로" }));
 
-    expect(screen.getByText("숨긴 히스토리와 완전 삭제 권한")).toBeTruthy();
+    expect(screen.getByText("기본 모드")).toBeTruthy();
+    expect(screen.queryByText("숨긴 히스토리와 완전 삭제 권한")).toBeNull();
   });
 
   it("keeps detailed user stats collapsed until requested", async () => {

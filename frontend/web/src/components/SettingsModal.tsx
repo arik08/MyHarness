@@ -69,8 +69,29 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
   const serverOnlyLabel = "서버 PC에서만 변경";
   return (
     <>
-      <h2>설정</h2>
-      <p className="settings-helper">자주 바꾸는 동작과 연결 정보를 한 곳에서 관리합니다.</p>
+      <div className="settings-home-header">
+        <div className="settings-home-title">
+          <h2>설정</h2>
+          <span
+            className="settings-home-message"
+            data-tooltip="자주 바꾸는 동작과 연결 정보를 한 곳에서 관리합니다."
+          >
+            {state.adminMode ? "관리자 모드 적용 중" : "기본 모드"}
+          </span>
+        </div>
+        <button
+          type="button"
+          className={`settings-admin-shortcut${state.adminMode ? " active" : ""}`}
+          aria-label="Admin mode"
+          data-tooltip="Admin Mode"
+          onClick={() => onSelect("admin")}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M12 3l7 3v5c0 4.6-2.9 8.8-7 10-4.1-1.2-7-5.4-7-10V6l7-3z" />
+            <path d="M9.5 12l1.7 1.7 3.6-4.1" />
+          </svg>
+        </button>
+      </div>
       <div className="settings-grid">
         <button type="button" className="settings-row" onClick={() => onSelect("prompt")}>
           <strong>프롬프트</strong>
@@ -99,10 +120,6 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
         <button type="button" className="settings-row" onClick={() => onSelect("stats")}>
           <strong>IP별 사용 통계</strong>
           <small>DAU / 접속횟수 / IP별 집계</small>
-        </button>
-        <button type="button" className={`settings-row${state.adminMode ? " active" : ""}`} onClick={() => onSelect("admin")}>
-          <strong>Admin mode</strong>
-          <small>{state.adminMode ? "관리자 모드 적용 중" : "숨긴 히스토리와 완전 삭제 권한"}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("restart")}>
           <strong>터미널 세션 재시작</strong>

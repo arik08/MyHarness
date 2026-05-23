@@ -819,6 +819,15 @@ describe("appReducer", () => {
     expect(next.messages).toHaveLength(0);
   });
 
+  it("hides initial plan mode command transcript items", () => {
+    const next = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: "/plan" } },
+    });
+
+    expect(next.messages).toHaveLength(0);
+  });
+
   it("hides plan mode status transcript items", () => {
     const enabled = appReducer(initialAppState, {
       type: "backend_event",
@@ -882,6 +891,59 @@ describe("appReducer", () => {
 
     expect(withToolCall.artifactRefreshKey).toBe(initialAppState.artifactRefreshKey);
     expect(completed.artifactRefreshKey).toBe(withToolCall.artifactRefreshKey + 1);
+  });
+
+  it("attaches structured artifact metadata from assistant completion events", () => {
+    const completed = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "정리 완료했습니다.",
+        has_tool_uses: false,
+        artifacts: [
+          { path: "글로도_4_6_영상_내용정리.md", kind: "markdown" },
+          { path: "youtube_NgkyUXJWYiI_transcript.json", kind: "json" },
+        ],
+      },
+    });
+
+    expect(completed.messages.at(-1)?.text).toBe("정리 완료했습니다.");
+    expect(completed.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
+      "글로도_4_6_영상_내용정리.md",
+      "youtube_NgkyUXJWYiI_transcript.json",
+    ]);
+  });
+
+  it("promotes completed write_file paths to assistant artifact metadata", () => {
+    const writing = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_input: { path: "outputs/구글_AI_상업화_영상_요약.html", content: "<html></html>" },
+      },
+    });
+    const completed = appReducer(writing, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "write_file",
+        output: "Wrote outputs/구글_AI_상업화_영상_요약.html",
+        is_error: false,
+      },
+    });
+    const answered = appReducer(completed, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "- 요약 보고서: `outputs/구글_AI_상업화_영상_요약.html`",
+        has_tool_uses: false,
+      },
+    });
+
+    expect(answered.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
+      "outputs/구글_AI_상업화_영상_요약.html",
+    ]);
   });
 
   it("measures workflow duration from the user request across stage changes", () => {
@@ -1339,6 +1401,37 @@ describe("appReducer", () => {
     expect(Object.values(restored.workflowEventsByMessageId).flat()).toHaveLength(0);
   });
 
+  it("does not assign the current time to restored history messages without timestamps", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "과거 질문" },
+          { type: "assistant", text: "과거 답변" },
+        ],
+      },
+    });
+
+    expect(restored.messages.map((message) => message.createdAt)).toEqual([undefined, undefined]);
+  });
+
+  it("restores saved assistant completion timestamps from history", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "과거 질문", timestamp: 1767529920000 },
+          { type: "assistant", text: "과거 답변", timestamp: 1767529980000 },
+        ],
+      },
+    });
+
+    expect(restored.messages[0].createdAt).toBe(1767529920000);
+    expect(restored.messages[1].createdAt).toBe(1767529980000);
+  });
+
   it("restores saved duration for completed simple history turns", () => {
     const restored = appReducer(initialAppState, {
       type: "backend_event",
@@ -1749,6 +1842,28 @@ describe("appReducer", () => {
     expect(shellEvent?.status).toBe("done");
     expect(shellEvent?.detail).toContain("pass");
     expect(completed.artifactRefreshKey).toBe(progressed.artifactRefreshKey);
+  });
+
+  it("keeps multiline tool outputs as a one-line workflow detail", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "sqlite 데이터를 분석해줘" },
+    });
+    const started = appReducer(active, {
+      type: "backend_event",
+      event: { type: "tool_started", tool_name: "mcp__sqlite_analysis__list_tables" },
+    });
+    const completed = appReducer(started, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "mcp__sqlite_analysis__list_tables",
+        output: "[\n  \"flights_airport\",\n  \"airlines\",\n  \"routes\"\n]",
+      },
+    });
+
+    const sqliteEvent = completed.workflowEvents.find((event) => event.toolName === "mcp__sqlite_analysis__list_tables");
+    expect(sqliteEvent?.detail).toBe("[ \"flights_airport\", \"airlines\", \"routes\" ]");
   });
 
   it("keeps interim workflow judgments and replaced details as visible history", () => {

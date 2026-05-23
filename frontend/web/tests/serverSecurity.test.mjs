@@ -304,8 +304,10 @@ test("overwrites only HTML artifacts through the preview edit API", async (t) =>
   await mkdir(join(workspacePath, "outputs"), { recursive: true });
   const htmlPath = join(workspacePath, "outputs", "report.html");
   const textPath = join(workspacePath, "outputs", "notes.txt");
+  const pdfPath = join(workspacePath, "outputs", "review.pdf");
   await writeFile(htmlPath, "<!doctype html><html><body><h1>Old</h1></body></html>", "utf8");
   await writeFile(textPath, "Old", "utf8");
+  await writeFile(pdfPath, Buffer.from("%PDF-1.4\n% MyHarness PDF smoke\n", "utf8"));
 
   const sessionResponse = await fetch(`${app.baseUrl}/api/session`, {
     method: "POST",
@@ -451,6 +453,24 @@ test("overwrites only HTML artifacts through the preview edit API", async (t) =>
   assert.equal(textResponse.status, 400);
   assert.match(textPayload.error, /Only HTML artifacts/i);
   assert.equal(await readFile(textPath, "utf8"), "Old");
+
+  const pdfParams = new URLSearchParams({
+    session: session.sessionId,
+    clientId: "preview-editor",
+    path: "outputs/review.pdf",
+  });
+  const pdfPreviewResponse = await fetch(`${app.baseUrl}/api/artifact?${pdfParams.toString()}`);
+  const pdfPreviewPayload = await pdfPreviewResponse.json();
+  assert.equal(pdfPreviewResponse.status, 200);
+  assert.equal(pdfPreviewPayload.kind, "pdf");
+  assert.equal(pdfPreviewPayload.mime, "application/pdf");
+  assert.equal(pdfPreviewPayload.dataUrl, undefined);
+
+  const pdfRawResponse = await fetch(`${app.baseUrl}/api/artifact/raw?${pdfParams.toString()}`);
+  assert.equal(pdfRawResponse.status, 200);
+  assert.equal(pdfRawResponse.headers.get("content-type"), "application/pdf");
+  assert.match(pdfRawResponse.headers.get("content-disposition") || "", /^inline;/);
+  assert.equal(await pdfRawResponse.text(), "%PDF-1.4\n% MyHarness PDF smoke\n");
 
   const outsideResponse = await fetch(`${app.baseUrl}/api/artifact`, {
     method: "PUT",
@@ -925,6 +945,51 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
   assert.deepEqual(historyPayload.options.map((item) => item.value), ["alpha", "zeta", "newer"]);
   assert.equal(historyPayload.options[0].pinned, true);
   assert.equal(historyPayload.options[1].pinned, true);
+});
+
+test("uses the Korean new-chat title for empty saved history snapshots", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceName = `EmptyTitleTest${Date.now().toString(36)}`;
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: workspaceName }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  const workspace = workspacePayload.workspace;
+  workspacePath = workspace?.path || "";
+  assert.equal(workspaceResponse.status, 200);
+  assert.ok(workspace?.path);
+
+  const sessionDir = join(workspace.path, ".myharness", "sessions");
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(
+    join(sessionDir, "session-empty.json"),
+    JSON.stringify({
+      session_id: "empty",
+      created_at: 100,
+      summary: "",
+      messages: [],
+      message_count: 0,
+    }),
+  );
+
+  const historyResponse = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspace.path)}`);
+  const historyPayload = await historyResponse.json();
+
+  assert.equal(historyResponse.status, 200);
+  assert.equal(historyPayload.options[0].description, "새 대화");
+  assert.match(historyPayload.options[0].label, /새 대화$/);
 });
 
 test("deletes a project after stopping active backend sessions in that project", async (t) => {

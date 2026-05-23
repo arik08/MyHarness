@@ -68,6 +68,17 @@ function isMergeableLogMessage(message: ChatMessage) {
   );
 }
 
+function isNoisyBackendLogMessage(message: ChatMessage) {
+  if (message.role !== "log" || message.isError || message.terminal || isCommandCatalog(message.text)) {
+    return false;
+  }
+  const text = message.text.trim();
+  return (
+    /\bINFO\b\s+Processing request of type\b/.test(text)
+    || /^[A-Za-z]+Request$/.test(text)
+  );
+}
+
 type RenderMessageItem = {
   message: ChatMessage;
   originalIndex: number;
@@ -77,6 +88,9 @@ function mergeAdjacentLogMessages(messages: ChatMessage[]): RenderMessageItem[] 
   const items: RenderMessageItem[] = [];
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
+    if (isNoisyBackendLogMessage(message)) {
+      continue;
+    }
     const previous = items.at(-1);
     if (previous && isMergeableLogMessage(previous.message) && isMergeableLogMessage(message)) {
       previous.message = {

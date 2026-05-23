@@ -85,16 +85,10 @@ function useStreamingText(
 
   function smoothRevealCount(pendingText: string, desiredCount: number) {
     const pendingChars = Array.from(pendingText);
-    if (!pendingChars.length) {
+    if (!pendingChars.length || desiredCount <= 0) {
       return 0;
     }
-    const maxFrameChars = pendingChars.length >= 900 ? 4 : pendingChars.length >= 420 ? 3 : pendingChars.length >= 160 ? 2 : 1;
-    const limit = Math.min(pendingChars.length, Math.max(1, Math.min(maxFrameChars, desiredCount)));
-    if (pendingChars.length <= limit) {
-      return pendingChars.length;
-    }
-
-    return limit;
+    return 1;
   }
 
   function scheduleFlush() {

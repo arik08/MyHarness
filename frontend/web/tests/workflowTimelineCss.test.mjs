@@ -29,6 +29,20 @@ test("keeps Claude theme activity status aligned with the neutral sidebar tone",
   assert.doesNotMatch(activitySpinner, /var\(--accent\)/);
 });
 
+test("uses softer tinted workflow output previews for light-family themes", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const lightPreview = css.match(/:root:not\(\[data-theme\]\) \.workflow-output-preview\s*{[\s\S]*?^}/m)?.[0] ?? "";
+  const claudePreview = css.match(/:root\[data-theme="claude"\] \.workflow-output-preview\s*{[\s\S]*?^}/m)?.[0] ?? "";
+  const poscoPreview = css.match(/:root\[data-theme="posco"\] \.workflow-output-preview\s*{[\s\S]*?^}/m)?.[0] ?? "";
+
+  assert.match(lightPreview, /background:\s*#f8fafc;/);
+  assert.match(claudePreview, /background:\s*#f8f5f0;/);
+  assert.match(poscoPreview, /background:\s*#f3f8fd;/);
+  assert.match(css, /\.workflow-diff-line\.added\s*{[\s\S]*?background:\s*color-mix\(in srgb,\s*var\(--success-soft\) 44%,\s*transparent\);/);
+  assert.match(css, /\.workflow-diff-line\.removed\s*{[\s\S]*?background:\s*color-mix\(in srgb,\s*var\(--danger-soft\) 44%,\s*transparent\);/);
+  assert.doesNotMatch(css, /:root\[data-theme="claude"\] \.workflow-output-body\s*{/);
+});
+
 test("caps inline Mermaid chart height while preserving scroll access", async () => {
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   const mermaidChart = css.match(/\.markdown-body \.mermaid-chart\s*{[\s\S]*?^}/m)?.[0] ?? "";

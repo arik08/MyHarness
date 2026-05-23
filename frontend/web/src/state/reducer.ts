@@ -1,6 +1,6 @@
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
-import { normalizeArtifactPath } from "../utils/artifacts";
+import { artifactKind, artifactLabelForPath, artifactName, isKnownArtifactPath, normalizeArtifactPath } from "../utils/artifacts";
 import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
 import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 
@@ -20,7 +20,7 @@ const defaultAppSettings: AppSettings = {
 
 export type AppAction =
   | { type: "backend_event"; event: BackendEvent; sessionId?: string }
-  | { type: "append_message"; message: Omit<ChatMessage, "id">; skipHistory?: boolean }
+  | { type: "append_message"; message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "createdAt">>; skipHistory?: boolean }
   | { type: "session_started"; sessionId: string; clientId?: string; busy?: boolean }
   | { type: "session_replaced"; sessionId: string; workspace?: Workspace }
   | { type: "set_theme"; themeId: ThemeId }
@@ -202,8 +202,9 @@ function storedArtifactPanelWidth(key: string) {
 }
 
 function initialArtifactPanelListWidth() {
-  return storedArtifactPanelWidth("myharness:artifactPanelListWidth")
+  const stored = storedArtifactPanelWidth("myharness:artifactPanelListWidth")
     ?? storedArtifactPanelWidth("myharness:artifactPanelWidth");
+  return stored ? Math.min(stored, 500) : 500;
 }
 
 function initialArtifactPanelPreviewWidth() {
@@ -333,12 +334,62 @@ export const initialAppState: AppState = {
   },
 };
 
-function createMessage(message: Omit<ChatMessage, "id">): ChatMessage {
+function createMessage(message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "createdAt">>): ChatMessage {
   return { id: nextId(), ...message };
 }
 
-function appendMessage(messages: ChatMessage[], message: Omit<ChatMessage, "id">): ChatMessage[] {
+function appendMessage(messages: ChatMessage[], message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "createdAt">>): ChatMessage[] {
   return [...messages, createMessage(message)];
+}
+
+function normalizeAssistantArtifacts(value: unknown): ArtifactSummary[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const artifacts: ArtifactSummary[] = [];
+  for (const item of value) {
+    const raw: Record<string, unknown> = item && typeof item === "object" ? item as Record<string, unknown> : { path: item };
+    const path = normalizeArtifactPath(String(raw.path || raw.file || ""));
+    const key = path.toLowerCase();
+    if (!path || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const kind = String(raw.kind || artifactKind(path));
+    const name = String(raw.name || artifactName(path));
+    const label = String(raw.label || artifactLabelForPath(path, kind));
+    const size = Number(raw.size);
+    artifacts.push({
+      path,
+      name,
+      kind,
+      label,
+      size: Number.isFinite(size) && size >= 0 ? size : undefined,
+    });
+  }
+  return artifacts;
+}
+
+function mergeAssistantArtifacts(existing: ArtifactSummary[] | undefined, next: ArtifactSummary[]) {
+  const merged = normalizeAssistantArtifacts([...(existing || []), ...next]);
+  return merged.length ? merged : undefined;
+}
+
+function workflowOutputArtifactPath(input?: Record<string, unknown> | null) {
+  const patch = workflowStringInput(input, ["patch", "diff"]).value;
+  const path = workflowStringInput(input, ["path", "file_path", "output_path"]).value || workflowPatchPath(patch);
+  return normalizeArtifactPath(path);
+}
+
+function workflowEventArtifactCandidates(events: WorkflowEvent[]) {
+  return normalizeAssistantArtifacts(events
+    .filter((event) => {
+      const toolName = event.toolName.toLowerCase();
+      return event.status !== "error" && (toolName === "write_file" || toolName === "write_long_report");
+    })
+    .map((event) => workflowOutputArtifactPath(event.toolInput))
+    .filter((path) => path && isKnownArtifactPath(path)));
 }
 
 const staleSessionMessage = "세션 연결이 끊겼습니다. 페이지를 새로고침하거나 새 세션을 시작한 뒤 다시 시도해주세요.";
@@ -378,7 +429,7 @@ function assistantStreamingText(currentText: string, nextChunkOrSnapshot: string
   return `${currentText}${nextChunkOrSnapshot}`;
 }
 
-function completePendingAssistantMessage(messages: ChatMessage[], completedText = "", suppressActions = false): ChatMessage[] {
+function completePendingAssistantMessage(messages: ChatMessage[], completedText = "", suppressActions = false, artifacts: ArtifactSummary[] = []): ChatMessage[] {
   const last = messages[messages.length - 1];
   if (last?.role === "assistant" && last.isComplete !== true) {
     const text = assistantCompletionText(last.text, completedText);
@@ -387,7 +438,14 @@ function completePendingAssistantMessage(messages: ChatMessage[], completedText 
     }
     return [
       ...messages.slice(0, -1),
-      { ...last, text, isComplete: true, suppressActions: suppressActions || last.suppressActions },
+      {
+        ...last,
+        text,
+        isComplete: true,
+        suppressActions: suppressActions || last.suppressActions,
+        createdAt: Date.now(),
+        artifacts: mergeAssistantArtifacts(last.artifacts, artifacts),
+      },
     ];
   }
   return messages;
@@ -464,6 +522,7 @@ function isNonConversationTranscriptItem(item: { role?: string; text?: string })
   const role = item.role || "";
   const text = String(item.text || "").trim();
   if (!text) return true;
+  if (role === "user" && isPlanModeCommandText(text)) return true;
   if (role === "system" && text === "Conversation cleared.") return true;
   if (
     role === "system"
@@ -475,6 +534,22 @@ function isNonConversationTranscriptItem(item: { role?: string; text?: string })
 
 function canonicalUserTranscriptText(text: string) {
   return String(text || "").replace(/\r\n/g, "\n").trim();
+}
+
+function timestampMsFromRecord(record: Record<string, unknown>) {
+  const raw = record.createdAt ?? record.created_at ?? record.timestamp;
+  if (raw === null || raw === undefined || raw === "") {
+    return undefined;
+  }
+  const value = typeof raw === "string" ? Date.parse(raw) : Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return value < 10_000_000_000 ? value * 1000 : value;
+}
+
+function isPlanModeCommandText(text: string) {
+  return /^\/plan(?:\s|$)/i.test(String(text || "").trim());
 }
 
 function isDuplicateActiveUserTranscript(state: AppState, text: string) {
@@ -595,6 +670,10 @@ function workflowOutputFirstLine(output: string, fallback: string) {
   return output.split(/\r?\n/).find((line) => line.trim()) || fallback;
 }
 
+function workflowOutputCompactLine(output: string, fallback: string) {
+  return output.replace(/\s+/g, " ").trim() || fallback;
+}
+
 function todoFailureDetail(output: string) {
   const firstLine = workflowOutputFirstLine(output, "작업 목록 정리에 실패했습니다.").trim();
   return firstLine.replace(/^Invalid input for (?:todo_write|TodoWrite):\s*/i, "입력 형식 오류: ");
@@ -653,7 +732,7 @@ function workflowToolDetail(
     }
   }
   if (output) {
-    return workflowOutputFirstLine(output, `${toolName || "도구"} 완료`);
+    return workflowOutputCompactLine(output, `${toolName || "도구"} 완료`);
   }
   return workflowDetailFromInput(input) || fallback;
 }
@@ -1663,7 +1742,7 @@ function reduceHistoryRestoreEvent(
       if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
         workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
       }
-      const message = createMessage({ role: "user", text: String(record.text || "") });
+      const message = createMessage({ role: "user", text: String(record.text || ""), createdAt: timestampMsFromRecord(record) });
       messages.push(message);
       workflowAnchorMessageId = message.id;
       workflowEvents = initialWorkflowEvents();
@@ -1675,7 +1754,7 @@ function reduceHistoryRestoreEvent(
       const text = String(record.text || "");
       if (text.trim()) {
         if (isFinalRestoredAssistantAnswer(historyEvents, index)) {
-          messages.push(createMessage({ role: "assistant", text, isComplete: true }));
+          messages.push(createMessage({ role: "assistant", text, isComplete: true, createdAt: timestampMsFromRecord(record) }));
           currentTurnHasAssistant = true;
         } else {
           workflowEvents = applyWorkflowProgressNote(
@@ -2163,13 +2242,6 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     if (isNonConversationTranscriptItem(item)) {
       return state;
     }
-    if (
-      item.role === "user"
-      && (item.kind === "steering" || item.kind === "queued")
-      && /^\/plan(?:\s|$)/i.test(String(item.text || "").trim())
-    ) {
-      return state;
-    }
     const text = normalizeVisibleText(item.text);
     if (item.role === "user" && (item.kind === "steering" || item.kind === "queued")) {
       if (isDuplicateKindedUserTranscript(state, text, item.kind)) {
@@ -2248,6 +2320,10 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
 
   if (event.type === "assistant_complete") {
     const value = normalizeVisibleText(String(event.message || ""));
+    const artifacts = normalizeAssistantArtifacts([
+      ...workflowEventArtifactCandidates(state.workflowEvents),
+      ...normalizeAssistantArtifacts(event.artifacts),
+    ]);
     const last = state.messages[state.messages.length - 1];
     const isFinalAnswer = event.has_tool_uses !== true;
     const messages = isFinalAnswer
@@ -2255,13 +2331,19 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         ? last?.role === "assistant" && last.isComplete !== true
           ? [
               ...state.messages.slice(0, -1),
-              { ...last, text: assistantCompletionText(last.text, value), isComplete: true },
+              {
+                ...last,
+                text: assistantCompletionText(last.text, value),
+                isComplete: true,
+                createdAt: Date.now(),
+                artifacts: mergeAssistantArtifacts(last.artifacts, artifacts),
+              },
             ]
-          : appendMessage(state.messages, { role: "assistant", text: value, isComplete: true })
+          : appendMessage(state.messages, { role: "assistant", text: value, isComplete: true, createdAt: Date.now(), artifacts })
         : last?.role === "assistant"
-          ? [...state.messages.slice(0, -1), { ...last, isComplete: true }]
+          ? [...state.messages.slice(0, -1), { ...last, isComplete: true, createdAt: Date.now(), artifacts: mergeAssistantArtifacts(last.artifacts, artifacts) }]
           : state.messages
-      : completePendingAssistantMessage(state.messages, value, true);
+      : completePendingAssistantMessage(state.messages, value, true, artifacts);
     return {
       ...state,
       busy: event.has_tool_uses === true,
@@ -2837,9 +2919,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, artifactRefreshKey: state.artifactRefreshKey + 1 };
 
     case "set_artifact_panel_width":
-      return state.activeArtifact
-        ? { ...state, artifactPanelWidth: action.value, artifactPanelPreviewWidth: action.value }
-        : { ...state, artifactPanelWidth: action.value, artifactPanelListWidth: action.value };
+      if (state.activeArtifact) {
+        return { ...state, artifactPanelWidth: action.value, artifactPanelPreviewWidth: action.value };
+      }
+      {
+        const listWidth = action.value === null ? null : Math.min(action.value, 500);
+        return { ...state, artifactPanelWidth: listWidth, artifactPanelListWidth: listWidth };
+      }
 
     case "set_artifact_resizing":
       return { ...state, artifactResizing: action.value };

@@ -73,7 +73,7 @@ export type BackendEvent =
   | { type: "skills_snapshot"; skills?: unknown[] }
   | { type: "transcript_item"; item?: TranscriptItem }
   | { type: "assistant_delta"; message?: string | null; value?: string | null }
-  | { type: "assistant_complete"; message?: string | null; has_tool_uses?: boolean | null }
+  | { type: "assistant_complete"; message?: string | null; has_tool_uses?: boolean | null; artifacts?: ArtifactSummary[] | null }
   | { type: "session_title"; message?: string | null; value?: string | null }
   | { type: "tool_started"; tool_name?: string; tool_call_id?: string | null; tool_call_index?: number | null; tool_input?: Record<string, unknown> | null }
   | { type: "tool_input_delta"; tool_name?: string; tool_call_index?: number; arguments_delta?: string }

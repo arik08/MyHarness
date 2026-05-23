@@ -176,7 +176,11 @@ def _build_long_report_section() -> str:
             "another active limit makes that impossible. Keep ordinary reports as one coherent artifact below roughly 20,000 tokens.",
             "Use `write_long_report` only when the user or MyHarness compose options explicitly request an extra-long artifact "
             "around 20,000 tokens or more, such as 초장문, 20k, 40k, 80k, 160k, or a large numeric target. In that flow, write an outline, "
-            "draft sections, save intermediate progress, review, merge, and return the final artifact path with a concise summary.",
+            "draft sections, save intermediate progress, review, merge, and return the final artifact path with a concise summary. "
+            "If the report also asks for research, investigation, current facts, market data, policy/regulation checks, sources, "
+            "or source-backed claims, gather the evidence first with `web_search`/`web_fetch` or an office research worker. "
+            "Then pass concise source cards through `write_long_report.source_notes` or local research files through `source_paths`; "
+            "do not rely on earlier search/tool output staying visible inside the writing tool.",
         ]
     )
 

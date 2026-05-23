@@ -236,6 +236,8 @@ def test_build_runtime_system_prompt_guides_explicit_extra_long_report_generatio
     assert "20k, 40k, 80k, 160k" in prompt
     assert "outline" in prompt
     assert "section" in prompt
+    assert "source_notes" in prompt
+    assert "do not rely on earlier search/tool output" in prompt
     assert "Do not generate more than 20,000 tokens" not in prompt
 
 

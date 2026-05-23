@@ -18,12 +18,33 @@ function answerFileName(title: string, text: string) {
   return `outputs/${clean || "answer"}.md`;
 }
 
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function formatMessageTime(timestamp?: number) {
+  if (!timestamp) {
+    return "";
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+  return "'" + [
+    pad2(date.getFullYear() % 100),
+    pad2(date.getMonth() + 1),
+    pad2(date.getDate()),
+  ].join(".") + ` (${dayNames[date.getDay()]}) ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
 export function AssistantActions({ message, children }: { message: ChatMessage; children?: ReactNode }) {
   const { state, dispatch } = useAppState();
   const [status, setStatus] = useState("");
   const [copying, setCopying] = useState(false);
   const [saving, setSaving] = useState(false);
   const text = message.text.trim();
+  const messageTime = formatMessageTime(message.createdAt);
 
   if (message.suppressActions || !message.isComplete || !text) {
     return null;
@@ -100,6 +121,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
           <path d="M7 3v5h8" />
         </svg>
       </button>
+      {messageTime ? <span className="assistant-action-time">{messageTime}</span> : null}
       <span className="assistant-action-status">{status}</span>
       {children}
     </div>

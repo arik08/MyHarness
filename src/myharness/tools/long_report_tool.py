@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from html import escape
@@ -29,6 +30,15 @@ DEFAULT_REPORT_TOKEN_CAP = 12_000
 REPORT_TOKEN_HARD_CAP = 160_000
 IMPLIED_LONG_REPORT_TARGET_TOKENS = 18_000
 IMPLIED_EXTRA_LONG_REPORT_TARGET_TOKENS = REPORT_TOKEN_HARD_CAP
+SOURCE_NOTES_MAX_CHARS = 80_000
+STYLE_CONSISTENCY_CONTRACT = (
+    "문체·용어·구조 일관성 계약:\n"
+    "- 전체 보고서는 존댓말이 아닌 공식 비즈니스 보고서체로 통일하세요.\n"
+    "- 같은 개념, 기업명, 제품명, 지표명, 단위, 기간 표기는 모든 섹션에서 같은 표현을 쓰세요.\n"
+    "- 각 섹션은 독립 요약문처럼 다시 시작하지 말고, 이전 섹션과 논리적으로 이어지는 분석 본문으로 쓰세요.\n"
+    "- 수치의 단위와 기준 연도/지역/범위가 바뀌면 문장 안에서 명확히 표시하세요.\n"
+    "- 표, 목록, 단락의 밀도와 톤을 전체 보고서 안에서 비슷하게 유지하세요.\n"
+)
 
 
 class LongReportToolInput(BaseModel):
@@ -50,6 +60,13 @@ class LongReportToolInput(BaseModel):
         ),
     )
     source_paths: list[str] = Field(default_factory=list, description="Optional local text files to use as source material")
+    source_notes: str = Field(
+        default="",
+        description=(
+            "Concise research bundle or source cards gathered before writing. Include key facts, dates, URLs, "
+            "confidence, and caveats when web/search research was used."
+        ),
+    )
     max_sections: int = Field(default=8, ge=1, le=30, description="Maximum outline sections to generate")
 
 
@@ -63,8 +80,10 @@ class LongReportTool(BaseTool):
         "such as 초장문, 20k, 40k, 80k, 160k, 대보고서, or a numeric target above normal report length. "
         "Normal report requests should still use a direct coherent artifact around 10,000-12,000 tokens. "
         "Set target_tokens to the requested body length, up to the 160,000-token hard cap. "
+        "When search or research has already been performed, pass the source cards or research digest in source_notes "
+        "or pass local research files in source_paths; do not rely on prior chat/tool output being visible inside this tool. "
         "The tool creates an outline, writes sections with lower per-call token caps, reviews the result, "
-        "and returns only the output path and short summary."
+        "writes a claim/source ledger sidecar, and returns only the output path and short summary."
     )
     input_model = LongReportToolInput
 
@@ -86,7 +105,7 @@ class LongReportTool(BaseTool):
         target_tokens = _resolve_target_tokens(arguments)
         report_token_budget = target_tokens or DEFAULT_REPORT_TOKEN_CAP
         allow_section_overrun = target_tokens > IMPLIED_LONG_REPORT_TARGET_TOKENS
-        source_text = _read_source_material(context.cwd, arguments.source_paths)
+        source_text = _source_material_for_report(context.cwd, arguments)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         preview_writer = _ReportPreviewWriter(
             cwd=context.cwd,
@@ -100,6 +119,12 @@ class LongReportTool(BaseTool):
 
         outline_prompt = _outline_prompt(arguments, source_text, target_tokens=target_tokens)
         generation_usage = UsageSnapshot()
+        preview_writer.write_progress_state(
+            generation_usage,
+            document_written_tokens=written_token_counter.total_tokens,
+            phase="outline",
+            phase_label="보고서 뼈대 생성 중",
+        )
         outline_text, _, usage = await _request_text(
             api_client,
             model=model,
@@ -112,10 +137,17 @@ class LongReportTool(BaseTool):
         preview_writer.write_progress_state(
             generation_usage,
             document_written_tokens=written_token_counter.total_tokens,
+            phase="outline_ready",
+            phase_label="보고서 뼈대 생성 완료",
         )
-        sections = _parse_outline(outline_text, max_sections=arguments.max_sections)
+        outline_sections = _parse_outline_sections(outline_text, max_sections=arguments.max_sections)
+        sections = [str(item.get("title") or "").strip() for item in outline_sections if str(item.get("title") or "").strip()]
+        if not sections:
+            sections = _parse_outline(outline_text, max_sections=arguments.max_sections)
+            outline_sections = [{"title": section} for section in sections]
         if not sections:
             sections = ["요약"]
+            outline_sections = [{"title": "요약", "intent": "요청 내용을 한눈에 파악할 수 있게 핵심 논리를 정리합니다."}]
         section_target_tokens = _target_tokens_per_section(
             target_tokens=report_token_budget,
             section_count=len(sections),
@@ -123,12 +155,31 @@ class LongReportTool(BaseTool):
             minimum_per_section=2_500 if allow_section_overrun else 500,
         )
         requested_section_target_tokens = section_target_tokens if target_tokens else 0
-        await preview_writer.write([], force=True)
+        preview_writer.write_progress_state(
+            generation_usage,
+            document_written_tokens=written_token_counter.total_tokens,
+            phase="outline_ready",
+            phase_label="보고서 뼈대 생성 완료",
+            outline_sections=outline_sections,
+            section_total=len(sections),
+        )
 
         section_bodies: list[tuple[str, str]] = []
         section_summaries: list[str] = []
         for index, section_title in enumerate(sections, start=1):
             section_parts: list[str] = []
+            section_summary = _outline_section_summary(outline_sections[index - 1] if index - 1 < len(outline_sections) else {})
+            preview_writer.write_progress_state(
+                generation_usage,
+                document_written_tokens=written_token_counter.total_tokens,
+                phase="section",
+                phase_label="섹션 본문 작성 중",
+                outline_sections=outline_sections,
+                section_index=index,
+                section_total=len(sections),
+                section_title=section_title,
+                section_summary=section_summary,
+            )
 
             async def _on_section_delta(delta: str, *, _section_title: str = section_title) -> None:
                 section_parts.append(delta)
@@ -136,6 +187,13 @@ class LongReportTool(BaseTool):
                 preview_writer.write_progress_state(
                     generation_usage,
                     document_written_tokens=written_token_counter.total_tokens,
+                    phase="section",
+                    phase_label="섹션 본문 작성 중",
+                    outline_sections=outline_sections,
+                    section_index=index,
+                    section_total=len(sections),
+                    section_title=_section_title,
+                    section_summary=section_summary,
                 )
                 await preview_writer.write([*section_bodies, (_section_title, "".join(section_parts))])
 
@@ -178,6 +236,7 @@ class LongReportTool(BaseTool):
                 stop_reason=stop_reason,
                 target_tokens=requested_section_target_tokens,
                 model=model,
+                minimum_ratio=_section_completion_floor_ratio(target_tokens),
             ) and continuations < max_continuations:
                 remaining_budget = _remaining_section_token_budget(
                     body,
@@ -195,6 +254,14 @@ class LongReportTool(BaseTool):
                     preview_writer.write_progress_state(
                         generation_usage,
                         document_written_tokens=written_token_counter.total_tokens,
+                        phase="continuation",
+                        phase_label="섹션 이어쓰기 중",
+                        outline_sections=outline_sections,
+                        section_index=index,
+                        section_total=len(sections),
+                        section_title=_section_title,
+                        section_summary=section_summary,
+                        continuation_index=continuations + 1,
                     )
                     current = _append_continuation(body, "".join(continuation_parts))
                     await preview_writer.write([*section_bodies, (_section_title, current)])
@@ -221,6 +288,14 @@ class LongReportTool(BaseTool):
                 preview_writer.write_progress_state(
                     generation_usage,
                     document_written_tokens=written_token_counter.total_tokens,
+                    phase="continuation",
+                    phase_label="섹션 이어쓰기 중",
+                    outline_sections=outline_sections,
+                    section_index=index,
+                    section_total=len(sections),
+                    section_title=section_title,
+                    section_summary=section_summary,
+                    continuation_index=continuations + 1,
                 )
                 continuation = "".join(continuation_parts) or continuation
                 if not continuation.strip():
@@ -231,6 +306,72 @@ class LongReportTool(BaseTool):
             section_bodies.append((section_title, body.strip()))
             section_summaries.append(_short_summary(section_title, body))
 
+        style_audit_text = ""
+        revised_section_ids: list[str] = []
+        if _should_run_style_consistency_revision(arguments, target_tokens, section_bodies):
+            preview_writer.write_progress_state(
+                generation_usage,
+                document_written_tokens=written_token_counter.total_tokens,
+                phase="style_audit",
+                phase_label="문체와 구조 일관성 점검 중",
+                outline_sections=outline_sections,
+                section_total=len(sections),
+            )
+            style_audit_text, _, usage = await _request_text(
+                api_client,
+                model=model,
+                system_prompt=system_prompt,
+                reasoning_effort=reasoning_effort,
+                prompt=_style_consistency_audit_prompt(arguments.title, section_bodies, model=model),
+                max_tokens=min(2_000, token_limits["review"]),
+            )
+            generation_usage = _add_usage(generation_usage, usage)
+            revision_ids = _section_ids_for_style_revision(style_audit_text, section_count=len(section_bodies))
+            if revision_ids:
+                updated_section_bodies = list(section_bodies)
+                for section_id in revision_ids[:2]:
+                    section_index = int(section_id.rsplit("-", 1)[-1]) - 1
+                    section_title, current_body = updated_section_bodies[section_index]
+                    revised_body, _, usage = await _request_text(
+                        api_client,
+                        model=model,
+                        system_prompt=system_prompt,
+                        reasoning_effort=reasoning_effort,
+                        prompt=_style_revision_prompt(
+                            arguments.title,
+                            section_id,
+                            section_title,
+                            current_body,
+                            style_audit_text,
+                        ),
+                        max_tokens=token_limits["section"],
+                    )
+                    generation_usage = _add_usage(generation_usage, usage)
+                    if revised_body.strip():
+                        written_token_counter.add(revised_body)
+                        updated_section_bodies[section_index] = (section_title, revised_body.strip())
+                        revised_section_ids.append(section_id)
+                if revised_section_ids:
+                    section_bodies = updated_section_bodies
+                    section_summaries = [_short_summary(title, body) for title, body in section_bodies]
+                    await preview_writer.write(section_bodies, force=True)
+            preview_writer.write_progress_state(
+                generation_usage,
+                document_written_tokens=written_token_counter.total_tokens,
+                phase="style_audit_done",
+                phase_label="문체와 구조 일관성 점검 완료",
+                outline_sections=outline_sections,
+                section_total=len(sections),
+            )
+
+        preview_writer.write_progress_state(
+            generation_usage,
+            document_written_tokens=written_token_counter.total_tokens,
+            phase="review",
+            phase_label="검토 요약 작성 중",
+            outline_sections=outline_sections,
+            section_total=len(sections),
+        )
         review_text, _, usage = await _request_text(
             api_client,
             model=model,
@@ -245,6 +386,10 @@ class LongReportTool(BaseTool):
         preview_writer.write_progress_state(
             generation_usage,
             document_written_tokens=written_token_counter.total_tokens,
+            phase="merge",
+            phase_label="최종 보고서 병합 중",
+            outline_sections=outline_sections,
+            section_total=len(sections),
         )
 
         report_text = _render_report(
@@ -254,12 +399,35 @@ class LongReportTool(BaseTool):
             output_format=output_format,
             target_tokens=target_tokens,
             model=model,
+            source_references=_source_reference_candidates(arguments),
         )
         output_path.write_text(
             report_text,
             encoding="utf-8",
         )
+        preview_writer.write_progress_state(
+            generation_usage,
+            document_written_tokens=written_token_counter.total_tokens,
+            phase="done",
+            phase_label="장문 보고서 생성 완료",
+            outline_sections=outline_sections,
+            section_total=len(sections),
+        )
+        ledger = _build_report_ledger(
+            arguments,
+            output_path=output_path,
+            output_format=output_format,
+            target_tokens=target_tokens,
+            source_text=source_text,
+            section_bodies=section_bodies,
+            review_text=review_text,
+            style_audit_text=style_audit_text,
+            revised_section_ids=revised_section_ids,
+            model=model,
+        )
+        ledger_path = _write_report_ledger(output_path, ledger)
         display_path = display_tool_path(output_path, context.cwd)
+        display_ledger_path = display_tool_path(ledger_path, context.cwd)
         estimated_tokens = estimate_tokens(report_text, model=model)
         written_tokens = written_token_counter.total_tokens
         token_note = (
@@ -270,7 +438,10 @@ class LongReportTool(BaseTool):
         )
         if target_tokens:
             token_note += f" / 목표 {target_tokens:,}"
-        output = f"장문 보고서를 생성했습니다: {display_path} (섹션 {len(section_bodies)}개{token_note})"
+        output = (
+            f"장문 보고서를 생성했습니다: {display_path} "
+            f"(섹션 {len(section_bodies)}개{token_note}, 근거 ledger {display_ledger_path})"
+        )
         return ToolResult(
             output=output,
             metadata={
@@ -285,6 +456,13 @@ class LongReportTool(BaseTool):
                 "usage_output_tokens": generation_usage.output_tokens,
                 "usage_total_tokens": generation_usage.total_tokens,
                 "section_count": len(section_bodies),
+                "ledger_path": str(ledger_path),
+                "source_notes_present": bool(arguments.source_notes.strip()),
+                "source_path_count": len(arguments.source_paths),
+                "style_audit_present": bool(style_audit_text.strip()),
+                "style_revised_section_ids": revised_section_ids,
+                "target_adherence": ledger.get("target_adherence", {}),
+                "quality_warnings": ledger.get("quality", {}).get("warnings", []),
             },
         )
 
@@ -308,12 +486,33 @@ class _ReportPreviewWriter:
         self.model = model
         self._last_write_at = 0.0
 
-    def write_progress_state(self, usage: UsageSnapshot, *, document_written_tokens: int = 0) -> None:
+    def write_progress_state(
+        self,
+        usage: UsageSnapshot,
+        *,
+        document_written_tokens: int = 0,
+        phase: str = "",
+        phase_label: str = "",
+        outline_sections: list[dict[str, object]] | None = None,
+        section_index: int = 0,
+        section_total: int = 0,
+        section_title: str = "",
+        section_summary: str = "",
+        continuation_index: int = 0,
+    ) -> None:
         write_long_report_progress_state(
             self.cwd,
             self.output_path,
             usage=usage,
             document_written_tokens=document_written_tokens,
+            phase=phase,
+            phase_label=phase_label,
+            outline_sections=outline_sections,
+            section_index=section_index,
+            section_total=section_total,
+            section_title=section_title,
+            section_summary=section_summary,
+            continuation_index=continuation_index,
         )
 
     async def write(
@@ -445,8 +644,9 @@ def _target_tokens_per_section(
 ) -> int:
     if target_tokens <= 0 or section_count <= 0:
         return 0
-    per_section = max(minimum_per_section, target_tokens // section_count)
-    return min(per_section, int(section_cap * 0.85))
+    del section_cap
+    per_section = (target_tokens + section_count - 1) // section_count
+    return max(minimum_per_section, per_section)
 
 
 def _section_request_max_tokens(section_target_tokens: int, section_cap: int) -> int:
@@ -458,7 +658,7 @@ def _section_request_max_tokens(section_target_tokens: int, section_cap: int) ->
 def _section_collected_token_budget(section_target_tokens: int, *, allow_overrun: bool = True) -> int | None:
     if section_target_tokens <= 0:
         return None
-    multiplier = 1.1 if allow_overrun else 1.0
+    multiplier = 1.2 if allow_overrun else 1.0
     return max(1_000, int(section_target_tokens * multiplier))
 
 
@@ -479,6 +679,10 @@ def _remaining_section_token_budget(
 def _max_continuations_for_target(section_target_tokens: int) -> int:
     if section_target_tokens <= 0:
         return 2
+    if section_target_tokens >= 60_000:
+        return 8
+    if section_target_tokens >= 30_000:
+        return 6
     if section_target_tokens >= 10_000:
         return 4
     if section_target_tokens >= 6_000:
@@ -486,10 +690,27 @@ def _max_continuations_for_target(section_target_tokens: int) -> int:
     return 2
 
 
+def _section_completion_floor_ratio(report_target_tokens: int) -> float:
+    if report_target_tokens >= 40_000:
+        return 0.8
+    return 0.9
+
+
 def _slugify_title(title: str) -> str:
     cleaned = re.sub(r"\s+", "_", title.strip())
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", cleaned)
     return cleaned.strip("._") or "long_report"
+
+
+def _source_material_for_report(cwd: Path, arguments: LongReportToolInput) -> str:
+    chunks: list[str] = []
+    source_notes = arguments.source_notes.strip()
+    if source_notes:
+        chunks.append(f"## Research notes\n{source_notes[:SOURCE_NOTES_MAX_CHARS]}")
+    file_sources = _read_source_material(cwd, arguments.source_paths)
+    if file_sources:
+        chunks.append(file_sources)
+    return "\n\n".join(chunks)[:160_000]
 
 
 def _read_source_material(cwd: Path, source_paths: list[str]) -> str:
@@ -506,14 +727,226 @@ def _read_source_material(cwd: Path, source_paths: list[str]) -> str:
     return "\n\n".join(chunks)[:160_000]
 
 
+def _report_ledger_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.name}.ledger.json")
+
+
+def _write_report_ledger(output_path: Path, ledger: dict[str, object]) -> Path:
+    ledger_path = _report_ledger_path(output_path)
+    ledger_path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
+    return ledger_path
+
+
+def _requires_external_research(arguments: LongReportToolInput) -> bool:
+    text = f"{arguments.title}\n{arguments.brief}".lower()
+    patterns = (
+        r"최신",
+        r"최근",
+        r"현황",
+        r"시장",
+        r"경쟁",
+        r"정책",
+        r"규제",
+        r"조사",
+        r"리서치",
+        r"출처",
+        r"근거",
+        r"\bresearch\b",
+        r"\bmarket\b",
+        r"\bcurrent\b",
+        r"\blatest\b",
+        r"\bsource",
+    )
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _source_reference_candidates(arguments: LongReportToolInput) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    if arguments.source_notes.strip():
+        references.append(_source_notes_reference(arguments.source_notes))
+    for index, raw_path in enumerate(arguments.source_paths[:10], start=1):
+        references.append({"id": f"source_path_{index}", "type": "file", "label": raw_path})
+    return references
+
+
+def _source_notes_reference(source_notes: str) -> dict[str, str]:
+    title_match = re.search(r"(?im)^\s*title\s*:\s*(.+?)\s*$", source_notes)
+    date_match = re.search(r"(?im)^\s*date\s*:\s*(.+?)\s*$", source_notes)
+    url_match = re.search(r"https?://[^\s)>\]]+", source_notes)
+    reference = {
+        "id": "source_notes",
+        "type": "research_notes",
+        "label": title_match.group(1).strip() if title_match else "Research notes",
+    }
+    if date_match:
+        reference["date"] = date_match.group(1).strip()
+    if url_match:
+        reference["url"] = url_match.group(0).strip().rstrip(".,")
+    return reference
+
+
+def _claim_candidates(body: str, *, limit: int = 8) -> list[str]:
+    normalized = " ".join(str(body or "").split())
+    if not normalized:
+        return []
+    candidates: list[str] = []
+    sentence_parts = re.split(r"(?<=[.!?。！？다요죠함음임됨니다])\s+", normalized)
+    signal = re.compile(
+        r"(\d|%|％|년|월|분기|조|억|만|달러|원|증가|감소|상승|하락|점유|규모|전망|리스크|risk|market|growth)",
+        flags=re.IGNORECASE,
+    )
+    for sentence in sentence_parts:
+        cleaned = sentence.strip()
+        if len(cleaned) < 20:
+            continue
+        if signal.search(cleaned):
+            candidates.append(cleaned[:500])
+        if len(candidates) >= limit:
+            break
+    if not candidates and sentence_parts:
+        first = sentence_parts[0].strip()
+        if first:
+            candidates.append(first[:500])
+    return candidates
+
+
+def _should_run_style_consistency_revision(
+    arguments: LongReportToolInput,
+    target_tokens: int,
+    section_bodies: list[tuple[str, str]],
+) -> bool:
+    if len(section_bodies) < 2:
+        return False
+    if target_tokens >= 20_000:
+        return True
+    return bool(arguments.source_notes.strip() or arguments.source_paths)
+
+
+def _section_ids_for_style_revision(audit_text: str, *, section_count: int) -> list[str]:
+    if not audit_text.strip():
+        return []
+    lowered = audit_text.strip().lower()
+    if lowered in {"ok", "pass", "no issues", "no issue", "none"}:
+        return []
+    ids: list[str] = []
+    for match in re.finditer(r"\b(?:rewrite|revise|fix)\s+section[-_\s]*(\d{1,2})\b", audit_text, flags=re.IGNORECASE):
+        index = int(match.group(1))
+        if 1 <= index <= section_count:
+            section_id = f"section-{index}"
+            if section_id not in ids:
+                ids.append(section_id)
+    return ids
+
+
+def _build_report_ledger(
+    arguments: LongReportToolInput,
+    *,
+    output_path: Path,
+    output_format: Literal["markdown", "html"],
+    target_tokens: int,
+    source_text: str,
+    section_bodies: list[tuple[str, str]],
+    review_text: str,
+    model: str,
+    style_audit_text: str = "",
+    revised_section_ids: list[str] | None = None,
+) -> dict[str, object]:
+    references = _source_reference_candidates(arguments)
+    warnings: list[str] = []
+    requires_external_research = _requires_external_research(arguments)
+    if requires_external_research and not source_text.strip():
+        warnings.append(
+            "This report request appears to need external research, but no source_notes or source_paths were provided to write_long_report."
+        )
+    if source_text.strip() and not references:
+        warnings.append("Source material was present but no structured source references were recorded.")
+    source_ids = [reference["id"] for reference in references]
+    sections: list[dict[str, object]] = []
+    estimated_body_tokens = 0
+    for index, (section_title, body) in enumerate(section_bodies, start=1):
+        section_estimated_tokens = estimate_tokens(body, model=model)
+        estimated_body_tokens += section_estimated_tokens
+        claims = [
+            {
+                "text": claim,
+                "status": "candidate",
+                "citation_candidates": source_ids,
+            }
+            for claim in _claim_candidates(body)
+        ]
+        sections.append(
+            {
+                "id": f"section-{index}",
+                "title": section_title,
+                "estimated_tokens": section_estimated_tokens,
+                "summary": _short_summary(section_title, body),
+                "claims": claims,
+            }
+        )
+    target_ratio = (estimated_body_tokens / target_tokens) if target_tokens else None
+    if target_ratio is not None and target_ratio < 0.8:
+        warnings.append(
+            "Estimated body tokens are below 80% of the requested target; source/detail scarcity or model stop behavior may have limited expansion."
+        )
+    return {
+        "version": 1,
+        "report_path": str(output_path),
+        "title": arguments.title,
+        "output_format": output_format,
+        "target_tokens": target_tokens,
+        "target_adherence": {
+            "target_tokens": target_tokens,
+            "estimated_body_tokens": estimated_body_tokens,
+            "ratio": round(target_ratio, 3) if target_ratio is not None else None,
+            "status": "not_requested"
+            if not target_tokens
+            else ("low" if target_ratio is not None and target_ratio < 0.8 else "approximate"),
+        },
+        "research": {
+            "requires_external_research": requires_external_research,
+            "source_notes_present": bool(arguments.source_notes.strip()),
+            "source_path_count": len(arguments.source_paths),
+            "source_material_estimated_tokens": estimate_tokens(source_text, model=model) if source_text else 0,
+            "sources": references,
+        },
+        "sections": sections,
+        "review": {
+            "present": bool(review_text.strip()),
+            "estimated_tokens": estimate_tokens(review_text, model=model) if review_text else 0,
+        },
+        "style_consistency": {
+            "audit_present": bool(style_audit_text.strip()),
+            "audit_summary": style_audit_text.strip()[:2_000],
+            "revised_section_ids": revised_section_ids or [],
+        },
+        "quality": {
+            "status": "style_checked" if style_audit_text.strip() else "unchecked",
+            "warnings": warnings,
+            "next_checks": [
+                "verify_candidate_claims_against_sources",
+                "check_section_coverage_and_balance",
+                "check_style_terminology_and_unit_consistency",
+                "flag_unsupported_claims_before_public_use",
+            ],
+        },
+    }
+
+
 def _outline_prompt(arguments: LongReportToolInput, source_text: str, *, target_tokens: int) -> str:
     source_block = f"\n\n참고 자료:\n{source_text}" if source_text else ""
     target_line = f"목표 분량: 약 {target_tokens:,} tokens\n" if target_tokens else ""
     return (
-        f"'{arguments.title}' 보고서의 목차를 작성하세요.\n"
+        f"'{arguments.title}' 보고서의 논리 흐름을 설계하세요.\n"
         f"요구사항: {arguments.brief}\n"
         f"{target_line}"
-        f"섹션 제목만 한 줄에 하나씩, 최대 {arguments.max_sections}개로 쓰세요."
+        f"최대 {arguments.max_sections}개 섹션으로 구성하세요.\n"
+        "반드시 JSON만 출력하세요. 형식:\n"
+        "{\n"
+        '  "sections": [\n'
+        '    {"title": "섹션 제목", "intent": "이 섹션의 역할", "key_points": ["포함할 내용"], "analysis_angle": "분석 관점"}\n'
+        "  ]\n"
+        "}\n"
+        "각 intent, key_points, analysis_angle은 사용자가 초반에 방향을 판단할 수 있을 만큼 구체적으로 짧게 쓰세요."
         f"{source_block}"
     )
 
@@ -542,6 +975,7 @@ def _section_prompt(
         f"전체 요구사항: {brief}\n"
         f"현재 섹션: {index}/{total} {section_title}\n"
         f"이전 섹션 요약:\n{prior or '(없음)'}\n\n"
+        f"{STYLE_CONSISTENCY_CONTRACT}\n"
         f"{length_instruction}"
         "현재 섹션 본문만 작성하세요. 제목 마크다운은 쓰지 마세요.\n"
         "HTML 태그를 쓰지 마세요. 본문은 일반 텍스트와 Markdown 목록/표만 사용하세요.\n"
@@ -571,16 +1005,61 @@ def _continuation_prompt(
     return (
         f"보고서 '{title}'의 '{section_title}' 섹션을 이어서 작성합니다.\n"
         f"{reason}\n"
+        f"{STYLE_CONSISTENCY_CONTRACT}\n"
         "아래 마지막 문맥을 이어서 현재 섹션 본문만 계속 작성하세요. "
         "이미 쓴 내용을 요약하거나 반복하지 말고, 누락된 분석·사례·함의·비교를 추가하세요.\n\n"
         f"마지막 문맥:\n{current_body[-4_000:]}"
     )
 
 
+def _style_consistency_audit_prompt(
+    title: str,
+    section_bodies: list[tuple[str, str]],
+    *,
+    model: str,
+) -> str:
+    section_blocks = []
+    for index, (section_title, body) in enumerate(section_bodies, start=1):
+        sample = body[:4_000]
+        token_count = estimate_tokens(body, model=model)
+        section_blocks.append(
+            f"## section-{index}: {section_title}\n"
+            f"estimated_tokens: {token_count:,}\n"
+            f"{sample}"
+        )
+    return (
+        f"'{title}' 보고서의 섹션별 문체·용어·구조 일관성을 감사하세요.\n"
+        f"{STYLE_CONSISTENCY_CONTRACT}\n"
+        "목표 분량은 참고 가이드일 뿐이며, 이 감사에서는 분량을 맞추기 위해 내용을 줄이라고 지시하지 마세요.\n"
+        "섹션별 용어, 단위, 기간, 존댓말/보고서체 혼용, 독립 요약문처럼 다시 시작하는 문제, 표/목록 밀도 차이만 보세요.\n"
+        "문제가 없으면 정확히 `OK`만 쓰세요.\n"
+        "특정 섹션을 고쳐야 하면 한 줄에 하나씩 `REWRITE section-N: 이유` 형식으로 쓰세요. 최대 2개 섹션만 지목하세요.\n\n"
+        + "\n\n".join(section_blocks)
+    )
+
+
+def _style_revision_prompt(
+    title: str,
+    section_id: str,
+    section_title: str,
+    current_body: str,
+    style_audit_text: str,
+) -> str:
+    return (
+        f"보고서 '{title}'의 {section_id} '{section_title}' 섹션만 문체·용어·구조 일관성 기준에 맞게 다시 작성하세요.\n"
+        f"{STYLE_CONSISTENCY_CONTRACT}\n"
+        "목표 토큰 수나 기존 섹션 길이는 참고 가이드일 뿐입니다. 분량을 맞추려고 핵심 근거, 수치, 비교, caveat를 삭제하지 마세요.\n"
+        "사실관계와 핵심 주장은 유지하고, 표현·용어·단위·문단 흐름만 정리하세요.\n"
+        "현재 섹션 본문만 출력하세요. 제목 마크다운, 검토 메모, 변경 설명은 쓰지 마세요.\n\n"
+        f"스타일 감사 결과:\n{style_audit_text.strip()}\n\n"
+        f"현재 섹션 본문:\n{current_body}"
+    )
+
+
 def _review_prompt(title: str, section_summaries: list[str]) -> str:
     return (
         f"'{title}' 보고서 초안의 검토 요약을 5개 bullet 이내로 작성하세요.\n"
-        "중복, 누락, 후속 보완점을 중심으로 짧게 쓰세요.\n\n"
+        "중복, 누락, 후속 보완점, 문체·용어·단위 일관성 문제를 중심으로 짧게 쓰세요.\n\n"
         + "\n".join(section_summaries)
     )
 
@@ -678,15 +1157,93 @@ def _trim_to_complete_boundary(text: str) -> str:
 
 
 def _parse_outline(outline_text: str, *, max_sections: int) -> list[str]:
-    sections: list[str] = []
+    return [str(item.get("title") or "").strip() for item in _parse_outline_sections(outline_text, max_sections=max_sections)]
+
+
+def _parse_outline_sections(outline_text: str, *, max_sections: int) -> list[dict[str, object]]:
+    parsed = _parse_outline_sections_json(outline_text, max_sections=max_sections)
+    if parsed:
+        return parsed
+    sections: list[dict[str, object]] = []
     for line in outline_text.splitlines():
         cleaned = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
         cleaned = cleaned.strip("#").strip()
-        if cleaned and cleaned not in sections:
-            sections.append(cleaned)
+        if not cleaned:
+            continue
+        title, summary = _split_outline_line(cleaned)
+        if title and all(item.get("title") != title for item in sections):
+            section: dict[str, object] = {"title": title}
+            if summary:
+                section["intent"] = summary
+            sections.append(section)
         if len(sections) >= max_sections:
             break
     return sections
+
+
+def _parse_outline_sections_json(outline_text: str, *, max_sections: int) -> list[dict[str, object]]:
+    raw_text = outline_text.strip()
+    if raw_text.startswith("```"):
+        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE).strip()
+        raw_text = re.sub(r"\s*```$", "", raw_text).strip()
+    try:
+        raw = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return []
+    candidates = raw.get("sections") if isinstance(raw, dict) else raw
+    if not isinstance(candidates, list):
+        return []
+    sections: list[dict[str, object]] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        title = _clean_outline_text(item.get("title") or item.get("section_title"))
+        if not title or any(section.get("title") == title for section in sections):
+            continue
+        section: dict[str, object] = {"title": title}
+        intent = _clean_outline_text(item.get("intent") or item.get("section_intent") or item.get("purpose"))
+        if intent:
+            section["intent"] = intent
+        key_points = _clean_outline_points(item.get("key_points") or item.get("keyPoints") or item.get("contents"))
+        if key_points:
+            section["key_points"] = key_points
+        analysis_angle = _clean_outline_text(item.get("analysis_angle") or item.get("analysis") or item.get("angle"))
+        if analysis_angle:
+            section["analysis_angle"] = analysis_angle
+        sections.append(section)
+        if len(sections) >= max_sections:
+            break
+    return sections
+
+
+def _split_outline_line(value: str) -> tuple[str, str]:
+    for separator in (" - ", " — ", ": "):
+        if separator in value:
+            title, summary = value.split(separator, 1)
+            return _clean_outline_text(title), _clean_outline_text(summary)
+    return _clean_outline_text(value), ""
+
+
+def _clean_outline_text(value: object, *, limit: int = 260) -> str:
+    text = " ".join(str(value or "").split())
+    text = text.strip(" -*#`")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit - 3]}..."
+
+
+def _clean_outline_points(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [_clean_outline_text(item, limit=140) for item in value if _clean_outline_text(item, limit=140)][:5]
+    text = _clean_outline_text(value)
+    return [text] if text else []
+
+
+def _outline_section_summary(section: dict[str, object]) -> str:
+    intent = _clean_outline_text(section.get("intent") or section.get("section_intent"))
+    key_points = _clean_outline_points(section.get("key_points") or section.get("keyPoints"))
+    analysis_angle = _clean_outline_text(section.get("analysis_angle") or section.get("analysis"))
+    return " · ".join([intent, ", ".join(key_points), analysis_angle]).strip(" ·")
 
 
 def _was_truncated(stop_reason: str | None) -> bool:
@@ -699,13 +1256,14 @@ def _should_continue_section(
     stop_reason: str | None,
     target_tokens: int,
     model: str,
+    minimum_ratio: float = 0.9,
 ) -> bool:
     if _was_truncated(stop_reason):
         return True
     if target_tokens <= 0:
         return False
     current_tokens = estimate_tokens(body, model=model)
-    return current_tokens < int(target_tokens * 0.9)
+    return current_tokens < int(target_tokens * minimum_ratio)
 
 
 def _append_continuation(body: str, continuation: str) -> str:
@@ -731,9 +1289,18 @@ def _render_report(
     output_format: Literal["markdown", "html"] = "markdown",
     target_tokens: int = 0,
     model: str | None = None,
+    source_references: list[dict[str, str]] | None = None,
 ) -> str:
+    sources = source_references or []
     if output_format == "html":
-        return _render_html_report(title, section_bodies, review_text, target_tokens=target_tokens, model=model)
+        return _render_html_report(
+            title,
+            section_bodies,
+            review_text,
+            target_tokens=target_tokens,
+            model=model,
+            source_references=sources,
+        )
     lines = [f"# {title}", ""]
     lines.append("## 목차")
     for section_title, _body in section_bodies:
@@ -741,8 +1308,12 @@ def _render_report(
     lines.append("")
     for section_title, body in section_bodies:
         lines.extend([f"## {section_title}", "", body, ""])
+        if sources:
+            lines.extend([_render_markdown_source_hint(sources), ""])
     if review_text.strip():
         lines.extend(["## 검토 요약", "", review_text.strip(), ""])
+    if sources:
+        lines.extend(["## 출처·근거 후보", "", *_render_markdown_sources(sources), ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -753,7 +1324,9 @@ def _render_html_report(
     *,
     target_tokens: int,
     model: str | None,
+    source_references: list[dict[str, str]] | None = None,
 ) -> str:
+    sources = source_references or []
     estimated_body_tokens = estimate_tokens("\n\n".join(body for _title, body in section_bodies), model=model)
     target_note = f"목표 {target_tokens:,} tokens" if target_tokens else "목표 분량 미지정"
     nav = "\n".join(
@@ -765,6 +1338,7 @@ def _render_html_report(
             f'<section id="section-{index}">'
             f"<h2>{escape(section_title)}</h2>"
             f"{_render_html_blocks(body)}"
+            f"{_render_html_source_hint(sources)}"
             "</section>"
         )
         for index, (section_title, body) in enumerate(section_bodies, start=1)
@@ -778,6 +1352,7 @@ def _render_html_report(
         target_note=target_note,
         model=model,
     )
+    sources_html = _render_html_sources(sources)
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -1021,6 +1596,48 @@ def _render_html_report(
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 0.92em;
     }}
+    .source-hint {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 18px 0 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .source-hint strong {{
+      color: var(--ink);
+      margin-right: 2px;
+    }}
+    .source-hint a {{
+      color: var(--accent);
+      text-decoration: none;
+      overflow-wrap: anywhere;
+    }}
+    .sources-section {{
+      margin-top: 38px;
+      padding-top: 22px;
+      border-top: 2px solid var(--line);
+    }}
+    .source-note {{
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    .source-details {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .source-details a {{
+      color: var(--accent);
+    }}
     @media (max-width: 760px) {{
       main {{ padding: 32px 18px 56px; }}
       .visual-grid {{ grid-template-columns: 1fr; }}
@@ -1054,6 +1671,7 @@ def _render_html_report(
     </nav>
     {section_html}
     {review_html}
+    {sources_html}
   </main>
 </body>
 </html>
@@ -1123,6 +1741,63 @@ def _render_html_blocks(text: str) -> str:
 
     flush_paragraph()
     return "\n".join(html_parts)
+
+
+def _render_markdown_source_hint(sources: list[dict[str, str]]) -> str:
+    labels = ", ".join(f"[{source.get('id', 'source')}] {source.get('label', 'source')}" for source in sources)
+    return f"> 근거 후보: {labels}"
+
+
+def _render_markdown_sources(sources: list[dict[str, str]]) -> list[str]:
+    lines: list[str] = []
+    for source in sources:
+        parts = [f"- `{source.get('id', 'source')}` {source.get('label', 'source')}"]
+        if source.get("date"):
+            parts.append(f"date: {source['date']}")
+        if source.get("url"):
+            parts.append(f"URL: {source['url']}")
+        lines.append(" / ".join(parts))
+    return lines
+
+
+def _render_html_source_hint(sources: list[dict[str, str]]) -> str:
+    if not sources:
+        return ""
+    links = " ".join(
+        f'<a href="#source-{escape(source.get("id", "source"))}">{escape(source.get("label", "source"))}</a>'
+        for source in sources
+    )
+    return f'<aside class="source-hint"><strong>근거 후보</strong>{links}</aside>'
+
+
+def _render_html_sources(sources: list[dict[str, str]]) -> str:
+    if not sources:
+        return ""
+    items = []
+    for source in sources:
+        source_id = escape(source.get("id", "source"))
+        label = escape(source.get("label", "source"))
+        details = []
+        if source.get("date"):
+            details.append(f'<span class="source-meta">{escape(source["date"])}</span>')
+        if source.get("url"):
+            url = escape(source["url"])
+            details.append(f'<a href="{url}" target="_blank" rel="noopener noreferrer">{url}</a>')
+        details_html = "".join(details)
+        items.append(
+            f'<li id="source-{source_id}">'
+            f'<strong>{source_id}</strong> {label}'
+            f'<div class="source-details">{details_html}</div>'
+            "</li>"
+        )
+    return (
+        '<section class="sources-section" id="sources">'
+        "<h2>출처·근거 후보</h2>"
+        '<p class="source-note">이 목록은 작성 전 수집된 source card와 로컬 자료를 기준으로 한 근거 후보입니다. '
+        "공개 전에는 ledger의 claim 후보와 함께 사실관계를 재검증하세요.</p>"
+        f"<ol>{''.join(items)}</ol>"
+        "</section>"
+    )
 
 
 def _render_html_visual_overview(

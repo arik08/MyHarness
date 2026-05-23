@@ -6,6 +6,7 @@ import type { AppSettings, ChatMessage } from "../types/ui";
 import {
   artifactDisplayName,
   artifactIcon,
+  artifactKind,
   artifactLabelForPath,
   artifactName,
   collectArtifactCandidates,
@@ -31,6 +32,62 @@ function hasMermaidFence(text: string) {
   return /^ {0,3}(`{3,}|~{3,})\s*(?:mermaid|mmd)\b/im.test(String(text || ""));
 }
 
+function messageArtifactCandidates(message: ChatMessage) {
+  if (message.artifacts?.length) {
+    return message.artifacts.map((artifact) => {
+      const path = normalizeArtifactPath(artifact.path || artifact.name || "");
+      const kind = artifact.kind || artifactKind(path);
+      return {
+        ...artifact,
+        path,
+        name: artifact.name || artifactName(path),
+        kind,
+        label: artifact.label || artifactLabelForPath(path, kind),
+      };
+    }).filter((artifact) => artifact.path);
+  }
+  return collectArtifactCandidates(message.isComplete ? message.text : "");
+}
+
+function lineContainsArtifactPath(line: string, artifacts: ArtifactSummary[]) {
+  const normalizedLine = line.replace(/\\/g, "/");
+  return artifacts.some((artifact) => {
+    const path = normalizeArtifactPath(artifact.path || "");
+    return path && normalizedLine.includes(path);
+  });
+}
+
+function removeStructuredArtifactReferenceLines(text: string, artifacts: ArtifactSummary[]) {
+  if (!artifacts.length) {
+    return text;
+  }
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+  const remove = new Set<number>();
+  lines.forEach((line, index) => {
+    if (!lineContainsArtifactPath(line, artifacts)) {
+      return;
+    }
+    remove.add(index);
+    if (/^\s*["'`]{1,2}\s*$/.test(lines[index + 1] || "")) {
+      remove.add(index + 1);
+    }
+    if (/^\s*(?:[-*+]\s*)?[^:\n]{0,120}:\s*["'`]*\s*$/.test(lines[index - 1] || "")) {
+      remove.add(index - 1);
+    }
+    if (/^\s*["'`]{1,2}\s*$/.test(lines[index - 1] || "")) {
+      remove.add(index - 1);
+      if (/^\s*(?:[-*+]\s*)?[^:\n]{0,120}:\s*["'`]*\s*$/.test(lines[index - 2] || "")) {
+        remove.add(index - 2);
+      }
+    }
+  });
+  return lines
+    .filter((_line, index) => !remove.has(index))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function removeArtifactReferenceRanges(text: string, references: Array<{ start: number; end: number }>) {
   if (!references.length) {
     return text;
@@ -53,16 +110,16 @@ function useMessageArtifacts(message: ChatMessage) {
   const [artifacts, setArtifacts] = useState<ResolvedArtifact[]>([]);
   const [loadingPath, setLoadingPath] = useState("");
   const candidateSignature = useMemo(
-    () => collectArtifactCandidates(message.isComplete ? message.text : "")
+    () => messageArtifactCandidates(message)
       .filter((artifact) => shouldResolveArtifactCandidate(artifact.path, state.workspacePath))
       .map((artifact) => artifact.path)
       .join("\n"),
-    [message.isComplete, message.text, state.workspacePath],
+    [message, state.workspacePath],
   );
 
   useEffect(() => {
     let canceled = false;
-    const candidates = collectArtifactCandidates(message.isComplete ? message.text : "")
+    const candidates = messageArtifactCandidates(message)
       .filter((artifact) => shouldResolveArtifactCandidate(artifact.path, state.workspacePath));
     if (!candidates.length || (!state.sessionId && !state.workspacePath && !state.workspaceName)) {
       setArtifacts((current) => (current.length ? [] : current));
@@ -93,7 +150,7 @@ function useMessageArtifacts(message: ChatMessage) {
               label: payload.label || artifactLabelForPath(payload.path || artifact.path, payload.kind || artifact.kind),
             };
           } catch {
-            return null;
+            return { ...artifact, sourcePath: artifact.path };
           }
         }),
       );
@@ -207,8 +264,13 @@ export function AssistantArtifactContent({
   onVisibleTextChange?: () => void;
 }) {
   const { artifactBySourcePath, artifacts, loadingPath, openArtifact } = useMessageArtifacts(message);
+  const hasStructuredArtifacts = Boolean(message.artifacts?.length);
+  const structuredArtifactText = useMemo(
+    () => (hasStructuredArtifacts ? removeStructuredArtifactReferenceLines(message.text, message.artifacts || []) : message.text),
+    [hasStructuredArtifacts, message.artifacts, message.text],
+  );
   const resolvedReferences = useMemo(() => {
-    if (!message.isComplete || !artifactBySourcePath.size) {
+    if (hasStructuredArtifacts || !message.isComplete || !artifactBySourcePath.size) {
       return [];
     }
     return collectArtifactReferences(message.text)
@@ -218,7 +280,7 @@ export function AssistantArtifactContent({
       }))
       .filter((item): item is { reference: ReturnType<typeof collectArtifactReferences>[number]; artifact: ResolvedArtifact } => Boolean(item.artifact))
       .sort((left, right) => left.reference.start - right.reference.start);
-  }, [artifactBySourcePath, message.isComplete, message.text]);
+  }, [artifactBySourcePath, hasStructuredArtifacts, message.isComplete, message.text]);
   const parts = useMemo(() => {
     if (!resolvedReferences.length || hasMermaidFence(message.text)) {
       return [];
@@ -245,12 +307,12 @@ export function AssistantArtifactContent({
   const mermaidArtifactText = useMemo(() => (
     message.isComplete && resolvedReferences.length && hasMermaidFence(message.text)
       ? removeArtifactReferenceRanges(message.text, resolvedReferences.map((item) => item.reference))
-      : message.text
-  ), [message.isComplete, message.text, resolvedReferences]);
+      : structuredArtifactText
+  ), [message.isComplete, message.text, resolvedReferences, structuredArtifactText]);
 
   if (!parts.length) {
     return (
-      <div className={resolvedReferences.length && hasMermaidFence(message.text) ? "assistant-artifact-content" : undefined}>
+      <div className={(resolvedReferences.length && hasMermaidFence(message.text)) || hasStructuredArtifacts ? "assistant-artifact-content" : undefined}>
         <StreamingAssistantMessage
           message={mermaidArtifactText === message.text ? message : { ...message, text: mermaidArtifactText }}
           settings={settings}
@@ -258,6 +320,13 @@ export function AssistantArtifactContent({
           onVisibleTextChange={onVisibleTextChange}
         />
         {resolvedReferences.length && hasMermaidFence(message.text) ? (
+          <div className="artifact-cards" aria-label="답변 산출물">
+            {artifacts.map((artifact) => (
+              <ArtifactCard key={artifact.path} artifact={artifact} loadingPath={loadingPath} onOpen={(nextArtifact) => void openArtifact(nextArtifact)} />
+            ))}
+          </div>
+        ) : null}
+        {hasStructuredArtifacts && artifacts.length ? (
           <div className="artifact-cards" aria-label="답변 산출물">
             {artifacts.map((artifact) => (
               <ArtifactCard key={artifact.path} artifact={artifact} loadingPath={loadingPath} onOpen={(nextArtifact) => void openArtifact(nextArtifact)} />

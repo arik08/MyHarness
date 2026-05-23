@@ -198,6 +198,7 @@ class BackendEvent(BaseModel):
     arguments_delta: str | None = None
     tool_input: dict[str, Any] | None = None
     output: str | None = None
+    artifacts: list[dict[str, Any]] | None = None
     is_error: bool | None = None
     compact_phase: str | None = None
     compact_trigger: str | None = None

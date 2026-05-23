@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ChatPanel } from "./ChatPanel";
-import { ArtifactPanel, clampArtifactPanelWidth } from "./ArtifactPanel";
+import { ArtifactPanel, artifactPanelListMaxWidth, clampArtifactPanelWidth } from "./ArtifactPanel";
 import { ModalHost } from "./ModalHost";
 import { Sidebar } from "./Sidebar";
 import { TooltipLayer } from "./TooltipLayer";
@@ -51,7 +51,9 @@ export function AppShell() {
     "--chat-panel-min-width": `${sidebarAutoCollapseChatWidthPx}px`,
     "--sidebar-collapsed-track-width": `${sidebarCollapsedTrackWidthPx}px`,
     "--sidebar-track-width": !state.sidebarCollapsed && state.sidebarWidth ? `${state.sidebarWidth}px` : undefined,
-    "--artifact-panel-width": state.artifactPanelWidth ? `${state.artifactPanelWidth}px` : undefined,
+    "--artifact-panel-width": state.artifactPanelWidth
+      ? `${state.activeArtifact ? state.artifactPanelWidth : Math.min(state.artifactPanelWidth, artifactPanelListMaxWidth)}px`
+      : undefined,
   };
 
   useEffect(() => {

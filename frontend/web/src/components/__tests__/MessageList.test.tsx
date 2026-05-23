@@ -91,6 +91,25 @@ function WorkflowWriteDeltaProbe() {
   );
 }
 
+function WorkflowEditDeltaProbe() {
+  const { dispatch } = useAppState();
+  const sendDelta = (delta: string) => dispatch({
+    type: "backend_event",
+    event: {
+      type: "tool_input_delta",
+      tool_name: "edit_file",
+      tool_call_index: 0,
+      arguments_delta: delta,
+    },
+  });
+  return (
+    <>
+      <button type="button" onClick={() => sendDelta("{\"path\":\"outputs/report.html\",\"old_str\":\"<h1>Old</h1>\"")}>edit first</button>
+      <button type="button" onClick={() => sendDelta(",\"new_str\":\"<h1>New</h1><p>Fast</p>\"}")}>edit more</button>
+    </>
+  );
+}
+
 function WorkflowWriteCompleteProbe() {
   const { dispatch } = useAppState();
   return (
@@ -491,7 +510,7 @@ describe("MessageList", () => {
 
   it("collapses long user messages and lets them expand again", async () => {
     const user = userEvent.setup();
-    const longText = Array.from({ length: 21 }, (_, index) => `${index + 1}번째 줄입니다.`).join("\n");
+    const longText = Array.from({ length: 11 }, (_, index) => `${index + 1}번째 줄입니다.`).join("\n");
     render(
       <AppStateProvider
         initialState={{
@@ -506,15 +525,34 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelector(".user-collapsed-message")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "더 보기" })).toBeTruthy();
-    expect(document.querySelector(".user-message-preview")?.textContent).toContain("20번째 줄입니다.");
-    expect(document.querySelector(".user-message-preview")?.textContent).not.toContain("21번째 줄입니다.");
+    expect(screen.getByRole("button", { name: "확장" })).toBeTruthy();
+    expect(document.querySelector(".user-message-preview")?.textContent).toContain("10번째 줄입니다.");
+    expect(document.querySelector(".user-message-preview")?.textContent).not.toContain("11번째 줄입니다.");
 
-    await user.click(screen.getByRole("button", { name: "더 보기" }));
+    await user.click(screen.getByRole("button", { name: "확장" }));
 
     expect(document.querySelector(".user-expanded-message")).toBeTruthy();
     expect(screen.getByRole("button", { name: "접기" })).toBeTruthy();
-    expect(document.querySelector(".user-expanded-message")?.textContent).toContain("21번째 줄입니다.");
+    expect(document.querySelector(".user-expanded-message")?.textContent).toContain("11번째 줄입니다.");
+  });
+
+  it("collapses ten-line user messages", () => {
+    const tenLineText = Array.from({ length: 10 }, (_, index) => `${index + 1}번째 입력 줄입니다.`).join("\n");
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "user-1", role: "user", text: tenLineText },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".user-collapsed-message")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "확장" })).toBeTruthy();
   });
 
   it("keeps completed assistant messages fully visible even after twenty lines", () => {
@@ -533,7 +571,7 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelector(".assistant-collapsed-message")).toBeNull();
-    expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "확장" })).toBeNull();
     expect(document.body.textContent || "").toContain("20번째 응답 줄입니다.");
     expect(document.body.textContent || "").toContain("21번째 응답 줄입니다.");
   });
@@ -559,8 +597,34 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelector(".user-collapsed-message")).toBeNull();
-    expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "확장" })).toBeNull();
     expect(document.body.textContent || "").toContain("Harness 기반 AI Agent");
+  });
+
+  it("copies user message text from the user bubble action", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "user-1", role: "user", text: "사람이 입력한 원문" },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "입력 복사" }));
+
+    expect(writeText).toHaveBeenCalledWith("사람이 입력한 원문");
+    expect(screen.getByRole("button", { name: "입력 복사됨" })).toBeTruthy();
   });
 
   it("does not render a bare @ shortcut marker as a file mention", () => {
@@ -1457,7 +1521,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("live.html");
   });
 
-  it("shows a running long report preview even before generated file content is available", () => {
+  it("shows a running long report outline before generated file content is available", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -1481,6 +1545,23 @@ describe("MessageList", () => {
                 output_path: "",
                 output_format: "html",
                 target_tokens: 40000,
+                phase_label: "보고서 뼈대 생성 완료",
+                section_index: 1,
+                section_total: 2,
+                outline_sections: [
+                  {
+                    title: "네트워크 구조 진단",
+                    intent: "공항 연결망의 중심과 주변부를 구분합니다.",
+                    key_points: ["허브 공항", "노선 집중도"],
+                    analysis_angle: "운항 수와 연결 수를 함께 비교합니다.",
+                  },
+                  {
+                    title: "핵심 노선과 수요 집중",
+                    intent: "상위 노선이 전체 흐름에서 차지하는 의미를 설명합니다.",
+                    key_points: ["상위 노선", "누적 비중"],
+                    analysis_angle: "편중과 반복 수요를 함께 봅니다.",
+                  },
+                ],
               },
             },
           ],
@@ -1492,14 +1573,12 @@ describe("MessageList", () => {
 
     expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
     expect(screen.queryByText("파일 작성")).toBeNull();
-    expect(screen.getByText("작성 중인 결과물 - GPT_1_~_GPT_5_보고서_report.html")).toBeTruthy();
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("목차와 섹션 단위로 나눠 작성한 뒤 최종 파일로 합칩니다.");
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("목표 분량: 40,000 tokens");
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("상태: 섹션 단위 생성 중 · 36초 경과");
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("1. 목차 설계");
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("2. 섹션별 본문 작성");
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("3. 짧거나 잘린 섹션 이어쓰기");
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("4. 검토 요약 및 최종 병합");
+    expect(screen.getByText("작성할 보고서 흐름")).toBeTruthy();
+    expect(screen.getByText("네트워크 구조 진단")).toBeTruthy();
+    expect(screen.getByText(/공항 연결망의 중심과 주변부/)).toBeTruthy();
+    expect(screen.getByText("핵심 노선과 수요 집중")).toBeTruthy();
+    expect(screen.getByText("네트워크 구조 진단").closest(".workflow-long-report-section")?.className).toContain("active");
+    expect(document.querySelector(".workflow-output-preview")).toBeNull();
   });
 
   it("shows long completed HTML write tool content in the workflow output preview body", () => {
@@ -1994,7 +2073,9 @@ describe("MessageList", () => {
         </AppStateProvider>,
       );
 
-      expect((document.querySelector(".workflow-output-body") as HTMLElement).scrollTop).toBe(640);
+      const body = document.querySelector(".workflow-output-body") as HTMLElement;
+      expect(body.className).toContain("running-fill");
+      expect(body.scrollTop).toBe(640);
     } finally {
       if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
       if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
@@ -2075,6 +2156,136 @@ describe("MessageList", () => {
     }
   });
 
+  it("does not force diff previews to the running max-height pane", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "보고서 고쳐줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "apply_patch",
+              title: "apply_patch",
+              detail: "outputs/report.html",
+              status: "running",
+              level: "child",
+              toolInput: {
+                patch: [
+                  "*** Begin Patch",
+                  "*** Update File: outputs/report.html",
+                  "-<h1>Old</h1>",
+                  "+<h1>New</h1>",
+                  "*** End Patch",
+                ].join("\n"),
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const body = document.querySelector(".workflow-output-body") as HTMLElement;
+    expect(body.className).toContain("diff");
+    expect(body.className).not.toContain("running-fill");
+  });
+
+  it("buffers running write preview growth before revealing it in small chunks", () => {
+    vi.useFakeTimers();
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "인터넷 AI 미래 보고서 작성해줘" },
+          ],
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamRevealDurationMs: 600,
+          },
+        }}
+      >
+        <WorkflowWriteDeltaProbe />
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const firstContent = "<!doctype html>\n<section>1</section>";
+    const completeContent = "<!doctype html>\n<section>1</section>\n<section>2</section>";
+    fireEvent.click(screen.getByRole("button", { name: "write first" }));
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(firstContent);
+
+    fireEvent.click(screen.getByRole("button", { name: "write more" }));
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(firstContent);
+
+    act(() => {
+      vi.advanceTimersByTime(162);
+    });
+
+    const firstBufferedStep = document.querySelector(".workflow-output-body")?.textContent || "";
+    expect(firstBufferedStep.length).toBeGreaterThan(firstContent.length);
+    expect(firstBufferedStep.length).toBeLessThan(completeContent.length);
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(completeContent);
+  });
+
+  it("buffers running edit preview growth before revealing it in small chunks", () => {
+    vi.useFakeTimers();
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "보고서 제목과 문장을 고쳐줘" },
+          ],
+          appSettings: {
+            ...initialAppState.appSettings,
+            streamRevealDurationMs: 600,
+          },
+        }}
+      >
+        <WorkflowEditDeltaProbe />
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const firstContent = "-- <h1>Old</h1>++ ";
+    const completeContent = "-- <h1>Old</h1>++ <h1>New</h1><p>Fast</p>";
+    fireEvent.click(screen.getByRole("button", { name: "edit first" }));
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(firstContent);
+
+    fireEvent.click(screen.getByRole("button", { name: "edit more" }));
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(firstContent);
+
+    act(() => {
+      vi.advanceTimersByTime(162);
+    });
+
+    const firstBufferedStep = document.querySelector(".workflow-output-body")?.textContent || "";
+    expect(firstBufferedStep.length).toBeGreaterThan(firstContent.length);
+    expect(firstBufferedStep.length).toBeLessThan(completeContent.length);
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(completeContent);
+    expect(screen.getByText("++ <h1>New</h1><p>Fast</p>").className).toContain("added");
+  });
+
   it("replaces a streamed write preview when the completed tool name differs", async () => {
     vi.useFakeTimers();
     render(
@@ -2105,7 +2316,7 @@ describe("MessageList", () => {
     expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
   });
 
-  it("shows long report generation usage instead of preview text tokens", () => {
+  it("does not render a long report output preview from completion summary alone", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -2136,9 +2347,9 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("작성 완료 - CPU_반도체_주가_급등_분석_보고서.html")).toBeTruthy();
-    expect(screen.getByText("작성 사용량 141,234 토큰")).toBeTruthy();
-    expect(screen.queryByText(/29줄/)).toBeNull();
+    expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
+    expect(document.querySelector(".workflow-output-preview")).toBeNull();
+    expect(screen.queryByText("작성 완료 - CPU_반도체_주가_급등_분석_보고서.html")).toBeNull();
   });
 
   it("shows running long report generation usage from progress metadata", () => {
@@ -2247,7 +2458,7 @@ describe("MessageList", () => {
         initialState={{
           ...initialAppState,
           messages: [
-            { id: "assistant-1", role: "assistant", text: "완료된 답변입니다.", isComplete: true },
+            { id: "assistant-1", role: "assistant", text: "완료된 답변입니다.", isComplete: true, createdAt: new Date(2026, 0, 4, 15, 32, 0).getTime() },
           ],
         }}
       >
@@ -2258,6 +2469,7 @@ describe("MessageList", () => {
     expect(screen.getByText("답변 완료")).toBeTruthy();
     expect(screen.getByLabelText("원문 복사")).toBeTruthy();
     expect(screen.getByLabelText("본문 저장")).toBeTruthy();
+    expect(screen.getByText("'26.01.04 (일) 15:32:00")).toBeTruthy();
   });
 
   it("shows only the filename after saving a completed assistant answer", async () => {
@@ -2358,6 +2570,38 @@ describe("MessageList", () => {
     const frame = await screen.findByTitle("super-ai-worm-game.html") as HTMLIFrameElement;
     expect(frame).toBeTruthy();
     expect(frame.srcdoc).toContain("AI Worm");
+  });
+
+  it("keeps artifact cards visible when metadata resolution is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("resolve unavailable");
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "정리 완료했습니다.\n\n- 요약 보고서: `outputs/구글_AI_상업화_영상_요약.html`",
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "구글_AI_상업화_영상_요약.html 미리보기 열기" })).toBeTruthy();
+    const assistantContent = document.querySelector(".assistant-artifact-content")?.textContent || "";
+    expect(assistantContent).toContain("정리 완료했습니다.");
+    expect(assistantContent).not.toContain("outputs/");
+    expect(assistantContent).not.toContain("요약 보고서");
   });
 
   it("replaces artifact labels and multiline wrappers with only the artifact card", async () => {
@@ -2496,6 +2740,120 @@ describe("MessageList", () => {
     expect(assistantContent).toContain("완료했습니다. HTML 보고서를 아래 경로에 작성했습니다.");
     expect(assistantContent).toContain("포스코_자금그룹_채권업무_프로세스_보고서.html");
     expect(assistantContent).not.toContain("`");
+  });
+
+  it("removes natural-language labels and wrapper backticks around multiple root artifact cards", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact/resolve?")) {
+        const path = new URL(url, "http://localhost").searchParams.get("path") || "";
+        const payloads = new Map([
+          ["글로도_4_6_영상_내용정리.md", { kind: "markdown", size: 7_900 }],
+          ["youtube_NgkyUXJWYiI_transcript.json", { kind: "json", size: 29_300 }],
+        ]);
+        const payload = payloads.get(path);
+        if (payload) {
+          return {
+            ok: true,
+            json: async () => ({
+              path,
+              name: path,
+              ...payload,
+            }),
+          } as Response;
+        }
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: [
+                "정리 완료했습니다.",
+                "",
+                "- 요약/정리 문서: `",
+                "글로도_4_6_영상_내용정리.md",
+                "`",
+                "",
+                "- 추출한 원문 자막 JSON: `",
+                "youtube_NgkyUXJWYiI_transcript.json",
+                "`",
+              ].join("\n"),
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const summaryCard = await screen.findByRole("button", { name: "글로도_4_6_영상_내용정리.md 미리보기 열기" });
+    const transcriptCard = await screen.findByRole("button", { name: "youtube_NgkyUXJWYiI_transcript.json 미리보기 열기" });
+    expect(summaryCard.closest(".assistant-artifact-inline")).toBeTruthy();
+    expect(transcriptCard.closest(".assistant-artifact-inline")).toBeTruthy();
+    const assistantContent = document.querySelector(".assistant-artifact-content")?.textContent || "";
+    expect(assistantContent).toContain("정리 완료했습니다.");
+    expect(assistantContent).toContain("글로도_4_6_영상_내용정리.md");
+    expect(assistantContent).toContain("youtube_NgkyUXJWYiI_transcript.json");
+    expect(assistantContent).not.toContain("요약/정리 문서");
+    expect(assistantContent).not.toContain("추출한 원문 자막 JSON");
+    expect(assistantContent).not.toContain("`");
+  });
+
+  it("renders structured artifact metadata without relying on prose path parsing", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("Unexpected fetch");
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: [
+                "정리 완료했습니다.",
+                "",
+                "- 요약 보고서: `outputs/구글_AI_상업화_영상_요약.html`",
+                "- 추출 원문 JSON: `outputs/youtube_요약_원문.json`",
+                "",
+                "핵심만 짧게 말하면, 영상은 AI 상업화 흐름을 설명합니다.",
+              ].join("\n"),
+              isComplete: true,
+              artifacts: [
+                { path: "outputs/구글_AI_상업화_영상_요약.html", kind: "html" },
+                { path: "outputs/youtube_요약_원문.json", kind: "json" },
+              ],
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "구글_AI_상업화_영상_요약.html 미리보기 열기" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "youtube_요약_원문.json 미리보기 열기" })).toBeTruthy();
+    const assistantContent = document.querySelector(".assistant-artifact-content")?.textContent || "";
+    expect(assistantContent).toContain("정리 완료했습니다.");
+    expect(assistantContent).toContain("핵심만 짧게 말하면");
+    expect(assistantContent).not.toContain("outputs/");
+    expect(assistantContent).not.toContain("`");
+    expect(assistantContent).not.toContain("요약 보고서");
+    expect(assistantContent).not.toContain("추출 원문 JSON");
   });
 
   it("shows filename-only artifact cards when the resolver omits a name", async () => {
@@ -2705,7 +3063,7 @@ describe("MessageList", () => {
     expect(document.querySelectorAll("article.message")).toHaveLength(1);
   });
 
-  it("renders adjacent plain log lines inside one message bubble", () => {
+  it("hides noisy backend MCP request log lines", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -2714,6 +3072,7 @@ describe("MessageList", () => {
             { id: "log-1", role: "log", text: "[05/23/26 03:59:12] INFO Processing request of type server.py:720" },
             { id: "log-2", role: "log", text: "ListToolsRequest" },
             { id: "log-3", role: "log", text: "INFO Processing request of type server.py:720" },
+            { id: "log-4", role: "log", text: "real backend warning" },
           ],
         }}
       >
@@ -2723,9 +3082,28 @@ describe("MessageList", () => {
 
     const articles = document.querySelectorAll("article.message.log");
     expect(articles).toHaveLength(1);
-    expect(articles[0]?.textContent).toContain("[05/23/26 03:59:12] INFO Processing request of type server.py:720");
-    expect(articles[0]?.textContent).toContain("ListToolsRequest");
-    expect(articles[0]?.textContent).toContain("INFO Processing request of type server.py:720");
+    expect(articles[0]?.textContent).toBe("real backend warning");
+  });
+
+  it("renders adjacent plain log lines inside one message bubble", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            { id: "log-1", role: "log", text: "first backend line" },
+            { id: "log-2", role: "log", text: "second backend line" },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const articles = document.querySelectorAll("article.message.log");
+    expect(articles).toHaveLength(1);
+    expect(articles[0]?.textContent).toContain("first backend line");
+    expect(articles[0]?.textContent).toContain("second backend line");
   });
 
   it("keeps log message boundaries when a normal chat message appears between them", () => {
@@ -3019,6 +3397,42 @@ describe("MessageList", () => {
       vi.advanceTimersByTime(600);
     });
     expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변입니다.");
+  });
+
+  it("reveals a long streaming backlog one character per frame", () => {
+    vi.useFakeTimers();
+    const settings = {
+      ...initialAppState.appSettings,
+      streamStartBufferMs: 0,
+      streamRevealDurationMs: 80,
+    };
+    const initialText = "시작";
+    const finalText = `${initialText}${"가".repeat(500)}`;
+    const { rerender } = render(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: initialText }}
+        settings={settings}
+        active
+      />,
+    );
+
+    rerender(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: finalText, isComplete: true }}
+        settings={settings}
+        active={false}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("시작가");
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("시작가가");
   });
 
   it("uses zero reveal duration as an instant reveal after the configured buffer", () => {

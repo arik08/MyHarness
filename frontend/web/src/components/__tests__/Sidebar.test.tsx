@@ -587,7 +587,8 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("숨김")).toBeTruthy();
+    expect(screen.getByText("이전 대화").closest(".history-item")?.classList.contains("hidden-history")).toBe(true);
+    expect(screen.queryByText("숨김")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
     const deleteButton = screen.getByRole("button", { name: "이전 대화 삭제" });
 

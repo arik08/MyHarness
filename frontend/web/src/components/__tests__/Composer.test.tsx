@@ -77,8 +77,8 @@ describe("Composer", () => {
 
     const toggle = screen.getByRole("button", { name: "입력 옵션 열기" });
     expect(toggle.getAttribute("title")).toBeNull();
-    expect(toggle.getAttribute("data-tooltip")).toBe("첨부 및 출력 옵션");
-    expect(toggle.getAttribute("data-tooltip-placement")).toBe("left");
+    expect(toggle.getAttribute("data-tooltip")).toBeNull();
+    expect(toggle.getAttribute("data-tooltip-placement")).toBeNull();
 
     await user.click(toggle);
 
@@ -94,11 +94,11 @@ describe("Composer", () => {
     expect(controlLabels.map((node) => node.textContent)).toEqual(["출력", "모드", "출력량"]);
     expect(controlLabels.map((node) => node.getAttribute("data-tooltip-placement"))).toEqual(["top", "top", "top"]);
     expect(controlLabels.map((node) => node.getAttribute("data-tooltip"))).toEqual([
-      "답변을 채팅에 표시할지 산출물로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다.",
-      "산출물을 만들 때 새로 생성할지 기존 산출물을 수정할지 정합니다.",
-      "산출물 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다. ~40k 이상은 먼저 개요와 작성 계획을 세운 뒤 섹션별로 나누어 작성하고 검토 후 합치는 방식으로 처리합니다.",
+      "답변을 채팅에 표시할지 파일로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다.",
+      "파일을 만들 때 새로 생성할지 기존 파일을 수정할지 정합니다.",
+      "파일 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다. ~40k 이상은 먼저 개요와 작성 계획을 세운 뒤 섹션별로 나누어 작성하고 검토 후 합치는 방식으로 처리합니다.",
     ]);
-    expect(Array.from(screen.getByLabelText("산출물 작업").querySelectorAll("button")).every((button) => !button.disabled)).toBe(true);
+    expect(Array.from(screen.getByLabelText("파일 작업").querySelectorAll("button")).every((button) => !button.disabled)).toBe(true);
     expect(screen.getByLabelText("출력 위치").querySelector("button")?.textContent).toBe("자동");
     expect(screen.getByLabelText("출력 길이").querySelector("button")?.textContent).toBe("자동");
     expect(screen.queryByRole("button", { name: "8k" })).toBeNull();
@@ -140,6 +140,28 @@ describe("Composer", () => {
     }));
   });
 
+  it("resets expanded panel options when the panel is closed", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "파일" }));
+    await user.click(screen.getByRole("button", { name: "수정" }));
+    await user.click(screen.getByRole("button", { name: "16k" }));
+    await user.click(screen.getByRole("button", { name: "입력 옵션 닫기" }));
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "접은 뒤에는 자동으로 보내줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.not.objectContaining({
+      composeOptions: expect.anything(),
+    }));
+  });
+
   it("serializes artifact edit compose options with the active artifact path", async () => {
     const user = userEvent.setup();
     render(
@@ -156,7 +178,7 @@ describe("Composer", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
-    await user.click(screen.getByRole("button", { name: "산출물" }));
+    await user.click(screen.getByRole("button", { name: "파일" }));
     await user.click(screen.getByRole("button", { name: "수정" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "현재 보고서 다듬어줘");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
@@ -220,7 +242,7 @@ describe("Composer", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
-    await user.click(screen.getByRole("button", { name: "산출물" }));
+    await user.click(screen.getByRole("button", { name: "파일" }));
     await user.click(screen.getByRole("button", { name: "~40k" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "대보고서 작성");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
@@ -244,7 +266,7 @@ describe("Composer", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
-    await user.click(screen.getByRole("button", { name: "산출물" }));
+    await user.click(screen.getByRole("button", { name: "파일" }));
     await user.click(screen.getByRole("button", { name: "16k" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "16k 정도로 답변해줘");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
@@ -314,6 +336,13 @@ describe("Composer", () => {
     }));
     expect(screen.getByText("client-notes.pdf")).toBeTruthy();
     expect(screen.getByText("2.0 KB")).toBeTruthy();
+    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
+    expect(stylesheet).toContain(".composer-panel-controls {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  width: 100%;\n  min-width: 0;\n  margin-block: -2px;\n  padding-block: 2px;\n  overflow-x: auto;");
+    expect(stylesheet).toContain(".composer-attachment-row {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: min(780px, calc(100% - 24px));\n  min-width: 0;\n  margin: 0 auto 7px;");
+    expect(stylesheet).toContain(".pasted-text-tray {\n  display: flex;\n  gap: 6px;\n  width: min(780px, calc(100% - 24px));");
+    expect(stylesheet).toContain(".pasted-text-tray,\n  .composer-attachment-row {\n    width: min(100% - 48px, 736px);\n  }");
+    expect(stylesheet).toContain(".client-attachment-type {\n  display: grid;\n  place-items: center;\n  min-width: 24px;\n  padding: 0 4px;");
+    expect(stylesheet).not.toContain(".composer-attach-group:has(.client-attachment-tray)");
 
     await user.click(screen.getByRole("button", { name: "client-notes.pdf 삭제" }));
     expect(screen.queryByText("client-notes.pdf")).toBeNull();
@@ -559,7 +588,32 @@ describe("Composer", () => {
     expect(option.textContent).toContain("도구 4");
 
     await user.keyboard("{Enter}");
-    expect(input).toHaveProperty("value", "$mcp:sqlite_analysis");
+    expect(input).toHaveProperty("value", "$mcp:sqlite_analysis ");
+  });
+
+  it("adds a trailing space after applying skill and file suggestions at the cursor", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          skills: [{ name: "design-review", description: "디자인 점검", enabled: true }],
+          artifacts: [{ path: "outputs/report.md", name: "report.md", kind: "file" }],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...") as HTMLTextAreaElement;
+    await user.type(input, "$des");
+    await user.keyboard("{Enter}");
+    expect(input).toHaveProperty("value", "$design-review ");
+
+    await user.clear(input);
+    await user.type(input, "@rep");
+    await user.keyboard("{Enter}");
+    expect(input).toHaveProperty("value", "@outputs/report.md ");
   });
 
   it("shows skill suggestions when dollar is typed in the middle of the draft", async () => {
@@ -609,6 +663,7 @@ describe("Composer", () => {
     await user.click(screen.getByRole("option", { name: /@report\.md/ }));
 
     expect(input).toHaveProperty("value", "이 파일 참고 @outputs/report.md 해줘");
+    expect(input.selectionStart).toBe("이 파일 참고 @outputs/report.md ".length);
   });
 
   it("uses the file path name for file suggestions when an artifact name is missing", async () => {
@@ -1079,7 +1134,10 @@ describe("Composer", () => {
     expect(planModeButton.classList.contains("hidden")).toBe(false);
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "메시지 보내기" }).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "작업 중단" })).toBeNull();
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ line: "/plan" }));
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      line: "/plan",
+      suppressUserTranscript: true,
+    }));
 
     await act(async () => {
       resolvePlan({ ok: true });

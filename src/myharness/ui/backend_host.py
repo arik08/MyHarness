@@ -14,7 +14,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from myharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, SupportsStreamingMessages
@@ -81,6 +81,8 @@ _LONG_REPORT_PROGRESS_DISPLAY_LIMIT = 0
 _SWARM_STATUS_INTERVAL_SECONDS = 2.0
 _ASSISTANT_PROGRESS_OPEN = "<myharness-progress>"
 _ASSISTANT_PROGRESS_CLOSE = "</myharness-progress>"
+_ASSISTANT_ARTIFACTS_OPEN = "<myharness-artifacts>"
+_ASSISTANT_ARTIFACTS_CLOSE = "</myharness-artifacts>"
 _SWARM_STRAGGLER_MIN_SECONDS = 10 * 60
 _SWARM_STRAGGLER_PEER_FACTOR = 3.0
 _SWARM_STRAGGLER_WAVE_WINDOW_SECONDS = 15 * 60
@@ -201,6 +203,115 @@ def _assistant_progress_prefix_keep(text: str) -> int:
 
 def _strip_assistant_progress_markers(text: str) -> tuple[str, list[str]]:
     return _AssistantProgressFilter().strip(text)
+
+
+class _AssistantArtifactFilter:
+    """Extract same-stream artifact JSON markers from assistant text."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def feed(self, text: str) -> tuple[str, list[dict[str, Any]]]:
+        self._buffer += text
+        return self._drain(final=False)
+
+    def flush(self) -> tuple[str, list[dict[str, Any]]]:
+        return self._drain(final=True)
+
+    def strip(self, text: str) -> tuple[str, list[dict[str, Any]]]:
+        self._buffer = text
+        return self._drain(final=True)
+
+    def _drain(self, *, final: bool) -> tuple[str, list[dict[str, Any]]]:
+        visible_parts: list[str] = []
+        artifacts: list[dict[str, Any]] = []
+        while self._buffer:
+            start = self._buffer.find(_ASSISTANT_ARTIFACTS_OPEN)
+            if start < 0:
+                if final:
+                    visible_parts.append(self._buffer)
+                    self._buffer = ""
+                    break
+                keep = _assistant_artifacts_prefix_keep(self._buffer)
+                emit_len = len(self._buffer) - keep
+                if emit_len > 0:
+                    visible_parts.append(self._buffer[:emit_len])
+                    self._buffer = self._buffer[emit_len:]
+                break
+            if start > 0:
+                visible_parts.append(self._buffer[:start])
+                self._buffer = self._buffer[start:]
+            after_open = len(_ASSISTANT_ARTIFACTS_OPEN)
+            end = self._buffer.find(_ASSISTANT_ARTIFACTS_CLOSE, after_open)
+            if end < 0:
+                if final:
+                    self._buffer = ""
+                break
+            raw_payload = self._buffer[after_open:end].strip()
+            artifacts.extend(_assistant_artifact_items(raw_payload))
+            self._buffer = self._buffer[end + len(_ASSISTANT_ARTIFACTS_CLOSE):]
+        return "".join(visible_parts), artifacts
+
+
+def _assistant_artifact_items(raw_payload: str) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return []
+    raw_items: object
+    if isinstance(payload, dict):
+        raw_items = payload.get("artifacts") or payload.get("files") or []
+    else:
+        raw_items = payload
+    if not isinstance(raw_items, list):
+        return []
+
+    artifacts: list[dict[str, Any]] = []
+    for item in raw_items:
+        if isinstance(item, str):
+            artifact = {"path": item}
+        elif isinstance(item, dict):
+            artifact = item
+        else:
+            continue
+        path = str(artifact.get("path") or artifact.get("file") or "").strip().replace("\\", "/")
+        if not path:
+            continue
+        next_item: dict[str, Any] = {"path": path}
+        for key in ("name", "kind", "label", "mime"):
+            value = artifact.get(key)
+            if isinstance(value, str) and value.strip():
+                next_item[key] = value.strip()
+        size = artifact.get("size")
+        if isinstance(size, int) and size >= 0:
+            next_item["size"] = size
+        artifacts.append(next_item)
+    return artifacts
+
+
+def _assistant_artifacts_prefix_keep(text: str) -> int:
+    max_keep = min(len(text), len(_ASSISTANT_ARTIFACTS_OPEN) - 1)
+    for size in range(max_keep, 0, -1):
+        if _ASSISTANT_ARTIFACTS_OPEN.startswith(text[-size:]):
+            return size
+    return 0
+
+
+def _strip_assistant_artifact_markers(text: str) -> tuple[str, list[dict[str, Any]]]:
+    return _AssistantArtifactFilter().strip(text)
+
+
+def _dedupe_assistant_artifacts(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        path = str(artifact.get("path") or "").strip().replace("\\", "/")
+        key = path.lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append({**artifact, "path": path})
+    return deduped
 
 
 def _format_file_size(value: object) -> str:
@@ -724,12 +835,26 @@ def _progress_preview_content(tool_name: str, cwd: Path, path: str) -> str:
 
 def _long_report_progress_usage_input(cwd: Path, path: str) -> dict[str, object]:
     state = read_long_report_progress_state(cwd, path)
-    return {key: value for key, value in state.items() if value > 0}
+    return {key: value for key, value in state.items() if _long_report_progress_value_visible(value)}
+
+
+def _long_report_progress_value_visible(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value > 0
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value)
+    return False
 
 
 def _tool_progress_message(tool_name: str, tool_input: dict[str, object] | None, elapsed_seconds: int) -> str:
     lower = tool_name.lower()
     payload = tool_input or {}
+    if lower == "write_long_report":
+        return _long_report_progress_message(payload, elapsed_seconds)
     if "bash" in lower or "shell" in lower:
         command = _truncate_progress_text(payload.get("command"))
         return f"명령 실행 중... {elapsed_seconds}초 경과" + (f" · {command}" if command else "")
@@ -738,6 +863,40 @@ def _tool_progress_message(tool_name: str, tool_input: dict[str, object] | None,
         return f"파일 작업 중... {elapsed_seconds}초 경과" + (f" · {path}" if path else "")
     target = _truncate_progress_text(payload.get("url") or payload.get("query") or payload.get("pattern"))
     return f"{tool_name} 실행 중... {elapsed_seconds}초 경과" + (f" · {target}" if target else "")
+
+
+def _long_report_progress_message(payload: dict[str, object], elapsed_seconds: int) -> str:
+    phase_label = _truncate_progress_text(payload.get("phase_label"), limit=64)
+    section_title = _truncate_progress_text(payload.get("section_title"), limit=54)
+    section_index = _progress_int(payload.get("section_index"))
+    section_total = _progress_int(payload.get("section_total"))
+    outline_count = len(payload.get("outline_sections")) if isinstance(payload.get("outline_sections"), list) else 0
+    written_tokens = _progress_int(payload.get("document_written_tokens"))
+    if section_index and section_total:
+        base = f"{section_index}/{section_total} 섹션 작성 중"
+    elif phase_label:
+        base = phase_label
+    elif outline_count:
+        base = f"보고서 뼈대 생성 완료 · {outline_count}개 섹션"
+    else:
+        base = "장문 보고서 생성 중"
+    parts = [base]
+    if section_title:
+        parts.append(section_title)
+    if written_tokens:
+        parts.append(f"작성 {written_tokens:,} 토큰")
+    parts.append(f"{elapsed_seconds}초 경과")
+    return " · ".join(parts)
+
+
+def _progress_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        number = int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
 
 
 def _normalize_question_choices(choices: list[dict[str, object]]) -> list[dict[str, str]]:
@@ -1566,6 +1725,8 @@ class ReactBackendHost:
         tool_progress_tasks: dict[str, asyncio.Task[None]] = {}
         assistant_progress_filter = _AssistantProgressFilter()
         assistant_progress_seen: set[str] = set()
+        assistant_artifact_filter = _AssistantArtifactFilter()
+        assistant_artifacts: list[dict[str, Any]] = []
 
         async def _emit_assistant_progress(messages: list[str]) -> None:
             for message in messages:
@@ -1666,6 +1827,8 @@ class ReactBackendHost:
             if isinstance(event, AssistantTextDelta):
                 visible_text, progress_messages = assistant_progress_filter.feed(event.text)
                 await _emit_assistant_progress(progress_messages)
+                visible_text, artifact_items = assistant_artifact_filter.feed(visible_text)
+                assistant_artifacts.extend(artifact_items)
                 if visible_text:
                     await _emit_or_buffer_assistant_delta(visible_text)
                 return
@@ -1695,10 +1858,16 @@ class ReactBackendHost:
             if isinstance(event, AssistantTurnComplete):
                 remaining_text, progress_messages = assistant_progress_filter.flush()
                 await _emit_assistant_progress(progress_messages)
+                remaining_text, artifact_items = assistant_artifact_filter.feed(remaining_text)
+                assistant_artifacts.extend(artifact_items)
+                remaining_text, artifact_items = assistant_artifact_filter.flush()
+                assistant_artifacts.extend(artifact_items)
                 if remaining_text:
                     await _emit_or_buffer_assistant_delta(remaining_text)
                 complete_text, complete_progress_messages = _strip_assistant_progress_markers(event.message.text.strip())
                 await _emit_assistant_progress(complete_progress_messages)
+                complete_text, complete_artifacts = _strip_assistant_artifact_markers(complete_text)
+                assistant_artifacts.extend(complete_artifacts)
                 assert self._bundle is not None
                 pending_agents = _has_pending_async_agents_for_current_session()
                 complete_text = _guard_premature_async_agent_final_response(
@@ -1715,6 +1884,7 @@ class ReactBackendHost:
                         message=complete_text.strip(),
                         item=TranscriptItem(role="assistant", text=complete_text.strip()),
                         has_tool_uses=bool(event.message.tool_uses),
+                        artifacts=_dedupe_assistant_artifacts(assistant_artifacts),
                     )
                 )
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
@@ -3096,7 +3266,7 @@ class ReactBackendHost:
                     payload["kind"] = item.kind
                 self._append_history_event(payload)
             elif item.role == "assistant":
-                self._append_history_event({"type": "assistant", "text": text})
+                self._append_history_event({"type": "assistant", "text": text, "timestamp": int(time.time() * 1000)})
             return
 
         if event.type == "assistant_complete":
@@ -3107,6 +3277,7 @@ class ReactBackendHost:
                         "type": "assistant",
                         "text": text,
                         "has_tool_uses": bool(event.has_tool_uses),
+                        "timestamp": int(time.time() * 1000),
                     }
                 )
             return

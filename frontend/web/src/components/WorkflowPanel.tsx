@@ -193,36 +193,6 @@ function workflowElapsedDetail(detail: string) {
   return String(detail || "").match(/(?:\d+분(?: \d+초)?|\d+초) 경과/)?.[0] || "";
 }
 
-function workflowLongReportProcessLines(done: boolean) {
-  const marker = done ? "완료" : "진행";
-  return [
-    `1. 목차 설계 - ${marker}`,
-    `2. 섹션별 본문 작성 - ${marker}`,
-    `3. 짧거나 잘린 섹션 이어쓰기 - ${marker}`,
-    `4. 검토 요약 및 최종 병합 - ${marker}`,
-  ];
-}
-
-function workflowLongReportPreviewContent(event: WorkflowEvent, input: Record<string, unknown>) {
-  const target = typeof input.target_tokens === "number" && Number.isFinite(input.target_tokens)
-    ? `목표 분량: ${input.target_tokens.toLocaleString()} tokens`
-    : "";
-  const elapsed = event.status === "running" ? workflowElapsedDetail(event.detail) : "";
-  const stateLine = [
-    event.status === "running" ? "상태: 섹션 단위 생성 중" : "상태: 생성 완료",
-    elapsed,
-  ].filter(Boolean).join(" · ");
-  return [
-    event.status === "running"
-      ? "장문 보고서를 한 번에 쓰지 않고, 목차와 섹션 단위로 나눠 작성한 뒤 최종 파일로 합칩니다."
-      : "장문 보고서를 섹션별 작성물과 검토 요약으로 합쳤습니다.",
-    target,
-    stateLine,
-    ...workflowLongReportProcessLines(event.status !== "running"),
-    compactDetail(event.output || "").replace(/^장문 보고서를 생성했습니다:\s*/u, "결과: "),
-  ].filter(Boolean).join("\n");
-}
-
 function splitWorkflowPreviewLines(value: string) {
   const normalized = String(value || "").replace(/\r\n/g, "\n");
   return normalized ? normalized.split("\n") : [""];
@@ -300,9 +270,6 @@ function workflowPreviewSource(event: WorkflowEvent) {
   const content = workflowInputValue(input, ["content", "new_string", "new_source"]);
   if (content.found) {
     return { path, kind: "content" as const, content: content.value };
-  }
-  if (isLongReportWorkflowTool(event.toolName)) {
-    return { path, kind: "content" as const, content: workflowLongReportPreviewContent(event, input) };
   }
   return null;
 }
@@ -413,6 +380,165 @@ const workflowEventStaggerMs = 90;
 const workflowPlanningStaggerMs = 220;
 const workflowRunningPreviewFullRenderMaxChars = 80_000;
 const workflowRunningPreviewTailChars = 48_000;
+const workflowPreviewOutputBufferMs = 128;
+
+function useSmoothWorkflowPreviewText(targetText: string, running: boolean, revealDurationMs: number) {
+  const [visibleText, setVisibleText] = useState(targetText);
+  const visibleTextRef = useRef(targetText);
+  const pendingTextRef = useRef("");
+  const bufferTimerRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const frameFallbackTimerRef = useRef<number | null>(null);
+  const lastFrameAtRef = useRef<number | null>(null);
+  const revealBudgetRef = useRef(0);
+  const revealDurationMsRef = useRef(revealDurationMs);
+
+  function clearBufferTimer() {
+    if (bufferTimerRef.current !== null) {
+      window.clearTimeout(bufferTimerRef.current);
+      bufferTimerRef.current = null;
+    }
+  }
+
+  function clearFrameFallbackTimer() {
+    if (frameFallbackTimerRef.current !== null) {
+      window.clearTimeout(frameFallbackTimerRef.current);
+      frameFallbackTimerRef.current = null;
+    }
+  }
+
+  function clearRevealTimers() {
+    clearBufferTimer();
+    clearFrameFallbackTimer();
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    lastFrameAtRef.current = null;
+    revealBudgetRef.current = 0;
+  }
+
+  function previewRevealRate(pendingLength: number) {
+    const duration = Math.max(80, Math.min(2000, revealDurationMsRef.current));
+    const baseCharsPerMs = Math.max(0.018, Math.min(0.12, 34 / duration));
+    const backlogBoost = 1 + Math.min(2.4, pendingLength / 900);
+    return baseCharsPerMs * backlogBoost;
+  }
+
+  function smoothPreviewRevealCount(pendingText: string, desiredCount: number) {
+    const pendingChars = Array.from(pendingText);
+    if (!pendingChars.length) {
+      return 0;
+    }
+    const maxTickChars = pendingChars.length >= 1400 ? 8 : pendingChars.length >= 700 ? 6 : pendingChars.length >= 220 ? 4 : pendingChars.length >= 80 ? 2 : 1;
+    return Math.min(pendingChars.length, Math.max(1, Math.min(maxTickChars, desiredCount)));
+  }
+
+  function flushPreviewText(timestamp = performance.now()) {
+    animationFrameRef.current = null;
+    clearFrameFallbackTimer();
+    const pendingText = pendingTextRef.current;
+    if (!pendingText) {
+      lastFrameAtRef.current = null;
+      revealBudgetRef.current = 0;
+      return;
+    }
+    const elapsedMs =
+      lastFrameAtRef.current === null ? 16 : Math.max(8, Math.min(64, timestamp - lastFrameAtRef.current));
+    lastFrameAtRef.current = timestamp;
+    revealBudgetRef.current += elapsedMs * previewRevealRate(Array.from(pendingText).length);
+    if (revealBudgetRef.current < 1) {
+      schedulePreviewRevealFrame();
+      return;
+    }
+    const pendingChars = Array.from(pendingText);
+    const revealCount = smoothPreviewRevealCount(pendingText, Math.floor(revealBudgetRef.current));
+    revealBudgetRef.current = Math.max(0, revealBudgetRef.current - revealCount);
+    const nextText = pendingChars.slice(0, revealCount).join("");
+    pendingTextRef.current = pendingChars.slice(revealCount).join("");
+    visibleTextRef.current = `${visibleTextRef.current}${nextText}`;
+    setVisibleText(visibleTextRef.current);
+    if (pendingTextRef.current) {
+      schedulePreviewRevealFrame();
+    } else {
+      lastFrameAtRef.current = null;
+      revealBudgetRef.current = 0;
+    }
+  }
+
+  function schedulePreviewRevealFrame() {
+    if (animationFrameRef.current !== null || frameFallbackTimerRef.current !== null) {
+      return;
+    }
+    animationFrameRef.current = window.requestAnimationFrame((timestamp) => {
+      flushPreviewText(timestamp);
+    });
+    frameFallbackTimerRef.current = window.setTimeout(() => {
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      flushPreviewText(performance.now());
+    }, 34);
+  }
+
+  function schedulePreviewBuffer() {
+    if (
+      bufferTimerRef.current !== null ||
+      animationFrameRef.current !== null ||
+      frameFallbackTimerRef.current !== null
+    ) {
+      return;
+    }
+    bufferTimerRef.current = window.setTimeout(() => {
+      bufferTimerRef.current = null;
+      schedulePreviewRevealFrame();
+    }, workflowPreviewOutputBufferMs);
+  }
+
+  useEffect(() => () => clearRevealTimers(), []);
+
+  useEffect(() => {
+    revealDurationMsRef.current = revealDurationMs;
+    if (pendingTextRef.current) {
+      clearBufferTimer();
+      schedulePreviewBuffer();
+    }
+  }, [revealDurationMs]);
+
+  useEffect(() => {
+    if (!running || revealDurationMs <= 0) {
+      clearRevealTimers();
+      pendingTextRef.current = "";
+      visibleTextRef.current = targetText;
+      setVisibleText(targetText);
+      return;
+    }
+
+    const visibleText = visibleTextRef.current;
+    const queuedText = `${visibleText}${pendingTextRef.current}`;
+    if (queuedText === targetText) {
+      return;
+    }
+    if (targetText.startsWith(queuedText)) {
+      pendingTextRef.current = `${pendingTextRef.current}${targetText.slice(queuedText.length)}`;
+      schedulePreviewBuffer();
+      return;
+    }
+    if (targetText.startsWith(visibleText)) {
+      pendingTextRef.current = targetText.slice(visibleText.length);
+      schedulePreviewBuffer();
+      return;
+    }
+
+    clearRevealTimers();
+    pendingTextRef.current = "";
+    visibleTextRef.current = targetText;
+    setVisibleText(targetText);
+  }, [targetText, running, revealDurationMs]);
+
+  return visibleText;
+}
 
 type WebInvestigationSource = {
   url: string;
@@ -606,10 +732,24 @@ function workflowStepTitle(event: WorkflowEvent) {
   return "파일 작업";
 }
 
-function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source: WorkflowPreviewSource }) {
+function WorkflowOutputPreview({
+  event,
+  source,
+  revealDurationMs,
+}: {
+  event: WorkflowEvent;
+  source: WorkflowPreviewSource;
+  revealDurationMs: number;
+}) {
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
   const displayContent = workflowVisiblePreviewContent(event, source.content);
+  const visibleDisplayContent = useSmoothWorkflowPreviewText(displayContent, !done, revealDurationMs);
+  const bodyClassName = [
+    "workflow-output-body",
+    source.kind === "diff" ? "diff" : "",
+    source.kind !== "diff" && !done ? "running-fill" : "",
+  ].filter(Boolean).join(" ");
   const fileName = workflowPreviewFileName(source.path);
   const prefix = source.kind === "diff"
     ? done ? "수정 완료" : "수정 미리보기"
@@ -626,7 +766,7 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
       return;
     }
     body.scrollTop = body.scrollHeight;
-  }, [event.status, displayContent]);
+  }, [event.status, visibleDisplayContent]);
 
   return (
     <div className="workflow-output-preview">
@@ -634,13 +774,119 @@ function WorkflowOutputPreview({ event, source }: { event: WorkflowEvent; source
         <span className="workflow-output-label">{fileName ? `${prefix} - ${fileName}` : prefix}</span>
         <span className="workflow-output-line-count">{count}</span>
       </div>
-      <pre ref={bodyRef} className={`workflow-output-body${source.kind === "diff" ? " diff" : ""}`}>{source.kind === "diff"
-        ? source.content.split(/\r?\n/).map((line, index) => (
+      <pre ref={bodyRef} className={bodyClassName}>{source.kind === "diff"
+        ? visibleDisplayContent.split(/\r?\n/).map((line, index) => (
           <span className={workflowDiffLineClassName(line)} key={`${index}:${line}`}>
             {line || " "}
           </span>
         ))
-        : displayContent}</pre>
+        : visibleDisplayContent}</pre>
+    </div>
+  );
+}
+
+type LongReportOutlineSection = {
+  title: string;
+  intent: string;
+  keyPoints: string[];
+  analysisAngle: string;
+};
+
+function workflowLongReportNumber(input: Record<string, unknown> | null | undefined, key: string) {
+  const value = input?.[key];
+  if (typeof value === "boolean") {
+    return 0;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+}
+
+function workflowLongReportString(input: Record<string, unknown> | null | undefined, key: string) {
+  const value = input?.[key];
+  return typeof value === "string" ? compactDetail(value) : "";
+}
+
+function workflowLongReportOutlineSections(input: Record<string, unknown> | null | undefined): LongReportOutlineSection[] {
+  const raw = input?.outline_sections;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item) => {
+      const record = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      const title = typeof record.title === "string" ? compactDetail(record.title) : "";
+      const intent = typeof record.intent === "string" ? compactDetail(record.intent) : "";
+      const analysisAngle = typeof record.analysis_angle === "string" ? compactDetail(record.analysis_angle) : "";
+      const keyPoints = Array.isArray(record.key_points)
+        ? record.key_points
+            .map((point) => (typeof point === "string" ? compactDetail(point) : ""))
+            .filter(Boolean)
+            .slice(0, 3)
+        : typeof record.key_points === "string" && compactDetail(record.key_points)
+          ? [compactDetail(record.key_points)]
+          : [];
+      return { title, intent, keyPoints, analysisAngle };
+    })
+    .filter((item) => item.title)
+    .slice(0, 30);
+}
+
+function workflowLongReportSectionSummary(section: LongReportOutlineSection) {
+  return [
+    section.intent,
+    section.keyPoints.length ? section.keyPoints.join(", ") : "",
+    section.analysisAngle,
+  ].filter(Boolean).join(" · ");
+}
+
+function WorkflowLongReportOutline({ event }: { event: WorkflowEvent }) {
+  const input = event.toolInput || {};
+  const sections = workflowLongReportOutlineSections(input);
+  if (!sections.length) {
+    return null;
+  }
+  const sectionIndex = workflowLongReportNumber(input, "section_index");
+  const sectionTotal = workflowLongReportNumber(input, "section_total") || sections.length;
+  const writtenTokens = workflowLongReportNumber(input, "document_written_tokens");
+  const targetTokens = workflowLongReportNumber(input, "target_tokens");
+  const phaseLabel = workflowLongReportString(input, "phase_label")
+    || (event.status === "running" ? "보고서 생성 중" : "보고서 생성 완료");
+  const meta = [
+    sectionIndex && sectionTotal ? `${sectionIndex}/${sectionTotal} 섹션` : `${sections.length}개 섹션`,
+    writtenTokens ? `작성 ${formatWorkflowTokenCount(writtenTokens)}` : "",
+    targetTokens ? `목표 ${formatWorkflowTokenCount(targetTokens)}` : "",
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <div className="workflow-long-report-outline" aria-label="작성할 보고서 흐름">
+      <div className="workflow-long-report-head">
+        <span>작성할 보고서 흐름</span>
+        <small>{[phaseLabel, meta].filter(Boolean).join(" · ")}</small>
+      </div>
+      <ol className="workflow-long-report-sections">
+        {sections.map((section, index) => {
+          const step = index + 1;
+          const active = sectionIndex === step;
+          const done = sectionIndex > step || event.status !== "running";
+          const summary = workflowLongReportSectionSummary(section);
+          return (
+            <li
+              className={[
+                "workflow-long-report-section",
+                active ? "active" : "",
+                done ? "done" : "",
+              ].filter(Boolean).join(" ")}
+              key={`${step}:${section.title}`}
+            >
+              <span className="workflow-long-report-index">{step}</span>
+              <span className="workflow-long-report-section-copy">
+                <strong>{section.title}</strong>
+                {summary ? <small>{summary}</small> : null}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }
@@ -1127,6 +1373,12 @@ export function WorkflowPanel({
     ),
     [events],
   );
+  const longReportOutlineEvent = useMemo(
+    () => [...events]
+      .reverse()
+      .find((event) => isLongReportWorkflowTool(event.toolName) && workflowLongReportOutlineSections(event.toolInput).length),
+    [events],
+  );
   const visibleTimelineEvents = useMemo(
     () => visibleEvents.filter((event) => !isWorkflowActivityEvent(event)),
     [visibleEvents],
@@ -1137,6 +1389,7 @@ export function WorkflowPanel({
   );
   const rows = useMemo(() => workflowRows(visibleTimelineEvents), [visibleTimelineEvents]);
   const hasOutputPreview = outputPreviewEvents.length > 0;
+  const hasLongReportOutline = Boolean(longReportOutlineEvent);
   const displayedDurationSeconds = totalDurationSeconds ?? liveTotalDurationSeconds;
   const latestVisibleEventId = visibleEvents.at(-1)?.id || "";
   const countLabel = [
@@ -1157,6 +1410,7 @@ export function WorkflowPanel({
   }, [
     animateActiveWorkflow,
     displayedDurationSeconds,
+    hasLongReportOutline,
     hasOutputPreview,
     latestVisibleEventId,
     rows.length,
@@ -1170,7 +1424,7 @@ export function WorkflowPanel({
 
   return (
     <article className="message assistant workflow-message" aria-label="도구 진행 상황">
-      <details className="workflow-card" open={!eventOverride && state.busy || runningCount > 0 || hasOutputPreview}>
+      <details className="workflow-card" open={!eventOverride && state.busy || runningCount > 0 || hasOutputPreview || hasLongReportOutline}>
         <summary>
           <span className="workflow-title">작업 진행</span>
           <span className="workflow-count">
@@ -1227,10 +1481,16 @@ export function WorkflowPanel({
               />
             ) : null}
           </div>
+          {longReportOutlineEvent ? <WorkflowLongReportOutline event={longReportOutlineEvent} /> : null}
           {outputPreviewEvents.length ? (
             <div className="workflow-output-list">
               {outputPreviewEvents.map(({ event, source }) => (
-                <WorkflowOutputPreview event={event} source={source} key={event.id} />
+                <WorkflowOutputPreview
+                  event={event}
+                  source={source}
+                  revealDurationMs={state.appSettings.streamRevealDurationMs}
+                  key={event.id}
+                />
               ))}
             </div>
           ) : null}

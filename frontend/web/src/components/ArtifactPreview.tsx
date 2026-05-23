@@ -1727,6 +1727,7 @@ export function ArtifactPreview({
   draftDirty,
   sourceMode,
   downloadUrl,
+  rawUrl,
   htmlEditMode,
   aiSelectionEnabled,
   aiEditComments = [],
@@ -1738,6 +1739,7 @@ export function ArtifactPreview({
   draftDirty?: boolean;
   sourceMode: boolean;
   downloadUrl: string;
+  rawUrl?: string;
   htmlEditMode?: boolean;
   aiSelectionEnabled?: boolean;
   aiEditComments?: ArtifactAiEditComment[];
@@ -1851,7 +1853,13 @@ export function ArtifactPreview({
     return <img className="artifact-image" src={dataUrl} alt={displayName} />;
   }
   if (kind === "pdf") {
-    return <iframe className="artifact-frame" title={displayName} src={dataUrl} />;
+    return (
+      <iframe
+        className="artifact-frame artifact-pdf-frame"
+        title={displayName}
+        src={String(rawUrl || dataUrl || downloadUrl)}
+      />
+    );
   }
   if (isMarkdownArtifact(artifact, payload)) {
     return (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -16,10 +17,19 @@ from myharness.tools.base import ToolExecutionContext
 from myharness.tools.long_report_tool import (
     LongReportTool,
     LongReportToolInput,
+    _continuation_prompt,
+    _review_prompt,
     _render_html_blocks,
     _render_html_report,
     _resolve_target_tokens,
+    _source_reference_candidates,
+    _parse_outline_sections,
+    _section_completion_floor_ratio,
+    _section_collected_token_budget,
+    _max_continuations_for_target,
     _section_prompt,
+    _section_request_max_tokens,
+    _target_tokens_per_section,
     _trim_text_to_token_budget,
 )
 
@@ -122,12 +132,113 @@ async def test_long_report_uses_lower_gpt55_report_token_limits(tmp_path: Path):
     assert result.metadata["usage_output_tokens"] == 80
     assert result.metadata["usage_total_tokens"] == 120
     progress_state = read_long_report_progress_state(tmp_path, "outputs/long_report.md")
-    assert progress_state == {
-        "document_written_tokens": result.metadata["document_written_tokens"],
-        "usage_input_tokens": 40,
-        "usage_output_tokens": 80,
-        "usage_total_tokens": 120,
-    }
+    assert progress_state["document_written_tokens"] == result.metadata["document_written_tokens"]
+    assert progress_state["usage_input_tokens"] == 40
+    assert progress_state["usage_output_tokens"] == 80
+    assert progress_state["usage_total_tokens"] == 120
+    assert progress_state["phase"] == "done"
+    assert progress_state["phase_label"] == "장문 보고서 생성 완료"
+    assert [section["title"] for section in progress_state["outline_sections"]] == ["배경", "영향"]
+
+
+@pytest.mark.asyncio
+async def test_long_report_accepts_source_notes_and_writes_claim_ledger(tmp_path: Path):
+    client = FakeReportClient(
+        [
+            ("- 시장 현황\n- 리스크", None),
+            ("2026년 시장은 15% 성장했습니다. 주요 공급사는 투자를 확대했습니다.", None),
+            ("규제 리스크는 2026년 하반기 비용 증가로 이어질 수 있습니다.", None),
+            ("OK", None),
+            ("검토 요약", None),
+        ]
+    )
+
+    result = await LongReportTool().execute(
+        LongReportToolInput(
+            title="시장 조사 보고서",
+            brief="최신 시장 현황을 조사 보고서로 작성하세요.",
+            output_path="outputs/researched.md",
+            source_notes=(
+                "Source card [1]\n"
+                "Title: Example Market Outlook\n"
+                "Date: 2026-05-01\n"
+                "URL: https://example.com/market\n"
+                "Key facts: 2026년 시장 성장률 15%, 규제 비용 증가 가능성."
+            ),
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.5",
+                "system_prompt": "system",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    assert "근거 ledger" in result.output
+    assert result.metadata["source_notes_present"] is True
+    outline_prompt = client.requests[0].messages[0].text
+    first_section_prompt = client.requests[1].messages[0].text
+    assert "## Research notes" in outline_prompt
+    assert "https://example.com/market" in outline_prompt
+    assert "2026년 시장 성장률 15%" in first_section_prompt
+    ledger_path = Path(str(result.metadata["ledger_path"]))
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert ledger["research"]["requires_external_research"] is True
+    assert ledger["research"]["source_notes_present"] is True
+    assert ledger["research"]["sources"][0]["id"] == "source_notes"
+    assert ledger["sections"][0]["id"] == "section-1"
+    assert ledger["sections"][0]["claims"][0]["citation_candidates"] == ["source_notes"]
+    assert ledger["style_consistency"]["audit_present"] is True
+    assert ledger["style_consistency"]["revised_section_ids"] == []
+    assert ledger["quality"]["status"] == "style_checked"
+    assert ledger["quality"]["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_long_report_rewrites_flagged_sections_for_style_consistency(tmp_path: Path):
+    client = FakeReportClient(
+        [
+            ("- 시장 현황\n- 리스크", None),
+            ("2026년 시장은 15% 성장했습니다. 공식 보고서체입니다.", None),
+            ("근데 이건 좀 말투가 튀어요. 비용은 3억 원입니다.", None),
+            ("REWRITE section-2: casual wording and unit style drift", None),
+            ("2026년 하반기 규제 리스크는 비용 3억 원 증가 가능성으로 정리된다.", None),
+            ("검토 요약", None),
+        ]
+    )
+
+    result = await LongReportTool().execute(
+        LongReportToolInput(
+            title="시장 조사 보고서",
+            brief="최신 시장 현황을 조사 보고서로 작성하세요.",
+            output_path="outputs/rewrite.md",
+            source_notes="Source card [1]\nURL: https://example.com/market\nKey facts: cost risk 3억 원.",
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.5",
+                "system_prompt": "system",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    report = (tmp_path / "outputs" / "rewrite.md").read_text(encoding="utf-8")
+    assert "말투가 튀어요" not in report
+    assert "비용 3억 원 증가 가능성" in report
+    assert "## 출처·근거 후보" in report
+    assert "Example" not in report
+    assert "목표 토큰 수나 기존 섹션 길이는 참고 가이드일 뿐입니다" in client.requests[4].messages[0].text
+    ledger = json.loads(Path(str(result.metadata["ledger_path"])).read_text(encoding="utf-8"))
+    assert result.metadata["style_audit_present"] is True
+    assert result.metadata["style_revised_section_ids"] == ["section-2"]
+    assert ledger["style_consistency"]["revised_section_ids"] == ["section-2"]
+    assert ledger["quality"]["status"] == "style_checked"
 
 
 @pytest.mark.asyncio
@@ -153,7 +264,7 @@ async def test_long_report_uses_gpt54_mini_section_limit_and_continues_truncated
     )
 
     assert result.is_error is False
-    assert [request.max_tokens for request in client.requests] == [6_000, 12_495, 12_495, 6_000]
+    assert [request.max_tokens for request in client.requests] == [6_000, 12_600, 12_600, 6_000]
     report = (tmp_path / "outputs" / "mini.md").read_text(encoding="utf-8")
     assert "요약 본문 1 이어쓰기" in report
 
@@ -195,13 +306,14 @@ async def test_long_report_flushes_partial_file_while_section_streams(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_long_report_target_tokens_continue_short_sections_and_render_html(tmp_path: Path):
-    long_body = "확장 분석 문장입니다. " * 8_000
+    long_body = "확장 분석 문장입니다. " * 10_000
     client = FakeReportClient(
         [
             ("- 배경\n- 결론", None),
             ("짧은 배경", None),
             (long_body, None),
             (long_body, None),
+            ("OK", None),
             ("검토 요약", None),
         ]
     )
@@ -223,8 +335,9 @@ async def test_long_report_target_tokens_continue_short_sections_and_render_html
     )
 
     assert result.is_error is False
-    assert [request.max_tokens for request in client.requests] == [8_000, 16_065, 16_065, 16_065, 8_000]
+    assert [request.max_tokens for request in client.requests] == [8_000, 18_000, 18_000, 18_000, 2_000, 8_000]
     assert result.metadata["target_tokens"] == 80_000
+    assert result.metadata["target_adherence"]["status"] == "approximate"
     report = (tmp_path / "outputs" / "deep.html").read_text(encoding="utf-8")
     assert "<!doctype html>" in report
     assert "<title>초장문 보고서</title>" in report
@@ -262,8 +375,8 @@ async def test_long_report_clamps_sections_to_requested_target_budget(tmp_path: 
     assert result.is_error is False
     report = (tmp_path / "outputs" / "clamped.md").read_text(encoding="utf-8")
     assert result.metadata["target_tokens"] == 40_000
-    assert estimate_tokens(report, model="gpt-5.5") < 25_000
-    assert result.metadata["estimated_tokens"] < 25_000
+    assert 35_000 <= estimate_tokens(report, model="gpt-5.5") <= 50_000
+    assert 35_000 <= result.metadata["estimated_tokens"] <= 50_000
 
 
 def test_long_report_infers_user_requested_target_tokens():
@@ -291,6 +404,22 @@ def test_long_report_infers_user_requested_target_tokens():
     )
 
 
+def test_long_report_keeps_large_target_across_section_continuations():
+    section_target = _target_tokens_per_section(
+        target_tokens=80_000,
+        section_count=2,
+        section_cap=18_000,
+    )
+
+    assert section_target == 40_000
+    assert _section_request_max_tokens(section_target, 18_000) == 18_000
+    assert _section_collected_token_budget(section_target, allow_overrun=True) == 48_000
+    assert _section_completion_floor_ratio(40_000) == 0.8
+    assert _section_completion_floor_ratio(16_000) == 0.9
+    assert _max_continuations_for_target(section_target) == 6
+    assert _max_continuations_for_target(80_000) == 8
+
+
 def test_long_report_token_budget_trim_uses_complete_sentence_boundary():
     text = ("완성 문장입니다. " * 200) + "잘리면 안 되는 미완성 문"
 
@@ -301,7 +430,41 @@ def test_long_report_token_budget_trim_uses_complete_sentence_boundary():
     assert estimate_tokens(trimmed, model="gpt-5.5") <= 500
 
 
+def test_long_report_parses_structured_outline_sections():
+    outline = json.dumps(
+        {
+            "sections": [
+                {
+                    "title": "네트워크 구조 진단",
+                    "intent": "공항 연결망의 중심과 주변부를 먼저 구분합니다.",
+                    "key_points": ["허브 공항", "노선 집중도"],
+                    "analysis_angle": "트래픽과 연결 수를 함께 비교합니다.",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    sections = _parse_outline_sections(outline, max_sections=8)
+
+    assert sections == [
+        {
+            "title": "네트워크 구조 진단",
+            "intent": "공항 연결망의 중심과 주변부를 먼저 구분합니다.",
+            "key_points": ["허브 공항", "노선 집중도"],
+            "analysis_angle": "트래픽과 연결 수를 함께 비교합니다.",
+        }
+    ]
+
+
 def test_html_report_renderer_adds_visual_summary_and_section_weight_chart():
+    source_references = _source_reference_candidates(
+        LongReportToolInput(
+            title="메모리 시장 리포트",
+            brief="시장 조사",
+            source_notes="Title: HBM Market Outlook\nDate: 2026-05-01\nURL: https://example.com/hbm",
+        )
+    )
     html = _render_html_report(
         "메모리 시장 리포트",
         [
@@ -311,15 +474,20 @@ def test_html_report_renderer_adds_visual_summary_and_section_weight_chart():
         "검토 요약",
         target_tokens=12_000,
         model="gpt-5.5",
+        source_references=source_references,
     )
 
     assert 'class="visual-overview"' in html
     assert 'class="section-weight-chart"' in html
+    assert 'class="source-hint"' in html
+    assert 'class="sources-section"' in html
     assert 'aria-label="섹션별 본문 분량 비중"' in html
     assert '<link rel="icon" href="data:,">' in html
     assert "1990년대 일본 DRAM 쇠퇴" in html
     assert "2024년 AI/HBM 슈퍼사이클" in html
     assert "섹션 분량 비중" in html
+    assert "HBM Market Outlook" in html
+    assert "https://example.com/hbm" in html
 
 
 def test_html_blocks_render_basic_markdown_and_escape_raw_html():
@@ -364,6 +532,23 @@ def test_section_prompt_requires_visualizable_material_without_raw_html():
     assert "HTML 태그를 쓰지 마세요" in prompt
     assert "표로 정리할 수 있는 수치" in prompt
     assert "차트·타임라인·비교표 후보" in prompt
+    assert "문체·용어·구조 일관성 계약" in prompt
+    assert "같은 개념, 기업명, 제품명, 지표명, 단위, 기간 표기" in prompt
+
+
+def test_long_report_followup_prompts_preserve_style_consistency_contract():
+    continuation = _continuation_prompt(
+        "메모리 시장 리포트",
+        "AI/HBM 슈퍼사이클",
+        "현재 본문입니다.",
+        target_tokens=8_000,
+        model="gpt-5.5",
+    )
+    review = _review_prompt("메모리 시장 리포트", ["- AI/HBM 슈퍼사이클: 요약"])
+
+    assert "문체·용어·구조 일관성 계약" in continuation
+    assert "이미 쓴 내용을 요약하거나 반복하지 말고" in continuation
+    assert "문체·용어·단위 일관성" in review
 
 
 def test_default_tool_registry_includes_long_report_tool_for_explicit_extra_long_artifacts():

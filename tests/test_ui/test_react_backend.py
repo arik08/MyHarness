@@ -102,7 +102,8 @@ def test_long_report_progress_infers_path_and_reads_streamed_file(tmp_path):
     preview = _read_progress_preview_content(tmp_path, progress_path)
 
     assert progress_path == "outputs/GPT_진화와_미래_보고서_report.html"
-    assert "outputs/GPT_진화와_미래_보고서_report.html" in message
+    assert "장문 보고서 생성 중" in message
+    assert "7초 경과" in message
     assert "<h1>생성 중</h1>" in preview
 
 
@@ -136,12 +137,41 @@ def test_long_report_progress_usage_reads_sidecar_state(tmp_path):
 
     usage_input = _long_report_progress_usage_input(tmp_path, progress_path)
 
-    assert usage_input == {
-        "document_written_tokens": 4321,
-        "usage_input_tokens": 1234,
-        "usage_output_tokens": 5678,
-        "usage_total_tokens": 6912,
-    }
+    assert usage_input["document_written_tokens"] == 4321
+    assert usage_input["usage_input_tokens"] == 1234
+    assert usage_input["usage_output_tokens"] == 5678
+    assert usage_input["usage_total_tokens"] == 6912
+    assert usage_input["last_updated_at"]
+
+
+def test_long_report_progress_usage_includes_outline_metadata(tmp_path):
+    progress_path = "outputs/report.html"
+    write_long_report_progress_state(
+        tmp_path,
+        progress_path,
+        usage=UsageSnapshot(input_tokens=12, output_tokens=34),
+        document_written_tokens=0,
+        phase="outline_ready",
+        phase_label="보고서 뼈대 생성 완료",
+        outline_sections=[
+            {
+                "title": "노선망 구조",
+                "intent": "허브와 주변 공항을 구분합니다.",
+                "key_points": ["상위 공항", "연결 수"],
+                "analysis_angle": "트래픽과 연결성을 함께 봅니다.",
+            }
+        ],
+        section_total=1,
+    )
+
+    usage_input = _long_report_progress_usage_input(tmp_path, progress_path)
+    message = _tool_progress_message("write_long_report", usage_input, 9)
+
+    assert usage_input["phase"] == "outline_ready"
+    assert usage_input["phase_label"] == "보고서 뼈대 생성 완료"
+    assert usage_input["outline_sections"]
+    assert "보고서 뼈대 생성 완료" in message
+    assert "9초 경과" in message
 
 
 def test_frontend_request_accepts_start_new_session():
@@ -276,8 +306,9 @@ def test_backend_host_records_history_events_for_snapshot_replay():
             "output": "passed",
             "is_error": False,
         },
-        {"type": "assistant", "text": "완료했습니다.", "has_tool_uses": False},
+        {"type": "assistant", "text": "완료했습니다.", "has_tool_uses": False, "timestamp": host._history_events[-1]["timestamp"]},
     ]
+    assert isinstance(host._history_events[-1]["timestamp"], int)
 
 
 def test_backend_host_records_line_complete_duration_for_snapshot_replay():
@@ -294,9 +325,10 @@ def test_backend_host_records_line_complete_duration_for_snapshot_replay():
 
     assert host._history_events == [
         {"type": "user", "text": "질문"},
-        {"type": "assistant", "text": "답변", "has_tool_uses": False},
+        {"type": "assistant", "text": "답변", "has_tool_uses": False, "timestamp": host._history_events[1]["timestamp"]},
         {"type": "line_complete", "workflow_duration_seconds": 17},
     ]
+    assert isinstance(host._history_events[1]["timestamp"], int)
 
 
 def test_backend_host_records_tool_input_deltas_for_snapshot_replay():
@@ -925,7 +957,13 @@ async def test_backend_host_records_suppressed_user_transcript_for_history(tmp_p
 
     assert not any(event.type == "transcript_item" and event.item and event.item.role == "user" for event in events)
     assert host._history_events[0] == {"type": "user", "text": "저장되어야 하는 질문"}
-    assert any(event == {"type": "assistant", "text": "기록된 답변", "has_tool_uses": False} for event in host._history_events)
+    assert any(
+        event.get("type") == "assistant"
+        and event.get("text") == "기록된 답변"
+        and event.get("has_tool_uses") is False
+        and isinstance(event.get("timestamp"), int)
+        for event in host._history_events
+    )
 
 
 @pytest.mark.asyncio
@@ -1248,6 +1286,60 @@ async def test_backend_host_extracts_same_stream_progress_json(tmp_path, monkeyp
     assert assistant_text == "답변 앞\n\n답변 뒤"
     assert "<myharness-progress>" not in (complete.message or "")
     assert complete.message == "답변 앞\n\n답변 뒤"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_extracts_same_stream_artifact_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del bundle, line, print_system, clear_output
+        marker = (
+            '<myharness-artifacts>{"artifacts":['
+            '{"path":"글로도_4_6_영상_내용정리.md"},'
+            '{"path":"youtube_NgkyUXJWYiI_transcript.json"}'
+            "]}</myharness-artifacts>"
+        )
+        await render_event(AssistantTextDelta(text="정리 완료했습니다.\n" + marker[:45]))
+        await render_event(AssistantTextDelta(text=marker[45:]))
+        await render_event(
+            AssistantTurnComplete(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text=f"정리 완료했습니다.\n{marker}")],
+                ),
+                usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            )
+        )
+        return True
+
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line("영상 정리해줘")
+    finally:
+        await close_runtime(host._bundle)
+
+    assistant_text = "".join(event.message or "" for event in events if event.type == "assistant_delta")
+    complete = next(event for event in events if event.type == "assistant_complete")
+
+    assert assistant_text == "정리 완료했습니다.\n"
+    assert "<myharness-artifacts>" not in (complete.message or "")
+    assert complete.message == "정리 완료했습니다."
+    assert [artifact["path"] for artifact in complete.artifacts or []] == [
+        "글로도_4_6_영상_내용정리.md",
+        "youtube_NgkyUXJWYiI_transcript.json",
+    ]
 
 
 @pytest.mark.asyncio

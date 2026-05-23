@@ -118,9 +118,17 @@ description: >
    ```bash
    py -3 .skills/insane-search/scripts/youtube_transcript.py "URL" --json
    ```
-2. 스크립트는 `ko-orig`, `ko`, `en` 순서로 `subtitles`와 `automatic_captions`를 확인하고, `json3`/`vtt`/`srv*` 자막을 텍스트로 정리한다. 분석에는 이 출력의 `title`, `duration`, `caption_language`, `transcript`를 사용한다.
-3. `ok=false`이고 `reason`이 `NO_CAPTIONS` 또는 `EMPTY_CAPTIONS`이면 영상 내용을 추측하지 말고, "자막 또는 자동생성 자막이 없어 영상 내용 분석은 할 수 없습니다"라고 답한다. 제목·설명·썸네일만으로 본문 분석한 것처럼 말하지 않는다.
-4. 스크립트 자체가 실패할 때만 `yt-dlp --list-subs "URL"`로 자막 존재 여부를 진단한다.
+2. 자막 원문을 파일로 저장해야 하면 셸 리다이렉션보다 스크립트의 `--output` 옵션을 우선 사용한다. Windows/PowerShell에서 `>`가 도구 인자 처리와 충돌하거나, PowerShell 5 계열에서 `&&`가 실패할 수 있기 때문이다.
+   ```bash
+   py -3 .skills/insane-search/scripts/youtube_transcript.py "URL" --json --max-chars 200000 --output "outputs/youtube_transcript.json"
+   ```
+   `--output`이 없는 구버전 스크립트라면 PowerShell 파이프를 한 줄로 사용한다. `&&`, `mkdir -p`, Bash heredoc, bare `>` 리다이렉션은 피한다.
+   ```powershell
+   $out = "outputs"; New-Item -ItemType Directory -Force -Path $out | Out-Null; py -3 .skills\insane-search\scripts\youtube_transcript.py "URL" --json --max-chars 200000 | Set-Content -Path "$out\youtube_transcript.json" -Encoding UTF8
+   ```
+3. 스크립트는 `ko-orig`, `ko`, `en` 순서로 `subtitles`와 `automatic_captions`를 확인하고, `json3`/`vtt`/`srv*` 자막을 텍스트로 정리한다. 분석에는 이 출력의 `title`, `duration`, `caption_language`, `transcript`를 사용한다.
+4. `ok=false`이고 `reason`이 `NO_CAPTIONS` 또는 `EMPTY_CAPTIONS`이면 영상 내용을 추측하지 말고, "자막 또는 자동생성 자막이 없어 영상 내용 분석은 할 수 없습니다"라고 답한다. 제목·설명·썸네일만으로 본문 분석한 것처럼 말하지 않는다.
+5. 스크립트 자체가 실패할 때만 `yt-dlp --list-subs "URL"`로 자막 존재 여부를 진단한다.
 
 스크립트가 없거나 수정 중일 때만 쓰는 수동 Python 패턴:
 ```bash

@@ -292,7 +292,7 @@ function nextLineRange(value: string, lineEnd: number) {
 }
 
 function isArtifactLabelPrefix(value: string) {
-  return /^\s*(?:[-*+]\s*)?(?:[^:\n`"'()[\]]{0,40}\s+)?(?:파일(?:\s*(?:위치|경로|명))?|file(?:\s*(?:path|location|name))?|산출물|결과물|artifact|output)\s*:\s*["'`]*\s*$/i.test(value);
+  return /^\s*(?:[-*+]\s*)?(?:[^:\n`"'()[\]]{0,60}\s+)?(?:파일(?:\s*(?:위치|경로|명))?|문서|보고서|자막|json|file(?:\s*(?:path|location|name))?|document|report|transcript|산출물|결과물|artifact|output)\s*:\s*["'`]*\s*$/i.test(value);
 }
 
 function isReferenceWrapperSuffix(value: string) {

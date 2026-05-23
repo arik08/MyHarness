@@ -149,7 +149,7 @@ const artifactTypes = {
   ".jpeg": { kind: "image", mime: "image/jpeg", encoding: "base64" },
   ".webp": { kind: "image", mime: "image/webp", encoding: "base64" },
   ".svg": { kind: "image", mime: "image/svg+xml", encoding: "base64" },
-  ".pdf": { kind: "pdf", mime: "application/pdf", encoding: "base64" },
+  ".pdf": { kind: "pdf", mime: "application/pdf", encoding: "binary" },
   ".doc": { kind: "file", mime: "application/msword", encoding: "binary" },
   ".docx": { kind: "file", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", encoding: "binary" },
   ".xls": { kind: "file", mime: "application/vnd.ms-excel", encoding: "binary" },
@@ -3176,7 +3176,7 @@ async function readSessionListItem(path) {
   const fileName = basename(path);
   const sessionId = String(data.session_id || "").trim()
     || fileName.replace(/^session-/, "").replace(/\.json$/i, "");
-  const summary = compactText(data.summary) || firstUserSummary(data.messages) || "(untitled chat)";
+  const summary = compactText(data.summary) || firstUserSummary(data.messages) || "새 대화";
   const createdAt = historyOrderTimestamp(data, info);
   const date = new Date(createdAt * (createdAt < 10_000_000_000 ? 1000 : 1));
   const labelDate = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -4251,12 +4251,12 @@ function normalizeComposeOptions(value) {
     options.artifact_action = artifactAction;
   }
   const lengthPreset = String(value.length_preset || value.lengthPreset || "").trim().toLowerCase();
-  if (["default", "long", "very_long", "extra_long"].includes(lengthPreset)) {
+  if (["default", "long", "very_long", "extended", "extra_long"].includes(lengthPreset)) {
     options.length_preset = lengthPreset;
   }
   const rawTarget = Number(value.target_output_tokens ?? value.targetOutputTokens ?? 0);
   if (Number.isFinite(rawTarget) && rawTarget > 0) {
-    options.target_output_tokens = Math.max(1, Math.min(120_000, Math.trunc(rawTarget)));
+    options.target_output_tokens = Math.max(1, Math.min(160_000, Math.trunc(rawTarget)));
   }
   const activeArtifactPath = normalizeProjectFilePath(value.active_artifact_path || value.activeArtifactPath || "");
   if (activeArtifactPath) {
@@ -4369,6 +4369,14 @@ function emit(session, event) {
   for (const client of session.clients) {
     writeSseEvent(client, event, eventId);
   }
+}
+
+function isNoisyBackendLogLine(line) {
+  const text = String(line || "").trim();
+  return (
+    /\bINFO\b\s+Processing request of type\b/.test(text)
+    || /^[A-Za-z]+Request$/.test(text)
+  );
 }
 
 function shouldReplayEvent(event) {
@@ -4551,6 +4559,9 @@ async function createBackendSession(options = {}) {
 
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
     if (!line.startsWith(protocolPrefix)) {
+      if (isNoisyBackendLogLine(line)) {
+        return;
+      }
       emit(session, { type: "transcript_item", item: { role: "log", text: line } });
       return;
     }
@@ -4565,6 +4576,9 @@ async function createBackendSession(options = {}) {
   });
 
   readline.createInterface({ input: child.stderr }).on("line", (line) => {
+    if (isNoisyBackendLogLine(line)) {
+      return;
+    }
     emit(session, { type: "transcript_item", item: { role: "log", text: line } });
   });
 
@@ -5187,6 +5201,26 @@ async function handleApi(request, response, pathname) {
       }
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not download artifact" });
+    }
+    return true;
+  }
+
+  if (request.method === "GET" && pathname === "/api/artifact/raw") {
+    const params = new URL(request.url, `http://localhost:${port}`).searchParams;
+    try {
+      const artifactPath = params.get("path");
+      const session = await workspaceTargetSessionFromRequest(params, artifactPath, workspaceScope);
+      const payload = await artifactDownloadTarget(session, artifactPath);
+      response.writeHead(200, {
+        "Content-Type": payload.mime,
+        "Content-Length": String(payload.size),
+        "Content-Disposition": `inline; filename="${asciiHeaderFilename(payload.name)}"`,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      });
+      createReadStream(payload.target).pipe(response);
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "Could not open artifact" });
     }
     return true;
   }

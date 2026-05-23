@@ -2509,6 +2509,36 @@ describe("ArtifactPanel", () => {
     expect(decodeURIComponent(download.getAttribute("href") || "")).toContain("path=outputs/namuwiki-history-report.pptx");
   });
 
+  it("embeds PDF previews through the inline artifact URL", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          clientId: "client-a",
+          sessionId: "session-a",
+          workspacePath: "C:/repo",
+          workspaceName: "repo",
+          activeArtifact: {
+            path: "outputs/quarterly-review.pdf",
+            name: "quarterly-review.pdf",
+            kind: "pdf",
+            label: "PDF",
+            size: 42,
+          },
+          activeArtifactPayload: { kind: "pdf", mime: "application/pdf" },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = document.querySelector(".artifact-pdf-frame") as HTMLIFrameElement;
+    expect(frame).toBeTruthy();
+    expect(decodeURIComponent(frame.getAttribute("src") || "")).toContain("/api/artifact/raw?");
+    expect(decodeURIComponent(frame.getAttribute("src") || "")).toContain("path=outputs/quarterly-review.pdf");
+  });
+
   it("requires a second click before deleting a project file from the list", async () => {
     vi.mocked(listProjectFiles).mockResolvedValueOnce({
       scope: "default",
@@ -2547,13 +2577,14 @@ describe("ArtifactPanel", () => {
 
     await screen.findByText("report.html");
     const actions = document.querySelector(".project-file-actions");
+    const floatingActions = document.querySelector(".project-file-floating-actions");
     const main = document.querySelector(".project-file-main");
     expect(main?.children[1]?.getAttribute("aria-label")).toBe("report.html 열기");
-    expect(actions?.children[0]?.getAttribute("aria-label")).toBe("report.html 즐겨찾기 추가");
-    expect(actions?.children[1]?.getAttribute("aria-label")).toBe("report.html 파일명 수정");
-    expect(actions?.children[2]?.getAttribute("aria-label")).toBe("report.html 삭제");
-    expect(actions?.children[3]?.textContent).toBe("42 B");
-    expect(actions?.children[4]?.getAttribute("aria-label")).toBe("report.html 다운로드");
+    expect(floatingActions?.children[0]?.getAttribute("aria-label")).toBe("report.html 즐겨찾기 추가");
+    expect(floatingActions?.children[1]?.getAttribute("aria-label")).toBe("report.html 파일명 수정");
+    expect(floatingActions?.children[2]?.getAttribute("aria-label")).toBe("report.html 삭제");
+    expect(actions?.children[0]?.textContent).toBe("42 B");
+    expect(actions?.children[1]?.getAttribute("aria-label")).toBe("report.html 다운로드");
 
     await userEvent.click(screen.getByRole("button", { name: "report.html 삭제" }));
     expect(deleteArtifact).not.toHaveBeenCalled();
@@ -2603,7 +2634,7 @@ describe("ArtifactPanel", () => {
     const pinnedSection = document.querySelector(".project-file-section-pinned");
     expect(pinnedSection?.querySelector(".project-file-section-title")?.textContent).toBe("즐겨찾기");
     expect(pinnedSection?.querySelector(".project-file-item strong")?.textContent).toBe("report.html");
-    expect(pinnedSection?.querySelector(".project-file-main")?.classList.contains("project-file-main-pinned")).toBe(true);
+    expect(pinnedSection?.querySelector(".project-file-floating-actions .project-file-pin")?.classList.contains("active")).toBe(true);
     expect([...document.querySelectorAll(".project-file-item strong")].filter((node) => node.textContent === "report.html")).toHaveLength(2);
     expect(localStorage.getItem("myharness:projectFilePins:C%3A%2Frepo")).toContain("outputs/report.html");
 
@@ -2931,5 +2962,9 @@ describe("ArtifactPanel", () => {
 
   it("keeps enough chat width visible when the artifact panel is resized wide", () => {
     expect(clampArtifactPanelWidth(1420, { windowWidth: 1200, sidebarCollapsed: false })).toBe(532);
+  });
+
+  it("caps the artifact panel at the comfortable project-file width", () => {
+    expect(clampArtifactPanelWidth(900, { windowWidth: 1600, sidebarCollapsed: true, maxWidth: 500 })).toBe(500);
   });
 });

@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -189,6 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=int, default=120, help="Network/subprocess timeout seconds")
     parser.add_argument("--json", action="store_true", help="Emit full JSON payload")
     parser.add_argument("--max-chars", type=int, default=0, help="Truncate transcript in text mode")
+    parser.add_argument("--output", help="Write output to this UTF-8 file instead of stdout")
     return parser
 
 
@@ -204,25 +206,37 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        output = json.dumps(payload, ensure_ascii=False, indent=2)
     else:
-        print(f"TITLE: {payload.get('title') or ''}")
-        print(f"DURATION: {payload.get('duration') or ''}")
-        print(f"UPLOADER: {payload.get('uploader') or ''}")
+        lines = [
+            f"TITLE: {payload.get('title') or ''}",
+            f"DURATION: {payload.get('duration') or ''}",
+            f"UPLOADER: {payload.get('uploader') or ''}",
+        ]
         if not payload.get("ok"):
-            print(f"NO_TRANSCRIPT: {payload.get('reason') or 'UNKNOWN'}")
-            return 1
-        print(
-            "CAPTION: "
-            f"{payload.get('caption_language')} "
-            f"{payload.get('caption_source')} "
-            f"{payload.get('caption_ext')}"
-        )
-        print()
-        transcript = payload.get("transcript") or ""
-        if args.max_chars and len(transcript) > args.max_chars:
-            transcript = transcript[: args.max_chars].rstrip() + "\n...[truncated]"
-        print(transcript)
+            lines.append(f"NO_TRANSCRIPT: {payload.get('reason') or 'UNKNOWN'}")
+        else:
+            lines.extend(
+                [
+                    "CAPTION: "
+                    f"{payload.get('caption_language')} "
+                    f"{payload.get('caption_source')} "
+                    f"{payload.get('caption_ext')}",
+                    "",
+                ]
+            )
+            transcript = payload.get("transcript") or ""
+            if args.max_chars and len(transcript) > args.max_chars:
+                transcript = transcript[: args.max_chars].rstrip() + "\n...[truncated]"
+            lines.append(transcript)
+        output = "\n".join(lines)
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
 
     return 0 if payload.get("ok") else 1
 

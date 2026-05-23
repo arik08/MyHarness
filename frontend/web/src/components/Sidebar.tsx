@@ -841,7 +841,6 @@ export function Sidebar() {
                     >
                       {item.pinned ? <span className="history-pin-indicator" aria-hidden="true">★</span> : null}
                       <span className="history-title">{displayLabel}</span>
-                      {state.adminMode && isHidden ? <span className="history-hidden-badge">숨김</span> : null}
                       {detailLabel ? <small>{detailLabel}</small> : null}
                     </button>
                   )}

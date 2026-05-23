@@ -15,12 +15,14 @@ vi.mock("../ChatPanel", () => ({
 
 vi.mock("../ArtifactPanel", () => ({
   ArtifactPanel: () => <section className="artifact-panel" data-testid="artifact-panel" />,
+  artifactPanelListMaxWidth: 500,
   clampArtifactPanelWidth: (
     value: number,
-    options: { windowWidth: number; sidebarCollapsed: boolean; sidebarWidth?: number },
+    options: { windowWidth: number; sidebarCollapsed: boolean; sidebarWidth?: number; maxWidth?: number },
   ) => {
     const sidebarWidth = options.sidebarCollapsed ? sidebarCollapsedTrackWidthPx : Math.max(268, options.sidebarWidth || 268);
-    const maxWidth = Math.max(320, options.windowWidth - sidebarWidth - sidebarAutoCollapseChatWidthPx);
+    const availableWidth = options.windowWidth - sidebarWidth - sidebarAutoCollapseChatWidthPx;
+    const maxWidth = Math.max(320, Math.min(options.maxWidth ?? availableWidth, availableWidth));
     return Math.min(Math.max(value, 320), maxWidth);
   },
 }));
@@ -218,7 +220,7 @@ describe("AppShell sidebar auto collapse", () => {
     });
 
     expect(screen.getByLabelText("sidebar state").textContent).toBe("collapsed:auto");
-    expect(screen.getByLabelText("artifact width").textContent).toBe(String(artifactPanelWidth + reclaimedSidebarWidth));
+    expect(screen.getByLabelText("artifact width").textContent).toBe("500");
     expect(appShell().className).toContain("artifact-open");
     expect(appShell().classList.contains("sidebar-transitioning")).toBe(true);
   });
@@ -340,7 +342,7 @@ describe("AppShell sidebar auto collapse", () => {
     });
 
     expect(screen.getByLabelText("sidebar state").textContent).toBe("collapsed:auto");
-    expect(screen.getByLabelText("artifact width").textContent).toBe(String(reopenedArtifactWidth + 120 + reclaimedSidebarWidth));
+    expect(screen.getByLabelText("artifact width").textContent).toBe("500");
   });
 
   it("restores an auto-collapsed sidebar only when the expanded chat width can stay above 400px", () => {

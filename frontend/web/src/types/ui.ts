@@ -17,6 +17,7 @@ export type ChatMessage = {
   id: string;
   role: TranscriptItem["role"];
   text: string;
+  createdAt?: number;
   kind?: TranscriptItem["kind"];
   toolName?: string;
   isError?: boolean;
@@ -27,6 +28,7 @@ export type ChatMessage = {
     output?: string;
     status?: "running" | "done" | "error";
   };
+  artifacts?: ArtifactSummary[];
 };
 
 export type LiveSessionView = {

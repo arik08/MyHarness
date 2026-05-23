@@ -22,6 +22,7 @@ import { sidebarAutoCollapseChatWidthPx, sidebarCollapsedTrackWidthPx, sidebarDe
 
 const artifactHistoryMarker = "myharnessArtifactPanel";
 const artifactPanelMinWidth = 320;
+export const artifactPanelListMaxWidth = 500;
 const shareCopyLabel = "공유 링크 복사";
 const shareCopiedLabel = "공유 링크 복사됨";
 const shareCopiedFeedbackMs = 1400;
@@ -62,9 +63,10 @@ function sameArtifactHistoryState(nextState: Record<string, unknown>) {
     && String(current.path || "") === String(nextState.path || "");
 }
 
-export function clampArtifactPanelWidth(value: number, options: { windowWidth: number; sidebarCollapsed: boolean; sidebarWidth?: number }) {
+export function clampArtifactPanelWidth(value: number, options: { windowWidth: number; sidebarCollapsed: boolean; sidebarWidth?: number; maxWidth?: number }) {
   const sidebarWidth = options.sidebarCollapsed ? sidebarCollapsedTrackWidthPx : Math.max(sidebarDefaultWidthPx, options.sidebarWidth || sidebarDefaultWidthPx);
-  const maxWidth = Math.max(artifactPanelMinWidth, options.windowWidth - sidebarWidth - sidebarAutoCollapseChatWidthPx);
+  const availableWidth = options.windowWidth - sidebarWidth - sidebarAutoCollapseChatWidthPx;
+  const maxWidth = Math.max(artifactPanelMinWidth, Math.min(options.maxWidth ?? availableWidth, availableWidth));
   return Math.min(Math.max(value, artifactPanelMinWidth), maxWidth);
 }
 
@@ -280,6 +282,16 @@ function downloadUrl(artifact: ArtifactSummary, state: ReturnType<typeof useAppS
   if (workspacePath) query.set("workspacePath", workspacePath);
   if (workspaceName) query.set("workspaceName", workspaceName);
   return `/api/artifact/download?${query.toString()}`;
+}
+
+function rawArtifactUrl(artifact: ArtifactSummary, state: ReturnType<typeof useAppState>["state"]) {
+  const query = new URLSearchParams({ clientId: state.clientId, path: artifact.path });
+  if (state.sessionId) query.set("session", state.sessionId);
+  const workspacePath = artifact.workspace?.path || state.workspacePath;
+  const workspaceName = artifact.workspace?.name || state.workspaceName;
+  if (workspacePath) query.set("workspacePath", workspacePath);
+  if (workspaceName) query.set("workspaceName", workspaceName);
+  return `/api/artifact/raw?${query.toString()}`;
 }
 
 function encodeReadableQueryValue(value: string) {
@@ -942,7 +954,7 @@ export function ArtifactPanel() {
     event.preventDefault();
     const handle = event.currentTarget;
     const startX = event.clientX;
-    const startWidth = state.artifactPanelWidth || Math.min(Math.max(window.innerWidth * 0.38, 360), 680);
+    const startWidth = state.artifactPanelWidth || Math.min(Math.max(window.innerWidth * 0.38, 360), state.activeArtifact ? 680 : artifactPanelListMaxWidth);
     dispatch({ type: "set_artifact_resizing", value: true });
     try {
       handle.setPointerCapture(event.pointerId);
@@ -976,6 +988,7 @@ export function ArtifactPanel() {
         windowWidth: window.innerWidth,
         sidebarCollapsed: state.sidebarCollapsed,
         sidebarWidth: state.sidebarWidth,
+        maxWidth: state.activeArtifact ? undefined : artifactPanelListMaxWidth,
       });
       dispatch({ type: "set_artifact_panel_width", value: Math.round(next) });
     };
@@ -1538,7 +1551,6 @@ export function ArtifactPanel() {
         {!active ? (
           <ArtifactList
             artifacts={visibleArtifacts}
-            totalCount={state.artifacts.length}
             loadingPath={loadingPath}
             filter={fileFilter}
             sort={fileSort}
@@ -1573,6 +1585,7 @@ export function ArtifactPanel() {
             draftDirty={draftDirty}
             sourceMode={sourceMode}
             downloadUrl={downloadUrl(active, state)}
+            rawUrl={rawArtifactUrl(active, state)}
             htmlEditMode={htmlEditMode}
             aiSelectionEnabled={canEditHtmlPreview && htmlEditMode}
             aiEditComments={aiEditComments}
@@ -1625,7 +1638,6 @@ function sortedArtifacts(artifacts: ArtifactSummary[], filter: string, sort: str
 function ArtifactList({
   artifacts,
   allArtifacts,
-  totalCount,
   loadingPath,
   filter,
   sort,
@@ -1648,7 +1660,6 @@ function ArtifactList({
 }: {
   artifacts: ArtifactSummary[];
   allArtifacts: ArtifactSummary[];
-  totalCount: number;
   loadingPath: string;
   filter: string;
   sort: string;
@@ -1677,7 +1688,6 @@ function ArtifactList({
     return (
       <>
         <ProjectFileToolbar
-          totalCount={totalCount}
           filter={filter}
           sort={sort}
           scope={scope}
@@ -1697,7 +1707,6 @@ function ArtifactList({
   return (
     <>
       <ProjectFileToolbar
-        totalCount={totalCount}
         filter={filter}
         sort={sort}
         scope={scope}
@@ -1866,9 +1875,8 @@ function ProjectFileItem({
 
   return (
     <div className={`project-file-item${deleteReady ? " delete-ready" : ""}${deleting ? " deleting" : ""}`}>
-      <div className={`project-file-main${pinned ? " project-file-main-pinned" : ""}${editingName ? " project-file-main-editing" : ""}`}>
+      <div className={`project-file-main${editingName ? " project-file-main-editing" : ""}`}>
         <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
-        {pinned ? pinButton : null}
         {editingName ? (
           <span className="artifact-card-copy project-file-inline-rename">
             <input
@@ -1899,8 +1907,8 @@ function ProjectFileItem({
           </button>
         )}
       </div>
-      <span className={`project-file-actions${pinned ? "" : " project-file-actions-with-pin"}`}>
-        {pinned ? null : pinButton}
+      <span className="project-file-floating-actions">
+        {pinButton}
         <button
           className="project-file-rename"
           type="button"
@@ -1927,6 +1935,8 @@ function ProjectFileItem({
         >
           <Icon name={deleteReady ? "warning" : "trash"} />
         </button>
+      </span>
+      <span className="project-file-actions">
         <span className="project-file-size artifact-card-size">{loading ? "불러오는 중" : formatBytes(artifact.size)}</span>
         <a className="project-file-download" href={downloadUrl} download={displayName} aria-label={`${displayName} 다운로드`} data-tooltip="다운로드" onClick={(event) => event.stopPropagation()}>
           <Icon name="download" />
@@ -1937,7 +1947,6 @@ function ProjectFileItem({
 }
 
 function ProjectFileToolbar({
-  totalCount,
   filter,
   sort,
   scope,
@@ -1949,7 +1958,6 @@ function ProjectFileToolbar({
   onToggleScope,
   onRefresh,
 }: {
-  totalCount: number;
   filter: string;
   sort: string;
   scope: "default" | "all";
@@ -1963,7 +1971,6 @@ function ProjectFileToolbar({
 }) {
   return (
     <div className="project-file-toolbar">
-      <span className="project-file-sort-summary">{scope === "all" ? "전체" : "outputs"} · {totalCount}개</span>
       <div className="project-file-controls">
         <label className="project-file-sort">
           <span>유형</span>
