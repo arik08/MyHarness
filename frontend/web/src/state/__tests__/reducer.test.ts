@@ -914,6 +914,25 @@ describe("appReducer", () => {
     ]);
   });
 
+  it("creates a visible completion message for marker-only artifact completions", () => {
+    const completed = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "",
+        has_tool_uses: false,
+        artifacts: [
+          { path: "outputs/한국_주변국_GDP_분석_보고서.html", kind: "html" },
+        ],
+      },
+    });
+
+    expect(completed.messages.at(-1)?.text).toBe("작성 완료했습니다.");
+    expect(completed.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
+      "outputs/한국_주변국_GDP_분석_보고서.html",
+    ]);
+  });
+
   it("promotes completed write_file paths to assistant artifact metadata", () => {
     const writing = appReducer(initialAppState, {
       type: "backend_event",
@@ -944,6 +963,57 @@ describe("appReducer", () => {
     expect(answered.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
       "outputs/구글_AI_상업화_영상_요약.html",
     ]);
+  });
+
+  it("marks the visible checklist complete when an artifact write auto-finalizes", () => {
+    const requested = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "GDP 보고서 작성" },
+    });
+    const withTodo = appReducer(requested, {
+      type: "backend_event",
+      event: {
+        type: "todo_update",
+        todo_markdown: [
+          "- [x] SQLite에 어떤 GDP/국가 데이터가 있는지 확인",
+          "- [x] 한국 및 주변국 범위·지표를 정리하고 필요한 쿼리 실행",
+          "- [x] 분석 구조와 차트/표 구성 설계",
+          "- [ ] HTML 보고서 작성",
+        ].join("\n"),
+      },
+    });
+    const writing = appReducer(withTodo, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_input: { path: "outputs/한국_주변국_GDP_분석_보고서.html", content: "<html></html>" },
+      },
+    });
+    const wroteFile = appReducer(writing, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "write_file",
+        output: "Wrote outputs/한국_주변국_GDP_분석_보고서.html",
+        is_error: false,
+      },
+    });
+    const answered = appReducer(wroteFile, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "",
+        has_tool_uses: false,
+      },
+    });
+
+    expect(answered.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
+      "outputs/한국_주변국_GDP_분석_보고서.html",
+    ]);
+    expect(answered.todoMarkdown).toContain("- [x] HTML 보고서 작성");
+    expect(answered.todoMarkdown).not.toContain("- [ ]");
+    expect(answered.todoCollapsed).toBe(true);
   });
 
   it("measures workflow duration from the user request across stage changes", () => {
@@ -1430,6 +1500,31 @@ describe("appReducer", () => {
 
     expect(restored.messages[0].createdAt).toBe(1767529920000);
     expect(restored.messages[1].createdAt).toBe(1767529980000);
+  });
+
+  it("restores marker-only artifact completions as visible answer cards", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "GDP 보고서 작성" },
+          {
+            type: "assistant",
+            text: "",
+            artifacts: [{ path: "outputs/한국_주변국_GDP_분석_보고서.html" }],
+          },
+        ],
+      },
+    });
+
+    expect(restored.messages.map((message) => [message.role, message.text])).toEqual([
+      ["user", "GDP 보고서 작성"],
+      ["assistant", "작성 완료했습니다."],
+    ]);
+    expect(restored.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
+      "outputs/한국_주변국_GDP_분석_보고서.html",
+    ]);
   });
 
   it("restores saved duration for completed simple history turns", () => {

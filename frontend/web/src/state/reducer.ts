@@ -576,7 +576,7 @@ function isDuplicateKindedUserTranscript(state: AppState, text: string, kind: Ch
 
 function isFinalRestoredAssistantAnswer(historyEvents: Array<Record<string, unknown>>, index: number) {
   const current = historyEvents[index];
-  if (!String(current?.text || "").trim()) {
+  if (!String(current?.text || "").trim() && !normalizeAssistantArtifacts(current?.artifacts).length) {
     return false;
   }
   for (const next of historyEvents.slice(index + 1)) {
@@ -584,7 +584,7 @@ function isFinalRestoredAssistantAnswer(historyEvents: Array<Record<string, unkn
     if (type === "user") {
       return true;
     }
-    if (type === "assistant" && String(next?.text || "").trim()) {
+    if (type === "assistant" && (String(next?.text || "").trim() || normalizeAssistantArtifacts(next?.artifacts).length)) {
       return false;
     }
     if (["tool_started", "tool_completed", "tool_progress", "tool_input_delta"].includes(type)) {
@@ -1692,6 +1692,10 @@ function isCompletedTodoMarkdown(markdown: string) {
   return checklistItems.length > 0 && checklistItems.every((mark) => mark.toLowerCase() === "x");
 }
 
+function completeTodoMarkdown(markdown: string) {
+  return String(markdown || "").replace(/^(\s*[-*]\s+\[)[ xX](\]\s+.+)$/gm, "$1x$2");
+}
+
 function rememberCurrentBackendModal(state: AppState) {
   const keys = backendModalKeysForState(state);
   if (!keys.length || state.modal?.kind !== "backend") {
@@ -1816,10 +1820,17 @@ function reduceHistoryRestoreEvent(
       continue;
     }
     if (type === "assistant") {
-      const text = String(record.text || "");
-      if (text.trim()) {
+      const artifacts = normalizeAssistantArtifacts(record.artifacts);
+      const text = String(record.text || "").trim() || (artifacts.length ? "작성 완료했습니다." : "");
+      if (text.trim() || artifacts.length) {
         if (isFinalRestoredAssistantAnswer(historyEvents, index)) {
-          messages.push(createMessage({ role: "assistant", text, isComplete: true, createdAt: timestampMsFromRecord(record) }));
+          messages.push(createMessage({
+            role: "assistant",
+            text,
+            isComplete: true,
+            createdAt: timestampMsFromRecord(record),
+            artifacts: artifacts.length ? artifacts : undefined,
+          }));
           currentTurnHasAssistant = true;
         } else {
           workflowEvents = applyWorkflowProgressNote(
@@ -2416,13 +2427,16 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
   }
 
   if (event.type === "assistant_complete") {
-    const value = normalizeVisibleText(String(event.message || ""));
     const artifacts = normalizeAssistantArtifacts([
       ...workflowEventArtifactCandidates(state.workflowEvents),
       ...normalizeAssistantArtifacts(event.artifacts),
     ]);
+    const rawValue = normalizeVisibleText(String(event.message || ""));
+    const value = rawValue || (artifacts.length ? "작성 완료했습니다." : "");
     const last = state.messages[state.messages.length - 1];
     const isFinalAnswer = event.has_tool_uses !== true;
+    const shouldCompleteTodo = isFinalAnswer && artifacts.length > 0 && Boolean(state.todoMarkdown.trim());
+    const todoMarkdown = shouldCompleteTodo ? completeTodoMarkdown(state.todoMarkdown) : state.todoMarkdown;
     const messages = isFinalAnswer
       ? value
         ? last?.role === "assistant" && last.isComplete !== true
@@ -2456,7 +2470,8 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       status: event.has_tool_uses === true ? "processing" : "ready",
       statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
       artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
-      todoCollapsed: isFinalAnswer && state.todoMarkdown.trim() ? true : state.todoCollapsed,
+      todoMarkdown,
+      todoCollapsed: isFinalAnswer && todoMarkdown.trim() ? true : state.todoCollapsed,
     };
   }
 

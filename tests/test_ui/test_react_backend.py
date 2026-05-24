@@ -369,6 +369,31 @@ def test_backend_host_records_history_events_for_snapshot_replay():
     assert isinstance(host._history_events[-1]["timestamp"], int)
 
 
+def test_backend_host_records_marker_only_artifacts_for_snapshot_replay():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    host._record_history_event(BackendEvent(type="transcript_item", item={"role": "user", "text": "보고서 작성"}))
+    host._record_history_event(
+        BackendEvent(
+            type="assistant_complete",
+            message="",
+            artifacts=[{"path": "outputs/한국_주변국_GDP_분석_보고서.html"}],
+        )
+    )
+
+    assert host._history_events == [
+        {"type": "user", "text": "보고서 작성"},
+        {
+            "type": "assistant",
+            "text": "",
+            "has_tool_uses": False,
+            "timestamp": host._history_events[-1]["timestamp"],
+            "artifacts": [{"path": "outputs/한국_주변국_GDP_분석_보고서.html"}],
+        },
+    ]
+    assert isinstance(host._history_events[-1]["timestamp"], int)
+
+
 def test_backend_host_records_line_complete_duration_for_snapshot_replay():
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
 

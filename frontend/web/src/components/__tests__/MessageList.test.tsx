@@ -2162,6 +2162,73 @@ describe("MessageList", () => {
     }
   });
 
+  it("keeps completed write previews scrolled to the generated tail", () => {
+    const scrollTopValues = new WeakMap<Element, number>();
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return 720;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
+      },
+      set(value: number) {
+        scrollTopValues.set(this, value);
+      },
+    });
+
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            workflowAnchorMessageId: "user-1",
+            messages: [
+              { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
+            ],
+            workflowEvents: [
+              {
+                id: "workflow-1",
+                toolName: "write_file",
+                title: "write_file",
+                detail: "outputs/page.html",
+                status: "done",
+                level: "child",
+                toolInput: {
+                  path: "outputs/page.html",
+                  content: [
+                    "<!doctype html>",
+                    "<html>",
+                    "<body>",
+                    "<script>",
+                    "</script>",
+                    "</body>",
+                    "</html>",
+                  ].join("\n"),
+                },
+              },
+            ],
+          }}
+        >
+          <MessageList />
+        </AppStateProvider>,
+      );
+
+      const body = document.querySelector(".workflow-output-body") as HTMLElement;
+      expect(body.textContent || "").toContain("</html>");
+      expect(body.scrollTop).toBe(720);
+    } finally {
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
+    }
+  });
+
   it("does not move the message list scroll when streamed write content grows", async () => {
     const scrollHeights = new WeakMap<Element, number>();
     const clientHeights = new WeakMap<Element, number>();

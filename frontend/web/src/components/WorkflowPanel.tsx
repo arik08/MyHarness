@@ -765,7 +765,7 @@ function WorkflowOutputPreview({
 
   useLayoutEffect(() => {
     const body = bodyRef.current;
-    if (!body || event.status !== "running") {
+    if (!body) {
       return;
     }
     body.scrollTop = body.scrollHeight;

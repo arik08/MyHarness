@@ -3333,14 +3333,18 @@ class ReactBackendHost:
 
         if event.type == "assistant_complete":
             text = (event.message or "").strip()
-            if text:
+            artifacts = event.artifacts if isinstance(event.artifacts, list) else []
+            if text or artifacts:
+                payload = {
+                    "type": "assistant",
+                    "text": text,
+                    "has_tool_uses": bool(event.has_tool_uses),
+                    "timestamp": int(time.time() * 1000),
+                }
+                if artifacts:
+                    payload["artifacts"] = artifacts
                 self._append_history_event(
-                    {
-                        "type": "assistant",
-                        "text": text,
-                        "has_tool_uses": bool(event.has_tool_uses),
-                        "timestamp": int(time.time() * 1000),
-                    }
+                    payload
                 )
             return
 
