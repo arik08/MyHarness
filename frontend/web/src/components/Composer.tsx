@@ -18,7 +18,7 @@ const outputTokenPresets = {
   very_long: 12_000,
   extended: 16_000,
 } as const;
-const extraLongTokenOptions = [40_000, 80_000, 160_000] as const;
+const extraLongTokenOptions = [24_000, 32_000, 40_000] as const;
 
 type OutputSurface = "default" | "chat" | "artifact";
 type ArtifactAction = "auto" | "create" | "edit";
@@ -183,7 +183,7 @@ export function Composer() {
   const [outputSurface, setOutputSurface] = useState<OutputSurface>("default");
   const [artifactAction, setArtifactAction] = useState<ArtifactAction>("auto");
   const [lengthPreset, setLengthPreset] = useState<LengthPreset>("default");
-  const [extraLongTarget, setExtraLongTarget] = useState<number>(40_000);
+  const [extraLongTarget, setExtraLongTarget] = useState<number>(24_000);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const composerBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -402,7 +402,7 @@ export function Composer() {
     setOutputSurface("default");
     setArtifactAction("auto");
     setLengthPreset("default");
-    setExtraLongTarget(40_000);
+    setExtraLongTarget(24_000);
     if (!options.keepOpen) {
       setExpandedPanelOpen(false);
     }
@@ -931,7 +931,7 @@ export function Composer() {
               <div className="composer-control-group">
                 <span
                   className="composer-control-label"
-                  data-tooltip="파일 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다. ~40k 이상은 먼저 개요와 작성 계획을 세운 뒤 섹션별로 나누어 작성하고 검토 후 합치는 방식으로 처리합니다."
+                  data-tooltip="파일 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다."
                   data-tooltip-placement="top"
                 >
                   출력량

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
@@ -31,6 +33,8 @@ REPORT_TOKEN_HARD_CAP = 160_000
 IMPLIED_LONG_REPORT_TARGET_TOKENS = 18_000
 IMPLIED_EXTRA_LONG_REPORT_TARGET_TOKENS = REPORT_TOKEN_HARD_CAP
 SOURCE_NOTES_MAX_CHARS = 80_000
+OUTLINE_REQUEST_MAX_TOKENS = 1_200
+OUTLINE_TIMEOUT_SECONDS = 30
 STYLE_CONSISTENCY_CONTRACT = (
     "문체·용어·구조 일관성 계약:\n"
     "- 전체 보고서는 존댓말이 아닌 공식 비즈니스 보고서체로 통일하세요.\n"
@@ -82,7 +86,7 @@ class LongReportTool(BaseTool):
         "Set target_tokens to the requested body length, up to the 160,000-token hard cap. "
         "When search or research has already been performed, pass the source cards or research digest in source_notes "
         "or pass local research files in source_paths; do not rely on prior chat/tool output being visible inside this tool. "
-        "The tool creates an outline, writes sections with lower per-call token caps, reviews the result, "
+        "The tool creates a fast model-generated outline, writes sections with lower per-call token caps, reviews the result, "
         "writes a claim/source ledger sidecar, and returns only the output path and short summary."
     )
     input_model = LongReportToolInput
@@ -107,6 +111,10 @@ class LongReportTool(BaseTool):
         allow_section_overrun = target_tokens > IMPLIED_LONG_REPORT_TARGET_TOKENS
         source_text = _source_material_for_report(context.cwd, arguments)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        intermediate_writer = _LongReportIntermediateArtifacts(
+            output_path=output_path,
+            title=arguments.title,
+        )
         preview_writer = _ReportPreviewWriter(
             cwd=context.cwd,
             output_path=output_path,
@@ -114,40 +122,85 @@ class LongReportTool(BaseTool):
             output_format=output_format,
             target_tokens=target_tokens,
             model=model,
+            intermediate_snapshot=lambda: intermediate_writer.progress_files(context.cwd),
+            intermediate_dir=intermediate_writer.display_root(context.cwd),
         )
+        report_design_brief = _report_design_brief(arguments, output_format=output_format)
+        intermediate_writer.write_design_brief(report_design_brief)
         written_token_counter = _CumulativeTokenCounter(model=model)
 
-        outline_prompt = _outline_prompt(arguments, source_text, target_tokens=target_tokens)
         generation_usage = UsageSnapshot()
+        outline_prompt = _outline_prompt(arguments, source_text, target_tokens=target_tokens)
         preview_writer.write_progress_state(
             generation_usage,
             document_written_tokens=written_token_counter.total_tokens,
             phase="outline",
             phase_label="보고서 뼈대 생성 중",
         )
-        outline_text, _, usage = await _request_text(
-            api_client,
-            model=model,
-            system_prompt=system_prompt,
-            reasoning_effort=reasoning_effort,
-            prompt=outline_prompt,
-            max_tokens=token_limits["outline"],
-        )
-        generation_usage = _add_usage(generation_usage, usage)
+        outline_parts: list[str] = []
+
+        async def _on_outline_delta(delta: str) -> None:
+            outline_parts.append(delta)
+            current_outline = "".join(outline_parts)
+            intermediate_writer.write_outline_draft(current_outline)
+            preview_writer.write_progress_state(
+                generation_usage,
+                document_written_tokens=written_token_counter.total_tokens,
+                phase="outline",
+                phase_label="보고서 뼈대 생성 중",
+                section_summary=_short_progress_excerpt(current_outline),
+            )
+            await preview_writer.write_stage_text("보고서 뼈대 생성 중", current_outline)
+
+        try:
+            outline_text, _, usage = await asyncio.wait_for(
+                _request_text(
+                    api_client,
+                    model=model,
+                    system_prompt=system_prompt,
+                    reasoning_effort=_outline_reasoning_effort(reasoning_effort),
+                    prompt=outline_prompt,
+                    max_tokens=min(token_limits["outline"], OUTLINE_REQUEST_MAX_TOKENS),
+                    on_delta=_on_outline_delta,
+                ),
+                timeout=OUTLINE_TIMEOUT_SECONDS,
+            )
+            outline_text = ("".join(outline_parts) or outline_text).strip()
+            generation_usage = _add_usage(generation_usage, usage)
+        except TimeoutError:
+            outline_text = _fallback_outline_text(arguments, source_text)
+            intermediate_writer.write_outline_draft(
+                "목차 생성 요청이 제한 시간 안에 완료되지 않아 안전용 기본 구조로 전환했습니다.\n\n"
+                f"{outline_text}"
+            )
+        outline_sections = _parse_outline_sections(outline_text, max_sections=arguments.max_sections)
+        sections = [
+            str(item.get("title") or "").strip()
+            for item in outline_sections
+            if str(item.get("title") or "").strip()
+        ]
+        if not sections:
+            outline_text = _fallback_outline_text(arguments, source_text)
+            outline_sections = _parse_outline_sections(outline_text, max_sections=arguments.max_sections)
+            sections = [
+                str(item.get("title") or "").strip()
+                for item in outline_sections
+                if str(item.get("title") or "").strip()
+            ]
+        if not sections:
+            sections = ["요약"]
+            outline_sections = [{"title": "요약", "intent": "요청 내용을 한눈에 파악할 수 있게 핵심 논리를 정리합니다."}]
+            outline_text = json.dumps({"sections": outline_sections}, ensure_ascii=False)
+        intermediate_writer.write_outline(outline_text, outline_sections)
         preview_writer.write_progress_state(
             generation_usage,
             document_written_tokens=written_token_counter.total_tokens,
             phase="outline_ready",
             phase_label="보고서 뼈대 생성 완료",
+            outline_sections=outline_sections,
+            section_total=len(sections),
         )
-        outline_sections = _parse_outline_sections(outline_text, max_sections=arguments.max_sections)
-        sections = [str(item.get("title") or "").strip() for item in outline_sections if str(item.get("title") or "").strip()]
-        if not sections:
-            sections = _parse_outline(outline_text, max_sections=arguments.max_sections)
-            outline_sections = [{"title": section} for section in sections]
-        if not sections:
-            sections = ["요약"]
-            outline_sections = [{"title": "요약", "intent": "요청 내용을 한눈에 파악할 수 있게 핵심 논리를 정리합니다."}]
+        await preview_writer.write_stage_text("보고서 뼈대 생성 완료", outline_text, force=True)
         section_target_tokens = _target_tokens_per_section(
             target_tokens=report_token_budget,
             section_count=len(sections),
@@ -184,6 +237,8 @@ class LongReportTool(BaseTool):
             async def _on_section_delta(delta: str, *, _section_title: str = section_title) -> None:
                 section_parts.append(delta)
                 written_token_counter.add(delta)
+                current_body = "".join(section_parts)
+                intermediate_writer.write_section(index, _section_title, current_body)
                 preview_writer.write_progress_state(
                     generation_usage,
                     document_written_tokens=written_token_counter.total_tokens,
@@ -195,7 +250,7 @@ class LongReportTool(BaseTool):
                     section_title=_section_title,
                     section_summary=section_summary,
                 )
-                await preview_writer.write([*section_bodies, (_section_title, "".join(section_parts))])
+                await preview_writer.write([*section_bodies, (_section_title, current_body)])
 
             prompt = _section_prompt(
                 title=arguments.title,
@@ -206,6 +261,8 @@ class LongReportTool(BaseTool):
                 index=index,
                 total=len(sections),
                 target_tokens=requested_section_target_tokens,
+                output_format=output_format,
+                design_brief=report_design_brief,
             )
             body, stop_reason, usage = await _request_text(
                 api_client,
@@ -228,6 +285,7 @@ class LongReportTool(BaseTool):
                 document_written_tokens=written_token_counter.total_tokens,
             )
             body = ("".join(section_parts) or body).strip()
+            intermediate_writer.write_section(index, section_title, body, force=True)
             await preview_writer.write([*section_bodies, (section_title, body)], force=True)
             continuations = 0
             max_continuations = _max_continuations_for_target(section_target_tokens)
@@ -251,6 +309,8 @@ class LongReportTool(BaseTool):
                 async def _on_continuation_delta(delta: str, *, _section_title: str = section_title) -> None:
                     continuation_parts.append(delta)
                     written_token_counter.add(delta)
+                    current = _append_continuation(body, "".join(continuation_parts))
+                    intermediate_writer.write_section(index, _section_title, current)
                     preview_writer.write_progress_state(
                         generation_usage,
                         document_written_tokens=written_token_counter.total_tokens,
@@ -263,7 +323,6 @@ class LongReportTool(BaseTool):
                         section_summary=section_summary,
                         continuation_index=continuations + 1,
                     )
-                    current = _append_continuation(body, "".join(continuation_parts))
                     await preview_writer.write([*section_bodies, (_section_title, current)])
 
                 continuation, stop_reason, usage = await _request_text(
@@ -277,6 +336,7 @@ class LongReportTool(BaseTool):
                         body,
                         target_tokens=requested_section_target_tokens,
                         model=model,
+                        design_brief=report_design_brief,
                     ),
                     max_tokens=_section_request_max_tokens(section_target_tokens, token_limits["section"]),
                     max_collected_tokens=remaining_budget,
@@ -301,6 +361,7 @@ class LongReportTool(BaseTool):
                 if not continuation.strip():
                     break
                 body = _append_continuation(body, continuation)
+                intermediate_writer.write_section(index, section_title, body, force=True)
                 await preview_writer.write([*section_bodies, (section_title, body)], force=True)
                 continuations += 1
             section_bodies.append((section_title, body.strip()))
@@ -317,6 +378,22 @@ class LongReportTool(BaseTool):
                 outline_sections=outline_sections,
                 section_total=len(sections),
             )
+            style_audit_parts: list[str] = []
+
+            async def _on_style_audit_delta(delta: str) -> None:
+                style_audit_parts.append(delta)
+                current_audit = "".join(style_audit_parts)
+                preview_writer.write_progress_state(
+                    generation_usage,
+                    document_written_tokens=written_token_counter.total_tokens,
+                    phase="style_audit",
+                    phase_label="문체와 구조 일관성 점검 중",
+                    outline_sections=outline_sections,
+                    section_total=len(sections),
+                    section_summary=_short_progress_excerpt(current_audit),
+                )
+                await preview_writer.write([*section_bodies, ("문체와 구조 일관성 점검 중", current_audit)])
+
             style_audit_text, _, usage = await _request_text(
                 api_client,
                 model=model,
@@ -324,14 +401,50 @@ class LongReportTool(BaseTool):
                 reasoning_effort=reasoning_effort,
                 prompt=_style_consistency_audit_prompt(arguments.title, section_bodies, model=model),
                 max_tokens=min(2_000, token_limits["review"]),
+                on_delta=_on_style_audit_delta,
             )
+            style_audit_text = ("".join(style_audit_parts) or style_audit_text).strip()
             generation_usage = _add_usage(generation_usage, usage)
+            intermediate_writer.write_style_audit(style_audit_text)
             revision_ids = _section_ids_for_style_revision(style_audit_text, section_count=len(section_bodies))
             if revision_ids:
                 updated_section_bodies = list(section_bodies)
                 for section_id in revision_ids[:2]:
                     section_index = int(section_id.rsplit("-", 1)[-1]) - 1
                     section_title, current_body = updated_section_bodies[section_index]
+                    preview_writer.write_progress_state(
+                        generation_usage,
+                        document_written_tokens=written_token_counter.total_tokens,
+                        phase="style_revision",
+                        phase_label="섹션 문체와 구조 수정 중",
+                        outline_sections=outline_sections,
+                        section_index=section_index + 1,
+                        section_total=len(sections),
+                        section_title=section_title,
+                        section_summary=_outline_section_summary(
+                            outline_sections[section_index] if section_index < len(outline_sections) else {}
+                        ),
+                    )
+                    revision_parts: list[str] = []
+
+                    async def _on_revision_delta(delta: str, *, _section_index: int = section_index, _section_title: str = section_title) -> None:
+                        revision_parts.append(delta)
+                        current_revision = "".join(revision_parts)
+                        preview_writer.write_progress_state(
+                            generation_usage,
+                            document_written_tokens=written_token_counter.total_tokens,
+                            phase="style_revision",
+                            phase_label="섹션 문체와 구조 수정 중",
+                            outline_sections=outline_sections,
+                            section_index=_section_index + 1,
+                            section_total=len(sections),
+                            section_title=_section_title,
+                            section_summary=_short_progress_excerpt(current_revision),
+                        )
+                        await preview_writer.write(
+                            [*section_bodies, (f"{_section_title} 수정안 작성 중", current_revision)]
+                        )
+
                     revised_body, _, usage = await _request_text(
                         api_client,
                         model=model,
@@ -345,12 +458,21 @@ class LongReportTool(BaseTool):
                             style_audit_text,
                         ),
                         max_tokens=token_limits["section"],
+                        on_delta=_on_revision_delta,
                     )
+                    revised_body = ("".join(revision_parts) or revised_body).strip()
                     generation_usage = _add_usage(generation_usage, usage)
                     if revised_body.strip():
                         written_token_counter.add(revised_body)
                         updated_section_bodies[section_index] = (section_title, revised_body.strip())
                         revised_section_ids.append(section_id)
+                        intermediate_writer.write_section(
+                            section_index + 1,
+                            section_title,
+                            revised_body.strip(),
+                            variant="revised",
+                            force=True,
+                        )
                 if revised_section_ids:
                     section_bodies = updated_section_bodies
                     section_summaries = [_short_summary(title, body) for title, body in section_bodies]
@@ -372,6 +494,22 @@ class LongReportTool(BaseTool):
             outline_sections=outline_sections,
             section_total=len(sections),
         )
+        review_parts: list[str] = []
+
+        async def _on_review_delta(delta: str) -> None:
+            review_parts.append(delta)
+            current_review = "".join(review_parts)
+            preview_writer.write_progress_state(
+                generation_usage,
+                document_written_tokens=written_token_counter.total_tokens,
+                phase="review",
+                phase_label="검토 요약 작성 중",
+                outline_sections=outline_sections,
+                section_total=len(sections),
+                section_summary=_short_progress_excerpt(current_review),
+            )
+            await preview_writer.write(section_bodies, review_text=current_review)
+
         review_text, _, usage = await _request_text(
             api_client,
             model=model,
@@ -379,10 +517,13 @@ class LongReportTool(BaseTool):
             reasoning_effort=reasoning_effort,
             prompt=_review_prompt(arguments.title, section_summaries),
             max_tokens=token_limits["review"],
+            on_delta=_on_review_delta,
         )
+        review_text = ("".join(review_parts) or review_text).strip()
         generation_usage = _add_usage(generation_usage, usage)
         if review_text:
             written_token_counter.add(review_text)
+        intermediate_writer.write_review(review_text)
         preview_writer.write_progress_state(
             generation_usage,
             document_written_tokens=written_token_counter.total_tokens,
@@ -401,6 +542,7 @@ class LongReportTool(BaseTool):
             model=model,
             source_references=_source_reference_candidates(arguments),
         )
+        intermediate_writer.write_assembled_report(report_text, output_format=output_format)
         output_path.write_text(
             report_text,
             encoding="utf-8",
@@ -440,14 +582,14 @@ class LongReportTool(BaseTool):
             token_note += f" / 목표 {target_tokens:,}"
         output = (
             f"장문 보고서를 생성했습니다: {display_path} "
-            f"(섹션 {len(section_bodies)}개{token_note}, 근거 ledger {display_ledger_path})"
+            f"(섹션 {len(section_bodies)}개{token_note}, 근거 ledger {display_ledger_path}, "
+            f"중간 산출물 {display_tool_path(intermediate_writer.root_dir, context.cwd)})"
         )
         return ToolResult(
             output=output,
             metadata={
                 "model_output": output,
-                "display_output": output,
-                "transcript_output": output,
+                "display_output": "장문 보고서 생성 완료",
                 "path": str(output_path),
                 "estimated_tokens": estimated_tokens,
                 "target_tokens": target_tokens,
@@ -457,6 +599,8 @@ class LongReportTool(BaseTool):
                 "usage_total_tokens": generation_usage.total_tokens,
                 "section_count": len(section_bodies),
                 "ledger_path": str(ledger_path),
+                "intermediate_dir": str(intermediate_writer.root_dir),
+                "intermediate_manifest_path": str(intermediate_writer.manifest_path),
                 "source_notes_present": bool(arguments.source_notes.strip()),
                 "source_path_count": len(arguments.source_paths),
                 "style_audit_present": bool(style_audit_text.strip()),
@@ -477,6 +621,8 @@ class _ReportPreviewWriter:
         output_format: Literal["markdown", "html"],
         target_tokens: int,
         model: str | None,
+        intermediate_snapshot: Callable[[], list[dict[str, object]]] | None = None,
+        intermediate_dir: str = "",
     ) -> None:
         self.cwd = cwd
         self.output_path = output_path
@@ -484,6 +630,8 @@ class _ReportPreviewWriter:
         self.output_format = output_format
         self.target_tokens = target_tokens
         self.model = model
+        self.intermediate_snapshot = intermediate_snapshot
+        self.intermediate_dir = intermediate_dir
         self._last_write_at = 0.0
 
     def write_progress_state(
@@ -513,6 +661,8 @@ class _ReportPreviewWriter:
             section_title=section_title,
             section_summary=section_summary,
             continuation_index=continuation_index,
+            intermediate_dir=self.intermediate_dir,
+            intermediate_files=self.intermediate_snapshot() if self.intermediate_snapshot else None,
         )
 
     async def write(
@@ -537,6 +687,153 @@ class _ReportPreviewWriter:
             ),
             encoding="utf-8",
         )
+
+    async def write_stage_text(self, stage_title: str, text: str, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_write_at < 0.5:
+            return
+        self._last_write_at = 0.0 if force else now
+        self.output_path.write_text(
+            _render_stage_preview(
+                self.title,
+                stage_title,
+                text,
+                output_format=self.output_format,
+            ),
+            encoding="utf-8",
+        )
+
+
+class _LongReportIntermediateArtifacts:
+    def __init__(self, *, output_path: Path, title: str) -> None:
+        self.output_path = output_path
+        self.title = title
+        self.root_dir = output_path.with_name(f"{output_path.stem}.intermediate")
+        self.sections_dir = self.root_dir / "sections"
+        self.manifest_path = self.root_dir / "manifest.json"
+        self._last_section_write_at: dict[str, float] = {}
+        self._files: dict[str, str] = {}
+        self.sections_dir.mkdir(parents=True, exist_ok=True)
+        self._write_manifest()
+
+    def write_outline(self, outline_text: str, outline_sections: list[dict[str, object]]) -> None:
+        content = [
+            f"# {self.title} - 보고서 뼈대",
+            "",
+            "## 구조화된 섹션",
+            "",
+            json.dumps(outline_sections, ensure_ascii=False, indent=2),
+            "",
+            "## 원문 outline",
+            "",
+            outline_text.strip(),
+            "",
+        ]
+        self._write_file("outline", self.root_dir / "outline.md", "\n".join(content))
+
+    def write_outline_draft(self, outline_text: str) -> None:
+        if not outline_text.strip():
+            return
+        content = [
+            f"# {self.title} - 보고서 뼈대 작성 중",
+            "",
+            outline_text.strip(),
+            "",
+        ]
+        self._write_file("outline", self.root_dir / "outline.md", "\n".join(content))
+
+    def write_design_brief(self, design_brief: str) -> None:
+        self._write_file(
+            "design-brief",
+            self.root_dir / "design_brief.md",
+            f"# {self.title} - 디자인·문체 계약\n\n{design_brief.strip()}\n",
+        )
+
+    def write_section(
+        self,
+        index: int,
+        title: str,
+        body: str,
+        *,
+        variant: str = "draft",
+        force: bool = False,
+    ) -> None:
+        clean_variant = _slugify_title(variant).lower()
+        path = self.sections_dir / f"{index:02d}_{_slugify_title(title)}"
+        path = path.with_name(f"{path.name}.{clean_variant}.md")
+        key = str(path)
+        now = time.monotonic()
+        if not force and now - self._last_section_write_at.get(key, 0.0) < 1.0:
+            return
+        self._last_section_write_at[key] = now
+        content = f"# {index}. {title}\n\n{body.strip()}\n"
+        self._write_file(f"section-{index:02d}-{clean_variant}", path, content)
+
+    def write_style_audit(self, style_audit_text: str) -> None:
+        if not style_audit_text.strip():
+            return
+        self._write_file(
+            "style-audit",
+            self.root_dir / "style_audit.md",
+            f"# {self.title} - 문체와 구조 감사\n\n{style_audit_text.strip()}\n",
+        )
+
+    def write_review(self, review_text: str) -> None:
+        self._write_file(
+            "review",
+            self.root_dir / "review.md",
+            f"# {self.title} - 검토 요약\n\n{review_text.strip()}\n",
+        )
+
+    def write_assembled_report(self, report_text: str, *, output_format: Literal["markdown", "html"]) -> None:
+        suffix = ".html" if output_format == "html" else ".md"
+        self._write_file("assembled-report", self.root_dir / f"assembled_report{suffix}", report_text)
+
+    def display_root(self, cwd: Path) -> str:
+        try:
+            return self.root_dir.resolve().relative_to(cwd.resolve()).as_posix()
+        except ValueError:
+            return str(self.root_dir.resolve())
+
+    def progress_files(self, cwd: Path) -> list[dict[str, object]]:
+        files: list[dict[str, object]] = []
+        for label, raw_path in self._files.items():
+            path = Path(raw_path)
+            try:
+                stat = path.stat()
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            try:
+                display_path = path.resolve().relative_to(cwd.resolve()).as_posix()
+            except ValueError:
+                display_path = str(path.resolve())
+            files.append(
+                {
+                    "label": label,
+                    "path": display_path,
+                    "size_bytes": stat.st_size,
+                    "line_count": text.count("\n") + (1 if text else 0),
+                    "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                }
+            )
+        return sorted(files, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+
+    def _write_file(self, label: str, path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        self._files[label] = str(path)
+        self._write_manifest()
+
+    def _write_manifest(self) -> None:
+        manifest = {
+            "title": self.title,
+            "output_path": str(self.output_path),
+            "intermediate_dir": str(self.root_dir),
+            "files": self._files,
+        }
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        self.manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 class _CumulativeTokenCounter:
@@ -932,22 +1229,100 @@ def _build_report_ledger(
     }
 
 
-def _outline_prompt(arguments: LongReportToolInput, source_text: str, *, target_tokens: int) -> str:
-    source_block = f"\n\n참고 자료:\n{source_text}" if source_text else ""
-    target_line = f"목표 분량: 약 {target_tokens:,} tokens\n" if target_tokens else ""
+def _fallback_outline_text(arguments: LongReportToolInput, source_text: str) -> str:
+    source_hint = "제공된 SQLite/분석 결과와 사용자가 요청한 보고서 목적을 함께 근거로 삼습니다."
+    if source_text.strip():
+        source_hint = "제공된 조사 메모, 쿼리 결과, 데이터 요약을 근거로 삼습니다."
+    base_sections = [
+        {
+            "title": "데이터 범위와 분석 기준",
+            "intent": "사용한 데이터의 기간, 필드, 단위, 해석 기준을 먼저 고정합니다.",
+            "key_points": ["데이터 구조", "기간과 단위", "분석 한계"],
+            "analysis_angle": source_hint,
+        },
+        {
+            "title": "전체 추세와 핵심 지표",
+            "intent": "전체 평균, 최고·최저, 변동 폭으로 큰 흐름을 설명합니다.",
+            "key_points": ["전체 추세", "핵심 수치", "전환점"],
+            "analysis_angle": "장기 흐름과 단기 충격을 분리해 봅니다.",
+        },
+        {
+            "title": "세부 그룹별 비교",
+            "intent": "산업·기간·범주별 차이를 비교해 구조적 특징을 찾습니다.",
+            "key_points": ["상위 그룹", "하위 그룹", "격차"],
+            "analysis_angle": "평균 수준과 변동성을 함께 비교합니다.",
+        },
+        {
+            "title": "규모와 비중의 구조",
+            "intent": "비율만으로 보이지 않는 절대 규모와 기여도를 함께 해석합니다.",
+            "key_points": ["규모 효과", "점유율", "절대 수치"],
+            "analysis_angle": "높은 비율과 큰 절대 규모가 다른 신호를 줄 수 있음을 분리합니다.",
+        },
+        {
+            "title": "충격 구간과 변동성",
+            "intent": "급등·급락 시점과 민감도가 큰 항목을 중심으로 원인을 해석합니다.",
+            "key_points": ["위기 구간", "변동성", "회복 속도"],
+            "analysis_angle": "충격 전후의 차이와 지속성을 확인합니다.",
+        },
+        {
+            "title": "시계열 전환점과 국면 변화",
+            "intent": "기간별 흐름을 구간으로 나누어 상승·하락·정체 국면을 설명합니다.",
+            "key_points": ["전환점", "국면", "추세 지속성"],
+            "analysis_angle": "연도별 평균과 월별 움직임을 함께 봅니다.",
+        },
+        {
+            "title": "계절성 및 반복 패턴",
+            "intent": "월별·분기별 반복 패턴이 있는지 확인하고 해석상 주의점을 정리합니다.",
+            "key_points": ["월별 패턴", "반복성", "계절 요인"],
+            "analysis_angle": "구조 변화와 계절 변동을 혼동하지 않도록 분리합니다.",
+        },
+        {
+            "title": "최고·최저 이벤트와 이상치",
+            "intent": "극단값과 피크 이벤트가 전체 결론에 미치는 영향을 따져봅니다.",
+            "key_points": ["최고점", "최저점", "이상치"],
+            "analysis_angle": "일회성 이벤트와 지속적 취약성을 구분합니다.",
+        },
+        {
+            "title": "유형화와 리스크 그룹",
+            "intent": "평균 수준, 변동성, 규모를 조합해 유사 그룹을 나눕니다.",
+            "key_points": ["고위험 그룹", "방어적 그룹", "혼합형"],
+            "analysis_angle": "단일 순위보다 유형별 의사결정 단서를 도출합니다.",
+        },
+        {
+            "title": "해석상 한계와 검증 포인트",
+            "intent": "데이터 범위, 부분연도, 단위 불확실성처럼 결론을 제한하는 요소를 명시합니다.",
+            "key_points": ["데이터 한계", "단위", "추가 검증"],
+            "analysis_angle": "확인된 사실과 추정 해석을 분리합니다.",
+        },
+        {
+            "title": "시사점과 활용 방안",
+            "intent": "분석 결과가 의사결정, 리스크 관리, 추가 조사에 주는 의미를 정리합니다.",
+            "key_points": ["실무 시사점", "주의점", "후속 분석"],
+            "analysis_angle": "데이터에서 확인된 사실과 해석상 가정을 분리합니다.",
+        },
+    ]
+    sections = base_sections[: max(1, min(arguments.max_sections, len(base_sections)))]
+    return json.dumps({"sections": sections}, ensure_ascii=False)
+
+
+def _report_design_brief(arguments: LongReportToolInput, *, output_format: Literal["markdown", "html"]) -> str:
+    if output_format != "html":
+        return (
+            "최종 산출물 형식: Markdown 보고서\n"
+            "문체: 공식 비즈니스 보고서체\n"
+            "구성: 섹션별 논리 흐름, 정확한 표, 근거와 caveat를 우선합니다.\n"
+            "섹션 작성 방식: 각 섹션은 나중에 다시 LLM으로 재작성하지 않고 최종 보고서에 바로 들어갈 본문 조각입니다."
+        )
     return (
-        f"'{arguments.title}' 보고서의 논리 흐름을 설계하세요.\n"
-        f"요구사항: {arguments.brief}\n"
-        f"{target_line}"
-        f"최대 {arguments.max_sections}개 섹션으로 구성하세요.\n"
-        "반드시 JSON만 출력하세요. 형식:\n"
-        "{\n"
-        '  "sections": [\n'
-        '    {"title": "섹션 제목", "intent": "이 섹션의 역할", "key_points": ["포함할 내용"], "analysis_angle": "분석 관점"}\n'
-        "  ]\n"
-        "}\n"
-        "각 intent, key_points, analysis_angle은 사용자가 초반에 방향을 판단할 수 있을 만큼 구체적으로 짧게 쓰세요."
-        f"{source_block}"
+        "최종 산출물 형식: 독자-facing HTML 웹보고서\n"
+        "시각 언어: `visual-artifact` 기준의 회의용 보고서. 큰 장식보다 밀도 있는 정보 계층, 정확한 표, "
+        "차트화 가능한 데이터, workflow/timeline 도식을 우선합니다.\n"
+        "문체: 공식 비즈니스 보고서체. 같은 지표명, 단위, 기간, 산업명 표기를 끝까지 통일합니다.\n"
+        "섹션 작성 방식: 각 섹션은 나중에 다시 LLM으로 재작성하지 않고 최종 HTML에 바로 들어갈 본문 조각입니다. "
+        "따라서 처음부터 표, 수치, 비교축, 단계 흐름을 분리해 작성합니다.\n"
+        "독자 관점: 제작 과정 메타데이터, 토큰 예산, 모델/도구 정보, 내부 진행 지표는 본문에 쓰지 않습니다.\n"
+        f"보고서 제목: {arguments.title}\n"
+        f"작성 요구: {arguments.brief}"
     )
 
 
@@ -961,6 +1336,8 @@ def _section_prompt(
     index: int,
     total: int,
     target_tokens: int,
+    output_format: Literal["markdown", "html"] = "markdown",
+    design_brief: str = "",
 ) -> str:
     prior = "\n".join(prior_summaries[-5:])
     length_instruction = ""
@@ -970,13 +1347,24 @@ def _section_prompt(
             "요약 초안으로 끝내지 말고, 하위 소제목·근거·사례·반론·영향 분석을 충분히 펼쳐 쓰세요. "
             "최소 목표에 못 미칠 것 같으면 스스로 내용을 더 확장하세요.\n"
         )
+    visual_instruction = ""
+    if output_format == "html":
+        visual_instruction = (
+            "`visual-artifact` 기준의 HTML 보고서로 렌더링될 예정입니다. "
+            "독자-facing 본문을 작성하고, 제작 과정 메타데이터나 내부 진행 지표는 본문에 넣지 마세요. "
+            "핵심 수치, 순위, 기간별 변화, 그룹 비교, 비중, 리스크 등은 차트와 표로 바꾸기 쉽도록 분리해 쓰고, "
+            "절차, 인과관계, 분석 workflow, 의사결정 흐름은 단계형 목록이나 타임라인으로 구조화하세요. "
+            "가능하면 Markdown 표를 포함하세요. 시각화를 위한 데이터는 원문 문장 속에만 묻어두지 마세요.\n"
+        )
     return (
         f"보고서 제목: {title}\n"
         f"전체 요구사항: {brief}\n"
         f"현재 섹션: {index}/{total} {section_title}\n"
         f"이전 섹션 요약:\n{prior or '(없음)'}\n\n"
         f"{STYLE_CONSISTENCY_CONTRACT}\n"
+        f"디자인·문체 계약:\n{design_brief or '(없음)'}\n"
         f"{length_instruction}"
+        f"{visual_instruction}"
         "현재 섹션 본문만 작성하세요. 제목 마크다운은 쓰지 마세요.\n"
         "HTML 태그를 쓰지 마세요. 본문은 일반 텍스트와 Markdown 목록/표만 사용하세요.\n"
         "표로 정리할 수 있는 수치, 연도, 기업명, 제품군, 리스크, 비교축이 있으면 Markdown 표나 목록으로 구조화하세요.\n"
@@ -993,6 +1381,7 @@ def _continuation_prompt(
     *,
     target_tokens: int,
     model: str,
+    design_brief: str = "",
 ) -> str:
     current_tokens = estimate_tokens(current_body, model=model)
     if target_tokens > 0:
@@ -1006,6 +1395,7 @@ def _continuation_prompt(
         f"보고서 '{title}'의 '{section_title}' 섹션을 이어서 작성합니다.\n"
         f"{reason}\n"
         f"{STYLE_CONSISTENCY_CONTRACT}\n"
+        f"디자인·문체 계약:\n{design_brief or '(없음)'}\n"
         "아래 마지막 문맥을 이어서 현재 섹션 본문만 계속 작성하세요. "
         "이미 쓴 내용을 요약하거나 반복하지 말고, 누락된 분석·사례·함의·비교를 추가하세요.\n\n"
         f"마지막 문맥:\n{current_body[-4_000:]}"
@@ -1054,6 +1444,35 @@ def _style_revision_prompt(
         f"스타일 감사 결과:\n{style_audit_text.strip()}\n\n"
         f"현재 섹션 본문:\n{current_body}"
     )
+
+
+def _outline_prompt(arguments: LongReportToolInput, source_text: str, *, target_tokens: int) -> str:
+    source_block = f"\n\n참고 자료:\n{source_text}" if source_text else ""
+    target_line = f"목표 분량: 약 {target_tokens:,} tokens\n" if target_tokens else ""
+    return (
+        f"'{arguments.title}' 보고서의 논리 흐름을 설계하세요.\n"
+        f"요구사항: {arguments.brief}\n"
+        f"{target_line}"
+        f"최대 {arguments.max_sections}개 섹션으로 구성하세요.\n"
+        "이 단계의 산출물은 섹션 작성자를 위한 routing brief입니다. 짧고 실행 가능한 구조만 반환하세요.\n"
+        "목표 분량은 이후 섹션 본문 작성 단계의 목표입니다. 목차 단계에서 분량을 채우려 하지 마세요. 본문을 미리 쓰지 마세요.\n"
+        "도메인과 자료에 맞는 구조를 판단하되, 완벽한 목차를 위해 과도하게 숙고하지 말고 즉시 JSON을 반환하세요.\n"
+        "본문, 서론, 결론 문단, 제작 메타데이터, 토큰 수 설명은 쓰지 마세요.\n"
+        "반드시 JSON만 출력하세요. 형식:\n"
+        "{\n"
+        '  "sections": [\n'
+        '    {"title": "섹션 제목", "intent": "이 섹션의 역할", "key_points": ["포함할 내용"], "analysis_angle": "분석 관점"}\n'
+        "  ]\n"
+        "}\n"
+        "각 intent, key_points, analysis_angle은 이후 섹션 작성 품질을 높일 만큼 구체적이되 간결하게 쓰세요."
+        f"{source_block}"
+    )
+
+
+def _outline_reasoning_effort(reasoning_effort: str | None) -> str | None:
+    if not reasoning_effort:
+        return None
+    return "minimal"
 
 
 def _review_prompt(title: str, section_summaries: list[str]) -> str:
@@ -1281,6 +1700,49 @@ def _short_summary(section_title: str, body: str) -> str:
     return f"- {section_title}: {normalized[:600]}"
 
 
+def _short_progress_excerpt(text: str, *, limit: int = 220) -> str:
+    normalized = " ".join(str(text or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit - 3]}..."
+
+
+def _render_stage_preview(
+    title: str,
+    stage_title: str,
+    text: str,
+    *,
+    output_format: Literal["markdown", "html"] = "markdown",
+) -> str:
+    body = str(text or "").strip()
+    if output_format == "html":
+        return (
+            "<!doctype html>\n"
+            '<html lang="ko">\n'
+            "<head>\n"
+            '  <meta charset="utf-8">\n'
+            '  <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            f"  <title>{escape(title)} - {escape(stage_title)}</title>\n"
+            "  <style>\n"
+            "    body { margin: 0; color: #1f2328; background: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.72; }\n"
+            "    main { max-width: 940px; margin: 0 auto; padding: 42px 28px 64px; }\n"
+            "    h1 { margin: 0 0 8px; font-size: 30px; line-height: 1.2; }\n"
+            "    .stage { color: #667085; font-size: 14px; margin-bottom: 24px; }\n"
+            "    pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 18px; border: 1px solid #d9dee7; border-radius: 8px; background: #f7f9fc; font: inherit; }\n"
+            "  </style>\n"
+            "</head>\n"
+            "<body>\n"
+            "  <main>\n"
+            f"    <h1>{escape(title)}</h1>\n"
+            f"    <div class=\"stage\">{escape(stage_title)}</div>\n"
+            f"    <pre>{escape(body)}</pre>\n"
+            "  </main>\n"
+            "</body>\n"
+            "</html>\n"
+        )
+    return f"# {title}\n\n## {stage_title}\n\n{body}\n"
+
+
 def _render_report(
     title: str,
     section_bodies: list[tuple[str, str]],
@@ -1327,8 +1789,7 @@ def _render_html_report(
     source_references: list[dict[str, str]] | None = None,
 ) -> str:
     sources = source_references or []
-    estimated_body_tokens = estimate_tokens("\n\n".join(body for _title, body in section_bodies), model=model)
-    target_note = f"목표 {target_tokens:,} tokens" if target_tokens else "목표 분량 미지정"
+    del target_tokens
     nav = "\n".join(
         f'<a href="#section-{index}">{escape(section_title)}</a>'
         for index, (section_title, _body) in enumerate(section_bodies, start=1)
@@ -1348,10 +1809,9 @@ def _render_html_report(
         review_html = f"<section><h2>검토 요약</h2>{_render_html_blocks(review_text)}</section>"
     visual_overview = _render_html_visual_overview(
         section_bodies,
-        estimated_body_tokens=estimated_body_tokens,
-        target_note=target_note,
         model=model,
     )
+    executive_lens = _render_html_executive_lens(section_bodies, review_text)
     sources_html = _render_html_sources(sources)
     return f"""<!doctype html>
 <html lang="ko">
@@ -1375,7 +1835,9 @@ def _render_html_report(
     body {{
       margin: 0;
       color: var(--ink);
-      background: #ffffff;
+      background:
+        linear-gradient(180deg, #f5f7fb 0, #ffffff 290px),
+        #ffffff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.72;
     }}
@@ -1385,9 +1847,21 @@ def _render_html_report(
       padding: 48px 28px 72px;
     }}
     header {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+      gap: 24px;
+      align-items: end;
       border-bottom: 2px solid var(--ink);
-      padding-bottom: 22px;
+      padding: 8px 0 24px;
       margin-bottom: 24px;
+    }}
+    .report-eyebrow {{
+      margin: 0 0 10px;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: 0;
+      text-transform: uppercase;
     }}
     h1 {{
       margin: 0 0 12px;
@@ -1395,18 +1869,11 @@ def _render_html_report(
       line-height: 1.16;
       letter-spacing: 0;
     }}
-    .meta {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 14px;
-    }}
-    .pill {{
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 4px 8px;
-      background: var(--panel);
+    .report-deck {{
+      margin: 0;
+      color: #344054;
+      font-size: 15px;
+      line-height: 1.58;
     }}
     .visual-overview {{
       margin: 28px 0 32px;
@@ -1415,32 +1882,60 @@ def _render_html_report(
       border-radius: 8px;
       background: #fbfcfe;
     }}
-    .metric-grid {{
+    .executive-lens {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 10px;
-      margin-bottom: 22px;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 0.72fr);
+      gap: 16px;
+      margin: 26px 0 30px;
     }}
-    .metric-card {{
+    .lens-panel {{
       min-width: 0;
-      padding: 14px;
+      padding: 18px;
       border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
       border-radius: 8px;
       background: #ffffff;
     }}
-    .metric-value {{
-      display: block;
-      color: var(--ink);
-      font-size: 23px;
-      font-weight: 750;
-      line-height: 1.2;
+    .lens-panel.secondary {{
+      border-left-color: var(--accent-2);
+      background: #f9fbfb;
     }}
-    .metric-label {{
+    .lens-panel h2 {{
+      margin: 0 0 10px;
+      font-size: 18px;
+    }}
+    .lens-panel p,
+    .lens-panel li {{
+      color: #344054;
+      font-size: 14px;
+      line-height: 1.55;
+    }}
+    .data-signal-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      margin: 0 0 22px;
+    }}
+    .data-signal {{
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid #dbe5ef;
+      border-radius: 8px;
+      background: #ffffff;
+    }}
+    .data-signal strong {{
       display: block;
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: 13px;
+      color: var(--accent-3);
+      font-size: 22px;
+      line-height: 1.15;
+    }}
+    .data-signal span {{
+      display: block;
+      margin-top: 5px;
+      color: #475467;
+      font-size: 12px;
       line-height: 1.35;
+      overflow-wrap: anywhere;
     }}
     .visual-grid {{
       display: grid;
@@ -1449,7 +1944,8 @@ def _render_html_report(
       align-items: start;
     }}
     .story-rail,
-    .section-weight-chart {{
+    .section-weight-chart,
+    .table-derived-visual {{
       min-width: 0;
       padding: 16px;
       border: 1px solid var(--line);
@@ -1468,6 +1964,31 @@ def _render_html_report(
       padding: 0;
       list-style: none;
     }}
+    .workflow-map {{
+      position: relative;
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }}
+    .workflow-step {{
+      position: relative;
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      padding-bottom: 10px;
+    }}
+    .workflow-step:not(:last-child)::after {{
+      content: "";
+      position: absolute;
+      left: 14px;
+      top: 30px;
+      bottom: -2px;
+      width: 2px;
+      background: #dbe5ef;
+    }}
     .story-item {{
       display: grid;
       grid-template-columns: 30px minmax(0, 1fr);
@@ -1475,6 +1996,8 @@ def _render_html_report(
       align-items: start;
     }}
     .story-index {{
+      position: relative;
+      z-index: 1;
       display: grid;
       place-items: center;
       width: 28px;
@@ -1493,9 +2016,28 @@ def _render_html_report(
       line-height: 1.38;
       overflow-wrap: anywhere;
     }}
+    .workflow-caption {{
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }}
     .bar-list {{
       display: grid;
       gap: 10px;
+    }}
+    .derived-viz-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }}
+    .derived-viz-meta {{
+      margin: -4px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
     }}
     .bar-row {{
       display: grid;
@@ -1640,6 +2182,8 @@ def _render_html_report(
     }}
     @media (max-width: 760px) {{
       main {{ padding: 32px 18px 56px; }}
+      header,
+      .executive-lens {{ grid-template-columns: 1fr; }}
       .visual-grid {{ grid-template-columns: 1fr; }}
       .bar-row {{ grid-template-columns: 1fr; gap: 5px; }}
       .bar-value {{ text-align: left; }}
@@ -1655,16 +2199,16 @@ def _render_html_report(
     }}
   </style>
 </head>
-<body>
+<body class="visual-artifact-report">
   <main>
     <header>
-      <h1>{escape(title)}</h1>
-      <div class="meta">
-        <span class="pill">섹션 {len(section_bodies):,}개</span>
-        <span class="pill">본문 약 {estimated_body_tokens:,} tokens</span>
-        <span class="pill">{escape(target_note)}</span>
+      <div>
+        <p class="report-eyebrow">Analytical HTML Report</p>
+        <h1>{escape(title)}</h1>
       </div>
+      <p class="report-deck">핵심 수치, 표, 섹션 흐름을 먼저 스캔한 뒤 상세 본문으로 내려가도록 구성한 시각 보고서입니다.</p>
     </header>
+    {executive_lens}
     {visual_overview}
     <nav aria-label="목차">
       {nav}
@@ -1803,8 +2347,6 @@ def _render_html_sources(sources: list[dict[str, str]]) -> str:
 def _render_html_visual_overview(
     section_bodies: list[tuple[str, str]],
     *,
-    estimated_body_tokens: int,
-    target_note: str,
     model: str | None,
 ) -> str:
     if not section_bodies:
@@ -1812,9 +2354,10 @@ def _render_html_visual_overview(
     section_stats = _section_token_stats(section_bodies, model=model)
     story_items = "\n".join(
         (
-            '<li class="story-item">'
+            '<li class="workflow-step">'
             f'<span class="story-index">{index}</span>'
-            f'<span class="story-title">{escape(title)}</span>'
+            f'<span><span class="story-title">{escape(title)}</span>'
+            f'<span class="workflow-caption">섹션 {index}에서 확인할 분석 흐름</span></span>'
             "</li>"
         )
         for index, title, _tokens, _share in section_stats[:8]
@@ -1833,24 +2376,10 @@ def _render_html_visual_overview(
     )
     return f"""
     <section class="visual-overview" aria-label="리포트 시각 요약">
-      <div class="metric-grid">
-        <div class="metric-card">
-          <span class="metric-value">{len(section_bodies):,}</span>
-          <span class="metric-label">총 섹션</span>
-        </div>
-        <div class="metric-card">
-          <span class="metric-value">{estimated_body_tokens:,}</span>
-          <span class="metric-label">본문 추정 토큰</span>
-        </div>
-        <div class="metric-card">
-          <span class="metric-value">{escape(target_note)}</span>
-          <span class="metric-label">생성 목표</span>
-        </div>
-      </div>
       <div class="visual-grid">
         <div class="story-rail">
-          <h2 class="visual-title">서사 흐름</h2>
-          <ol class="story-list">
+          <h2 class="visual-title">보고서 workflow</h2>
+          <ol class="workflow-map" aria-label="보고서 섹션 workflow">
             {story_items}
           </ol>
         </div>
@@ -1861,8 +2390,199 @@ def _render_html_visual_overview(
           </div>
         </div>
       </div>
+      {_render_html_data_signals(section_bodies)}
+      {_render_html_table_visuals(section_bodies)}
     </section>
 """
+
+
+def _render_html_executive_lens(section_bodies: list[tuple[str, str]], review_text: str) -> str:
+    if not section_bodies:
+        return ""
+    first_sections = "".join(
+        f"<li>{escape(title)}</li>"
+        for title, _body in section_bodies[:4]
+    )
+    review_excerpt = _short_progress_excerpt(review_text, limit=280) if review_text.strip() else ""
+    review_block = (
+        f"<p>{escape(review_excerpt)}</p>"
+        if review_excerpt
+        else "<p>검토 요약은 최종 병합 단계에서 작성되며, 본문 아래에 별도 섹션으로 배치됩니다.</p>"
+    )
+    return f"""
+    <section class="executive-lens" aria-label="보고서 읽기 가이드">
+      <div class="lens-panel">
+        <h2>읽기 경로</h2>
+        <ol>{first_sections}</ol>
+      </div>
+      <div class="lens-panel secondary">
+        <h2>검토 관점</h2>
+        {review_block}
+      </div>
+    </section>
+"""
+
+
+def _render_html_data_signals(section_bodies: list[tuple[str, str]]) -> str:
+    signals = _extract_numeric_signals(section_bodies)
+    if not signals:
+        return ""
+    items = "\n".join(
+        (
+            '<div class="data-signal">'
+            f"<strong>{escape(signal['value'])}</strong>"
+            f"<span>{escape(signal['context'])}</span>"
+            "</div>"
+        )
+        for signal in signals
+    )
+    return f"""
+      <div class="data-signal-grid" aria-label="본문에서 추출한 주요 수치 신호">
+        {items}
+      </div>
+"""
+
+
+def _extract_numeric_signals(section_bodies: list[tuple[str, str]], *, max_items: int = 6) -> list[dict[str, str]]:
+    pattern = re.compile(
+        r"(?<![\w.])(-?\d{1,3}(?:,\d{3})+|-?\d+(?:\.\d+)?)(\s?(?:%|pp|p|명|개|년|월|배|달러|원|조|억))?",
+        flags=re.IGNORECASE,
+    )
+    signals: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for section_title, body in section_bodies:
+        for match in pattern.finditer(body):
+            value = f"{match.group(1)}{match.group(2) or ''}".strip()
+            if not _is_useful_numeric_signal(value):
+                continue
+            if value in seen:
+                continue
+            seen.add(value)
+            context = _numeric_signal_context(body, match.start(), match.end())
+            if not context:
+                context = section_title
+            signals.append({"value": value, "context": context})
+            if len(signals) >= max_items:
+                return signals
+    return signals
+
+
+def _is_useful_numeric_signal(value: str) -> bool:
+    if re.search(r"\b(?:tokens?)\b", value, flags=re.IGNORECASE):
+        return False
+    if re.search(r"[%명개년월배원억조]|pp|p", value):
+        return True
+    number = _parse_numeric_value(value)
+    return number is not None and abs(number) >= 10
+
+
+def _numeric_signal_context(text: str, start: int, end: int) -> str:
+    left = max(text.rfind(".", 0, start), text.rfind("\n", 0, start), text.rfind("다.", 0, start))
+    right_candidates = [pos for pos in (text.find(".", end), text.find("\n", end), text.find("다.", end)) if pos != -1]
+    right = min(right_candidates) if right_candidates else min(len(text), end + 90)
+    excerpt = text[left + 1 : right + 1].strip(" -\n\t")
+    return _short_progress_excerpt(excerpt, limit=120)
+
+
+def _render_html_table_visuals(section_bodies: list[tuple[str, str]]) -> str:
+    charts = _extract_table_visuals(section_bodies)
+    if not charts:
+        return ""
+    cards = "\n".join(_render_html_table_visual_card(chart) for chart in charts)
+    return f"""
+      <div class="derived-viz-grid" aria-label="표에서 자동 생성한 비교 시각화">
+        {cards}
+      </div>
+"""
+
+
+def _extract_table_visuals(section_bodies: list[tuple[str, str]], *, max_charts: int = 3) -> list[dict[str, object]]:
+    charts: list[dict[str, object]] = []
+    for section_title, body in section_bodies:
+        for table_lines in _extract_markdown_table_lines(body):
+            rows = [_split_table_row(line) for line in table_lines]
+            if len(rows) < 3 or len(rows[0]) < 2:
+                continue
+            headers = rows[0]
+            body_rows = rows[2:]
+            for column_index, header in enumerate(headers[1:], start=1):
+                points = []
+                for row in body_rows[:10]:
+                    if len(row) <= column_index:
+                        continue
+                    numeric = _parse_numeric_value(row[column_index])
+                    if numeric is None:
+                        continue
+                    points.append(
+                        {
+                            "label": row[0][:80],
+                            "value": numeric,
+                            "raw": row[column_index],
+                        }
+                    )
+                if len(points) >= 2:
+                    charts.append(
+                        {
+                            "title": f"{section_title} - {header}",
+                            "source": section_title,
+                            "points": points[:8],
+                        }
+                    )
+                    break
+            if len(charts) >= max_charts:
+                return charts
+    return charts
+
+
+def _extract_markdown_table_lines(text: str) -> list[list[str]]:
+    lines = text.strip().splitlines()
+    tables: list[list[str]] = []
+    index = 0
+    while index < len(lines):
+        if _looks_like_table_start(lines, index):
+            table_lines: list[str] = []
+            while index < len(lines) and "|" in lines[index] and lines[index].strip():
+                table_lines.append(lines[index].strip())
+                index += 1
+            tables.append(table_lines)
+            continue
+        index += 1
+    return tables
+
+
+def _render_html_table_visual_card(chart: dict[str, object]) -> str:
+    points = [point for point in chart.get("points", []) if isinstance(point, dict)]
+    max_value = max((abs(float(point.get("value", 0))) for point in points), default=1.0) or 1.0
+    rows = "\n".join(
+        (
+            '<div class="bar-row">'
+            f'<div class="bar-label">{escape(str(point.get("label", "")))}</div>'
+            '<div class="bar-track">'
+            f'<div class="bar-fill" style="width: {max(4.0, abs(float(point.get("value", 0))) / max_value * 100):.1f}%;"></div>'
+            "</div>"
+            f'<div class="bar-value">{escape(str(point.get("raw", point.get("value", ""))))}</div>'
+            "</div>"
+        )
+        for point in points
+    )
+    return (
+        '<div class="table-derived-visual">'
+        f'<h2 class="visual-title">{escape(str(chart.get("title", "표 기반 비교")))}</h2>'
+        f'<p class="derived-viz-meta">원문 표의 수치 열을 자동 비교 시각화했습니다.</p>'
+        f'<div class="bar-list">{rows}</div>'
+        "</div>"
+    )
+
+
+def _parse_numeric_value(value: object) -> float | None:
+    text = str(value or "").replace(",", "")
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
 
 
 def _section_token_stats(

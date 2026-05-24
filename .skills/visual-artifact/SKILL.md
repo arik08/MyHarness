@@ -68,6 +68,17 @@ quarterly trends, sources, or a report:
 - For Mermaid process maps and dense diagrams, use semantic color groups so the reader can scan the system at a glance: blue for standards/requests/reports, teal for operations/market/planning, orange for investment/CAPEX/strategic decisions, red for risk/issues, and purple for governance/approval. Prefer pale fills with crisp colored borders and readable dark text; use stronger fills only for start/end, warnings, or key status nodes. In flowcharts, add `classDef` styles and assign classes by meaning instead of leaving all nodes the same color.
 - Use accessible contrast and semantic HTML.
 
+## Layout Density And Whitespace QA
+
+- Treat large unused white space inside report panels as a layout defect, especially when a chart or table occupies only the top half of a bordered card. Do not leave a mostly empty card just because its sibling column is taller.
+- Fill report panel space with meaningful content before changing dimensions: key takeaways, interpretation bullets, metric strips, benchmark notes, anomaly explanations, source notes, confidence/limitation notes, or a compact secondary visual. Do not solve sparse panels by merely shrinking everything into a tiny chart.
+- Size charts to their actual data and reading task while preserving readable scale. Use `aspect-ratio`, `min()`/`clamp()`, and explicit `max-height` to prevent accidental oversizing, but prefer adding relevant analysis around the chart when the section has room.
+- In two-column report sections, do not force equal-height cards when the content is imbalanced unless both cards are intentionally filled. If one side is taller, use the other side to explain what the reader should conclude from the visual rather than leaving blank space.
+- For paired chart-plus-interpretation sections, align the right panel with the left panel deliberately: top edges, right column width, and bottom edges should read as one clean row. If the explanation card is shorter than the chart/table card, fill it with additional analysis, caveats, source notes, ranked implications, or next-step interpretation; do not leave a ragged right-side border floating halfway down the row.
+- Use CSS grid intentionally for paired report panels (`align-items: stretch` only when both sides are content-filled; otherwise change the composition). Avoid accidental masonry-like ragged edges in formal report sections unless the whole section is intentionally unframed and editorial.
+- Before finalizing an HTML report, scan each section at desktop width and ask: “Is more than about one-third of this panel blank?” If yes, first add useful analysis or supporting evidence; if there is nothing meaningful to add, then split the table, adjust the grid, or change the composition.
+- Keep vertical rhythm deliberate: section gaps should separate ideas, not compensate for sparse content. Avoid `min-height`, viewport-height sections, oversized padding, and stretch-aligned grid rows unless the content actually fills them with information.
+
 ## Library choices
 
 - **ECharts**: multi-chart business dashboards/reports.

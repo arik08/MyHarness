@@ -1143,7 +1143,7 @@ describe("appReducer", () => {
       "작업 계획 수립",
       "작업 실행",
       "skill",
-      "다음 단계 검토 중",
+      "후속 응답 대기",
     ]);
     expect(next.workflowEvents.find((event) => event.toolName === "skill")?.status).toBe("done");
   });
@@ -1936,7 +1936,7 @@ describe("appReducer", () => {
 
     expect(activityEvent?.status).toBe("done");
     expect(activityEvent?.detail).toBe("다음 작업을 정했습니다.");
-    expect(activityEvent?.detailLog?.[0]).toContain("도구 결과를 읽고");
+    expect(activityEvent?.detailLog?.[0]).toContain("도구 실행은 완료");
     expect(purposeEvent?.detail).toBe("추가 검색 결과를 비교하고 있습니다.");
     expect(purposeEvent?.detailLog?.length).toBeGreaterThan(0);
     expect(secondCompleted.workflowEvents.filter((event) => event.role === "activity")).toHaveLength(1);
@@ -2185,7 +2185,7 @@ describe("appReducer", () => {
 
     expect(started.statusText).toBe("웹 페이지 확인 중");
     expect(progressed.statusText).toBe("웹 페이지 확인 중");
-    expect(completed.statusText).toBe("도구 결과 검토 중");
+    expect(completed.statusText).toBe("후속 응답 대기 중");
     expect(streaming.statusText).toBe("응답 작성 중");
     expect(progressed.workflowEvents.find((event) => event.toolName === "web_fetch")?.detail).toContain("mckinsey.com");
   });
@@ -2310,6 +2310,31 @@ describe("appReducer", () => {
     expect(writeEvents).toHaveLength(1);
     expect(writeEvents[0].status).toBe("done");
     expect(writeEvents[0].toolInput?.content).toBe("hello");
+  });
+
+  it("shows provider idle after write_file as a transparent follow-up wait", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "HTML 보고서를 작성해줘" },
+    });
+    const started = appReducer(active, {
+      type: "backend_event",
+      event: { type: "tool_started", tool_name: "write_file", tool_input: { path: "chart.html", content: "hello" } },
+    });
+    const completed = appReducer(started, {
+      type: "backend_event",
+      event: { type: "tool_completed", tool_name: "write_file", output: "Wrote chart.html", is_error: false },
+    });
+    const waiting = appReducer(completed, {
+      type: "backend_event",
+      event: { type: "status", message: "AI 응답을 기다리고 있습니다." },
+    });
+
+    const activity = waiting.workflowEvents.find((event) => event.role === "activity");
+    expect(activity?.title).toBe("후속 응답 대기");
+    expect(activity?.detail).toContain("AI 응답 대기 중입니다.");
+    expect(activity?.detail).toContain("파일 작성은 완료됐고");
+    expect(waiting.statusText).toBe("AI 후속 응답 대기 중");
   });
 
   it("merges streamed write previews when backend call ids arrive later", () => {

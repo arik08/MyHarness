@@ -168,8 +168,13 @@ function workflowInputValue(input: Record<string, unknown> | null | undefined, k
 }
 
 function isLongReportWorkflowTool(toolName: string) {
+  if (!longReportWorkflowUiEnabled) {
+    return false;
+  }
   return toolName.toLowerCase() === "write_long_report";
 }
+
+const longReportWorkflowUiEnabled = false;
 
 function slugifyWorkflowReportTitle(title: unknown) {
   const cleaned = String(title || "")
@@ -266,6 +271,9 @@ function workflowPreviewSource(event: WorkflowEvent) {
   const content = workflowInputValue(input, ["content", "new_string", "new_source"]);
   if (content.found) {
     return { path, kind: "content" as const, content: content.value };
+  }
+  if (path && event.status === "running" && lower.includes("write")) {
+    return { path, kind: "content" as const, content: "파일 내용을 읽는 중입니다..." };
   }
   return null;
 }
@@ -787,6 +795,13 @@ type LongReportOutlineSection = {
   analysisAngle: string;
 };
 
+type LongReportIntermediateFile = {
+  label: string;
+  path: string;
+  sizeBytes: number;
+  lineCount: number;
+};
+
 function workflowLongReportNumber(input: Record<string, unknown> | null | undefined, key: string) {
   const value = input?.[key];
   if (typeof value === "boolean") {
@@ -826,6 +841,37 @@ function workflowLongReportOutlineSections(input: Record<string, unknown> | null
     .slice(0, 30);
 }
 
+function workflowLongReportIntermediateFiles(input: Record<string, unknown> | null | undefined): LongReportIntermediateFile[] {
+  const raw = input?.intermediate_files;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item) => {
+      const record = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      const path = typeof record.path === "string" ? compactDetail(record.path) : "";
+      const label = typeof record.label === "string" ? compactDetail(record.label) : "";
+      const sizeBytes = typeof record.size_bytes === "number" && Number.isFinite(record.size_bytes)
+        ? Math.max(0, Math.round(record.size_bytes))
+        : 0;
+      const lineCount = typeof record.line_count === "number" && Number.isFinite(record.line_count)
+        ? Math.max(0, Math.round(record.line_count))
+        : 0;
+      return { label, path, sizeBytes, lineCount };
+    })
+    .filter((item) => item.path);
+}
+
+function formatWorkflowFileSize(bytes: number) {
+  if (!bytes) {
+    return "";
+  }
+  if (bytes < 1024) {
+    return `${bytes.toLocaleString()}B`;
+  }
+  return `${(bytes / 1024).toFixed(bytes >= 10 * 1024 ? 0 : 1)}KB`;
+}
+
 function workflowLongReportSectionSummary(section: LongReportOutlineSection) {
   return [
     section.intent,
@@ -834,20 +880,165 @@ function workflowLongReportSectionSummary(section: LongReportOutlineSection) {
   ].filter(Boolean).join(" · ");
 }
 
+const workflowLongReportProcessSteps = [
+  { key: "plan", label: "계획", detail: "범위와 출력 형식 정리" },
+  { key: "outline", label: "목차", detail: "섹션 구조 설계" },
+  { key: "section", label: "섹션 작성", detail: "본문을 항목별로 작성" },
+  { key: "revision", label: "보강/수정", detail: "이어쓰기와 문체 정리" },
+  { key: "review", label: "검토", detail: "품질 점검과 요약" },
+  { key: "merge", label: "병합/저장", detail: "최종 보고서 저장" },
+] as const;
+
+function workflowLongReportActiveProcessIndex(phase: string, eventStatus: WorkflowEvent["status"]) {
+  if (eventStatus === "done") {
+    return workflowLongReportProcessSteps.length - 1;
+  }
+  switch (phase) {
+    case "outline":
+    case "outline_ready":
+      return 1;
+    case "section":
+    case "continuation":
+      return 2;
+    case "style_audit":
+    case "style_revision":
+    case "style_audit_done":
+      return 3;
+    case "review":
+      return 4;
+    case "merge":
+    case "done":
+      return 5;
+    default:
+      return eventStatus === "running" ? 1 : 0;
+  }
+}
+
+function workflowLongReportPhaseFromDetail(detail: string) {
+  const value = compactDetail(detail);
+  if (/검토|점검/.test(value)) {
+    return "review";
+  }
+  if (/병합|저장|완료/.test(value)) {
+    return "merge";
+  }
+  if (/수정|보강|문체|구조/.test(value)) {
+    return "style_revision";
+  }
+  if (/이어쓰기/.test(value)) {
+    return "continuation";
+  }
+  if (/섹션\s*작성|본문/.test(value)) {
+    return "section";
+  }
+  return "";
+}
+
+function workflowLongReportFallbackPhaseLabel(phase: string, event: WorkflowEvent) {
+  switch (phase) {
+    case "section":
+      return "섹션 본문 작성 중";
+    case "continuation":
+      return "섹션 이어쓰기 중";
+    case "style_audit":
+      return "문체와 구조 일관성 점검 중";
+    case "style_revision":
+      return "섹션 문체와 구조 수정 중";
+    case "review":
+      return "검토 요약 작성 중";
+    case "merge":
+      return "최종 보고서 병합 중";
+    default:
+      return event.status === "running" ? "보고서 뼈대 생성 중" : "보고서 생성 완료";
+  }
+}
+
+function workflowLongReportLiveDetail(event: WorkflowEvent, phaseLabel: string) {
+  const detail = compactToolDetail(event.detail);
+  if (!detail) {
+    return "응답 수신 상태를 확인하는 중";
+  }
+  if (detail.includes(phaseLabel)) {
+    return detail;
+  }
+  return detail.replace(/^진행 중\s*·\s*/i, "");
+}
+
+function workflowLongReportPreviewText(content: string) {
+  return compactDetail(
+    content
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&amp;/gi, "&"),
+  );
+}
+
+function workflowLongReportArtifactDetails(input: Record<string, unknown>) {
+  const content = typeof input.content === "string" ? input.content : "";
+  const path = workflowLongReportString(input, "output_path")
+    || workflowLongReportString(input, "path")
+    || workflowLongReportString(input, "file_path");
+  const fileName = workflowPreviewFileName(path);
+  const details: string[] = [];
+  if (fileName) {
+    details.push(`산출물 ${fileName}`);
+  }
+  if (content) {
+    const lineCount = countWorkflowPreviewLines(content);
+    const charCount = Array.from(content).length;
+    details.push(`실제 파일 ${lineCount.toLocaleString()}줄 · ${charCount.toLocaleString()}자`);
+    const previewText = workflowLongReportPreviewText(content);
+    if (previewText) {
+      details.push(`최근 내용: ${previewText.slice(-140)}`);
+    }
+  }
+  const intermediateFiles = workflowLongReportIntermediateFiles(input);
+  if (intermediateFiles.length) {
+    const latest = intermediateFiles[0];
+    details.push(`중간 산출물 ${intermediateFiles.length.toLocaleString()}개 · ${workflowPreviewFileName(latest.path)}`);
+  }
+  return details;
+}
+
 function WorkflowLongReportOutline({ event }: { event: WorkflowEvent }) {
   const input = event.toolInput || {};
   const sections = workflowLongReportOutlineSections(input);
-  if (!sections.length) {
-    return null;
-  }
+  const intermediateFiles = workflowLongReportIntermediateFiles(input);
   const sectionIndex = workflowLongReportNumber(input, "section_index");
   const sectionTotal = workflowLongReportNumber(input, "section_total") || sections.length;
+  const continuationIndex = workflowLongReportNumber(input, "continuation_index");
   const writtenTokens = workflowLongReportNumber(input, "document_written_tokens");
   const targetTokens = workflowLongReportNumber(input, "target_tokens");
+  const phase = workflowLongReportString(input, "phase") || workflowLongReportPhaseFromDetail(event.detail);
   const phaseLabel = workflowLongReportString(input, "phase_label")
-    || (event.status === "running" ? "보고서 생성 중" : "보고서 생성 완료");
+    || workflowLongReportFallbackPhaseLabel(phase, event);
+  const activeProcessIndex = workflowLongReportActiveProcessIndex(phase, event.status);
+  const currentSectionTitle = workflowLongReportString(input, "section_title")
+    || (sectionIndex > 0 ? sections[sectionIndex - 1]?.title || "" : "");
+  const currentSectionSummary = workflowLongReportString(input, "section_summary")
+    || (sectionIndex > 0 ? workflowLongReportSectionSummary(sections[sectionIndex - 1]) : "");
+  const artifactDetails = workflowLongReportArtifactDetails(input);
+  const currentDetails = [
+    currentSectionTitle
+      ? `${sectionIndex && sectionTotal ? `${sectionIndex}/${sectionTotal} ` : ""}${currentSectionTitle}`
+      : "",
+    continuationIndex ? `이어쓰기 ${continuationIndex}회차` : "",
+    currentSectionSummary,
+    ...artifactDetails,
+  ].filter(Boolean);
+  const liveDetails = currentDetails.length
+    ? currentDetails
+    : event.status === "running"
+      ? [workflowLongReportLiveDetail(event, phaseLabel)]
+      : [];
   const meta = [
-    sectionIndex && sectionTotal ? `${sectionIndex}/${sectionTotal} 섹션` : `${sections.length}개 섹션`,
+    sectionIndex && sectionTotal ? `${sectionIndex}/${sectionTotal} 섹션` : "",
+    !sectionIndex && sectionTotal ? `${sectionTotal}개 섹션` : "",
+    !sectionIndex && !sectionTotal && sections.length ? `${sections.length}개 섹션` : "",
     writtenTokens ? `작성 ${formatWorkflowTokenCount(writtenTokens)}` : "",
     targetTokens ? `목표 ${formatWorkflowTokenCount(targetTokens)}` : "",
   ].filter(Boolean).join(" · ");
@@ -858,30 +1049,85 @@ function WorkflowLongReportOutline({ event }: { event: WorkflowEvent }) {
         <span>작성할 보고서 흐름</span>
         <small>{[phaseLabel, meta].filter(Boolean).join(" · ")}</small>
       </div>
-      <ol className="workflow-long-report-sections">
-        {sections.map((section, index) => {
-          const step = index + 1;
-          const active = sectionIndex === step;
-          const done = sectionIndex > step || event.status !== "running";
-          const summary = workflowLongReportSectionSummary(section);
+      <ol className="workflow-long-report-process" aria-label="장문 보고서 작업 단계">
+        {workflowLongReportProcessSteps.map((step, index) => {
+          const active = event.status === "running" && index === activeProcessIndex;
+          const done = event.status !== "running" || index < activeProcessIndex;
           return (
             <li
               className={[
-                "workflow-long-report-section",
+                "workflow-long-report-process-step",
                 active ? "active" : "",
+                active && !currentDetails.length ? "waiting" : "",
                 done ? "done" : "",
               ].filter(Boolean).join(" ")}
-              key={`${step}:${section.title}`}
+              key={step.key}
             >
-              <span className="workflow-long-report-index">{step}</span>
-              <span className="workflow-long-report-section-copy">
-                <strong>{section.title}</strong>
-                {summary ? <small>{summary}</small> : null}
-              </span>
+              <strong>{step.label}</strong>
+              <small>{step.detail}</small>
             </li>
           );
         })}
       </ol>
+      {liveDetails.length ? (
+        <div className="workflow-long-report-current">
+          <span className="workflow-long-report-live-dot" aria-hidden="true" />
+          <strong>{phaseLabel}</strong>
+          {liveDetails.map((detail) => (
+            <span key={detail}>{detail}</span>
+          ))}
+        </div>
+      ) : null}
+      {sections.length ? (
+        <ol className="workflow-long-report-sections">
+          {sections.map((section, index) => {
+            const step = index + 1;
+            const active = sectionIndex === step;
+            const done = sectionIndex > step || event.status !== "running";
+            const summary = workflowLongReportSectionSummary(section);
+            return (
+              <li
+                className={[
+                  "workflow-long-report-section",
+                  active ? "active" : "",
+                  done ? "done" : "",
+                ].filter(Boolean).join(" ")}
+                key={`${step}:${section.title}`}
+              >
+                <span className="workflow-long-report-index">{step}</span>
+                <span className="workflow-long-report-section-copy">
+                  <strong>{section.title}</strong>
+                  {summary ? <small>{summary}</small> : null}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+      {intermediateFiles.length ? (
+        <div className="workflow-long-report-files" aria-label="작성 중인 중간 산출물">
+          <div className="workflow-long-report-files-head">
+            <strong>중간 산출물</strong>
+            <span>{intermediateFiles.length.toLocaleString()}개 파일 갱신 중</span>
+          </div>
+          <ol>
+            {intermediateFiles.map((file) => {
+              const fileName = workflowPreviewFileName(file.path);
+              const meta = [
+                file.lineCount ? `${file.lineCount.toLocaleString()}줄` : "",
+                formatWorkflowFileSize(file.sizeBytes),
+                file.label,
+              ].filter(Boolean).join(" · ");
+              return (
+                <li key={`${file.label}:${file.path}`}>
+                  <span className="workflow-long-report-file-name">{fileName}</span>
+                  {meta ? <small>{meta}</small> : null}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1371,7 +1617,12 @@ export function WorkflowPanel({
   const longReportOutlineEvent = useMemo(
     () => [...events]
       .reverse()
-      .find((event) => isLongReportWorkflowTool(event.toolName) && workflowLongReportOutlineSections(event.toolInput).length),
+      .find((event) => isLongReportWorkflowTool(event.toolName) && (
+        event.status === "running"
+        || workflowLongReportOutlineSections(event.toolInput).length
+        || workflowLongReportString(event.toolInput, "phase")
+        || workflowLongReportString(event.toolInput, "phase_label")
+      )),
     [events],
   );
   const visibleTimelineEvents = useMemo(

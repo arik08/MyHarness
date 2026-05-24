@@ -104,6 +104,18 @@ describe("artifact utilities", () => {
     expect(collectArtifactCandidates("보고서.html 파일을 확인하세요.").map((artifact) => artifact.path)).toEqual(["보고서.html"]);
   });
 
+  it("does not collect artifact paths from markdown table cells", () => {
+    const candidates = collectArtifactCandidates([
+      "| 테이블명 | 행 수 | 출처 |",
+      "|---|---:|---|",
+      "| `cars` | 406 | vega-datasets cars.json |",
+      "| `flights_airport` | 5,366 | vega-datasets flights-airport.csv |",
+      "| `unemployment_industries` | 1,708 | vega-datasets unemployment-across-industries.json |",
+    ].join("\n"));
+
+    expect(candidates).toEqual([]);
+  });
+
   it("resolves absolute paths only when they are inside the active workspace", () => {
     const workspace = "C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/Playground/shared/Default";
 

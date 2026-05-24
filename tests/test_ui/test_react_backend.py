@@ -30,6 +30,7 @@ from myharness.ui.backend_host import (
     _detect_swarm_orchestration_checkpoint,
     _detect_unresponsive_swarm_teammate,
     _guard_premature_async_agent_final_response,
+    _latest_long_report_progress_usage_input,
     _long_report_progress_path,
     _long_report_progress_usage_input,
     _progress_preview_content,
@@ -102,7 +103,7 @@ def test_long_report_progress_infers_path_and_reads_streamed_file(tmp_path):
     preview = _read_progress_preview_content(tmp_path, progress_path)
 
     assert progress_path == "outputs/GPT_진화와_미래_보고서_report.html"
-    assert "장문 보고서 생성 중" in message
+    assert "보고서 뼈대 생성 중" in message
     assert "7초 경과" in message
     assert "<h1>생성 중</h1>" in preview
 
@@ -136,11 +137,37 @@ def test_long_report_progress_usage_reads_sidecar_state(tmp_path):
 
     usage_input = _long_report_progress_usage_input(tmp_path, progress_path)
 
+    assert usage_input["output_path"] == "outputs/report.html"
     assert usage_input["document_written_tokens"] == 4321
     assert usage_input["usage_input_tokens"] == 1234
     assert usage_input["usage_output_tokens"] == 5678
     assert usage_input["usage_total_tokens"] == 6912
     assert usage_input["last_updated_at"]
+
+
+def test_latest_long_report_progress_usage_follows_actual_output_path(tmp_path):
+    actual_path = "outputs/산업별_실업_데이터_상세_분석_웹보고서.html"
+    report_path = tmp_path / actual_path
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("<!doctype html><section>실시간 작성 본문</section>", encoding="utf-8")
+    write_long_report_progress_state(
+        tmp_path,
+        actual_path,
+        usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+        document_written_tokens=321,
+        phase="section",
+        phase_label="섹션 본문 작성 중",
+        section_index=1,
+        section_total=3,
+        section_title="데이터 구조",
+    )
+
+    usage_input = _latest_long_report_progress_usage_input(tmp_path)
+    preview = _progress_preview_content("write_long_report", tmp_path, str(usage_input["output_path"]))
+
+    assert usage_input["output_path"] == actual_path
+    assert usage_input["section_title"] == "데이터 구조"
+    assert "실시간 작성 본문" in preview
 
 
 def test_long_report_progress_usage_includes_outline_metadata(tmp_path):
@@ -171,6 +198,38 @@ def test_long_report_progress_usage_includes_outline_metadata(tmp_path):
     assert usage_input["outline_sections"]
     assert "보고서 뼈대 생성 완료" in message
     assert "9초 경과" in message
+
+
+def test_long_report_progress_usage_includes_intermediate_files(tmp_path):
+    progress_path = "outputs/report.html"
+    write_long_report_progress_state(
+        tmp_path,
+        progress_path,
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        phase="section",
+        phase_label="섹션 본문 작성 중",
+        intermediate_dir="outputs/report.intermediate",
+        intermediate_files=[
+            {
+                "label": "section-01-draft",
+                "path": "outputs/report.intermediate/sections/01_개요.draft.md",
+                "size_bytes": 14123,
+                "line_count": 84,
+            }
+        ],
+    )
+
+    usage_input = _long_report_progress_usage_input(tmp_path, progress_path)
+
+    assert usage_input["intermediate_dir"] == "outputs/report.intermediate"
+    assert usage_input["intermediate_files"] == [
+        {
+            "label": "section-01-draft",
+            "path": "outputs/report.intermediate/sections/01_개요.draft.md",
+            "size_bytes": 14123,
+            "line_count": 84,
+        }
+    ]
 
 
 def test_frontend_request_accepts_start_new_session():
@@ -1057,10 +1116,14 @@ async def test_backend_host_injects_client_attachment_refs_and_compose_options(t
     assert "original client SSD paths are not available" in sent_text
     assert "`.myharness/client-uploads/client/source.pdf`" in sent_text
     assert "The user selected artifact output and asked to edit the active artifact `outputs/report.html`" in sent_text
-    assert "Target artifact length: about 40,000 output tokens." in sent_text
-    assert "`write_long_report`" in sent_text
-    assert client.requests[0].max_tokens == 40000
+    assert "Target artifact content length: about 40,000 tokens." in sent_text
+    assert "Treat this as a length target, not merely an upper cap" in sent_text
+    assert "at least about 32,000 tokens" in sent_text
+    assert "long-report section-merge tool is temporarily disabled" in sent_text
+    assert "`write_file`" in sent_text
+    assert client.requests[0].max_tokens == 50000
     assert host._bundle.engine.max_tokens == original_max_tokens
+    assert "compose_target_output_tokens" not in host._bundle.engine.tool_metadata
     assert host._history_events[0] == {"type": "user", "text": "보고서 수정 [file attachments: source.pdf]"}
 
 
@@ -1096,10 +1159,14 @@ async def test_backend_host_applies_artifact_preferences_when_output_surface_is_
     assert client.requests
     sent_text = "\n".join(message.text for message in client.requests[0].messages)
     assert "The user left output surface on auto, but if you create an artifact" in sent_text
-    assert "Target artifact length: about 40,000 output tokens." in sent_text
-    assert "`write_long_report`" in sent_text
-    assert client.requests[0].max_tokens == original_max_tokens
+    assert "Target artifact content length: about 40,000 tokens." in sent_text
+    assert "Treat this as a length target, not merely an upper cap" in sent_text
+    assert "at least about 32,000 tokens" in sent_text
+    assert "long-report section-merge tool is temporarily disabled" in sent_text
+    assert "`write_file`" in sent_text
+    assert client.requests[0].max_tokens == 50000
     assert host._bundle.engine.max_tokens == original_max_tokens
+    assert "compose_target_output_tokens" not in host._bundle.engine.tool_metadata
 
 
 @pytest.mark.asyncio

@@ -1521,7 +1521,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("live.html");
   });
 
-  it("shows a running long report outline before generated file content is available", () => {
+  it("shows disabled long report progress as ordinary file writing", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -1545,6 +1545,7 @@ describe("MessageList", () => {
                 output_path: "",
                 output_format: "html",
                 target_tokens: 40000,
+                phase: "section",
                 phase_label: "보고서 뼈대 생성 완료",
                 section_index: 1,
                 section_total: 2,
@@ -1571,14 +1572,92 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
-    expect(screen.queryByText("파일 작성")).toBeNull();
-    expect(screen.getByText("작성할 보고서 흐름")).toBeTruthy();
-    expect(screen.getByText("네트워크 구조 진단")).toBeTruthy();
-    expect(screen.getByText(/공항 연결망의 중심과 주변부/)).toBeTruthy();
-    expect(screen.getByText("핵심 노선과 수요 집중")).toBeTruthy();
-    expect(screen.getByText("네트워크 구조 진단").closest(".workflow-long-report-section")?.className).toContain("active");
+    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(screen.getByText(/파일 작업 중... 36초 경과/)).toBeTruthy();
+    expect(screen.queryByText("장문 보고서 생성")).toBeNull();
+    expect(screen.queryByText("작성할 보고서 흐름")).toBeNull();
+    expect(screen.queryByText("목차")).toBeNull();
+    expect(screen.queryByText("섹션 작성")).toBeNull();
+    expect(document.querySelector(".workflow-long-report-outline")).toBeNull();
     expect(document.querySelector(".workflow-output-preview")).toBeNull();
+  });
+
+  it("does not show disabled long report process phases", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "데이터 분석 보고서를 길게 써줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-report",
+              toolName: "write_long_report",
+              title: "write_long_report",
+              detail: "파일 작업 중...",
+              status: "running",
+              level: "child",
+              toolInput: {
+                title: "데이터 분석 보고서",
+                output_format: "html",
+                target_tokens: 40000,
+                phase: "outline",
+                phase_label: "보고서 뼈대 생성 중",
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(screen.queryByText("작성할 보고서 흐름")).toBeNull();
+    expect(screen.queryByText("목차")).toBeNull();
+    expect(screen.queryByText("진행중...")).toBeNull();
+  });
+
+  it("falls back to ordinary file progress when disabled long report metadata is not ready yet", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "데이터 분석 보고서를 길게 써줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-report",
+              toolName: "write_long_report",
+              title: "write_long_report",
+              detail: "파일 작업 중... 2분 13초 경과",
+              status: "running",
+              level: "child",
+              toolInput: {
+                title: "데이터 분석 보고서",
+                output_format: "html",
+                target_tokens: 40000,
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(screen.getByText(/파일 작업 중... 2분 13초 경과/)).toBeTruthy();
+    expect(screen.queryByText(/보고서 뼈대 생성 중/)).toBeNull();
+    expect(document.querySelector(".workflow-long-report-current")).toBeNull();
+    expect(document.querySelector(".workflow-long-report-live-dot")).toBeNull();
+    expect(document.querySelector(".workflow-long-report-outline")).toBeNull();
   });
 
   it("shows long completed HTML write tool content in the workflow output preview body", () => {
@@ -1738,7 +1817,8 @@ describe("MessageList", () => {
     );
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
-    expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
+    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(screen.queryByText("장문 보고서 생성")).toBeNull();
     expect(body.textContent).not.toContain("보고서 시작");
     expect(body.textContent).toContain("마지막 장문 보고서 본문");
     expect(body.textContent).not.toBe(hugeContent);
@@ -2347,12 +2427,13 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("장문 보고서 생성")).toBeTruthy();
+    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(screen.queryByText("장문 보고서 생성")).toBeNull();
     expect(document.querySelector(".workflow-output-preview")).toBeNull();
     expect(screen.queryByText("작성 완료 - CPU_반도체_주가_급등_분석_보고서.html")).toBeNull();
   });
 
-  it("shows running long report generation usage from progress metadata", () => {
+  it("shows disabled long report progress metadata as ordinary file output", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -2374,6 +2455,20 @@ describe("MessageList", () => {
                 content: "<section><p>미리보기 본문</p></section>",
                 document_written_tokens: 98234,
                 usage_total_tokens: 1588,
+                intermediate_files: [
+                  {
+                    label: "section-03-draft",
+                    path: "outputs/cpu_주가_급등_분석_보고서.intermediate/sections/03_산업별_충격_비교.draft.md",
+                    line_count: 92,
+                    size_bytes: 14336,
+                  },
+                  {
+                    label: "design-brief",
+                    path: "outputs/cpu_주가_급등_분석_보고서.intermediate/design_brief.md",
+                    line_count: 9,
+                    size_bytes: 1024,
+                  },
+                ],
               },
             },
           ],
@@ -2384,8 +2479,13 @@ describe("MessageList", () => {
     );
 
     expect(screen.getByText("작성 중인 결과물 - cpu_주가_급등_분석_보고서.html")).toBeTruthy();
-    expect(screen.getByText("작성 사용량 98,234 토큰")).toBeTruthy();
-    expect(screen.getByText(/3\/8 섹션 작성 중 · 산업별 충격 비교/)).toBeTruthy();
+    expect(screen.getAllByText(/3\/8 섹션 작성 중 · 산업별 충격 비교/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("작성 사용량 98,234 토큰")).toBeNull();
+    expect(document.querySelector(".workflow-long-report-outline")).toBeNull();
+    expect(document.querySelector(".workflow-long-report-current")).toBeNull();
+    expect(screen.queryByText("중간 산출물")).toBeNull();
+    expect(screen.queryByText("03_산업별_충격_비교.draft.md")).toBeNull();
+    expect(screen.queryByText("design_brief.md")).toBeNull();
     expect(screen.queryByText(/섹션별 작성\/이어쓰기\/검토 후 병합 중/)).toBeNull();
     expect(screen.queryByText(/1,781 토큰/)).toBeNull();
   });
@@ -2572,6 +2672,48 @@ describe("MessageList", () => {
     const frame = await screen.findByTitle("super-ai-worm-game.html") as HTMLIFrameElement;
     expect(frame).toBeTruthy();
     expect(frame.srcdoc).toContain("AI Worm");
+  });
+
+  it("keeps artifact-looking filenames inside markdown tables as table text", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    const tableMarkdown = [
+      "접근 가능한 `sqlite_analysis` 테이블은 다음과 같습니다.",
+      "",
+      "| 테이블명 | 행 수 | 출처 |",
+      "|---|---:|---|",
+      "| `cars` | 406 | vega-datasets cars.json |",
+      "| `flights_airport` | 5,366 | vega-datasets flights-airport.csv |",
+      "| `gapminder_health_income` | 187 | vega-datasets gapminder-health-income.csv |",
+      "| `unemployment_industries` | 1,708 | vega-datasets unemployment-across-industries.json |",
+      "",
+      "원하시면 특정 테이블의 컬럼 구조도 확인해드릴 수 있습니다.",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          workspacePath: "C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness",
+          messages: [
+            { id: "assistant-1", role: "assistant", text: tableMarkdown, isComplete: true },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const table = document.querySelector(".markdown-body table");
+    expect(table).toBeTruthy();
+    expect(table?.querySelectorAll("tbody tr")).toHaveLength(4);
+    expect(table?.textContent || "").toContain("cars.json");
+    expect(table?.textContent || "").toContain("flights-airport.csv");
+    expect(document.querySelector(".artifact-card")).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("keeps artifact cards visible when metadata resolution is unavailable", async () => {

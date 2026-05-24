@@ -269,6 +269,58 @@ function lineRangeForPosition(value: string, start: number, end: number) {
   return { lineStart, lineEnd, nextNewline };
 }
 
+function markdownTableCells(value: string) {
+  const trimmed = String(value || "").trim();
+  const withoutEdges = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  return withoutEdges.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparatorLine(value: string) {
+  const cells = markdownTableCells(value);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function isMarkdownBlockBoundary(value: string) {
+  return /^\s*$/.test(value) || /^ {0,3}(`{3,}|~{3,})/.test(value);
+}
+
+function looksLikeMarkdownTableLine(value: string) {
+  const trimmed = String(value || "").trim();
+  return markdownTableCells(trimmed).length >= 2 && trimmed.includes("|");
+}
+
+function isInsideMarkdownTable(value: string, start: number) {
+  const lines = value.split("\n");
+  const lineIndex = value.slice(0, start).split("\n").length - 1;
+  const line = lines[lineIndex] || "";
+  if (!looksLikeMarkdownTableLine(line)) {
+    return false;
+  }
+  const trimmed = line.trim();
+  if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+    return true;
+  }
+  for (let index = lineIndex - 1; index >= 0; index -= 1) {
+    const previous = lines[index] || "";
+    if (isMarkdownBlockBoundary(previous)) {
+      break;
+    }
+    if (isMarkdownTableSeparatorLine(previous)) {
+      return true;
+    }
+  }
+  for (let index = lineIndex + 1; index < lines.length; index += 1) {
+    const next = lines[index] || "";
+    if (isMarkdownBlockBoundary(next)) {
+      break;
+    }
+    if (isMarkdownTableSeparatorLine(next)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function previousLineRange(value: string, lineStart: number) {
   if (lineStart <= 0) {
     return null;
@@ -382,6 +434,9 @@ export function collectArtifactReferences(text: string) {
   const references: ArtifactReference[] = [];
   const occupiedRanges: Array<{ start: number; end: number }> = [];
   const push = (start: number, end: number, replaceStart = start, replaceEnd = end) => {
+    if (isInsideMarkdownTable(value, start)) {
+      return;
+    }
     const reference = artifactReferenceFromRange(value, start, end, replaceStart, replaceEnd);
     if (!reference) {
       return;

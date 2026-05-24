@@ -192,6 +192,7 @@ const shellCommandTimeoutMs = 60_000;
 const shellOutputMaxChars = 24_000;
 const tokenCountMaxChars = 200_000;
 const modelOutputTokenDefault = 42_000;
+const composeTargetOutputTokenMax = 40_000;
 const maxActiveSessions = Math.max(1, Number(process.env.MYHARNESS_MAX_ACTIVE_SESSIONS || 20));
 const maxBusySessions = Math.max(1, Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS || 8));
 const currentSessionBusyMessage = "현재 대화가 응답 중입니다. 답변이 끝난 뒤 다시 시도하거나 텍스트로 이어서 지시하세요.";
@@ -4256,7 +4257,7 @@ function normalizeComposeOptions(value) {
   }
   const rawTarget = Number(value.target_output_tokens ?? value.targetOutputTokens ?? 0);
   if (Number.isFinite(rawTarget) && rawTarget > 0) {
-    options.target_output_tokens = Math.max(1, Math.min(160_000, Math.trunc(rawTarget)));
+    options.target_output_tokens = Math.max(1, Math.min(composeTargetOutputTokenMax, Math.trunc(rawTarget)));
   }
   const activeArtifactPath = normalizeProjectFilePath(value.active_artifact_path || value.activeArtifactPath || "");
   if (activeArtifactPath) {

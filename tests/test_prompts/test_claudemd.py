@@ -228,16 +228,16 @@ def test_build_runtime_system_prompt_guides_explicit_extra_long_report_generatio
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="80,000 토큰 HTML 보고서 작성")
+    prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="40,000 토큰 HTML 보고서 작성")
 
     assert "Report Generation" in prompt
-    assert "below roughly 20,000 tokens" in prompt
-    assert "Use `write_long_report` only when" in prompt
-    assert "20k, 40k, 80k, 160k" in prompt
-    assert "outline" in prompt
-    assert "section" in prompt
-    assert "source_notes" in prompt
-    assert "do not rely on earlier search/tool output" in prompt
+    assert "about 24k, 32k, or 40k output tokens" in prompt
+    assert "roughly 80-105% of the requested tokens" in prompt
+    assert "do not stop at an ordinary 10k-13k report" in prompt
+    assert "Use the selected model's direct output budget" in prompt
+    assert "The `write_long_report` section-merge flow is temporarily disabled" in prompt
+    assert "Do not call it for extra-long report requests" in prompt
+    assert "Keep concise source notes in context" in prompt
     assert "Do not generate more than 20,000 tokens" not in prompt
 
 
@@ -258,7 +258,14 @@ def test_build_runtime_system_prompt_keeps_report_limits_from_overriding_html_ar
     assert "Ordinary report requests may still require standalone files" in prompt
     assert "장문보고서, 긴 보고서, 대보고서" in prompt
     assert "create a standalone HTML report under `outputs/`" in prompt
+    assert "load and follow the `visual-artifact` skill" in prompt
+    assert "charts for trends/comparisons/proportions" in prompt
+    assert "workflow/timeline diagrams when process or causal flow matters" in prompt
+    assert "Do not expose production metadata" in prompt
+    assert "not a plain article wrapped in HTML" in prompt
     assert "aim for roughly 10,000 substantive body tokens by default" in prompt
+    assert "use `todo_write` and concrete `<myharness-progress>` markers" in prompt
+    assert "Do not stay silent through the analysis phase" in prompt
     assert "should be answered directly" not in prompt
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -14,10 +15,12 @@ from myharness.services.long_report_progress import read_long_report_progress_st
 from myharness.services.token_estimation import estimate_tokens
 from myharness.tools import create_default_tool_registry
 from myharness.tools.base import ToolExecutionContext
+from myharness.tools import long_report_tool as long_report_module
 from myharness.tools.long_report_tool import (
     LongReportTool,
     LongReportToolInput,
     _continuation_prompt,
+    _report_design_brief,
     _review_prompt,
     _render_html_blocks,
     _render_html_report,
@@ -86,6 +89,59 @@ class StreamingReportClient:
         )
 
 
+class OutlineStreamingReportClient:
+    def __init__(self, output_path: Path) -> None:
+        self.output_path = output_path
+        self.requests: list[ApiMessageRequest] = []
+        self.saw_outline_preview = False
+
+    async def stream_message(self, request: ApiMessageRequest):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            yield ApiTextDeltaEvent(text="- 시장 현황\n")
+            self.saw_outline_preview = (
+                self.output_path.exists()
+                and "시장 현황" in self.output_path.read_text(encoding="utf-8")
+            )
+            yield ApiTextDeltaEvent(text="- 리스크")
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="- 시장 현황\n- 리스크")]),
+                usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+                stop_reason=None,
+            )
+            return
+        if len(self.requests) <= 3:
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="본문")]),
+                usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+                stop_reason=None,
+            )
+            return
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="검토 요약")]),
+            usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+            stop_reason=None,
+        )
+
+
+class SlowOutlineReportClient:
+    def __init__(self) -> None:
+        self.requests: list[ApiMessageRequest] = []
+
+    async def stream_message(self, request: ApiMessageRequest):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            await asyncio.sleep(60)
+            if False:
+                yield ApiTextDeltaEvent(text="")
+            return
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="본문")]),
+            usage=UsageSnapshot(input_tokens=10, output_tokens=20),
+            stop_reason=None,
+        )
+
+
 @pytest.mark.asyncio
 async def test_long_report_uses_lower_gpt55_report_token_limits(tmp_path: Path):
     client = FakeReportClient(
@@ -114,7 +170,7 @@ async def test_long_report_uses_lower_gpt55_report_token_limits(tmp_path: Path):
     )
 
     assert result.is_error is False
-    assert [request.max_tokens for request in client.requests] == [8_000, 6_300, 6_300, 8_000]
+    assert [request.max_tokens for request in client.requests] == [1_200, 6_300, 6_300, 8_000]
     report = (tmp_path / "outputs" / "long_report.md").read_text(encoding="utf-8")
     assert "# 긴 보고서" in report
     assert "## 배경" in report
@@ -131,6 +187,21 @@ async def test_long_report_uses_lower_gpt55_report_token_limits(tmp_path: Path):
     assert result.metadata["usage_input_tokens"] == 40
     assert result.metadata["usage_output_tokens"] == 80
     assert result.metadata["usage_total_tokens"] == 120
+    assert result.metadata["model_output"] == result.output
+    assert result.metadata["display_output"] == "장문 보고서 생성 완료"
+    assert "transcript_output" not in result.metadata
+    intermediate_dir = Path(str(result.metadata["intermediate_dir"]))
+    assert intermediate_dir.name == "long_report.intermediate"
+    assert (intermediate_dir / "outline.md").read_text(encoding="utf-8").count("배경") >= 1
+    design_brief = (intermediate_dir / "design_brief.md").read_text(encoding="utf-8")
+    assert "디자인·문체 계약" in design_brief
+    assert "나중에 다시 LLM으로 재작성하지 않고" in design_brief
+    assert (intermediate_dir / "sections" / "01_배경.draft.md").read_text(encoding="utf-8") == "# 1. 배경\n\n배경 본문\n"
+    assert (intermediate_dir / "sections" / "02_영향.draft.md").read_text(encoding="utf-8") == "# 2. 영향\n\n영향 본문\n"
+    assert (intermediate_dir / "review.md").read_text(encoding="utf-8") == "# 긴 보고서 - 검토 요약\n\n검토 요약\n"
+    manifest = json.loads(Path(str(result.metadata["intermediate_manifest_path"])).read_text(encoding="utf-8"))
+    assert manifest["intermediate_dir"] == str(intermediate_dir)
+    assert "중간 산출물 outputs/long_report.intermediate" in result.output
     progress_state = read_long_report_progress_state(tmp_path, "outputs/long_report.md")
     assert progress_state["document_written_tokens"] == result.metadata["document_written_tokens"]
     assert progress_state["usage_input_tokens"] == 40
@@ -139,6 +210,70 @@ async def test_long_report_uses_lower_gpt55_report_token_limits(tmp_path: Path):
     assert progress_state["phase"] == "done"
     assert progress_state["phase_label"] == "장문 보고서 생성 완료"
     assert [section["title"] for section in progress_state["outline_sections"]] == ["배경", "영향"]
+    assert progress_state["intermediate_dir"] == "outputs/long_report.intermediate"
+    intermediate_paths = [item["path"] for item in progress_state["intermediate_files"]]
+    assert "outputs/long_report.intermediate/design_brief.md" in intermediate_paths
+    assert "outputs/long_report.intermediate/sections/01_배경.draft.md" in intermediate_paths
+
+
+@pytest.mark.asyncio
+async def test_long_report_outline_timeout_falls_back_to_default_sections(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(long_report_module, "OUTLINE_TIMEOUT_SECONDS", 0.01)
+    client = SlowOutlineReportClient()
+
+    result = await LongReportTool().execute(
+        LongReportToolInput(
+            title="지연 목차 보고서",
+            brief="목차가 지연되어도 본문으로 넘어가야 합니다.",
+            output_path="outputs/timeout.md",
+            max_sections=2,
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.5",
+                "system_prompt": "system",
+                "reasoning_effort": "high",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    assert [request.max_tokens for request in client.requests] == [1_200, 6_300, 6_300, 8_000]
+    assert client.requests[0].reasoning_effort == "minimal"
+    report = (tmp_path / "outputs" / "timeout.md").read_text(encoding="utf-8")
+    assert "## 데이터 범위와 분석 기준" in report
+    progress_state = read_long_report_progress_state(tmp_path, "outputs/timeout.md")
+    assert progress_state["phase"] == "done"
+    assert [section["title"] for section in progress_state["outline_sections"]] == ["데이터 범위와 분석 기준", "전체 추세와 핵심 지표"]
+
+
+@pytest.mark.asyncio
+async def test_long_report_streams_outline_preview_before_sections(tmp_path: Path):
+    output_path = tmp_path / "outputs" / "outline-stream.html"
+    client = OutlineStreamingReportClient(output_path)
+
+    result = await LongReportTool().execute(
+        LongReportToolInput(
+            title="시장 조사 보고서",
+            brief="목차부터 투명하게 보여주세요.",
+            output_path="outputs/outline-stream.html",
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "api_client": client,
+                "model": "gpt-5.5",
+                "system_prompt": "system",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    assert client.saw_outline_preview is True
+    assert output_path.exists()
+    assert "검토 요약" in output_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -183,6 +318,9 @@ async def test_long_report_accepts_source_notes_and_writes_claim_ledger(tmp_path
     first_section_prompt = client.requests[1].messages[0].text
     assert "## Research notes" in outline_prompt
     assert "https://example.com/market" in outline_prompt
+    assert "섹션 작성자를 위한 routing brief" in outline_prompt
+    assert "목차 단계에서 분량을 채우려 하지 마세요" in outline_prompt
+    assert "완벽한 목차를 위해 과도하게 숙고하지 말고 즉시 JSON" in outline_prompt
     assert "2026년 시장 성장률 15%" in first_section_prompt
     ledger_path = Path(str(result.metadata["ledger_path"]))
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
@@ -264,7 +402,7 @@ async def test_long_report_uses_gpt54_mini_section_limit_and_continues_truncated
     )
 
     assert result.is_error is False
-    assert [request.max_tokens for request in client.requests] == [6_000, 12_600, 12_600, 6_000]
+    assert [request.max_tokens for request in client.requests] == [1_200, 12_600, 12_600, 6_000]
     report = (tmp_path / "outputs" / "mini.md").read_text(encoding="utf-8")
     assert "요약 본문 1 이어쓰기" in report
 
@@ -335,14 +473,16 @@ async def test_long_report_target_tokens_continue_short_sections_and_render_html
     )
 
     assert result.is_error is False
-    assert [request.max_tokens for request in client.requests] == [8_000, 18_000, 18_000, 18_000, 2_000, 8_000]
+    assert [request.max_tokens for request in client.requests] == [1_200, 18_000, 18_000, 18_000, 2_000, 8_000]
     assert result.metadata["target_tokens"] == 80_000
     assert result.metadata["target_adherence"]["status"] == "approximate"
     report = (tmp_path / "outputs" / "deep.html").read_text(encoding="utf-8")
     assert "<!doctype html>" in report
     assert "<title>초장문 보고서</title>" in report
-    assert "본문 약" in report
-    assert "목표 80,000 tokens" in report
+    assert "본문 약" not in report
+    assert "목표 80,000 tokens" not in report
+    assert "본문 추정 토큰" not in report
+    assert "생성 목표" not in report
 
 
 @pytest.mark.asyncio
@@ -468,8 +608,16 @@ def test_html_report_renderer_adds_visual_summary_and_section_weight_chart():
     html = _render_html_report(
         "메모리 시장 리포트",
         [
-            ("1990년대 일본 DRAM 쇠퇴", "일본 DRAM 기업의 쇠퇴를 설명합니다. " * 60),
-            ("2024년 AI/HBM 슈퍼사이클", "HBM 수요와 AI 서버 병목을 설명합니다. " * 180),
+            (
+                "1990년대 일본 DRAM 쇠퇴",
+                "일본 DRAM 기업의 쇠퇴를 설명합니다. 1995년 점유율은 42%였습니다.\n\n"
+                "| 기업 | 점유율 | 생산량 |\n"
+                "| --- | --- | --- |\n"
+                "| A사 | 42% | 120 |\n"
+                "| B사 | 27% | 80 |\n"
+                "| C사 | 14% | 45 |\n",
+            ),
+            ("2024년 AI/HBM 슈퍼사이클", "HBM 수요와 AI 서버 병목을 설명합니다. 2024년 성장률은 63%입니다. " * 80),
         ],
         "검토 요약",
         target_tokens=12_000,
@@ -478,16 +626,33 @@ def test_html_report_renderer_adds_visual_summary_and_section_weight_chart():
     )
 
     assert 'class="visual-overview"' in html
+    assert 'class="visual-artifact-report"' in html
+    assert 'class="executive-lens"' in html
+    assert 'class="workflow-map"' in html
+    assert 'aria-label="보고서 섹션 workflow"' in html
+    assert 'class="data-signal-grid"' in html
+    assert 'class="table-derived-visual"' in html
     assert 'class="section-weight-chart"' in html
     assert 'class="source-hint"' in html
     assert 'class="sources-section"' in html
     assert 'aria-label="섹션별 본문 분량 비중"' in html
+    assert 'aria-label="표에서 자동 생성한 비교 시각화"' in html
     assert '<link rel="icon" href="data:,">' in html
+    assert "Analytical HTML Report" in html
+    assert "visual-artifact" in html
     assert "1990년대 일본 DRAM 쇠퇴" in html
     assert "2024년 AI/HBM 슈퍼사이클" in html
     assert "섹션 분량 비중" in html
+    assert "보고서 workflow" in html
+    assert "원문 표의 수치 열을 자동 비교 시각화했습니다" in html
     assert "HBM Market Outlook" in html
     assert "https://example.com/hbm" in html
+    assert "총 섹션" not in html
+    assert "본문 추정 토큰" not in html
+    assert "생성 목표" not in html
+    assert "목표 12,000 tokens" not in html
+    assert 'class="metric-grid"' not in html
+    assert 'class="pill"' not in html
 
 
 def test_html_blocks_render_basic_markdown_and_escape_raw_html():
@@ -527,8 +692,19 @@ def test_section_prompt_requires_visualizable_material_without_raw_html():
         index=1,
         total=3,
         target_tokens=0,
+        output_format="html",
+        design_brief=_report_design_brief(
+            LongReportToolInput(title="메모리 시장 리포트", brief="HTML 보고서"),
+            output_format="html",
+        ),
     )
 
+    assert "`visual-artifact` 기준의 HTML 보고서" in prompt
+    assert "독자-facing 본문" in prompt
+    assert "나중에 다시 LLM으로 재작성하지 않고" in prompt
+    assert "최종 HTML에 바로 들어갈 본문 조각" in prompt
+    assert "분석 workflow" in prompt
+    assert "타임라인" in prompt
     assert "HTML 태그를 쓰지 마세요" in prompt
     assert "표로 정리할 수 있는 수치" in prompt
     assert "차트·타임라인·비교표 후보" in prompt
@@ -543,15 +719,17 @@ def test_long_report_followup_prompts_preserve_style_consistency_contract():
         "현재 본문입니다.",
         target_tokens=8_000,
         model="gpt-5.5",
+        design_brief="최종 HTML에 바로 들어갈 본문 조각입니다.",
     )
     review = _review_prompt("메모리 시장 리포트", ["- AI/HBM 슈퍼사이클: 요약"])
 
     assert "문체·용어·구조 일관성 계약" in continuation
+    assert "최종 HTML에 바로 들어갈 본문 조각입니다." in continuation
     assert "이미 쓴 내용을 요약하거나 반복하지 말고" in continuation
     assert "문체·용어·단위 일관성" in review
 
 
-def test_default_tool_registry_includes_long_report_tool_for_explicit_extra_long_artifacts():
+def test_default_tool_registry_temporarily_excludes_long_report_tool():
     registry = create_default_tool_registry()
 
-    assert registry.get("write_long_report") is not None
+    assert registry.get("write_long_report") is None

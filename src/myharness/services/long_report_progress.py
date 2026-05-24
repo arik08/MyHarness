@@ -22,6 +22,8 @@ _NUMERIC_PROGRESS_KEYS = (
 )
 
 _TEXT_PROGRESS_KEYS = (
+    "output_path",
+    "intermediate_dir",
     "phase",
     "phase_label",
     "section_title",
@@ -57,11 +59,19 @@ def write_long_report_progress_state(
     section_title: str = "",
     section_summary: str = "",
     continuation_index: int = 0,
+    intermediate_dir: str = "",
+    intermediate_files: list[dict[str, object]] | None = None,
 ) -> None:
+    resolved_report_path = _resolve_report_path(cwd, report_path)
     state_path = long_report_progress_state_path(cwd, report_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     written_tokens = max(0, int(document_written_tokens or 0))
+    try:
+        display_report_path = resolved_report_path.relative_to(cwd.resolve()).as_posix()
+    except ValueError:
+        display_report_path = str(resolved_report_path)
     state: dict[str, Any] = {
+        "output_path": display_report_path,
         "document_written_tokens": written_tokens,
         "usage_input_tokens": usage.input_tokens,
         "usage_output_tokens": usage.output_tokens,
@@ -84,6 +94,12 @@ def write_long_report_progress_state(
         state["section_summary"] = str(section_summary).strip()
     if continuation_index > 0:
         state["continuation_index"] = max(0, int(continuation_index or 0))
+    if intermediate_dir:
+        state["intermediate_dir"] = str(intermediate_dir).strip()
+    if intermediate_files:
+        normalized_files = _normalize_intermediate_files(intermediate_files)
+        if normalized_files:
+            state["intermediate_files"] = normalized_files
     state_path.write_text(
         json.dumps(state, ensure_ascii=False),
         encoding="utf-8",
@@ -110,6 +126,35 @@ def _normalize_outline_sections(value: list[dict[str, object]]) -> list[dict[str
             section["key_points"] = key_points
         sections.append(section)
     return sections
+
+
+def _normalize_intermediate_files(value: list[dict[str, object]]) -> list[dict[str, object]]:
+    files: list[dict[str, object]] = []
+    for item in value[:80]:
+        if not isinstance(item, dict):
+            continue
+        path = _clean_progress_text(item.get("path"), limit=420)
+        if not path:
+            continue
+        file_item: dict[str, object] = {"path": path}
+        label = _clean_progress_text(item.get("label"), limit=120)
+        if label:
+            file_item["label"] = label
+        for key in ("size_bytes", "line_count"):
+            raw_number = item.get(key)
+            if isinstance(raw_number, bool):
+                continue
+            try:
+                number = int(raw_number) if raw_number is not None else 0
+            except (TypeError, ValueError):
+                continue
+            if number >= 0:
+                file_item[key] = number
+        updated_at = _clean_progress_text(item.get("updated_at"), limit=80)
+        if updated_at:
+            file_item["updated_at"] = updated_at
+        files.append(file_item)
+    return files
 
 
 def _clean_key_points(value: object) -> list[str]:
@@ -153,4 +198,9 @@ def read_long_report_progress_state(cwd: Path, report_path: str | Path) -> dict[
         normalized = _normalize_outline_sections(outline_sections)
         if normalized:
             result["outline_sections"] = normalized
+    intermediate_files = raw.get("intermediate_files")
+    if isinstance(intermediate_files, list):
+        normalized_files = _normalize_intermediate_files(intermediate_files)
+        if normalized_files:
+            result["intermediate_files"] = normalized_files
     return result

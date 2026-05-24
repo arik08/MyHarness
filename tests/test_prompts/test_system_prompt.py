@@ -99,9 +99,12 @@ def test_build_system_prompt_plans_substantial_tasks_first():
     prompt = build_system_prompt(env=env)
 
     assert "For substantial tasks, share progress as a short markdown checklist" in prompt
+    assert "standalone report generation that requires research, analysis" in prompt
     assert "`todo_write` with a full `todos` list and `persist=false`" in prompt
     assert "immediately after each checklist item is actually completed" in prompt
     assert "Do not wait until the end to mark multiple items done at once" in prompt
+    assert "surface progress during evidence review, outline planning, data/statistical analysis" in prompt
+    assert "the file-writing tool preview is not a substitute for analysis-stage progress" in prompt
     assert '<myharness-progress>{"message":"specific user-facing progress note"}</myharness-progress>' in prompt
     assert "fit in about two compact UI lines" in prompt
     assert "Do not use generic filler" in prompt
@@ -161,7 +164,17 @@ def test_build_system_prompt_defaults_report_requests_to_html_artifacts():
     assert "pasted site, article, document, transcript, or source text" in prompt
     assert "보고서로 작성해줘" in prompt
     assert "create a standalone HTML report under `outputs/`" in prompt
+    assert "load and follow the `visual-artifact` skill" in prompt
+    assert "charts for trends/comparisons/proportions" in prompt
+    assert "workflow/timeline diagrams when process or causal flow matters" in prompt
+    assert "Do not expose production metadata" in prompt
+    assert "instead of a plain article wrapped in HTML" in prompt
     assert "aim for roughly 10,000 substantive body tokens by default" in prompt
+    assert "about 24k, 32k, or 40k output tokens" in prompt
+    assert "treat that as a target artifact content length rather than a loose upper cap" in prompt
+    assert "do not stop at an ordinary 10k-13k report" in prompt
+    assert "Use the selected model's direct output budget" in prompt
+    assert "The `write_long_report` section-merge flow is temporarily disabled" in prompt
     assert "Do not put the full report body only in the chat" in prompt
     assert "PPT, PowerPoint, Markdown, PDF, DOCX, XLSX, plain text, slides" in prompt
     assert "honor that requested format instead" in prompt
@@ -239,6 +252,27 @@ def test_visual_artifact_contains_report_design_rules_and_routes_a4_to_a4_skill(
     assert "For standalone HTML reports or web reports, use Mermaid" in skill_text
     assert "use both this skill and `html-a4-landscape-report`" in skill_text
     assert "let `html-a4-landscape-report` own the page-based layout workflow" in skill_text
+
+
+def test_visual_artifact_flags_empty_report_panels_as_layout_defects():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "large unused white space inside report panels" not in prompt
+    assert "Treat large unused white space inside report panels as a layout defect" in skill_text
+    assert "Do not leave a mostly empty card just because its sibling column is taller" in skill_text
+    assert "Fill report panel space with meaningful content before changing dimensions" in skill_text
+    assert "Do not solve sparse panels by merely shrinking everything into a tiny chart" in skill_text
+    assert "explain what the reader should conclude from the visual" in skill_text
+    assert "first add useful analysis or supporting evidence" in skill_text
+    assert "more than about one-third of this panel blank" in skill_text
+    assert "For paired chart-plus-interpretation sections, align the right panel with the left panel deliberately" in skill_text
+    assert "bottom edges should read as one clean row" in skill_text
+    assert "do not leave a ragged right-side border floating halfway down the row" in skill_text
+    assert "`align-items: stretch` only when both sides are content-filled" in skill_text
 
 
 def test_build_system_prompt_prefers_existing_files_and_batched_edits():

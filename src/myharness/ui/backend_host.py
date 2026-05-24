@@ -383,10 +383,15 @@ def _format_compose_options_note(options: object | None) -> str:
         else:
             lines.append("The user left output surface on auto. Apply the following artifact preferences only if you decide to create or edit an artifact.")
     if output_surface != "chat" and target_output_tokens:
-        lines.append(f"Target artifact length: about {target_output_tokens:,} output tokens.")
+        floor_tokens = int(target_output_tokens * 0.8)
+        lines.append(
+            f"Target artifact content length: about {target_output_tokens:,} tokens. "
+            f"Treat this as a length target, not merely an upper cap; aim for roughly 80-105% of it "
+            f"(at least about {floor_tokens:,} tokens unless the source material is too thin or the user asks to be concise)."
+        )
     if output_surface != "chat" and (length_preset == "extra_long" or target_output_tokens >= 20_000):
         lines.append(
-            "For report-style extra-long artifacts, use `write_long_report` explicitly: outline, section drafts, progress/preview writes, review, merge, and final artifact save."
+            "The long-report section-merge tool is temporarily disabled. For report-style long artifacts, use the selected model's direct output budget and save one coherent artifact with `write_file` when a file is needed."
         )
     return "\n".join(lines)
 
@@ -395,12 +400,18 @@ def _compose_target_output_tokens(options: object | None) -> int:
     if options is None:
         return 0
     output_surface = str(getattr(options, "output_surface", "") or "").strip()
-    if output_surface != "artifact":
+    if output_surface == "chat":
         return 0
     try:
         return max(0, int(getattr(options, "target_output_tokens", 0) or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _compose_model_request_tokens(target_output_tokens: int) -> int:
+    if target_output_tokens <= 0:
+        return 0
+    return max(target_output_tokens, int(target_output_tokens * 1.25))
 
 
 def _tool_progress_delays(tool_name: str) -> tuple[float, float]:
@@ -838,6 +849,32 @@ def _long_report_progress_usage_input(cwd: Path, path: str) -> dict[str, object]
     return {key: value for key, value in state.items() if _long_report_progress_value_visible(value)}
 
 
+def _latest_long_report_progress_usage_input(cwd: Path, *, min_mtime: float = 0.0) -> dict[str, object]:
+    progress_dir = cwd.resolve() / ".myharness" / "long-report-progress"
+    try:
+        candidates = [
+            path
+            for path in progress_dir.glob("*.json")
+            if path.is_file() and path.stat().st_mtime >= min_mtime
+        ]
+    except OSError:
+        return {}
+    for state_path in sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)[:5]:
+        try:
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        output_path = str(raw.get("output_path") or "").strip()
+        if not output_path:
+            continue
+        state = _long_report_progress_usage_input(cwd, output_path)
+        if state:
+            return state
+    return {}
+
+
 def _long_report_progress_value_visible(value: object) -> bool:
     if isinstance(value, bool):
         return False
@@ -879,7 +916,7 @@ def _long_report_progress_message(payload: dict[str, object], elapsed_seconds: i
     elif outline_count:
         base = f"보고서 뼈대 생성 완료 · {outline_count}개 섹션"
     else:
-        base = "장문 보고서 생성 중"
+        base = "보고서 뼈대 생성 중"
     parts = [base]
     if section_title:
         parts.append(section_title)
@@ -1751,19 +1788,31 @@ class ReactBackendHost:
             assert self._bundle is not None
             cwd = self._bundle.cwd
             started_at = time.monotonic()
+            started_wall_time = time.time()
             first_delay, interval = _tool_progress_delays(tool_name)
             await asyncio.sleep(first_delay)
             while True:
                 elapsed = max(1, round(time.monotonic() - started_at))
                 progress_input = dict(tool_input or {})
                 preview_path = _progress_preview_path(tool_name, progress_input)
+                if tool_name.lower() == "write_long_report":
+                    progress_usage = _long_report_progress_usage_input(cwd, preview_path) if preview_path else {}
+                    if not progress_usage:
+                        progress_usage = _latest_long_report_progress_usage_input(
+                            cwd,
+                            min_mtime=max(0.0, started_wall_time - 5.0),
+                        )
+                    if progress_usage:
+                        progress_input.update(progress_usage)
+                        preview_path = str(progress_input.get("output_path") or preview_path).strip()
+                    else:
+                        progress_input.setdefault("phase", "outline")
+                        progress_input.setdefault("phase_label", "보고서 뼈대 생성 중")
                 if preview_path and "content" not in progress_input:
                     preview_content = _progress_preview_content(tool_name, cwd, preview_path)
                     if preview_content:
                         progress_input.setdefault("path", preview_path)
                         progress_input.setdefault("content", preview_content)
-                if tool_name.lower() == "write_long_report" and preview_path:
-                    progress_input.update(_long_report_progress_usage_input(cwd, preview_path))
                 await self._emit(
                     BackendEvent(
                         type="tool_progress",
@@ -1976,10 +2025,18 @@ class ReactBackendHost:
         )
         original_max_tokens = self._bundle.engine.max_tokens
         target_output_tokens = _compose_target_output_tokens(compose_options)
+        target_metadata_keys = ("compose_target_output_tokens", "compose_target_output_floor_tokens")
+        original_target_metadata = {
+            key: self._bundle.engine.tool_metadata.get(key)
+            for key in target_metadata_keys
+            if key in self._bundle.engine.tool_metadata
+        }
         max_tokens_changed = False
         try:
             if target_output_tokens:
-                self._bundle.engine.set_max_tokens(target_output_tokens)
+                self._bundle.engine.tool_metadata["compose_target_output_tokens"] = target_output_tokens
+                self._bundle.engine.tool_metadata["compose_target_output_floor_tokens"] = int(target_output_tokens * 0.8)
+                self._bundle.engine.set_max_tokens(_compose_model_request_tokens(target_output_tokens))
                 max_tokens_changed = True
             if (
                 first_token != "/clear"
@@ -2056,6 +2113,11 @@ class ReactBackendHost:
         finally:
             if max_tokens_changed:
                 self._bundle.engine.set_max_tokens(original_max_tokens)
+            for key in target_metadata_keys:
+                if key in original_target_metadata:
+                    self._bundle.engine.tool_metadata[key] = original_target_metadata[key]
+                else:
+                    self._bundle.engine.tool_metadata.pop(key, None)
             await _stop_all_tool_progress()
             release_mutation_lock(self._bundle.engine.tool_metadata.pop("mutation_lock_token", None))
 

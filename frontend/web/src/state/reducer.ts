@@ -1012,6 +1012,41 @@ function purposeCopy(purpose: WorkflowEvent["purpose"]) {
   return { title: "작업 실행", running: "필요한 변경이나 명령을 실행하고 있습니다.", done: "작업 실행을 마쳤습니다." };
 }
 
+function providerIdleLabel(detail: string) {
+  const cleanDetail = compactWorkflowDetail(detail);
+  const match = cleanDetail.match(/^(.+?)\s*응답을 기다리고 있습니다\.?$/);
+  return match?.[1]?.trim() || "";
+}
+
+function followupWaitingDetail(statusDetail: string, previousDetail: string) {
+  const label = providerIdleLabel(statusDetail) || "AI";
+  const previous = compactWorkflowDetail(previousDetail);
+  const resultState = previous.includes("파일 작성은 완료") || previous.includes("파일 작업은 완료")
+    ? "파일 작성은 완료됐고, 결과를 모델에 전달했습니다."
+    : "도구 실행은 완료됐고, 결과를 모델에 전달했습니다.";
+  return `${label} 응답 대기 중입니다. ${resultState} 추가 도구 호출이나 최종 답변 이벤트를 기다립니다.`;
+}
+
+function workflowProgressDetailForTarget(event: WorkflowEvent, detail: string) {
+  if (event.role === "activity" && event.status === "running" && providerIdleLabel(detail)) {
+    return followupWaitingDetail(detail, event.detail);
+  }
+  return detail;
+}
+
+function statusTextForProgressNote(events: WorkflowEvent[], detail: string, fallback: string) {
+  const idleLabel = providerIdleLabel(detail);
+  if (!idleLabel) {
+    return fallback;
+  }
+  const waitingForFollowup = events.some((event) => (
+    event.role === "activity"
+    && event.status === "running"
+    && event.title === "후속 응답 대기"
+  ));
+  return waitingForFollowup ? `${idleLabel} 후속 응답 대기 중` : fallback;
+}
+
 function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
   const cleanDetail = truncateWorkflowDetail(detail, 220);
   if (!cleanDetail) {
@@ -1037,10 +1072,11 @@ function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
   if (targetIndex === -1) {
     return events;
   }
-  if (compactWorkflowDetail(events[targetIndex].detail) === cleanDetail) {
+  const targetDetail = workflowProgressDetailForTarget(events[targetIndex], cleanDetail);
+  if (compactWorkflowDetail(events[targetIndex].detail) === targetDetail) {
     return events;
   }
-  return events.map((event, index) => index === targetIndex ? mergeWorkflowEventPatch(event, { detail: cleanDetail }) : event);
+  return events.map((event, index) => index === targetIndex ? mergeWorkflowEventPatch(event, { detail: targetDetail }) : event);
 }
 
 function genericPurposeDetails(purpose: WorkflowEvent["purpose"]) {
@@ -1131,7 +1167,10 @@ function refreshPurposeEvents(events: WorkflowEvent[]) {
   });
 }
 
-function startActivityStep(events: WorkflowEvent[]): WorkflowEvent[] {
+function startActivityStep(events: WorkflowEvent[], copy = {
+  title: "후속 응답 대기",
+  detail: "도구 실행은 완료됐고, 결과를 모델에 전달했습니다. 다음 도구 호출이나 최종 답변 이벤트를 기다립니다.",
+}): WorkflowEvent[] {
   if (events.some((event) => event.level === "child" && event.status === "running")) {
     return events;
   }
@@ -1142,16 +1181,16 @@ function startActivityStep(events: WorkflowEvent[]): WorkflowEvent[] {
   if (existingActivityIndex !== -1) {
     return events.map((event, index) => index === existingActivityIndex
       ? mergeWorkflowEventPatch(event, {
-          title: "다음 단계 검토 중",
+          title: copy.title,
           status: "running",
-          detail: "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
+          detail: copy.detail,
         })
       : event);
   }
   return appendWorkflowEvent(events, {
     toolName: "",
-    title: "다음 단계 검토 중",
-    detail: "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
+    title: copy.title,
+    detail: copy.detail,
     status: "running",
     level: "parent",
     role: "activity",
@@ -1161,9 +1200,35 @@ function startActivityStep(events: WorkflowEvent[]): WorkflowEvent[] {
 function completeActivityStep(events: WorkflowEvent[], detail = "다음 작업을 정했습니다."): WorkflowEvent[] {
   return events.map((event) => (
     event.role === "activity" && event.status === "running"
-      ? mergeWorkflowEventPatch(event, { title: "다음 단계 결정 완료", status: "done", detail })
+      ? mergeWorkflowEventPatch(event, {
+          title: event.title === "후속 응답 대기" ? "후속 응답 수신" : "다음 단계 결정 완료",
+          status: "done",
+          detail,
+        })
       : event
   ));
+}
+
+function followupActivityCopy(toolName: string, isError: boolean) {
+  if (isError) {
+    return {
+      title: "오류 후속 응답 대기",
+      detail: "도구 오류를 모델에 전달했습니다. 복구 방향이나 최종 안내 이벤트를 기다립니다.",
+      statusText: "오류 후속 응답 대기 중",
+    };
+  }
+  if (isWorkflowOutputTool(toolName)) {
+    return {
+      title: "후속 응답 대기",
+      detail: "파일 작성은 완료됐고, 결과를 모델에 전달했습니다. 최종 안내나 추가 작업 이벤트를 기다립니다.",
+      statusText: "후속 응답 대기 중",
+    };
+  }
+  return {
+    title: "후속 응답 대기",
+    detail: "도구 실행은 완료됐고, 결과를 모델에 전달했습니다. 다음 도구 호출이나 최종 답변 이벤트를 기다립니다.",
+    statusText: "후속 응답 대기 중",
+  };
 }
 
 function answerDraftDetail(characterCount = 0) {
@@ -2151,7 +2216,8 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
         toolCallIndex,
       });
     }
-    workflowEvents = startActivityStep(refreshPurposeEvents(workflowEvents));
+    const followupCopy = followupActivityCopy(toolName, isError);
+    workflowEvents = startActivityStep(refreshPurposeEvents(workflowEvents), followupCopy);
     return {
       ...state,
       busy: true,
@@ -2159,7 +2225,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
       workflowEvents,
       workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
       status: "processing",
-      statusText: isError ? "도구 결과 확인 중" : "도구 결과 검토 중",
+      statusText: followupCopy.statusText,
     };
   }
 
@@ -2237,7 +2303,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       : state.workflowEvents;
     return {
       ...state,
-      statusText: text || state.statusText,
+      statusText: text ? statusTextForProgressNote(workflowEvents, text, text) : state.statusText,
       workflowEvents,
     };
   }

@@ -5095,7 +5095,7 @@ a:focus-visible {
   pointer-events: none;
 }
 
-.todo-card-list li {
+.todo-card-list > li {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: start;
@@ -5117,12 +5117,12 @@ a:focus-visible {
   border-radius: 4px;
 }
 
-.todo-card-list li.done .todo-checkmark {
+.todo-card-list > li.done .todo-checkmark {
   background: var(--success);
   border-color: var(--success);
 }
 
-.todo-card-list li.done .todo-checkmark::after {
+.todo-card-list > li.done .todo-checkmark::after {
   content: "";
   width: 7px;
   height: 4px;
@@ -5140,7 +5140,7 @@ a:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.todo-card-list li.done .todo-label {
+.todo-card-list > li.done .todo-label {
   color: var(--ink);
   text-decoration: none;
 }
@@ -5158,18 +5158,49 @@ a:focus-visible {
   animation: todoSpinner 0.82s linear infinite;
 }
 
-.todo-card-list li.running .todo-spinner {
+.todo-card-list > li.running .todo-spinner {
   display: inline-block;
 }
 
-.todo-card-list li.running .todo-checkmark {
+.todo-card-list > li.running .todo-checkmark {
   opacity: 0;
 }
 
-.todo-card-list li.running .todo-label {
+.todo-card-list > li.running .todo-label {
   color: var(--ink);
   font-weight: 680;
   text-decoration: none;
+}
+
+.todo-activity-list {
+  grid-column: 2;
+  display: grid;
+  gap: 3px;
+  margin: -1px 0 1px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  list-style: none;
+}
+
+.todo-activity-line {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: start;
+  gap: 5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.todo-activity-line::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  margin-top: 6px;
+  background: color-mix(in srgb, var(--accent) 66%, var(--muted));
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .workflow-card {
@@ -5525,6 +5556,118 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.workflow-long-report-process {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+  margin: 1px 0 2px;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-long-report-process-step {
+  position: relative;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  color: var(--muted);
+  overflow: hidden;
+}
+
+.workflow-long-report-process-step strong {
+  color: color-mix(in srgb, var(--ink) 78%, var(--muted));
+  font-size: 11.5px;
+  font-weight: 760;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-long-report-process-step small {
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-long-report-process-step.active {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.workflow-long-report-process-step.active::after {
+  content: "";
+  position: absolute;
+  inset: auto 6px 3px 6px;
+  height: 2px;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--accent) 18%, transparent) 20%,
+      color-mix(in srgb, var(--accent) 78%, transparent) 50%,
+      color-mix(in srgb, var(--accent) 18%, transparent) 80%,
+      transparent 100%
+    );
+  background-size: 180% 100%;
+  border-radius: 999px;
+  animation: workflowLongReportSweep 1.25s linear infinite;
+}
+
+.workflow-long-report-process-step.waiting::after {
+  opacity: 0.82;
+}
+
+.workflow-long-report-process-step.active strong {
+  color: color-mix(in srgb, var(--accent) 78%, var(--ink));
+}
+
+.workflow-long-report-process-step.done strong {
+  color: color-mix(in srgb, var(--success) 62%, var(--ink));
+}
+
+.workflow-long-report-current {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 7px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.workflow-long-report-live-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--accent) 72%, var(--ink));
+  border-radius: 999px;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: workflowLongReportPulse 1.2s ease-out infinite;
+}
+
+.workflow-long-report-current strong {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 760;
+}
+
+.workflow-long-report-current span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .workflow-long-report-sections {
   display: grid;
   gap: 4px;
@@ -5592,6 +5735,100 @@ a:focus-visible {
 
 .workflow-long-report-section.done:not(.active) .workflow-long-report-index {
   color: color-mix(in srgb, var(--success) 65%, var(--muted));
+}
+
+.workflow-long-report-files {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 74%, transparent);
+}
+
+.workflow-long-report-files-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.workflow-long-report-files-head strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-long-report-files-head span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.workflow-long-report-files ol {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.workflow-long-report-files li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.workflow-long-report-file-name {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-long-report-files li small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .workflow-long-report-process {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@keyframes workflowLongReportSweep {
+  from { background-position: 100% 0; }
+  to { background-position: -80% 0; }
+}
+
+@keyframes workflowLongReportPulse {
+  0% {
+    opacity: 0.52;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  70% {
+    opacity: 1;
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+  100% {
+    opacity: 0.52;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  }
 }
 
 .answer-web-sources {

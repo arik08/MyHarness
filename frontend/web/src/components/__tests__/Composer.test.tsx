@@ -96,7 +96,7 @@ describe("Composer", () => {
     expect(controlLabels.map((node) => node.getAttribute("data-tooltip"))).toEqual([
       "답변을 채팅에 표시할지 파일로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다.",
       "파일을 만들 때 새로 생성할지 기존 파일을 수정할지 정합니다.",
-      "파일 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다. ~40k 이상은 먼저 개요와 작성 계획을 세운 뒤 섹션별로 나누어 작성하고 검토 후 합치는 방식으로 처리합니다.",
+      "파일 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다.",
     ]);
     expect(Array.from(screen.getByLabelText("파일 작업").querySelectorAll("button")).every((button) => !button.disabled)).toBe(true);
     expect(screen.getByLabelText("출력 위치").querySelector("button")?.textContent).toBe("자동");
@@ -106,7 +106,9 @@ describe("Composer", () => {
     expect(screen.queryByRole("button", { name: "~20k" })).toBeNull();
     expect(screen.queryByRole("button", { name: "초장문" })).toBeNull();
     expect(screen.queryByRole("button", { name: "직접" })).toBeNull();
-    expect(screen.getByRole("button", { name: "~160k" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "~24k" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "~32k" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "~40k" })).toBeTruthy();
     expect(stylesheet).toContain(".composer-expand-button.active {\n  color: var(--muted);");
     expect(stylesheet).toContain("stroke-width: 2.45;");
     expect(stylesheet).toContain(".composer-expand-button.active svg {\n  transform: translateY(-1px);");
@@ -1418,6 +1420,126 @@ describe("Composer", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(document.querySelectorAll(".todo-checkmark")).toHaveLength(2);
     expect(screen.getByText("(완료) 조사")).toBeTruthy();
+  });
+
+  it("shows live workflow activity under the running checklist item", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          todoMarkdown: "- [x] 테이블 구조 확인\n- [ ] 분석 결과 정리",
+          statusText: "분석 결과를 보고서 구조로 정리하고 있습니다.",
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "mcp__sqlite_analysis__run_query",
+              title: "쿼리 실행",
+              detail: "업종별 실업률 변동성을 계산했습니다.",
+              detailLog: ["unemployment_industries 테이블 범위를 확인했습니다."],
+              status: "done",
+              role: "activity",
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const runningItem = screen.getByText("분석 결과 정리").closest("li");
+    expect(runningItem?.classList.contains("running")).toBe(true);
+    expect(screen.getByLabelText("현재 작업 진행")).toBeTruthy();
+    expect(screen.getByText("unemployment_industries 테이블 범위를 확인했습니다.")).toBeTruthy();
+    expect(screen.getByText("분석 결과를 보고서 구조로 정리하고 있습니다.")).toBeTruthy();
+  });
+
+  it("does not mirror follow-up wait copy under the running checklist item", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          todoMarkdown: "- [x] 테이블 구조 확인\n- [ ] 분석 결과 정리",
+          statusText: "AI 후속 응답 대기 중",
+          workflowEvents: [
+            {
+              id: "workflow-query",
+              toolName: "mcp__sqlite_analysis__run_query",
+              title: "쿼리 실행",
+              detail: "노선별 지표를 계산했습니다.",
+              status: "done",
+              role: "activity",
+            },
+            {
+              id: "workflow-wait",
+              toolName: "",
+              title: "후속 응답 대기",
+              detail: "AI 응답 대기 중입니다. 도구 실행은 완료됐고, 결과를 모델에 전달했습니다. 추가 도구 호출이나 최종 답변 이벤트를 기다립니다.",
+              detailLog: [
+                "AI 응답 대기 중입니다. 도구 실행은 완료됐고, 결과를 모델에 전달했습니다. 추가 도구 호출이나 최종 답변 이벤트를 기다립니다.",
+              ],
+              status: "running",
+              role: "activity",
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const activity = screen.getByLabelText("현재 작업 진행");
+    expect(activity.textContent || "").toContain("노선별 지표를 계산했습니다.");
+    expect(activity.textContent || "").not.toContain("AI 후속 응답 대기 중");
+    expect(activity.textContent || "").not.toContain("추가 도구 호출이나 최종 답변 이벤트를 기다립니다.");
+  });
+
+  it("shows disabled long report workflow as ordinary activity in the checklist", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          todoMarkdown: "- [x] 데이터 분석\n- [ ] 초장문 웹보고서 생성 및 저장",
+          workflowEvents: [
+            {
+              id: "workflow-report",
+              toolName: "write_long_report",
+              title: "write_long_report",
+              detail: "파일 작업 중... 2분 13초 경과",
+              status: "running",
+              level: "child",
+              toolInput: {
+                phase: "outline",
+                phase_label: "보고서 뼈대 생성 중",
+                target_tokens: 40000,
+                output_path: "outputs/report.html",
+                content: "<!doctype html><h1>산업별 실업률 분석</h1>",
+                intermediate_files: [
+                  {
+                    path: "outputs/report.intermediate/design_brief.md",
+                    label: "design-brief",
+                  },
+                  {
+                    path: "outputs/report.intermediate/sections/01_개요.draft.md",
+                    label: "section-01-draft",
+                  },
+                ],
+              },
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const activity = screen.getByLabelText("현재 작업 진행");
+    expect(activity.textContent || "").toContain("파일 작업 중... 2분 13초 경과");
+    expect(activity.textContent || "").not.toContain("보고서 뼈대 생성 중");
+    expect(activity.textContent || "").not.toContain("중간 산출물");
+    expect(activity.textContent || "").not.toContain("다음 작업을 정했습니다.");
   });
 
   it("hides a checklist from a different chat session", () => {

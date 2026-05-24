@@ -41,7 +41,7 @@ class FrontendComposeOptions(BaseModel):
     target_output_tokens: int | None = Field(
         default=None,
         ge=1,
-        le=160_000,
+        le=40_000,
         validation_alias=AliasChoices("target_output_tokens", "targetOutputTokens"),
     )
     length_preset: Literal["default", "long", "very_long", "extended", "extra_long"] | None = Field(

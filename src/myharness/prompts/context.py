@@ -173,14 +173,25 @@ def _build_long_report_section() -> str:
             "a standalone HTML report under `outputs/` rather than putting the full report body only in the chat. For "
             "ordinary report requests with no explicit length, aim for roughly 10,000 substantive body tokens by default, "
             "unless the user asks for a shorter artifact, the source material is too thin to support that length, or "
-            "another active limit makes that impossible. Keep ordinary reports as one coherent artifact below roughly 20,000 tokens.",
-            "Use `write_long_report` only when the user or MyHarness compose options explicitly request an extra-long artifact "
-            "around 20,000 tokens or more, such as 초장문, 20k, 40k, 80k, 160k, or a large numeric target. In that flow, write an outline, "
-            "draft sections, save intermediate progress, review, merge, and return the final artifact path with a concise summary. "
+            "another active limit makes that impossible. If the user or compose options explicitly request about 24k, 32k, "
+            "or 40k output tokens, treat that as a target artifact content length rather than a loose upper cap: aim for "
+            "roughly 80-105% of the requested tokens, and do not stop at an ordinary 10k-13k report when the target is "
+            "24k or higher unless the source material is genuinely too thin or the user asks to be concise. Use the "
+            "selected model's direct output budget and keep the result as one coherent artifact.",
+            "For HTML report artifacts, load and follow the `visual-artifact` skill. Make the result feel like a polished "
+            "reader-facing report page with strong visual hierarchy, exact tables, charts for trends/comparisons/proportions, "
+            "and workflow/timeline diagrams when process or causal flow matters, not a plain article wrapped in HTML. Do not "
+            "expose production metadata, generation budgets, tool/model details, or internal progress counters in the report "
+            "body unless the user explicitly asks for an audit/debug view.",
+            "Treat ordinary report generation as a substantial visible workflow when it involves research, analysis, source review, "
+            "data queries, or a multi-section artifact. Before the final `write_file` call, use `todo_write` and concrete "
+            "`<myharness-progress>` markers to show what you are analyzing, comparing, calculating, outlining, or synthesizing. "
+            "Do not stay silent through the analysis phase and rely only on the later file-write argument stream for visibility.",
+            "The `write_long_report` section-merge flow is temporarily disabled. Do not call it for extra-long report requests; "
+            "instead, rely on the selected model's direct output limit and use `write_file` for one coherent artifact when a file is needed. "
             "If the report also asks for research, investigation, current facts, market data, policy/regulation checks, sources, "
             "or source-backed claims, gather the evidence first with `web_search`/`web_fetch` or an office research worker. "
-            "Then pass concise source cards through `write_long_report.source_notes` or local research files through `source_paths`; "
-            "do not rely on earlier search/tool output staying visible inside the writing tool.",
+            "Keep concise source notes in context so the final direct artifact can cite or summarize them reliably.",
         ]
     )
 

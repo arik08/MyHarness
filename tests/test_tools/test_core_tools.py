@@ -86,6 +86,30 @@ async def test_file_write_result_hides_local_path_before_playground(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_file_write_warns_model_when_target_artifact_is_too_short(tmp_path: Path):
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            "compose_target_output_tokens": 1_000,
+            "compose_target_output_floor_tokens": 800,
+            "model": "gpt-5.5",
+        },
+    )
+
+    write_result = await FileWriteTool().execute(
+        FileWriteToolInput(path="outputs/report.html", content="<html><body><h1>Short</h1></body></html>"),
+        context,
+    )
+
+    assert write_result.is_error is False
+    assert write_result.output == "Wrote outputs/report.html"
+    assert write_result.metadata["display_output"] == "Wrote outputs/report.html"
+    assert "Target length check" in write_result.metadata["model_output"]
+    assert "minimum acceptable floor of about 800 tokens" in write_result.metadata["model_output"]
+    assert "calling `write_file` again on the same path" in write_result.metadata["model_output"]
+
+
+@pytest.mark.asyncio
 async def test_file_write_blocks_invalid_mermaid_before_writing(tmp_path: Path, monkeypatch):
     from myharness.tools import mermaid_preflight
 
@@ -144,8 +168,9 @@ def test_file_write_tool_description_guides_human_artifact_filenames():
     description = FileWriteTool.description
 
     assert "direct coherent report artifacts" in description
-    assert "20,000 tokens" in description
-    assert "write_long_report" in description
+    assert "24k, 32k, or 40k targets" in description
+    assert "long-report section-merge flow is disabled" in description
+    assert "surface research, analysis, outline, data, chart, or synthesis progress before this tool call" in description
     assert "human-facing HTML, Markdown, PDF, DOCX, XLSX, and PPTX artifacts" in description
     assert "Korean filenames" in description
     assert "underscores between words" in description

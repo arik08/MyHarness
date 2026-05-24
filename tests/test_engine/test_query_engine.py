@@ -290,9 +290,32 @@ async def test_query_engine_emits_provider_idle_status_before_first_stream_event
 
     status_events = [event for event in events if isinstance(event, StatusEvent)]
     assert status_events
-    assert "P-GPT 응답 생성 중" in status_events[0].message
+    assert "P-GPT 응답을 기다리고 있습니다." in status_events[0].message
     assert "파일 미리보기" not in status_events[0].message
     assert isinstance(events[-1], AssistantTurnComplete)
+
+
+@pytest.mark.asyncio
+async def test_query_engine_provider_idle_status_uses_user_facing_label(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    monkeypatch.setattr("myharness.engine.query.PROVIDER_STREAM_IDLE_FIRST_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr("myharness.engine.query.PROVIDER_STREAM_IDLE_REPEAT_SECONDS", 0.01, raising=False)
+    engine = QueryEngine(
+        api_client=SlowFirstEventApiClient(),
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="gpt-5.4",
+        system_prompt="system",
+        tool_metadata={"active_profile": "openai", "provider": "openai"},
+    )
+
+    events = [event async for event in engine.submit_message("write a file")]
+
+    status_events = [event for event in events if isinstance(event, StatusEvent)]
+    assert status_events
+    assert status_events[0].message == "AI 응답을 기다리고 있습니다."
+    assert "Provider" not in status_events[0].message
 
 
 @pytest.mark.asyncio
@@ -1423,6 +1446,99 @@ async def test_query_engine_applies_path_rules_to_write_file_targets_in_full_aut
     assert tool_results[0].is_error is True
     assert "matches deny rule" in tool_results[0].output
     assert target.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_query_engine_finishes_after_successful_html_write_without_extra_model_round(tmp_path: Path):
+    client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_write_report",
+                            name="write_file",
+                            input={
+                                "path": "outputs/report.html",
+                                "content": "<!doctype html><html><body>done</body></html>",
+                            },
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            )
+        ]
+    )
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("HTML 보고서를 작성해줘")]
+
+    assert len(client.requests) == 1
+    assert (tmp_path / "outputs" / "report.html").exists()
+    tool_results = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert len(tool_results) == 1
+    assert tool_results[0].output == "Wrote outputs/report.html"
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert "<myharness-artifacts>" in events[-1].message.text
+    assert "outputs/report.html" in events[-1].message.text
+    assert len(engine.messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_query_engine_continues_after_short_target_write_feedback(tmp_path: Path):
+    client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_short_report",
+                            name="write_file",
+                            input={
+                                "path": "outputs/report.html",
+                                "content": "<!doctype html><html><body>short</body></html>",
+                            },
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="확장하겠습니다.")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={
+            "compose_target_output_tokens": 1_000,
+            "compose_target_output_floor_tokens": 800,
+        },
+    )
+
+    events = [event async for event in engine.submit_message("HTML 보고서를 1,000토큰으로 작성해줘")]
+
+    assert len(client.requests) == 2
+    tool_results = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert len(tool_results) == 1
+    assert tool_results[0].output == "Wrote outputs/report.html"
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "확장하겠습니다."
 
 
 class _OkInput(BaseModel):

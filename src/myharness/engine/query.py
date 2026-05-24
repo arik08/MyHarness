@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -156,6 +157,8 @@ _ASYNC_AGENT_FINALIZATION_ALLOWED_TOOLS = {
 
 _ASYNC_AGENT_ALWAYS_FINALIZING_TOOLS = {"write_file", "write_long_report"}
 _HUMAN_FACING_OUTPUT_EXTENSIONS = {".html", ".htm", ".md", ".docx", ".pptx", ".xlsx", ".pdf"}
+_AUTO_FINAL_WRITE_EXTENSIONS = {".html", ".htm", ".md", ".markdown", ".txt"}
+_TARGET_LENGTH_CHECK_MARKER = "[Target length check]"
 _HUMAN_FACING_OUTPUT_HINTS = (
     "outputs/",
     "outputs\\",
@@ -206,6 +209,38 @@ def _looks_like_finalizing_shell_command(command: str) -> bool:
     )
     has_write_action = any(hint in normalized for hint in _SHELL_WRITE_HINTS)
     return has_output_target and has_write_action
+
+
+def _autofinal_artifact_items(
+    tool_calls: list[ToolUseBlock],
+    tool_results: list[ToolResultBlock],
+) -> list[dict[str, str]]:
+    if len(tool_calls) != len(tool_results) or not tool_calls:
+        return []
+    artifacts: list[dict[str, str]] = []
+    for tool_call, result in zip(tool_calls, tool_results, strict=True):
+        if result.is_error:
+            return []
+        if _TARGET_LENGTH_CHECK_MARKER in result.content:
+            return []
+        if tool_call.name.strip().lower() != "write_file":
+            return []
+        path_values = _tool_input_path_values(tool_call.input)
+        if not path_values:
+            return []
+        path = path_values[0].replace("\\", "/").strip()
+        if Path(path).suffix.lower() not in _AUTO_FINAL_WRITE_EXTENSIONS:
+            return []
+        artifacts.append({"path": path})
+    return artifacts
+
+
+def _artifact_marker_message(artifacts: list[dict[str, str]]) -> ConversationMessage:
+    payload = json.dumps({"artifacts": artifacts}, ensure_ascii=False, separators=(",", ":"))
+    return ConversationMessage(
+        role="assistant",
+        content=[TextBlock(text=f"<myharness-artifacts>{payload}</myharness-artifacts>")],
+    )
 
 
 def _should_block_async_agent_finalization_tool(
@@ -312,11 +347,9 @@ def _format_internal_steering_prompt(text: str) -> str:
 def _provider_stream_idle_message(context: QueryContext) -> str:
     metadata = context.tool_metadata or {}
     active_profile = str(metadata.get("active_profile") or "").strip().lower()
-    provider = str(metadata.get("provider") or "").strip().lower()
-    label = "P-GPT" if "pgpt" in active_profile or "p-gpt" in active_profile else "Provider"
-    if label == "Provider" and provider:
-        label = "Provider"
-    return f"{label} 응답 생성 중"
+    if "pgpt" in active_profile or "p-gpt" in active_profile:
+        return "P-GPT 응답을 기다리고 있습니다."
+    return "AI 응답을 기다리고 있습니다."
 
 
 async def _stream_provider_events_with_idle_status(
@@ -1034,6 +1067,25 @@ async def run_query(
             tool_results = [result for result in tool_results if result is not None]
 
         messages.append(ConversationMessage(role="user", content=tool_results))
+        autofinal_artifacts = _autofinal_artifact_items(tool_calls, tool_results)
+        if autofinal_artifacts:
+            synthetic_message = _artifact_marker_message(autofinal_artifacts)
+            synthetic_usage = UsageSnapshot()
+            messages.append(synthetic_message)
+            yield AssistantTurnComplete(message=synthetic_message, usage=synthetic_usage), synthetic_usage
+            if context.hook_executor is not None:
+                await context.hook_executor.execute(
+                    HookEvent.STOP,
+                    {
+                        "event": HookEvent.STOP.value,
+                        "stop_reason": "artifact_write_complete",
+                    },
+                )
+            run_auto_skill_learning(
+                context.tool_metadata,
+                enabled=context.auto_skill_learning_enabled,
+            )
+            return
         steering_count = await _drain_steering_messages(context, messages)
         if steering_count:
             yield StatusEvent(
