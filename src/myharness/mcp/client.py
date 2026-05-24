@@ -49,6 +49,15 @@ class McpClientManager:
     async def connect_all(self) -> None:
         """Connect all configured MCP servers supported by the current build."""
         for name, config in self._server_configs.items():
+            if getattr(config, "auto_connect", True) is False:
+                self._statuses[name] = McpConnectionStatus(
+                    name=name,
+                    state="pending",
+                    transport=getattr(config, "type", "unknown"),
+                    auth_configured=bool(getattr(config, "headers", None)),
+                    detail="Configured; automatic connection is disabled.",
+                )
+                continue
             if isinstance(config, McpStdioServerConfig):
                 await self._connect_stdio(name, config)
             elif isinstance(config, McpHttpServerConfig):

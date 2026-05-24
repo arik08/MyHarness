@@ -146,16 +146,27 @@ class AuthManager:
                     origin = "file"
                     state = "configured"
             elif source == "pgpt_api_key":
-                has_employee_no = bool(
+                stored_api_key = load_credential(storage_provider, "api_key")
+                stored_employee_no = load_credential(storage_provider, "employee_no") or load_credential(storage_provider, "system_code")
+                env_api_key = os.environ.get("PGPT_API_KEY")
+                env_employee_no = (
                     os.environ.get("PGPT_EMPLOYEE_NO")
                     or os.environ.get("PGPT_SYSTEM_CODE")
                     or os.environ.get("POSCO_EMP_NO")
                 )
-                if os.environ.get("PGPT_API_KEY") and has_employee_no:
+                if stored_api_key and stored_employee_no:
+                    configured = True
+                    origin = "file"
+                    state = "configured"
+                elif stored_api_key:
+                    origin = "partial"
+                    state = "missing_employee_no"
+                    detail = "P-GPT requires employee number."
+                elif env_api_key and env_employee_no:
                     configured = True
                     origin = "env"
                     state = "configured"
-                elif os.environ.get("PGPT_API_KEY"):
+                elif env_api_key:
                     origin = "partial"
                     state = "missing_employee_no"
                     detail = "P-GPT requires employee number."
@@ -280,15 +291,23 @@ class AuthManager:
                     source = "file"
 
             elif provider == "pgpt":
-                has_employee_no = bool(
+                stored_api_key = load_credential("pgpt", "api_key")
+                stored_employee_no = load_credential("pgpt", "employee_no") or load_credential("pgpt", "system_code")
+                env_api_key = os.environ.get("PGPT_API_KEY")
+                env_employee_no = (
                     os.environ.get("PGPT_EMPLOYEE_NO")
                     or os.environ.get("PGPT_SYSTEM_CODE")
                     or os.environ.get("POSCO_EMP_NO")
                 )
-                if os.environ.get("PGPT_API_KEY") and has_employee_no:
+                if stored_api_key and stored_employee_no:
+                    configured = True
+                    source = "file"
+                elif stored_api_key:
+                    source = "partial"
+                elif env_api_key and env_employee_no:
                     configured = True
                     source = "env"
-                elif os.environ.get("PGPT_API_KEY"):
+                elif env_api_key:
                     source = "partial"
 
             elif provider in ("bedrock", "vertex"):

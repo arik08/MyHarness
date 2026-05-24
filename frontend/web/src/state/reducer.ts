@@ -1,4 +1,4 @@
-import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
+import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { artifactKind, artifactLabelForPath, artifactName, isKnownArtifactPath, normalizeArtifactPath } from "../utils/artifacts";
 import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
@@ -6,6 +6,7 @@ import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 
 const clientSessionKey = "myharness:clientSessionId";
 const appSettingsKey = "myharness:appSettings";
+const adminModeStorageKey = "myharness:adminMode";
 const hiddenHistoryKeysStorageKey = "myharness:hiddenHistoryKeys";
 
 const defaultAppSettings: AppSettings = {
@@ -157,6 +158,18 @@ function saveAppSettings(settings: AppSettings) {
   }
 }
 
+export function loadAdminModePreference() {
+  return loadLocalStorageValue(adminModeStorageKey) === "1";
+}
+
+function saveAdminModePreference(value: boolean) {
+  try {
+    localStorage.setItem(adminModeStorageKey, value ? "1" : "0");
+  } catch {
+    // Embedded/private contexts may block localStorage.
+  }
+}
+
 function normalizeHiddenHistoryKeys(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
@@ -264,7 +277,7 @@ export const initialAppState: AppState = {
   chatTitle: "MyHarness",
   systemPrompt: loadLocalStorageValue("myharness:systemPrompt"),
   appSettings: loadAppSettings(),
-  adminMode: false,
+  adminMode: loadAdminModePreference(),
   themeId: initialThemeId(),
   sidebarCollapsed: initialSidebarCollapsedValue,
   sidebarCollapseReason: initialSidebarCollapseReason(initialSidebarCollapsedValue),
@@ -272,6 +285,7 @@ export const initialAppState: AppState = {
   sidebarResizing: false,
   commands: [],
   skills: [],
+  plugins: [],
   mcpServers: [],
   workspaceName: "",
   workspacePath: "",
@@ -1451,6 +1465,33 @@ function normalizeSkills(skills: unknown[]): SkillItem[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function normalizePlugins(plugins: unknown[]): PluginItem[] {
+  return plugins
+    .map((plugin) => {
+      if (typeof plugin === "string") {
+        return { name: plugin, description: "", enabled: true };
+      }
+      if (plugin && typeof plugin === "object") {
+        const raw = plugin as Record<string, unknown>;
+        const skillCount = Number(raw.skill_count);
+        const commandCount = Number(raw.command_count);
+        const mcpServerCount = Number(raw.mcp_server_count);
+        return {
+          name: String(raw.name || "").trim(),
+          description: String(raw.description || "").trim(),
+          enabled: raw.enabled !== false,
+          skill_count: Number.isFinite(skillCount) ? skillCount : undefined,
+          skills: normalizeSkills(Array.isArray(raw.skills) ? raw.skills : []),
+          command_count: Number.isFinite(commandCount) ? commandCount : undefined,
+          mcp_server_count: Number.isFinite(mcpServerCount) ? mcpServerCount : undefined,
+        };
+      }
+      return { name: "", description: "", enabled: true };
+    })
+    .filter((plugin) => plugin.name)
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
 function normalizeMcpServers(servers: unknown[]): AppState["mcpServers"] {
   return servers
     .map((server) => {
@@ -2259,12 +2300,15 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         ...next,
         commands: normalizeCommands(Array.isArray(event.commands) ? event.commands : []),
         skills: normalizeSkills(Array.isArray(event.skills) ? event.skills : []),
+        plugins: normalizePlugins(Array.isArray(event.plugins) ? event.plugins : []),
         mcpServers: normalizeMcpServers(Array.isArray(event.mcp_servers) ? event.mcp_servers : []),
       };
     }
-    return Array.isArray(event.mcp_servers)
-      ? { ...next, mcpServers: normalizeMcpServers(event.mcp_servers) }
-      : next;
+    return {
+      ...next,
+      ...(Array.isArray(event.plugins) ? { plugins: normalizePlugins(event.plugins) } : {}),
+      ...(Array.isArray(event.mcp_servers) ? { mcpServers: normalizeMcpServers(event.mcp_servers) } : {}),
+    };
   }
 
   if (event.type === "skills_snapshot") {
@@ -2839,6 +2883,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "set_admin_mode": {
       const adminMode = action.value === true;
+      saveAdminModePreference(adminMode);
       const nextState = { ...state, adminMode };
       return {
         ...nextState,

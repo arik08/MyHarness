@@ -10,20 +10,20 @@ import os
 def resolve_pgpt_employee_no() -> str | None:
     """Resolve the employee/system code used in P-GPT bearer tokens."""
     return (
-        os.environ.get("PGPT_EMPLOYEE_NO")
+        _stored_pgpt_value("employee_no")
+        or _stored_pgpt_value("system_code")
+        or os.environ.get("PGPT_EMPLOYEE_NO")
         or os.environ.get("PGPT_SYSTEM_CODE")
         or os.environ.get("POSCO_EMP_NO")
-        or _stored_pgpt_value("employee_no")
-        or _stored_pgpt_value("system_code")
     )
 
 
 def resolve_pgpt_company_code() -> str:
     """Resolve the company code used in P-GPT bearer tokens."""
     return (
-        os.environ.get("PGPT_COMPANY_CODE")
+        _stored_pgpt_value("company_code")
+        or os.environ.get("PGPT_COMPANY_CODE")
         or os.environ.get("POSCO_COMP_NO")
-        or _stored_pgpt_value("company_code")
         or "30"
     )
 

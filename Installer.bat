@@ -26,7 +26,7 @@ echo.
 call :find_bootstrap_python
 if errorlevel 1 (
   echo [ERROR] No usable Python 3.10+ was found.
-  echo Tried MYHARNESS_PYTHON, PYTHON, py -3, python, and python3.
+  echo Tried MYHARNESS_PYTHON, PYTHON, python, and python3.
   echo Install Python 3.10+ or set MYHARNESS_PYTHON to a valid python.exe.
   echo.
   pause
@@ -206,7 +206,9 @@ echo.
 echo Next:
 echo   1. Run run_myharness_web.bat
 echo   2. Open http://localhost:4173
-echo   3. Save P-GPT API Key and employee number in the app settings
+echo   3. Save P-GPT API key and employee number in the launcher prompt or app settings
+echo      Launcher prompt saves to .myharness\credentials.json and Windows user env
+echo      Reads prefer .myharness\credentials.json, then PGPT_* environment variables
 echo.
 pause
 exit /b 0
@@ -222,8 +224,6 @@ if not "%PYTHON%"=="" (
   call :try_bootstrap_python "%PYTHON%" ""
   if not errorlevel 1 exit /b 0
 )
-call :try_bootstrap_python "py" "-3"
-if not errorlevel 1 exit /b 0
 call :try_bootstrap_python "python" ""
 if not errorlevel 1 exit /b 0
 call :try_bootstrap_python "python3" ""

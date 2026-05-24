@@ -796,3 +796,16 @@ class TestPgptOpenAICompatibleProvider:
         assert resolved.provider == "openai"
         assert resolved.value == "pgpt-file-key"
         assert resolved.source == "file:pgpt"
+
+    def test_resolve_auth_prefers_pgpt_credentials_file_over_env(self, tmp_path, monkeypatch):
+        from myharness.auth.storage import store_credential
+
+        monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setenv("PGPT_API_KEY", "pgpt-env-key")
+        store_credential("pgpt", "api_key", "pgpt-file-key", use_keyring=False)
+        settings = Settings(active_profile="p-gpt")
+
+        resolved = settings.resolve_auth()
+
+        assert resolved.value == "pgpt-file-key"
+        assert resolved.source == "file:pgpt"

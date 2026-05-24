@@ -16,6 +16,8 @@ class McpStdioServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] | None = None
     cwd: str | None = None
+    auto_connect: bool = True
+    description: str = ""
 
 
 class McpHttpServerConfig(BaseModel):
@@ -24,6 +26,8 @@ class McpHttpServerConfig(BaseModel):
     type: Literal["http"] = "http"
     url: str
     headers: dict[str, str] = Field(default_factory=dict)
+    auto_connect: bool = True
+    description: str = ""
 
 
 class McpWebSocketServerConfig(BaseModel):
@@ -32,6 +36,8 @@ class McpWebSocketServerConfig(BaseModel):
     type: Literal["ws"] = "ws"
     url: str
     headers: dict[str, str] = Field(default_factory=dict)
+    auto_connect: bool = True
+    description: str = ""
 
 
 McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpWebSocketServerConfig

@@ -343,7 +343,7 @@ def _specialized_candidate(
         ),
         do_next_time=(
             "Run the reusable helper first: "
-            'py -3 .skills/insane-search/scripts/youtube_transcript.py "URL" --json. '
+            'python .skills/insane-search/scripts/youtube_transcript.py "URL" --json. '
             f"Verified path: {verified_summary}"
         ),
         avoid_next_time=(

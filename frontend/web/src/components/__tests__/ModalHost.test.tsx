@@ -102,12 +102,15 @@ describe("ModalHost download settings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Admin mode 진입" }));
 
     expect(screen.getByText("관리자 모드 적용 중")).toBeTruthy();
+    expect(localStorage.getItem("myharness:adminMode")).toBe("1");
 
     await userEvent.click(screen.getByRole("button", { name: /Admin mode/ }));
+    expect(screen.getByText("현재 관리자 모드가 켜져 있으며 이 브라우저에 유지됩니다.")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Admin mode 해제" }));
     await userEvent.click(screen.getByRole("button", { name: "뒤로" }));
 
     expect(screen.getByText("기본 모드")).toBeTruthy();
+    expect(localStorage.getItem("myharness:adminMode")).toBe("0");
     expect(screen.queryByText("숨긴 히스토리와 완전 삭제 권한")).toBeNull();
   });
 

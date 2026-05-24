@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 from pydantic import BaseModel, Field
 
-from myharness.config.paths import get_project_config_dir
+from myharness.config.paths import get_config_dir, get_project_config_dir
 from myharness.config.settings import Settings
 from myharness.skills.state import get_disabled_skill_names
 from myharness.utils.fs import atomic_write_text
@@ -27,11 +27,28 @@ def get_project_preferences_path(cwd: str | Path) -> Path:
     return get_project_config_dir(cwd) / "preferences.json"
 
 
+def get_app_preferences_path() -> Path:
+    """Return app-wide capability preferences shared across workspaces."""
+    return get_config_dir() / "preferences.json"
+
+
 def load_project_preferences(cwd: str | Path) -> ProjectPreferences | None:
     """Load project-local preferences if present."""
     path = get_project_preferences_path(cwd)
     if not path.exists():
         return None
+    try:
+        raw = path.read_text(encoding="utf-8")
+        return normalize_project_preferences(ProjectPreferences.model_validate_json(raw))
+    except Exception:
+        return None
+
+
+def load_app_preferences() -> ProjectPreferences | None:
+    """Load app-wide preferences if present."""
+    path = get_app_preferences_path()
+    if not path.exists():
+        return _load_legacy_default_workspace_preferences()
     try:
         raw = path.read_text(encoding="utf-8")
         return normalize_project_preferences(ProjectPreferences.model_validate_json(raw))
@@ -57,15 +74,24 @@ def effective_project_preferences(cwd: str | Path, settings: Settings) -> Projec
 
 def apply_project_preferences_to_settings(settings: Settings, cwd: str | Path | None) -> Settings:
     """Overlay project-local MCP and plugin preferences onto settings."""
-    if cwd is None:
+    app_preferences = load_app_preferences()
+    project_preferences = load_project_preferences(cwd) if cwd is not None else None
+    if app_preferences is None and project_preferences is None:
         return settings
-    preferences = load_project_preferences(cwd)
-    if preferences is None:
-        return settings
+    enabled_plugins = dict(settings.enabled_plugins or {})
+    if app_preferences is not None:
+        enabled_plugins.update(app_preferences.enabled_plugins)
+    if project_preferences is not None:
+        enabled_plugins.update(project_preferences.enabled_plugins)
+    disabled_mcp_servers = (
+        set(project_preferences.disabled_mcp_servers)
+        if project_preferences is not None
+        else set(settings.disabled_mcp_servers or set())
+    )
     return settings.model_copy(
         update={
-            "disabled_mcp_servers": set(preferences.disabled_mcp_servers),
-            "enabled_plugins": dict(preferences.enabled_plugins),
+            "disabled_mcp_servers": disabled_mcp_servers,
+            "enabled_plugins": enabled_plugins,
         }
     )
 
@@ -77,6 +103,34 @@ def save_project_preferences(cwd: str | Path, preferences: ProjectPreferences) -
     payload = normalized.model_dump_json(indent=2) + "\n"
     atomic_write_text(path, payload)
     return normalized
+
+
+def save_app_preferences(preferences: ProjectPreferences) -> ProjectPreferences:
+    """Persist normalized app-wide preferences."""
+    normalized = normalize_project_preferences(preferences)
+    path = get_app_preferences_path()
+    payload = normalized.model_dump_json(indent=2) + "\n"
+    atomic_write_text(path, payload)
+    return normalized
+
+
+def _load_legacy_default_workspace_preferences() -> ProjectPreferences | None:
+    """Recover app-wide plugin choices from older default workspace files."""
+    playground = get_config_dir().parent / "Playground"
+    if not playground.exists():
+        return None
+    merged = ProjectPreferences()
+    found = False
+    for path in sorted(playground.glob("*/Default/.myharness/preferences.json")):
+        try:
+            raw = path.read_text(encoding="utf-8")
+            preferences = normalize_project_preferences(ProjectPreferences.model_validate_json(raw))
+        except Exception:
+            continue
+        if preferences.enabled_plugins:
+            merged.enabled_plugins.update(preferences.enabled_plugins)
+            found = True
+    return normalize_project_preferences(merged) if found else None
 
 
 def set_project_skill_enabled(cwd: str | Path, name: str, enabled: bool, settings: Settings) -> ProjectPreferences:
@@ -125,7 +179,12 @@ def set_project_plugin_enabled(
             for skill_name in preferences.disabled_skills
             if _normalize_name(skill_name) not in reset_names
         ]
-    return save_project_preferences(cwd, preferences)
+    saved = save_project_preferences(cwd, preferences)
+    app_preferences = load_app_preferences() or ProjectPreferences()
+    if clean_name:
+        app_preferences.enabled_plugins[clean_name] = bool(enabled)
+    save_app_preferences(app_preferences)
+    return saved
 
 
 def normalize_project_preferences(preferences: ProjectPreferences) -> ProjectPreferences:

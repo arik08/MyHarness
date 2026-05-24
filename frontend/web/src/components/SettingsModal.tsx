@@ -198,7 +198,7 @@ function AdminModeSettings({ onBack }: { onBack: () => void }) {
             aria-label="Admin mode 비밀번호"
             onChange={(event) => setPassword(event.currentTarget.value)}
           />
-          <small>{state.adminMode ? "현재 관리자 모드가 켜져 있습니다." : "관리자 모드는 현재 브라우저에서만 적용됩니다."}</small>
+          <small>{state.adminMode ? "현재 관리자 모드가 켜져 있으며 이 브라우저에 유지됩니다." : "관리자 모드는 이 브라우저에 유지됩니다."}</small>
         </label>
         <div className="modal-actions">
           <button type="button" onClick={onBack}>뒤로</button>

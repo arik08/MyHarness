@@ -19,6 +19,7 @@ from myharness.engine.query_engine import QueryEngine
 from myharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
 from myharness.permissions import PermissionChecker
 from myharness.plugins.types import PluginCommandDefinition
+from myharness.project_preferences import load_project_preferences
 from myharness.state import AppState, AppStateStore
 from myharness.tasks import get_task_manager
 from myharness.tools import create_default_tool_registry
@@ -210,7 +211,7 @@ async def test_learned_skills_command_shows_recent_metadata(tmp_path: Path, monk
         {
             "skill": "learned-python-pytest",
             "action": "created",
-            "summary": "Use py -3 on Windows",
+            "summary": "Use python on Windows",
             "path": str(tmp_path / ".skills" / "learned-python-pytest" / "SKILL.md"),
         }
     ]
@@ -636,7 +637,6 @@ async def test_help_lists_skills_mcp_and_plugins_even_when_empty(tmp_path: Path,
 
     assert "사용 가능한 스킬:" in result.message
     assert "MCP 서버:" in result.message
-    assert "(설정된 MCP 서버가 없습니다)" in result.message
     assert "플러그인:" in result.message
     assert "superpowers" in result.message
     assert "/mcp toggle NAME" in result.message
@@ -656,7 +656,8 @@ async def test_mcp_command_toggles_server_usage(tmp_path: Path, monkeypatch):
 
     assert "비활성화" in toggle_result.message
     assert toggle_result.refresh_runtime is True
-    assert "demo" in load_settings().disabled_mcp_servers
+    assert "demo" not in load_settings().disabled_mcp_servers
+    assert load_project_preferences(tmp_path).disabled_mcp_servers == ["demo"]
 
     list_command, list_args = registry.lookup("/mcp list")
     list_result = await list_command.handler(list_args, context)
@@ -680,7 +681,8 @@ async def test_plugin_command_toggles_plugin_usage(tmp_path: Path, monkeypatch):
     toggle_result = await toggle_command.handler(toggle_args, context)
 
     assert "플러그인 'fixture-plugin'을(를) 비활성화" in toggle_result.message
-    assert load_settings().enabled_plugins["fixture-plugin"] is False
+    assert "fixture-plugin" not in load_settings().enabled_plugins
+    assert load_project_preferences(tmp_path).enabled_plugins["fixture-plugin"] is False
 
 
 @pytest.mark.asyncio

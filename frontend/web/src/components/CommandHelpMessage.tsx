@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import { useAppState } from "../state/app-state";
-import type { SkillItem } from "../types/backend";
+import type { McpServerItem, PluginItem, SkillItem } from "../types/backend";
 import { Icon, type IconName } from "./ArtifactIcons";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -15,6 +15,8 @@ type ToggleEntry = {
   enabled: boolean;
   description: string;
   source: string;
+  skillCount?: number;
+  skills?: ToggleEntry[];
 };
 
 type SkillPluginGroup = {
@@ -38,63 +40,6 @@ const preferredPluginOrder = [
 ];
 const virtualSkillPluginNames = new Set(["경영기획본부"]);
 const introSectionTitles = new Set(["입력 단축키", "알아두면 좋은 기능"]);
-
-const demoMcpItems: ToggleEntry[] = [
-  {
-    name: "posco-email",
-    enabled: true,
-    description: "[연결필요] POSCO 메일 데이터 연동 후 조직 커뮤니케이션, 요청, 회신 이력을 조회할 수 있습니다.",
-    source: "mcp-demo",
-  },
-  {
-    name: "posco-calender",
-    enabled: true,
-    description: "[연결필요] POSCO 일정 데이터 연동 후 회의, 보고 일정, 주요 업무 마일스톤을 참조할 수 있습니다.",
-    source: "mcp-demo",
-  },
-  {
-    name: "posco-ecm",
-    enabled: true,
-    description: "[연결필요] ECM 권한 연동 후 사내 문서, 보고서, 결재 자료, 첨부 파일 같은 비정형 문서를 검색할 수 있습니다.",
-    source: "mcp-demo",
-  },
-  {
-    name: "posco-datalake",
-    enabled: true,
-    description: "[연결필요] 데이터레이크 접근 권한과 보안 승인을 마친 뒤 경영/생산/재무 테이블 같은 정형 데이터를 조회할 수 있습니다.",
-    source: "mcp-demo",
-  },
-  {
-    name: "posco-ontology",
-    enabled: true,
-    description: "[연결필요] POSCO 업무 온톨로지와 기준정보를 연결하면 조직, 설비, 제품, 프로세스 맥락을 참조할 수 있습니다.",
-    source: "mcp-demo",
-  },
-  {
-    name: "posco-plm",
-    enabled: true,
-    description: "[연결필요] 포스코 투자관리시스템 연동 후 투자 과제, 예산, 승인, 진행 현황을 조회할 수 있습니다.",
-    source: "mcp-demo",
-  },
-  {
-    name: "posco-erp",
-    enabled: true,
-    description: "[연결필요] ERP/POSPIA 권한 연동 후 생산, 구매, 판매, 주문, 출하, 정산 같은 전사 기준 데이터를 조회할 수 있습니다.",
-    source: "mcp-demo",
-  },
-  {
-    name: "posco-mih",
-    enabled: true,
-    description: "[연결필요] MIH(Marketing Information Hub) 권한 연동 후 시장, 고객, 수요, 가격 같은 마케팅 정보를 조회할 수 있습니다.",
-    source: "mcp-demo",
-  },
-  {
-    name: "posco-gih",
-    enabled: true,
-    description: "[연결필요] GIH(Global Information Hub) 권한 연동 후 글로벌 시장 정보와 그룹 정보 플랫폼의 공유 자료를 조회할 수 있습니다.",
-    source: "mcp-demo",
-  },
-];
 
 const koSkillDescriptionsByName: Record<string, string> = {
   "brainstorming": "창의적 작업, 기능 생성, 컴포넌트 구축, 기능 추가, 동작 수정처럼 구현 전에 의도와 요구사항, 설계를 먼저 탐색해야 할 때 사용합니다.",
@@ -275,28 +220,23 @@ function parseMcpCatalog(text: string): ToggleEntry[] {
     .replace(/^(MCP servers:|MCP 서버:)\s*/i, "")
     .trim();
   if (!source || source === "(no MCP servers configured)" || source === "(설정된 MCP 서버가 없습니다)") {
-    return demoMcpItems;
+    return [];
   }
-  const configuredItems = source
+  return source
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
     .map((line) => {
-      const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled|활성|비활성)\]\s+\(([^)]*)\)/i);
+      const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled|활성|비활성)\]\s+\(([^)]*)\)(?::\s*(.*))?$/i);
       if (!match) return null;
       return {
         name: match[1].trim(),
         enabled: ["enabled", "활성"].includes(match[2].toLowerCase()),
-        description: match[3].trim() || "MCP server",
+        description: (match[4] || match[3]).trim() || "MCP server",
         source: "mcp",
       };
     })
     .filter((item): item is ToggleEntry => Boolean(item));
-  const configuredNames = new Set(configuredItems.map((item) => item.name.toLowerCase()));
-  return [
-    ...demoMcpItems.filter((item) => !configuredNames.has(item.name.toLowerCase())),
-    ...configuredItems,
-  ];
 }
 
 function parsePluginCatalog(text: string): ToggleEntry[] {
@@ -454,8 +394,37 @@ function groupSkillsByPlugin(
     groups.set(pluginName, group);
   }
 
+  for (const plugin of plugins) {
+    if (!plugin.skills?.length) continue;
+    const pluginName = plugin.name.toLowerCase();
+    const group = groups.get(pluginName) || {
+      plugin,
+      items: [],
+      toneIndex: pluginToneByName.get(pluginName) ?? (groups.size + 1) % SKILL_GROUP_TONE_COUNT,
+    };
+    const existingNames = new Set(group.items.map((item) => item.name.toLowerCase()));
+    for (const skill of plugin.skills) {
+      if (existingNames.has(skill.name.toLowerCase())) continue;
+      group.items.push({
+        ...skill,
+        enabled: plugin.enabled === false ? false : skill.enabled,
+      });
+    }
+    groups.set(pluginName, group);
+  }
+
   const orderedGroups = plugins
-    .map((plugin) => groups.get(plugin.name.toLowerCase()))
+    .map((plugin) => {
+      const pluginName = plugin.name.toLowerCase();
+      const group = groups.get(pluginName);
+      if (group) return group;
+      if (!plugin.skillCount && !plugin.skills?.length) return null;
+      return {
+        plugin,
+        items: [],
+        toneIndex: pluginToneByName.get(pluginName) ?? (groups.size + 1) % SKILL_GROUP_TONE_COUNT,
+      };
+    })
     .filter((group): group is SkillPluginGroup => Boolean(group));
   const listedPluginNames = new Set(plugins.map((plugin) => plugin.name.toLowerCase()));
   const unlistedGroups = [...groups.entries()]
@@ -495,6 +464,11 @@ function catalogTooltip(item: ToggleEntry, fallback: string) {
   ].filter(Boolean).join("\n");
 }
 
+function pluginGroupStatusLabel(group: SkillPluginGroup) {
+  if (!group.plugin.enabled) return "비활성";
+  return "활성";
+}
+
 function helpSummaryIconName(label: string): IconName {
   if (label === "입력 단축키") return "keyboard";
   if (label === "알아두면 좋은 기능") return "sparkles";
@@ -503,6 +477,40 @@ function helpSummaryIconName(label: string): IconName {
   if (label === "플러그인") return "plug";
   if (label === "사용 가능한 명령어") return "terminal";
   return "comment";
+}
+
+function mergePluginState(items: ToggleEntry[], plugins: PluginItem[]) {
+  const byName = new Map(plugins.map((plugin) => [plugin.name.toLowerCase(), plugin]));
+  return items.map((item) => {
+    const snapshot = byName.get(item.name.toLowerCase());
+    if (!snapshot) return item;
+    return {
+      ...item,
+      description: snapshot.description || item.description,
+      enabled: snapshot.enabled !== false,
+      skillCount: snapshot.skill_count,
+      skills: Array.isArray(snapshot.skills)
+        ? snapshot.skills.map((skill) => ({
+          name: skill.name,
+          description: displaySkillDescription(skill.name, skill.description || "", skill.source || `plugin:${item.name}`),
+          enabled: skill.enabled !== false,
+          source: skill.source || `plugin:${item.name}`,
+        }))
+        : undefined,
+    };
+  });
+}
+
+function mergeMcpState(items: ToggleEntry[], servers: McpServerItem[]) {
+  const byName = new Map(servers.map((server) => [server.name.toLowerCase(), server]));
+  return items.map((item) => {
+    const status = byName.get(item.name.toLowerCase());
+    if (!status) return item;
+    return {
+      ...item,
+      enabled: status.state !== "disabled",
+    };
+  });
 }
 
 function HelpSummaryTitle({ label }: { label: string }) {
@@ -532,11 +540,11 @@ export function CommandHelpMessage({ text }: { text: string }) {
     };
   }, [text]);
   const pluginItems = useMemo(
-    () => orderPluginsForHelp(parsed.plugins.map((item) => ({
+    () => orderPluginsForHelp(mergePluginState(parsed.plugins, state.plugins).map((item) => ({
       ...item,
       enabled: toggleOverrides[`plugin:${item.name.toLowerCase()}`] ?? item.enabled,
     }))),
-    [parsed.plugins, toggleOverrides],
+    [parsed.plugins, state.plugins, toggleOverrides],
   );
   const pluginEnabledByName = useMemo(
     () => new Map(pluginItems.map((item) => [item.name.toLowerCase(), item.enabled])),
@@ -554,11 +562,11 @@ export function CommandHelpMessage({ text }: { text: string }) {
     [parsed.skills, pluginEnabledByName, state.skills, toggleOverrides],
   );
   const mcpItems = useMemo(
-    () => parsed.mcps.map((item) => ({
+    () => mergeMcpState(parsed.mcps, state.mcpServers).map((item) => ({
       ...item,
       enabled: toggleOverrides[`mcp:${item.name.toLowerCase()}`] ?? item.enabled,
     })),
-    [parsed.mcps, toggleOverrides],
+    [parsed.mcps, state.mcpServers, toggleOverrides],
   );
   const groupedSkillItems = useMemo(
     () => groupSkillsByPlugin(skillItems, pluginItems, pluginToneByName),
@@ -665,9 +673,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
           label="MCP"
           items={mcpItems}
           emptyText="설정된 MCP 서버가 없습니다"
-          onToggle={(item) => void toggleItem("set_mcp_enabled", item.name, item.enabled, {
-            localOnly: item.source === "mcp-demo",
-          })}
+          onToggle={(item) => void toggleItem("set_mcp_enabled", item.name, item.enabled)}
         />
       ) : null}
       {parsed.hasPlugins ? (
@@ -760,35 +766,19 @@ function SkillCatalog({
               aria-label={`${group.plugin.name} 플러그인 스킬`}
               key={`plugin-group:${group.plugin.name}`}
             >
-              {group.plugin.enabled ? (
-                <button
-                  className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
-                  type="button"
-                  aria-label={`${group.plugin.name} 플러그인 비활성화`}
-                  data-tooltip={`${group.plugin.name}\n클릭하면 플러그인을 비활성화하고 스킬 목록을 접습니다.`}
-                  onClick={() => onPluginToggle(group.plugin)}
-                >
-                  <span>
-                    <strong>{group.plugin.name}</strong>
-                    <small>활성</small>
-                  </span>
-                  <span>{group.items.length}개</span>
-                </button>
-              ) : (
-                <button
-                  className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
-                  type="button"
-                  aria-label={`${group.plugin.name} 플러그인 활성화`}
-                  data-tooltip={`${group.plugin.name}\n클릭하면 플러그인을 활성화합니다.`}
-                  onClick={() => onPluginToggle(group.plugin)}
-                >
-                  <span>
-                    <strong>{group.plugin.name}</strong>
-                    <small>비활성</small>
-                  </span>
-                  <span>{group.items.length}개</span>
-                </button>
-              )}
+              <button
+                className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
+                type="button"
+                aria-label={`${group.plugin.name} 플러그인 ${group.plugin.enabled ? "비활성화" : "활성화"}`}
+                data-tooltip={`${group.plugin.name}\n클릭하면 플러그인을 ${group.plugin.enabled ? "비활성화하고 스킬 목록을 접습니다." : "활성화합니다."}`}
+                onClick={() => onPluginToggle(group.plugin)}
+              >
+                <span>
+                  <strong>{group.plugin.name}</strong>
+                  <small>{pluginGroupStatusLabel(group)}</small>
+                </span>
+                <span>{group.plugin.skillCount ?? group.items.length}개</span>
+              </button>
               {group.plugin.enabled ? (
                 <ToggleGrid label={group.plugin.name} items={group.items} onToggle={onToggle} />
               ) : null}

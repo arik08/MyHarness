@@ -369,11 +369,19 @@ describe("CommandHelpMessage", () => {
     ))).toBe(true);
   });
 
-  it("shows POSCO demo MCP connectors when no MCP servers are configured", async () => {
+  it("shows configured POSCO MCP connectors with minimal labels", async () => {
     const user = userEvent.setup();
     const helpText = [
       "MCP 서버:",
-      "(설정된 MCP 서버가 없습니다)",
+      "- posco-email [활성] (stdio): POSCO 메일 데이터 연동",
+      "- posco-calender [활성] (stdio): POSCO 일정 데이터 연동",
+      "- posco-ecm [활성] (stdio): ECM 문서 데이터 연동",
+      "- posco-datalake [활성] (stdio): 데이터레이크 정형 데이터 연동",
+      "- posco-ontology [활성] (stdio): 업무 온톨로지/기준정보 연동",
+      "- posco-plm [활성] (stdio): 투자관리시스템 데이터 연동",
+      "- posco-erp [활성] (stdio): ERP/POSPIA 기준 데이터 연동",
+      "- posco-mih [활성] (stdio): MIH 시장 정보 연동",
+      "- posco-gih [활성] (stdio): GIH 글로벌 정보 연동",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -399,26 +407,63 @@ describe("CommandHelpMessage", () => {
     ]) {
       const connector = screen.getByRole("button", { name: new RegExp(name) });
       expect(connector.textContent).toContain("활성");
-      expect(connector.textContent).toContain("[연결필요]");
     }
 
     const emailConnector = screen.getByRole("button", { name: /posco-email/ });
-    expect(screen.getByRole("button", { name: /posco-ecm/ }).textContent).toContain("비정형 문서");
-    expect(screen.getByRole("button", { name: /posco-datalake/ }).textContent).toContain("정형 데이터");
-    expect(screen.getByRole("button", { name: /posco-erp/ }).textContent).toContain("전사 기준 데이터");
-    expect(screen.getByRole("button", { name: /posco-mih/ }).textContent).toContain("Marketing Information Hub");
-    expect(screen.getByRole("button", { name: /posco-gih/ }).textContent).toContain("Global Information Hub");
+    expect(emailConnector.textContent).toContain("POSCO 메일 데이터 연동");
+    expect(screen.getByRole("button", { name: /posco-datalake/ }).textContent).toContain("데이터레이크 정형 데이터 연동");
 
     await user.click(emailConnector);
     expect(emailConnector.textContent).toContain("비활성");
-    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(sendBackendRequest).toHaveBeenCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_mcp_enabled", value: "posco-email", enabled: false },
+    );
 
     await user.click(emailConnector);
     expect(emailConnector.textContent).toContain("활성");
-    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(sendBackendRequest).toHaveBeenLastCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_mcp_enabled", value: "posco-email", enabled: true },
+    );
   });
 
-  it("keeps POSCO demo MCP connectors visible with configured MCP servers", async () => {
+  it("restores persisted disabled state for configured POSCO MCP connectors", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "MCP 서버:",
+      "- posco-email [활성] (stdio)",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          mcpServers: [
+            {
+              name: "posco-email",
+              state: "disabled",
+              detail: "Disabled in settings.",
+              transport: "stdio",
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "MCP");
+    expect(screen.getByRole("button", { name: /posco-email/ }).textContent).toContain("비활성");
+  });
+
+  it("does not invent POSCO MCP connectors when they are absent from the catalog", async () => {
     const user = userEvent.setup();
     const helpText = [
       "MCP 서버:",
@@ -435,15 +480,8 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "MCP");
-    const buttons = screen.getAllByRole("button");
-    const demoIndex = buttons.findIndex((button) => button.textContent?.includes("posco-email"));
-    const configuredIndex = buttons.findIndex((button) => button.textContent?.includes("sqlite_analysis"));
-    expect(demoIndex).toBeGreaterThanOrEqual(0);
-    expect(configuredIndex).toBeGreaterThanOrEqual(0);
-    expect(demoIndex).toBeLessThan(configuredIndex);
-    expect(buttons[configuredIndex].textContent).toContain("stdio");
-    expect(screen.getByRole("button", { name: /posco-email/ }).textContent).toContain("[연결필요]");
-    expect(screen.getByRole("button", { name: /posco-datalake/ }).textContent).toContain("정형 데이터");
+    expect(screen.queryByRole("button", { name: /posco-email/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /sqlite_analysis/ }).textContent).toContain("stdio");
   });
 
   it("collapses plugin-owned skills in the help view when their plugin is toggled off", async () => {
@@ -500,6 +538,151 @@ describe("CommandHelpMessage", () => {
       { type: "set_plugin_enabled", value: "superpowers", enabled: true },
     );
     expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("활성");
+  });
+
+  it("keeps disabled backend plugin snapshots visible as collapsed skill groups", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- using-superpowers [plugin:superpowers] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
+      "",
+      "플러그인:",
+      "- superpowers [활성]: Superpowers skills",
+      "- claude-for-legal-lite [활성]: Legal workflows",
+      "- office-subagent-presets [비활성]: Focused office-work subagent presets",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            {
+              name: "using-superpowers",
+              description: "스킬을 찾고 사용하는 방식을 정합니다.",
+              source: "plugin:superpowers",
+              enabled: true,
+            },
+          ],
+          plugins: [
+            {
+              name: "superpowers",
+              description: "Superpowers skills",
+              enabled: true,
+              skill_count: 14,
+            },
+            {
+              name: "claude-for-legal-lite",
+              description: "Legal workflows",
+              enabled: false,
+              skill_count: 10,
+              skills: [
+                {
+                  name: "legal-contract-review",
+                  description: "계약서를 검토합니다.",
+                  source: "plugin:claude-for-legal-lite",
+                  enabled: true,
+                },
+              ],
+            },
+            {
+              name: "office-subagent-presets",
+              description: "Focused office-work subagent presets",
+              enabled: false,
+              skill_count: 0,
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "스킬");
+    const disabledGroup = screen.getByRole("group", { name: /claude-for-legal-lite 플러그인 스킬/ });
+    expect(disabledGroup.textContent).toContain("비활성");
+    expect(disabledGroup.textContent).toContain("10개");
+    expect(screen.queryByRole("button", { name: /legal-contract-review/ })).toBeNull();
+    expect(screen.queryByRole("group", { name: /office-subagent-presets 플러그인 스킬/ })).toBeNull();
+
+    await openHelpSection(user, "플러그인");
+    const pluginButtons = screen.getAllByRole("button", { name: /claude-for-legal-lite/ });
+    expect(pluginButtons.some((button) => button.textContent?.includes("비활성"))).toBe(true);
+    expect(screen.getByRole("button", { name: /office-subagent-presets/ }).textContent).toContain("비활성");
+  });
+
+  it("keeps a disabled plugin skill group visible while it is optimistically re-enabled", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- using-superpowers [plugin:superpowers] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
+      "",
+      "플러그인:",
+      "- superpowers [활성]: Superpowers skills",
+      "- claude-for-legal-lite [활성]: Legal workflows",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            {
+              name: "using-superpowers",
+              description: "스킬을 찾고 사용하는 방식을 정합니다.",
+              source: "plugin:superpowers",
+              enabled: true,
+            },
+          ],
+          plugins: [
+            {
+              name: "superpowers",
+              description: "Superpowers skills",
+              enabled: true,
+              skill_count: 14,
+            },
+            {
+              name: "claude-for-legal-lite",
+              description: "Legal workflows",
+              enabled: false,
+              skill_count: 10,
+              skills: [
+                {
+                  name: "legal-contract-review",
+                  description: "계약서를 검토합니다.",
+                  source: "plugin:claude-for-legal-lite",
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "스킬");
+    await user.click(screen.getByRole("button", { name: "claude-for-legal-lite 플러그인 활성화" }));
+
+    expect(sendBackendRequest).toHaveBeenCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_plugin_enabled", value: "claude-for-legal-lite", enabled: true },
+    );
+    const enabledGroup = screen.getByRole("group", { name: /claude-for-legal-lite 플러그인 스킬/ });
+    expect(enabledGroup.textContent).toContain("claude-for-legal-lite");
+    expect(enabledGroup.textContent).toContain("활성");
+    expect(enabledGroup.textContent).toContain("10개");
+    expect(screen.getByRole("button", { name: /legal-contract-review/ }).textContent).toContain("활성");
   });
 
   it("allows individual plugin-owned skill toggles and syncs them from the plugin toggle", async () => {

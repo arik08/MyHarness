@@ -68,8 +68,8 @@ export type SwarmNotificationSnapshot = {
 };
 
 export type BackendEvent =
-  | { type: "ready"; state?: BackendStateSnapshot; commands?: unknown[]; skills?: unknown[]; tasks?: unknown[]; mcp_servers?: unknown[] }
-  | { type: "state_snapshot"; state?: BackendStateSnapshot; mcp_servers?: unknown[] }
+  | { type: "ready"; state?: BackendStateSnapshot; commands?: unknown[]; skills?: unknown[]; plugins?: unknown[]; tasks?: unknown[]; mcp_servers?: unknown[] }
+  | { type: "state_snapshot"; state?: BackendStateSnapshot; plugins?: unknown[]; mcp_servers?: unknown[] }
   | { type: "skills_snapshot"; skills?: unknown[] }
   | { type: "transcript_item"; item?: TranscriptItem }
   | { type: "assistant_delta"; message?: string | null; value?: string | null }
@@ -147,6 +147,16 @@ export type SkillItem = {
   description: string;
   source?: string;
   enabled?: boolean;
+};
+
+export type PluginItem = {
+  name: string;
+  description: string;
+  enabled?: boolean;
+  skill_count?: number;
+  skills?: SkillItem[];
+  command_count?: number;
+  mcp_server_count?: number;
 };
 
 export type McpServerItem = {

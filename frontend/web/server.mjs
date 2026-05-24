@@ -52,6 +52,7 @@ configurePoscoCertificate();
 const sharedWorkspaceScopeName = "shared";
 const defaultWorkspaceName = "Default";
 const projectPreferencesRel = join(".myharness", "preferences.json");
+const appPreferencesRel = "preferences.json";
 const artifactAliasesRel = join(".myharness", "artifact-aliases.json");
 const port = Number(process.env.PORT || 4273);
 const host = process.env.HOST || "0.0.0.0";
@@ -2488,6 +2489,10 @@ function projectPreferencesPath(workspace) {
   return join(workspace.path, projectPreferencesRel);
 }
 
+function appPreferencesPath() {
+  return join(globalConfigDir(), appPreferencesRel);
+}
+
 function globalConfigDir() {
   const envDir = String(process.env.MYHARNESS_CONFIG_DIR || "").trim();
   if (envDir) {
@@ -2850,13 +2855,18 @@ async function savePgptSettings(body = {}) {
     const value = String(body.apiKey || "").trim();
     if (value) {
       next.api_key = value;
+      process.env.PGPT_API_KEY = value;
     }
   }
   if (Object.prototype.hasOwnProperty.call(body, "employeeNo")) {
     next.employee_no = String(body.employeeNo || "").trim();
+    if (next.employee_no) {
+      process.env.PGPT_EMPLOYEE_NO = next.employee_no;
+    }
   }
   if (Object.prototype.hasOwnProperty.call(body, "companyCode")) {
     next.company_code = String(body.companyCode || "").trim() || "30";
+    process.env.PGPT_COMPANY_CODE = next.company_code;
   }
   credentials.pgpt = next;
   await writeJsonFile(credentialsPath, credentials);
@@ -2896,11 +2906,71 @@ async function globalPreferencesSnapshot() {
   const configDir = globalConfigDir();
   const settings = await readJsonFileIfExists(join(configDir, "settings.json")) || {};
   const skillState = await readJsonFileIfExists(join(configDir, "skill_state.json")) || {};
+  const appPreferences = await readJsonFileIfExists(appPreferencesPath()) || {};
+  const normalizedAppPreferences = normalizeProjectPreferences(appPreferences);
   return normalizeProjectPreferences({
     disabled_skills: Array.isArray(skillState.disabled_skills) ? skillState.disabled_skills : [],
     disabled_mcp_servers: Array.isArray(settings.disabled_mcp_servers) ? settings.disabled_mcp_servers : [],
-    enabled_plugins: settings.enabled_plugins && typeof settings.enabled_plugins === "object" ? settings.enabled_plugins : {},
+    enabled_plugins: {
+      ...(settings.enabled_plugins && typeof settings.enabled_plugins === "object" ? settings.enabled_plugins : {}),
+      ...normalizedAppPreferences.enabled_plugins,
+    },
   });
+}
+
+async function updatePluginPreferenceFiles(name, enabled, session = null) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return;
+  const normalizedEnabled = enabled !== false;
+
+  const appPath = appPreferencesPath();
+  const appPreferences = normalizeProjectPreferences(await readJsonFileIfExists(appPath) || {});
+  appPreferences.enabled_plugins[cleanName] = normalizedEnabled;
+  await writeJsonFileAtomic(appPath, normalizeProjectPreferences(appPreferences));
+
+  const workspace = session?.workspace;
+  if (workspace?.path) {
+    const workspacePath = projectPreferencesPath(workspace);
+    const workspacePreferences = normalizeProjectPreferences(await readJsonFileIfExists(workspacePath) || {});
+    workspacePreferences.enabled_plugins[cleanName] = normalizedEnabled;
+    await writeJsonFileAtomic(workspacePath, workspacePreferences);
+  }
+
+  const scopes = [];
+  try {
+    const entries = await readdir(playgroundRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) scopes.push(entry.name);
+    }
+  } catch {
+    return;
+  }
+  await Promise.all(scopes.map(async (scopeName) => {
+    const path = join(playgroundRoot, scopeName, defaultWorkspaceName, projectPreferencesRel);
+    const raw = await readJsonFileIfExists(path);
+    if (!raw) return;
+    const preferences = normalizeProjectPreferences(raw);
+    preferences.enabled_plugins[cleanName] = normalizedEnabled;
+    await writeJsonFileAtomic(path, preferences);
+  }));
+}
+
+async function updateMcpPreferenceFiles(name, enabled, session = null) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return;
+
+  const workspace = session?.workspace;
+  if (!workspace?.path) return;
+  const workspacePath = projectPreferencesPath(workspace);
+  const workspacePreferences = normalizeProjectPreferences(await readJsonFileIfExists(workspacePath) || {});
+  const disabled = new Set(workspacePreferences.disabled_mcp_servers);
+  if (enabled !== false) {
+    disabled.delete(cleanName);
+  } else {
+    disabled.add(cleanName);
+  }
+  workspacePreferences.disabled_mcp_servers = [...disabled].sort();
+  await writeJsonFileAtomic(workspacePath, normalizeProjectPreferences(workspacePreferences));
 }
 
 async function ensureDefaultPreferences(scope = defaultWorkspaceScope()) {
@@ -3781,14 +3851,11 @@ function directPythonCommandForWindows(command) {
     return null;
   }
   const executable = basename(String(parts[0] || "").replace(/^["']|["']$/g, "")).toLowerCase();
-  if (!["python", "python.exe", "python3", "python3.exe", "py", "py.exe"].includes(executable)) {
+  if (!["python", "python.exe", "python3", "python3.exe"].includes(executable)) {
     return null;
   }
-  const requestedArgs = executable === "py" || executable === "py.exe"
-    ? (parts[1] === "-3" ? ["-3"] : [])
-    : [];
-  const remaining = parts.slice(1 + requestedArgs.length);
-  const python = resolvePythonCommand(parts[0], requestedArgs);
+  const remaining = parts.slice(1);
+  const python = resolvePythonCommand(parts[0], []);
   return {
     file: python.file,
     args: [...python.args, ...remaining],
@@ -3796,7 +3863,7 @@ function directPythonCommandForWindows(command) {
 }
 
 function pythonHeredocCommandForWindows(command) {
-  const match = String(command || "").match(/^\s*(?<prefix>(?:python3?|py)(?:\.exe)?(?:\s+-3)?)\s+-\s+<<\s*(?<quote>['"]?)(?<tag>[A-Za-z_][A-Za-z0-9_]*)\k<quote>\s*\r?\n(?<body>[\s\S]*)\r?\n\k<tag>\s*$/i);
+  const match = String(command || "").match(/^\s*(?<prefix>python3?(?:\.exe)?)\s+-\s+<<\s*(?<quote>['"]?)(?<tag>[A-Za-z_][A-Za-z0-9_]*)\k<quote>\s*\r?\n(?<body>[\s\S]*)\r?\n\k<tag>\s*$/i);
   if (!match?.groups) {
     return null;
   }
@@ -3825,7 +3892,6 @@ function backendPythonCommand() {
 function resolvePythonCommand(requestedExecutable = "", requestedArgs = []) {
   const requestedName = String(requestedExecutable || "").trim();
   const requestedBase = basename(requestedName).toLowerCase();
-  const requestedIsPy = requestedBase === "py" || requestedBase === "py.exe";
   const requestedIsGeneric = ["", "python", "python.exe", "python3", "python3.exe"].includes(requestedBase);
   const requestedHasPath = requestedName.includes("\\") || requestedName.includes("/") || isAbsolute(requestedName);
   const candidates = [];
@@ -3849,12 +3915,6 @@ function resolvePythonCommand(requestedExecutable = "", requestedArgs = []) {
       label: [requestedName, ...requestedArgs].join(" "),
       cacheable: requestedIsGeneric,
     });
-  } else if (requestedIsPy) {
-    candidates.push({
-      file: resolveCommandOnPath(requestedName) || requestedName,
-      args: requestedArgs,
-      label: [requestedName, ...requestedArgs].join(" "),
-    });
   }
 
   if (requestedIsGeneric) {
@@ -3866,7 +3926,7 @@ function resolvePythonCommand(requestedExecutable = "", requestedArgs = []) {
         label: [requestedName, ...requestedArgs].join(" "),
       });
     }
-  } else if (!requestedIsPy) {
+  } else {
     candidates.push(...defaultPythonCandidates());
   }
 
@@ -3909,7 +3969,6 @@ function defaultPythonCandidates() {
 
   if (process.platform === "win32") {
     candidates.push(
-      { file: resolveCommandOnPath("py.exe") || resolveCommandOnPath("py") || "py", args: ["-3"], label: "py -3" },
       { file: resolveCommandOnPath("python.exe") || resolveCommandOnPath("python") || "python", args: [], label: "python" },
       { file: resolveCommandOnPath("python3.exe") || resolveCommandOnPath("python3") || "python3", args: [], label: "python3" },
     );
@@ -5464,7 +5523,14 @@ async function handleApi(request, response, pathname) {
         json(response, 404, { error: "Unknown session" });
         return true;
       }
-      const ok = sendBackend(session, body.payload || {});
+      const payload = body.payload || {};
+      if (payload?.type === "set_plugin_enabled") {
+        await updatePluginPreferenceFiles(payload.value, payload.enabled, session);
+      }
+      if (payload?.type === "set_mcp_enabled") {
+        await updateMcpPreferenceFiles(payload.value, payload.enabled, session);
+      }
+      const ok = sendBackend(session, payload);
       json(response, ok ? 200 : 409, { ok });
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not respond to session" });

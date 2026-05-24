@@ -225,13 +225,13 @@ describe("TooltipLayer", () => {
             });
           }}
         >
-          출력량
+          출력한도
         </button>
         <TooltipLayer />
       </div>,
     );
 
-    fireEvent.pointerOver(screen.getByRole("button", { name: "출력량" }));
+    fireEvent.pointerOver(screen.getByRole("button", { name: "출력한도" }));
     act(() => {
       vi.advanceTimersByTime(260);
     });

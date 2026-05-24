@@ -20,8 +20,10 @@ from myharness.engine.stream_events import (
     ToolInputDelta,
 )
 from myharness.engine.messages import ConversationMessage, TextBlock
-from myharness.mcp.types import McpConnectionStatus, McpToolInfo
+from myharness.mcp.types import McpConnectionStatus, McpStdioServerConfig, McpToolInfo
+from myharness.project_preferences import load_project_preferences
 from myharness.services.long_report_progress import write_long_report_progress_state
+from myharness.skills.types import SkillDefinition
 from myharness.tasks.types import TaskRecord
 from myharness.ui.backend_host import (
     BackendHostConfig,
@@ -86,6 +88,86 @@ class FailingApiClient:
         if False:
             yield None
         raise RuntimeError(self._message)
+
+
+def test_mcp_snapshot_marks_disabled_server_even_if_connected(tmp_path):
+    host = ReactBackendHost(BackendHostConfig(cwd=str(tmp_path)))
+    settings = SimpleNamespace(
+        disabled_mcp_servers={"demo"},
+        mcp_servers={"demo": McpStdioServerConfig(command="python", args=["server.py"])},
+    )
+    host._bundle = SimpleNamespace(  # type: ignore[assignment]
+        cwd=str(tmp_path),
+        current_settings=lambda: settings,
+        current_plugins=lambda: [],
+        mcp_manager=SimpleNamespace(
+            list_statuses=lambda: [
+                McpConnectionStatus(name="demo", state="connected", transport="stdio"),
+            ],
+        ),
+    )
+
+    statuses = host._mcp_statuses_for_snapshot()
+
+    assert statuses[0].name == "demo"
+    assert statuses[0].state == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_persists_configured_posco_mcp_toggle(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    events: list[BackendEvent] = []
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"), cwd=tmp_path)
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+
+    await host._handle_set_mcp_enabled("posco-email", False)
+
+    preferences = load_project_preferences(tmp_path)
+    assert preferences is not None
+    assert "posco-email" in preferences.disabled_mcp_servers
+    assert not any(event.type == "error" for event in events)
+    disabled_status = next(
+        server
+        for event in events
+        for server in (event.mcp_servers or [])
+        if server["name"] == "posco-email"
+    )
+    assert disabled_status["state"] == "disabled"
+
+
+def test_plugin_snapshots_include_plugin_skills(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    plugin = SimpleNamespace(
+        manifest=SimpleNamespace(name="legal-plugin", description="Legal workflows"),
+        enabled=False,
+        skills=[
+            SkillDefinition(
+                name="legal-contract-review",
+                description="Review contracts.",
+                content="# Contract review",
+                source="plugin:legal-plugin",
+            )
+        ],
+        commands=[],
+        mcp_servers={},
+    )
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = SimpleNamespace(cwd=tmp_path, current_plugins=lambda: [plugin])
+
+    snapshots = host._plugin_snapshots()
+
+    assert snapshots[0].name == "legal-plugin"
+    assert snapshots[0].enabled is False
+    assert snapshots[0].skill_count == 1
+    assert [skill.name for skill in snapshots[0].skills] == ["legal-contract-review"]
 
 
 def test_long_report_progress_infers_path_and_reads_streamed_file(tmp_path):

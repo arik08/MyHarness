@@ -54,6 +54,11 @@ from myharness.permissions import PermissionChecker, PermissionMode
 from myharness.plugins import load_plugins
 from myharness.prompts import build_runtime_system_prompt
 from myharness.plugins.installer import install_plugin_from_path, uninstall_plugin
+from myharness.project_preferences import (
+    apply_project_preferences_to_settings,
+    set_project_mcp_enabled,
+    set_project_plugin_enabled,
+)
 from myharness.services import (
     build_post_compact_messages,
     compact_conversation,
@@ -107,7 +112,9 @@ def _format_mcp_management_text(settings, plugins, cwd: str | Path) -> str:
     for name, config in sorted(servers.items()):
         status = "비활성" if name in disabled else "활성"
         transport = getattr(config, "type", "알 수 없음")
-        lines.append(f"- {name} [{status}] ({transport})")
+        description = str(getattr(config, "description", "") or "").strip()
+        suffix = f": {description}" if description else ""
+        lines.append(f"- {name} [{status}] ({transport}){suffix}")
     return "\n".join(lines)
 
 
@@ -131,6 +138,11 @@ def _format_capability_management_text(settings, plugins, skills, cwd: str | Pat
             "전환 사용법: /skills toggle NAME, /mcp toggle NAME, /plugin toggle NAME",
         ]
     )
+
+
+def _effective_command_settings(context: "CommandContext") -> Settings:
+    """Return settings with project-local UI preferences applied."""
+    return apply_project_preferences_to_settings(load_settings(), context.cwd)
 
 
 @dataclass
@@ -661,7 +673,7 @@ def create_default_command_registry(
         return "자동" if normalized.lower() in {"", "none", "auto"} else normalized
 
     async def _help_handler(_: str, context: CommandContext) -> CommandResult:
-        settings = load_settings()
+        settings = _effective_command_settings(context)
         plugins = load_plugins(
             settings,
             context.cwd,
@@ -1161,7 +1173,7 @@ def create_default_command_registry(
         )
 
     async def _reload_plugins_handler(_: str, context: CommandContext) -> CommandResult:
-        settings = load_settings()
+        settings = _effective_command_settings(context)
         plugins = load_plugins(
             settings,
             context.cwd,
@@ -1184,10 +1196,12 @@ def create_default_command_registry(
         return CommandResult(message="\n".join(lines))
 
     async def _skills_handler(args: str, context: CommandContext) -> CommandResult:
+        settings = _effective_command_settings(context)
         skill_registry = load_skill_registry(
             context.cwd,
             extra_skill_dirs=context.extra_skill_dirs,
             extra_plugin_roots=context.extra_plugin_roots,
+            settings=settings,
             include_disabled=True,
         )
         tokens = args.split(maxsplit=1)
@@ -1207,6 +1221,7 @@ def create_default_command_registry(
                 context.cwd,
                 extra_skill_dirs=context.extra_skill_dirs,
                 extra_plugin_roots=context.extra_plugin_roots,
+                settings=settings,
                 include_disabled=True,
             )
             skills = _custom_skills(refreshed.list_skills())
@@ -1568,7 +1583,7 @@ def create_default_command_registry(
         return CommandResult(message="사용법: /pr_comments [show|add FILE[:LINE] :: COMMENT|clear]")
 
     async def _mcp_handler(args: str, context: CommandContext) -> CommandResult:
-        settings = load_settings()
+        settings = _effective_command_settings(context)
         tokens = args.split()
         plugins = load_plugins(
             settings,
@@ -1593,9 +1608,8 @@ def create_default_command_registry(
                     disabled.remove(server_name)
                 else:
                     disabled.add(server_name)
-            settings.disabled_mcp_servers = disabled
-            save_settings(settings)
             enabled = server_name not in disabled
+            set_project_mcp_enabled(context.cwd, server_name, enabled, settings)
             return CommandResult(
                 message=f"MCP 서버 '{server_name}'을(를) {'활성화' if enabled else '비활성화'}했습니다.",
                 refresh_runtime=True,
@@ -1648,7 +1662,7 @@ def create_default_command_registry(
         return CommandResult(message="사용법: /mcp [list|enable NAME|disable NAME|toggle NAME|auth SERVER ...]")
 
     async def _plugin_handler(args: str, context: CommandContext) -> CommandResult:
-        settings = load_settings()
+        settings = _effective_command_settings(context)
         tokens = args.split()
         if not tokens or tokens[0] == "list":
             plugins = load_plugins(
@@ -1659,12 +1673,26 @@ def create_default_command_registry(
             )
             return CommandResult(message=_format_plugins_management_text(plugins))
         if tokens[0] == "enable" and len(tokens) == 2:
-            settings.enabled_plugins[tokens[1]] = True
-            save_settings(settings)
+            plugins = {plugin.manifest.name: plugin for plugin in load_plugins(
+                settings,
+                context.cwd,
+                extra_roots=context.extra_plugin_roots,
+                include_program_plugins=True,
+            )}
+            plugin = plugins.get(tokens[1])
+            reset_names = [skill.name for skill in plugin.skills] if plugin is not None else []
+            set_project_plugin_enabled(context.cwd, tokens[1], True, settings, reset_skill_names=reset_names)
             return CommandResult(message=f"플러그인 '{tokens[1]}'을(를) 활성화했습니다. 다시 불러오려면 세션을 재시작하세요.")
         if tokens[0] == "disable" and len(tokens) == 2:
-            settings.enabled_plugins[tokens[1]] = False
-            save_settings(settings)
+            plugins = {plugin.manifest.name: plugin for plugin in load_plugins(
+                settings,
+                context.cwd,
+                extra_roots=context.extra_plugin_roots,
+                include_program_plugins=True,
+            )}
+            plugin = plugins.get(tokens[1])
+            reset_names = [skill.name for skill in plugin.skills] if plugin is not None else []
+            set_project_plugin_enabled(context.cwd, tokens[1], False, settings, reset_skill_names=reset_names)
             return CommandResult(message=f"플러그인 '{tokens[1]}'을(를) 비활성화했습니다. 다시 불러오려면 세션을 재시작하세요.")
         if tokens[0] == "toggle" and len(tokens) == 2:
             plugins = load_plugins(
@@ -1678,8 +1706,13 @@ def create_default_command_registry(
             if current is None:
                 return CommandResult(message=f"알 수 없는 플러그인: {tokens[1]}")
             enabled = not current.enabled
-            settings.enabled_plugins[tokens[1]] = enabled
-            save_settings(settings)
+            set_project_plugin_enabled(
+                context.cwd,
+                tokens[1],
+                enabled,
+                settings,
+                reset_skill_names=[skill.name for skill in current.skills],
+            )
             return CommandResult(
                 message=f"플러그인 '{tokens[1]}'을(를) {'활성화' if enabled else '비활성화'}했습니다. 다시 불러오려면 세션을 재시작하세요."
             )

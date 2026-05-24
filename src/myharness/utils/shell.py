@@ -137,13 +137,11 @@ def _resolve_windows_direct_command(command: str) -> list[str] | None:
         return None
 
     executable = Path(parts[0].strip("\"'")).name.lower()
-    if executable not in {"python", "python.exe", "python3", "python3.exe", "py", "py.exe"}:
+    if executable not in {"python", "python.exe", "python3", "python3.exe"}:
         return None
 
     launcher = _resolve_windows_python_launcher(parts[0])
     remaining = parts[1:]
-    if executable in {"py", "py.exe"} and launcher == [sys.executable] and remaining[:1] == ["-3"]:
-        remaining = remaining[1:]
     return [*launcher, *remaining]
 
 
@@ -332,7 +330,7 @@ def _translate_simple_printf(command: str) -> list[str] | None:
 def _translate_python_stdin_heredoc(command: str) -> list[str] | None:
     """Translate common Bash heredoc Python snippets for native Windows shells."""
     match = re.fullmatch(
-        r"""\s*(?P<prefix>(?:python3?|py)(?:\.exe)?(?:\s+-3)?)\s+-\s+<<\s*(?P<quote>['"]?)(?P<tag>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)\s*\r?\n(?P<body>.*)\r?\n(?P=tag)\s*""",
+        r"""\s*(?P<prefix>python3?(?:\.exe)?)\s+-\s+<<\s*(?P<quote>['"]?)(?P<tag>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)\s*\r?\n(?P<body>.*)\r?\n(?P=tag)\s*""",
         command,
         flags=re.DOTALL | re.IGNORECASE,
     )
@@ -359,13 +357,6 @@ def _resolve_windows_python_launcher(executable: str) -> list[str]:
         launcher = [candidate]
         if generic:
             _store_cached_windows_python_launcher(launcher, source="python")
-        return launcher
-
-    py_launcher = shutil.which("py")
-    if py_launcher and _windows_command_prefix_is_usable([py_launcher, "-3"]):
-        launcher = [py_launcher, "-3"]
-        if generic:
-            _store_cached_windows_python_launcher(launcher, source="py")
         return launcher
 
     launcher = [sys.executable]

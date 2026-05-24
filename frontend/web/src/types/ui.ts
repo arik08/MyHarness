@@ -1,4 +1,4 @@
-import type { ArtifactSummary, Attachment, CommandItem, HistoryItem, McpServerItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, TranscriptItem, Workspace, WorkspaceScope } from "./backend";
+import type { ArtifactSummary, Attachment, CommandItem, HistoryItem, McpServerItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, TranscriptItem, Workspace, WorkspaceScope } from "./backend";
 
 export type StatusKind =
   | "connecting"
@@ -104,6 +104,7 @@ export type AppState = {
   sidebarResizing: boolean;
   commands: CommandItem[];
   skills: SkillItem[];
+  plugins: PluginItem[];
   mcpServers: McpServerItem[];
   workspaceName: string;
   workspacePath: string;

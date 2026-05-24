@@ -144,6 +144,7 @@ class PluginSnapshot(BaseModel):
     description: str = ""
     enabled: bool = True
     skill_count: int = 0
+    skills: list[SkillSnapshot] = Field(default_factory=list)
     command_count: int = 0
     mcp_server_count: int = 0
 
@@ -219,6 +220,7 @@ class BackendEvent(BaseModel):
         tasks: list[TaskRecord],
         commands: list[str | dict[str, Any]],
         skills: list[SkillSnapshot] | None = None,
+        plugins: list[PluginSnapshot] | None = None,
     ) -> "BackendEvent":
         return cls(
             type="ready",
@@ -228,6 +230,7 @@ class BackendEvent(BaseModel):
             bridge_sessions=[],
             commands=commands,
             skills=skills or [],
+            plugins=plugins or [],
         )
 
     @classmethod

@@ -871,6 +871,16 @@ class Settings(BaseModel):
             "minimax_api_key": "MINIMAX_API_KEY",
             "pgpt_api_key": "PGPT_API_KEY",
         }.get(auth_source)
+        if auth_source == "pgpt_api_key":
+            stored = load_credential(storage_provider, "api_key")
+            if stored:
+                return ResolvedAuth(
+                    provider=provider or auth_source_provider_name(auth_source),
+                    auth_kind="api_key",
+                    value=stored,
+                    source=f"file:{storage_provider}",
+                    state="configured",
+                )
         if env_var:
             env_value = os.environ.get(env_var, "")
             if env_value:
@@ -882,7 +892,7 @@ class Settings(BaseModel):
                     state="configured",
                 )
 
-        stored = load_credential(storage_provider, "api_key")
+        stored = None if auth_source == "pgpt_api_key" else load_credential(storage_provider, "api_key")
         if stored:
             return ResolvedAuth(
                 provider=provider or auth_source_provider_name(auth_source),
@@ -894,7 +904,7 @@ class Settings(BaseModel):
 
         if auth_source == "pgpt_api_key":
             raise ValueError(
-                "No credentials found for P-GPT. Set PGPT_API_KEY and PGPT_EMPLOYEE_NO environment variables first."
+                "No credentials found for P-GPT. Save credentials in .myharness/credentials.json or set PGPT_API_KEY and PGPT_EMPLOYEE_NO."
             )
 
         explicit_key = "" if profile.credential_slot else self.api_key

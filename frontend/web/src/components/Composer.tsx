@@ -934,7 +934,7 @@ export function Composer() {
                   data-tooltip="파일 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다."
                   data-tooltip-placement="top"
                 >
-                  출력량
+                  출력한도
                 </span>
                 <div className="composer-segment composer-length-segment" aria-label="출력 길이">
                   {([

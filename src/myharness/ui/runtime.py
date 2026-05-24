@@ -141,7 +141,9 @@ class RuntimeBundle:
                 state = "비활성" if name in disabled else "대기"
                 detail = "설정에서 비활성화됨" if name in disabled else "설정됨. 연결하려면 백엔드를 재시작하거나 다시 불러오세요."
                 transport = str(getattr(config, "type", "알 수 없음"))
-                lines.append(f"- {name}: {state} ({transport}) - {detail}")
+                description = str(getattr(config, "description", "") or "").strip()
+                suffix = f": {description}" if description else f" - {detail}"
+                lines.append(f"- {name}: {state} ({transport}){suffix}")
                 continue
             suffix = f" - {status.detail}" if status.detail else ""
             lines.append(f"- {name}: {status.state}{suffix}")

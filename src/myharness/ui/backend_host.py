@@ -40,6 +40,7 @@ from myharness.engine.query import format_internal_steering_update
 from myharness.output_styles import load_output_styles
 from myharness.permissions.mutation_lock import release_mutation_lock
 from myharness.project_preferences import (
+    load_project_preferences,
     set_project_mcp_enabled,
     set_project_plugin_enabled,
     set_project_skill_enabled,
@@ -54,6 +55,7 @@ from myharness.services.session_storage import (
 from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
+from myharness.skills.state import apply_skill_enabled_state
 from myharness.skills.types import SkillDefinition
 from myharness.tasks import get_task_manager
 from myharness.tools.mcp_tool import _sanitize_tool_segment
@@ -1172,6 +1174,7 @@ class ReactBackendHost:
                     for command in self._bundle.commands.list_commands()
                 ],
                 self._skill_snapshots(),
+                self._plugin_snapshots(),
             )
         )
         await self._emit(BackendEvent(type="active_session", value=self._bundle.session_id))
@@ -2773,8 +2776,6 @@ class ReactBackendHost:
         )
         disabled = set(self._bundle.current_settings().disabled_mcp_servers or set())
         for name, config in configs.items():
-            if name in statuses:
-                continue
             transport = getattr(config, "type", "unknown")
             if name in disabled:
                 statuses[name] = McpConnectionStatus(
@@ -2783,6 +2784,8 @@ class ReactBackendHost:
                     detail="Disabled in settings.",
                     transport=str(transport),
                 )
+                continue
+            if name in statuses:
                 continue
             statuses[name] = McpConnectionStatus(
                 name=name,
@@ -2794,12 +2797,23 @@ class ReactBackendHost:
 
     def _plugin_snapshots(self) -> list[PluginSnapshot]:
         assert self._bundle is not None
+        preferences = load_project_preferences(self._bundle.cwd)
+        disabled_skill_names = set(preferences.disabled_skills) if preferences is not None else set()
         return [
             PluginSnapshot(
                 name=plugin.manifest.name,
                 description=plugin.manifest.description,
                 enabled=plugin.enabled,
                 skill_count=len(plugin.skills),
+                skills=[
+                    SkillSnapshot(
+                        name=skill.name,
+                        description=display_skill_description(skill),
+                        source=skill.source,
+                        enabled=skill.enabled,
+                    )
+                    for skill in apply_skill_enabled_state(plugin.skills, disabled_skill_names)
+                ],
                 command_count=len(plugin.commands),
                 mcp_server_count=len(plugin.mcp_servers),
             )

@@ -62,7 +62,7 @@ Write-Success "PowerShell $($PSVersionTable.PSVersion) detected"
 Write-Step "Checking Python version (3.10+ required)"
 
 $PythonCmd = $null
-$PythonCommands = @("python", "python3", "py")
+$PythonCommands = @("python", "python3")
 
 foreach ($cmd in $PythonCommands) {
     $pyPath = Get-Command $cmd -ErrorAction SilentlyContinue

@@ -13,7 +13,7 @@ from myharness.skills import load_skill_registry
 
 
 def test_repeated_verified_failure_creates_program_local_skill(tmp_path: Path):
-    metadata: dict[str, object] = {"recent_verified_work": ["Ran pytest after using py -3 [passed]"]}
+    metadata: dict[str, object] = {"recent_verified_work": ["Ran pytest after using python [passed]"]}
     for _ in range(2):
         remember_tool_failure(
             metadata,
@@ -125,7 +125,7 @@ def test_web_fetch_signature_uses_status_and_domain_not_path():
 def test_youtube_yt_dlp_failures_create_reusable_transcript_skill(tmp_path: Path):
     metadata: dict[str, object] = {
         "recent_verified_work": [
-            "Ran command py -3 .skills/insane-search/scripts/youtube_transcript.py URL --json"
+            "Ran command python .skills/insane-search/scripts/youtube_transcript.py URL --json"
         ]
     }
     for video_id in ("uqdwML8VzUY", "I9nDOSGfwZg"):

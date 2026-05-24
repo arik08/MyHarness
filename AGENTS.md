@@ -9,7 +9,7 @@
 - LLM 동작을 제어할 때는 프롬프트, 시스템 지침, 도구 설명, 출력 계약을 우선 수정하세요. 특정 문구·섹션·결과물을 코드에 하드코딩해서 모델을 우회하는 방식은 장애 대응이나 안전장치처럼 다른 방법이 실패한 최후의 수단으로만 사용하세요.
 - UI 화면 점검용 stdout/stderr 로그, 스크린샷, 임시 브라우저 프로필은 저장이 필요할 때 프로젝트 루트에 흩뿌리지 말고 `.myharness/ui-checks/` 같은 ignore된 로컬 작업 폴더에 모으세요.
 - `PATCH_NOTES.md`는 하루에 한 번 수준의 변경 기록 정리용으로 보고, 사용자가 요청했거나 릴리즈/일일 정리처럼 명확히 필요한 경우에만 수정하세요.
-- 한글/비ASCII가 들어간 파일을 PowerShell 기본 `Get-Content`/`Set-Content`/`Out-File`로 재저장하지 마세요. 읽을 때는 `-Encoding UTF8`을 명시하고, 수정은 `apply_patch`나 UTF-8을 명시한 도구를 사용한 뒤 `py -3 scripts/utf8_guard.py --changed`로 인코딩 깨짐을 확인하세요.
+- 한글/비ASCII가 들어간 파일을 PowerShell 기본 `Get-Content`/`Set-Content`/`Out-File`로 재저장하지 마세요. 읽을 때는 `-Encoding UTF8`을 명시하고, 수정은 `apply_patch`나 UTF-8을 명시한 도구를 사용한 뒤 `python scripts/utf8_guard.py --changed`로 인코딩 깨짐을 확인하세요.
 
 ## Karpathy Guidelines
 

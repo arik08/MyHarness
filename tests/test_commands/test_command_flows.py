@@ -12,6 +12,7 @@ from myharness.config.settings import load_settings
 from myharness.engine.messages import ConversationMessage, TextBlock
 from myharness.engine.query_engine import QueryEngine
 from myharness.permissions import PermissionChecker
+from myharness.project_preferences import load_project_preferences
 from myharness.state import AppState, AppStateStore
 from myharness.tools import create_default_tool_registry
 
@@ -143,12 +144,14 @@ async def test_plugin_command_lifecycle_flow(tmp_path: Path, monkeypatch):
     disable_command, disable_args = registry.lookup("/plugin disable fixture-plugin")
     disable_result = await disable_command.handler(disable_args, context)
     assert "비활성화" in disable_result.message
-    assert load_settings().enabled_plugins["fixture-plugin"] is False
+    assert "fixture-plugin" not in load_settings().enabled_plugins
+    assert load_project_preferences(tmp_path).enabled_plugins["fixture-plugin"] is False
 
     enable_command, enable_args = registry.lookup("/plugin enable fixture-plugin")
     enable_result = await enable_command.handler(enable_args, context)
     assert "활성화" in enable_result.message
-    assert load_settings().enabled_plugins["fixture-plugin"] is True
+    assert "fixture-plugin" not in load_settings().enabled_plugins
+    assert load_project_preferences(tmp_path).enabled_plugins["fixture-plugin"] is True
 
     uninstall_command, uninstall_args = registry.lookup("/plugin uninstall fixture-plugin")
     uninstall_result = await uninstall_command.handler(uninstall_args, context)

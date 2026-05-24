@@ -78,7 +78,7 @@ set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
 call :find_bootstrap_python
 if errorlevel 1 (
   echo [ERROR] No usable Python 3.10+ was found.
-  echo Tried MYHARNESS_PYTHON, PYTHON, py -3, python, and python3.
+  echo Tried MYHARNESS_PYTHON, PYTHON, python, and python3.
   echo Install Python 3.10+ or run Installer.bat after setting MYHARNESS_PYTHON.
   echo.
   pause
@@ -235,8 +235,6 @@ if not "%PYTHON%"=="" (
   call :try_bootstrap_python "%PYTHON%" ""
   if not errorlevel 1 exit /b 0
 )
-call :try_bootstrap_python "py" "-3"
-if not errorlevel 1 exit /b 0
 call :try_bootstrap_python "python" ""
 if not errorlevel 1 exit /b 0
 call :try_bootstrap_python "python3" ""
@@ -300,35 +298,31 @@ echo [INFO] Default provider profile: %MYHARNESS_SELECTED_PROFILE%
 exit /b 0
 
 :ensure_pgpt_env
+call :load_pgpt_env_from_credentials
 set "PGPT_ENV_MISSING="
 if "%PGPT_API_KEY%"=="" set "PGPT_ENV_MISSING=1"
 if "%PGPT_EMPLOYEE_NO%"=="" set "PGPT_ENV_MISSING=1"
 if "%PGPT_ENV_MISSING%"=="" exit /b 0
 
 echo.
-echo [INFO] P-GPT environment variables are not fully configured.
+echo [INFO] P-GPT credentials are not fully configured.
 echo        Required for P-GPT: PGPT_API_KEY, PGPT_EMPLOYEE_NO
-echo        Company code is fixed to 30 by the app and will not be saved as an environment variable.
-echo        You may skip this if you use another provider.
+echo        Saved credentials are also read from %MYHARNESS_CONFIG_DIR%\credentials.json
+echo        Company code defaults to 30.
+echo        Leave PGPT_API_KEY empty to skip this setup.
 echo.
-set "PGPT_SETUP_CHOICE="
-set /p "PGPT_SETUP_CHOICE=Set and permanently save P-GPT environment variables now? [y/N]: "
-if /i not "%PGPT_SETUP_CHOICE%"=="Y" (
-  echo [INFO] Skipping P-GPT environment setup.
-  echo        You can still use another provider, or configure P-GPT later in app settings.
-  exit /b 0
-)
-
 echo.
-echo [INFO] Values entered here will be saved permanently to your Windows user environment with setx.
-echo        setx applies to future terminals; this launcher will also use them for the current run.
-echo        To change them later, run setx again or edit Windows Environment Variables.
+echo [INFO] Values entered here will be saved to this project's .myharness\credentials.json
+echo        and to your Windows user environment with setx.
 echo.
 
 if not "%PGPT_API_KEY%"=="" goto pgpt_employee_no
 set "PGPT_API_KEY_INPUT="
 set /p "PGPT_API_KEY_INPUT=PGPT_API_KEY: "
-if "%PGPT_API_KEY_INPUT%"=="" goto pgpt_employee_no
+if "%PGPT_API_KEY_INPUT%"=="" (
+  echo [INFO] Skipping P-GPT environment setup.
+  exit /b 0
+)
 set "PGPT_API_KEY=%PGPT_API_KEY_INPUT%"
 setx PGPT_API_KEY "%PGPT_API_KEY_INPUT%" >nul
 if errorlevel 1 echo [WARN] Failed to permanently save PGPT_API_KEY with setx.
@@ -337,11 +331,28 @@ if errorlevel 1 echo [WARN] Failed to permanently save PGPT_API_KEY with setx.
 if not "%PGPT_EMPLOYEE_NO%"=="" goto pgpt_env_done
 set "PGPT_EMPLOYEE_NO_INPUT="
 set /p "PGPT_EMPLOYEE_NO_INPUT=PGPT_EMPLOYEE_NO: "
-if "%PGPT_EMPLOYEE_NO_INPUT%"=="" goto pgpt_env_done
+if "%PGPT_EMPLOYEE_NO_INPUT%"=="" (
+  echo [INFO] Skipping P-GPT environment setup.
+  exit /b 0
+)
 set "PGPT_EMPLOYEE_NO=%PGPT_EMPLOYEE_NO_INPUT%"
 setx PGPT_EMPLOYEE_NO "%PGPT_EMPLOYEE_NO_INPUT%" >nul
 if errorlevel 1 echo [WARN] Failed to permanently save PGPT_EMPLOYEE_NO with setx.
 
 :pgpt_env_done
+call :save_pgpt_credentials
 echo [INFO] P-GPT environment setup finished.
+exit /b 0
+
+:load_pgpt_env_from_credentials
+if not exist "%MYHARNESS_CONFIG_DIR%\credentials.json" exit /b 0
+for /f "usebackq tokens=1,* delims==" %%A in (`"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -c "import json, os; from pathlib import Path; p=Path(os.environ.get('MYHARNESS_CONFIG_DIR') or '.myharness')/'credentials.json'; data=json.loads(p.read_text(encoding='utf-8')); pgpt=data.get('pgpt') if isinstance(data.get('pgpt'), dict) else {}; print('PGPT_API_KEY=' + str(pgpt.get('api_key') or '')); print('PGPT_EMPLOYEE_NO=' + str(pgpt.get('employee_no') or pgpt.get('system_code') or '')); print('PGPT_COMPANY_CODE=' + str(pgpt.get('company_code') or ''))" 2^>nul`) do (
+  if not "%%~B"=="" set "%%~A=%%~B"
+)
+exit /b 0
+
+:save_pgpt_credentials
+if "%PGPT_API_KEY%"=="" exit /b 0
+if "%PGPT_EMPLOYEE_NO%"=="" exit /b 0
+"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -c "import json, os; from pathlib import Path; p=Path(os.environ.get('MYHARNESS_CONFIG_DIR') or '.myharness')/'credentials.json'; data=json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}; pgpt=data.get('pgpt') if isinstance(data.get('pgpt'), dict) else {}; values={'api_key': os.environ.get('PGPT_API_KEY','').strip(), 'employee_no': os.environ.get('PGPT_EMPLOYEE_NO','').strip(), 'company_code': os.environ.get('PGPT_COMPANY_CODE','').strip() or '30'}; pgpt.update({k:v for k,v in values.items() if v}); data['pgpt']=pgpt; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')" >nul 2>nul
 exit /b 0

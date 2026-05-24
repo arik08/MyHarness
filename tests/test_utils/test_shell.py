@@ -75,9 +75,9 @@ def test_resolve_shell_command_can_use_cmd_on_windows(monkeypatch):
 
     monkeypatch.setattr("myharness.utils.shell.shutil.which", fake_which)
 
-    command = resolve_shell_command("py -3 --version", platform_name="windows", shell="cmd")
+    command = resolve_shell_command("python --version", platform_name="windows", shell="cmd")
 
-    assert command == ["C:/Windows/System32/cmd.exe", "/d", "/s", "/c", "chcp 65001>nul & py -3 --version"]
+    assert command == ["C:/Windows/System32/cmd.exe", "/d", "/s", "/c", "chcp 65001>nul & python --version"]
 
 
 def test_resolve_shell_command_can_use_git_bash_on_windows(monkeypatch):
@@ -188,17 +188,20 @@ def test_windows_simple_printf_is_translated_without_shell():
 def test_windows_python_launcher_choice_is_cached(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     calls: list[tuple[str, ...]] = []
+    python_exe = tmp_path / "Python" / "python.exe"
+    python_exe.parent.mkdir(parents=True)
+    python_exe.write_text("", encoding="utf-8")
 
     def fake_which(name: str) -> str | None:
-        return {"python": "C:/WindowsApps/python.exe", "py": "C:/Windows/py.exe"}.get(name)
+        return {"python": str(python_exe)}.get(name)
 
     def fake_run(argv, **kwargs):
         del kwargs
         calls.append(tuple(argv))
 
         class _Result:
-            returncode = 0 if argv[0] == "C:/Windows/py.exe" else 1
-            stdout = "Python 3.13.3" if returncode == 0 else "Python"
+            returncode = 0
+            stdout = "Python 3.13.3"
             stderr = ""
 
         return _Result()
@@ -209,11 +212,10 @@ def test_windows_python_launcher_choice_is_cached(monkeypatch, tmp_path: Path):
     first = _resolve_windows_direct_command('python -u -c "print(1)"')
     second = _resolve_windows_direct_command('python -u -c "print(2)"')
 
-    assert first == ["C:/Windows/py.exe", "-3", "-u", "-c", "print(1)"]
-    assert second == ["C:/Windows/py.exe", "-3", "-u", "-c", "print(2)"]
+    assert first == [str(python_exe), "-u", "-c", "print(1)"]
+    assert second == [str(python_exe), "-u", "-c", "print(2)"]
     assert calls == [
-        ("C:/WindowsApps/python.exe", "--version"),
-        ("C:/Windows/py.exe", "-3", "--version"),
+        (str(python_exe), "--version"),
     ]
 
 
@@ -255,41 +257,14 @@ def test_windows_python_direct_command_preserves_inline_quoted_arguments(
     ]
 
 
-def test_windows_py_direct_command_bypasses_shell_and_keeps_quoted_arguments(
-    monkeypatch,
-    tmp_path: Path,
-):
+def test_windows_py_direct_command_is_not_special_cased(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
-    monkeypatch.setattr(
-        "myharness.utils.shell.shutil.which",
-        lambda name: "C:/Windows/py.exe" if name == "py" else None,
-    )
-
-    def fake_run(argv, **kwargs):
-        del argv, kwargs
-
-        class _Result:
-            returncode = 0
-            stdout = "Python 3.13.3"
-            stderr = ""
-
-        return _Result()
-
-    monkeypatch.setattr("myharness.utils.shell.subprocess.run", fake_run)
-
     argv = _resolve_windows_direct_command(
-        'py -3 init_skill.py ui-design-essence --interface display_name="UI Design Essence"'
+        'py init_skill.py ui-design-essence --interface display_name="UI Design Essence"'
     )
 
-    assert argv == [
-        "C:/Windows/py.exe",
-        "-3",
-        "init_skill.py",
-        "ui-design-essence",
-        "--interface",
-        "display_name=UI Design Essence",
-    ]
+    assert argv is None
 
 
 def test_windows_python_heredoc_is_translated_to_python_c(monkeypatch, tmp_path: Path):

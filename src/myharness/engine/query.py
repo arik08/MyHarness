@@ -180,7 +180,6 @@ _SHELL_WRITE_HINTS = (
     "write-long-report",
     "pandoc",
     "python -c",
-    "py -3",
     "node -e",
 )
 

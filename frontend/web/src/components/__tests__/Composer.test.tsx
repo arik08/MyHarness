@@ -91,7 +91,7 @@ describe("Composer", () => {
     expect(attachButton.getAttribute("data-tooltip-placement")).toBe("top");
     expect(attachButton.textContent).toBe("");
     const controlLabels = Array.from(document.querySelectorAll<HTMLElement>(".composer-control-label"));
-    expect(controlLabels.map((node) => node.textContent)).toEqual(["출력", "모드", "출력량"]);
+    expect(controlLabels.map((node) => node.textContent)).toEqual(["출력", "모드", "출력한도"]);
     expect(controlLabels.map((node) => node.getAttribute("data-tooltip-placement"))).toEqual(["top", "top", "top"]);
     expect(controlLabels.map((node) => node.getAttribute("data-tooltip"))).toEqual([
       "답변을 채팅에 표시할지 파일로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다.",

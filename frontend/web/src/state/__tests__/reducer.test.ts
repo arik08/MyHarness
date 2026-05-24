@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { appReducer, initialAppState, loadHiddenHistoryKeys } from "../reducer";
+import { appReducer, initialAppState, loadAdminModePreference, loadHiddenHistoryKeys } from "../reducer";
 import { historyVisibilityKey } from "../../utils/history";
 
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
@@ -76,6 +76,29 @@ describe("appReducer", () => {
     expect(lockedAgain.history).toEqual([]);
   });
 
+  it("persists admin mode preference locally", () => {
+    localStorage.removeItem("myharness:adminMode");
+
+    const enabled = appReducer(initialAppState, { type: "set_admin_mode", value: true });
+    expect(enabled.adminMode).toBe(true);
+    expect(loadAdminModePreference()).toBe(true);
+
+    const disabled = appReducer(enabled, { type: "set_admin_mode", value: false });
+    expect(disabled.adminMode).toBe(false);
+    expect(loadAdminModePreference()).toBe(false);
+    expect(localStorage.getItem("myharness:adminMode")).toBe("0");
+  });
+
+  it("restores persisted admin mode when the app state initializes", async () => {
+    localStorage.setItem("myharness:adminMode", "1");
+    vi.resetModules();
+
+    const reducerModule = await import("../reducer");
+
+    expect(reducerModule.initialAppState.adminMode).toBe(true);
+    localStorage.removeItem("myharness:adminMode");
+  });
+
   it("applies ready snapshots", () => {
     const next = appReducer(initialAppState, {
       type: "backend_event",
@@ -93,12 +116,75 @@ describe("appReducer", () => {
             scope: { mode: "shared", name: "shared", root: "C:/root" },
           },
         },
+        plugins: [
+          {
+            name: "claude-for-legal-lite",
+            description: "Legal workflows",
+            enabled: false,
+            skill_count: 10,
+            skills: [
+              {
+                name: "legal-contract-review",
+                description: "Review contracts.",
+                source: "plugin:claude-for-legal-lite",
+                enabled: true,
+              },
+            ],
+          },
+        ],
       },
     });
 
     expect(next.ready).toBe(true);
     expect(next.statusText).toBe("준비됨");
     expect(next.workspaceName).toBe("Default");
+    expect(next.plugins).toEqual([
+      {
+        name: "claude-for-legal-lite",
+        description: "Legal workflows",
+        enabled: false,
+        skill_count: 10,
+        skills: [
+          {
+            name: "legal-contract-review",
+            description: "Review contracts.",
+            source: "plugin:claude-for-legal-lite",
+            enabled: true,
+          },
+        ],
+        command_count: undefined,
+        mcp_server_count: undefined,
+      },
+    ]);
+  });
+
+  it("updates plugin state from state snapshots", () => {
+    const ready = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "ready",
+        plugins: [{ name: "office-subagent-presets", description: "Office presets", enabled: true }],
+      },
+    });
+    const next = appReducer(ready, {
+      type: "backend_event",
+      event: {
+        type: "state_snapshot",
+        plugins: [{ name: "office-subagent-presets", description: "Office presets", enabled: false }],
+      },
+    });
+
+    expect(next.plugins).toEqual([
+      {
+        name: "office-subagent-presets",
+        description: "Office presets",
+        enabled: false,
+        skill_count: undefined,
+        skills: [],
+        command_count: undefined,
+        mcp_server_count: undefined,
+      },
+    ]);
   });
 
   it("applies optimistic permission mode updates", () => {
