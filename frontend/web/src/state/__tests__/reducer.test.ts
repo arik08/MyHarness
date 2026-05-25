@@ -556,7 +556,7 @@ describe("appReducer", () => {
     });
     const withWorkflow = appReducer(withToolUseHandoff, {
       type: "backend_event",
-      event: { type: "tool_started", tool_name: "skill", tool_input: { name: "using-superpowers" } },
+      event: { type: "tool_started", tool_name: "skill", tool_input: { name: "brainstorming" } },
     });
     const next = appReducer(withWorkflow, {
       type: "backend_event",
@@ -1286,11 +1286,11 @@ describe("appReducer", () => {
   it("tracks tool completion without rendering raw tool output as a chat message", () => {
     const started = appReducer(initialAppState, {
       type: "backend_event",
-      event: { type: "tool_started", tool_name: "skill", tool_input: { name: "using-superpowers" } },
+      event: { type: "tool_started", tool_name: "skill", tool_input: { name: "brainstorming" } },
     });
     const next = appReducer(started, {
       type: "backend_event",
-      event: { type: "tool_completed", tool_name: "skill", output: "Skill: using-superpowers" },
+      event: { type: "tool_completed", tool_name: "skill", output: "Skill: brainstorming" },
     });
 
     expect(next.messages).toHaveLength(0);

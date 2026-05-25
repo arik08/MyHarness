@@ -3143,7 +3143,7 @@ describe("MessageList", () => {
               role: "assistant",
               text: [
                 "Three.js 기반으로 작성했습니다.",
-                "참고: C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/.plugins/superpowers/skills/using-superpowers/SKILL.md",
+                "참고: C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/.plugins/workflow-kit/skills/internal/SKILL.md",
                 "산출물: `outputs/report.html`",
               ].join("\n"),
               isComplete: true,

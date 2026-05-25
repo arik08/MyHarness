@@ -638,7 +638,8 @@ async def test_help_lists_skills_mcp_and_plugins_even_when_empty(tmp_path: Path,
     assert "사용 가능한 스킬:" in result.message
     assert "MCP 서버:" in result.message
     assert "플러그인:" in result.message
-    assert "superpowers" in result.message
+    assert "brainstorming" in result.message
+    assert "superpowers" not in result.message
     assert "/mcp toggle NAME" in result.message
     assert "/plugin toggle NAME" in result.message
 

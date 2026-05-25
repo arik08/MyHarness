@@ -87,7 +87,10 @@ def test_build_system_prompt_encourages_parallel_research_tools():
     assert "directly asks for a specific URL, page, or source" in prompt
     assert "when you judge that a blocked or sparse source needs to be fetched" in prompt
     assert "central to the answer" in prompt
+    assert 'invoke `skill(name="openweb")` directly' in prompt
     assert 'invoke `skill(name="insane-search")`' in prompt
+    assert "before generic `web_search`/`web_fetch`" in prompt
+    assert "`web_fetch`/`web_search`/`openweb` attempt" in prompt
     assert "401, 402, 403, 429" in prompt
     assert "direct-request/source-importance test" in prompt
     assert "casual lead, duplicate source, low-value search result" in prompt

@@ -1,13 +1,14 @@
 ---
 name: insane-search
 description: >
-  Auto-bypass for blocked websites — tries every method until one works.
-  Use when WebFetch returns 402/403/blocked, or when accessing X/Twitter, Reddit,
+  Auto-bypass for blocked or sparse web sources after normal web access or
+  OpenWeb cannot satisfy the request. Use when WebFetch/WebSearch/OpenWeb returns
+  401/402/403/429, access denied, bot/WAF/challenge pages, unexpectedly sparse
+  results, or when accessing X/Twitter, Reddit,
   YouTube, GitHub, Mastodon, Medium, Substack, Stack Overflow, Threads, Naver,
-  Coupang, LinkedIn, or any platform with WAF/bot protection. Leverages yt-dlp
-  (1,858 media sites), Jina Reader, public APIs (HN, Bluesky, arXiv), and a
-  generic WAF-profile-driven fetch chain (curl_cffi TLS impersonation, mobile
-  URL transforms, Playwright real-Chrome) with auto dependency install.
+  Coupang, LinkedIn, or any WAF/bot-protected platform and the source matters.
+  Leverages yt-dlp, Jina Reader, public APIs, curl_cffi TLS impersonation,
+  mobile URL transforms, and Playwright real-Chrome fallback.
   Korean triggers: 트위터/X 못 열어, 레딧 안 읽혀, 유튜브 자막 뽑아줘, 깃헙 검색,
   사이트 차단됨, 스레드 안 열려, 마스토돈, 미디엄, 서브스택, 스택오버플로우,
   네이버 블로그, 디시인사이드, 에펨코리아, 요즘IT, 긱뉴스, 클리앙, 쿠팡, 링크드인,
@@ -19,7 +20,7 @@ description: >
 
 # Insane Search
 
-> URL 접근이 차단될 때, **사이트 무관한** 우회 전략을 자동 선택한다.
+> 일반 접근 또는 `openweb`으로 해결되지 않는 차단/희소 소스를 대상으로, **사이트 무관한** 우회 전략을 자동 선택한다.
 
 ## 하네스 규칙 (Claude에게 강제되는 지침)
 
@@ -40,7 +41,7 @@ description: >
 
 **R4 — 힌트는 런타임에만**: 사이트 고유 정보(성공 셀렉터, 우선 Referer)는 CLI 인자 또는 `user_hint`로만 전달, 저장소에 고정 금지.
 
-**R5 — Phase 0 공식 API 우선**: X/Reddit/YouTube/HN/arXiv 등 **공식 공개 엔드포인트**가 있는 플랫폼은 Phase 0 테이블을 먼저 확인하고 해당 API를 쓴다. 이건 편향이 아니라 합의된 접근 경로.
+**R5 — Phase 0 공식 API 우선**: X/Reddit/YouTube/HN/arXiv 등 **공식 공개 엔드포인트**가 있는 플랫폼은 Phase 0 테이블을 먼저 확인하고 해당 API를 쓴다. 이건 편향이 아니라 합의된 접근 경로다.
 
 **R6 — 실패 선언은 전수 시도 후에만**: 격자(URL 변환 × TLS impersonate × Referer × Playwright fallback)를 **모두** 돌린 뒤에만 "뚫을 수 없음" 결론. CLI의 `max_attempts` 기본 12가 이를 보장.
 단, R7 조건(WAF 조기 감지)이 성립하면 engine 격자는 계속 돌되, Claude가 **병렬로** MCP 정찰 루트를 시도할 수 있다. 빠른 쪽이 이긴다.
@@ -74,7 +75,8 @@ description: >
 
 이 스킬의 핵심 불변식:
 
-- **단일 진입점**: 일반 웹 페이지는 항상 `python3 -m engine <URL>` 또는 `from engine import fetch; fetch(...)`.
+- **Fallback 전용**: OpenWeb나 일반 웹 도구로 해결되지 않는 차단/희소 소스에만 사용한다.
+- **단일 진입점**: 일반 웹 페이지는 `python3 -m engine <URL>` 또는 `from engine import fetch; fetch(...)`.
 - **편향 금지**: `engine/**`, `waf_profiles.yaml`에 특정 사이트 하드코딩 금지.
 - **힌트는 런타임에만**: 사이트 고유 정보는 CLI/`user_hint` 경유.
 

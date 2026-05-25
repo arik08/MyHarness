@@ -26,11 +26,15 @@ _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
         "넘침 검사가 중요한 산출물을 만들 때 사용합니다."
     ),
     "insane-search": (
-        "차단된 웹사이트를 자동으로 우회하기 위해 가능한 방법을 순차적으로 시도합니다. "
-        "WebFetch가 402/403/차단 오류를 반환하거나 X/Twitter, Reddit, YouTube, GitHub, "
+        "일반 웹 도구나 OpenWeb로 해결되지 않는 차단·희소 웹 소스를 우회하기 위해 가능한 방법을 순차적으로 시도합니다. "
+        "WebFetch/WebSearch/OpenWeb가 401/402/403/429, 차단, 봇 보호, 희소 결과를 반환하거나 X/Twitter, Reddit, YouTube, GitHub, "
         "Mastodon, Medium, Substack, Stack Overflow, Threads, Naver, Coupang, LinkedIn처럼 "
-        "WAF나 봇 보호가 있는 플랫폼에 접근할 때 사용합니다. yt-dlp, Jina Reader, 공개 API, "
-        "TLS 위장, 모바일 URL 변환, Playwright 실제 Chrome 체인을 활용합니다."
+        "WAF나 봇 보호가 있는 플랫폼의 중요한 소스에 접근할 때 사용합니다. yt-dlp, Jina Reader, "
+        "공개 API, TLS 위장, 모바일 URL 변환, Playwright 실제 Chrome 체인을 활용합니다."
+    ),
+    "openweb": (
+        "OpenWeb가 지원하는 플랫폼의 URL, 핸들, 프로필, 저장소·패키지, 논문, 플랫폼 한정 검색을 "
+        "구조화된 read/search operation으로 처리합니다. 대상 플랫폼이 명확하면 일반 web_search/web_fetch보다 먼저 사용합니다."
     ),
     "plan": "코딩 전에 구현 계획을 설계해야 할 때 사용합니다.",
     "playwright-capture": (
@@ -70,7 +74,6 @@ _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
         "등을 계획·구현·검토·개선할 때 사용합니다."
     ),
     "using-git-worktrees": "현재 작업공간과 분리된 기능 작업이 필요하거나 구현 계획을 실행하기 전에 안전한 git worktree를 만들 때 사용합니다.",
-    "using-superpowers": "대화를 시작할 때 스킬을 찾고 사용하는 방식을 정하며, 답변이나 질문 전 관련 스킬을 먼저 불러와야 할 때 사용합니다.",
     "verification-before-completion": "작업 완료, 수정 완료, 테스트 통과를 주장하기 직전에 검증 명령을 실행하고 결과를 확인해야 할 때 사용합니다.",
     "visual-artifact": (
         "보고서, 대시보드, 인포그래픽, 원페이지, 슬라이드형 웹페이지, 시각 요약, 비교 페이지, 타임라인, "
@@ -83,7 +86,6 @@ _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
         "잘림/넘침, PDF/스크린샷 준비 상태, 전반적인 완성도를 점검할 때 사용합니다."
     ),
     "writing-plans": "다단계 작업의 명세나 요구사항이 있고 코드를 만지기 전에 구현 계획을 작성해야 할 때 사용합니다.",
-    "writing-skills": "새 스킬을 만들거나 기존 스킬을 편집하거나 배포 전 스킬 동작을 검증할 때 사용합니다.",
 }
 
 _KO_DESCRIPTION_BY_TEXT: dict[str, str] = {

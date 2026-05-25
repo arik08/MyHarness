@@ -121,7 +121,7 @@ describe("artifact utilities", () => {
 
     expect(shouldResolveArtifactCandidate("outputs/report.html", workspace)).toBe(true);
     expect(shouldResolveArtifactCandidate(`${workspace}/outputs/report.html`, workspace)).toBe(true);
-    expect(shouldResolveArtifactCandidate("C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/.plugins/superpowers/skills/using-superpowers/SKILL.md", workspace)).toBe(false);
+    expect(shouldResolveArtifactCandidate("C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/.plugins/workflow-kit/skills/internal/SKILL.md", workspace)).toBe(false);
   });
 
   it("deduplicates artifacts by normalized path", () => {

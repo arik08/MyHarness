@@ -14,10 +14,11 @@ Automatically learned guidance, generalized from prior blocked web-fetch failure
 
 ## Generalized Lesson
 - Treat the stored URLs as examples only. Generalize by site/platform and failure type.
-- Prefer source-specific routes: official API, RSS/feed, Jina Reader for ordinary HTML, `insane-search` for blocked central sources, or browser/Playwright only when JavaScript rendering is actually required.
+- Prefer source-specific routes: OpenWeb typed site operations for supported platforms, official API, RSS/feed, Jina Reader for ordinary HTML, `insane-search` fallback for blocked central sources, or browser/Playwright only when JavaScript rendering is actually required.
 
 ## Recommended Next Step
-- If the user requested the source directly or the source is central, invoke `insane-search` before giving up.
+- If the user requested the source directly or the source is central, check whether OpenWeb supports the platform and try its relevant read operation first.
+- If OpenWeb is unsupported, insufficient, or blocked by login/session requirements, invoke `insane-search` before giving up.
 - If a public API or structured endpoint exists, use that before trying more HTML fetch variants.
 
 ## Avoid

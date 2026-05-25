@@ -133,13 +133,13 @@ def test_plugin_toggle_can_reset_owned_skill_overrides(tmp_path: Path, monkeypat
     workspace = tmp_path / "workspace"
     settings = load_settings()
 
-    set_project_skill_enabled(workspace, "Using-Superpowers", False, settings)
+    set_project_skill_enabled(workspace, "Workflow Helper", False, settings)
     set_project_plugin_enabled(
         workspace,
-        "superpowers",
+        "workflow-kit",
         False,
         settings,
-        reset_skill_names=["using-superpowers", "writing-skills"],
+        reset_skill_names=["workflow helper", "skill-writer"],
     )
 
     payload = json.loads(get_project_preferences_path(workspace).read_text(encoding="utf-8"))
@@ -147,9 +147,9 @@ def test_plugin_toggle_can_reset_owned_skill_overrides(tmp_path: Path, monkeypat
         "version": 1,
         "disabled_skills": [],
         "disabled_mcp_servers": [],
-        "enabled_plugins": {"superpowers": False},
+        "enabled_plugins": {"workflow-kit": False},
     }
-    assert load_app_preferences().enabled_plugins == {"superpowers": False}
+    assert load_app_preferences().enabled_plugins == {"workflow-kit": False}
 
 
 def test_project_plugin_disable_hides_owned_skills_on_reload(tmp_path: Path, monkeypatch):

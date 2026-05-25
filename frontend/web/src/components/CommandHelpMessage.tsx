@@ -34,7 +34,6 @@ type HelpIntroSection = {
 const SKILL_GROUP_TONE_COUNT = 6;
 const VIRTUAL_SKILL_TONE = "virtual";
 const preferredPluginOrder = [
-  "superpowers",
   "claude-for-legal-lite",
   "경영기획본부",
 ];
@@ -52,7 +51,8 @@ const koSkillDescriptionsByName: Record<string, string> = {
   "executing-plans": "검토 체크포인트가 포함된 작성된 구현 계획을 별도 세션에서 실행할 때 사용합니다.",
   "finishing-a-development-branch": "구현이 완료되고 모든 테스트가 통과한 뒤, 병합·PR·정리 등 개발 브랜치 통합 방식을 결정해야 할 때 사용합니다.",
   "frontend-design": "고품질 프론트엔드 인터페이스를 만들어야 할 때 사용합니다. 웹 컴포넌트, 페이지, 산출물, 포스터, 애플리케이션, 랜딩 페이지, 대시보드, React 컴포넌트, HTML/CSS 레이아웃, 웹 UI 스타일링과 시각 개선 작업에 사용합니다.",
-  "insane-search": "차단된 웹사이트를 자동으로 우회하기 위해 가능한 방법을 순차적으로 시도합니다. WebFetch가 차단 오류를 반환하거나 봇 보호가 있는 플랫폼에 접근할 때 사용합니다.",
+  "insane-search": "일반 웹 도구나 OpenWeb로 해결되지 않는 차단·희소 웹 소스를 우회하기 위해 가능한 방법을 순차적으로 시도합니다.",
+  "openweb": "OpenWeb 지원 플랫폼의 URL, 핸들, 프로필, 저장소·패키지, 논문, 플랫폼 한정 검색을 구조화된 read/search operation으로 처리합니다.",
   "plan": "코딩 전에 구현 계획을 설계해야 할 때 사용합니다.",
   "playwright-capture": "Playwright/Chromium으로 HTML 페이지를 렌더링하고 스크린샷이나 PDF로 내보낼 때 사용합니다.",
   "polish": "출시 전 MyHarness UI의 최종 다듬기와 QA가 필요할 때 사용합니다.",
@@ -72,16 +72,13 @@ const koSkillDescriptionsByName: Record<string, string> = {
   "ui-design-essence": "페이지, 컴포넌트, 대시보드, 보고서, 프로토타입, 랜딩 페이지, HTML 프리뷰를 만들거나 개선할 때의 시각 UI 디자인 기준입니다.",
   "ui-ux-pro-max": "웹과 모바일 UI/UX 설계, 계획, 구현, 검토, 개선이 필요할 때 사용합니다.",
   "using-git-worktrees": "현재 작업공간과 분리된 기능 작업이 필요하거나 구현 계획을 실행하기 전에 안전한 git worktree를 만들 때 사용합니다.",
-  "using-superpowers": "대화를 시작할 때 스킬을 찾고 사용하는 방식을 정하며, 답변이나 질문 전 관련 스킬을 먼저 불러와야 할 때 사용합니다.",
   "verification-before-completion": "작업 완료, 수정 완료, 테스트 통과를 주장하기 직전에 검증 명령을 실행하고 결과를 확인해야 할 때 사용합니다.",
   "visual-artifact": "보고서, 대시보드, 인포그래픽, 원페이지, 슬라이드형 웹페이지 등 단일 HTML 시각 산출물이 필요할 때 사용합니다.",
   "visual-review": "브라우저에서 렌더링된 시각 산출물의 레이아웃, 내보내기, 접근성, 발표 품질을 검토할 때 사용합니다.",
   "writing-plans": "다단계 작업의 명세나 요구사항이 있고 코드를 만지기 전에 구현 계획을 작성해야 할 때 사용합니다.",
-  "writing-skills": "새 스킬을 만들거나 기존 스킬을 편집하거나 배포 전 스킬 동작을 검증할 때 사용합니다.",
 };
 
 const koPluginDescriptionsByName: Record<string, string> = {
-  "superpowers": "계획 수립, TDD, 디버깅, 협업 워크플로를 지원하는 에이전트 스킬 프레임워크입니다.",
   "claude-for-legal-lite": "사용자가 제공한 문서와 로컬 playbook을 바탕으로 계약, 개인정보, 법무 검토를 지원합니다.",
 };
 

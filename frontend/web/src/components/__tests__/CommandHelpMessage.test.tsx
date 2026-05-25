@@ -63,7 +63,7 @@ describe("CommandHelpMessage", () => {
       "(설정된 MCP 서버가 없습니다)",
       "",
       "플러그인:",
-      "- superpowers [활성]: Superpowers skills",
+      "- workflow-kit [활성]: Workflow kit skills",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -273,8 +273,7 @@ describe("CommandHelpMessage", () => {
     const user = userEvent.setup();
     const helpText = [
       "플러그인:",
-      "- superpowers [활성]: An agentic skills framework & software development methodology that works: planning, TDD, debugging, and collaboration workflows.",
-      "- claude-for-legal-lite [활성]: 사용자가 제공한 문서와 로컬 playbook을 바탕으로 계약, 개인...",
+      "- claude-for-legal-lite [활성]: Legal review skills",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -287,18 +286,18 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "플러그인");
-    const superpowers = screen.getByRole("button", { name: /superpowers/ });
-    expect(superpowers.textContent).toContain("계획 수립");
-    expect(superpowers.textContent).not.toContain("agentic skills");
-    expect(superpowers.getAttribute("data-tooltip")).toContain("에이전트 스킬 프레임워크");
-    expect(superpowers.getAttribute("data-tooltip")).not.toContain("software development methodology");
+    const legalPlugin = screen.getByRole("button", { name: /claude-for-legal-lite/ });
+    expect(legalPlugin.textContent).toContain("법무 검토");
+    expect(legalPlugin.textContent).not.toContain("Legal review");
+    expect(legalPlugin.getAttribute("data-tooltip")).toContain("계약");
+    expect(legalPlugin.getAttribute("data-tooltip")).not.toContain("Legal review");
   });
 
   it("orders executive demo plugins after the existing preferred plugins", async () => {
     const user = userEvent.setup();
     const helpText = [
       "플러그인:",
-      "- superpowers [활성]: Superpowers skills",
+      "- workflow-kit [활성]: Workflow kit skills",
       "- 경영기획본부 [활성]: 전략, ESG, 투자, 사업, 재무, 산업가스 스킬",
       "- claude-for-legal-lite [활성]: Legal review skills",
       "",
@@ -318,9 +317,9 @@ describe("CommandHelpMessage", () => {
     const pluginNames = Array.from(pluginCard?.querySelectorAll("button.skill-toggle-pill strong") ?? [])
       .map((node) => node.textContent);
     expect(pluginNames).toEqual([
-      "superpowers",
       "claude-for-legal-lite",
       "경영기획본부",
+      "workflow-kit",
     ]);
   });
 
@@ -488,10 +487,10 @@ describe("CommandHelpMessage", () => {
     const user = userEvent.setup();
     const helpText = [
       "사용 가능한 스킬:",
-      "- using-superpowers [plugin] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
+      "- using-workflow-kit [plugin] [활성]: 워크플로 사용 방식을 정합니다.",
       "",
       "플러그인:",
-      "- superpowers [활성]: Superpowers skills",
+      "- workflow-kit [활성]: Workflow kit skills",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -504,9 +503,9 @@ describe("CommandHelpMessage", () => {
           sessionId: "session-1",
           skills: [
             {
-              name: "using-superpowers",
-              description: "스킬을 찾고 사용하는 방식을 정합니다.",
-              source: "plugin:superpowers",
+              name: "using-workflow-kit",
+              description: "워크플로 사용 방식을 정합니다.",
+              source: "plugin:workflow-kit",
               enabled: true,
             },
           ],
@@ -517,37 +516,37 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "스킬");
-    await user.click(screen.getByRole("button", { name: "superpowers 플러그인 비활성화" }));
+    await user.click(screen.getByRole("button", { name: "workflow-kit 플러그인 비활성화" }));
 
     expect(sendBackendRequest).toHaveBeenCalledWith(
       "session-1",
       expect.any(String),
-      { type: "set_plugin_enabled", value: "superpowers", enabled: false },
+      { type: "set_plugin_enabled", value: "workflow-kit", enabled: false },
     );
-    const superpowersGroup = screen.getByRole("group", { name: /superpowers 플러그인 스킬/ });
-    expect(superpowersGroup.textContent).toContain("superpowers");
-    expect(superpowersGroup.textContent).toContain("비활성");
-    expect(superpowersGroup.textContent).not.toContain("using-superpowers");
-    expect(screen.queryByRole("button", { name: /using-superpowers/ })).toBeNull();
+    const workflowKitGroup = screen.getByRole("group", { name: /workflow-kit 플러그인 스킬/ });
+    expect(workflowKitGroup.textContent).toContain("workflow-kit");
+    expect(workflowKitGroup.textContent).toContain("비활성");
+    expect(workflowKitGroup.textContent).not.toContain("using-workflow-kit");
+    expect(screen.queryByRole("button", { name: /using-workflow-kit/ })).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "superpowers 플러그인 활성화" }));
+    await user.click(screen.getByRole("button", { name: "workflow-kit 플러그인 활성화" }));
 
     expect(sendBackendRequest).toHaveBeenLastCalledWith(
       "session-1",
       expect.any(String),
-      { type: "set_plugin_enabled", value: "superpowers", enabled: true },
+      { type: "set_plugin_enabled", value: "workflow-kit", enabled: true },
     );
-    expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("활성");
+    expect(screen.getByRole("button", { name: /using-workflow-kit/ }).textContent).toContain("활성");
   });
 
   it("keeps disabled backend plugin snapshots visible as collapsed skill groups", async () => {
     const user = userEvent.setup();
     const helpText = [
       "사용 가능한 스킬:",
-      "- using-superpowers [plugin:superpowers] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
+      "- using-workflow-kit [plugin:workflow-kit] [활성]: 워크플로 사용 방식을 정합니다.",
       "",
       "플러그인:",
-      "- superpowers [활성]: Superpowers skills",
+      "- workflow-kit [활성]: Workflow kit skills",
       "- claude-for-legal-lite [활성]: Legal workflows",
       "- office-subagent-presets [비활성]: Focused office-work subagent presets",
       "",
@@ -562,16 +561,16 @@ describe("CommandHelpMessage", () => {
           sessionId: "session-1",
           skills: [
             {
-              name: "using-superpowers",
-              description: "스킬을 찾고 사용하는 방식을 정합니다.",
-              source: "plugin:superpowers",
+              name: "using-workflow-kit",
+              description: "워크플로 사용 방식을 정합니다.",
+              source: "plugin:workflow-kit",
               enabled: true,
             },
           ],
           plugins: [
             {
-              name: "superpowers",
-              description: "Superpowers skills",
+              name: "workflow-kit",
+              description: "Workflow kit skills",
               enabled: true,
               skill_count: 14,
             },
@@ -619,10 +618,10 @@ describe("CommandHelpMessage", () => {
     const user = userEvent.setup();
     const helpText = [
       "사용 가능한 스킬:",
-      "- using-superpowers [plugin:superpowers] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
+      "- using-workflow-kit [plugin:workflow-kit] [활성]: 워크플로 사용 방식을 정합니다.",
       "",
       "플러그인:",
-      "- superpowers [활성]: Superpowers skills",
+      "- workflow-kit [활성]: Workflow kit skills",
       "- claude-for-legal-lite [활성]: Legal workflows",
       "",
       "사용 가능한 명령어:",
@@ -636,16 +635,16 @@ describe("CommandHelpMessage", () => {
           sessionId: "session-1",
           skills: [
             {
-              name: "using-superpowers",
-              description: "스킬을 찾고 사용하는 방식을 정합니다.",
-              source: "plugin:superpowers",
+              name: "using-workflow-kit",
+              description: "워크플로 사용 방식을 정합니다.",
+              source: "plugin:workflow-kit",
               enabled: true,
             },
           ],
           plugins: [
             {
-              name: "superpowers",
-              description: "Superpowers skills",
+              name: "workflow-kit",
+              description: "Workflow kit skills",
               enabled: true,
               skill_count: 14,
             },
@@ -689,11 +688,11 @@ describe("CommandHelpMessage", () => {
     const user = userEvent.setup();
     const helpText = [
       "사용 가능한 스킬:",
-      "- using-superpowers [plugin] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
-      "- writing-skills [plugin] [활성]: 새 스킬을 만듭니다.",
+      "- using-workflow-kit [plugin] [활성]: 워크플로 사용 방식을 정합니다.",
+      "- skill-writer [plugin] [활성]: 스킬 작성을 돕습니다.",
       "",
       "플러그인:",
-      "- superpowers [활성]: Superpowers skills",
+      "- workflow-kit [활성]: Workflow kit skills",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -706,15 +705,15 @@ describe("CommandHelpMessage", () => {
           sessionId: "session-1",
           skills: [
             {
-              name: "using-superpowers",
-              description: "스킬을 찾고 사용하는 방식을 정합니다.",
-              source: "plugin:superpowers",
+              name: "using-workflow-kit",
+              description: "워크플로 사용 방식을 정합니다.",
+              source: "plugin:workflow-kit",
               enabled: true,
             },
             {
-              name: "writing-skills",
-              description: "새 스킬을 만듭니다.",
-              source: "plugin:superpowers",
+              name: "skill-writer",
+              description: "스킬 작성을 돕습니다.",
+              source: "plugin:workflow-kit",
               enabled: true,
             },
           ],
@@ -725,35 +724,35 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "스킬");
-    await user.click(screen.getByRole("button", { name: /using-superpowers/ }));
+    await user.click(screen.getByRole("button", { name: /using-workflow-kit/ }));
 
     expect(sendBackendRequest).toHaveBeenCalledWith(
       "session-1",
       expect.any(String),
-      { type: "set_skill_enabled", value: "using-superpowers", enabled: false },
+      { type: "set_skill_enabled", value: "using-workflow-kit", enabled: false },
     );
-    expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("비활성");
-    expect(screen.getByRole("button", { name: /writing-skills/ }).textContent).toContain("활성");
+    expect(screen.getByRole("button", { name: /using-workflow-kit/ }).textContent).toContain("비활성");
+    expect(screen.getByRole("button", { name: /skill-writer/ }).textContent).toContain("활성");
 
-    await user.click(screen.getByRole("button", { name: "superpowers 플러그인 비활성화" }));
+    await user.click(screen.getByRole("button", { name: "workflow-kit 플러그인 비활성화" }));
 
     expect(sendBackendRequest).toHaveBeenLastCalledWith(
       "session-1",
       expect.any(String),
-      { type: "set_plugin_enabled", value: "superpowers", enabled: false },
+      { type: "set_plugin_enabled", value: "workflow-kit", enabled: false },
     );
-    expect(screen.queryByRole("button", { name: /using-superpowers/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /writing-skills/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /using-workflow-kit/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /skill-writer/ })).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "superpowers 플러그인 활성화" }));
+    await user.click(screen.getByRole("button", { name: "workflow-kit 플러그인 활성화" }));
 
     expect(sendBackendRequest).toHaveBeenLastCalledWith(
       "session-1",
       expect.any(String),
-      { type: "set_plugin_enabled", value: "superpowers", enabled: true },
+      { type: "set_plugin_enabled", value: "workflow-kit", enabled: true },
     );
-    expect(screen.getByRole("button", { name: /using-superpowers/ }).textContent).toContain("활성");
-    expect(screen.getByRole("button", { name: /writing-skills/ }).textContent).toContain("활성");
+    expect(screen.getByRole("button", { name: /using-workflow-kit/ }).textContent).toContain("활성");
+    expect(screen.getByRole("button", { name: /skill-writer/ }).textContent).toContain("활성");
   });
 
   it("groups plugin-owned skills together under their plugin", async () => {
@@ -762,14 +761,14 @@ describe("CommandHelpMessage", () => {
       "사용 가능한 스킬:",
       "- legal-contract-review [plugin] [활성]: 계약서를 검토합니다.",
       "- deploy-helper [plugin] [활성]: 배포를 돕습니다.",
-      "- using-superpowers [plugin] [활성]: 스킬을 찾고 사용하는 방식을 정합니다.",
-      "- writing-skills [plugin] [활성]: 새 스킬을 만듭니다.",
+      "- using-workflow-kit [plugin] [활성]: 워크플로 사용 방식을 정합니다.",
+      "- skill-writer [plugin] [활성]: 스킬 작성을 돕습니다.",
       "- review [project] [활성]: Review checklist",
       "",
       "플러그인:",
       "- claude-for-legal-lite [활성]: Legal review skills",
       "- deploy [활성]: Deploy skills",
-      "- superpowers [활성]: Superpowers skills",
+      "- workflow-kit [활성]: Workflow kit skills",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -782,15 +781,15 @@ describe("CommandHelpMessage", () => {
           sessionId: "session-1",
           skills: [
             {
-              name: "using-superpowers",
-              description: "스킬을 찾고 사용하는 방식을 정합니다.",
-              source: "plugin:superpowers",
+              name: "using-workflow-kit",
+              description: "워크플로 사용 방식을 정합니다.",
+              source: "plugin:workflow-kit",
               enabled: true,
             },
             {
-              name: "writing-skills",
-              description: "새 스킬을 만듭니다.",
-              source: "plugin:superpowers",
+              name: "skill-writer",
+              description: "스킬 작성을 돕습니다.",
+              source: "plugin:workflow-kit",
               enabled: true,
             },
             {
@@ -816,44 +815,44 @@ describe("CommandHelpMessage", () => {
     await openHelpSection(user, "스킬");
     await openHelpSection(user, "플러그인");
 
-    const superpowersGroup = screen.getByRole("group", { name: /superpowers 플러그인 스킬/ });
-    expect(superpowersGroup.textContent).toContain("using-superpowers");
-    expect(superpowersGroup.textContent).toContain("writing-skills");
-    expect(superpowersGroup.textContent).not.toContain("review");
-    expect(superpowersGroup.getAttribute("data-skill-group-tone")).toBe("1");
-    expect(screen.getByText(/계획 수립, TDD/).closest("button")?.getAttribute("data-skill-group-tone")).toBe("1");
-
     const legalGroup = screen.getByRole("group", { name: /claude-for-legal-lite 플러그인 스킬/ });
     expect(legalGroup.textContent).toContain("legal-contract-review");
-    expect(legalGroup.getAttribute("data-skill-group-tone")).toBe("2");
-    expect(screen.getByText(/법무 검토를 지원합니다/).closest("button")?.getAttribute("data-skill-group-tone")).toBe("2");
+    expect(legalGroup.getAttribute("data-skill-group-tone")).toBe("1");
+    expect(screen.getByText(/법무 검토를 지원합니다/).closest("button")?.getAttribute("data-skill-group-tone")).toBe("1");
 
     const deployGroup = screen.getByRole("group", { name: /deploy 플러그인 스킬/ });
     expect(deployGroup.textContent).toContain("deploy-helper");
-    expect(deployGroup.getAttribute("data-skill-group-tone")).toBe("3");
-    expect(screen.getByText("Deploy skills").closest("button")?.getAttribute("data-skill-group-tone")).toBe("3");
+    expect(deployGroup.getAttribute("data-skill-group-tone")).toBe("2");
+    expect(screen.getByText("Deploy skills").closest("button")?.getAttribute("data-skill-group-tone")).toBe("2");
+
+    const workflowKitGroup = screen.getByRole("group", { name: /workflow-kit 플러그인 스킬/ });
+    expect(workflowKitGroup.textContent).toContain("using-workflow-kit");
+    expect(workflowKitGroup.textContent).toContain("skill-writer");
+    expect(workflowKitGroup.textContent).not.toContain("review");
+    expect(workflowKitGroup.getAttribute("data-skill-group-tone")).toBe("3");
+    expect(screen.getByText(/Workflow kit skills/).closest("button")?.getAttribute("data-skill-group-tone")).toBe("3");
 
     const pluginGroupNames = screen
       .getAllByRole("group")
       .map((group) => group.getAttribute("aria-label"));
     expect(pluginGroupNames.filter((name): name is string => Boolean(name))).toEqual([
       "일반 스킬",
-      "superpowers 플러그인 스킬",
       "claude-for-legal-lite 플러그인 스킬",
       "deploy 플러그인 스킬",
+      "workflow-kit 플러그인 스킬",
     ]);
 
     const pluginCard = Array.from(container.querySelectorAll("details.command-card"))
       .find((card) => card.querySelector("summary")?.textContent?.includes("플러그인"));
     const pluginNames = Array.from(pluginCard?.querySelectorAll("button.skill-toggle-pill strong") ?? [])
       .map((node) => node.textContent);
-    expect(pluginNames).toEqual(["superpowers", "claude-for-legal-lite", "deploy"]);
+    expect(pluginNames).toEqual(["claude-for-legal-lite", "deploy", "workflow-kit"]);
 
     const standaloneGroup = screen.getByRole("group", { name: "일반 스킬" });
     expect(standaloneGroup.className).toContain("skill-plugin-group");
     expect(standaloneGroup.getAttribute("data-skill-group-tone")).toBe("0");
     expect(standaloneGroup.textContent).toContain("review");
-    expect(standaloneGroup.textContent).not.toContain("using-superpowers");
+    expect(standaloneGroup.textContent).not.toContain("using-workflow-kit");
 
     const collapseStandalone = screen.getByRole("button", { name: "일반 스킬 접기" });
     expect(collapseStandalone.getAttribute("aria-expanded")).toBe("true");
