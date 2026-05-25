@@ -9069,7 +9069,7 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   background: transparent;
   border: 0;
   box-shadow: none;
-  color: var(--accent-strong);
+  color: #2563eb;
 }
 
 .modal-card .settings-admin-shortcut:focus-visible {

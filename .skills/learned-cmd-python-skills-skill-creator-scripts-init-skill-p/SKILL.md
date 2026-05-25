@@ -18,7 +18,7 @@ Automatically learned guidance, generalized from prior skill-creation command ch
 
 ## Recommended Next Step
 - Use the project skill tooling, then run the quick validator against the actual skill directory.
-- Prefer `py -3` on this Windows machine when invoking Python scripts.
+- Use `python` when invoking Python scripts in this repo.
 
 ## Avoid
 - Do not edit generated skill YAML/frontmatter without validating it afterward.

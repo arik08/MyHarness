@@ -1495,6 +1495,46 @@ describe("Composer", () => {
     expect(activity.textContent || "").not.toContain("추가 도구 호출이나 최종 답변 이벤트를 기다립니다.");
   });
 
+  it("keeps failed and empty-result workflow noise out of the running checklist item", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          todoMarkdown: "- [x] 원문 링크 수집\n- [ ] 관련 링크 분석",
+          statusText: "관련 링크의 핵심 정보를 정리하고 있습니다.",
+          workflowEvents: [
+            {
+              id: "workflow-success",
+              toolName: "web_search",
+              title: "웹 검색",
+              detail: "공식 발표 자료 3건을 확인했습니다.",
+              status: "done",
+              role: "activity",
+            },
+            {
+              id: "workflow-empty",
+              toolName: "web_search",
+              title: "웹 검색",
+              detail: "검색 결과가 없습니다.",
+              detailLog: ["검색 결과가 없습니다.", "필요한 번역이나 명령을 실행하고 있습니다."],
+              status: "error",
+              role: "activity",
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const activity = screen.getByLabelText("현재 작업 진행");
+    expect(activity.textContent || "").toContain("공식 발표 자료 3건을 확인했습니다.");
+    expect(activity.textContent || "").toContain("관련 링크의 핵심 정보를 정리하고 있습니다.");
+    expect(activity.textContent || "").not.toContain("검색 결과가 없습니다.");
+    expect(activity.textContent || "").not.toContain("필요한 번역이나 명령을 실행하고 있습니다.");
+  });
+
   it("shows disabled long report workflow as ordinary activity in the checklist", () => {
     render(
       <AppStateProvider

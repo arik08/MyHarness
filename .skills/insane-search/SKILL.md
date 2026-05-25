@@ -116,17 +116,17 @@ description: >
 
 사용자가 YouTube 링크를 보내며 "자막 받아서 분석", "영상 내용 분석", "요약", "정리"를 요청하면 YouTube 페이지를 브라우저로 직접 열려고 하지 말고 `yt-dlp` 메타데이터와 자막 URL을 우선 사용한다.
 
-1. 먼저 재사용 스크립트를 사용한다. 임시 redirection, heredoc, 긴 `python -c` 조합을 새로 만들지 않는다.
+1. 먼저 재사용 스크립트를 사용한다. 영상 요약/정리처럼 자막을 바로 분석하면 되는 경우에는 첫 시도에서 `--output`을 쓰지 말고 stdout JSON을 그대로 읽는다. 첫 호출이 성공했으면 같은 URL을 저장 목적으로 재호출하지 말고, 이미 받은 JSON으로 답한다. 임시 redirection, heredoc, 긴 `python -c` 조합을 새로 만들지 않는다.
    ```bash
-   py -3 .skills/insane-search/scripts/youtube_transcript.py "URL" --json
+   python .skills/insane-search/scripts/youtube_transcript.py "URL" --json --max-chars 200000
    ```
-2. 자막 원문을 파일로 저장해야 하면 셸 리다이렉션보다 스크립트의 `--output` 옵션을 우선 사용한다. Windows/PowerShell에서 `>`가 도구 인자 처리와 충돌하거나, PowerShell 5 계열에서 `&&`가 실패할 수 있기 때문이다.
+2. 사용자가 파일 저장을 요청했거나 transcript를 후속 산출물로 보존해야 할 때만 `--output`을 쓴다. `>` 리다이렉션은 사용하지 않는다. 이때 경로는 현재 MyHarness 작업공간에서 보이는 `outputs/` 아래로 잡는다. 프로그램 루트에서 실행 중이고 실제 작업공간이 `Playground/shared/Default`라면 `Playground/shared/Default/outputs/...`처럼 workspace outputs를 명시한다.
    ```bash
-   py -3 .skills/insane-search/scripts/youtube_transcript.py "URL" --json --max-chars 200000 --output "outputs/youtube_transcript.json"
+   python .skills/insane-search/scripts/youtube_transcript.py "URL" --json --max-chars 200000 --output "Playground/shared/Default/outputs/youtube_transcript.json"
    ```
    `--output`이 없는 구버전 스크립트라면 PowerShell 파이프를 한 줄로 사용한다. `&&`, `mkdir -p`, Bash heredoc, bare `>` 리다이렉션은 피한다.
    ```powershell
-   $out = "outputs"; New-Item -ItemType Directory -Force -Path $out | Out-Null; py -3 .skills\insane-search\scripts\youtube_transcript.py "URL" --json --max-chars 200000 | Set-Content -Path "$out\youtube_transcript.json" -Encoding UTF8
+   $out = "outputs"; New-Item -ItemType Directory -Force -Path $out | Out-Null; python .skills\insane-search\scripts\youtube_transcript.py "URL" --json --max-chars 200000 | Set-Content -Path "$out\youtube_transcript.json" -Encoding UTF8
    ```
 3. 스크립트는 `ko-orig`, `ko`, `en` 순서로 `subtitles`와 `automatic_captions`를 확인하고, `json3`/`vtt`/`srv*` 자막을 텍스트로 정리한다. 분석에는 이 출력의 `title`, `duration`, `caption_language`, `transcript`를 사용한다.
 4. `ok=false`이고 `reason`이 `NO_CAPTIONS` 또는 `EMPTY_CAPTIONS`이면 영상 내용을 추측하지 말고, "자막 또는 자동생성 자막이 없어 영상 내용 분석은 할 수 없습니다"라고 답한다. 제목·설명·썸네일만으로 본문 분석한 것처럼 말하지 않는다.

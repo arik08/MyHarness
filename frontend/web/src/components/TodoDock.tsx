@@ -33,9 +33,20 @@ const todoActivityGenericDetails = new Set([
   "진행 방향을 정했습니다.",
   "필요한 자료와 맥락을 확인하고 있습니다.",
   "필요한 정보를 확인했습니다.",
+  "필요한 번역이나 명령을 실행하고 있습니다.",
   "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
   "작업 실행을 마쳤습니다.",
   "최종 답변을 작성했습니다.",
+]);
+
+const todoActivityNoisyDetails = new Set([
+  "검색 결과가 없습니다.",
+  "검색 결과가 없습니다",
+  "검색 결과 없음",
+  "결과가 없습니다.",
+  "결과가 없습니다",
+  "관련 결과가 없습니다.",
+  "관련 결과가 없습니다",
 ]);
 
 function compactTodoActivity(value: string) {
@@ -44,7 +55,10 @@ function compactTodoActivity(value: string) {
 
 function isUsefulTodoActivity(value: string) {
   const detail = compactTodoActivity(value);
-  return Boolean(detail) && !todoActivityGenericDetails.has(detail) && !isFollowupWaitingActivity(detail);
+  return Boolean(detail)
+    && !todoActivityGenericDetails.has(detail)
+    && !todoActivityNoisyDetails.has(detail)
+    && !isFollowupWaitingActivity(detail);
 }
 
 function appendTodoActivityLine(lines: string[], value: string) {
@@ -185,10 +199,6 @@ function todoActivityLines(state: AppState) {
   for (const event of state.workflowEvents) {
     if (longReportActivityUiEnabled && event.toolName.toLowerCase() === "write_long_report") {
       hasLongReportActivity = true;
-    }
-    if (event.status === "error" || event.status === "warning") {
-      appendWorkflowActivity(lines, event);
-      continue;
     }
     if (event.status === "running" || event.role === "purpose" || event.role === "activity" || event.role === "planning") {
       appendWorkflowActivity(lines, event);

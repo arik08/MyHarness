@@ -87,6 +87,8 @@ def test_build_system_prompt_encourages_parallel_research_tools():
     assert "directly asks for a specific URL, page, or source" in prompt
     assert "when you judge that a blocked or sparse source needs to be fetched" in prompt
     assert "central to the answer" in prompt
+    assert "YouTube video explanation, summary, transcript, captions, or content analysis" in prompt
+    assert "Do not route these caption/content tasks through `openweb` first" in prompt
     assert 'invoke `skill(name="openweb")` directly' in prompt
     assert 'invoke `skill(name="insane-search")`' in prompt
     assert "before generic `web_search`/`web_fetch`" in prompt

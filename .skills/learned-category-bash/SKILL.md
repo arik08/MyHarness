@@ -17,7 +17,7 @@ Automatically learned guidance, generalized from prior shell-command failures.
 - Prefer an existing reusable script, project command, or source-specific fetch path over rebuilding a one-off shell command.
 
 ## Recommended Next Step
-- Re-check the goal and choose the stable workflow first. On this Windows repo, prefer `py -3` for Python scripts and project-provided helpers when available.
+- Re-check the goal and choose the stable workflow first. On this Windows repo, use `python` for Python scripts and project-provided helpers.
 - If the prior evidence only shows that a different source was fetched successfully, treat it as a source-selection lesson rather than a shell syntax lesson.
 
 ## Avoid

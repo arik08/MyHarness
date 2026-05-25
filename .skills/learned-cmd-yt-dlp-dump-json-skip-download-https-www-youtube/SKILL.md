@@ -20,9 +20,11 @@ Automatically learned guidance, generalized from prior YouTube subtitle extracti
 - Run the reusable helper first:
 
 ```powershell
-py -3 .skills/insane-search/scripts/youtube_transcript.py "URL" --json
+python .skills/insane-search/scripts/youtube_transcript.py "URL" --json --max-chars 200000
 ```
 
+- For ordinary video summaries, read stdout directly. If the first helper call succeeded, do not rerun the same URL just to save a copy. Do not add `--output` on the first attempt unless the user asked to save the transcript or a later artifact needs the file.
+- If saving is required, use the helper's `--output` option directly. Never use PowerShell `>` redirection for this helper.
 - If the helper returns `NO_CAPTIONS` or `EMPTY_CAPTIONS`, do not infer the video body from title/description alone.
 
 ## Avoid
