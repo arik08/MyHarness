@@ -3,6 +3,7 @@ import { saveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ChatMessage } from "../types/ui";
 import { artifactName } from "../utils/artifacts";
+import { chatShareUrl, shareBaseUrl } from "../utils/chatShare";
 import { copyTextToClipboard } from "../utils/clipboard";
 
 function answerFileName(title: string, text: string) {
@@ -43,6 +44,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
   const [status, setStatus] = useState("");
   const [copying, setCopying] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const text = message.text.trim();
   const messageTime = formatMessageTime(message.createdAt);
 
@@ -86,6 +88,33 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
     }
   }
 
+  async function shareAnswer() {
+    const chatId = state.activeHistoryId || state.sessionId || "";
+    if (!chatId) {
+      setStatus("공유할 대화가 없습니다.");
+      return;
+    }
+    setSharing(true);
+    try {
+      const baseUrl = await shareBaseUrl();
+      await copyTextToClipboard(chatShareUrl({
+        baseUrl,
+        chatId,
+        messageId: message.id,
+        workspaceName: state.workspaceName,
+        workspacePath: state.workspacePath,
+      }));
+      setStatus("공유 링크를 복사했습니다.");
+    } catch (error) {
+      setStatus(`공유 실패: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      window.setTimeout(() => {
+        setSharing(false);
+        setStatus((current) => current.includes("실패") ? current : "");
+      }, 1400);
+    }
+  }
+
   return (
     <div className="assistant-actions">
       <span className="assistant-done">
@@ -119,6 +148,22 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
           <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
           <path d="M17 21v-8H7v8" />
           <path d="M7 3v5h8" />
+        </svg>
+      </button>
+      <button
+        className="assistant-action-button"
+        type="button"
+        data-tooltip="채팅 링크 공유"
+        aria-label="채팅 링크 공유"
+        disabled={sharing}
+        onClick={() => void shareAnswer()}
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <circle cx="18" cy="5" r="3" />
+          <circle cx="6" cy="12" r="3" />
+          <circle cx="18" cy="19" r="3" />
+          <path d="m8.6 10.6 6.8-4.2" />
+          <path d="m8.6 13.4 6.8 4.2" />
         </svg>
       </button>
       {messageTime ? <span className="assistant-action-time">{messageTime}</span> : null}

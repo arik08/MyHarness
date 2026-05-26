@@ -257,11 +257,11 @@ def test_windows_python_direct_command_preserves_inline_quoted_arguments(
     ]
 
 
-def test_windows_py_direct_command_is_not_special_cased(monkeypatch, tmp_path: Path):
+def test_windows_unknown_direct_command_is_not_special_cased(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     argv = _resolve_windows_direct_command(
-        'py init_skill.py ui-design-essence --interface display_name="UI Design Essence"'
+        'custom-python init_skill.py ui-design-essence --interface display_name="UI Design Essence"'
     )
 
     assert argv is None

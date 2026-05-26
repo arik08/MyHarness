@@ -111,7 +111,7 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
   });
 
-  it("shows Light before POSCO in the theme cycle", async () => {
+  it("shows Light before Claude in the theme cycle", async () => {
     render(
       <AppStateProvider initialState={{ ...initialAppState, themeId: "light" }}>
         <Sidebar />
@@ -124,7 +124,7 @@ describe("Sidebar", () => {
 
     await userEvent.click(themeButton);
 
-    expect(screen.getByRole("button", { name: "테마 전환: POSCO" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "테마 전환: Claude" })).toBeTruthy();
   });
 
   it("resizes the expanded sidebar without going below the current default width", () => {

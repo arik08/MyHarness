@@ -1222,7 +1222,10 @@ async def test_backend_host_injects_client_attachment_refs_and_compose_options(t
     assert "The user attached local client files" in sent_text
     assert "original client SSD paths are not available" in sent_text
     assert "`.myharness/client-uploads/client/source.pdf`" in sent_text
+    assert "Active preview artifact: `outputs/report.html`." in sent_text
+    assert "create the next version in the same folder instead of overwriting it" in sent_text
     assert "The user selected artifact output and asked to edit the active artifact `outputs/report.html`" in sent_text
+    assert "save edits to the next version file rather than overwriting the active artifact" in sent_text
     assert "Target artifact content length: about 40,000 tokens." in sent_text
     assert "Treat this as a length target, not merely an upper cap" in sent_text
     assert "at least about 32,000 tokens" in sent_text
@@ -1231,6 +1234,8 @@ async def test_backend_host_injects_client_attachment_refs_and_compose_options(t
     assert client.requests[0].max_tokens == 50000
     assert host._bundle.engine.max_tokens == original_max_tokens
     assert "compose_target_output_tokens" not in host._bundle.engine.tool_metadata
+    assert "compose_active_artifact_path" not in host._bundle.engine.tool_metadata
+    assert "compose_artifact_versioning" not in host._bundle.engine.tool_metadata
     assert host._history_events[0] == {"type": "user", "text": "보고서 수정 [file attachments: source.pdf]"}
 
 
@@ -2975,6 +2980,35 @@ def test_forced_mcp_line_accepts_display_name_without_sticky_followup():
 
     assert "Selected MCP server: sqlite_analysis" in first_prompt
     assert followup_prompt == "간단한 데이터 뽑아봐"
+
+
+def test_selected_mcp_registry_exposes_only_selected_server_tools():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    class FakeMcpManager:
+        def list_tools(self):
+            return [
+                McpToolInfo(
+                    server_name="korean-law",
+                    name="search_decisions",
+                    description="Search decisions",
+                    input_schema={"type": "object", "properties": {}},
+                ),
+                McpToolInfo(
+                    server_name="sqlite_analysis",
+                    name="query",
+                    description="Run SQL",
+                    input_schema={"type": "object", "properties": {}},
+                ),
+            ]
+
+    host._bundle = SimpleNamespace(mcp_manager=FakeMcpManager())  # type: ignore[assignment]
+
+    registry = host._tool_registry_for_selected_mcp("korean-law")
+
+    assert registry is not None
+    assert [tool.name for tool in registry.list_tools()] == ["mcp__korean-law__search_decisions"]
+    assert registry.get("mcp__sqlite_analysis__query") is None
 
 
 @pytest.mark.asyncio

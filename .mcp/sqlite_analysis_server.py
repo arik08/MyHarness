@@ -1,4 +1,4 @@
-"""Small read-only SQLite MCP server for local analysis tests."""
+"""Read-only World Bank WDI SQLite MCP server for RDB analysis tests."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "data" / "analysis_samples.sqlite"
 MAX_ROWS = 200
 
-server = FastMCP("myharness-sqlite-analysis")
+server = FastMCP("worldbank-rdb")
 
 
 def connect() -> sqlite3.Connection:
@@ -30,6 +30,10 @@ def rows_to_json(rows: list[sqlite3.Row]) -> str:
     return json.dumps([dict(row) for row in rows], ensure_ascii=False, indent=2)
 
 
+def dicts_to_json(rows: list[dict[str, Any]]) -> str:
+    return json.dumps(rows, ensure_ascii=False, indent=2)
+
+
 def assert_read_only(sql: str) -> None:
     stripped = sql.strip().rstrip(";")
     if not re.match(r"(?is)^(select|with)\b", stripped):
@@ -41,13 +45,20 @@ def assert_read_only(sql: str) -> None:
 
 @server.tool()
 def list_tables() -> str:
-    """List available SQLite tables with row counts and source URLs."""
+    """List available SQLite tables with row counts, source URLs, and table descriptions."""
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT table_name, row_count, source, url
-            FROM dataset_sources
-            ORDER BY table_name
+            SELECT
+                s.table_name,
+                s.row_count,
+                s.source,
+                s.url,
+                d.description AS table_description
+            FROM dataset_sources AS s
+            LEFT JOIN data_dictionary_tables AS d
+                ON d.table_name = s.table_name
+            ORDER BY s.table_name
             """
         ).fetchall()
     return rows_to_json(rows)
@@ -55,7 +66,7 @@ def list_tables() -> str:
 
 @server.tool()
 def describe_table(table_name: str) -> str:
-    """Return SQLite column metadata for one table."""
+    """Return SQLite column metadata plus data-dictionary descriptions for one table."""
     safe_table = table_name.strip()
     with connect() as conn:
         known = conn.execute(
@@ -64,8 +75,20 @@ def describe_table(table_name: str) -> str:
         ).fetchone()
         if known is None:
             raise ValueError(f"Unknown table: {safe_table}")
-        rows = conn.execute(f'PRAGMA table_info("{safe_table}")').fetchall()
-    return rows_to_json(rows)
+        description_rows = conn.execute(
+            """
+            SELECT column_name, description
+            FROM data_dictionary_columns
+            WHERE table_name = ?
+            """,
+            (safe_table,),
+        ).fetchall()
+        descriptions = {row["column_name"]: row["description"] for row in description_rows}
+        rows = [
+            {**dict(row), "description": descriptions.get(row["name"])}
+            for row in conn.execute(f'PRAGMA table_info("{safe_table}")').fetchall()
+        ]
+    return dicts_to_json(rows)
 
 
 @server.tool()
@@ -94,14 +117,21 @@ def query(sql: str, limit: int = 50) -> str:
     return rows_to_json(rows)
 
 
-@server.resource("sqlite-analysis://overview", name="SQLite analysis overview")
+@server.resource("worldbank-rdb://overview", name="World Bank RDB overview")
 def overview() -> str:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT table_name, row_count, source, url
-            FROM dataset_sources
-            ORDER BY table_name
+            SELECT
+                s.table_name,
+                s.row_count,
+                s.source,
+                s.url,
+                d.description AS table_description
+            FROM dataset_sources AS s
+            LEFT JOIN data_dictionary_tables AS d
+                ON d.table_name = s.table_name
+            ORDER BY s.table_name
             """
         ).fetchall()
     return rows_to_json(rows)

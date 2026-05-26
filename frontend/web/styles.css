@@ -1,60 +1,60 @@
 :root {
   color-scheme: light;
-  --app: #ffffff;
+  --app: #f7f8fa;
   --panel: #ffffff;
-  --sidebar: #f9fafb;
-  --sidebar-hover: #f3f4f6;
-  --ink: #111827;
-  --muted: #4b5563;
-  --faint: #9ca3af;
-  --line: #e5e7eb;
-  --line-strong: #d1d5db;
-  --user: #f3f4f6;
-  --accent: #2563eb;
-  --accent-soft: #eff6ff;
-  --success: #047857;
-  --success-soft: #ecfdf5;
-  --warning: #b45309;
-  --warning-soft: #fffbeb;
-  --pin-star: #6b7280;
-  --pin-star-hover: #4b5563;
-  --shadow: 0 16px 44px rgba(17, 24, 39, 0.08);
-  --focus: rgba(37, 99, 235, 0.48);
-  --icon-muted: #6b7280;
-  --icon-hover: rgba(243, 244, 246, 0.92);
+  --sidebar: #f1f4f7;
+  --sidebar-hover: #e7ecf2;
+  --ink: #17202c;
+  --muted: #526171;
+  --faint: #8b96a3;
+  --line: #dde4eb;
+  --line-strong: #c4ced9;
+  --user: #edf2f7;
+  --accent: #0072bc;
+  --accent-soft: #e5f2fb;
+  --success: #14745f;
+  --success-soft: #e8f5f1;
+  --warning: #9a6617;
+  --warning-soft: #fff4dc;
+  --pin-star: #375f86;
+  --pin-star-hover: #22496f;
+  --shadow: 0 16px 44px rgba(23, 32, 44, 0.08);
+  --focus: rgba(0, 114, 188, 0.46);
+  --icon-muted: #667486;
+  --icon-hover: rgba(231, 236, 242, 0.92);
   --tooltip-bg: #111;
   --tooltip-ink: #fff;
-  --inverse: #111827;
+  --inverse: #17324a;
   --inverse-ink: #ffffff;
   --panel-glass: rgba(255, 255, 255, 0.9);
   --panel-raised: #ffffff;
   --chat-bg: #ffffff;
-  --new-chat: #f3f4f6;
-  --new-chat-hover: #e5e7eb;
+  --new-chat: #e7ecf2;
+  --new-chat-hover: #dbe3eb;
   --composer-bg: rgba(255, 255, 255, 0.94);
-  --composer-border: rgba(209, 213, 219, 0.9);
-  --composer-shadow: 0 16px 42px rgba(17, 24, 39, 0.09), 0 3px 10px rgba(17, 24, 39, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.94);
+  --composer-border: rgba(196, 206, 217, 0.9);
+  --composer-shadow: 0 16px 42px rgba(23, 32, 44, 0.09), 0 3px 10px rgba(23, 32, 44, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.94);
   --composer-fade: rgba(255, 255, 255, 1);
   --danger: #dc2626;
   --danger-soft: #fef2f2;
-  --link: #1d4ed8;
-  --code-bg: #111827;
-  --code-ink: #f9fafb;
-  --code-border: rgba(229, 231, 235, 0.16);
+  --link: #0065a8;
+  --code-bg: #17202c;
+  --code-ink: #f7fafc;
+  --code-border: rgba(221, 228, 235, 0.16);
   --code-copy-bg: rgba(255, 255, 255, 0.1);
   --code-copy-bg-hover: rgba(255, 255, 255, 0.16);
   --code-copy-border: rgba(255, 255, 255, 0.24);
   --code-copy-border-hover: rgba(255, 255, 255, 0.34);
   --code-copy-ink: #f8f8f6;
-  --skill-token-bg: #f5f3ff;
-  --skill-token-ink: #6d28d9;
-  --skill-token-mark-bg: #7c3aed;
+  --skill-token-bg: #eef2f7;
+  --skill-token-ink: #375f86;
+  --skill-token-mark-bg: #526171;
   --skill-token-mark-ink: #fff;
-  --command-token-bg: #eff6ff;
-  --command-token-ink: #1d4ed8;
-  --command-token-mark-bg: #2563eb;
+  --command-token-bg: #e5f2fb;
+  --command-token-ink: #0065a8;
+  --command-token-mark-bg: #0072bc;
   --command-token-mark-ink: #fff;
-  --send-button-bg: #111827;
+  --send-button-bg: #0072bc;
   --send-button-ink: #ffffff;
   --stop-button-bg: var(--danger-soft);
   --stop-button-ink: var(--danger);
@@ -129,67 +129,6 @@
   --stop-button-bg: var(--danger-soft);
   --stop-button-ink: var(--danger);
   --stop-button-border: rgba(194, 75, 53, 0.28);
-}
-
-:root[data-theme="posco"] {
-  color-scheme: light;
-  --app: #f5f8fc;
-  --panel: #fbfdff;
-  --sidebar: #eef4fb;
-  --sidebar-hover: #dfeaf7;
-  --ink: #17243a;
-  --muted: #56677f;
-  --faint: #8796aa;
-  --line: #d6e2ef;
-  --line-strong: #afc5db;
-  --user: #e5eef8;
-  --accent: #0072bc;
-  --accent-soft: #dff0ff;
-  --success: #1b6f64;
-  --success-soft: #dff2ef;
-  --warning: #7a5b15;
-  --warning-soft: #f6ecd2;
-  --pin-star: #1e3a8a;
-  --pin-star-hover: #172554;
-  --shadow: 0 16px 48px rgba(24, 60, 100, 0.13);
-  --focus: rgba(0, 114, 188, 0.55);
-  --icon-muted: #607793;
-  --icon-hover: rgba(221, 235, 249, 0.9);
-  --inverse: #0a4e86;
-  --inverse-ink: #f6fbff;
-  --panel-glass: rgba(251, 253, 255, 0.88);
-  --panel-raised: #ffffff;
-  --chat-bg: #fff;
-  --new-chat: #dfeaf7;
-  --new-chat-hover: #cbdced;
-  --composer-bg: rgba(251, 253, 255, 0.92);
-  --composer-border: rgba(177, 199, 220, 0.9);
-  --composer-shadow: 0 18px 46px rgba(24, 60, 100, 0.14), 0 3px 10px rgba(24, 60, 100, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  --composer-fade: rgba(255, 255, 255, 1);
-  --danger: #b94747;
-  --danger-soft: #f7dede;
-  --link: #0065a8;
-  --code-bg: #233140;
-  --code-ink: #f3f8fc;
-  --code-border: rgba(196, 210, 223, 0.18);
-  --code-copy-bg: rgba(243, 248, 252, 0.1);
-  --code-copy-bg-hover: rgba(243, 248, 252, 0.2);
-  --code-copy-border: rgba(243, 248, 252, 0.18);
-  --code-copy-border-hover: rgba(243, 248, 252, 0.3);
-  --code-copy-ink: #f6fbff;
-  --skill-token-bg: #e8edff;
-  --skill-token-ink: #3457b5;
-  --skill-token-mark-bg: #3157c5;
-  --skill-token-mark-ink: #fff;
-  --command-token-bg: #e0f1ff;
-  --command-token-ink: #0065a8;
-  --command-token-mark-bg: #0072bc;
-  --command-token-mark-ink: #fff;
-  --send-button-bg: #afc5db;
-  --send-button-ink: #0a365f;
-  --stop-button-bg: #f2e6e6;
-  --stop-button-ink: #9d4444;
-  --stop-button-border: rgba(185, 71, 71, 0.26);
 }
 
 :root[data-theme="dark"] {
@@ -1539,11 +1478,12 @@ a:focus-visible {
   place-items: center;
   width: 30px;
   height: 30px;
-  background: var(--inverse);
+  background: var(--accent);
   border-radius: 999px;
-  color: var(--inverse-ink);
+  color: #ffffff;
   font-size: 11px;
   font-weight: 820;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .runtime-copy {
@@ -3168,6 +3108,22 @@ a:focus-visible {
   width: 100%;
 }
 
+.message.shared-chat-target .bubble {
+  animation: shared-chat-target-pulse 1.8s ease;
+}
+
+@keyframes shared-chat-target-pulse {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+
+  18%,
+  72% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 36%, transparent);
+  }
+}
+
 .assistant-markdown-flow {
   display: flex;
   flex-direction: column;
@@ -4334,7 +4290,6 @@ a:focus-visible {
 
 .project-file-item:hover .project-file-floating-actions,
 .project-file-item:has(.project-file-floating-actions :focus-visible) .project-file-floating-actions,
-.project-file-item:has(.project-file-pin.active) .project-file-floating-actions,
 .project-file-item.delete-ready .project-file-floating-actions,
 .project-file-item.deleting .project-file-floating-actions {
   opacity: 1;
@@ -5960,14 +5915,8 @@ a:focus-visible {
 :root:not([data-theme]) .workflow-web-query,
 :root[data-theme="light"] .workflow-web-query {
   color: #ffffff;
-  background: #1f2937;
-  border-color: #111827;
-}
-
-:root[data-theme="posco"] .workflow-web-query {
-  color: #ffffff;
-  background: #0a4e86;
-  border-color: #073b66;
+  background: #0072bc;
+  border-color: #0065a8;
 }
 
 :root[data-theme="claude"] .workflow-web-query {
@@ -6056,18 +6005,13 @@ a:focus-visible {
 }
 
 :root:not([data-theme]) .workflow-output-preview {
-  background: #f8fafc;
-  border-color: #e4e9f0;
+  background: #f4f8fb;
+  border-color: #dbe7f1;
 }
 
 :root[data-theme="claude"] .workflow-output-preview {
   background: #f8f5f0;
   border-color: #e7dfd4;
-}
-
-:root[data-theme="posco"] .workflow-output-preview {
-  background: #f3f8fd;
-  border-color: #d9e8f6;
 }
 
 .workflow-output-preview.hidden {
@@ -6133,6 +6077,44 @@ a:focus-visible {
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
+}
+
+.workflow-output-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-output-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: color-mix(in srgb, var(--accent) 72%, var(--ink));
+  background: color-mix(in srgb, var(--panel-raised) 88%, var(--accent-soft) 12%);
+  border: 1px solid color-mix(in srgb, var(--line) 68%, var(--accent) 32%);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.workflow-output-open:hover:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 20%, var(--panel-raised));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.workflow-output-open:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.workflow-output-open svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
 }
 
 .workflow-output-body {

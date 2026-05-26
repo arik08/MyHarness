@@ -66,6 +66,7 @@ MAX_TRACKED_VERIFIED_WORK = 10
 MAX_AUTO_CONTINUATIONS = 4
 PROVIDER_STREAM_IDLE_FIRST_SECONDS = 7.0
 PROVIDER_STREAM_IDLE_REPEAT_SECONDS = 10.0
+PROVIDER_STREAM_IDLE_MAX_SECONDS = 600.0
 ASYNC_AGENT_FINALIZATION_BLOCK_MESSAGE = (
     "아직 pending worker가 있습니다. 최종 산출물을 만들기 전에 `task_output`/`task_get`으로 worker 결과를 먼저 확인하거나, "
     "필요하면 worker를 중단, 교체, relay, 또는 승계하세요."
@@ -369,11 +370,19 @@ async def _stream_provider_events_with_idle_status(
     task = asyncio.create_task(_produce())
     timeout = max(0.0, PROVIDER_STREAM_IDLE_FIRST_SECONDS)
     repeat = max(0.0, PROVIDER_STREAM_IDLE_REPEAT_SECONDS)
+    max_idle = max(0.0, float(os.environ.get("MYHARNESS_PROVIDER_STREAM_IDLE_MAX_SECONDS") or PROVIDER_STREAM_IDLE_MAX_SECONDS))
+    idle_started_at: float | None = None
     try:
         while True:
             try:
                 item = await asyncio.wait_for(queue.get(), timeout=timeout or None)
             except asyncio.TimeoutError:
+                now = time.monotonic()
+                idle_started_at = idle_started_at or now
+                if max_idle and now - idle_started_at >= max_idle:
+                    raise TimeoutError(
+                        f"Provider stream produced no events for {max_idle:.0f} seconds."
+                    )
                 yield StatusEvent(message=_provider_stream_idle_message(context))
                 timeout = repeat
                 continue
@@ -382,6 +391,7 @@ async def _stream_provider_events_with_idle_status(
             if isinstance(item, BaseException):
                 raise item
             timeout = repeat
+            idle_started_at = None
             yield item
     finally:
         if not task.done():
@@ -1210,6 +1220,7 @@ async def _execute_tool_call(
         ToolExecutionContext(
             cwd=context.cwd,
             metadata={
+                "_shared_tool_metadata": context.tool_metadata or {},
                 "api_client": context.api_client,
                 "tool_registry": context.tool_registry,
                 "ask_user_prompt": context.ask_user_prompt,

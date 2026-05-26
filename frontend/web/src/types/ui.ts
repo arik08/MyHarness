@@ -68,7 +68,7 @@ export type WorkflowEvent = {
   output?: string;
 };
 
-export type ThemeId = "light" | "claude" | "posco" | "dark" | "mono" | "mono-orange";
+export type ThemeId = "light" | "claude" | "dark" | "mono" | "mono-orange";
 export type SidebarCollapseReason = "auto" | "manual" | null;
 
 export type ComposerState = {

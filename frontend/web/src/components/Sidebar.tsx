@@ -14,7 +14,6 @@ import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/run
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
   { id: "light", label: "Light" },
-  { id: "posco", label: "POSCO" },
   { id: "claude", label: "Claude" },
   { id: "dark", label: "Dark-Blue" },
   { id: "mono", label: "MonoChrome-Green" },

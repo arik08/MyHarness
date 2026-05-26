@@ -229,14 +229,14 @@ OpenHarness Web.url
 
 - `node`
 - `npm`
-- `py` / Python 3
+- `python` / Python 3
 - OpenHarness 실행에 필요한 Python 패키지 import
 - `frontend\web\node_modules`
 
 Python 패키지가 부족하면 아래 명령을 자동으로 실행합니다.
 
 ```powershell
-py -3 -m pip install -e .
+python -m pip install -e .
 ```
 
 웹 의존성이 없으면 아래 명령을 자동으로 실행합니다.

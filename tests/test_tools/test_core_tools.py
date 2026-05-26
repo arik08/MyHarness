@@ -110,6 +110,36 @@ async def test_file_write_warns_model_when_target_artifact_is_too_short(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_active_artifact_versioning_blocks_original_write_and_edit(tmp_path: Path):
+    active = tmp_path / "outputs" / "report.html"
+    active.parent.mkdir(parents=True)
+    active.write_text("<h1>Original</h1>", encoding="utf-8")
+    (tmp_path / "outputs" / "report v1.html").write_text("<h1>Legacy v1</h1>", encoding="utf-8")
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            "compose_artifact_versioning": True,
+            "compose_active_artifact_path": "outputs/report.html",
+        },
+    )
+
+    write_result = await FileWriteTool().execute(
+        FileWriteToolInput(path="outputs/report.html", content="<h1>Changed</h1>"),
+        context,
+    )
+    edit_result = await FileEditTool().execute(
+        FileEditToolInput(path="outputs/report.html", old_str="Original", new_str="Changed"),
+        context,
+    )
+
+    assert write_result.is_error is True
+    assert edit_result.is_error is True
+    assert "outputs/report_v2.html" in write_result.output
+    assert "outputs/report_v2.html" in edit_result.output
+    assert active.read_text(encoding="utf-8") == "<h1>Original</h1>"
+
+
+@pytest.mark.asyncio
 async def test_file_write_blocks_invalid_mermaid_before_writing(tmp_path: Path, monkeypatch):
     from myharness.tools import mermaid_preflight
 

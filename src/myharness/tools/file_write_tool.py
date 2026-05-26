@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -58,6 +59,9 @@ class FileWriteTool(BaseTool):
 
         if arguments.create_directories:
             path.parent.mkdir(parents=True, exist_ok=True)
+        version_guard = _active_artifact_version_guard(path, context)
+        if version_guard:
+            return ToolResult(output=version_guard, is_error=True)
         mermaid_errors = mermaid_preflight_errors(path, arguments.content)
         if mermaid_errors:
             return ToolResult(
@@ -85,6 +89,33 @@ def _resolve_path(base: Path, candidate: str) -> Path:
     if not path.is_absolute():
         path = base / path
     return path.resolve()
+
+
+def _active_artifact_version_guard(path: Path, context: ToolExecutionContext) -> str:
+    if not bool(context.metadata.get("compose_artifact_versioning")):
+        return ""
+    active = str(context.metadata.get("compose_active_artifact_path") or "").strip()
+    if not active:
+        return ""
+    active_path = _resolve_path(context.cwd, active)
+    if path != active_path:
+        return ""
+    next_path = _next_version_path(active_path)
+    return (
+        "활성 preview 산출물은 원본으로 보존해야 합니다. "
+        f"`{display_tool_path(path, context.cwd)}`에 직접 쓰지 말고, "
+        f"`{display_tool_path(next_path, context.cwd)}` 같은 다음 버전 파일에 저장하세요."
+    )
+
+
+def _next_version_path(path: Path) -> Path:
+    stem = re.sub(r"[\s_]+(?:ver\.|v)\d+$", "", path.stem, flags=re.IGNORECASE)
+    for index in range(1, 1000):
+        candidate = path.with_name(f"{stem}_v{index}{path.suffix}")
+        legacy = path.with_name(f"{stem} v{index}{path.suffix}")
+        if not candidate.exists() and not legacy.exists():
+            return candidate
+    return path.with_name(f"{stem}_v999{path.suffix}")
 
 
 def _target_length_feedback(content: str, path: Path, context: ToolExecutionContext) -> str:

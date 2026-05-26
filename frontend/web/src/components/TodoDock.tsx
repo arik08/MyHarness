@@ -25,6 +25,8 @@ type TodoDockProps = {
   variant?: "dock" | "composerButton";
 };
 
+const maxTodoActivityLines = 3;
+
 const todoActivityGenericDetails = new Set([
   "준비됨",
   "요청 확인",
@@ -207,7 +209,7 @@ function todoActivityLines(state: AppState) {
   if (!hasLongReportActivity) {
     appendTodoActivityLine(lines, state.statusText);
   }
-  return lines.slice(-4);
+  return lines.slice(-maxTodoActivityLines);
 }
 
 const longReportActivityUiEnabled = false;

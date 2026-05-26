@@ -58,14 +58,15 @@ from myharness.skills.loader import is_learned_skill
 from myharness.skills.state import apply_skill_enabled_state
 from myharness.skills.types import SkillDefinition
 from myharness.tasks import get_task_manager
-from myharness.tools.mcp_tool import _sanitize_tool_segment
+from myharness.tools import ToolRegistry
+from myharness.tools.mcp_tool import McpToolAdapter, _sanitize_tool_segment
 from myharness.ui.async_agents import (
     format_completed_task_notifications,
     pending_async_agent_entries,
     wait_for_completed_async_agent_entries,
 )
 from myharness.ui.protocol import BackendEvent, FrontendRequest, PluginSnapshot, SkillSnapshot, TranscriptItem
-from myharness.ui.runtime import build_runtime, close_runtime, handle_line, refresh_runtime_client, start_runtime
+from myharness.ui.runtime import build_runtime, close_runtime, handle_line, refresh_runtime_client, start_runtime, sync_app_state
 from myharness.services.session_backend import SessionBackend
 
 log = logging.getLogger(__name__)
@@ -366,6 +367,13 @@ def _format_compose_options_note(options: object | None) -> str:
     except (TypeError, ValueError):
         target_output_tokens = 0
     lines = ["# Compose Options", ""]
+    if active_artifact_path and output_surface != "chat":
+        lines.extend(
+            [
+                f"Active preview artifact: `{active_artifact_path}`.",
+                "If the user asks to change, update, fix, adjust, tweak, or modify this artifact from chat, preserve the active file as the original and create the next version in the same folder instead of overwriting it. Use the same base name with `_vN` before the extension, treating existing `_vN` and ` vN` files as versions, then edit that new version file.",
+            ]
+        )
     if output_surface == "chat":
         lines.append("The user selected chat output. Prefer a Markdown answer in the conversation and avoid creating large files unless necessary.")
     elif output_surface == "artifact":
@@ -373,7 +381,7 @@ def _format_compose_options_note(options: object | None) -> str:
             lines.append("The user selected artifact output and asked to create a new artifact. Save the result under `outputs/` with a meaningful filename.")
         elif artifact_action == "edit":
             target = f" `{active_artifact_path}`" if active_artifact_path else ""
-            lines.append(f"The user selected artifact output and asked to edit the active artifact{target}. Inspect the target before changing it.")
+            lines.append(f"The user selected artifact output and asked to edit the active artifact{target}. Inspect the target, then save edits to the next version file rather than overwriting the active artifact.")
         else:
             lines.append("The user selected artifact output. Decide whether to create or edit an artifact, and save meaningful outputs under `outputs/`.")
     elif artifact_action or target_output_tokens:
@@ -381,7 +389,7 @@ def _format_compose_options_note(options: object | None) -> str:
             lines.append("The user left output surface on auto, but if you create an artifact, prefer creating a new artifact under `outputs/`.")
         elif artifact_action == "edit":
             target = f" `{active_artifact_path}`" if active_artifact_path else ""
-            lines.append(f"The user left output surface on auto, but if you edit an artifact, inspect the active artifact{target} before changing it.")
+            lines.append(f"The user left output surface on auto, but if you edit an artifact, inspect the active artifact{target}, then save edits to the next version file rather than overwriting it.")
         else:
             lines.append("The user left output surface on auto. Apply the following artifact preferences only if you decide to create or edit an artifact.")
     if output_surface != "chat" and target_output_tokens:
@@ -1227,6 +1235,7 @@ class ReactBackendHost:
                     continue
                 if request.type == "refresh_skills":
                     self._sync_learning_mode()
+                    await self._refresh_mcp_configs()
                     await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
                     await self._emit(self._status_snapshot())
                     continue
@@ -1297,6 +1306,7 @@ class ReactBackendHost:
                 line = (request.line or "").strip()
                 if not line and not request.attachments and not request.attachment_refs:
                     continue
+                await self._refresh_mcp_configs()
                 self._busy = True
                 try:
                     self._active_request_task = asyncio.create_task(
@@ -1711,6 +1721,7 @@ class ReactBackendHost:
             if note
         ]
         is_shell_shortcut = not image_blocks and not client_attachment_refs and line.lstrip().startswith("!")
+        selected_mcp = None if image_blocks or is_shell_shortcut else self._parse_forced_mcp_line(line)
         effective_line = line if image_blocks or is_shell_shortcut else self._line_with_forced_skill(line)
         if prompt_notes and not is_shell_shortcut:
             effective_line = "\n\n".join(part for part in (effective_line.strip(), *prompt_notes) if part)
@@ -2027,8 +2038,27 @@ class ReactBackendHost:
             else None
         )
         original_max_tokens = self._bundle.engine.max_tokens
+        original_tool_registry = self._bundle.tool_registry
+        original_engine_tool_registry = getattr(self._bundle.engine, "_tool_registry", None)
+        selected_mcp_registry = (
+            self._tool_registry_for_selected_mcp(selected_mcp[0])
+            if selected_mcp is not None
+            else None
+        )
+        selected_mcp_metadata_keys = (
+            "selected_mcp_server",
+            "selected_mcp_tool_calls",
+            "selected_mcp_not_found_count",
+            "selected_mcp_success_count",
+        )
         target_output_tokens = _compose_target_output_tokens(compose_options)
-        target_metadata_keys = ("compose_target_output_tokens", "compose_target_output_floor_tokens")
+        target_metadata_keys = (
+            "compose_target_output_tokens",
+            "compose_target_output_floor_tokens",
+            "compose_active_artifact_path",
+            "compose_artifact_action",
+            "compose_artifact_versioning",
+        )
         original_target_metadata = {
             key: self._bundle.engine.tool_metadata.get(key)
             for key in target_metadata_keys
@@ -2041,6 +2071,13 @@ class ReactBackendHost:
                 self._bundle.engine.tool_metadata["compose_target_output_floor_tokens"] = int(target_output_tokens * 0.8)
                 self._bundle.engine.set_max_tokens(_compose_model_request_tokens(target_output_tokens))
                 max_tokens_changed = True
+            active_artifact_path = str(getattr(compose_options, "active_artifact_path", "") or "").strip()
+            if active_artifact_path:
+                self._bundle.engine.tool_metadata["compose_active_artifact_path"] = active_artifact_path
+                self._bundle.engine.tool_metadata["compose_artifact_action"] = str(
+                    getattr(compose_options, "artifact_action", "") or "auto"
+                )
+                self._bundle.engine.tool_metadata["compose_artifact_versioning"] = True
             if (
                 first_token != "/clear"
                 and not first_token.startswith("/")
@@ -2058,6 +2095,13 @@ class ReactBackendHost:
             if original_messages is not None:
                 self._bundle.engine.clear()
             try:
+                if selected_mcp_registry is not None:
+                    self._bundle.engine.tool_metadata["selected_mcp_server"] = selected_mcp[0]
+                    self._bundle.engine.tool_metadata["selected_mcp_tool_calls"] = 0
+                    self._bundle.engine.tool_metadata["selected_mcp_not_found_count"] = 0
+                    self._bundle.engine.tool_metadata["selected_mcp_success_count"] = 0
+                    self._bundle.tool_registry = selected_mcp_registry
+                    setattr(self._bundle.engine, "_tool_registry", selected_mcp_registry)
                 should_continue = await handle_line(
                     self._bundle,
                     effective_prompt,
@@ -2121,6 +2165,11 @@ class ReactBackendHost:
                     self._bundle.engine.tool_metadata[key] = original_target_metadata[key]
                 else:
                     self._bundle.engine.tool_metadata.pop(key, None)
+            self._bundle.tool_registry = original_tool_registry
+            if original_engine_tool_registry is not None:
+                setattr(self._bundle.engine, "_tool_registry", original_engine_tool_registry)
+            for key in selected_mcp_metadata_keys:
+                self._bundle.engine.tool_metadata.pop(key, None)
             await _stop_all_tool_progress()
             release_mutation_lock(self._bundle.engine.tool_metadata.pop("mutation_lock_token", None))
 
@@ -2374,7 +2423,36 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="error", message=f"알 수 없는 MCP 서버입니다: {name}"))
             return
         set_project_mcp_enabled(self._bundle.cwd, name, enabled is not False, settings)
+        await self._refresh_mcp_configs()
         await self._emit(self._status_snapshot())
+
+    async def _refresh_mcp_configs(self) -> None:
+        """Connect newly discovered MCP configs and expose their tools immediately."""
+        assert self._bundle is not None
+        configs = load_mcp_server_configs(
+            self._bundle.current_settings(),
+            self._bundle.current_plugins(),
+            cwd=self._bundle.cwd,
+        )
+        changed = False
+        for name, config in configs.items():
+            changed = await self._bundle.mcp_manager.ensure_server_config(name, config) or changed
+        if not changed:
+            return
+        for tool_info in self._bundle.mcp_manager.list_tools():
+            self._bundle.tool_registry.register(McpToolAdapter(self._bundle.mcp_manager, tool_info))
+        sync_app_state(self._bundle)
+
+    def _tool_registry_for_selected_mcp(self, server_name: str) -> ToolRegistry | None:
+        assert self._bundle is not None
+        registry = ToolRegistry()
+        matched = False
+        for tool_info in self._bundle.mcp_manager.list_tools():
+            if tool_info.server_name != server_name:
+                continue
+            registry.register(McpToolAdapter(self._bundle.mcp_manager, tool_info))
+            matched = True
+        return registry if matched else None
 
     async def _handle_set_plugin_enabled(self, name: str, enabled: bool | None) -> None:
         assert self._bundle is not None
@@ -2444,6 +2522,8 @@ class ReactBackendHost:
             f"The user explicitly selected the `{status.name}` MCP server with `$mcp:`. "
             "Use this selected MCP server before answering whenever the request can be satisfied by it. "
             "If the server exposes an appropriate tool, call that MCP tool first and base the answer on the result. "
+            "Keep MCP usage tight: make at most two targeted searches before summarizing, and if one search returns useful results, stop broad keyword retries. "
+            "If an MCP result says [NOT_FOUND], do not repeat similar keyword variations more than once; report the miss briefly and summarize any successful results. "
             "For questions about what data is available or what can be queried, call "
             f"`{list_tables_tool or 'the selected MCP list_tables tool'}` first instead of relying only on generic MCP resource listing.\n\n"
             f"Selected MCP server: {status.name}\n"

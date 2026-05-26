@@ -1971,6 +1971,73 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-list .workflow-step.child small")?.textContent).toBe("완료 · 파일 작업 완료 · live.html");
   });
 
+  it("opens a completed html write preview before the final assistant answer arrives", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            path: "outputs/fast-report.html",
+            name: "fast-report.html",
+            kind: "html",
+            content: "<!doctype html><html><body>fast</body></html>",
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "live-session",
+          clientId: "client-1",
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-done",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "Wrote outputs/fast-report.html",
+              output: "Wrote outputs/fast-report.html",
+              status: "done",
+              level: "child",
+              toolInput: {
+                path: "outputs/fast-report.html",
+                content: "<!doctype html><html><body>fast</body></html>",
+              },
+            },
+            {
+              id: "workflow-waiting",
+              toolName: "",
+              title: "후속 응답 대기",
+              detail: "파일 작성은 완료됐고, 결과를 모델에 전달했습니다.",
+              status: "running",
+              level: "parent",
+              role: "activity",
+            },
+          ],
+        }}
+      >
+        <MessageList />
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const openButton = screen.getByRole("button", { name: "fast-report.html 미리보기 열기" });
+    expect(openButton.closest(".workflow-output-preview")).toBeTruthy();
+
+    await userEvent.click(openButton);
+
+    await waitFor(() => expect(screen.getByText("fast-report.html")).toBeTruthy());
+    expect(document.querySelector(".artifact-panel")).toBeTruthy();
+  });
+
   it("renders edit previews as colored diff rows", () => {
     render(
       <AppStateProvider
@@ -2638,7 +2705,46 @@ describe("MessageList", () => {
     expect(screen.getByText("답변 완료")).toBeTruthy();
     expect(screen.getByLabelText("원문 복사")).toBeTruthy();
     expect(screen.getByLabelText("본문 저장")).toBeTruthy();
+    expect(screen.getByLabelText("채팅 링크 공유")).toBeTruthy();
     expect(screen.getByText("'26.01.04 (일) 15:32:00")).toBeTruthy();
+  });
+
+  it("copies a shareable chat link for a completed assistant answer", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      expect(String(input)).toBe("/api/share/base-url");
+      return {
+        ok: true,
+        json: async () => ({ baseUrl: "http://10.0.0.5:4273" }),
+      } as Response;
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "live-session",
+          activeHistoryId: "saved-chat",
+          workspaceName: "Default",
+          messages: [
+            { id: "assistant-1", role: "assistant", text: "공유할 답변입니다.", isComplete: true },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByLabelText("채팅 링크 공유"));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+      "http://10.0.0.5:4273/?chat=saved-chat&message=assistant-1&workspace=Default",
+    ));
+    expect(await screen.findByText("공유 링크를 복사했습니다.")).toBeTruthy();
   });
 
   it("shows only the filename after saving a completed assistant answer", async () => {
@@ -3441,6 +3547,7 @@ describe("MessageList", () => {
     expect(screen.queryByText("답변 완료")).toBeNull();
     expect(screen.queryByLabelText("원문 복사")).toBeNull();
     expect(screen.queryByLabelText("본문 저장")).toBeNull();
+    expect(screen.queryByLabelText("채팅 링크 공유")).toBeNull();
   });
 
   it("keeps visible tool-use handoff text in the chat body", async () => {
@@ -3466,6 +3573,7 @@ describe("MessageList", () => {
     expect(screen.queryByText("답변 완료")).toBeNull();
     expect(screen.queryByLabelText("원문 복사")).toBeNull();
     expect(screen.queryByLabelText("본문 저장")).toBeNull();
+    expect(screen.queryByLabelText("채팅 링크 공유")).toBeNull();
   });
 
   it("buffers the active streaming assistant answer before revealing it smoothly", () => {

@@ -201,12 +201,15 @@ function isSlashCommandMessage(text: string) {
   return /^\/\S*/.test(String(text || "").trim());
 }
 
-function initialThemeId(): ThemeId {
-  const value = loadLocalStorageValue("myharness:theme");
-  if (value === "nexus") {
+function normalizeThemeId(value: string): ThemeId {
+  if (value === "nexus" || value === "posco") {
     return "light";
   }
-  return value === "claude" || value === "posco" || value === "dark" || value === "mono" || value === "mono-orange" ? value : "light";
+  return value === "claude" || value === "dark" || value === "mono" || value === "mono-orange" ? value : "light";
+}
+
+function initialThemeId(): ThemeId {
+  return normalizeThemeId(loadLocalStorageValue("myharness:theme"));
 }
 
 function storedArtifactPanelWidth(key: string) {
@@ -2605,7 +2608,9 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
   if (event.type === "line_complete") {
     const hasRestorableWorkflow = hasRestorableWorkflowEvents(state.workflowEvents);
     const workflowAnchorMessageId = hasRestorableWorkflow ? state.workflowAnchorMessageId : null;
-    const workflowEvents = hasRestorableWorkflow ? state.workflowEvents : [];
+    const workflowEvents = hasRestorableWorkflow
+      ? refreshPurposeEvents(completeActivityStep(completePlanning(state.workflowEvents), "작업을 마쳤습니다."))
+      : [];
     const workflowDurationSeconds = hasRestorableWorkflow
       ? workflowDurationFromMetadata(recordOrNull(event.compact_metadata)) ?? workflowElapsedDurationSeconds(state)
       : null;

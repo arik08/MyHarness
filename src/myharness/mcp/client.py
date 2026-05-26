@@ -88,6 +88,45 @@ class McpClientManager:
         """Return one configured server object if present."""
         return self._server_configs.get(name)
 
+    async def ensure_server_config(self, name: str, config: object) -> bool:
+        """Add or refresh one server config and connect it if needed."""
+        existing = self._server_configs.get(name)
+        status = self._statuses.get(name)
+        if existing == config and status is not None and status.state != "pending":
+            return False
+        if name in self._stacks:
+            with contextlib.suppress(RuntimeError, asyncio.CancelledError):
+                await self._stacks.pop(name).aclose()
+            self._sessions.pop(name, None)
+        self._server_configs[name] = config
+        self._statuses[name] = McpConnectionStatus(
+            name=name,
+            state="pending",
+            transport=getattr(config, "type", "unknown"),
+        )
+        if getattr(config, "auto_connect", True) is False:
+            self._statuses[name] = McpConnectionStatus(
+                name=name,
+                state="pending",
+                transport=getattr(config, "type", "unknown"),
+                auth_configured=bool(getattr(config, "headers", None)),
+                detail="Configured; automatic connection is disabled.",
+            )
+            return True
+        if isinstance(config, McpStdioServerConfig):
+            await self._connect_stdio(name, config)
+        elif isinstance(config, McpHttpServerConfig):
+            await self._connect_http(name, config)
+        else:
+            self._statuses[name] = McpConnectionStatus(
+                name=name,
+                state="failed",
+                transport=getattr(config, "type", "unknown"),
+                auth_configured=bool(getattr(config, "headers", None)),
+                detail=f"Unsupported MCP transport in current build: {getattr(config, 'type', 'unknown')}",
+            )
+        return True
+
     async def close(self) -> None:
         """Close all active MCP sessions."""
         for stack in list(self._stacks.values()):

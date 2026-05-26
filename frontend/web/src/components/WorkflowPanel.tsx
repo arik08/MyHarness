@@ -1,6 +1,17 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { readArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
+import type { ArtifactSummary } from "../types/backend";
 import type { WorkflowEvent } from "../types/ui";
+import {
+  artifactDisplayName,
+  artifactKind,
+  artifactLabelForPath,
+  artifactName,
+  isKnownArtifactPath,
+  normalizeArtifactPath,
+} from "../utils/artifacts";
+import { Icon } from "./ArtifactIcons";
 
 function statusLabel(status: string) {
   if (status === "running") return "진행 중";
@@ -385,6 +396,20 @@ const workflowRunningPreviewFullRenderMaxChars = 80_000;
 const workflowRunningPreviewTailChars = 48_000;
 const workflowPreviewOutputBufferMs = 128;
 
+function workflowPreviewArtifact(source: WorkflowPreviewSource, done: boolean): ArtifactSummary | null {
+  const path = normalizeArtifactPath(source.path);
+  const kind = artifactKind(path);
+  if (!done || source.kind !== "content" || kind !== "html" || !isKnownArtifactPath(path)) {
+    return null;
+  }
+  return {
+    path,
+    name: artifactName(path),
+    kind,
+    label: artifactLabelForPath(path, kind),
+  };
+}
+
 function useSmoothWorkflowPreviewText(targetText: string, running: boolean, revealDurationMs: number) {
   const [visibleText, setVisibleText] = useState(targetText);
   const visibleTextRef = useRef(targetText);
@@ -744,6 +769,8 @@ function WorkflowOutputPreview({
   source: WorkflowPreviewSource;
   revealDurationMs: number;
 }) {
+  const { state, dispatch } = useAppState();
+  const [openingPath, setOpeningPath] = useState("");
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
   const displayContent = workflowVisiblePreviewContent(event, source.content);
@@ -762,6 +789,34 @@ function WorkflowOutputPreview({
     : isLongReportWorkflowTool(event.toolName)
       ? formatWorkflowLongReportCount(event, source.content)
       : formatWorkflowContentCount(source.content);
+  const artifact = workflowPreviewArtifact(source, done);
+  const artifactDisplay = artifact ? artifactDisplayName(artifact) : fileName;
+
+  async function openWorkflowArtifact() {
+    if (!artifact) {
+      return;
+    }
+    const displayArtifact = { ...artifact, name: artifactDisplayName(artifact) };
+    dispatch({ type: "open_artifact", artifact: displayArtifact });
+    setOpeningPath(displayArtifact.path);
+    try {
+      const payload = await readArtifact({
+        sessionId: state.sessionId || undefined,
+        clientId: state.clientId,
+        workspacePath: displayArtifact.workspace?.path || state.workspacePath,
+        workspaceName: displayArtifact.workspace?.name || state.workspaceName,
+        path: displayArtifact.path,
+      });
+      dispatch({ type: "open_artifact", artifact: { ...displayArtifact, workspace: payload.workspace || displayArtifact.workspace }, payload });
+    } catch (error) {
+      dispatch({
+        type: "open_modal",
+        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+      });
+    } finally {
+      setOpeningPath("");
+    }
+  }
 
   useLayoutEffect(() => {
     const body = bodyRef.current;
@@ -775,7 +830,21 @@ function WorkflowOutputPreview({
     <div className="workflow-output-preview">
       <div className="workflow-output-title">
         <span className="workflow-output-label">{fileName ? `${prefix} - ${fileName}` : prefix}</span>
-        <span className="workflow-output-line-count">{count}</span>
+        <span className="workflow-output-actions">
+          <span className="workflow-output-line-count">{count}</span>
+          {artifact ? (
+            <button
+              className="workflow-output-open"
+              type="button"
+              aria-label={`${artifactDisplay} 미리보기 열기`}
+              data-tooltip={openingPath === artifact.path ? "불러오는 중" : "미리보기 열기"}
+              disabled={openingPath === artifact.path}
+              onClick={() => void openWorkflowArtifact()}
+            >
+              <Icon name="preview" />
+            </button>
+          ) : null}
+        </span>
       </div>
       <pre ref={bodyRef} className={bodyClassName}>{source.kind === "diff"
         ? visibleDisplayContent.split(/\r?\n/).map((line, index) => (

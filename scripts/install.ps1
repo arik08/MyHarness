@@ -291,13 +291,13 @@ if ($LauncherExe) {
     }
 } else {
     # Try module execution
-    $ModuleVersion = python -m myharness --version 2>&1
+    $ModuleVersion = & $PythonCmd -m myharness --version 2>&1
     if ($ModuleVersion) {
-        Write-Warn "Launcher commands not yet available on PATH. Run via: python -m myharness"
+        Write-Warn "Launcher commands not yet available on PATH. Run via: $PythonCmd -m myharness"
         Write-Host "  Version: $ModuleVersion"
     } else {
         Write-Warn "Could not verify launcher commands. The package may need a PATH update."
-        Write-Host "  Try: python -m myharness --version"
+        Write-Host "  Try: $PythonCmd -m myharness --version"
     }
 }
 

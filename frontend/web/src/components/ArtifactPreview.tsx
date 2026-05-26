@@ -1631,8 +1631,10 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
     if (event.key === "Escape") clearUi();
   }, true);
 
-  window.addEventListener("scroll", () => {
-    if (aiSelectionEnabled) clearUi();
+  window.addEventListener("scroll", (event) => {
+    if (!aiSelectionEnabled) return;
+    if (event.target?.closest?.(".myharness-ai-comment-popover")) return;
+    clearUi();
   }, true);
   window.addEventListener("resize", () => {
     if (aiSelectionEnabled) clearUi();

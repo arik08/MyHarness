@@ -19,3 +19,11 @@ test("keeps the project file toolbar on one row until the panel is narrow", asyn
   assert.match(controls, /flex-wrap:\s*nowrap;/);
   assert.match(narrowContainer, /\.project-file-controls\s*{[\s\S]*?flex-wrap:\s*wrap;/);
 });
+
+test("does not keep project file floating actions open for pinned rows", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const floatingActionOpenRule = css.match(/\.project-file-item:hover \.project-file-floating-actions,[\s\S]*?\.project-file-floating-actions\s*{[\s\S]*?^}/m)?.[0] ?? "";
+
+  assert.match(floatingActionOpenRule, /\.project-file-item:hover \.project-file-floating-actions/);
+  assert.doesNotMatch(floatingActionOpenRule, /project-file-pin\.active/);
+});

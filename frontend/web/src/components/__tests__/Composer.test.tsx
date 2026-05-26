@@ -22,6 +22,10 @@ vi.mock("../../api/session", () => ({
   startSession: vi.fn().mockResolvedValue({ sessionId: "session-new" }),
 }));
 
+function readStylesheet() {
+  return readFileSync(resolve(__dirname, "../../../styles.css"), "utf8").replace(/\r\n/g, "\n");
+}
+
 describe("Composer", () => {
   beforeEach(() => {
     vi.mocked(cancelMessage).mockClear();
@@ -49,10 +53,10 @@ describe("Composer", () => {
     expect(send?.disabled).toBe(true);
   });
 
-  it("uses a subdued neutral send button color in the default theme", () => {
-    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
+  it("uses POSCO Blue for the default theme send button", () => {
+    const stylesheet = readStylesheet();
 
-    expect(stylesheet).toContain("--send-button-bg: #cdb6aa;");
+    expect(stylesheet).toContain("--send-button-bg: #0072bc;");
     expect(stylesheet).toContain("--send-button-ink: #ffffff;");
   });
 
@@ -68,7 +72,7 @@ describe("Composer", () => {
 
   it("opens the attached composer panel without native title tooltips", async () => {
     const user = userEvent.setup();
-    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
+    const stylesheet = readStylesheet();
     render(
       <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
         <Composer />
@@ -189,6 +193,31 @@ describe("Composer", () => {
       composeOptions: {
         output_surface: "artifact",
         artifact_action: "edit",
+        active_artifact_path: "outputs/current-report.html",
+      },
+    }));
+  });
+
+  it("passes the active artifact path for plain chat requests from the preview context", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          activeArtifact: { path: "outputs/current-report.html", name: "current-report.html", kind: "html" },
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "이 보고서 제목만 더 짧게 바꿔줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      composeOptions: {
         active_artifact_path: "outputs/current-report.html",
       },
     }));
@@ -338,7 +367,7 @@ describe("Composer", () => {
     }));
     expect(screen.getByText("client-notes.pdf")).toBeTruthy();
     expect(screen.getByText("2.0 KB")).toBeTruthy();
-    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
+    const stylesheet = readStylesheet();
     expect(stylesheet).toContain(".composer-panel-controls {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  width: 100%;\n  min-width: 0;\n  margin-block: -2px;\n  padding-block: 2px;\n  overflow-x: auto;");
     expect(stylesheet).toContain(".composer-attachment-row {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: min(780px, calc(100% - 24px));\n  min-width: 0;\n  margin: 0 auto 7px;");
     expect(stylesheet).toContain(".pasted-text-tray {\n  display: flex;\n  gap: 6px;\n  width: min(780px, calc(100% - 24px));");
@@ -426,7 +455,7 @@ describe("Composer", () => {
   });
 
   it("renders pasted images with the legacy thumbnail chip and preview modal", async () => {
-    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
+    const stylesheet = readStylesheet();
     const file = new File(["image"], "pasted-image.png", { type: "image/png" });
     const item = { kind: "file", type: "image/png", getAsFile: () => file };
     const readerSpy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function readAsDataURLMock(this: FileReader) {
@@ -693,7 +722,7 @@ describe("Composer", () => {
 
   it("grows the input and composer frame for multiline drafts", async () => {
     const user = userEvent.setup();
-    const stylesheet = readFileSync(resolve(__dirname, "../../../styles.css"), "utf8");
+    const stylesheet = readStylesheet();
     render(
       <AppStateProvider>
         <Composer />
@@ -1452,6 +1481,55 @@ describe("Composer", () => {
     expect(screen.getByLabelText("현재 작업 진행")).toBeTruthy();
     expect(screen.getByText("unemployment_industries 테이블 범위를 확인했습니다.")).toBeTruthy();
     expect(screen.getByText("분석 결과를 보고서 구조로 정리하고 있습니다.")).toBeTruthy();
+  });
+
+  it("shows only the three most recent live workflow activity lines", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          todoMarkdown: "- [x] 범위 확인\n- [x] 구조 설계\n- [x] 우선순위 정리\n- [ ] HTML 보고서 작성",
+          statusText: "파일 작업 중",
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "",
+              title: "진행 상황",
+              detail: "보고서 범위와 활용 관점을 정리했습니다.",
+              status: "done",
+              role: "activity",
+            },
+            {
+              id: "workflow-2",
+              toolName: "",
+              title: "진행 상황",
+              detail: "포스코 업무 시나리오별 법무·규제 활용 구조화",
+              status: "done",
+              role: "activity",
+            },
+            {
+              id: "workflow-3",
+              toolName: "",
+              title: "진행 상황",
+              detail: "시각 구성·표·우선순위 매트릭스 설계",
+              status: "done",
+              role: "activity",
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const activityLines = [...document.querySelectorAll(".todo-activity-line")]
+      .map((line) => line.textContent);
+    expect(activityLines).toEqual([
+      "포스코 업무 시나리오별 법무·규제 활용 구조화",
+      "시각 구성·표·우선순위 매트릭스 설계",
+      "파일 작업 중",
+    ]);
   });
 
   it("does not mirror follow-up wait copy under the running checklist item", () => {

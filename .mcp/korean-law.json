@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "korean-law": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "korean-law-mcp@4.0.6"
+      ],
+      "env": {
+        "LAW_OC": "myeongcheol"
+      },
+      "cwd": "C:\\Users\\user\\Desktop\\Documents\\Python\\MyHarness",
+      "description": "Korean Law MCP - 법제처 Open API 기반 법령, 판례, 행정규칙, 자치법규, 조약, 해석례 조회"
+    }
+  }
+}

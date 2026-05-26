@@ -1,13 +1,13 @@
 {
   "mcpServers": {
-    "sqlite_analysis": {
+    "worldbank_rdb": {
       "type": "stdio",
-      "command": "py",
+      "description": "World Bank WDI 데이터를 SQLite 기반의 정규화된 RDB 형태로 조회하는 읽기 전용 MCP입니다. 국가/경제권, 지표, 지역, 소득그룹, 출처, 데이터 딕셔너리를 조인해 GDP, 제조업, 금속무역, 에너지, 물류, 금융 리스크 지표를 분석할 수 있습니다.",
+      "command": "python",
       "args": [
-        "-3",
-        "C:\\Users\\Myeongcheol\\Desktop\\Documents\\Programing\\MyHarness\\.mcp\\sqlite_analysis_server.py"
+        "C:\\Users\\user\\Desktop\\Documents\\Python\\MyHarness\\.mcp\\sqlite_analysis_server.py"
       ],
-      "cwd": "C:\\Users\\Myeongcheol\\Desktop\\Documents\\Programing\\MyHarness"
+      "cwd": "C:\\Users\\user\\Desktop\\Documents\\Python\\MyHarness"
     }
   }
 }

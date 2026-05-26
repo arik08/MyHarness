@@ -442,7 +442,7 @@ export function Composer() {
           options.target_output_tokens = targetOutputTokens;
         }
       }
-      if (artifactAction === "edit" && state.activeArtifact?.path) {
+      if (state.activeArtifact?.path) {
         options.active_artifact_path = state.activeArtifact.path;
       }
     }

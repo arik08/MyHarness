@@ -186,7 +186,9 @@ export function MessageList() {
         return (
           <Fragment key={message.id}>
             <article
+              id={`message-${message.id}`}
               className={`message ${message.role}${commandCatalog ? " command-output" : ""}${message.isError ? " error" : ""}${kindBadge ? ` message-kind-${kindBadge.className}` : ""}`}
+              data-message-id={message.id}
             >
               {kindBadge ? <div className="message-kind-label">{kindBadge.label}</div> : null}
               <div className="bubble">

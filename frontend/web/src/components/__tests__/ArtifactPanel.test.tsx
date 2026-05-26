@@ -1523,6 +1523,26 @@ describe("ArtifactPanel", () => {
     expect(await screen.findByRole("button", { name: "report_v1.html 파일명 수정" })).toBeTruthy();
   });
 
+  it("keeps the inline AI edit popover open when a long instruction scrolls the textarea", async () => {
+    const srcdoc = renderHtmlPreviewSrcdoc("<html><body><h1>Old headline</h1><p>Old body</p></body></html>");
+    const dom = await loadPreviewDom(srcdoc);
+
+    dom.window.document.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24,
+    }));
+    const textarea = dom.window.document.querySelector(".myharness-ai-comment-popover textarea") as HTMLTextAreaElement;
+    expect(textarea).toBeTruthy();
+
+    textarea.value = Array.from({ length: 300 }, (_, index) => `수정사항 ${index + 1}`).join("\n");
+    textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    textarea.dispatchEvent(new dom.window.Event("scroll", { bubbles: false }));
+
+    expect(dom.window.document.querySelector(".myharness-ai-comment-popover")).toBeTruthy();
+  });
+
   it("adds a document-wide AI edit comment from the preview", async () => {
     render(
       <AppStateProvider
