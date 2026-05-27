@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import os
 import re
 from typing import Any
@@ -15,6 +16,8 @@ from mcp.server.fastmcp import FastMCP
 DEFAULT_API_KEY = "NTI4ZGI4MzE5YzdlODRiYTdkZDY2MGVlMDc0ZjkxODQ="
 BASE_URL = "https://kosis.kr/openapi"
 MAX_ROWS = 500
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 server = FastMCP("kosis")
 
@@ -53,8 +56,14 @@ def _get(endpoint: str, params: dict[str, Any]) -> Any:
         "jsonVD": "Y",
     }
     query.update({key: value for key, value in params.items() if value is not None})
-    response = httpx.get(f"{BASE_URL}/{endpoint}", params=query, timeout=30)
-    response.raise_for_status()
+    try:
+        response = httpx.get(f"{BASE_URL}/{endpoint}", params=query, timeout=30)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            "KOSIS request failed. If this is a company network, check HTTPS proxy "
+            "and corporate CA settings such as HTTPS_PROXY and SSL_CERT_FILE."
+        ) from exc
     data = _parse_kosis_json(response.text)
     if isinstance(data, dict) and data.get("err"):
         raise ValueError(f"KOSIS API error {data.get('err')}: {data.get('errMsg', '')}")
@@ -167,6 +176,33 @@ def explain_statistics(
     return _to_json(data, limit)
 
 
+@server.tool()
+def check_connection() -> str:
+    """Check whether the KOSIS API is reachable from the current network."""
+    data = _get(
+        "statisticsList.do",
+        {
+            "vwCd": "MT_ZTITLE",
+            "parentId": "A",
+        },
+    )
+    rows = data if isinstance(data, list) else []
+    return _to_json(
+        {
+            "ok": True,
+            "base_url": BASE_URL,
+            "sample_count": len(rows),
+            "proxy_env_present": {
+                "HTTP_PROXY": bool(os.environ.get("HTTP_PROXY")),
+                "HTTPS_PROXY": bool(os.environ.get("HTTPS_PROXY")),
+                "SSL_CERT_FILE": bool(os.environ.get("SSL_CERT_FILE")),
+                "REQUESTS_CA_BUNDLE": bool(os.environ.get("REQUESTS_CA_BUNDLE")),
+            },
+            "message": "KOSIS API is reachable.",
+        }
+    )
+
+
 @server.resource("kosis://overview", name="KOSIS MCP overview")
 def overview() -> str:
     """Describe available KOSIS tools and common service view codes."""
@@ -179,6 +215,12 @@ def overview() -> str:
                 "get_stat_data",
                 "get_table_meta",
                 "explain_statistics",
+                "check_connection",
+            ],
+            "company_network_notes": [
+                "HTTPS is kept enabled because HTTP redirects expose query parameters.",
+                "Use HTTPS_PROXY or HTTP_PROXY if outbound traffic must pass through a company proxy.",
+                "Use SSL_CERT_FILE or REQUESTS_CA_BUNDLE if the company network requires a custom CA bundle.",
             ],
             "common_vw_cd": {
                 "MT_ZTITLE": "국내통계 주제별",
