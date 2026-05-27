@@ -122,6 +122,7 @@ function isRootSourceCodePath(path: string) {
 export function artifactKind(path: string) {
   const ext = artifactExtension(path);
   if (ext === "html" || ext === "htm") return "html";
+  if (ext === "md" || ext === "markdown") return "markdown";
   if (imageExtensions.has(ext)) return "image";
   if (ext === "pdf") return "pdf";
   if (textExtensions.has(ext)) return "text";

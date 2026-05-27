@@ -1556,7 +1556,7 @@ function forgetHiddenHistoryKey(hiddenHistoryKeys: string[], key: string) {
 }
 
 function removeHiddenHistoryRows(state: AppState, history: HistoryItem[]) {
-  if (state.adminMode || !state.hiddenHistoryKeys.length) {
+  if (state.adminMode) {
     return history;
   }
   return history.filter((item) => !isHistoryItemHidden(item, state.hiddenHistoryKeys, state.workspacePath, state.workspaceName));

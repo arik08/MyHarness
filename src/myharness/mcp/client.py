@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import inspect
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -28,6 +29,18 @@ from myharness.mcp.types import (
 
 class McpServerNotConnectedError(Exception):
     """Raised when an MCP server is not connected or its session has been lost."""
+
+
+def _stdio_cwd(config: McpStdioServerConfig) -> str | None:
+    if not config.cwd:
+        return None
+    cwd = Path(config.cwd).expanduser()
+    if cwd.is_absolute():
+        return str(cwd)
+    cwd_base = getattr(config, "_cwd_base", None)
+    if cwd_base:
+        return str((Path(cwd_base).expanduser() / cwd).resolve())
+    return config.cwd
 
 
 class McpClientManager:
@@ -213,7 +226,7 @@ class McpClientManager:
                         command=config.command,
                         args=config.args,
                         env=config.env,
-                        cwd=config.cwd,
+                        cwd=_stdio_cwd(config),
                     )
                 )
             )

@@ -6,8 +6,15 @@ $script:ViteProcess = $null
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
 
-    & taskkill.exe /PID $ProcessId /T /F >$null 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    try {
+        & taskkill.exe /PID $ProcessId /T /F >$null 2>$null
+        $taskkillExitCode = $LASTEXITCODE
+    }
+    catch {
+        $taskkillExitCode = 1
+    }
+
+    if ($taskkillExitCode -ne 0) {
         Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
     }
 }
@@ -31,10 +38,6 @@ function Stop-ChildProcess {
     }
 }
 
-function Test-ClosePortProcessEnabled {
-    return $env:MYHARNESS_CLOSE_PORT_PROCESS -eq "1"
-}
-
 function Stop-ListeningPort {
     param(
         [Parameter(Mandatory = $true)][int]$Port,
@@ -51,11 +54,7 @@ function Stop-ListeningPort {
         return
     }
 
-    if (-not (Test-ClosePortProcessEnabled)) {
-        throw "Port $Port for $Label is already in use by PID $ownerPid. Edit this folder's myharness.local.env and choose another PORT/MYHARNESS_DEV_PORT, or set MYHARNESS_CLOSE_PORT_PROCESS=1 to intentionally close that process."
-    }
-
-    Write-Host "[INFO] Port $Port for $Label is already in use by PID $ownerPid. MYHARNESS_CLOSE_PORT_PROCESS=1, closing the existing process..."
+    Write-Host "[INFO] Port $Port for $Label is already in use by PID $ownerPid. Closing the existing process and starting fresh..."
     Stop-ProcessTree -ProcessId $ownerPid
     Start-Sleep -Milliseconds 500
 
@@ -162,17 +161,30 @@ function Read-LauncherKey {
 function Test-LauncherKey {
     param(
         $Key,
-        [Parameter(Mandatory = $true)][ConsoleKey]$ExpectedKey
+        [Parameter(Mandatory = $true)][ConsoleKey]$ExpectedKey,
+        [string[]]$Characters = @()
     )
 
     if ($null -eq $Key) {
         return $false
     }
     if ($Key.PSObject.Properties.Name -contains "Key") {
-        return $Key.Key -eq $ExpectedKey
+        if ($Key.Key -eq $ExpectedKey) {
+            return $true
+        }
     }
     if ($Key.PSObject.Properties.Name -contains "VirtualKeyCode") {
-        return $Key.VirtualKeyCode -eq [int]$ExpectedKey
+        if ($Key.VirtualKeyCode -eq [int]$ExpectedKey) {
+            return $true
+        }
+    }
+    foreach ($propertyName in @("KeyChar", "Character")) {
+        if ($Key.PSObject.Properties.Name -contains $propertyName) {
+            $character = [string]$Key.$propertyName
+            if ($Characters -contains $character) {
+                return $true
+            }
+        }
     }
 
     return $false
@@ -221,7 +233,35 @@ function Start-BackendLauncher {
 function Start-ViteServer {
     Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
     Write-Host "[INFO] Starting Vite React dev server on http://0.0.0.0:$script:VitePort ..."
-    return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "0.0.0.0", "--port", ([string]$script:VitePort), "--strictPort") -NoNewWindow -PassThru
+    $previousCi = $env:CI
+    try {
+        $env:CI = "true"
+        return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "0.0.0.0", "--port", ([string]$script:VitePort), "--strictPort") -NoNewWindow -PassThru
+    }
+    finally {
+        if ($null -eq $previousCi) {
+            Remove-Item Env:\CI -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:CI = $previousCi
+        }
+    }
+}
+
+function Restart-All {
+    Write-Host "[INFO] Restart requested. Restarting backend and Vite dev server..."
+    Stop-All
+    $script:BackendProcess = Start-BackendLauncher
+    $script:ViteProcess = Start-ViteServer
+}
+
+function HardReset-All {
+    Write-Host "[INFO] Hard reset requested. Stopping backend and Vite, clearing ports, and starting fresh..."
+    Stop-All
+    Stop-ListeningPort -Port $backendPort -Label "backend"
+    Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
+    $script:BackendProcess = Start-BackendLauncher
+    $script:ViteProcess = Start-ViteServer
 }
 
 [Console]::add_CancelKeyPress({
@@ -258,6 +298,7 @@ Write-Host "Keep this window open while developing."
 Write-Host "If the backend or Vite exits unexpectedly, this launcher will restart it."
 Write-Host "Press Q or Ctrl+C in this window to stop both servers."
 Write-Host "Press R in this window to restart both servers."
+Write-Host "Press T in this window to hard reset both servers."
 Write-Host ""
 
 try {
@@ -289,11 +330,11 @@ try {
                 Stop-All
                 break
             }
-            if (Test-LauncherKey -Key $key -ExpectedKey R) {
-                Write-Host "[INFO] Restart requested. Restarting backend and Vite dev server..."
-                Stop-All
-                $script:BackendProcess = Start-BackendLauncher
-                $script:ViteProcess = Start-ViteServer
+            if (Test-LauncherKey -Key $key -ExpectedKey R -Characters @("r", "R", ([string][char]0x3131))) {
+                Restart-All
+            }
+            if (Test-LauncherKey -Key $key -ExpectedKey T -Characters @("t", "T", ([string][char]0x3145))) {
+                HardReset-All
             }
         }
         catch {

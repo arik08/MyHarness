@@ -1866,7 +1866,7 @@ export function ArtifactPreview({
   if (isMarkdownArtifact(artifact, payload)) {
     return (
       <div className="artifact-markdown">
-        <MarkdownMessage text={content || "(내용 없음)"} />
+        <MarkdownMessage text={sourceContent || "(내용 없음)"} />
       </div>
     );
   }

@@ -284,6 +284,7 @@ def test_build_dry_run_preview_classifies_slash_command_and_flags_bad_mcp(monkey
     )
     monkeypatch.setattr("myharness.api.provider.auth_status", lambda settings: "configured")
     monkeypatch.setattr("myharness.plugins.load_plugins", lambda settings, cwd: [])
+    monkeypatch.setattr("myharness.mcp.config.get_program_mcp_dirs", lambda: [])
     monkeypatch.setattr("myharness.skills.load_skill_registry", lambda cwd, settings=None: _FakeSkillRegistry())
     monkeypatch.setattr("myharness.prompts.context.build_runtime_system_prompt", lambda *args, **kwargs: "preview prompt")
     monkeypatch.setattr("myharness.ui.runtime._resolve_api_client_from_settings", lambda settings: object())

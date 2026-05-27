@@ -117,6 +117,7 @@ export type HistoryItem = {
   label: string;
   description?: string;
   workspace?: Workspace | null;
+  hidden?: boolean;
   live?: boolean;
   liveSessionId?: string;
   busy?: boolean;

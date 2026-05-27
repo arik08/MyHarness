@@ -31,19 +31,6 @@ class McpToolAdapter(BaseTool):
         if not isinstance(shared_metadata, dict):
             shared_metadata = metadata
         selected_server = str(metadata.get("selected_mcp_server") or "")
-        if selected_server == self._tool_info.server_name:
-            tool_calls = int(shared_metadata.get("selected_mcp_tool_calls") or 0)
-            if tool_calls >= 4:
-                message = (
-                    "MCP tool-call limit reached for this selected server turn. "
-                    "Stop calling more MCP tools and summarize the useful results already returned."
-                )
-                return ToolResult(
-                    output=message,
-                    is_error=True,
-                    metadata={"display_output": "MCP 조회 제한에 도달했습니다. 이미 나온 결과를 요약하세요."},
-                )
-            shared_metadata["selected_mcp_tool_calls"] = tool_calls + 1
         try:
             output = await asyncio.wait_for(
                 self._manager.call_tool(

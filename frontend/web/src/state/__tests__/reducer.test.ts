@@ -76,6 +76,27 @@ describe("appReducer", () => {
     expect(lockedAgain.history).toEqual([]);
   });
 
+  it("uses server-provided hidden history markers across browsers", () => {
+    const historyItem = {
+      value: "session-hidden",
+      label: "5/3 10:00 2 msg",
+      description: "숨긴 대화",
+      workspace: { name: "Default", path: "C:/demo" },
+      hidden: true,
+    };
+    const normal = {
+      ...initialAppState,
+      workspaceName: "Default",
+      workspacePath: "C:/demo",
+      hiddenHistoryKeys: [],
+    };
+    const filtered = appReducer(normal, { type: "set_history", history: [historyItem] });
+    const admin = appReducer({ ...filtered, adminMode: true }, { type: "set_history", history: [historyItem] });
+
+    expect(filtered.history).toEqual([]);
+    expect(admin.history).toEqual([historyItem]);
+  });
+
   it("persists admin mode preference locally", () => {
     localStorage.removeItem("myharness:adminMode");
 

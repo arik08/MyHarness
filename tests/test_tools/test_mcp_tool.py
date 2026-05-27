@@ -141,7 +141,7 @@ async def test_mcp_tool_strips_noisy_not_found_warning_from_display():
 
 
 @pytest.mark.asyncio
-async def test_selected_mcp_tool_call_limit_stops_retries():
+async def test_selected_mcp_tool_call_count_does_not_block_calls():
     manager = FakeMcpManager("ok")
     adapter = McpToolAdapter(
         manager,
@@ -161,13 +161,13 @@ async def test_selected_mcp_tool_call_limit_stops_retries():
         ),
     )
 
-    assert result.is_error is True
-    assert manager.calls == 0
-    assert "limit reached" in result.output
+    assert result.is_error is False
+    assert result.output == "ok"
+    assert manager.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_selected_mcp_tool_call_limit_uses_shared_metadata():
+async def test_selected_mcp_tool_calls_continue_with_shared_metadata_count():
     manager = FakeMcpManager("ok")
     adapter = McpToolAdapter(
         manager,
@@ -196,8 +196,8 @@ async def test_selected_mcp_tool_call_limit_uses_shared_metadata():
     )
 
     assert first.is_error is False
-    assert second.is_error is True
-    assert manager.calls == 1
+    assert second.is_error is False
+    assert manager.calls == 2
 
 
 @pytest.mark.asyncio

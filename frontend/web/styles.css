@@ -6114,7 +6114,11 @@ a:focus-visible {
 .workflow-output-open svg {
   width: 14px;
   height: 14px;
+  fill: none;
   stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .workflow-output-body {

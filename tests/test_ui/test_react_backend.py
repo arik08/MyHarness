@@ -25,6 +25,7 @@ from myharness.project_preferences import load_project_preferences
 from myharness.services.long_report_progress import write_long_report_progress_state
 from myharness.skills.types import SkillDefinition
 from myharness.tasks.types import TaskRecord
+from myharness.tools import create_default_tool_registry
 from myharness.ui.backend_host import (
     BackendHostConfig,
     ReactBackendHost,
@@ -2982,7 +2983,7 @@ def test_forced_mcp_line_accepts_display_name_without_sticky_followup():
     assert followup_prompt == "간단한 데이터 뽑아봐"
 
 
-def test_selected_mcp_registry_exposes_only_selected_server_tools():
+def test_selected_mcp_registry_keeps_builtin_tools_and_selected_server_tools():
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
 
     class FakeMcpManager:
@@ -3002,12 +3003,19 @@ def test_selected_mcp_registry_exposes_only_selected_server_tools():
                 ),
             ]
 
-    host._bundle = SimpleNamespace(mcp_manager=FakeMcpManager())  # type: ignore[assignment]
+    manager = FakeMcpManager()
+    host._bundle = SimpleNamespace(  # type: ignore[assignment]
+        mcp_manager=manager,
+        tool_registry=create_default_tool_registry(manager),
+    )
 
     registry = host._tool_registry_for_selected_mcp("korean-law")
 
     assert registry is not None
-    assert [tool.name for tool in registry.list_tools()] == ["mcp__korean-law__search_decisions"]
+    tool_names = [tool.name for tool in registry.list_tools()]
+    assert "write_file" in tool_names
+    assert "cmd" in tool_names or "bash" in tool_names
+    assert "mcp__korean-law__search_decisions" in tool_names
     assert registry.get("mcp__sqlite_analysis__query") is None
 
 

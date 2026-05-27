@@ -75,17 +75,30 @@ function Read-LauncherKey {
 function Test-LauncherKey {
     param(
         $Key,
-        [Parameter(Mandatory = $true)][ConsoleKey]$ExpectedKey
+        [Parameter(Mandatory = $true)][ConsoleKey]$ExpectedKey,
+        [string[]]$Characters = @()
     )
 
     if ($null -eq $Key) {
         return $false
     }
     if ($Key.PSObject.Properties.Name -contains "Key") {
-        return $Key.Key -eq $ExpectedKey
+        if ($Key.Key -eq $ExpectedKey) {
+            return $true
+        }
     }
     if ($Key.PSObject.Properties.Name -contains "VirtualKeyCode") {
-        return $Key.VirtualKeyCode -eq [int]$ExpectedKey
+        if ($Key.VirtualKeyCode -eq [int]$ExpectedKey) {
+            return $true
+        }
+    }
+    foreach ($propertyName in @("KeyChar", "Character")) {
+        if ($Key.PSObject.Properties.Name -contains $propertyName) {
+            $character = [string]$Key.$propertyName
+            if ($Characters -contains $character) {
+                return $true
+            }
+        }
     }
 
     return $false
@@ -94,9 +107,40 @@ function Test-LauncherKey {
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
 
-    & taskkill.exe /PID $ProcessId /T /F >$null 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    try {
+        & taskkill.exe /PID $ProcessId /T /F >$null 2>$null
+        $taskkillExitCode = $LASTEXITCODE
+    }
+    catch {
+        $taskkillExitCode = 1
+    }
+
+    if ($taskkillExitCode -ne 0) {
         Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Stop-ListeningPort {
+    param([Parameter(Mandatory = $true)][int]$Port)
+
+    $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $connection) {
+        return
+    }
+
+    $ownerPid = [int]$connection.OwningProcess
+    if ($ownerPid -eq $PID) {
+        return
+    }
+
+    Write-Host "[INFO] Port $Port is already in use by PID $ownerPid. Closing the existing process and starting fresh..."
+    Write-LauncherLog "port_process_closing" @{ port = $Port; owner_pid = $ownerPid }
+    Stop-ProcessTree -ProcessId $ownerPid
+    Start-Sleep -Milliseconds 500
+
+    $stillListening = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($stillListening) {
+        throw "Port $Port is still in use after trying to close PID $ownerPid."
     }
 }
 
@@ -134,12 +178,15 @@ function Stop-ServerProcess {
 })
 
 while (-not $script:StopRequested) {
+    $serverPort = if ($env:PORT) { [int]$env:PORT } else { 4273 }
+    Stop-ListeningPort -Port $serverPort
     Write-Host "[INFO] Starting node server.mjs..."
     Write-LauncherLog "server_starting" @{ restart_count = $script:RestartCount }
     $process = Start-Process -FilePath "node.exe" -ArgumentList @("server.mjs") -NoNewWindow -PassThru
     $script:CurrentServerProcess = $process
     Write-LauncherLog "server_started" @{ child_pid = $process.Id; restart_count = $script:RestartCount }
     $restartRequested = $false
+    $hardResetRequested = $false
     $exitCode = 0
 
     try {
@@ -149,13 +196,23 @@ while (-not $script:StopRequested) {
             try {
                 if ($script:KeyHandlingEnabled) {
                     $key = Read-LauncherKey
-                    if (Test-LauncherKey -Key $key -ExpectedKey R) {
+                    if (Test-LauncherKey -Key $key -ExpectedKey R -Characters @("r", "R", ([string][char]0x3131))) {
                         $discardedKeys = Clear-ConsoleInputBuffer
                         Write-Host ""
                         Write-Host "[INFO] Restart requested. Stopping server..."
                         Write-LauncherLog "restart_requested" @{ reason = "keyboard_r"; child_pid = $process.Id; discarded_keys = $discardedKeys }
                         $restartRequested = $true
                         Stop-ServerProcess -Process $process
+                        break
+                    }
+                    if (Test-LauncherKey -Key $key -ExpectedKey T -Characters @("t", "T", ([string][char]0x3145))) {
+                        $discardedKeys = Clear-ConsoleInputBuffer
+                        Write-Host ""
+                        Write-Host "[INFO] Hard reset requested. Stopping server and clearing the port..."
+                        Write-LauncherLog "hard_reset_requested" @{ reason = "keyboard_t"; child_pid = $process.Id; discarded_keys = $discardedKeys }
+                        $hardResetRequested = $true
+                        Stop-ServerProcess -Process $process
+                        Stop-ListeningPort -Port $serverPort
                         break
                     }
                     if (Test-LauncherKey -Key $key -ExpectedKey Q) {
@@ -192,6 +249,12 @@ while (-not $script:StopRequested) {
     if ($restartRequested) {
         Clear-ConsoleInputBuffer | Out-Null
         Write-Host "[INFO] Restarting server..."
+        continue
+    }
+
+    if ($hardResetRequested) {
+        Clear-ConsoleInputBuffer | Out-Null
+        Write-Host "[INFO] Hard resetting server..."
         continue
     }
 

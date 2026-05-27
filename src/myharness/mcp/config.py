@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from myharness.mcp.types import McpJsonConfig
+from myharness.mcp.types import McpJsonConfig, McpStdioServerConfig
 from myharness.plugins.types import LoadedPlugin
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,10 @@ def load_mcp_configs_from_dirs(directories: list[Path]) -> dict[str, object]:
                 logger.warning("Failed to load MCP config from %s: %s", path, exc)
                 continue
             for name, server in config.mcpServers.items():
+                if isinstance(server, McpStdioServerConfig) and server.cwd:
+                    cwd_path = Path(server.cwd).expanduser()
+                    if not cwd_path.is_absolute():
+                        server._cwd_base = str(directory.parent.resolve())
                 servers.setdefault(name, server)
     return servers
 

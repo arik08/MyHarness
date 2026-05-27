@@ -11,8 +11,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 
-ROOT = Path(__file__).resolve().parent
-DB_PATH = ROOT / "data" / "analysis_samples.sqlite"
+DB_PATH = Path(".mcp/data/analysis_samples.sqlite")
 MAX_ROWS = 200
 
 server = FastMCP("worldbank-rdb")

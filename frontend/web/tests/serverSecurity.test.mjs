@@ -947,6 +947,60 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
   assert.equal(historyPayload.options[1].pinned, true);
 });
 
+test("marks hidden history snapshots so remote admin clients can show the hidden indicator", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceName = `HiddenHistoryTest${Date.now().toString(36)}`;
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: workspaceName }),
+  });
+  const workspacePayload = await workspaceResponse.json();
+  const workspace = workspacePayload.workspace;
+  workspacePath = workspace?.path || "";
+  assert.equal(workspaceResponse.status, 200);
+  assert.ok(workspace?.path);
+
+  const sessionDir = join(workspace.path, ".myharness", "sessions");
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(
+    join(sessionDir, "session-shared-hidden.json"),
+    JSON.stringify({
+      session_id: "shared-hidden",
+      created_at: 100,
+      summary: "hidden from another browser",
+      messages: [],
+      message_count: 1,
+    }),
+  );
+
+  const hideResponse = await fetch(`${app.baseUrl}/api/history/hide`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: "shared-hidden", workspacePath: workspace.path, workspaceName: workspace.name }),
+  });
+  const hidePayload = await hideResponse.json();
+  assert.equal(hideResponse.status, 200);
+  assert.equal(hidePayload.hidden, true);
+
+  const historyResponse = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspace.path)}`);
+  const historyPayload = await historyResponse.json();
+
+  assert.equal(historyResponse.status, 200);
+  assert.equal(historyPayload.options[0].value, "shared-hidden");
+  assert.equal(historyPayload.options[0].hidden, true);
+});
+
 test("uses the Korean new-chat title for empty saved history snapshots", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
@@ -1212,6 +1266,25 @@ test("user stats preserve concurrent page visits in JSON storage", async (t) => 
     Object.values(stored.byIp || {}).reduce((total, entry) => total + Number(entry?.visitCount || 0), 0),
     20,
   );
+});
+
+test("user stats record visits reported from the React app", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const visitResponse = await fetch(`${app.baseUrl}/api/visit`, {
+    method: "POST",
+    headers: { "x-forwarded-for": "10.0.2.7" },
+  });
+  const statsResponse = await fetch(`${app.baseUrl}/api/user-stats?clientId=client-stats`, {
+    headers: { "x-forwarded-for": "10.0.2.8" },
+  });
+  const payload = await statsResponse.json();
+
+  assert.equal(visitResponse.status, 200);
+  assert.equal(payload.todayVisitCount, 1);
+  assert.equal(payload.dailyActiveIpCount, 1);
+  assert.deepEqual(payload.ipBreakdown?.map((item) => [item.ip, item.visitCount]), [["10.0.2.7", 1]]);
 });
 
 test("dev launcher backend entry redirects page visits to Vite on the same host", async (t) => {

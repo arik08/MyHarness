@@ -7,7 +7,7 @@ import { Composer } from "../Composer";
 import { StatusPill } from "../StatusPill";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { deleteHistory, toggleHistoryPin } from "../../api/history";
+import { deleteHistory, hideHistory, toggleHistoryPin } from "../../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../../api/session";
 import { sendBackendRequest } from "../../api/messages";
 import type { Workspace } from "../../types/backend";
@@ -22,6 +22,7 @@ vi.mock("../../api/session", () => ({
 
 vi.mock("../../api/history", () => ({
   deleteHistory: vi.fn(),
+  hideHistory: vi.fn(),
   toggleHistoryPin: vi.fn(),
   updateHistoryTitle: vi.fn(),
 }));
@@ -63,6 +64,7 @@ describe("Sidebar", () => {
     vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [] });
     vi.mocked(startSession).mockResolvedValue({ sessionId: "session-restored" });
     vi.mocked(shutdownSession).mockResolvedValue({ ok: true });
+    vi.mocked(hideHistory).mockResolvedValue({ hidden: true });
     vi.mocked(toggleHistoryPin).mockResolvedValue({ ok: true, pinned: true, sessionId: "session-old" });
     vi.mocked(sendBackendRequest).mockResolvedValue({ ok: true });
   });
@@ -559,8 +561,33 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 삭제" }));
 
     await waitFor(() => expect(screen.queryByText("이전 대화")).toBeNull());
+    expect(hideHistory).toHaveBeenCalledWith("session-old", "C:/other", "Other");
     expect(deleteHistory).not.toHaveBeenCalled();
     expect(sendBackendRequest).not.toHaveBeenCalled();
+  });
+
+  it("marks server-hidden history items in admin mode", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          adminMode: true,
+          workspaceName: "Default",
+          workspacePath: "C:/current",
+          history: [{
+            value: "session-old",
+            label: "5/3 10:00 2 msg",
+            description: "이전 대화",
+            workspace: { name: "Other", path: "C:/other" },
+            hidden: true,
+          }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("이전 대화").closest(".history-item")?.classList.contains("hidden-history")).toBe(true);
   });
 
   it("permanently deletes a hidden saved history item in admin mode", async () => {

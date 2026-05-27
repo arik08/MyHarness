@@ -40,6 +40,7 @@ echo   This window is running the web server and backend launcher.
 echo   Keep it open while using MyHarness in the browser.
 echo   Press Q or Ctrl+C in this window to stop the server.
 echo   Press R in this window to restart the server.
+echo   Press T in this window to hard reset the server.
 echo.
 
 where node >nul 2>nul
@@ -171,29 +172,16 @@ for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass
 
 if not "%MYHARNESS_PORT_PID%"=="" (
   echo [INFO] Port %PORT% is already in use by PID %MYHARNESS_PORT_PID%.
-  if /i "%MYHARNESS_CLOSE_PORT_PROCESS%"=="1" (
-    echo [INFO] MYHARNESS_CLOSE_PORT_PROCESS=1, closing the existing process and starting MyHarness fresh...
-    taskkill /PID %MYHARNESS_PORT_PID% /T /F >nul 2>nul
-    timeout /t 1 /nobreak >nul
+  echo [INFO] Closing the existing process and starting MyHarness fresh...
+  taskkill /PID %MYHARNESS_PORT_PID% /T /F >nul 2>nul
+  timeout /t 1 /nobreak >nul
 
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-NetTCPConnection -LocalPort ([int]$env:PORT) -State Listen -ErrorAction SilentlyContinue) { exit 0 } exit 1" >nul 2>nul
-    if not errorlevel 1 (
-      echo.
-      echo [ERROR] Port %PORT% is still in use after trying to close PID %MYHARNESS_PORT_PID%.
-      echo Try running this launcher as Administrator, or use another port:
-      echo   edit myharness.local.env and set PORT=4274
-      echo.
-      pause
-      exit /b 1
-    )
-  ) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-NetTCPConnection -LocalPort ([int]$env:PORT) -State Listen -ErrorAction SilentlyContinue) { exit 0 } exit 1" >nul 2>nul
+  if not errorlevel 1 (
     echo.
-    echo [ERROR] Port %PORT% is already in use. Another MyHarness copy may be running.
-    echo To run copies side-by-side, edit this folder's myharness.local.env:
+    echo [ERROR] Port %PORT% is still in use after trying to close PID %MYHARNESS_PORT_PID%.
+    echo Try running this launcher as Administrator, or use another port:
     echo   PORT=4274
-    echo Then run run_myharness_web.bat again.
-    echo.
-    echo To intentionally close the process on this port, set MYHARNESS_CLOSE_PORT_PROCESS=1.
     echo.
     pause
     exit /b 1
@@ -206,6 +194,7 @@ echo [INFO] If another PC cannot connect, allow Node.js through Windows Firewall
 echo [INFO] If the server process exits unexpectedly, this launcher will restart it.
 echo [INFO] Press Q or Ctrl+C in this window to stop the server.
 echo [INFO] Press R in this window to restart the server.
+echo [INFO] Press T in this window to hard reset the server.
 echo.
 
 pushd "frontend\web"
@@ -298,7 +287,11 @@ echo [INFO] Default provider profile: %MYHARNESS_SELECTED_PROFILE%
 exit /b 0
 
 :ensure_pgpt_env
-call :load_pgpt_env_from_credentials
+if exist "%MYHARNESS_CONFIG_DIR%\credentials.json" (
+  for /f "usebackq tokens=1,* delims==" %%A in (`"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -c "import json, os; from pathlib import Path; p=Path(os.environ.get('MYHARNESS_CONFIG_DIR') or '.myharness')/'credentials.json'; data=json.loads(p.read_text(encoding='utf-8')); pgpt=data.get('pgpt') if isinstance(data.get('pgpt'), dict) else {}; print('PGPT_API_KEY=' + str(pgpt.get('api_key') or '')); print('PGPT_EMPLOYEE_NO=' + str(pgpt.get('employee_no') or pgpt.get('system_code') or '')); print('PGPT_COMPANY_CODE=' + str(pgpt.get('company_code') or ''))" 2^>nul`) do (
+    if not "%%~B"=="" set "%%~A=%%~B"
+  )
+)
 set "PGPT_ENV_MISSING="
 if "%PGPT_API_KEY%"=="" set "PGPT_ENV_MISSING=1"
 if "%PGPT_EMPLOYEE_NO%"=="" set "PGPT_ENV_MISSING=1"
@@ -342,13 +335,6 @@ if errorlevel 1 echo [WARN] Failed to permanently save PGPT_EMPLOYEE_NO with set
 :pgpt_env_done
 call :save_pgpt_credentials
 echo [INFO] P-GPT environment setup finished.
-exit /b 0
-
-:load_pgpt_env_from_credentials
-if not exist "%MYHARNESS_CONFIG_DIR%\credentials.json" exit /b 0
-for /f "usebackq tokens=1,* delims==" %%A in (`"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -c "import json, os; from pathlib import Path; p=Path(os.environ.get('MYHARNESS_CONFIG_DIR') or '.myharness')/'credentials.json'; data=json.loads(p.read_text(encoding='utf-8')); pgpt=data.get('pgpt') if isinstance(data.get('pgpt'), dict) else {}; print('PGPT_API_KEY=' + str(pgpt.get('api_key') or '')); print('PGPT_EMPLOYEE_NO=' + str(pgpt.get('employee_no') or pgpt.get('system_code') or '')); print('PGPT_COMPANY_CODE=' + str(pgpt.get('company_code') or ''))" 2^>nul`) do (
-  if not "%%~B"=="" set "%%~A=%%~B"
-)
 exit /b 0
 
 :save_pgpt_credentials

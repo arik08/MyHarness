@@ -16,7 +16,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: devPort,
     proxy: {
-      "/api": backendOrigin,
+      "/api": { target: backendOrigin, xfwd: true },
       "/vendor": backendOrigin,
     },
   },

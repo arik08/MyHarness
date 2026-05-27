@@ -66,6 +66,8 @@ let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
 let webUsageStatsWriteQueue = Promise.resolve();
+const recentDevRedirectVisitTtlMs = 15_000;
+const recentDevRedirectVisits = new Map();
 let server = null;
 const workspaceMutationQueues = new Map();
 const aiEditHeartbeatIntervalMs = 15_000;
@@ -120,8 +122,8 @@ const artifactAssetWorkspaces = new Map();
 const artifactTypes = {
   ".html": { kind: "html", mime: "text/html; charset=utf-8", encoding: "text" },
   ".htm": { kind: "html", mime: "text/html; charset=utf-8", encoding: "text" },
-  ".md": { kind: "text", mime: "text/markdown; charset=utf-8", encoding: "text" },
-  ".markdown": { kind: "text", mime: "text/markdown; charset=utf-8", encoding: "text" },
+  ".md": { kind: "markdown", mime: "text/markdown; charset=utf-8", encoding: "text" },
+  ".markdown": { kind: "markdown", mime: "text/markdown; charset=utf-8", encoding: "text" },
   ".txt": { kind: "text", mime: "text/plain; charset=utf-8", encoding: "text" },
   ".json": { kind: "text", mime: "application/json; charset=utf-8", encoding: "text" },
   ".csv": { kind: "text", mime: "text/csv; charset=utf-8", encoding: "text" },
@@ -2634,6 +2636,21 @@ async function recordWebVisit(request) {
   });
 }
 
+function rememberDevRedirectVisit(request) {
+  const ip = normalizeClientAddress(forwardedAddressFromRequest(request));
+  recentDevRedirectVisits.set(ip, Date.now());
+}
+
+function consumeRecentDevRedirectVisit(request) {
+  const ip = normalizeClientAddress(forwardedAddressFromRequest(request));
+  const recordedAt = recentDevRedirectVisits.get(ip);
+  if (!recordedAt) {
+    return false;
+  }
+  recentDevRedirectVisits.delete(ip);
+  return Date.now() - recordedAt <= recentDevRedirectVisitTtlMs;
+}
+
 async function readWorkspaceScopeSettings(request = null) {
   const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
   const mode = normalizeWorkspaceScopeMode(settings.web_workspace_scope || settings.workspace_scope || workspaceScopeMode);
@@ -3198,6 +3215,56 @@ function sessionDirectoryForWorkspace(workspace) {
   return join(workspace.path, ".myharness", "sessions");
 }
 
+function hiddenHistoryPathForWorkspace(workspace) {
+  return join(workspace.path, ".myharness", "hidden-history.json");
+}
+
+function normalizeHiddenHistoryIds(value) {
+  const source = Array.isArray(value) ? value : [];
+  return [...new Set(source.map((item) => String(item || "").trim()).filter(Boolean))].slice(-500);
+}
+
+async function readHiddenHistoryIds(workspace) {
+  try {
+    const payload = JSON.parse(await readFile(hiddenHistoryPathForWorkspace(workspace), "utf8"));
+    return normalizeHiddenHistoryIds(payload?.sessionIds);
+  } catch (error) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function writeHiddenHistoryIds(workspace, sessionIds) {
+  const target = hiddenHistoryPathForWorkspace(workspace);
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify({ sessionIds: normalizeHiddenHistoryIds(sessionIds) }, null, 2)}\n`);
+}
+
+async function hideWorkspaceHistoryItem(workspace, sessionId) {
+  const cleanId = String(sessionId || "").trim();
+  if (!cleanId) {
+    throw new Error("Session id is required");
+  }
+  const hiddenIds = await readHiddenHistoryIds(workspace);
+  if (!hiddenIds.includes(cleanId)) {
+    await writeHiddenHistoryIds(workspace, [...hiddenIds, cleanId]);
+  }
+  return true;
+}
+
+async function forgetHiddenWorkspaceHistoryItem(workspace, sessionId) {
+  const cleanId = String(sessionId || "").trim();
+  if (!cleanId) {
+    return;
+  }
+  const hiddenIds = await readHiddenHistoryIds(workspace);
+  if (hiddenIds.includes(cleanId)) {
+    await writeHiddenHistoryIds(workspace, hiddenIds.filter((item) => item !== cleanId));
+  }
+}
+
 function compactText(value, limit = 80) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
 }
@@ -3263,6 +3330,7 @@ async function readSessionListItem(path) {
 
 async function listWorkspaceHistory(workspace, options = {}) {
   const sessionDir = sessionDirectoryForWorkspace(workspace);
+  const hiddenIds = new Set(await readHiddenHistoryIds(workspace));
   let entries = [];
   try {
     entries = await readdir(sessionDir, { withFileTypes: true });
@@ -3282,6 +3350,7 @@ async function listWorkspaceHistory(workspace, options = {}) {
     try {
       const item = await readSessionListItem(file);
       if (item.value) {
+        item.hidden = hiddenIds.has(item.value);
         seen.add(item.value);
         items.push(item);
       }
@@ -3294,6 +3363,7 @@ async function listWorkspaceHistory(workspace, options = {}) {
   try {
     const latest = await readSessionListItem(latestPath);
     if (latest.value && !seen.has(latest.value)) {
+      latest.hidden = hiddenIds.has(latest.value);
       items.push(latest);
     }
   } catch {
@@ -3625,6 +3695,7 @@ async function deleteWorkspaceHistoryItem(workspace, sessionId) {
       }
     }
   }
+  await forgetHiddenWorkspaceHistoryItem(workspace, cleanId);
   return deleted;
 }
 
@@ -4809,6 +4880,18 @@ async function handleSettingsApi(request, response, pathname) {
 async function handleApi(request, response, pathname) {
   const workspaceScope = workspaceScopeFromRequest(request);
   const clientAddress = normalizeClientAddress(forwardedAddressFromRequest(request));
+  if (request.method === "POST" && pathname === "/api/visit") {
+    try {
+      if (!consumeRecentDevRedirectVisit(request)) {
+        await recordWebVisit(request);
+      }
+      json(response, 200, { ok: true });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not record visit" });
+    }
+    return true;
+  }
+
   if (request.method === "GET" && pathname === "/api/share/base-url") {
     json(response, 200, { baseUrl: publicBaseUrlForRequest(request) });
     return true;
@@ -4926,6 +5009,18 @@ async function handleApi(request, response, pathname) {
       json(response, deleted ? 200 : 404, { deleted, workspace });
     } catch (error) {
       json(response, 400, { error: error.message || "Could not delete history" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/history/hide") {
+    try {
+      const body = await readJson(request);
+      const workspace = workspaceFromHistoryRequest(body, workspaceScope);
+      const hidden = await withWorkspaceMutation(workspace.path, () => hideWorkspaceHistoryItem(workspace, body.sessionId));
+      json(response, 200, { hidden, workspace });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not hide history" });
     }
     return true;
   }
@@ -5583,6 +5678,7 @@ server = createServer(async (request, response) => {
   if (shouldRedirectDevUiRequest(request, pathname)) {
     const location = devUiRedirectLocation(request);
     if (location) {
+      rememberDevRedirectVisit(request);
       response.writeHead(302, {
         Location: location,
         "Cache-Control": "no-store",

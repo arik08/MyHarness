@@ -8,6 +8,8 @@ import { AppStateProvider } from "./state/app-state";
 import { useAppState } from "./state/app-state";
 import { runtimePreferencesFromState } from "./utils/runtimePreferences";
 
+const isDevBuild = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
+
 function sharedChatLinkParams() {
   const params = new URLSearchParams(window.location.search);
   const chatId = String(params.get("chat") || "").trim();
@@ -39,6 +41,12 @@ function AppContent() {
   const sharedChatScrolledRef = useRef(false);
   useBackendSession();
   useWorkspaceData();
+  useEffect(() => {
+    if (!isDevBuild) {
+      return;
+    }
+    void fetch("/api/visit", { method: "POST", keepalive: true }).catch(() => {});
+  }, []);
   useEffect(() => {
     function handleGlobalShortcut(event: KeyboardEvent) {
       if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || event.key.toLowerCase() !== "o") {

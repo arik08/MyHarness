@@ -49,6 +49,7 @@ describe("artifact utilities", () => {
     expect(isKnownArtifactPath("outputs/report.html")).toBe(true);
     expect(isKnownArtifactPath("outputs/archive.tmp")).toBe(false);
     expect(artifactKind("outputs/report.html")).toBe("html");
+    expect(artifactKind("outputs/notes.md")).toBe("markdown");
     expect(artifactKind("outputs/chart.png")).toBe("image");
     expect(artifactKind("outputs/manual.pdf")).toBe("pdf");
     expect(artifactKind("outputs/query.sql")).toBe("text");

@@ -451,6 +451,13 @@ describe("ArtifactPanel", () => {
     const source = await screen.findByLabelText("report.md 원문");
     expect(source).toBeInstanceOf(HTMLTextAreaElement);
     expect((source as HTMLTextAreaElement).value).toContain("# 분석 결과");
+
+    await userEvent.clear(source);
+    await userEvent.type(source, "# 수정된 문서\n\n본문입니다.");
+    await userEvent.click(screen.getByRole("button", { name: "미리보기" }));
+
+    expect(await screen.findByRole("heading", { name: "수정된 문서" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "분석 결과" })).toBeNull();
   });
 
   it("shows completed HTML source mode in the right preview and omits the redundant back action", async () => {

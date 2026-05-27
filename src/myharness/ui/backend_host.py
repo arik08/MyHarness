@@ -2447,6 +2447,14 @@ class ReactBackendHost:
         assert self._bundle is not None
         registry = ToolRegistry()
         matched = False
+        source_registry = getattr(self._bundle, "tool_registry", None)
+        if source_registry is not None:
+            for tool in source_registry.list_tools():
+                if isinstance(tool, McpToolAdapter):
+                    if getattr(tool, "_tool_info").server_name != server_name:
+                        continue
+                    matched = True
+                registry.register(tool)
         for tool_info in self._bundle.mcp_manager.list_tools():
             if tool_info.server_name != server_name:
                 continue

@@ -13,6 +13,10 @@ export function deleteHistory(sessionId: string, workspacePath: string, workspac
   return deleteJson<{ deleted: boolean }>("/api/history", { sessionId, workspacePath, workspaceName });
 }
 
+export function hideHistory(sessionId: string, workspacePath: string, workspaceName: string) {
+  return postJson<{ hidden: boolean }>("/api/history/hide", { sessionId, workspacePath, workspaceName });
+}
+
 export function updateHistoryTitle(sessionId: string, title: string, workspacePath: string, workspaceName: string) {
   return postJson<{ ok: true; title: string }>("/api/history/title", { sessionId, title, workspacePath, workspaceName });
 }

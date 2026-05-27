@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject, PointerEvent as ReactPointerEvent } from "react";
 import { useAppState } from "../state/app-state";
-import { deleteHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
+import { deleteHistory, hideHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import { currentConversationHistoryTitle, currentConversationTitle } from "../state/selectors";
@@ -241,12 +241,14 @@ export function Sidebar() {
           });
           dispatch({ type: "delete_history_local", sessionId, workspacePath, workspaceName });
         } else {
+          await hideHistory(sessionId, workspacePath, workspaceName);
           dispatch({ type: "hide_history_local", sessionId, workspacePath, workspaceName });
         }
       } else if (state.adminMode) {
         await deleteHistory(sessionId, workspacePath, workspaceName);
         dispatch({ type: "delete_history_local", sessionId, workspacePath, workspaceName });
       } else {
+        await hideHistory(sessionId, workspacePath, workspaceName);
         dispatch({ type: "hide_history_local", sessionId, workspacePath, workspaceName });
       }
     } catch (error) {

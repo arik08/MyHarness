@@ -12,9 +12,8 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
-DB_PATH = DATA_DIR / "analysis_samples.sqlite"
+DB_PATH = Path(".mcp/data/analysis_samples.sqlite")
+DATA_DIR = DB_PATH.parent
 
 START_YEAR = 1960
 END_YEAR = dt.date.today().year - 1

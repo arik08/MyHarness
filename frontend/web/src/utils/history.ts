@@ -30,6 +30,9 @@ export function isHistoryItemHidden(
   workspacePath = "",
   workspaceName = "",
 ) {
+  if (item.hidden === true) {
+    return true;
+  }
   const key = historyItemVisibilityKey(item, workspacePath, workspaceName);
   return Boolean(key && hiddenHistoryKeys.includes(key));
 }

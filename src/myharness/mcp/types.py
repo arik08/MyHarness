@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 class McpStdioServerConfig(BaseModel):
     """stdio MCP server configuration."""
+
+    _cwd_base: str | None = PrivateAttr(default=None)
 
     type: Literal["stdio"] = "stdio"
     command: str

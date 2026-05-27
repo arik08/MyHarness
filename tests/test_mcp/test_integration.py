@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from myharness.config.settings import Settings
-from myharness.mcp.config import load_mcp_server_configs
+from myharness.mcp.config import load_mcp_configs_from_dirs, load_mcp_server_configs
 from myharness.mcp.types import McpResourceInfo, McpStdioServerConfig, McpToolInfo
 from myharness.plugins.types import LoadedPlugin
 from myharness.plugins.schemas import PluginManifest
@@ -60,6 +60,39 @@ def test_load_mcp_server_configs_filters_disabled_servers():
 
     assert "local" not in servers
     assert "local" in all_servers
+
+
+def test_program_mcp_relative_cwd_stays_portable_with_source_base(tmp_path: Path):
+    mcp_dir = tmp_path / ".mcp"
+    mcp_dir.mkdir()
+    (mcp_dir / "sqlite-analysis.json").write_text(
+        """{
+  "mcpServers": {
+    "worldbank_rdb": {
+      "type": "stdio",
+      "command": "python",
+      "args": [".mcp/sqlite_analysis_server.py"],
+      "cwd": "."
+    }
+  }
+}
+""",
+        encoding="utf-8",
+    )
+
+    servers = load_mcp_configs_from_dirs([mcp_dir])
+
+    assert servers["worldbank_rdb"].cwd == "."
+    assert servers["worldbank_rdb"]._cwd_base == str(tmp_path.resolve())
+
+
+def test_stdio_cwd_resolves_against_source_base(tmp_path: Path):
+    config = McpStdioServerConfig(command="python", cwd=".")
+    config._cwd_base = str(tmp_path)
+
+    from myharness.mcp.client import _stdio_cwd
+
+    assert _stdio_cwd(config) == str(tmp_path.resolve())
 
 
 async def test_mcp_tools_are_registered():
