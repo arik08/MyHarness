@@ -19,7 +19,9 @@ def test_a4_landscape_report_skill_is_program_local_and_discoverable(tmp_path, m
     assert skill.path == str(ROOT / ".skills" / "html-a4-landscape-report" / "SKILL.md")
     assert "A4" in skill.description
     assert "landscape" in skill.description
+    assert "HTML or PPTX" in skill.description
     assert "section.page" in skill.content
+    assert "pptx-writer" in skill.content
     assert "Page Plan" in skill.content
     assert "together with `visual-artifact`" in skill.content
 
@@ -61,6 +63,16 @@ def test_a4_landscape_report_skill_default_prompt_mentions_skill_name():
     openai_yaml = (ROOT / ".skills" / "html-a4-landscape-report" / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
     assert "$html-a4-landscape-report" in openai_yaml
+    assert "HTML/PPTX" in openai_yaml
+    assert "전용" not in openai_yaml
+
+
+def test_a4_landscape_report_skill_keeps_repeated_headers_and_avoids_empty_bottoms():
+    skill_text = (ROOT / ".skills" / "html-a4-landscape-report" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "chapter, title, and subtitle positions consistent" in skill_text
+    assert "Do not leave the lower body area visibly empty" in skill_text
+    assert "Treat under-filled body height as a QA failure" in skill_text
 
 
 def test_base_prompt_does_not_duplicate_a4_landscape_skill_rules():

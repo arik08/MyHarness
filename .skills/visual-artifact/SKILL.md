@@ -20,7 +20,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 ## Decide the artifact type
 
 - **Executive/report page**: structured findings, tables, charts, recommendations, sources in a polished scrolling web report.
-- **A4 landscape page report**: only when the user explicitly asks for A4 landscape, A4 가로, 가로형 A4, printable horizontal PDF, or a fixed-page report, use this skill for the visual direction and use `html-a4-landscape-report` together with it for fixed-page structure, density limits, table splitting, and overflow QA.
+- **A4 landscape page report**: only when the user explicitly asks for A4 landscape, A4 가로, 가로형 A4, printable horizontal PDF, or a fixed-page report, use this skill for HTML/browser visual direction and use `html-a4-landscape-report` together with it for fixed-page structure, density limits, table splitting, and overflow QA. For A4 PPTX, pair `html-a4-landscape-report` with `pptx-writer` instead.
 - **Dashboard**: KPI cards, charts, filters/toggles if useful, data table.
 - **Infographic/one-pager**: strong story flow, big numbers, compact sections, print/capture-ready layout.
 - **Slide-like HTML**: 16:9 sections, keyboard or scroll navigation only if useful.
@@ -101,7 +101,7 @@ quarterly trends, sources, or a report:
 ## Capture-friendly conventions
 
 - For presentation-style output, include a `.stage` or `.slide` layout with 16:9 ratio when appropriate.
-- For A4 landscape HTML, use both this skill and `html-a4-landscape-report`; keep visual direction here, and let `html-a4-landscape-report` own the page-based layout workflow.
+- For A4 landscape HTML/PDF/browser reports, use both this skill and `html-a4-landscape-report`; keep visual direction here, and let `html-a4-landscape-report` own the page-based layout workflow. For A4 landscape PPTX, use `html-a4-landscape-report` with `pptx-writer`.
 - For reports, make A4/Letter print behavior explicit with sensible page breaks.
 - Avoid content that depends on hover-only interactions for core meaning.
 - Keep animations subtle and disable or simplify them for print.
