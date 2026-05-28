@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import ssl
 from typing import Any
 
 import httpx
@@ -20,6 +21,26 @@ MAX_ROWS = 500
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 server = FastMCP("kosis")
+
+
+def _httpx_verify_argument() -> bool | ssl.SSLContext:
+    """Return the SSL verification config for KOSIS requests."""
+    try:
+        from myharness.utils.certificates import httpx_verify_argument
+    except ImportError:
+        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+        if not bundle:
+            return True
+        context = ssl.create_default_context()
+        try:
+            context.set_ciphers("DEFAULT@SECLEVEL=1")
+        except ssl.SSLError:
+            pass
+        if hasattr(ssl, "VERIFY_X509_STRICT"):
+            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        context.load_verify_locations(cafile=bundle)
+        return context
+    return httpx_verify_argument()
 
 
 def _api_key() -> str:
@@ -57,12 +78,18 @@ def _get(endpoint: str, params: dict[str, Any]) -> Any:
     }
     query.update({key: value for key, value in params.items() if value is not None})
     try:
-        response = httpx.get(f"{BASE_URL}/{endpoint}", params=query, timeout=30)
+        response = httpx.get(
+            f"{BASE_URL}/{endpoint}",
+            params=query,
+            timeout=30,
+            verify=_httpx_verify_argument(),
+        )
         response.raise_for_status()
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, OSError, ssl.SSLError) as exc:
         raise RuntimeError(
             "KOSIS request failed. If this is a company network, check HTTPS proxy "
-            "and corporate CA settings such as HTTPS_PROXY and SSL_CERT_FILE."
+            "and corporate CA settings such as HTTPS_PROXY and SSL_CERT_FILE. "
+            "MyHarness will pass the configured corporate SSL context to httpx."
         ) from exc
     data = _parse_kosis_json(response.text)
     if isinstance(data, dict) and data.get("err"):

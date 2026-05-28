@@ -201,6 +201,8 @@ if not "%PYTHON%"=="" (
   call :try_bootstrap_python "%PYTHON%" ""
   if not errorlevel 1 exit /b 0
 )
+call :try_bootstrap_python "py" "-3"
+if not errorlevel 1 exit /b 0
 call :try_bootstrap_python "python" ""
 if not errorlevel 1 exit /b 0
 call :try_bootstrap_python "python3" ""
@@ -211,6 +213,8 @@ exit /b 1
 set "PY_CANDIDATE=%~1"
 set "PY_CANDIDATE_ARGS=%~2"
 "%PY_CANDIDATE%" %PY_CANDIDATE_ARGS% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul
+if errorlevel 1 exit /b 1
+"%PY_CANDIDATE%" %PY_CANDIDATE_ARGS% -m pip --version >nul 2>nul
 if errorlevel 1 exit /b 1
 set "MYHARNESS_BOOTSTRAP_PYTHON=%PY_CANDIDATE%"
 set "MYHARNESS_BOOTSTRAP_PYTHON_ARGS=%PY_CANDIDATE_ARGS%"

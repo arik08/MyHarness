@@ -3962,7 +3962,7 @@ a:focus-visible {
   max-width: 100%;
   min-width: 0;
   flex-wrap: nowrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 @container artifact-panel (max-width: 600px) {
@@ -3975,15 +3975,17 @@ a:focus-visible {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 7px;
+  gap: 5px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .project-file-sort select {
+  width: 96px;
   min-height: 30px;
-  padding: 4px 26px 4px 9px;
+  padding: 4px 22px 4px 8px;
   background: var(--panel-raised);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -3991,7 +3993,12 @@ a:focus-visible {
   font: inherit;
 }
 
+.project-file-sort + .project-file-sort select {
+  width: 92px;
+}
+
 .project-file-toolbar-button {
+  flex: 0 0 auto;
   min-height: 30px;
   padding: 4px 9px;
   background: var(--panel-raised);
@@ -4002,6 +4009,8 @@ a:focus-visible {
   font: inherit;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .project-file-toolbar-button:hover:not(:disabled),

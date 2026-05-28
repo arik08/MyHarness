@@ -17,6 +17,7 @@ export default defineConfig({
     port: devPort,
     proxy: {
       "/api": { target: backendOrigin, xfwd: true },
+      "/share": { target: backendOrigin, xfwd: true },
       "/vendor": backendOrigin,
     },
   },
