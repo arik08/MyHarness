@@ -393,6 +393,30 @@ function mergeAssistantArtifacts(existing: ArtifactSummary[] | undefined, next: 
   return merged.length ? merged : undefined;
 }
 
+function artifactPathSignature(artifacts: ArtifactSummary[] | undefined) {
+  return (artifacts || [])
+    .map((artifact) => normalizeArtifactPath(artifact.path || "").toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join("\n");
+}
+
+function isDuplicateAssistantCompletion(
+  message: ChatMessage | undefined,
+  text: string,
+  artifacts: ArtifactSummary[],
+) {
+  if (message?.role !== "assistant" || message.isComplete !== true) {
+    return false;
+  }
+  const previousText = normalizeVisibleText(message.text).trim();
+  const nextText = normalizeVisibleText(text).trim();
+  if (previousText !== nextText) {
+    return false;
+  }
+  return artifactPathSignature(message.artifacts) === artifactPathSignature(artifacts);
+}
+
 function workflowOutputArtifactPath(input?: Record<string, unknown> | null) {
   const patch = workflowStringInput(input, ["patch", "diff"]).value;
   const path = workflowStringInput(input, ["path", "file_path", "output_path"]).value || workflowPatchPath(patch);
@@ -2482,6 +2506,14 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const value = rawValue || (artifacts.length ? "작성 완료했습니다." : "");
     const last = state.messages[state.messages.length - 1];
     const isFinalAnswer = event.has_tool_uses !== true;
+    if (isFinalAnswer && isDuplicateAssistantCompletion(last, value, artifacts)) {
+      return {
+        ...state,
+        busy: false,
+        status: "ready",
+        statusText: "준비됨",
+      };
+    }
     const shouldCompleteTodo = isFinalAnswer && artifacts.length > 0 && Boolean(state.todoMarkdown.trim());
     const todoMarkdown = shouldCompleteTodo ? completeTodoMarkdown(state.todoMarkdown) : state.todoMarkdown;
     const messages = isFinalAnswer

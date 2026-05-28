@@ -1040,6 +1040,37 @@ describe("appReducer", () => {
     ]);
   });
 
+  it("ignores duplicate final assistant completion events for the same artifact", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "",
+        has_tool_uses: false,
+        artifacts: [
+          { path: "outputs/완성_보고서.html", kind: "html" },
+        ],
+      },
+    });
+    const duplicate = appReducer(first, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "",
+        has_tool_uses: false,
+        artifacts: [
+          { path: "outputs/완성_보고서.html", kind: "html" },
+        ],
+      },
+    });
+
+    expect(duplicate.messages).toHaveLength(first.messages.length);
+    expect(duplicate.messages.at(-1)?.text).toBe("작성 완료했습니다.");
+    expect(duplicate.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
+      "outputs/완성_보고서.html",
+    ]);
+  });
+
   it("promotes completed write_file paths to assistant artifact metadata", () => {
     const writing = appReducer(initialAppState, {
       type: "backend_event",

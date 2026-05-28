@@ -127,7 +127,7 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("workspace")} disabled={!localBrowserHost}>
           <strong>작업공간 범위</strong>
-          <small>{localBrowserHost ? (state.workspaceScope.mode === "ip" ? "IP별 프로젝트 분리" : "공용 프로젝트") : serverOnlyLabel}</small>
+          <small>{localBrowserHost ? (state.workspaceScope.mode === "ip" ? "IP별 프로젝트/스킬 분리" : "공용 프로젝트/스킬") : serverOnlyLabel}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("learned-skills")} disabled={!localBrowserHost}>
           <strong>자동학습 스킬 표시</strong>
@@ -748,15 +748,15 @@ function WorkspaceScopeSettings({ onBack, onClose }: { onBack: () => void; onClo
 
   return (
     <>
-      <SettingsHeader title="작업공간 범위">프로젝트와 대화 기록을 공유할지 접속 IP별로 나눌지 정합니다.</SettingsHeader>
+      <SettingsHeader title="작업공간 범위">프로젝트, 대화 기록, 스킬 활성화 설정을 공유할지 접속 IP별로 나눌지 정합니다.</SettingsHeader>
       <div className="scope-segmented-control workspace-scope-mode-list" role="radiogroup" aria-label="작업공간 범위">
         <button className={`scope-mode-option${mode === "shared" ? " active" : ""}`} type="button" role="radio" aria-checked={mode === "shared"} onClick={() => void save("shared")}>
           <span className="scope-mode-marker" />
-          <span className="scope-mode-copy"><strong>공용</strong><small>모든 접속자가 같은 프로젝트와 기록을 봅니다.</small></span>
+          <span className="scope-mode-copy"><strong>공용</strong><small>모든 접속자가 같은 프로젝트, 기록, 스킬 설정을 봅니다.</small></span>
         </button>
         <button className={`scope-mode-option${mode === "ip" ? " active" : ""}`} type="button" role="radio" aria-checked={mode === "ip"} onClick={() => void save("ip")}>
           <span className="scope-mode-marker" />
-          <span className="scope-mode-copy"><strong>IP별</strong><small>접속 IP마다 별도 프로젝트와 기록을 봅니다.</small></span>
+          <span className="scope-mode-copy"><strong>IP별</strong><small>접속 IP마다 별도 프로젝트, 기록, 스킬 설정을 봅니다.</small></span>
         </button>
       </div>
       <div className="modal-actions">

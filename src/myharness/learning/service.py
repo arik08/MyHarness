@@ -173,7 +173,7 @@ def persist_learning_candidate(
     """Create or update the program-local skill for a candidate."""
 
     root = (skills_dir or get_default_learning_skills_dir()).resolve()
-    skill_dir = root / candidate.skill_name
+    skill_dir = _select_learning_skill_dir(root, candidate)
     skill_file = skill_dir / "SKILL.md"
     patterns_file = skill_dir / "references" / "learned-patterns.md"
     existing_patterns = patterns_file.read_text(encoding="utf-8") if patterns_file.exists() else ""
@@ -203,7 +203,7 @@ def _remember_learning_result(metadata: dict[str, object], result: LearningResul
         learned = []
         metadata["recent_learned_skills"] = learned
     entry = {
-        "skill": result.candidate.skill_name,
+        "skill": result.skill_path.parent.name,
         "action": result.action,
         "evidence_hash": result.candidate.evidence_hash,
         "summary": result.candidate.lesson[:240],
@@ -229,6 +229,8 @@ def _render_skill(candidate: LearningCandidate) -> str:
         "This skill was generated automatically from a repeated, verified MyHarness failure pattern.\n\n"
         "## Generalization Rules\n"
         "- Treat stored evidence as examples, not as the only trigger.\n"
+        "- Before creating another `learned-*` skill, inspect existing `learned-*` "
+        "skills and update or merge into a broader one when it fits.\n"
         "- Prefer reusable failure classes such as platform, tool, status code, file type, or workflow step over exact URLs, paths, prompts, or IDs.\n"
         "- Reuse an existing helper script, skill, API route, or validator before assembling a new one-off command.\n"
         "- If the verified work is only inspection and not a real corrective path, treat the lesson as low-confidence and diagnose first.\n\n"
@@ -243,6 +245,85 @@ def _render_skill(candidate: LearningCandidate) -> str:
         "\n## Avoid\n"
         f"- {candidate.avoid_next_time}\n"
     )
+
+
+def _select_learning_skill_dir(root: Path, candidate: LearningCandidate) -> Path:
+    exact_dir = root / candidate.skill_name
+    if (exact_dir / "SKILL.md").exists():
+        return exact_dir
+
+    preferred_name = _preferred_existing_learned_skill_name(candidate)
+    if preferred_name:
+        preferred_dir = root / preferred_name
+        if (preferred_dir / "SKILL.md").exists():
+            return preferred_dir
+
+    compatible_dir = _find_compatible_existing_learned_skill(root, candidate)
+    if compatible_dir is not None:
+        return compatible_dir
+
+    return exact_dir
+
+
+def _preferred_existing_learned_skill_name(candidate: LearningCandidate) -> str | None:
+    signature = candidate.failure_signature
+    skill_name = candidate.skill_name
+    if (
+        signature.startswith(("web-fetch-", "web-search-"))
+        or skill_name.startswith(("learned-web-fetch-", "learned-web-search-"))
+    ):
+        return "learned-web-research-recovery"
+    if (
+        signature == YOUTUBE_TRANSCRIPT_SIGNATURE
+        or skill_name.startswith("learned-cmd-")
+        or skill_name.startswith("learned-category-bash")
+        or signature.startswith(("cmd-", "bash-", "shell-", "npm-", "python-", "yt-dlp-"))
+    ):
+        return "learned-command-failures"
+    return None
+
+
+def _find_compatible_existing_learned_skill(
+    root: Path,
+    candidate: LearningCandidate,
+) -> Path | None:
+    if not root.exists():
+        return None
+    category = _candidate_learning_category(candidate)
+    if category is None:
+        return None
+    for skill_dir in sorted(root.glob("learned-*")):
+        skill_file = skill_dir / "SKILL.md"
+        if not skill_file.exists():
+            continue
+        text = _redact(skill_file.read_text(encoding="utf-8", errors="replace").lower())
+        if category == "web" and any(
+            keyword in text
+            for keyword in ("web search", "web_search", "web fetch", "web_fetch", "source-backed")
+        ):
+            return skill_dir
+        if category == "command" and any(
+            keyword in text
+            for keyword in ("command", "shell", "cmd", "npm", "python", "yt-dlp", "test command")
+        ):
+            return skill_dir
+    return None
+
+
+def _candidate_learning_category(candidate: LearningCandidate) -> str | None:
+    signature = candidate.failure_signature
+    skill_name = candidate.skill_name
+    if signature.startswith(("web-fetch-", "web-search-")) or skill_name.startswith(
+        ("learned-web-fetch-", "learned-web-search-")
+    ):
+        return "web"
+    if (
+        signature == YOUTUBE_TRANSCRIPT_SIGNATURE
+        or skill_name.startswith(("learned-cmd-", "learned-category-bash"))
+        or signature.startswith(("cmd-", "bash-", "shell-", "npm-", "python-", "yt-dlp-"))
+    ):
+        return "command"
+    return None
 
 
 def _render_pattern(candidate: LearningCandidate) -> str:

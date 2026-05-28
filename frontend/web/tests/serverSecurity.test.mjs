@@ -1317,6 +1317,41 @@ test("can still use IP-scoped workspaces when explicitly configured", async (t) 
   assert.equal(payload.scope.mode, "ip");
 });
 
+test("IP-scoped workspaces isolate the same project name per client IP", async (t) => {
+  const app = await startWebServer({
+    host: "0.0.0.0",
+    env: { MYHARNESS_WORKSPACE_SCOPE: "ip" },
+  });
+  t.after(() => app.stop());
+
+  const firstResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": "10.10.0.11",
+    },
+    body: JSON.stringify({ name: "ScopedSkills" }),
+  });
+  const secondResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": "10.10.0.12",
+    },
+    body: JSON.stringify({ name: "ScopedSkills" }),
+  });
+  const first = await firstResponse.json();
+  const second = await secondResponse.json();
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  assert.equal(first.workspace.name, "ScopedSkills");
+  assert.equal(second.workspace.name, "ScopedSkills");
+  assert.notEqual(first.workspace.path, second.workspace.path);
+  assert.equal(first.workspace.scope.name, "10.10.0.11");
+  assert.equal(second.workspace.scope.name, "10.10.0.12");
+});
+
 test("output token settings expose official model caps and save valid values", async (t) => {
   const app = await startWebServer();
   t.after(() => app.stop());

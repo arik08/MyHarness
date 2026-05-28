@@ -215,6 +215,43 @@ def test_existing_candidate_is_not_duplicated(tmp_path: Path):
     assert second.action == "unchanged"
 
 
+def test_existing_learned_skill_is_updated_before_creating_specific_duplicate(tmp_path: Path):
+    skills_root = tmp_path / ".skills"
+    existing_dir = skills_root / "learned-command-failures"
+    references_dir = existing_dir / "references"
+    references_dir.mkdir(parents=True)
+    (existing_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: learned-command-failures\n"
+        "description: Use when command failures need workflow diagnosis.\n"
+        "---\n\n"
+        "# Learned Command Failures\n",
+        encoding="utf-8",
+    )
+    (references_dir / "learned-patterns.md").write_text("", encoding="utf-8")
+
+    metadata: dict[str, object] = {"recent_verified_work": ["Ran npm test after fixing setup"]}
+    for _ in range(2):
+        remember_tool_failure(
+            metadata,
+            tool_name="cmd",
+            tool_input={
+                "command": "npm run test:react -- src/components/__tests__/Composer.test.tsx"
+            },
+            tool_output="AssertionError: expected composer to submit",
+        )
+    candidate = analyze_learning_candidate(metadata)
+    assert candidate is not None
+
+    result = persist_learning_candidate(candidate, skills_dir=skills_root)
+
+    assert result.action == "updated"
+    assert result.skill_path == existing_dir / "SKILL.md"
+    assert not (skills_root / candidate.skill_name).exists()
+    patterns = (references_dir / "learned-patterns.md").read_text(encoding="utf-8")
+    assert candidate.evidence_hash in patterns
+
+
 def test_persist_caps_evidence_and_skips_duplicate_signature_lesson(tmp_path: Path):
     base = LearningCandidate(
         skill_name="learned-demo",

@@ -12,6 +12,7 @@
   --user: #edf2f7;
   --accent: #0072bc;
   --accent-soft: #e5f2fb;
+  --profile-mark-ink: #ffffff;
   --success: #14745f;
   --success-soft: #e8f5f1;
   --warning: #9a6617;
@@ -145,6 +146,7 @@
   --user: #17304a;
   --accent: #35a8ff;
   --accent-soft: #0f2e48;
+  --profile-mark-ink: var(--sidebar);
   --success: #5bd0b6;
   --success-soft: #0d342f;
   --warning: #e0b45d;
@@ -206,6 +208,7 @@
   --user: #041904;
   --accent: #00ff24;
   --accent-soft: #041f05;
+  --profile-mark-ink: var(--sidebar);
   --success: #54ff69;
   --success-soft: #042205;
   --warning: #a9ff59;
@@ -267,6 +270,7 @@
   --user: #210700;
   --accent: #ffb84d;
   --accent-soft: #2a0a00;
+  --profile-mark-ink: var(--sidebar);
   --success: #ffb84d;
   --success-soft: #2b0d00;
   --warning: #ffb84d;
@@ -1480,7 +1484,7 @@ a:focus-visible {
   height: 30px;
   background: var(--accent);
   border-radius: 999px;
-  color: #ffffff;
+  color: var(--profile-mark-ink);
   font-size: 11px;
   font-weight: 820;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
