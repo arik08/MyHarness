@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "ecos": {
+      "type": "stdio",
+      "description": "한국은행 ECOS Open API MCP입니다. 환율, 주요통계, 통계표 목록, 통계표 항목, 일반 통계 시계열을 조회합니다.",
+      "command": "python",
+      "args": [
+        ".mcp/ecos_server.py"
+      ],
+      "env": {
+        "ECOS_API_KEY": "IAY2CU4G4W24KJC0UHRM"
+      },
+      "cwd": "."
+    }
+  }
+}
