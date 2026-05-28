@@ -65,13 +65,13 @@ def test_load_mcp_server_configs_filters_disabled_servers():
 def test_program_mcp_relative_cwd_stays_portable_with_source_base(tmp_path: Path):
     mcp_dir = tmp_path / ".mcp"
     mcp_dir.mkdir()
-    (mcp_dir / "sqlite-analysis.json").write_text(
+    (mcp_dir / "local-sqlite.json").write_text(
         """{
   "mcpServers": {
-    "worldbank_rdb": {
+    "local_sqlite": {
       "type": "stdio",
       "command": "python",
-      "args": [".mcp/sqlite_analysis_server.py"],
+      "args": [".mcp/local_sqlite_server.py"],
       "cwd": "."
     }
   }
@@ -82,8 +82,8 @@ def test_program_mcp_relative_cwd_stays_portable_with_source_base(tmp_path: Path
 
     servers = load_mcp_configs_from_dirs([mcp_dir])
 
-    assert servers["worldbank_rdb"].cwd == "."
-    assert servers["worldbank_rdb"]._cwd_base == str(tmp_path.resolve())
+    assert servers["local_sqlite"].cwd == "."
+    assert servers["local_sqlite"]._cwd_base == str(tmp_path.resolve())
 
 
 def test_stdio_cwd_resolves_against_source_base(tmp_path: Path):

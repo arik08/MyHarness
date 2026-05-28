@@ -32,7 +32,6 @@ frontend/web/node_modules/
 .myharness/*
 !.myharness/settings.json
 outputs/
-.mcp/data/analysis_samples.sqlite
 tests/test_api/PGPT_OpenAI_Compatible.py
 Playground/
 react_tui_smoke.txt
