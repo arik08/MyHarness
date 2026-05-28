@@ -55,6 +55,7 @@ from myharness.services.session_storage import (
 from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
+from myharness.skills.routing import is_mcp_routed_skill_source
 from myharness.skills.state import apply_skill_enabled_state
 from myharness.skills.types import SkillDefinition
 from myharness.tasks import get_task_manager
@@ -2545,14 +2546,16 @@ class ReactBackendHost:
         if parsed is None:
             return None
         server_name, user_request = parsed
-        manager_status = next(
-            (
-                item
-                for item in self._bundle.mcp_manager.list_statuses()
-                if item.name.lower() == server_name.lower()
-            ),
-            None,
-        )
+        manager_status = None
+        if self._bundle is not None:
+            manager_status = next(
+                (
+                    item
+                    for item in self._bundle.mcp_manager.list_statuses()
+                    if item.name.lower() == server_name.lower()
+                ),
+                None,
+            )
         status = manager_status or next(
             (item for item in self._mcp_statuses_for_snapshot() if item.name.lower() == server_name.lower()),
             None,
@@ -2613,8 +2616,14 @@ class ReactBackendHost:
             requested_name = requested_name.strip()
         if not requested_name:
             return None
-        skills = {skill.name.lower(): skill.name for skill in self._skill_snapshots()}
-        canonical_name = skills.get(requested_name.lower())
+        skills = {skill.name.lower(): skill for skill in self._skill_snapshots()}
+        requested_key = requested_name.lower()
+        canonical_skill = skills.get(requested_key)
+        if canonical_skill is None and requested_key.startswith("mcp:"):
+            mcp_skill = skills.get(requested_key.removeprefix("mcp:"))
+            if mcp_skill is not None and is_mcp_routed_skill_source(mcp_skill.source):
+                canonical_skill = mcp_skill
+        canonical_name = canonical_skill.name if canonical_skill is not None else None
         if canonical_name is None:
             return None
         return canonical_name, user_request

@@ -622,6 +622,33 @@ describe("Composer", () => {
     expect(input).toHaveProperty("value", "$mcp:sqlite_analysis ");
   });
 
+  it("classifies skill-mcp skills as MCP suggestions", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          skills: [
+            { name: "browser-qa", description: "브라우저 MCP 라우팅", source: "skill-mcp:browser", enabled: true },
+            { name: "browser-notes", description: "일반 브라우저 메모", source: "project", enabled: true },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    await user.type(input, "$mcp:bro");
+
+    expect(screen.getByRole("option", { name: /\$mcp:browser-qa/ }).textContent).toContain("브라우저 MCP 라우팅");
+    expect(screen.queryByRole("option", { name: /\$browser-notes/ })).toBeNull();
+
+    await user.keyboard("{Enter}");
+    expect(input).toHaveProperty("value", "$mcp:browser-qa ");
+  });
+
   it("adds a trailing space after applying skill and file suggestions at the cursor", async () => {
     const user = userEvent.setup();
     render(

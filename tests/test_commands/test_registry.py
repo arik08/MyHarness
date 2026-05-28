@@ -20,6 +20,7 @@ from myharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
 from myharness.permissions import PermissionChecker
 from myharness.plugins.types import PluginCommandDefinition
 from myharness.project_preferences import load_project_preferences
+from myharness.skills.types import SkillDefinition
 from myharness.state import AppState, AppStateStore
 from myharness.tasks import get_task_manager
 from myharness.tools import create_default_tool_registry
@@ -642,6 +643,33 @@ async def test_help_lists_skills_mcp_and_plugins_even_when_empty(tmp_path: Path,
     assert "superpowers" not in result.message
     assert "/mcp toggle NAME" in result.message
     assert "/plugin toggle NAME" in result.message
+
+
+def test_skill_mcp_entries_are_classified_as_mcp_capabilities(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    settings = Settings()
+    skills = [
+        SkillDefinition(
+            name="browser-qa",
+            description="Route browser checks through the MCP browser capability",
+            content="Use the MCP browser tools through this routing skill.",
+            source="skill-mcp:browser",
+        ),
+        SkillDefinition(
+            name="report-writer",
+            description="Write reports",
+            content="Write reports.",
+            source="project",
+        ),
+    ]
+
+    text = registry_module._format_capability_management_text(settings, [], skills, tmp_path)
+
+    skills_section = text.split("MCP 서버:", 1)[0]
+    mcp_section = text.split("MCP 서버:", 1)[1].split("플러그인:", 1)[0]
+    assert "report-writer" in skills_section
+    assert "browser-qa" not in skills_section
+    assert "- browser-qa [활성] (skill-mcp): Route browser checks through the MCP browser capability" in mcp_section
 
 
 @pytest.mark.asyncio

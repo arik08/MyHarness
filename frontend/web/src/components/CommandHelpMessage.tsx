@@ -226,11 +226,12 @@ function parseMcpCatalog(text: string): ToggleEntry[] {
     .map((line) => {
       const match = line.match(/^-\s+(.+?)\s+\[(enabled|disabled|활성|비활성)\]\s+\(([^)]*)\)(?::\s*(.*))?$/i);
       if (!match) return null;
+      const transport = (match[3] || "").trim();
       return {
         name: match[1].trim(),
         enabled: ["enabled", "활성"].includes(match[2].toLowerCase()),
-        description: (match[4] || match[3]).trim() || "MCP server",
-        source: "mcp",
+        description: (match[4] || transport).trim() || "MCP server",
+        source: isSkillMcpSource(transport) ? "skill-mcp" : "mcp",
       };
     })
     .filter((item): item is ToggleEntry => Boolean(item));
@@ -338,6 +339,14 @@ function optimisticSkillSnapshot(skills: SkillItem[], items: ToggleEntry[], name
 function pluginNameFromSkillSource(source: string) {
   const match = String(source || "").trim().match(/^plugin:(.+)$/i);
   return match?.[1]?.trim().toLowerCase() || "";
+}
+
+function isSkillMcpSource(source: string) {
+  return /^(skill-mcp(?::|$)|mcp:)/i.test(String(source || "").trim());
+}
+
+function isSkillMcpItem(item: ToggleEntry) {
+  return isSkillMcpSource(item.source);
 }
 
 function pluginToneIndexByName(plugins: ToggleEntry[]) {
@@ -510,6 +519,21 @@ function mergeMcpState(items: ToggleEntry[], servers: McpServerItem[]) {
   });
 }
 
+function mergeSkillMcpState(items: ToggleEntry[], skills: SkillItem[]) {
+  const byName = new Map(skills.map((skill) => [skill.name.toLowerCase(), skill]));
+  return items.map((item) => {
+    if (!isSkillMcpItem(item)) return item;
+    const snapshot = byName.get(item.name.toLowerCase());
+    if (!snapshot) return item;
+    return {
+      ...item,
+      description: displaySkillDescription(snapshot.name || item.name, snapshot.description || item.description, snapshot.source || item.source),
+      enabled: snapshot.enabled !== false,
+      source: snapshot.source || item.source,
+    };
+  });
+}
+
 function HelpSummaryTitle({ label }: { label: string }) {
   return (
     <span className="command-summary-label">
@@ -559,11 +583,14 @@ export function CommandHelpMessage({ text }: { text: string }) {
     [parsed.skills, pluginEnabledByName, state.skills, toggleOverrides],
   );
   const mcpItems = useMemo(
-    () => mergeMcpState(parsed.mcps, state.mcpServers).map((item) => ({
-      ...item,
-      enabled: toggleOverrides[`mcp:${item.name.toLowerCase()}`] ?? item.enabled,
-    })),
-    [parsed.mcps, state.mcpServers, toggleOverrides],
+    () => mergeSkillMcpState(mergeMcpState(parsed.mcps, state.mcpServers), state.skills).map((item) => {
+      const overridePrefix = isSkillMcpItem(item) ? "skill" : "mcp";
+      return {
+        ...item,
+        enabled: toggleOverrides[`${overridePrefix}:${item.name.toLowerCase()}`] ?? item.enabled,
+      };
+    }),
+    [parsed.mcps, state.mcpServers, state.skills, toggleOverrides],
   );
   const groupedSkillItems = useMemo(
     () => groupSkillsByPlugin(skillItems, pluginItems, pluginToneByName),
@@ -670,7 +697,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
           label="MCP"
           items={mcpItems}
           emptyText="설정된 MCP 서버가 없습니다"
-          onToggle={(item) => void toggleItem("set_mcp_enabled", item.name, item.enabled)}
+          onToggle={(item) => void toggleItem(isSkillMcpItem(item) ? "set_skill_enabled" : "set_mcp_enabled", item.name, item.enabled)}
         />
       ) : null}
       {parsed.hasPlugins ? (

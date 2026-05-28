@@ -70,6 +70,7 @@ from myharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionB
 from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
+from myharness.skills.routing import is_mcp_routed_skill
 from myharness.skills.state import set_skill_enabled, toggle_skill_enabled
 from myharness.tasks import get_task_manager
 from myharness.plugins.types import PluginCommandDefinition
@@ -86,10 +87,19 @@ def _custom_skills(skills):
     return [skill for skill in skills if skill.source not in _BUILT_IN_SKILL_SOURCES]
 
 
+def _regular_custom_skills(skills):
+    return [skill for skill in _custom_skills(skills) if not is_mcp_routed_skill(skill)]
+
+
+def _mcp_routed_skills(skills):
+    return [skill for skill in _custom_skills(skills) if is_mcp_routed_skill(skill)]
+
+
 def _visible_custom_skills(skills, settings: Settings):
-    if settings.learning.effective_mode != "hide":
-        return _custom_skills(skills)
-    return [skill for skill in _custom_skills(skills) if not is_learned_skill(skill)]
+    custom = _custom_skills(skills)
+    if settings.learning.effective_mode == "hide":
+        custom = [skill for skill in custom if not is_learned_skill(skill)]
+    return custom
 
 
 def _format_skills_management_text(skills) -> str:
@@ -103,9 +113,10 @@ def _format_skills_management_text(skills) -> str:
     return "\n".join(lines)
 
 
-def _format_mcp_management_text(settings, plugins, cwd: str | Path) -> str:
+def _format_mcp_management_text(settings, plugins, cwd: str | Path, mcp_skills=()) -> str:
     servers = load_mcp_server_configs(settings, plugins, cwd=cwd, include_disabled=True)
-    if not servers:
+    mcp_skill_list = sorted(mcp_skills, key=lambda skill: skill.name)
+    if not servers and not mcp_skill_list:
         return "MCP 서버:\n(설정된 MCP 서버가 없습니다)"
     disabled = set(settings.disabled_mcp_servers or set())
     lines = ["MCP 서버:"]
@@ -115,6 +126,11 @@ def _format_mcp_management_text(settings, plugins, cwd: str | Path) -> str:
         description = str(getattr(config, "description", "") or "").strip()
         suffix = f": {description}" if description else ""
         lines.append(f"- {name} [{status}] ({transport}){suffix}")
+    for skill in mcp_skill_list:
+        status = "활성" if skill.enabled else "비활성"
+        description = display_skill_description(skill)
+        suffix = f": {description}" if description else ""
+        lines.append(f"- {skill.name} [{status}] (skill-mcp){suffix}")
     return "\n".join(lines)
 
 
@@ -130,10 +146,12 @@ def _format_plugins_management_text(plugins) -> str:
 
 
 def _format_capability_management_text(settings, plugins, skills, cwd: str | Path) -> str:
+    regular_skills = _regular_custom_skills(skills)
+    mcp_skills = _mcp_routed_skills(skills)
     return "\n\n".join(
         [
-            _format_skills_management_text(skills),
-            _format_mcp_management_text(settings, plugins, cwd),
+            _format_skills_management_text(regular_skills),
+            _format_mcp_management_text(settings, plugins, cwd, mcp_skills),
             _format_plugins_management_text(plugins),
             "전환 사용법: /skills toggle NAME, /mcp toggle NAME, /plugin toggle NAME",
         ]
@@ -1224,7 +1242,7 @@ def create_default_command_registry(
                 settings=settings,
                 include_disabled=True,
             )
-            skills = _custom_skills(refreshed.list_skills())
+            skills = _regular_custom_skills(refreshed.list_skills())
             return CommandResult(
                 message=(
                     f"스킬 '{skill.name}'을(를) {'활성화' if enabled else '비활성화'}했습니다.\n\n"
@@ -1243,7 +1261,7 @@ def create_default_command_registry(
             if skill is None:
                 return CommandResult(message=f"스킬을 찾을 수 없습니다: {rest}")
             return CommandResult(message=skill.content)
-        skills = _custom_skills(skill_registry.list_skills())
+        skills = _regular_custom_skills(skill_registry.list_skills())
         return CommandResult(message=_format_skills_management_text(skills))
 
     async def _learned_skills_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1592,10 +1610,30 @@ def create_default_command_registry(
             include_program_plugins=True,
         )
         servers = load_mcp_server_configs(settings, plugins, cwd=context.cwd, include_disabled=True)
+        skill_registry = load_skill_registry(
+            context.cwd,
+            extra_skill_dirs=context.extra_skill_dirs,
+            extra_plugin_roots=context.extra_plugin_roots,
+            settings=settings,
+            include_disabled=True,
+        )
+        mcp_skills = {skill.name: skill for skill in _mcp_routed_skills(skill_registry.list_skills())}
         if not tokens or tokens[0] == "list":
-            return CommandResult(message=_format_mcp_management_text(settings, plugins, context.cwd))
+            return CommandResult(message=_format_mcp_management_text(settings, plugins, context.cwd, mcp_skills.values()))
         if tokens[0] in {"enable", "disable", "toggle"} and len(tokens) == 2:
             server_name = tokens[1]
+            if server_name in mcp_skills:
+                skill = mcp_skills[server_name]
+                if tokens[0] == "enable":
+                    enabled = set_skill_enabled(skill.name, True)
+                elif tokens[0] == "disable":
+                    enabled = set_skill_enabled(skill.name, False)
+                else:
+                    enabled = toggle_skill_enabled(skill.name)
+                return CommandResult(
+                    message=f"MCP 스킬 '{skill.name}'을(를) {'활성화' if enabled else '비활성화'}했습니다.",
+                    refresh_runtime=True,
+                )
             if server_name not in servers:
                 return CommandResult(message=f"알 수 없는 MCP 서버: {server_name}")
             disabled = set(settings.disabled_mcp_servers or set())

@@ -109,6 +109,7 @@ function commandSuggestions(commands: CommandItem[], query: string): Suggestion[
 function skillSuggestions(skills: SkillItem[], query: string): Suggestion[] {
   const normalized = query.replace(/^\$/, "").toLowerCase();
   return skills
+    .filter((skill) => !isSkillMcpSource(skill.source || ""))
     .filter((skill) => skill.enabled !== false && skill.name.toLowerCase().includes(normalized))
     .map((skill) => ({
       kind: "skill",
@@ -118,9 +119,26 @@ function skillSuggestions(skills: SkillItem[], query: string): Suggestion[] {
     }));
 }
 
-function mcpSuggestions(servers: McpServerItem[], query: string): Suggestion[] {
+function isSkillMcpSource(source: string) {
+  return /^(skill-mcp(?::|$)|mcp:)/i.test(String(source || "").trim());
+}
+
+function skillMcpSuggestions(skills: SkillItem[], query: string): Suggestion[] {
   const normalized = query.replace(/^\$/, "").replace(/^mcp:/i, "").toLowerCase();
-  return servers
+  return skills
+    .filter((skill) => isSkillMcpSource(skill.source || ""))
+    .filter((skill) => skill.enabled !== false && skill.name.toLowerCase().includes(normalized))
+    .map((skill) => ({
+      kind: "mcp" as const,
+      value: `$mcp:${skill.name}`,
+      label: `$mcp:${skill.name}`,
+      description: skill.description || skill.source || "MCP 스킬",
+    }));
+}
+
+function mcpSuggestions(servers: McpServerItem[], skills: SkillItem[], query: string): Suggestion[] {
+  const normalized = query.replace(/^\$/, "").replace(/^mcp:/i, "").toLowerCase();
+  const serverSuggestions = servers
     .filter((server) => server.state !== "disabled" && server.name.toLowerCase().includes(normalized))
     .map((server) => {
       const details = [
@@ -130,12 +148,13 @@ function mcpSuggestions(servers: McpServerItem[], query: string): Suggestion[] {
         Number.isFinite(server.resource_count) ? `리소스 ${server.resource_count}` : "",
       ].filter(Boolean);
       return {
-        kind: "mcp",
+        kind: "mcp" as const,
         value: `$mcp:${server.name}`,
         label: `$mcp:${server.name}`,
         description: details.join(" · ") || server.detail || "MCP 서버",
       };
     });
+  return [...serverSuggestions, ...skillMcpSuggestions(skills, query)];
 }
 
 function fileSuggestions(artifacts: ArtifactSummary[], query: string): Suggestion[] {
@@ -208,7 +227,7 @@ export function Composer() {
     if (suggestionToken.trigger === "$") {
       return [
         ...skillSuggestions(state.skills, suggestionToken.query),
-        ...mcpSuggestions(state.mcpServers, suggestionToken.query),
+        ...mcpSuggestions(state.mcpServers, state.skills, suggestionToken.query),
       ];
     }
     if (suggestionToken.trigger === "@") return fileSuggestions(state.artifacts, suggestionToken.query);

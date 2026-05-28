@@ -43,7 +43,7 @@ from myharness.ui.backend_host import (
     _tool_progress_message,
     run_backend_host,
 )
-from myharness.ui.protocol import BackendEvent, FrontendAttachment, FrontendComposeOptions, FrontendRequest
+from myharness.ui.protocol import BackendEvent, FrontendAttachment, FrontendComposeOptions, FrontendRequest, SkillSnapshot
 from myharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 
 
@@ -3035,6 +3035,30 @@ def test_forced_mcp_line_builds_selected_server_prompt():
     assert "mcp__sqlite_analysis__query" in prompt
     assert "mcp__sqlite_analysis__list_tables" in prompt
     assert "cars 테이블 목록" in prompt
+
+
+def test_forced_mcp_line_can_route_to_skill_mcp_skill():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._mcp_statuses_for_snapshot = lambda: []  # type: ignore[method-assign]
+    host._skill_snapshots = lambda hide_learned=True: [  # type: ignore[method-assign]
+        SkillSnapshot(
+            name="browser-qa",
+            description="Route browser checks through MCP guidance",
+            source="skill-mcp:browser",
+        )
+    ]
+    host._loaded_skill_by_name = lambda name: SkillDefinition(  # type: ignore[method-assign]
+        name="browser-qa",
+        description="Route browser checks through MCP guidance",
+        content="Use the browser MCP tools sparingly.",
+        source="skill-mcp:browser",
+    )
+
+    prompt = host._line_with_forced_skill("$mcp:browser-qa inspect the UI")
+
+    assert "explicitly selected the `browser-qa` skill" in prompt
+    assert "Use the browser MCP tools sparingly." in prompt
+    assert "inspect the UI" in prompt
 
 
 def test_forced_mcp_line_accepts_middle_token_and_short_server_token():
