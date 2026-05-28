@@ -11,6 +11,7 @@ import pytest
 
 from myharness.api.client import ApiMessageCompleteEvent
 from myharness.api.usage import UsageSnapshot
+from myharness.config.settings import Settings
 from myharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
@@ -2268,6 +2269,80 @@ async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatc
     assert "# Selected Skill Content" in captured["line"]
     assert "# Review PR" in captured["line"]
     assert "inspect this branch" in captured["line"]
+
+
+@pytest.mark.asyncio
+async def test_backend_host_forces_disabled_mcp_from_dollar_prefix(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    class OnDemandMcpManager:
+        def __init__(self) -> None:
+            self.ensure_calls: list[tuple[str, object]] = []
+            self._statuses: list[McpConnectionStatus] = []
+
+        def list_statuses(self):
+            return list(self._statuses)
+
+        def list_tools(self):
+            return [tool for status in self._statuses for tool in status.tools]
+
+        async def ensure_server_config(self, name, config):
+            self.ensure_calls.append((name, config))
+            self._statuses = [
+                McpConnectionStatus(
+                    name=name,
+                    state="connected",
+                    transport="stdio",
+                    tools=[
+                        McpToolInfo(
+                            server_name=name,
+                            name="hello",
+                            description="Say hello",
+                            input_schema={"type": "object", "properties": {}},
+                        )
+                    ],
+                )
+            ]
+            return True
+
+        async def close(self):
+            return None
+
+    settings = Settings(
+        disabled_mcp_servers={"demo"},
+        mcp_servers={"demo": McpStdioServerConfig(command="python", args=["server.py"])},
+    )
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    await host._bundle.mcp_manager.close()
+    host._bundle.current_settings = lambda: settings  # type: ignore[method-assign]
+    host._bundle.current_plugins = lambda: []  # type: ignore[method-assign]
+    host._bundle.mcp_manager = OnDemandMcpManager()  # type: ignore[assignment]
+    captured: dict[str, object] = {}
+
+    async def _emit(_event):
+        return None
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del print_system, render_event, clear_output
+        captured["line"] = line
+        captured["tools"] = [tool.name for tool in bundle.tool_registry.list_tools()]
+        return True
+
+    monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    try:
+        should_continue = await host._process_line("$mcp:demo say hello")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert host._bundle.mcp_manager.ensure_calls
+    assert "explicitly selected the `demo` MCP server" in str(captured["line"])
+    assert "mcp__demo__hello" in captured["tools"]
+    assert "say hello" in str(captured["line"])
 
 
 @pytest.mark.asyncio

@@ -101,7 +101,7 @@ class McpClientManager:
         """Return one configured server object if present."""
         return self._server_configs.get(name)
 
-    async def ensure_server_config(self, name: str, config: object) -> bool:
+    async def ensure_server_config(self, name: str, config: object, *, force_connect: bool = False) -> bool:
         """Add or refresh one server config and connect it if needed."""
         existing = self._server_configs.get(name)
         status = self._statuses.get(name)
@@ -117,7 +117,7 @@ class McpClientManager:
             state="pending",
             transport=getattr(config, "type", "unknown"),
         )
-        if getattr(config, "auto_connect", True) is False:
+        if getattr(config, "auto_connect", True) is False and not force_connect:
             self._statuses[name] = McpConnectionStatus(
                 name=name,
                 state="pending",

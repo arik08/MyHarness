@@ -1722,6 +1722,8 @@ class ReactBackendHost:
         ]
         is_shell_shortcut = not image_blocks and not client_attachment_refs and line.lstrip().startswith("!")
         selected_mcp = None if image_blocks or is_shell_shortcut else self._parse_forced_mcp_line(line)
+        if selected_mcp is not None:
+            await self._ensure_forced_mcp_available(selected_mcp[0])
         effective_line = line if image_blocks or is_shell_shortcut else self._line_with_forced_skill(line)
         if prompt_notes and not is_shell_shortcut:
             effective_line = "\n\n".join(part for part in (effective_line.strip(), *prompt_notes) if part)
@@ -2443,6 +2445,27 @@ class ReactBackendHost:
             self._bundle.tool_registry.register(McpToolAdapter(self._bundle.mcp_manager, tool_info))
         sync_app_state(self._bundle)
 
+    async def _ensure_forced_mcp_available(self, server_name: str) -> bool:
+        """Connect an explicitly selected MCP server without enabling it globally."""
+        assert self._bundle is not None
+        configs = load_mcp_server_configs(
+            self._bundle.current_settings(),
+            self._bundle.current_plugins(),
+            cwd=self._bundle.cwd,
+            include_disabled=True,
+        )
+        config = configs.get(server_name)
+        if config is None:
+            return False
+        ensure = getattr(self._bundle.mcp_manager, "ensure_server_config", None)
+        if ensure is None:
+            return False
+        if "force_connect" in inspect.signature(ensure).parameters:
+            await ensure(server_name, config, force_connect=True)
+        else:
+            await ensure(server_name, config)
+        return True
+
     def _tool_registry_for_selected_mcp(self, server_name: str) -> ToolRegistry | None:
         assert self._bundle is not None
         registry = ToolRegistry()
@@ -2513,11 +2536,19 @@ class ReactBackendHost:
         if parsed is None:
             return None
         server_name, user_request = parsed
-        status = next(
+        manager_status = next(
+            (
+                item
+                for item in self._bundle.mcp_manager.list_statuses()
+                if item.name.lower() == server_name.lower()
+            ),
+            None,
+        )
+        status = manager_status or next(
             (item for item in self._mcp_statuses_for_snapshot() if item.name.lower() == server_name.lower()),
             None,
         )
-        if status is None or status.state == "disabled":
+        if status is None or (status.state == "disabled" and manager_status is None):
             return None
         request_text = user_request.strip() or "(No additional request was provided.)"
         tool_names = [
