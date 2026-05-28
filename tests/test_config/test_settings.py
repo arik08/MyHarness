@@ -628,6 +628,82 @@ class TestAnsiEscapeSequences:
         assert updated.model == "claude-opus-4-6"
 
 
+class TestGeminiProvider:
+    """Tests for the Google Gemini OpenAI-compatible provider profile."""
+
+    def test_gemini_in_default_provider_profiles(self):
+        from myharness.config.settings import default_provider_profiles
+
+        profiles = default_provider_profiles()
+        assert "gemini" in profiles
+        profile = profiles["gemini"]
+        assert profile.provider == "gemini"
+        assert profile.api_format == "openai"
+        assert profile.auth_source == "gemini_api_key"
+        assert profile.default_model == "gemini-3.5-flash"
+        assert profile.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+        assert profile.allowed_models == [
+            "gemini-3.5-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite",
+        ]
+
+    def test_auth_source_provider_name_gemini(self):
+        from myharness.config.settings import auth_source_provider_name
+
+        assert auth_source_provider_name("gemini_api_key") == "gemini"
+
+    def test_default_auth_source_for_gemini_provider(self):
+        from myharness.config.settings import default_auth_source_for_provider
+
+        assert default_auth_source_for_provider("gemini") == "gemini_api_key"
+
+    def test_resolve_auth_reads_gemini_api_key_env(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
+        settings = Settings(active_profile="gemini")
+
+        resolved = settings.resolve_auth()
+
+        assert resolved.provider == "gemini"
+        assert resolved.value == "gemini-test-key"
+        assert "GEMINI_API_KEY" in resolved.source
+
+    def test_gemini_saved_builtin_profile_uses_current_allowed_models_only(self):
+        settings = Settings(
+            profiles={
+                "gemini": ProviderProfile(
+                    label="Google Gemini",
+                    provider="gemini",
+                    api_format="openai",
+                    auth_source="gemini_api_key",
+                    default_model="gemini-2.5-flash",
+                    base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+                    allowed_models=["gemini-2.5-flash"],
+                )
+            }
+        )
+
+        profile = settings.merged_profiles()["gemini"]
+
+        assert profile.default_model == "gemini-3.5-flash"
+        assert profile.allowed_models == [
+            "gemini-3.5-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite",
+        ]
+
+    def test_gemini_profile_materializes_default_model(self):
+        settings = Settings(active_profile="gemini")
+
+        materialized = settings.materialize_active_profile()
+
+        assert materialized.model == "gemini-3.5-flash"
+        assert materialized.provider == "gemini"
+        assert materialized.api_format == "openai"
+
+
 class TestMiniMaxProvider:
     """Tests for MiniMax provider profile and auth integration."""
 

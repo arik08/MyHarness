@@ -45,8 +45,7 @@ echo   This starts both the backend server and Vite HMR dev server.
 echo   Backend PORT must be unique. If the preferred React port is unavailable, the launcher will pick another port.
 echo   Open the React dev UI URL printed below while developing.
 echo   Press Q or Ctrl+C in this window to stop both servers.
-echo   Press R in this window to restart both servers.
-echo   Press T in this window to hard reset both servers.
+echo   Press R in this window to full restart both servers.
 echo.
 
 where node >nul 2>nul

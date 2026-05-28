@@ -1543,8 +1543,8 @@ a:focus-visible {
 }
 
 .runtime-picker-model-panel {
-  width: min(236px, calc(100vw - 250px));
-  min-width: 196px;
+  width: min(340px, calc(100vw - 250px));
+  min-width: 236px;
 }
 
 .runtime-picker-effort-panel {
@@ -3984,6 +3984,12 @@ a:focus-visible {
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.runtime-picker-model-panel .runtime-picker-option strong,
+.runtime-picker-model-panel .runtime-picker-option small {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .project-file-sort select {

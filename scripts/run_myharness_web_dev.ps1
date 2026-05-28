@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 $script:StopRequested = $false
 $script:BackendProcess = $null
 $script:ViteProcess = $null
+$script:LauncherScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
 
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
@@ -16,6 +17,25 @@ function Stop-ProcessTree {
 
     if ($taskkillExitCode -ne 0) {
         Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Stop-ExistingDevLaunchers {
+    $escapedScriptPath = [regex]::Escape($script:LauncherScriptPath)
+    $existingLaunchers = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.ProcessId -ne $PID -and
+            $_.Name -match "^(powershell|pwsh)(\.exe)?$" -and
+            $_.CommandLine -match $escapedScriptPath
+        }
+
+    foreach ($launcher in $existingLaunchers) {
+        Write-Host "[INFO] Existing MyHarness dev launcher found at PID $($launcher.ProcessId). Closing it before starting fresh..."
+        Stop-ProcessTree -ProcessId ([int]$launcher.ProcessId)
+    }
+
+    if ($existingLaunchers) {
+        Start-Sleep -Milliseconds 800
     }
 }
 
@@ -63,6 +83,9 @@ function Stop-ListeningPort {
         throw "Port $Port is still in use after trying to close PID $ownerPid."
     }
 }
+
+$backendPort = if ($env:PORT) { [int]$env:PORT } else { 4273 }
+Stop-ExistingDevLaunchers
 
 function Test-CanListenOnPort {
     param(
@@ -249,14 +272,7 @@ function Start-ViteServer {
 }
 
 function Restart-All {
-    Write-Host "[INFO] Restart requested. Restarting backend and Vite dev server..."
-    Stop-All
-    $script:BackendProcess = Start-BackendLauncher
-    $script:ViteProcess = Start-ViteServer
-}
-
-function HardReset-All {
-    Write-Host "[INFO] Hard reset requested. Stopping backend and Vite, clearing ports, and starting fresh..."
+    Write-Host "[INFO] Full restart requested. Stopping backend and Vite, clearing ports, and starting fresh..."
     Stop-All
     Stop-ListeningPort -Port $backendPort -Label "backend"
     Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
@@ -274,7 +290,6 @@ function HardReset-All {
     Stop-All
 })
 
-$backendPort = if ($env:PORT) { [int]$env:PORT } else { 4273 }
 $preferredVitePort = Get-RequestedVitePort
 Stop-ListeningPort -Port $backendPort -Label "backend"
 $script:VitePort = Resolve-VitePort -PreferredPort $preferredVitePort
@@ -295,10 +310,9 @@ Write-Host "  Backend entry:      http://localhost:$env:PORT"
 Write-Host "  Network entry:      use http://<this PC IP>:$env:PORT from another PC"
 Write-Host ""
 Write-Host "Keep this window open while developing."
-Write-Host "If the backend or Vite exits unexpectedly, this launcher will restart it."
+Write-Host "If the backend or Vite exits unexpectedly, this launcher will full restart both servers."
 Write-Host "Press Q or Ctrl+C in this window to stop both servers."
-Write-Host "Press R in this window to restart both servers."
-Write-Host "Press T in this window to hard reset both servers."
+Write-Host "Press R in this window to full restart both servers."
 Write-Host ""
 
 try {
@@ -312,14 +326,14 @@ try {
                 break
             }
 
-            Write-Host "[WARN] Backend launcher exited with code $($script:BackendProcess.ExitCode). Restarting in 2 seconds..."
+            Write-Host "[WARN] Backend launcher exited with code $($script:BackendProcess.ExitCode). Full restarting in 2 seconds..."
             Start-Sleep -Seconds 2
-            $script:BackendProcess = Start-BackendLauncher
+            Restart-All
         }
         if ($script:ViteProcess.HasExited) {
-            Write-Host "[WARN] Vite dev server exited with code $($script:ViteProcess.ExitCode). Restarting in 2 seconds..."
+            Write-Host "[WARN] Vite dev server exited with code $($script:ViteProcess.ExitCode). Full restarting in 2 seconds..."
             Start-Sleep -Seconds 2
-            $script:ViteProcess = Start-ViteServer
+            Restart-All
         }
 
         try {
@@ -332,9 +346,6 @@ try {
             }
             if (Test-LauncherKey -Key $key -ExpectedKey R -Characters @("r", "R", ([string][char]0x3131))) {
                 Restart-All
-            }
-            if (Test-LauncherKey -Key $key -ExpectedKey T -Characters @("t", "T", ([string][char]0x3145))) {
-                HardReset-All
             }
         }
         catch {

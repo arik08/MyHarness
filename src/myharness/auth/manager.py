@@ -145,6 +145,15 @@ class AuthManager:
                     configured = True
                     origin = "file"
                     state = "configured"
+            elif source == "gemini_api_key":
+                if os.environ.get("GEMINI_API_KEY"):
+                    configured = True
+                    origin = "env"
+                    state = "configured"
+                elif load_credential(storage_provider, "api_key"):
+                    configured = True
+                    origin = "file"
+                    state = "configured"
             elif source == "pgpt_api_key":
                 stored_api_key = load_credential(storage_provider, "api_key")
                 stored_employee_no = load_credential(storage_provider, "employee_no") or load_credential(storage_provider, "system_code")
@@ -279,6 +288,14 @@ class AuthManager:
                     configured = True
                     source = "env"
                 elif load_credential("moonshot", "api_key"):
+                    configured = True
+                    source = "file"
+
+            elif provider == "gemini":
+                if os.environ.get("GEMINI_API_KEY"):
+                    configured = True
+                    source = "env"
+                elif load_credential("gemini", "api_key"):
                     configured = True
                     source = "file"
 

@@ -39,8 +39,7 @@ echo.
 echo   This window is running the web server and backend launcher.
 echo   Keep it open while using MyHarness in the browser.
 echo   Press Q or Ctrl+C in this window to stop the server.
-echo   Press R in this window to restart the server.
-echo   Press T in this window to hard reset the server.
+echo   Press R in this window to full restart the server.
 echo.
 
 where node >nul 2>nul
@@ -191,10 +190,9 @@ if not "%MYHARNESS_PORT_PID%"=="" (
 echo [INFO] Starting server...
 echo [INFO] Server bind host: %HOST%
 echo [INFO] If another PC cannot connect, allow Node.js through Windows Firewall.
-echo [INFO] If the server process exits unexpectedly, this launcher will restart it.
+echo [INFO] If the server process exits unexpectedly, this launcher will full restart it.
 echo [INFO] Press Q or Ctrl+C in this window to stop the server.
-echo [INFO] Press R in this window to restart the server.
-echo [INFO] Press T in this window to hard reset the server.
+echo [INFO] Press R in this window to full restart the server.
 echo.
 
 pushd "frontend\web"

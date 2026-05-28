@@ -2876,6 +2876,14 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Strongest coding and reasoning"
     assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == ["gpt-5.5", "gpt-5.4"]
     assert "gpt-5.4-mini" in [option["value"] for option in runtime_options["models_by_provider"]["codex"]]
+    assert any(option["value"] == "gemini" for option in runtime_options["providers"])
+    gemini_models = [option["value"] for option in runtime_options["models_by_provider"]["gemini"]]
+    assert gemini_models == [
+        "gemini-3.5-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite",
+    ]
     assert runtime_options["subagent_model"] == "gpt-5.4-mini"
     assert runtime_options["subagent_effort"] == "medium"
     assert any(option["value"] == "low" for option in runtime_options["efforts"])

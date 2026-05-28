@@ -43,6 +43,18 @@ def test_dev_launcher_falls_back_when_taskkill_fails() -> None:
     assert "Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue" in stop_tree
 
 
+def test_dev_launcher_closes_existing_dev_launcher_tree_before_ports() -> None:
+    script = _read_launcher("run_myharness_web_dev.ps1")
+    stop_existing = _function_body(script, "Stop-ExistingDevLaunchers")
+
+    assert "[System.IO.Path]::GetFullPath($PSCommandPath)" in script
+    assert "$_.ProcessId -ne $PID" in stop_existing
+    assert "$_.Name -match" in stop_existing
+    assert "$_.CommandLine -match $escapedScriptPath" in stop_existing
+    assert "Stop-ProcessTree -ProcessId ([int]$launcher.ProcessId)" in stop_existing
+    assert script.index("Stop-ExistingDevLaunchers") < script.index('Stop-ListeningPort -Port $backendPort -Label "backend"')
+
+
 def test_dev_launcher_restart_has_no_fixed_multi_second_pause() -> None:
     script = _read_launcher("run_myharness_web_dev.ps1")
     restart_block = re.search(
@@ -63,22 +75,53 @@ def test_launchers_accept_lowercase_and_korean_restart_keys() -> None:
         assert '"KeyChar", "Character"' in script
 
 
-def test_launchers_accept_lowercase_and_korean_hard_reset_keys() -> None:
+def test_launchers_do_not_keep_separate_hard_reset_key() -> None:
     for script_name in ("run_myharness_web_server.ps1", "run_myharness_web_dev.ps1"):
         script = _read_launcher(script_name)
 
-        assert '-ExpectedKey T -Characters @("t", "T", ([string][char]0x3145))' in script
-        assert "Hard reset requested" in script
+        assert "ExpectedKey T" not in script
+        assert "keyboard_t" not in script
 
 
-def test_launchers_show_hard_reset_shortcut() -> None:
+def test_launchers_show_full_restart_shortcut_on_r_only() -> None:
     backend_batch = (ROOT / "run_myharness_web.bat").read_text(encoding="utf-8")
     dev_batch = (ROOT / "run_myharness_web_dev.bat").read_text(encoding="utf-8")
     dev_script = _read_launcher("run_myharness_web_dev.ps1")
 
-    assert "Press T in this window to hard reset the server." in backend_batch
-    assert "Press T in this window to hard reset both servers." in dev_batch
-    assert "Press T in this window to hard reset both servers." in dev_script
+    assert "Press R in this window to full restart the server." in backend_batch
+    assert "Press R in this window to full restart both servers." in dev_batch
+    assert "Press R in this window to full restart both servers." in dev_script
+    assert "Press T in this window" not in backend_batch
+    assert "Press T in this window" not in dev_batch
+    assert "Press T in this window" not in dev_script
+
+
+def test_dev_restart_clears_backend_and_vite_ports() -> None:
+    script = _read_launcher("run_myharness_web_dev.ps1")
+    restart_all = _function_body(script, "Restart-All")
+
+    assert "Stop-All" in restart_all
+    assert 'Stop-ListeningPort -Port $backendPort -Label "backend"' in restart_all
+    assert 'Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"' in restart_all
+    assert "Start-BackendLauncher" in restart_all
+    assert "Start-ViteServer" in restart_all
+
+
+def test_dev_unexpected_exits_use_full_restart() -> None:
+    script = _read_launcher("run_myharness_web_dev.ps1")
+    backend_exit_tail = script[script.index("Backend launcher exited") :]
+    vite_exit_tail = script[script.index("Vite dev server exited") :]
+
+    assert "Full restarting in 2 seconds" in script
+    assert "Restart-All" in backend_exit_tail[:300]
+    assert "Restart-All" in vite_exit_tail[:300]
+
+
+def test_backend_unexpected_exit_clears_port_before_restart() -> None:
+    script = _read_launcher("run_myharness_web_server.ps1")
+
+    assert "full restarting server in 3 seconds" in script
+    assert "Stop-ListeningPort -Port $serverPort" in script[script.index("server_exited_unexpectedly") :]
 
 
 def test_dev_launcher_disables_vite_stdin_shortcuts() -> None:

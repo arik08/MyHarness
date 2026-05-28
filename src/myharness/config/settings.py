@@ -362,8 +362,14 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             provider="gemini",
             api_format="openai",
             auth_source="gemini_api_key",
-            default_model="gemini-2.5-flash",
+            default_model="gemini-3.5-flash",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            allowed_models=[
+                "gemini-3.5-flash",
+                "gemini-3.1-pro-preview",
+                "gemini-3-flash-preview",
+                "gemini-3.1-flash-lite",
+            ],
         ),
         "minimax": ProviderProfile(
             label="MiniMax",
@@ -656,7 +662,11 @@ class Settings(BaseModel):
             if builtin is not None and profile.base_url is None and builtin.base_url is not None:
                 profile = profile.model_copy(update={"base_url": builtin.base_url})
             if builtin is not None and _matches_builtin_profile(profile, builtin):
-                allowed_models = _merge_allowed_models(builtin.allowed_models, profile.allowed_models)
+                allowed_models = (
+                    list(builtin.allowed_models)
+                    if name == "gemini"
+                    else _merge_allowed_models(builtin.allowed_models, profile.allowed_models)
+                )
                 profile_updates: dict[str, object] = {}
                 if allowed_models != profile.allowed_models:
                     profile_updates["allowed_models"] = allowed_models
@@ -868,6 +878,7 @@ class Settings(BaseModel):
             "openai_api_key": "OPENAI_API_KEY",
             "dashscope_api_key": "DASHSCOPE_API_KEY",
             "moonshot_api_key": "MOONSHOT_API_KEY",
+            "gemini_api_key": "GEMINI_API_KEY",
             "minimax_api_key": "MINIMAX_API_KEY",
             "pgpt_api_key": "PGPT_API_KEY",
         }.get(auth_source)

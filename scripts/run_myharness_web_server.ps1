@@ -185,7 +185,6 @@ while (-not $script:StopRequested) {
     $process = Start-Process -FilePath "node.exe" -ArgumentList @("server.mjs") -NoNewWindow -PassThru
     $script:CurrentServerProcess = $process
     Write-LauncherLog "server_started" @{ child_pid = $process.Id; restart_count = $script:RestartCount }
-    $restartRequested = $false
     $hardResetRequested = $false
     $exitCode = 0
 
@@ -199,17 +198,8 @@ while (-not $script:StopRequested) {
                     if (Test-LauncherKey -Key $key -ExpectedKey R -Characters @("r", "R", ([string][char]0x3131))) {
                         $discardedKeys = Clear-ConsoleInputBuffer
                         Write-Host ""
-                        Write-Host "[INFO] Restart requested. Stopping server..."
-                        Write-LauncherLog "restart_requested" @{ reason = "keyboard_r"; child_pid = $process.Id; discarded_keys = $discardedKeys }
-                        $restartRequested = $true
-                        Stop-ServerProcess -Process $process
-                        break
-                    }
-                    if (Test-LauncherKey -Key $key -ExpectedKey T -Characters @("t", "T", ([string][char]0x3145))) {
-                        $discardedKeys = Clear-ConsoleInputBuffer
-                        Write-Host ""
-                        Write-Host "[INFO] Hard reset requested. Stopping server and clearing the port..."
-                        Write-LauncherLog "hard_reset_requested" @{ reason = "keyboard_t"; child_pid = $process.Id; discarded_keys = $discardedKeys }
+                        Write-Host "[INFO] Full restart requested. Stopping server and clearing the port..."
+                        Write-LauncherLog "hard_reset_requested" @{ reason = "keyboard_r"; child_pid = $process.Id; discarded_keys = $discardedKeys }
                         $hardResetRequested = $true
                         Stop-ServerProcess -Process $process
                         Stop-ListeningPort -Port $serverPort
@@ -246,22 +236,17 @@ while (-not $script:StopRequested) {
         exit 0
     }
 
-    if ($restartRequested) {
-        Clear-ConsoleInputBuffer | Out-Null
-        Write-Host "[INFO] Restarting server..."
-        continue
-    }
-
     if ($hardResetRequested) {
         Clear-ConsoleInputBuffer | Out-Null
-        Write-Host "[INFO] Hard resetting server..."
+        Write-Host "[INFO] Full restarting server..."
         continue
     }
 
     Write-Host "[WARN] Server process exited with code $exitCode."
-    Write-Host "[INFO] Keeping launcher alive; restarting server in 3 seconds. Press Q or Ctrl+C to stop."
+    Write-Host "[INFO] Keeping launcher alive; full restarting server in 3 seconds. Press Q or Ctrl+C to stop."
     Write-LauncherLog "server_exited_unexpectedly" @{ child_pid = $process.Id; exit_code = $exitCode; restart_count = $script:RestartCount }
     Start-Sleep -Seconds 3
+    Stop-ListeningPort -Port $serverPort
     $script:RestartCount += 1
 }
 

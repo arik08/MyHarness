@@ -965,8 +965,8 @@ def _normalize_question_choices(choices: list[dict[str, object]]) -> list[dict[s
 
 def _provider_select_options(settings: Settings) -> list[dict[str, object]]:
     statuses = AuthManager(settings).get_profile_statuses()
-    hidden_profiles = {"copilot", "moonshot", "gemini", "minimax"}
-    hidden_providers = {"copilot", "moonshot", "gemini", "minimax"}
+    hidden_profiles = {"copilot", "moonshot", "minimax"}
+    hidden_providers = {"copilot", "moonshot", "minimax"}
     return [
         {
             "value": name,
@@ -1053,8 +1053,10 @@ def _model_select_options(current_model: str, provider: str, allowed_models: lis
     elif provider_name == "gemini":
         families.extend(
             [
-                ("gemini-2.5-pro", "Gemini Pro"),
-                ("gemini-2.5-flash", "Gemini Flash"),
+                ("gemini-3.5-flash", "Gemini 3.5 Flash stable"),
+                ("gemini-3.1-pro-preview", "Gemini 3.1 Pro preview"),
+                ("gemini-3-flash-preview", "Gemini 3 Flash preview"),
+                ("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite stable"),
             ]
         )
     elif provider_name == "minimax":
@@ -1091,6 +1093,13 @@ def _model_option_description(provider_name: str, model: str) -> str:
         return "Faster and lighter"
     if normalized == "gpt-5.4-nano":
         return "Lowest latency"
+    if provider_name == "gemini":
+        return {
+            "gemini-3.5-flash": "Gemini 3.5 Flash stable",
+            "gemini-3.1-pro-preview": "Gemini 3.1 Pro preview",
+            "gemini-3-flash-preview": "Gemini 3 Flash preview",
+            "gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite stable",
+        }.get(normalized, "Gemini model")
     if provider_name == "pgpt":
         return "P-GPT model"
     return "Available model"
