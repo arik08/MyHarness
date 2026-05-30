@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react";
 import { saveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
+import type { UsageCostSummary } from "../types/backend";
 import type { ChatMessage } from "../types/ui";
 import { artifactName } from "../utils/artifacts";
 import { chatShareUrl, shareBaseUrl } from "../utils/chatShare";
@@ -37,6 +38,85 @@ function formatMessageTime(timestamp?: number) {
     pad2(date.getMonth() + 1),
     pad2(date.getDate()),
   ].join(".") + ` (${dayNames[date.getDay()]}) ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
+const tokenFormatter = new Intl.NumberFormat("en-US");
+
+function formatTokenCount(value?: number | null) {
+  return tokenFormatter.format(Math.max(0, Number(value || 0)));
+}
+
+function formatUsageCost(usage?: UsageCostSummary | null) {
+  if (!usage || usage.cost_supported !== true || usage.estimated_cost_usd === null || usage.estimated_cost_usd === undefined) {
+    return "계산 불가";
+  }
+  const value = Number(usage.estimated_cost_usd);
+  if (!Number.isFinite(value)) {
+    return "계산 불가";
+  }
+  return `$${value >= 1 ? value.toFixed(2) : value.toFixed(4)}`;
+}
+
+function usageHasData(usage?: UsageCostSummary | null) {
+  return Boolean(usage && (usage.input_tokens || usage.output_tokens || usage.cached_input_tokens));
+}
+
+function UsageMetricRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="assistant-usage-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function UsageSection({ title, usage }: { title: string; usage?: UsageCostSummary | null }) {
+  if (!usageHasData(usage)) {
+    return (
+      <section className="assistant-usage-section">
+        <h4>{title}</h4>
+        <p className="assistant-usage-empty">기록 없음</p>
+      </section>
+    );
+  }
+  return (
+    <section className="assistant-usage-section">
+      <h4>{title}</h4>
+      <UsageMetricRow label="Input" value={formatTokenCount(usage?.input_tokens)} />
+      <UsageMetricRow label="Cached" value={formatTokenCount(usage?.cached_input_tokens)} />
+      <UsageMetricRow label="Output" value={formatTokenCount(usage?.output_tokens)} />
+      <UsageMetricRow label="Total" value={formatTokenCount(usage?.total_tokens)} />
+      <UsageMetricRow label="Cost" value={formatUsageCost(usage)} />
+    </section>
+  );
+}
+
+function UsageCostPopover({ answerUsage, sessionUsage }: { answerUsage?: UsageCostSummary; sessionUsage?: UsageCostSummary | null }) {
+  const cacheHit = Boolean((answerUsage?.cached_input_tokens || 0) > 0 || (sessionUsage?.cached_input_tokens || 0) > 0);
+  return (
+    <span className="assistant-usage-control">
+      <button
+        className="assistant-action-button assistant-usage-button"
+        type="button"
+        aria-label="토큰/비용 보기"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M4 19V5" />
+          <path d="M4 19h16" />
+          <rect x="7" y="10" width="3" height="6" rx="1" />
+          <rect x="12" y="7" width="3" height="9" rx="1" />
+          <rect x="17" y="4" width="3" height="12" rx="1" />
+        </svg>
+      </button>
+      <span className="assistant-usage-popover" role="tooltip">
+        <span className={`assistant-usage-cache ${cacheHit ? "hit" : ""}`}>
+          Cache hit {cacheHit ? "적용" : "없음"}
+        </span>
+        <UsageSection title="이 답변" usage={answerUsage} />
+        <UsageSection title="세션 누적" usage={sessionUsage} />
+      </span>
+    </span>
+  );
 }
 
 export function AssistantActions({ message, children }: { message: ChatMessage; children?: ReactNode }) {
@@ -166,6 +246,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
           <path d="m8.6 13.4 6.8 4.2" />
         </svg>
       </button>
+      <UsageCostPopover answerUsage={message.usage} sessionUsage={state.sessionUsage} />
       {messageTime ? <span className="assistant-action-time">{messageTime}</span> : null}
       <span className="assistant-action-status">{status}</span>
       {children}

@@ -68,10 +68,13 @@ def _build_delegation_section() -> str:
             "Do not use raw ASCII art or the old `workflow` fence for the workflow.",
             "Spawn only the current independent wave. Do not spawn serial downstream roles prematurely; "
             "roles with unmet prerequisites wait until their inputs exist.",
-            "Keep each wave controlled: usually use at most 5 workers per wave, give each a non-overlapping scope, "
+            "Keep each wave controlled: usually use at most 10 workers per wave, give each a non-overlapping scope, "
             "and size the expected depth to the assignment. For quick slices, ask for concise bullets; for substantial analysis, "
             "ask for enough evidence, calculations, caveats, and intermediate tables to support a reliable synthesis. "
             "Prefer more workers only when they reduce wall-clock time.",
+            "For research or analysis workers using web, MCP, vector databases, knowledge bases, source documents, or database queries, "
+            "ask for source identifiers alongside important findings so you can cite them in the final answer or artifact. "
+            "Useful identifiers include URLs/titles, file paths/pages, MCP server/resource names, document ids, table names, and query labels.",
             "Ask workers to emit compact JSON progress via `task_update` as part of their natural output flow, without "
             "waiting for the parent to ask. Progress should appear when a worker learns something material, starts a new phase, "
             "changes direction, finds a blocker, or has a handoff-ready fact. Do not ask workers to report after every tool call "
@@ -154,6 +157,9 @@ def _build_task_worker_section() -> str:
             "or final output with a short `handoff` or `blocked_on` note for the parent orchestrator.",
             "For office, research, or analysis work that may feed a report, return chart, table, timeline, or comparison candidates "
             "with the specific numbers, labels, and source notes the parent should visualize.",
+            "When your findings depend on web, MCP, vector database, knowledge-base, source-document, or database-query results, "
+            "include enough source identifiers for the parent to cite important claims: URLs/titles, file pages or paths, "
+            "MCP server/resource names, document ids, table names, or query labels as available. Do not invent missing sources.",
             "Do not return raw unstyled HTML unless the assignment explicitly asks for HTML code; prefer structured Markdown findings.",
             "Return findings at the depth requested by the assignment. For small tasks, be concise; for substantial analysis, include "
             "the evidence, calculations, assumptions, caveats, and structured tables needed by the parent to synthesize reliably.",
@@ -191,7 +197,9 @@ def _build_long_report_section() -> str:
             "instead, rely on the selected model's direct output limit and use `write_file` for one coherent artifact when a file is needed. "
             "If the report also asks for research, investigation, current facts, market data, policy/regulation checks, sources, "
             "or source-backed claims, gather the evidence first with `web_search`/`web_fetch` or an office research worker. "
-            "Keep concise source notes in context so the final direct artifact can cite or summarize them reliably.",
+            "Keep concise source notes in context so the final direct artifact can cite important external claims reliably. "
+            "For web sources keep URLs/titles; for MCP, vector database, knowledge-base, document, or database-query results keep "
+            "the server/resource/document/table/query identifiers that let the reader understand where the information came from.",
         ]
     )
 

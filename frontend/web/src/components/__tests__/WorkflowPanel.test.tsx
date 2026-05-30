@@ -194,4 +194,28 @@ describe("WorkflowPanel", () => {
     expect(screen.getByText("요청 확인 · 경쟁사 이슈를 조사합니다.")).toBeTruthy();
     expect(screen.getByText("글로벌 철강 생산량과 저탄소 전환 기준으로 보겠습니다.")).toBeTruthy();
   });
+
+  it("renders context compaction progress as a centered divider", () => {
+    render(
+      <AppStateProvider>
+        <WorkflowPanel
+          events={[
+            {
+              id: "compact",
+              toolName: "context_compaction",
+              title: "컨텍스트 자동 압축",
+              detail: "컨텍스트 초과를 막기 위해 이전 대화를 자동 압축하고 있습니다.",
+              status: "running",
+              level: "parent",
+            },
+          ]}
+        />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("컨텍스트 자동 압축 중")).toBeTruthy();
+    expect(document.querySelector(".workflow-context-compact-divider")).toBeTruthy();
+    expect(document.querySelector(".workflow-card")).toBeNull();
+    expect(document.querySelector(".workflow-step")).toBeNull();
+  });
 });

@@ -176,10 +176,12 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
     assert "flowchart" in prompt
     assert "fenced `workflow` block" not in prompt
     assert "Do not spawn serial downstream roles prematurely" in prompt
-    assert "use at most 5 workers" in prompt
+    assert "use at most 10 workers" in prompt
     assert "non-overlapping scope" in prompt
     assert "substantial analysis" in prompt
     assert "intermediate tables" in prompt
+    assert "ask for source identifiers alongside important findings" in prompt
+    assert "URLs/titles, file paths/pages, MCP server/resource names, document ids, table names, and query labels" in prompt
     assert "Act as the main orchestrator" in prompt
     assert "send_message" in prompt
     assert 'model="inherit"' in prompt
@@ -238,6 +240,8 @@ def test_build_runtime_system_prompt_guides_explicit_extra_long_report_generatio
     assert "The `write_long_report` section-merge flow is temporarily disabled" in prompt
     assert "Do not call it for extra-long report requests" in prompt
     assert "Keep concise source notes in context" in prompt
+    assert "final direct artifact can cite important external claims reliably" in prompt
+    assert "server/resource/document/table/query identifiers" in prompt
     assert "Do not generate more than 20,000 tokens" not in prompt
 
 
@@ -290,6 +294,8 @@ def test_task_worker_prompt_skips_delegation_and_parent_task_queries(tmp_path: P
     assert "compact JSON progress" in prompt
     assert "generic still-working heartbeats" in prompt
     assert "chart, table, timeline, or comparison candidates" in prompt
+    assert "include enough source identifiers for the parent to cite important claims" in prompt
+    assert "MCP server/resource names, document ids, table names, or query labels" in prompt
     assert "Do not return raw unstyled HTML" in prompt
 
 

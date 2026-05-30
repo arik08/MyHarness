@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import ssl
 from pathlib import Path
 
@@ -22,7 +23,7 @@ def test_configure_certificate_returns_none_when_cert_is_missing(tmp_path: Path,
         assert key not in certificates.os.environ
 
 
-def test_configure_certificate_writes_combined_bundle(tmp_path: Path, monkeypatch) -> None:
+def test_configure_certificate_writes_combined_bundle(tmp_path: Path, monkeypatch, caplog) -> None:
     base_ca = tmp_path / "base-ca.pem"
     posco_cert = tmp_path / "POSCO_CA.crt"
     data_dir = tmp_path / "data"
@@ -36,6 +37,7 @@ def test_configure_certificate_writes_combined_bundle(tmp_path: Path, monkeypatc
     monkeypatch.delenv("NODE_EXTRA_CA_CERTS", raising=False)
     monkeypatch.delenv("npm_config_cafile", raising=False)
     monkeypatch.setattr(certificates, "_certifi_ca_bundle", lambda: str(base_ca))
+    caplog.set_level(logging.INFO, logger=certificates.log.name)
 
     result = certificates._configure_certificate(posco_cert)
 
@@ -46,6 +48,7 @@ def test_configure_certificate_writes_combined_bundle(tmp_path: Path, monkeypatc
         assert certificates.os.environ[key] == str(bundle_path)
     assert certificates.os.environ["NODE_EXTRA_CA_CERTS"] == str(posco_cert)
     assert certificates.os.environ["npm_config_cafile"] == str(posco_cert)
+    assert "Using POSCO certificate bundle" not in caplog.text
 
 
 def test_httpx_verify_argument_uses_configured_ca_bundle(monkeypatch) -> None:

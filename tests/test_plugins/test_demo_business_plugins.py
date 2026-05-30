@@ -1,4 +1,4 @@
-"""Program-local demo business plugins."""
+"""Program-local POSCO demo skills."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from myharness.plugins import load_plugins
 from myharness.skills import load_skill_registry
 
 
-def test_program_local_demo_business_plugins_load_as_skill_only_plugins(tmp_path: Path, monkeypatch):
+def test_program_local_posco_skill_loads_as_skill_only_plugin(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
 
     project = tmp_path / "workspace"
@@ -18,17 +18,16 @@ def test_program_local_demo_business_plugins_load_as_skill_only_plugins(tmp_path
     by_name = {plugin.manifest.name: plugin for plugin in plugins}
 
     assert not {
-        "경영기획",
-        "지속가능경영",
-        "투자관리",
-        "사업관리",
-        "재무관리",
-        "산업가스",
+        "경영기획본부",
+        "마케팅본부",
+        "구매본부",
+        "포항제철소",
+        "광양제철소",
     } & set(by_name)
 
-    plugin = by_name["경영기획본부"]
+    plugin = by_name["POSCO 스킬"]
     assert plugin.enabled is True
-    assert len(plugin.skills) == 21
+    assert len(plugin.skills) == 11
     assert plugin.commands == []
     assert plugin.agents == []
     assert plugin.hooks == {}
@@ -37,9 +36,19 @@ def test_program_local_demo_business_plugins_load_as_skill_only_plugins(tmp_path
 
     skills = load_skill_registry(project, settings=Settings()).list_skills()
     skill_sources = {skill.name: skill.source for skill in skills}
-    assert skill_sources["경영기획-전략-시나리오"] == "plugin:경영기획본부"
-    assert skill_sources["재무관리-재무기획"] == "plugin:경영기획본부"
-    assert skill_sources["재무관리-원가전망"] == "plugin:경영기획본부"
-    assert skill_sources["산업가스-사업개발"] == "plugin:경영기획본부"
-    assert skill_sources["산업가스-마케팅"] == "plugin:경영기획본부"
-    assert skill_sources["산업가스-조업안전기술"] == "plugin:경영기획본부"
+    expected_names = [
+        "경영 Skill",
+        "안전보건환경본부",
+        "사장직속",
+        "경영기획본부",
+        "전략투자본부",
+        "경영지원본부",
+        "마케팅본부",
+        "구매본부",
+        "포항제철소",
+        "광양제철소",
+        "기술연구원",
+    ]
+    assert {skill.name for skill in plugin.skills} == set(expected_names)
+    for name in expected_names:
+        assert skill_sources[name] == "plugin:POSCO 스킬"

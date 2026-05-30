@@ -14,6 +14,18 @@ async function readError(response: Response): Promise<Error> {
   return error;
 }
 
+function adminModeHeaders(): Record<string, string> {
+  try {
+    return localStorage.getItem("myharness:adminMode") === "1" ? { "X-MyHarness-Admin-Mode": "1" } : {};
+  } catch {
+    return {};
+  }
+}
+
+function jsonHeaders(): Record<string, string> {
+  return { "Content-Type": "application/json", ...adminModeHeaders() };
+}
+
 export async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -25,7 +37,7 @@ export async function getJson<T>(url: string): Promise<T> {
 export async function postJson<T>(url: string, payload: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
@@ -37,7 +49,7 @@ export async function postJson<T>(url: string, payload: unknown): Promise<T> {
 export async function putJson<T>(url: string, payload: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
@@ -49,7 +61,7 @@ export async function putJson<T>(url: string, payload: unknown): Promise<T> {
 export async function deleteJson<T>(url: string, payload: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {

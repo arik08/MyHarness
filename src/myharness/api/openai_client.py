@@ -333,6 +333,7 @@ class OpenAICompatibleClient:
                     usage_data = {
                         "input_tokens": chunk.usage.prompt_tokens or 0,
                         "output_tokens": chunk.usage.completion_tokens or 0,
+                        "cached_input_tokens": self._cached_tokens_from_usage(chunk.usage),
                     }
                 continue
 
@@ -418,6 +419,7 @@ class OpenAICompatibleClient:
             usage=UsageSnapshot(
                 input_tokens=usage_data.get("input_tokens", 0),
                 output_tokens=usage_data.get("output_tokens", 0),
+                cached_input_tokens=usage_data.get("cached_input_tokens", 0),
             ),
             stop_reason=finish_reason,
         )
@@ -567,6 +569,7 @@ class OpenAICompatibleClient:
             usage=UsageSnapshot(
                 input_tokens=usage_data.get("input_tokens", 0),
                 output_tokens=usage_data.get("output_tokens", 0),
+                cached_input_tokens=usage_data.get("cached_input_tokens", 0),
             ),
             stop_reason=finish_reason,
         )
@@ -651,8 +654,24 @@ class OpenAICompatibleClient:
             {
                 "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
                 "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+                "cached_input_tokens": OpenAICompatibleClient._cached_tokens_from_usage(usage),
             }
         )
+
+    @staticmethod
+    def _cached_tokens_from_usage(usage: Any) -> int:
+        for details_name in ("prompt_tokens_details", "input_tokens_details"):
+            details = usage.get(details_name) if isinstance(usage, dict) else getattr(usage, details_name, None)
+            if not details:
+                continue
+            value = details.get("cached_tokens") if isinstance(details, dict) else getattr(details, "cached_tokens", 0)
+            try:
+                cached_tokens = int(value or 0)
+            except (TypeError, ValueError):
+                cached_tokens = 0
+            if cached_tokens > 0:
+                return cached_tokens
+        return 0
 
     @staticmethod
     def _elapsed_ms(started_at: float) -> int:

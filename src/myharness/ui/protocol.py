@@ -102,7 +102,7 @@ class TranscriptItem(BaseModel):
 
     role: Literal["system", "user", "assistant", "tool", "tool_result", "log"]
     text: str
-    kind: Literal["steering", "queued"] | None = None
+    kind: Literal["steering", "queued", "question_answer"] | None = None
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None
     is_error: bool | None = None
@@ -200,6 +200,8 @@ class BackendEvent(BaseModel):
     tool_input: dict[str, Any] | None = None
     output: str | None = None
     artifacts: list[dict[str, Any]] | None = None
+    usage: dict[str, Any] | None = None
+    session_usage: dict[str, Any] | None = None
     is_error: bool | None = None
     compact_phase: str | None = None
     compact_trigger: str | None = None

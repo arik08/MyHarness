@@ -28,8 +28,8 @@ class _TaskWorkerSessionBackend:
     def get_session_dir(self, cwd: str | Path) -> Path:
         return Path(cwd).resolve() / ".myharness" / "sessions"
 
-    def save_snapshot(self, *, cwd, model, system_prompt, messages, usage, session_id=None, tool_metadata=None, history_events=None):
-        del model, system_prompt, messages, usage, session_id, tool_metadata, history_events
+    def save_snapshot(self, *, cwd, model, system_prompt, messages, usage, session_id=None, tool_metadata=None, history_events=None, usage_accounting=None):
+        del model, system_prompt, messages, usage, session_id, tool_metadata, history_events, usage_accounting
         return self.get_session_dir(cwd) / "task-worker-discarded.json"
 
     def load_latest(self, cwd: str | Path) -> dict | None:
@@ -111,6 +111,7 @@ async def _submit_print_follow_up(
         usage=bundle.engine.total_usage,
         session_id=bundle.session_id,
         tool_metadata=bundle.engine.tool_metadata,
+        usage_accounting=bundle.engine.usage_accounting,
     )
 
 
@@ -163,6 +164,8 @@ async def run_repl(
     backend_only: bool = False,
     restore_messages: list[dict] | None = None,
     restore_tool_metadata: dict[str, object] | None = None,
+    restore_usage: dict[str, object] | None = None,
+    restore_usage_accounting: dict[str, object] | None = None,
     permission_mode: str | None = None,
     effort: str | None = None,
 ) -> None:
@@ -183,6 +186,8 @@ async def run_repl(
             effort=effort,
             restore_messages=restore_messages,
             restore_tool_metadata=restore_tool_metadata,
+            restore_usage=restore_usage,
+            restore_usage_accounting=restore_usage_accounting,
             enforce_max_turns=max_turns is not None,
             permission_mode=permission_mode,
         )

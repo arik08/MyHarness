@@ -1172,7 +1172,7 @@ async function loadMermaid() {
   return mermaid;
 }
 
-async function renderMermaidSvg(source: string) {
+export async function renderMermaidSvg(source: string) {
   const mermaid = await loadMermaid();
   const id = `mermaid-chart-${++mermaidRenderId}`;
   const normalized = normalizeMermaidSource(source);

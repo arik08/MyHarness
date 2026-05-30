@@ -341,6 +341,7 @@ def save_session_snapshot(
     session_id: str | None = None,
     tool_metadata: dict[str, object] | None = None,
     history_events: list[dict[str, Any]] | None = None,
+    usage_accounting: dict[str, Any] | None = None,
 ) -> Path:
     """Persist a session snapshot. Saves both by ID and as latest."""
     session_dir = get_project_session_dir(cwd)
@@ -377,6 +378,7 @@ def save_session_snapshot(
     if not summary and first_user_summary:
         summary = first_user_summary[:80]
 
+    persisted_usage_accounting = _sanitize_usage_accounting(usage_accounting, model=model, usage=usage)
     payload = {
         "session_id": sid,
         "cwd": str(Path(cwd).resolve()),
@@ -385,6 +387,7 @@ def save_session_snapshot(
         "messages": [message.model_dump(mode="json") for message in messages],
         "history_events": _sanitize_history_events(history_events),
         "usage": usage.model_dump(),
+        "usage_accounting": persisted_usage_accounting,
         "tool_metadata": _persistable_tool_metadata(tool_metadata),
         "created_at": existing_created_at or now,
         "summary": summary,
@@ -432,6 +435,49 @@ def _sanitize_history_events(history_events: list[dict[str, Any]] | None) -> lis
     return events
 
 
+def _sanitize_usage_accounting(
+    usage_accounting: dict[str, Any] | None,
+    *,
+    model: str,
+    usage: UsageSnapshot,
+) -> dict[str, Any]:
+    if isinstance(usage_accounting, dict):
+        total = usage_accounting.get("total")
+        try:
+            total_usage = UsageSnapshot.model_validate(total if isinstance(total, dict) else usage.model_dump())
+        except Exception:
+            total_usage = usage
+        entries: list[dict[str, Any]] = []
+        for item in usage_accounting.get("by_model", []):
+            if not isinstance(item, dict):
+                continue
+            item_usage = item.get("usage")
+            try:
+                entry_usage = UsageSnapshot.model_validate(item_usage if isinstance(item_usage, dict) else {})
+            except Exception:
+                entry_usage = UsageSnapshot()
+            if not (entry_usage.total_tokens or entry_usage.cached_input_tokens):
+                continue
+            entries.append(
+                {
+                    "provider": str(item.get("provider") or ""),
+                    "model": str(item.get("model") or model),
+                    "usage": entry_usage.model_dump(mode="json"),
+                }
+            )
+        return {"total": total_usage.model_dump(mode="json"), "by_model": entries}
+    return {
+        "total": usage.model_dump(mode="json"),
+        "by_model": [
+            {
+                "provider": "",
+                "model": model,
+                "usage": usage.model_dump(mode="json"),
+            }
+        ] if usage.total_tokens or usage.cached_input_tokens else [],
+    }
+
+
 def _sanitize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize persisted messages for forward compatibility."""
     raw_messages = payload.get("messages", [])
@@ -443,6 +489,12 @@ def _sanitize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload["messages"] = [message.model_dump(mode="json") for message in messages]
         payload["message_count"] = len(messages)
     payload["history_events"] = _sanitize_history_events(payload.get("history_events"))
+    if not isinstance(payload.get("usage_accounting"), dict):
+        payload["usage_accounting"] = _sanitize_usage_accounting(
+            None,
+            model=str(payload.get("model") or ""),
+            usage=UsageSnapshot.model_validate(payload.get("usage") or {}),
+        )
     return payload
 
 

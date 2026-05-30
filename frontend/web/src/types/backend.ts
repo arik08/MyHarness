@@ -27,16 +27,44 @@ export type BackendStateSnapshot = {
   permission_mode?: string;
   cwd?: string;
   workspace?: Workspace;
+  session_usage?: UsageCostSummary | null;
+};
+
+export type UsageCostSummary = {
+  provider?: string;
+  model?: string;
+  input_tokens: number;
+  cached_input_tokens: number;
+  uncached_input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd?: number | null;
+  cost_supported?: boolean;
+  cost_note?: string;
+  model_breakdown?: UsageCostSummary[];
 };
 
 export type TranscriptItem = {
   role: "system" | "user" | "assistant" | "tool" | "tool_result" | "log";
   text: string;
-  kind?: "steering" | "queued" | null;
+  kind?: "steering" | "queued" | "question_answer" | null;
   tool_name?: string | null;
   tool_input?: Record<string, unknown> | null;
   is_error?: boolean | null;
 };
+
+export type CompactProgressPhase =
+  | "hooks_start"
+  | "context_collapse_start"
+  | "context_collapse_end"
+  | "session_memory_start"
+  | "session_memory_end"
+  | "compact_start"
+  | "compact_retry"
+  | "compact_end"
+  | "compact_failed";
+
+export type CompactProgressTrigger = "auto" | "manual" | "reactive";
 
 export type SwarmTeammateSnapshot = {
   id?: string;
@@ -68,12 +96,13 @@ export type SwarmNotificationSnapshot = {
 };
 
 export type BackendEvent =
-  | { type: "ready"; state?: BackendStateSnapshot; commands?: unknown[]; skills?: unknown[]; plugins?: unknown[]; tasks?: unknown[]; mcp_servers?: unknown[] }
-  | { type: "state_snapshot"; state?: BackendStateSnapshot; plugins?: unknown[]; mcp_servers?: unknown[] }
+  | { type: "ready"; state?: BackendStateSnapshot; commands?: unknown[]; skills?: unknown[]; plugins?: unknown[]; tasks?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null }
+  | { type: "state_snapshot"; state?: BackendStateSnapshot; plugins?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null }
   | { type: "skills_snapshot"; skills?: unknown[] }
   | { type: "transcript_item"; item?: TranscriptItem }
   | { type: "assistant_delta"; message?: string | null; value?: string | null }
-  | { type: "assistant_complete"; message?: string | null; has_tool_uses?: boolean | null; artifacts?: ArtifactSummary[] | null }
+  | { type: "assistant_complete"; message?: string | null; has_tool_uses?: boolean | null; artifacts?: ArtifactSummary[] | null; usage?: UsageCostSummary | null; session_usage?: UsageCostSummary | null }
+  | { type: "compact_progress"; compact_phase?: CompactProgressPhase | string | null; compact_trigger?: CompactProgressTrigger | string | null; attempt?: number | null; compact_checkpoint?: string | null; compact_metadata?: Record<string, unknown> | null; message?: string | null }
   | { type: "session_title"; message?: string | null; value?: string | null }
   | { type: "tool_started"; tool_name?: string; tool_call_id?: string | null; tool_call_index?: number | null; tool_input?: Record<string, unknown> | null }
   | { type: "tool_input_delta"; tool_name?: string; tool_call_index?: number; arguments_delta?: string }
@@ -90,7 +119,7 @@ export type BackendEvent =
   | { type: "status"; message?: string | null; value?: string | null; quiet?: boolean | null }
   | { type: "error"; message?: string | null }
   | { type: "shutdown"; message?: string | null }
-  | { type: string; [key: string]: unknown };
+  | { type: string; session_usage?: UsageCostSummary | null; [key: string]: unknown };
 
 export type SessionResponse = {
   sessionId: string;

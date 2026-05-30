@@ -1,5 +1,5 @@
 {
-  "model": "gpt-5.5",
+  "model": "gpt-5.4",
   "subagent_model": "gpt-5.4-mini",
   "subagent_effort": "medium",
   "max_tokens": 42000,
@@ -21,15 +21,15 @@
       "provider": "openai",
       "api_format": "openai",
       "auth_source": "pgpt_api_key",
-      "default_model": "gpt-5.5",
+      "default_model": "gpt-5.4",
       "base_url": "http://pgpt.posco.com/s0la01-gpt/v1",
-      "last_model": "gpt-5.5",
+      "last_model": "gpt-5.4",
       "credential_slot": null,
       "allowed_models": [
-        "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
-        "gpt-5.4-nano"
+        "gpt-5.4-nano",
+        "gpt-5.5"
       ],
       "context_window_tokens": null,
       "auto_compact_threshold_tokens": null

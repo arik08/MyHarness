@@ -102,7 +102,7 @@ function MessageRow({
 }): React.JSX.Element {
 	const isCodexStyle = outputStyle === 'codex';
 	const userKindLabel = messageKindLabel(item.kind);
-	const userKindColor = item.kind === 'queued' ? theme.colors.info : theme.colors.warning;
+	const userKindColor = item.kind === 'queued' || item.kind === 'question_answer' ? theme.colors.info : theme.colors.warning;
 
 	switch (item.role) {
 		case 'user':
@@ -199,6 +199,9 @@ function messageKindLabel(kind: TranscriptItem['kind']): string {
 	}
 	if (kind === 'queued') {
 		return '대기열';
+	}
+	if (kind === 'question_answer') {
+		return '질문 답변';
 	}
 	return '';
 }

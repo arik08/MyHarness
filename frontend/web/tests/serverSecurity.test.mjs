@@ -232,6 +232,136 @@ test("explains session limits as multi-user busy state", async (t) => {
   assert.match(secondPayload.error, /여러 명이 동시에 사용 중/);
 });
 
+test("shares main runtime choices across shared workspace sessions", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  t.after(() => app.stop());
+
+  async function createRuntimeSession(clientId, overrides = {}) {
+    const response = await fetch(`${app.baseUrl}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        clientId,
+        activeProfile: "p-gpt",
+        model: "gpt-5.5",
+        effort: "low",
+        ...overrides,
+      }),
+    });
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.ok(payload.sessionId);
+    const ready = await waitForSseEvent(
+      `${app.baseUrl}/api/events?session=${payload.sessionId}&clientId=${encodeURIComponent(clientId)}`,
+      (event) => event.type === "ready" && event.state?.model,
+      { timeoutMs: 20_000 },
+    );
+    return { sessionId: payload.sessionId, ready };
+  }
+
+  const admin = await createRuntimeSession("runtime-admin");
+  const peer = await createRuntimeSession("runtime-peer");
+
+  const peerProviderUpdate = waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${peer.sessionId}&clientId=runtime-peer`,
+    (event) => event.type === "state_snapshot" && event.state?.active_profile === "openai-compatible",
+    { timeoutMs: 10_000 },
+  );
+  const providerResponse = await fetch(`${app.baseUrl}/api/respond`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: admin.sessionId,
+      clientId: "runtime-admin",
+      payload: { type: "apply_select_command", command: "provider", value: "openai-compatible" },
+    }),
+  });
+  assert.equal(providerResponse.status, 200);
+  await peerProviderUpdate;
+
+  const peerModelUpdate = waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${peer.sessionId}&clientId=runtime-peer`,
+    (event) => event.type === "state_snapshot" && event.state?.model === "gpt-5.4-mini",
+    { timeoutMs: 10_000 },
+  );
+  const modelResponse = await fetch(`${app.baseUrl}/api/respond`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: admin.sessionId,
+      clientId: "runtime-admin",
+      payload: { type: "apply_select_command", command: "model", value: "gpt-5.4-mini" },
+    }),
+  });
+  assert.equal(modelResponse.status, 200);
+  await peerModelUpdate;
+
+  const peerEffortUpdate = waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${peer.sessionId}&clientId=runtime-peer`,
+    (event) => event.type === "state_snapshot" && event.state?.effort === "high",
+    { timeoutMs: 10_000 },
+  );
+  const effortResponse = await fetch(`${app.baseUrl}/api/respond`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: admin.sessionId,
+      clientId: "runtime-admin",
+      payload: { type: "apply_select_command", command: "effort", value: "high" },
+    }),
+  });
+  assert.equal(effortResponse.status, 200);
+  await peerEffortUpdate;
+
+  const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+  assert.deepEqual(settings.web_shared_runtime_preferences, {
+    version: 1,
+    active_profile: "openai-compatible",
+    model: "gpt-5.4-mini",
+    effort: "high",
+  });
+
+  const newcomer = await createRuntimeSession("runtime-newcomer", {
+    model: "gpt-5.5",
+    effort: "low",
+  });
+  assert.equal(newcomer.ready.state.active_profile, "openai-compatible");
+  assert.equal(newcomer.ready.state.model, "gpt-5.4-mini");
+  assert.equal(newcomer.ready.state.effort, "high");
+});
+
+test("keeps main runtime choices client-scoped for ip workspace sessions", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "ip" },
+  });
+  t.after(() => app.stop());
+
+  const createdResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "runtime-ip", activeProfile: "p-gpt", model: "gpt-5.5" }),
+  });
+  const created = await createdResponse.json();
+  assert.equal(createdResponse.status, 200);
+  assert.ok(created.sessionId);
+
+  const modelResponse = await fetch(`${app.baseUrl}/api/respond`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: created.sessionId,
+      clientId: "runtime-ip",
+      payload: { type: "apply_select_command", command: "model", value: "gpt-5.4-mini" },
+    }),
+  });
+  assert.equal(modelResponse.status, 200);
+
+  const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8").catch(() => "{}"));
+  assert.equal(settings.web_shared_runtime_preferences, undefined);
+});
+
 test("uploads client attachments as sanitized workspace-relative copies", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
@@ -534,7 +664,9 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
   assert.match(downloaded, /data-myharness-mermaid-zoom-script/);
   assert.match(downloaded, /myharness-mermaid-expand-button/);
   assert.match(downloaded, /Mermaid 다이어그램 크게 보기/);
-  assert.match(downloaded, /화면에 맞춤/);
+  assert.doesNotMatch(downloaded, /mermaid@11\.14\.0/);
+  assert.doesNotMatch(downloaded, /renderRawMermaidBlocks/);
+  assert.doesNotMatch(downloaded, /화면에 맞춤/);
 
   const plainParams = new URLSearchParams({
     workspacePath,
@@ -561,6 +693,7 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
   const savedHtml = await readFile(join(downloadDir, "workflow.html"), "utf8");
   assert.match(savedHtml, /data-myharness-mermaid-zoom-script/);
   assert.match(savedHtml, /myharness-mermaid-expand-button/);
+  assert.doesNotMatch(savedHtml, /renderRawMermaidBlocks/);
 });
 
 test("serves shared artifact links read-only from workspace-relative paths", async (t) => {
@@ -1440,4 +1573,27 @@ test("rejects global settings writes from forwarded remote clients", async (t) =
 
   assert.equal(response.status, 403);
   assert.match(payload.error, /local/i);
+});
+
+test("allows global settings writes from forwarded admin-mode clients", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "ip" },
+  });
+  t.after(() => app.stop());
+
+  const response = await fetch(`${app.baseUrl}/api/settings/workspace-scope`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": "203.0.113.10",
+      "x-myharness-admin-mode": "1",
+    },
+    body: JSON.stringify({ mode: "shared" }),
+  });
+  const payload = await response.json();
+  const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.mode, "shared");
+  assert.equal(settings.web_workspace_scope, "shared");
 });

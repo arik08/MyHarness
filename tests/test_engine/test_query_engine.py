@@ -648,6 +648,8 @@ async def test_query_engine_emits_compact_progress_before_reply(tmp_path: Path, 
     assert hooks_start_index < compact_start_index
     assert compact_start_index < final_index
     assert any(isinstance(event, CompactProgressEvent) and event.phase == "compact_end" for event in events)
+    assert engine.messages[0].text.startswith("[Compact boundary marker]")
+    assert engine.messages[-1].text == "after compact"
 
 
 @pytest.mark.asyncio

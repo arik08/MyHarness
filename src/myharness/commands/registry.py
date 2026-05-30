@@ -969,6 +969,7 @@ def create_default_command_registry(
                 system_prompt=build_runtime_system_prompt(load_settings(), cwd=context.cwd),
                 messages=context.engine.messages,
                 usage=context.engine.total_usage,
+                usage_accounting=getattr(context.engine, "usage_accounting", None),
             )
             export_path = context.session_backend.export_markdown(cwd=context.cwd, messages=context.engine.messages)
             tagged_json = session_dir / f"{safe_name}.json"

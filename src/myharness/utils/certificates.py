@@ -50,7 +50,6 @@ def _configure_certificate(cert_path: Path) -> str | None:
     os.environ.setdefault(_NODE_CA_ENV_VAR, cert)
     os.environ.setdefault(_NPM_CA_ENV_VAR, cert)
 
-    log.info("Using POSCO certificate bundle: %s", bundle)
     _configured_bundle = bundle
     return bundle
 

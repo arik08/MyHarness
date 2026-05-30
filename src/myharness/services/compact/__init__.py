@@ -51,6 +51,7 @@ TIME_BASED_MC_CLEARED_MESSAGE = "[Old tool result content cleared]"
 
 # Auto-compact thresholds
 AUTOCOMPACT_BUFFER_TOKENS = 13_000
+AUTOCOMPACT_CONTEXT_RATIO = 0.75
 MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
 COMPACT_TIMEOUT_SECONDS = 25
@@ -1063,8 +1064,9 @@ def get_autocompact_threshold(
         return int(auto_compact_threshold_tokens)
     context_window = get_context_window(model, context_window_tokens=context_window_tokens)
     reserved = min(MAX_OUTPUT_TOKENS_FOR_SUMMARY, 20_000)
-    effective = context_window - reserved
-    return effective - AUTOCOMPACT_BUFFER_TOKENS
+    fixed_buffer_threshold = context_window - reserved - AUTOCOMPACT_BUFFER_TOKENS
+    ratio_threshold = int(context_window * AUTOCOMPACT_CONTEXT_RATIO)
+    return max(1, min(fixed_buffer_threshold, ratio_threshold))
 
 
 def should_autocompact(

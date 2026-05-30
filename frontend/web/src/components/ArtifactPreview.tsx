@@ -1,10 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import type { ArtifactSummary } from "../types/backend";
 import type { ArtifactAiEditComment, ArtifactPayload } from "../types/ui";
 import { artifactDisplayName, isSourceCodeArtifact, sourceLanguageForArtifact } from "../utils/artifacts";
 import { Icon } from "./ArtifactIcons";
-import { MarkdownMessage } from "./MarkdownMessage";
+import { MarkdownMessage, renderMermaidSvg } from "./MarkdownMessage";
 
 export const artifactFrameBackMessage = "myharness:artifact-panel-back";
 export const artifactHtmlEditMessage = "myharness:artifact-html-edit";
@@ -12,6 +12,78 @@ export const artifactAiSelectionMessage = "myharness:artifact-ai-selection";
 export const artifactAiCommentsMessage = "myharness:artifact-ai-comments";
 export const artifactFrameScrollMessage = "myharness:artifact-frame-scroll";
 export const artifactHtmlEditModeMessage = "myharness:artifact-html-edit-mode";
+
+const htmlMermaidCodeSelector = "pre > code.language-mermaid, pre > code.lang-mermaid";
+
+function hasRawHtmlMermaid(content: string) {
+  const value = String(content || "");
+  return /\bmermaid\b/i.test(value) && (
+    /class\s*=\s*["'][^"']*\bmermaid\b/i.test(value)
+    || /language-mermaid|lang-mermaid/i.test(value)
+  );
+}
+
+function serializeHtmlDocument(document: Document, fullDocument: boolean) {
+  if (!fullDocument) {
+    return document.body.innerHTML;
+  }
+  const doctype = document.doctype
+    ? "<!DOCTYPE " + document.doctype.name
+      + (document.doctype.publicId ? " PUBLIC \"" + document.doctype.publicId + "\"" : "")
+      + (!document.doctype.publicId && document.doctype.systemId ? " SYSTEM" : "")
+      + (document.doctype.systemId ? " \"" + document.doctype.systemId + "\"" : "")
+      + ">"
+    : "";
+  return `${doctype ? `${doctype}\n` : ""}${document.documentElement.outerHTML}`;
+}
+
+async function renderHtmlMermaidWithChatRenderer(content: string) {
+  const value = String(content || "");
+  if (!hasRawHtmlMermaid(value)) {
+    return value;
+  }
+  const fullDocument = /<(?:!doctype|html|head|body)\b/i.test(value);
+  const document = new DOMParser().parseFromString(value, "text/html");
+  const tasks: Array<{ source: string; target: Element; replaceTarget?: Element }> = [];
+
+  document.querySelectorAll<HTMLElement>(".mermaid").forEach((element) => {
+    if (element.querySelector("svg")) return;
+    const source = (element.textContent || "").trim();
+    if (!source) return;
+    tasks.push({ source, target: element });
+  });
+
+  document.querySelectorAll<HTMLElement>(htmlMermaidCodeSelector).forEach((code) => {
+    if (code.closest(".mermaid")) return;
+    const source = (code.textContent || "").trim();
+    const pre = code.closest("pre");
+    if (!source || !pre) return;
+    const target = document.createElement("div");
+    target.className = "mermaid";
+    tasks.push({ source, target, replaceTarget: pre });
+  });
+
+  if (!tasks.length) {
+    return value;
+  }
+
+  await Promise.all(tasks.map(async (task) => {
+    try {
+      const result = await renderMermaidSvg(task.source);
+      task.target.innerHTML = result.svg;
+      task.target.setAttribute("data-processed", "true");
+      task.target.setAttribute("data-myharness-rendered-mermaid", "true");
+      if (task.replaceTarget) {
+        task.replaceTarget.replaceWith(task.target);
+      }
+    } catch {
+      task.target.classList.add("mermaid-error");
+      task.target.textContent = "Mermaid 다이어그램을 렌더링하지 못했습니다.";
+    }
+  }));
+
+  return serializeHtmlDocument(document, fullDocument);
+}
 
 function iframeMermaidZoomBridge(content: string) {
   const value = String(content || "");
@@ -149,6 +221,8 @@ function iframeMermaidZoomBridge(content: string) {
     #eef0f2;
   background-size: 18px 18px, auto;
   cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 .myharness-mermaid-zoom-viewport.dragging {
   cursor: grabbing;
@@ -361,6 +435,7 @@ function iframeMermaidZoomBridge(content: string) {
     viewport.addEventListener("pointerdown", (event) => {
       if (typeof event.button === "number" && event.button !== 0) return;
       event.preventDefault();
+      window.getSelection()?.removeAllRanges?.();
       dragging = true;
       pointerId = event.pointerId;
       lastX = event.clientX;
@@ -381,9 +456,10 @@ function iframeMermaidZoomBridge(content: string) {
   const attachButton = (svg) => {
     if (!svg || svg.closest(".myharness-mermaid-zoom-backdrop")) return;
     const host = findHost(svg);
-    if (!host || host.hasAttribute(attachedAttribute)) return;
+    if (!host) return;
     host.setAttribute(attachedAttribute, "true");
     host.classList.add("myharness-mermaid-zoom-host");
+    if (host.querySelector(".myharness-mermaid-expand-button")) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "myharness-mermaid-expand-button";
@@ -565,7 +641,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
   const modeMessageType = ${JSON.stringify(artifactHtmlEditModeMessage)};
   const artifactPath = ${JSON.stringify(artifactPath)};
   const fullDocument = ${JSON.stringify(isFullDocument)};
-  const excludedSelector = "script,style,noscript,svg,canvas,iframe,input,textarea,select,option,button";
+  const excludedSelector = "script,style,noscript,svg,canvas,iframe,input,textarea,select,option,button,.mermaid,.mermaid-chart,.myharness-mermaid-zoom-backdrop";
   let sendTimer = 0;
 
   const editableText = "[data-myharness-editable-text]";
@@ -1760,6 +1836,22 @@ export function ArtifactPreview({
   const htmlEditSessionAssetBaseUrlRef = useRef("");
   const htmlEditWasDraftDirtyRef = useRef(false);
   const htmlScrollPositionsRef = useRef(new Map<string, { x: number; y: number }>());
+  const [renderedHtmlMermaid, setRenderedHtmlMermaid] = useState<{ key: string; content: string } | null>(null);
+  const htmlMermaidRenderKey = `${artifact.path}\u0000${htmlDraftContent}`;
+  useEffect(() => {
+    if (kind !== "html" || sourceMode || isIncompleteHtmlDocument(htmlDraftContent) || !hasRawHtmlMermaid(htmlDraftContent)) {
+      setRenderedHtmlMermaid((current) => current?.key === htmlMermaidRenderKey ? current : null);
+      return undefined;
+    }
+    let cancelled = false;
+    void renderHtmlMermaidWithChatRenderer(htmlDraftContent).then((rendered) => {
+      if (cancelled) return;
+      setRenderedHtmlMermaid({ key: htmlMermaidRenderKey, content: rendered });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [htmlDraftContent, htmlMermaidRenderKey, kind, sourceMode]);
   useEffect(() => {
     function handleFrameScrollMessage(event: MessageEvent) {
       if (
@@ -1825,7 +1917,7 @@ export function ArtifactPreview({
       return <HighlightedArtifactSource artifact={artifact} content={htmlDraftContent} />;
     }
     const assetBaseUrl = String(payload.assetBaseUrl || "");
-    const frameBaseContent = htmlDraftContent;
+    const frameBaseContent = renderedHtmlMermaid?.key === htmlMermaidRenderKey ? renderedHtmlMermaid.content : htmlDraftContent;
     const preserveCommittedDraftFrame = htmlEditMode
       && !draftDirty
       && htmlEditWasDraftDirtyRef.current

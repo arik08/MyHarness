@@ -39,9 +39,11 @@ function SkillsSnapshotButton() {
 }
 
 async function openHelpSection(user: ReturnType<typeof userEvent.setup>, label: string) {
-  const summary = screen.getByText(label).closest("summary");
-  expect(summary).toBeTruthy();
-  await user.click(summary as HTMLElement);
+  const summary = screen.getAllByText(label)
+    .map((node) => node.closest("summary"))
+    .find((node): node is HTMLElement => Boolean(node));
+  if (!summary) throw new Error(`Help section not found: ${label}`);
+  await user.click(summary);
 }
 
 function expectHelpSectionIcon(label: string) {
@@ -293,12 +295,12 @@ describe("CommandHelpMessage", () => {
     expect(legalPlugin.getAttribute("data-tooltip")).not.toContain("Legal review");
   });
 
-  it("orders executive demo plugins after the existing preferred plugins", async () => {
+  it("orders POSCO skill after the existing preferred plugins", async () => {
     const user = userEvent.setup();
     const helpText = [
       "플러그인:",
       "- workflow-kit [활성]: Workflow kit skills",
-      "- 경영기획본부 [활성]: 전략, ESG, 투자, 사업, 재무, 산업가스 스킬",
+      "- POSCO 스킬 [활성]: 업무 자료 정리",
       "- claude-for-legal-lite [활성]: Legal review skills",
       "",
       "사용 가능한 명령어:",
@@ -318,19 +320,32 @@ describe("CommandHelpMessage", () => {
       .map((node) => node.textContent);
     expect(pluginNames).toEqual([
       "claude-for-legal-lite",
-      "경영기획본부",
+      "POSCO 스킬",
       "workflow-kit",
     ]);
   });
 
-  it("marks executive demo plugin skills as virtual skills", async () => {
+  it("renders POSCO skill as a collapsible headquarters tree with business skills", async () => {
     const user = userEvent.setup();
+    const poscoSkills = [
+      "경영 Skill",
+      "안전보건환경본부",
+      "사장직속",
+      "경영기획본부",
+      "전략투자본부",
+      "경영지원본부",
+      "마케팅본부",
+      "구매본부",
+      "포항제철소",
+      "광양제철소",
+      "기술연구원",
+    ];
     const helpText = [
       "사용 가능한 스킬:",
-      "- 경영기획-전략-시나리오 [plugin:경영기획본부] [활성]: 중장기 전략 시나리오를 정리합니다.",
+      ...poscoSkills.map((name) => `- ${name} [plugin:POSCO 스킬] [활성]: ${name} 업무 자료 정리와 보고 준비를 지원합니다.`),
       "",
       "플러그인:",
-      "- 경영기획본부 [활성]: 전략과 사업계획 관리",
+      "- POSCO 스킬 [활성]: 업무 자료 정리",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -341,14 +356,12 @@ describe("CommandHelpMessage", () => {
         initialState={{
           ...initialAppState,
           sessionId: "session-1",
-          skills: [
-            {
-              name: "경영기획-전략-시나리오",
-              description: "중장기 전략 시나리오를 정리합니다.",
-              source: "plugin:경영기획본부",
-              enabled: true,
-            },
-          ],
+          skills: poscoSkills.map((name) => ({
+            name,
+            description: `${name} 업무 자료 정리와 보고 준비를 지원합니다.`,
+            source: "plugin:POSCO 스킬",
+            enabled: true,
+          })),
         }}
       >
         <CommandHelpMessage text={helpText} />
@@ -357,15 +370,52 @@ describe("CommandHelpMessage", () => {
 
     await openHelpSection(user, "스킬");
     await openHelpSection(user, "플러그인");
-    const virtualSkill = screen.getByRole("button", { name: /경영기획-전략-시나리오/ });
-    expect(virtualSkill.textContent).toContain("[가상스킬]");
-    expect(virtualSkill.closest("[data-skill-group-tone]")?.getAttribute("data-skill-group-tone")).toBe("virtual");
-    expect(screen.getAllByRole("button", { name: /경영기획본부/ }).some((button) => (
-      button.textContent?.includes("[가상스킬]")
-    ))).toBe(true);
-    expect(screen.getAllByRole("button", { name: /경영기획본부/ }).some((button) => (
-      button.getAttribute("data-skill-group-tone") === "virtual"
-    ))).toBe(true);
+
+    const poscoGroup = screen.getByRole("group", { name: "POSCO 스킬" });
+    expect(within(poscoGroup).getByText("POSCO 스킬")).toBeTruthy();
+    expect(within(poscoGroup).queryByText("본부별 업무 스킬")).toBeNull();
+    expect(within(poscoGroup).getByText("11개 본부")).toBeTruthy();
+
+    const tree = within(poscoGroup).getByRole("tree", { name: "POSCO 스킬 본부 목록" });
+    const treeNames = Array.from(tree.querySelectorAll(".posco-skill-tree-node strong"))
+      .map((node) => node.textContent);
+    expect(treeNames).toEqual(poscoSkills);
+    const planningNode = within(poscoGroup).getByText("경영기획본부").closest("button") as HTMLElement;
+    expect(planningNode.querySelector("small")?.textContent).toContain("업무 자료");
+    expect(planningNode.hasAttribute("data-tooltip")).toBe(false);
+    expect(within(poscoGroup).queryByText("부서")).toBeNull();
+    expect(within(poscoGroup).queryByText("전략 시나리오")).toBeNull();
+
+    await user.click(planningNode);
+    expect(within(poscoGroup).getByText("전략 시나리오")).toBeTruthy();
+    expect(within(poscoGroup).getByText("사업계획 점검")).toBeTruthy();
+    expect(within(poscoGroup).getByRole("button", { name: "경영기획본부 업무 스킬 접기" }).getAttribute("aria-expanded")).toBe("true");
+    expect(poscoGroup.querySelector(".posco-skill-tree-dot")).toBeTruthy();
+    const scenarioLeaf = within(poscoGroup).getByText("전략 시나리오").closest(".posco-skill-tree-leaf") as HTMLElement;
+    expect(scenarioLeaf.querySelector("small")?.textContent).toContain("시장");
+    expect(scenarioLeaf.hasAttribute("data-tooltip")).toBe(false);
+    expect(poscoGroup.querySelector("[data-tooltip]")).toBeNull();
+
+    await user.click(within(poscoGroup).getByRole("button", { name: "전략 시나리오 비활성화" }));
+    expect(within(poscoGroup).getByRole("button", { name: "전략 시나리오 활성화" }).querySelector(".posco-skill-tree-state")?.textContent).toBe("비활성");
+
+    await user.click(planningNode);
+    expect(within(poscoGroup).queryByText("전략 시나리오")).toBeNull();
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+
+    await user.click(within(poscoGroup).getByRole("button", { name: "경영기획본부 비활성화" }));
+    expect(sendBackendRequest).toHaveBeenCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_skill_enabled", value: "경영기획본부", enabled: false },
+    );
+
+    await user.click(within(poscoGroup).getByRole("button", { name: "POSCO 스킬 트리 접기" }));
+    expect(within(poscoGroup).queryByRole("tree", { name: "POSCO 스킬 본부 목록" })).toBeNull();
+    expect(within(poscoGroup).getByRole("button", { name: "POSCO 스킬 트리 펼치기" }).getAttribute("aria-expanded")).toBe("false");
+
+    const pluginButtons = screen.getAllByRole("button", { name: /POSCO 스킬/ });
+    expect(pluginButtons.some((button) => button.getAttribute("data-skill-group-tone") === "virtual")).toBe(true);
   });
 
   it("shows configured POSCO MCP connectors with minimal labels", async () => {

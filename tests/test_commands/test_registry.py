@@ -362,7 +362,7 @@ async def test_model_command_rejects_disallowed_profile_model(tmp_path: Path, mo
     assert "사용할 수 없습니다" in result.message
     assert "opus" in result.message
     assert load_settings().resolve_profile()[1].last_model is None
-    assert load_settings().model == "gpt-5.5"
+    assert load_settings().model == "gpt-5.4"
 
 
 @pytest.mark.asyncio

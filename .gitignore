@@ -37,6 +37,7 @@ Playground/
 react_tui_smoke.txt
 .playwright-mcp/
 .codegraph/
+.code-review-graph/
 
 # Local UI/browser check artifacts
 .tmp-chrome-check/
@@ -44,6 +45,13 @@ react_tui_smoke.txt
 myharness-*.err.log
 myharness-*.out.log
 myharness-*.png
+
+# Local Vector GraphRAG source data and generated indexes
+.mcp/vector_db/documents/*
+!.mcp/vector_db/documents/.gitkeep
+.mcp/vector_db/data/*
+!.mcp/vector_db/data/.gitkeep
+.mcp/vector_db/__pycache__/
 
 # OS
 .DS_Store

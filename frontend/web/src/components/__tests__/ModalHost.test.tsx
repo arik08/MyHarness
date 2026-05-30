@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { isLocalBrowserHostname } from "../ModalHost";
+import { canUseServerHostSettings, isLocalBrowserHostname } from "../ModalHost";
 import { ModalHost } from "../ModalHost";
 import { AppStateProvider } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
@@ -34,6 +34,12 @@ describe("ModalHost remote access helpers", () => {
     expect(isLocalBrowserHostname("192.168.0.12")).toBe(false);
     expect(isLocalBrowserHostname("10.20.30.40")).toBe(false);
     expect(isLocalBrowserHostname("myharness-demo.local")).toBe(false);
+  });
+
+  it("allows server-host settings from remote browsers after admin mode unlock", () => {
+    expect(canUseServerHostSettings(false, false)).toBe(false);
+    expect(canUseServerHostSettings(false, true)).toBe(true);
+    expect(canUseServerHostSettings(true, false)).toBe(true);
   });
 });
 

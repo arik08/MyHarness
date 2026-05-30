@@ -34,6 +34,16 @@ vi.mock("../../api/artifacts", () => ({
   readArtifact: vi.fn(async () => ({ kind: "html", content: "<html><body>Preview</body></html>" })),
 }));
 
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async (id: string, source: string) => ({
+      svg: `<svg data-render-id="${id}" viewBox="0 0 220 80" role="img"><text>${String(source).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</text></svg>`,
+      diagramType: "flowchart",
+    })),
+  },
+}));
+
 function renderHtmlPreviewSrcdoc(content: string, comments: ArtifactAiEditComment[] = []) {
   const { container, unmount } = render(
     <ArtifactPreview
@@ -626,7 +636,6 @@ describe("ArtifactPanel", () => {
               "<div class=\"mermaid-panel\"><div class=\"mermaid\">flowchart LR",
               "A --> B",
               "</div></div>",
-              "<script src=\"https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js\"></script>",
               "</body></html>",
             ].join("\n"),
           },
@@ -642,10 +651,69 @@ describe("ArtifactPanel", () => {
     expect(frame.srcdoc).toContain("myharness-mermaid-expand-button");
     expect(frame.srcdoc).toContain("Mermaid 다이어그램 크게 보기");
     expect(frame.srcdoc).toContain("Mermaid 다이어그램 확대 보기");
+    expect(frame.srcdoc).not.toContain("mermaid@11.14.0");
+    expect(frame.srcdoc).not.toContain("renderRawMermaidBlocks");
     expect(frame.srcdoc).not.toContain("화면에 맞춤");
     expect(frame.srcdoc).not.toContain('control("화면에 맞춤", "Fit", "fit", fitView)');
     expect(frame.srcdoc).toContain('control("이동 초기화", "Reset", "reset", resetView)');
     expect(frame.srcdoc).toContain("controlIcons");
+  });
+
+  it("renders raw Mermaid blocks in HTML artifact previews before opening the zoom viewer", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: [
+              "<html><body>",
+              "<section><h1>조직개편 workflow</h1>",
+              "<div class=\"mermaid\">flowchart LR",
+              "A[현 조직] --> B[전환 조직]",
+              "</div></section>",
+              "</body></html>",
+            ].join("\n"),
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+    await waitFor(() => expect(frame.srcdoc).toContain("data-myharness-rendered-mermaid"));
+    expect(frame.srcdoc).toContain("data-render-id=\"mermaid-chart-");
+    expect(frame.srcdoc).not.toContain("mermaid@11.14.0");
+
+    const srcdoc = frame.srcdoc;
+    const dom = await loadPreviewDom(srcdoc);
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 30));
+    expect(dom.window.document.querySelector(".mermaid svg")).toBeTruthy();
+
+    const openButton = dom.window.document.querySelector<HTMLButtonElement>(".myharness-mermaid-expand-button");
+    expect(openButton).toBeTruthy();
+    openButton?.click();
+
+    const dialog = dom.window.document.querySelector(".myharness-mermaid-zoom-backdrop");
+    expect(dialog?.getAttribute("aria-label")).toBe("Mermaid 다이어그램 확대 보기");
+    expect(dialog?.querySelector(".myharness-mermaid-zoom-canvas svg")).toBeTruthy();
+    expect(dialog?.querySelector("[aria-label='화면에 맞춤']")).toBeNull();
+
+    const zoomIn = dialog?.querySelector<HTMLButtonElement>("[aria-label='확대']");
+    zoomIn?.click();
+    expect(dialog?.querySelector(".myharness-mermaid-zoom-value")?.textContent).toBe("120%");
+
+    const viewport = dialog?.querySelector<HTMLElement>(".myharness-mermaid-zoom-viewport");
+    const canvas = dialog?.querySelector<HTMLElement>(".myharness-mermaid-zoom-canvas");
+    const beforeDragTransform = canvas?.style.transform || "";
+    viewport?.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 100, clientY: 100, button: 0 }));
+    dom.window.dispatchEvent(new dom.window.MouseEvent("pointermove", { bubbles: true, cancelable: true, clientX: 145, clientY: 132 }));
+    dom.window.dispatchEvent(new dom.window.MouseEvent("pointerup", { bubbles: true, cancelable: true }));
+    expect(canvas?.style.transform).not.toBe(beforeDragTransform);
+    expect(canvas?.style.transform).toContain("translate(");
   });
 
   it("injects the inline comment picker through the unified body edit mode", async () => {

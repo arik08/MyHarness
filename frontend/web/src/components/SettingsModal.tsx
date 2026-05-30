@@ -24,6 +24,7 @@ import { useAppState } from "../state/app-state";
 import type { AppSettings } from "../types/ui";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import {
+  canUseServerHostSettings,
   downloadModeLabel,
   formatNumber,
   formatStatsDate,
@@ -66,7 +67,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) {
   const { state } = useAppState();
   const localBrowserHost = isLocalBrowserHost();
-  const serverOnlyLabel = "서버 PC에서만 변경";
+  const serverHostSettingsAccess = canUseServerHostSettings(localBrowserHost, state.adminMode);
+  const adminModeRequiredLabel = "Admin mode에서 변경";
   return (
     <>
       <div className="settings-home-header">
@@ -107,15 +109,15 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("download")}>
           <strong>파일 저장경로</strong>
-          <small>{downloadModeLabel(state.appSettings)}</small>
+          <small>{downloadModeLabel(state.appSettings, serverHostSettingsAccess)}</small>
         </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("shell")} disabled={!localBrowserHost}>
+        <button type="button" className="settings-row" onClick={() => onSelect("shell")} disabled={!serverHostSettingsAccess}>
           <strong>명령어 셀 (CLI)</strong>
-          <small>{localBrowserHost ? shellPreferenceLabel(state.appSettings.shell) : serverOnlyLabel}</small>
+          <small>{serverHostSettingsAccess ? shellPreferenceLabel(state.appSettings.shell) : adminModeRequiredLabel}</small>
         </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("yolo")} disabled={!localBrowserHost}>
+        <button type="button" className="settings-row" onClick={() => onSelect("yolo")} disabled={!serverHostSettingsAccess}>
           <strong>Yolo 모드</strong>
-          <small>{localBrowserHost ? "명령 실행과 파일 작업 권한 자동 승인 여부를 정합니다." : serverOnlyLabel}</small>
+          <small>{serverHostSettingsAccess ? "명령 실행과 파일 작업 권한 자동 승인 여부를 정합니다." : adminModeRequiredLabel}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("stats")}>
           <strong>IP별 사용 통계</strong>
@@ -125,17 +127,17 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
           <strong>터미널 세션 재시작</strong>
           <small>{state.sessionId ? "현재 세션 강제 재연결" : "새 세션 시작"}</small>
         </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("workspace")} disabled={!localBrowserHost}>
+        <button type="button" className="settings-row" onClick={() => onSelect("workspace")} disabled={!serverHostSettingsAccess}>
           <strong>작업공간 범위</strong>
-          <small>{localBrowserHost ? (state.workspaceScope.mode === "ip" ? "IP별 프로젝트/스킬 분리" : "공용 프로젝트/스킬") : serverOnlyLabel}</small>
+          <small>{serverHostSettingsAccess ? (state.workspaceScope.mode === "ip" ? "IP별 프로젝트/스킬 분리" : "공용 프로젝트/스킬") : adminModeRequiredLabel}</small>
         </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("learned-skills")} disabled={!localBrowserHost}>
+        <button type="button" className="settings-row" onClick={() => onSelect("learned-skills")} disabled={!serverHostSettingsAccess}>
           <strong>자동학습 스킬 표시</strong>
-          <small>{localBrowserHost ? "학습된 스킬을 표시하거나 숨깁니다." : serverOnlyLabel}</small>
+          <small>{serverHostSettingsAccess ? "학습된 스킬을 표시하거나 숨깁니다." : adminModeRequiredLabel}</small>
         </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("pgpt")} disabled={!localBrowserHost}>
+        <button type="button" className="settings-row" onClick={() => onSelect("pgpt")} disabled={!serverHostSettingsAccess}>
           <strong>P-GPT API 키</strong>
-          <small>{localBrowserHost ? "API 키, 직원번호, 회사번호를 저장합니다." : serverOnlyLabel}</small>
+          <small>{serverHostSettingsAccess ? "API 키, 직원번호, 회사번호를 저장합니다." : adminModeRequiredLabel}</small>
         </button>
       </div>
     </>
@@ -143,7 +145,8 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
 }
 
 function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack: () => void; onClose: () => void }) {
-  if (!isLocalBrowserHost() && isServerHostSettingsView(view)) return <ServerHostOnlySettings onBack={onBack} />;
+  const { state } = useAppState();
+  if (!canUseServerHostSettings(isLocalBrowserHost(), state.adminMode) && isServerHostSettingsView(view)) return <ServerHostOnlySettings onBack={onBack} />;
   if (view === "prompt") return <PromptSettings onBack={onBack} />;
   if (view === "behavior") return <BehaviorSettings onBack={onBack} />;
   if (view === "output-tokens") return <OutputTokenSettingsForm onBack={onBack} />;
@@ -218,7 +221,7 @@ function isServerHostSettingsView(view: SettingsView) {
 function ServerHostOnlySettings({ onBack }: { onBack: () => void }) {
   return (
     <>
-      <SettingsHeader title="서버 PC 전용">이 설정은 MyHarness를 실행 중인 PC에서만 변경할 수 있습니다.</SettingsHeader>
+      <SettingsHeader title="Admin mode 필요">이 설정은 Admin mode에서 변경할 수 있습니다.</SettingsHeader>
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
       </div>
@@ -388,12 +391,13 @@ function OutputTokenSettingsForm({ onBack }: { onBack: () => void }) {
 function DownloadSettings({ onBack }: { onBack: () => void }) {
   const { state, dispatch } = useAppState();
   const localBrowserHost = isLocalBrowserHost();
-  const [mode, setMode] = useState<AppSettings["downloadMode"]>(localBrowserHost ? state.appSettings.downloadMode : "browser");
-  const [folderPath, setFolderPath] = useState(localBrowserHost ? state.appSettings.downloadFolderPath : "");
+  const serverHostSettingsAccess = canUseServerHostSettings(localBrowserHost, state.adminMode);
+  const [mode, setMode] = useState<AppSettings["downloadMode"]>(serverHostSettingsAccess ? state.appSettings.downloadMode : "browser");
+  const [folderPath, setFolderPath] = useState(serverHostSettingsAccess ? state.appSettings.downloadFolderPath : "");
   const [error, setError] = useState("");
 
   async function browse() {
-    if (!localBrowserHost) return;
+    if (!serverHostSettingsAccess) return;
     setError("");
     try {
       const selected = await openFolderDialog(folderPath);
@@ -407,29 +411,29 @@ function DownloadSettings({ onBack }: { onBack: () => void }) {
   }
 
   function save() {
-    dispatch({ type: "set_app_settings", value: { downloadMode: localBrowserHost ? mode : "browser", downloadFolderPath: localBrowserHost ? folderPath : "" } });
+    dispatch({ type: "set_app_settings", value: { downloadMode: serverHostSettingsAccess ? mode : "browser", downloadFolderPath: serverHostSettingsAccess ? folderPath : "" } });
     onBack();
   }
 
   return (
     <>
-      <SettingsHeader title="파일 저장경로">{localBrowserHost ? "브라우저 기본 다운로드를 사용할지, 매번 위치를 물어볼지, 지정 폴더에 바로 저장할지 선택합니다." : "원격 접속에서는 브라우저 다운로드를 사용합니다."}</SettingsHeader>
+      <SettingsHeader title="파일 저장경로">{serverHostSettingsAccess ? "브라우저 기본 다운로드를 사용할지, 매번 위치를 물어볼지, 지정 폴더에 바로 저장할지 선택합니다." : "Admin mode 전에는 원격 접속에서 브라우저 다운로드를 사용합니다."}</SettingsHeader>
       <label className="setting-field">
         <span className="setting-field-label">저장 방식</span>
         <select value={mode} onChange={(event) => setMode(event.currentTarget.value === "folder" ? "folder" : event.currentTarget.value === "ask" ? "ask" : "browser")}>
           <option value="browser">브라우저 다운로드</option>
           <option value="ask">매번 저장 위치 선택</option>
-          <option value="folder" disabled={!localBrowserHost}>지정 폴더에 자동 저장</option>
+          <option value="folder" disabled={!serverHostSettingsAccess}>지정 폴더에 자동 저장</option>
         </select>
-        <small>{localBrowserHost ? "브라우저 다운로드는 브라우저의 다운로드 설정을 따릅니다." : "클라이언트 PC의 실제 저장 위치는 브라우저 다운로드 설정을 따릅니다."}</small>
+        <small>{serverHostSettingsAccess ? "브라우저 다운로드는 브라우저의 다운로드 설정을 따릅니다." : "클라이언트 PC의 실제 저장 위치는 브라우저 다운로드 설정을 따릅니다."}</small>
       </label>
       <label className="setting-field">
         <span className="setting-field-label">지정 폴더</span>
         <div className="folder-picker">
-          <input type="text" value={folderPath} readOnly placeholder={localBrowserHost ? "선택된 폴더가 없습니다" : "브라우저 다운로드 사용"} />
-          <button type="button" disabled={!localBrowserHost} onClick={() => void browse()}>찾아보기</button>
+          <input type="text" value={folderPath} readOnly placeholder={serverHostSettingsAccess ? "선택된 폴더가 없습니다" : "브라우저 다운로드 사용"} />
+          <button type="button" disabled={!serverHostSettingsAccess} onClick={() => void browse()}>찾아보기</button>
         </div>
-        <small>{localBrowserHost ? "찾아보기를 눌러 저장할 폴더를 선택하세요." : "원격 접속에서는 Host 폴더 선택을 사용할 수 없습니다."}</small>
+        <small>{serverHostSettingsAccess ? "찾아보기를 눌러 저장할 폴더를 선택하세요." : "Admin mode 전에는 Host 폴더 선택을 사용할 수 없습니다."}</small>
       </label>
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>

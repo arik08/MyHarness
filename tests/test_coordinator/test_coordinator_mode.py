@@ -187,6 +187,18 @@ def test_coordinator_system_prompt_guides_straggler_recovery(monkeypatch):
     assert "Do not let one lagging worker block the whole task" in prompt
 
 
+def test_coordinator_system_prompt_preserves_external_source_attribution(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SIMPLE", raising=False)
+    prompt = get_coordinator_system_prompt()
+
+    assert "## Source Attribution" in prompt
+    assert "important user-facing information comes from external knowledge" in prompt
+    assert "web search/fetch results, MCP tools or resources, vector databases" in prompt
+    assert "Preserve source identifiers from worker outputs" in prompt
+    assert "document ids, table names, or query labels" in prompt
+    assert "Include source identifiers for important claims so the final answer can cite them" in prompt
+
+
 # ---------------------------------------------------------------------------
 # WorkerConfig dataclass
 # ---------------------------------------------------------------------------

@@ -154,9 +154,11 @@ def _usage_from_response(response: dict[str, Any]) -> UsageSnapshot:
     usage = response.get("usage")
     if not isinstance(usage, dict):
         return UsageSnapshot()
+    input_details = usage.get("input_tokens_details") if isinstance(usage.get("input_tokens_details"), dict) else {}
     return UsageSnapshot(
         input_tokens=int(usage.get("input_tokens") or 0),
         output_tokens=int(usage.get("output_tokens") or 0),
+        cached_input_tokens=int(input_details.get("cached_tokens") or 0),
     )
 
 

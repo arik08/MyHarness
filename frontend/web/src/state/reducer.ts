@@ -1,4 +1,4 @@
-import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, Workspace, WorkspaceScope } from "../types/backend";
+import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, UsageCostSummary, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { artifactKind, artifactLabelForPath, artifactName, isKnownArtifactPath, normalizeArtifactPath } from "../utils/artifacts";
 import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
@@ -326,6 +326,7 @@ export const initialAppState: AppState = {
   todoCollapsed: false,
   swarmTeammates: [],
   swarmNotifications: [],
+  sessionUsage: null,
   swarmPopupOpen: false,
   workflowEvents: [],
   workflowDurationSeconds: null,
@@ -386,6 +387,43 @@ function normalizeAssistantArtifacts(value: unknown): ArtifactSummary[] {
     });
   }
   return artifacts;
+}
+
+function finiteUsageNumber(value: unknown) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : 0;
+}
+
+function normalizeUsageCostSummary(value: unknown): UsageCostSummary | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const inputTokens = finiteUsageNumber(raw.input_tokens);
+  const cachedInputTokens = finiteUsageNumber(raw.cached_input_tokens);
+  const outputTokens = finiteUsageNumber(raw.output_tokens);
+  const totalTokens = finiteUsageNumber(raw.total_tokens) || inputTokens + outputTokens;
+  const estimated = raw.estimated_cost_usd === null || raw.estimated_cost_usd === undefined
+    ? null
+    : Number(raw.estimated_cost_usd);
+  const breakdown = Array.isArray(raw.model_breakdown)
+    ? raw.model_breakdown
+        .map((item) => normalizeUsageCostSummary(item))
+        .filter((item): item is UsageCostSummary => Boolean(item))
+    : undefined;
+  return {
+    provider: typeof raw.provider === "string" ? raw.provider : undefined,
+    model: typeof raw.model === "string" ? raw.model : undefined,
+    input_tokens: inputTokens,
+    cached_input_tokens: cachedInputTokens,
+    uncached_input_tokens: finiteUsageNumber(raw.uncached_input_tokens) || Math.max(0, inputTokens - cachedInputTokens),
+    output_tokens: outputTokens,
+    total_tokens: totalTokens,
+    estimated_cost_usd: estimated !== null && Number.isFinite(estimated) ? estimated : null,
+    cost_supported: raw.cost_supported === true,
+    cost_note: typeof raw.cost_note === "string" ? raw.cost_note : undefined,
+    model_breakdown: breakdown?.length ? breakdown : undefined,
+  };
 }
 
 function mergeAssistantArtifacts(existing: ArtifactSummary[] | undefined, next: ArtifactSummary[]) {
@@ -615,6 +653,14 @@ function isDuplicateKindedUserTranscript(state: AppState, text: string, kind: Ch
   return last?.role === "user" && canonicalUserTranscriptText(last.text) === canonicalText && last.kind === kind;
 }
 
+function isSupplementalUserTranscriptKind(kind: ChatMessage["kind"]) {
+  return kind === "steering" || kind === "queued" || kind === "question_answer";
+}
+
+function isDeduplicatedUserTranscriptKind(kind: ChatMessage["kind"]) {
+  return kind === "steering" || kind === "queued";
+}
+
 function isFinalRestoredAssistantAnswer(historyEvents: Array<Record<string, unknown>>, index: number) {
   const current = historyEvents[index];
   if (!String(current?.text || "").trim() && !normalizeAssistantArtifacts(current?.artifacts).length) {
@@ -693,6 +739,102 @@ function compactToolStatus(toolName: string, fallback = "처리 중") {
   if (lower.includes("read")) return "파일 읽는 중";
   if (lower.includes("write") || lower.includes("edit") || lower.includes("notebook") || lower.includes("patch")) return "파일 작업 중";
   return fallback;
+}
+
+const compactProgressToolName = "context_compaction";
+
+function compactProgressStatus(phase: string): WorkflowEventStatus {
+  if (phase === "compact_failed") return "error";
+  if (phase.endsWith("_end") || phase === "compact_end") return "done";
+  return "running";
+}
+
+function compactProgressTitle(phase: string) {
+  if (phase === "compact_retry") return "컨텍스트 자동 압축 재시도";
+  if (phase === "compact_failed") return "컨텍스트 자동 압축 실패";
+  return "컨텍스트 자동 압축";
+}
+
+function compactProgressDetail(event: Extract<BackendEvent, { type: "compact_progress" }>) {
+  const phase = String(event.compact_phase || "");
+  const trigger = String(event.compact_trigger || "");
+  const reactive = trigger === "reactive";
+  const attempt = Number(event.attempt);
+  const attemptSuffix = Number.isFinite(attempt) && attempt > 0 ? ` (${attempt}회차)` : "";
+  switch (phase) {
+    case "hooks_start":
+      return reactive
+        ? "컨텍스트 한도 초과 후 재시도하기 전에 세션 상태를 정리하고 있습니다."
+        : "요약 전에 세션 상태를 정리하고 있습니다.";
+    case "context_collapse_start":
+      return "큰 도구 결과와 오래된 본문을 줄여 컨텍스트를 안전하게 맞추고 있습니다.";
+    case "context_collapse_end":
+      return "큰 컨텍스트 축소를 마쳤습니다.";
+    case "session_memory_start":
+      return "컨텍스트 초과를 막기 위해 이전 대화를 짧은 세션 메모리로 요약하고 있습니다.";
+    case "session_memory_end":
+      return "이전 대화 요약을 마쳤습니다.";
+    case "compact_start":
+      return reactive
+        ? "컨텍스트 한도를 넘어 이전 대화를 요약하고 다시 시도합니다."
+        : "컨텍스트 초과를 막기 위해 이전 대화를 요약하고 있습니다.";
+    case "compact_retry":
+      return `요약 요청이 너무 커서 오래된 컨텍스트를 더 줄인 뒤 다시 시도합니다.${attemptSuffix}`;
+    case "compact_end":
+      return "이전 대화 요약을 반영했고, 이어서 작업을 계속합니다.";
+    case "compact_failed": {
+      const message = String(event.message || "").trim();
+      return message ? `요약에 실패했습니다. ${truncateWorkflowDetail(message, 140)}` : "요약에 실패했습니다.";
+    }
+    default: {
+      const message = String(event.message || "").trim();
+      return message ? truncateWorkflowDetail(message, 180) : "컨텍스트를 요약하고 있습니다.";
+    }
+  }
+}
+
+function compactProgressStatusText(event: Extract<BackendEvent, { type: "compact_progress" }>) {
+  const phase = String(event.compact_phase || "");
+  if (phase === "compact_failed") return "컨텍스트 자동 압축 실패";
+  if (phase === "compact_retry") return "컨텍스트 자동 압축 재시도 중";
+  if (phase.endsWith("_end") || phase === "compact_end") return "컨텍스트 자동 압축 완료";
+  return String(event.compact_trigger || "") === "reactive" ? "컨텍스트 자동 압축 후 재시도 중" : "컨텍스트 자동 압축 중";
+}
+
+function applyCompactProgressEvent(
+  events: WorkflowEvent[],
+  event: Extract<BackendEvent, { type: "compact_progress" }>,
+) {
+  const phase = String(event.compact_phase || "");
+  const status = compactProgressStatus(phase);
+  const title = compactProgressTitle(phase);
+  const detail = compactProgressDetail(event);
+  const baseEvents = completePlanning(events.length ? events : initialWorkflowEvents());
+  return updateLatestWorkflowEvent(baseEvents, compactProgressToolName, {
+    title,
+    detail,
+    status,
+    level: "parent",
+  }) || appendWorkflowEvent(baseEvents, {
+    toolName: compactProgressToolName,
+    title,
+    detail,
+    status,
+    level: "parent",
+  });
+}
+
+function compactProgressEventFromRecord(record: Record<string, unknown>): Extract<BackendEvent, { type: "compact_progress" }> {
+  const rawAttempt = Number(record.attempt);
+  return {
+    type: "compact_progress",
+    compact_phase: typeof record.compact_phase === "string" ? record.compact_phase : null,
+    compact_trigger: typeof record.compact_trigger === "string" ? record.compact_trigger : null,
+    attempt: Number.isFinite(rawAttempt) ? rawAttempt : null,
+    compact_checkpoint: typeof record.compact_checkpoint === "string" ? record.compact_checkpoint : null,
+    compact_metadata: recordOrNull(record.compact_metadata),
+    message: typeof record.message === "string" ? record.message : null,
+  };
 }
 
 function workflowDetailFromInput(input?: Record<string, unknown> | null) {
@@ -1644,6 +1786,7 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
   const provider = String(snapshot.provider || state.provider);
   const activeProfile = String(snapshot.active_profile || state.activeProfile || provider);
   const providerLabel = String(snapshot.provider_label || state.providerLabel || provider);
+  const sessionUsage = normalizeUsageCostSummary(event.session_usage) || normalizeUsageCostSummary(snapshot.session_usage);
   return {
     ...state,
     ready: event.type === "ready" ? true : state.ready,
@@ -1660,6 +1803,7 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
     workspaceName: String(snapshot.workspace?.name || state.workspaceName),
     workspacePath: String(snapshot.workspace?.path || state.workspacePath),
     workspaceScope: snapshot.workspace?.scope || state.workspaceScope,
+    sessionUsage: sessionUsage || state.sessionUsage,
   };
 }
 
@@ -1820,6 +1964,7 @@ function currentLiveSessionView(state: AppState): LiveSessionView {
     todoCollapsed: state.todoCollapsed,
     swarmTeammates: state.swarmTeammates,
     swarmNotifications: state.swarmNotifications,
+    sessionUsage: state.sessionUsage,
   };
 }
 
@@ -1860,6 +2005,7 @@ function reduceHistoryRestoreEvent(
   const workflowDurationSecondsByMessageId: Record<string, number> = {};
   let restoredSwarmTeammates = state.swarmTeammates;
   let restoredSwarmNotifications = state.swarmNotifications;
+  let restoredSessionUsage = state.sessionUsage;
   let workflowInputBuffers: Record<string, string> = {};
   let currentTurnHasAssistant = false;
   const historyEvents = (Array.isArray(historyEvent.history_events) ? historyEvent.history_events : [])
@@ -1876,10 +2022,20 @@ function reduceHistoryRestoreEvent(
       continue;
     }
     if (type === "user") {
+      const kind = typeof record.kind === "string" ? record.kind as ChatMessage["kind"] : undefined;
+      if (isSupplementalUserTranscriptKind(kind)) {
+        messages.push(createMessage({
+          role: "user",
+          text: String(record.text || ""),
+          kind,
+          createdAt: timestampMsFromRecord(record),
+        }));
+        continue;
+      }
       if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
         workflowEventsByMessageId[workflowAnchorMessageId] = workflowEvents;
       }
-      const message = createMessage({ role: "user", text: String(record.text || ""), createdAt: timestampMsFromRecord(record) });
+      const message = createMessage({ role: "user", text: String(record.text || ""), kind, createdAt: timestampMsFromRecord(record) });
       messages.push(message);
       workflowAnchorMessageId = message.id;
       workflowEvents = initialWorkflowEvents();
@@ -1889,6 +2045,9 @@ function reduceHistoryRestoreEvent(
     }
     if (type === "assistant") {
       const artifacts = normalizeAssistantArtifacts(record.artifacts);
+      const usage = normalizeUsageCostSummary(record.usage);
+      const sessionUsage = normalizeUsageCostSummary(record.session_usage);
+      restoredSessionUsage = sessionUsage || restoredSessionUsage;
       const text = String(record.text || "").trim() || (artifacts.length ? "작성 완료했습니다." : "");
       if (text.trim() || artifacts.length) {
         if (isFinalRestoredAssistantAnswer(historyEvents, index)) {
@@ -1898,6 +2057,7 @@ function reduceHistoryRestoreEvent(
             isComplete: true,
             createdAt: timestampMsFromRecord(record),
             artifacts: artifacts.length ? artifacts : undefined,
+            usage,
           }));
           currentTurnHasAssistant = true;
         } else {
@@ -1907,6 +2067,13 @@ function reduceHistoryRestoreEvent(
           );
         }
       }
+      continue;
+    }
+    if (type === "compact_progress") {
+      workflowEvents = applyCompactProgressEvent(
+        workflowEvents.length ? workflowEvents : initialWorkflowEvents(),
+        compactProgressEventFromRecord(record),
+      );
       continue;
     }
     if (type === "line_complete") {
@@ -2103,6 +2270,7 @@ function reduceHistoryRestoreEvent(
     workflowStartedAtMs: null,
     swarmTeammates: restoredSwarmTeammates,
     swarmNotifications: restoredSwarmNotifications,
+    sessionUsage: restoredSessionUsage,
     restoringHistory: true,
     historyReadOnly: true,
     pendingFreshChat: false,
@@ -2368,6 +2536,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       workflowInputBuffers: {},
       todoMarkdown: "",
       todoSessionId: null,
+      sessionUsage: null,
       workflowEvents: [],
       workflowDurationSeconds: null,
       workflowStartedAtMs: null,
@@ -2387,6 +2556,19 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       ...state,
       statusText: text ? statusTextForProgressNote(workflowEvents, text, text) : state.statusText,
       workflowEvents,
+    };
+  }
+
+  if (event.type === "compact_progress") {
+    return {
+      ...state,
+      busy: true,
+      status: "processing",
+      statusText: compactProgressStatusText(event as Extract<BackendEvent, { type: "compact_progress" }>),
+      workflowEvents: applyCompactProgressEvent(
+        state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(),
+        event as Extract<BackendEvent, { type: "compact_progress" }>,
+      ),
     };
   }
 
@@ -2422,12 +2604,12 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       return state;
     }
     const text = normalizeVisibleText(item.text);
-    if (item.role === "user" && (item.kind === "steering" || item.kind === "queued")) {
+    if (item.role === "user" && isDeduplicatedUserTranscriptKind(item.kind)) {
       if (isDuplicateKindedUserTranscript(state, text, item.kind)) {
         return state;
       }
     }
-    if (item.role === "user" && item.kind !== "steering" && item.kind !== "queued") {
+    if (item.role === "user" && !isSupplementalUserTranscriptKind(item.kind)) {
       if (isDuplicateActiveUserTranscript(state, text)) {
         return state;
       }
@@ -2506,12 +2688,15 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const value = rawValue || (artifacts.length ? "작성 완료했습니다." : "");
     const last = state.messages[state.messages.length - 1];
     const isFinalAnswer = event.has_tool_uses !== true;
+    const usage = normalizeUsageCostSummary(event.usage);
+    const sessionUsage = normalizeUsageCostSummary(event.session_usage);
     if (isFinalAnswer && isDuplicateAssistantCompletion(last, value, artifacts)) {
       return {
         ...state,
         busy: false,
         status: "ready",
         statusText: "준비됨",
+        sessionUsage: sessionUsage || state.sessionUsage,
       };
     }
     const shouldCompleteTodo = isFinalAnswer && artifacts.length > 0 && Boolean(state.todoMarkdown.trim());
@@ -2527,11 +2712,12 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
                 isComplete: true,
                 createdAt: Date.now(),
                 artifacts: mergeAssistantArtifacts(last.artifacts, artifacts),
+                usage: usage || last.usage,
               },
             ]
-          : appendMessage(state.messages, { role: "assistant", text: value, isComplete: true, createdAt: Date.now(), artifacts })
+          : appendMessage(state.messages, { role: "assistant", text: value, isComplete: true, createdAt: Date.now(), artifacts, usage })
         : last?.role === "assistant"
-          ? [...state.messages.slice(0, -1), { ...last, isComplete: true, createdAt: Date.now(), artifacts: mergeAssistantArtifacts(last.artifacts, artifacts) }]
+          ? [...state.messages.slice(0, -1), { ...last, isComplete: true, createdAt: Date.now(), artifacts: mergeAssistantArtifacts(last.artifacts, artifacts), usage: usage || last.usage }]
           : state.messages
       : completePendingAssistantMessage(state.messages, value, true, artifacts);
     return {
@@ -2549,6 +2735,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       status: event.has_tool_uses === true ? "processing" : "ready",
       statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
       artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
+      sessionUsage: sessionUsage || state.sessionUsage,
       todoMarkdown,
       todoCollapsed: isFinalAnswer && todoMarkdown.trim() ? true : state.todoCollapsed,
     };
@@ -2766,6 +2953,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         todoCollapsed: restoredLiveView?.todoCollapsed ?? state.todoCollapsed,
         swarmTeammates: restoredLiveView?.swarmTeammates ?? state.swarmTeammates,
         swarmNotifications: restoredLiveView?.swarmNotifications ?? state.swarmNotifications,
+        sessionUsage: restoredLiveView?.sessionUsage ?? state.sessionUsage,
         busy,
         status: busy ? "processing" : "ready",
         statusText: busy ? "응답 진행 중" : "준비됨",
@@ -2773,7 +2961,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
 
     case "append_message":
-      if (action.message.role === "user" && action.message.kind !== "steering" && action.message.kind !== "queued") {
+      if (action.message.role === "user" && !isSupplementalUserTranscriptKind(action.message.kind)) {
         const message = createMessage(action.message);
         if (isSlashCommandMessage(action.message.text)) {
           return {
@@ -2840,6 +3028,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         todoCollapsed: false,
         swarmTeammates: [],
         swarmNotifications: [],
+        sessionUsage: null,
         workflowEvents: [],
         workflowDurationSeconds: null,
         workflowStartedAtMs: null,
@@ -3062,6 +3251,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         todoCollapsed: false,
         swarmTeammates: [],
         swarmNotifications: [],
+        sessionUsage: null,
         swarmPopupOpen: false,
         workflowEvents: [],
         workflowDurationSeconds: null,
@@ -3251,7 +3441,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, workflowEvents: [], workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowDurationSeconds: null, workflowStartedAtMs: null };
 
     case "clear_messages":
-      return { ...state, messages: [], workflowAnchorMessageId: null, workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowInputBuffers: {}, todoMarkdown: "", todoSessionId: null, todoCollapsed: false, workflowEvents: [], workflowDurationSeconds: null, workflowStartedAtMs: null };
+      return { ...state, messages: [], workflowAnchorMessageId: null, workflowEventsByMessageId: {}, workflowDurationSecondsByMessageId: {}, workflowInputBuffers: {}, todoMarkdown: "", todoSessionId: null, todoCollapsed: false, sessionUsage: null, workflowEvents: [], workflowDurationSeconds: null, workflowStartedAtMs: null };
 
     case "backend_event":
       return reduceBackendEvent(state, action);

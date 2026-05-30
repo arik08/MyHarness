@@ -32,7 +32,17 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
         model="claude-test",
         system_prompt="system",
         messages=[ConversationMessage(role="user", content=[TextBlock(text="hello")])],
-        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2, cached_input_tokens=1),
+        usage_accounting={
+            "total": {"input_tokens": 1, "output_tokens": 2, "cached_input_tokens": 1},
+            "by_model": [
+                {
+                    "provider": "openai",
+                    "model": "gpt-5.4",
+                    "usage": {"input_tokens": 1, "output_tokens": 2, "cached_input_tokens": 1},
+                }
+            ],
+        },
         tool_metadata={
             "task_focus_state": {"goal": "Fix compact carry-over"},
             "recent_verified_work": ["Focused session storage test passed"],
@@ -45,6 +55,9 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
     assert snapshot is not None
     assert snapshot["model"] == "claude-test"
     assert snapshot["usage"]["output_tokens"] == 2
+    assert snapshot["usage"]["cached_input_tokens"] == 1
+    assert snapshot["usage_accounting"]["by_model"][0]["provider"] == "openai"
+    assert snapshot["usage_accounting"]["by_model"][0]["usage"]["cached_input_tokens"] == 1
     assert snapshot["tool_metadata"]["task_focus_state"]["goal"] == "Fix compact carry-over"
     assert snapshot["tool_metadata"]["recent_verified_work"] == ["Focused session storage test passed"]
 

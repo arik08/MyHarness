@@ -30,6 +30,9 @@ function messageKindBadge(kind: ChatMessage["kind"]) {
   if (kind === "queued") {
     return { className: "queued", label: "대기열" };
   }
+  if (kind === "question_answer") {
+    return { className: "question-answer", label: "질문 답변" };
+  }
   return null;
 }
 

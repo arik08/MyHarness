@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from myharness.api.client import SupportsStreamingMessages
+from myharness.api.pricing import usage_cost_summary
+from myharness.api.usage import UsageSnapshot
 from myharness.engine.cost_tracker import CostTracker
 from myharness.coordinator.coordinator_mode import get_coordinator_user_context
 from myharness.engine.messages import (
@@ -103,6 +105,19 @@ class QueryEngine:
         """Return the total usage across all turns."""
         return self._cost_tracker.total
 
+    @property
+    def usage_accounting(self) -> dict:
+        """Return usage buckets grouped by provider/model."""
+        return self._cost_tracker.accounting
+
+    def usage_cost_summary(self, accounting: dict | None = None) -> dict:
+        """Return a serializable usage/cost summary for the current session."""
+        return usage_cost_summary(
+            accounting or self._cost_tracker.accounting,
+            provider=str(self._tool_metadata.get("provider") or ""),
+            model=self._model,
+        )
+
     def clear(self) -> None:
         """Clear the in-memory conversation history."""
         self._messages.clear()
@@ -156,6 +171,22 @@ class QueryEngine:
     def load_messages(self, messages: list[ConversationMessage]) -> None:
         """Replace the in-memory conversation history."""
         self._messages = sanitize_conversation_messages(list(messages))
+
+    def load_usage(
+        self,
+        *,
+        usage: UsageSnapshot | dict | None = None,
+        accounting: dict | None = None,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
+        """Replace the in-memory usage counters from persisted session data."""
+        self._cost_tracker.load(
+            usage=usage,
+            accounting=accounting,
+            provider=provider or str(self._tool_metadata.get("provider") or ""),
+            model=model or self._model,
+        )
 
     def has_pending_continuation(self) -> bool:
         """Return True when the conversation ends with tool results awaiting a follow-up model turn."""
@@ -226,7 +257,11 @@ class QueryEngine:
                         [message for message in query_messages if message is not coordinator_context]
                     )
                 if usage is not None:
-                    self._cost_tracker.add(usage)
+                    self._cost_tracker.add(
+                        usage,
+                        provider=str(self._tool_metadata.get("provider") or ""),
+                        model=context.model,
+                    )
                 yield event
         except BaseException:
             self._messages = sanitize_conversation_messages(
@@ -263,5 +298,9 @@ class QueryEngine:
         )
         async for event, usage in run_query(context, self._messages):
             if usage is not None:
-                self._cost_tracker.add(usage)
+                self._cost_tracker.add(
+                    usage,
+                    provider=str(self._tool_metadata.get("provider") or ""),
+                    model=context.model,
+                )
             yield event

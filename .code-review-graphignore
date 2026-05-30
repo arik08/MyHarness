@@ -1,9 +1,12 @@
 # Keep the code graph focused on source and tests.
+node_modules/**
 **/node_modules/**
 **/.vite/**
 **/dist/**
 **/build/**
 **/.next/**
+.code-review-graph/**
+.codegraph/**
 .myharness/**
 .playwright-mcp/**
 test-results/**

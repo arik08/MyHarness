@@ -32,6 +32,8 @@ def test_checked_in_project_settings_default_to_pgpt():
     assert settings.provider == "openai"
     assert settings.api_format == "openai"
     assert settings.resolve_profile()[0] == "p-gpt"
+    assert settings.model == "gpt-5.4"
+    assert settings.effort == "low"
 
 
 class TestSettings:
@@ -43,6 +45,7 @@ class TestSettings:
         assert s.timeout == 180.0
         assert s.max_turns == 200
         assert s.fast_mode is False
+        assert s.effort == "low"
         assert s.permission.mode == "default"
         assert s.sandbox.enabled is False
         assert s.sandbox.filesystem.allow_write == ["."]
@@ -780,8 +783,8 @@ class TestPgptOpenAICompatibleProvider:
         assert profile.provider == "openai"
         assert profile.api_format == "openai"
         assert profile.auth_source == "pgpt_api_key"
-        assert profile.default_model == "gpt-5.5"
-        assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+        assert profile.default_model == "gpt-5.4"
+        assert profile.allowed_models == ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"]
         assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
 
     def test_codex_subscription_default_profile_includes_lightweight_gpt54_models(self):
@@ -834,7 +837,57 @@ class TestPgptOpenAICompatibleProvider:
 
         profile = settings.merged_profiles()["p-gpt"]
 
-        assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+        assert profile.allowed_models == ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"]
+
+    def test_pgpt_saved_last_model_survives_builtin_default_change(self):
+        from myharness.config.settings import ProviderProfile
+
+        settings = Settings(
+            profiles={
+                "p-gpt": ProviderProfile(
+                    label="P-GPT",
+                    provider="openai",
+                    api_format="openai",
+                    auth_source="pgpt_api_key",
+                    default_model="gpt-5.5",
+                    base_url="http://pgpt.posco.com/s0la01-gpt/v1",
+                    last_model="gpt-5.5",
+                    allowed_models=["gpt-5.5", "gpt-5.4"],
+                )
+            }
+        )
+
+        profile = settings.merged_profiles()["p-gpt"]
+        materialized = settings.materialize_active_profile()
+
+        assert profile.default_model == "gpt-5.4"
+        assert profile.last_model == "gpt-5.5"
+        assert materialized.model == "gpt-5.5"
+
+    def test_pgpt_saved_builtin_default_moves_to_gpt54_when_no_last_model(self):
+        from myharness.config.settings import ProviderProfile
+
+        settings = Settings(
+            profiles={
+                "p-gpt": ProviderProfile(
+                    label="P-GPT",
+                    provider="openai",
+                    api_format="openai",
+                    auth_source="pgpt_api_key",
+                    default_model="gpt-5.5",
+                    base_url="http://pgpt.posco.com/s0la01-gpt/v1",
+                    last_model=None,
+                    allowed_models=["gpt-5.5", "gpt-5.4"],
+                )
+            }
+        )
+
+        profile = settings.merged_profiles()["p-gpt"]
+        materialized = settings.materialize_active_profile()
+
+        assert profile.default_model == "gpt-5.4"
+        assert profile.last_model is None
+        assert materialized.model == "gpt-5.4"
 
     def test_default_profile_is_pgpt(self):
         materialized = Settings().materialize_active_profile()
@@ -842,7 +895,8 @@ class TestPgptOpenAICompatibleProvider:
         assert materialized.active_profile == "p-gpt"
         assert materialized.provider == "openai"
         assert materialized.api_format == "openai"
-        assert materialized.model == "gpt-5.5"
+        assert materialized.model == "gpt-5.4"
+        assert materialized.effort == "low"
 
     def test_auth_source_provider_name_pgpt(self):
         from myharness.config.settings import auth_source_provider_name

@@ -20,7 +20,7 @@ from myharness.engine.stream_events import (
     ToolExecutionStarted,
     ToolInputDelta,
 )
-from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
 from myharness.mcp.types import McpConnectionStatus, McpStdioServerConfig, McpToolInfo
 from myharness.project_preferences import load_project_preferences
 from myharness.services.long_report_progress import write_long_report_progress_state
@@ -75,6 +75,32 @@ class SequencedApiClient:
         yield ApiMessageCompleteEvent(
             message=ConversationMessage(role="assistant", content=[TextBlock(text=text)]),
             usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            stop_reason=None,
+        )
+
+
+class ToolThenAnswerApiClient:
+    """Fake client that forces one tool loop before the final answer."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def stream_message(self, request):
+        del request
+        self.calls += 1
+        if self.calls == 1:
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[ToolUseBlock(id="tool-1", name="missing_tool", input={})],
+                ),
+                usage=UsageSnapshot(input_tokens=10, output_tokens=1, cached_input_tokens=4),
+                stop_reason="tool_use",
+            )
+            return
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="final answer")]),
+            usage=UsageSnapshot(input_tokens=20, output_tokens=2, cached_input_tokens=6),
             stop_reason=None,
         )
 
@@ -708,6 +734,53 @@ async def test_read_requests_resolves_permission_response_without_queueing(monke
 
 
 @pytest.mark.asyncio
+async def test_read_requests_records_question_answer_transcript(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    fut = asyncio.get_running_loop().create_future()
+    host._question_requests["question-1"] = fut
+    host._question_request_details["question-1"] = {
+        "question": "어떤 색으로 진행할까요?",
+        "choices": [{"value": "blue", "label": "파랑", "description": ""}],
+    }
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    payload = b'{"type":"question_response","request_id":"question-1","answer":"blue"}\n'
+
+    class _FakeBuffer:
+        def __init__(self):
+            self._reads = 0
+
+        def readline(self):
+            self._reads += 1
+            if self._reads == 1:
+                return payload
+            return b""
+
+    class _FakeStdin:
+        buffer = _FakeBuffer()
+
+    host._emit = _emit  # type: ignore[method-assign]
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", _FakeStdin())
+
+    await host._read_requests()
+
+    assert fut.done()
+    assert fut.result() == "blue"
+    transcript = next(event.item for event in events if event.type == "transcript_item" and event.item)
+    assert transcript.role == "user"
+    assert transcript.kind == "question_answer"
+    assert "어떤 색으로 진행할까요?" in transcript.text
+    assert "blue" in transcript.text
+    assert "파랑" in transcript.text
+    queued = await host._request_queue.get()
+    assert queued.type == "shutdown"
+    assert host._request_queue.empty()
+
+
+@pytest.mark.asyncio
 async def test_read_requests_queues_steering_line_while_busy(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._busy = True
@@ -816,6 +889,48 @@ async def test_backend_host_emits_task_output_modal(monkeypatch):
     assert events[-1].type == "modal_request"
     assert events[-1].modal["kind"] == "task_output"
     assert events[-1].modal["output"] == "worker output"
+
+
+@pytest.mark.asyncio
+async def test_read_requests_handles_task_output_while_busy(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._busy = True
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    class _FakeTaskManager:
+        def read_task_output(self, task_id, *, max_bytes=12000):
+            assert task_id == "a123"
+            assert max_bytes == 12000
+            return "worker output"
+
+    class _FakeBuffer:
+        def __init__(self):
+            self._reads = 0
+
+        def readline(self):
+            self._reads += 1
+            if self._reads == 1:
+                return b'{"type":"task_output","task_id":"a123","max_bytes":12000}\n'
+            return b""
+
+    class _FakeStdin:
+        buffer = _FakeBuffer()
+
+    host._emit = _emit  # type: ignore[method-assign]
+    monkeypatch.setattr("myharness.ui.backend_host.get_task_manager", lambda: _FakeTaskManager())
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", _FakeStdin())
+
+    await host._read_requests()
+
+    assert events[-1].type == "modal_request"
+    assert events[-1].modal["kind"] == "task_output"
+    assert events[-1].modal["output"] == "worker output"
+    queued = await host._request_queue.get()
+    assert queued.type == "shutdown"
+    assert host._request_queue.empty()
 
 
 @pytest.mark.asyncio
@@ -1099,6 +1214,36 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
         and "hello from react backend" in event.item.text
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_backend_host_emits_answer_and_session_usage_for_final_answer(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = ToolThenAnswerApiClient()
+    host = ReactBackendHost(BackendHostConfig(api_client=client, model="gpt-5.4", api_format="openai"))
+    host._bundle = await build_runtime(api_client=client, model="gpt-5.4", api_format="openai")
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("hi")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    complete = next(event for event in events if event.type == "assistant_complete" and event.has_tool_uses is False)
+    assert complete.usage["input_tokens"] == 30
+    assert complete.usage["output_tokens"] == 3
+    assert complete.usage["cached_input_tokens"] == 10
+    assert complete.session_usage["total_tokens"] == 33
+    assert complete.session_usage["cached_input_tokens"] == 10
 
 
 @pytest.mark.asyncio
@@ -1594,7 +1739,7 @@ async def test_backend_host_steers_divided_work_to_swarm_agents(tmp_path, monkey
     assert "flowchart" in steering_lines[0]
     assert "fenced `workflow` block" not in steering_lines[0]
     assert "Do not spawn serial downstream roles prematurely" in steering_lines[0]
-    assert "at most 5 workers" in steering_lines[0]
+    assert "at most 10 workers" in steering_lines[0]
     assert "non-overlapping scope" in steering_lines[0]
     assert "substantial analysis" in steering_lines[0]
     assert "intermediate tables" in steering_lines[0]
@@ -2872,8 +3017,8 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     runtime_options = event.modal["runtime_options"]
     active_provider = next(option["value"] for option in runtime_options["providers"] if option.get("active"))
     assert runtime_options["models_by_provider"][active_provider]
-    assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:2] == ["gpt-5.5", "gpt-5.4"]
-    assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Strongest coding and reasoning"
+    assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:2] == ["gpt-5.4", "gpt-5.4-mini"]
+    assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Balanced default model"
     assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == ["gpt-5.5", "gpt-5.4"]
     assert "gpt-5.4-mini" in [option["value"] for option in runtime_options["models_by_provider"]["codex"]]
     assert any(option["value"] == "gemini" for option in runtime_options["providers"])

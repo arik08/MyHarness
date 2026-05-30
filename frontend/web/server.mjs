@@ -309,9 +309,16 @@ function isLoopbackAddress(value) {
   return address === "localhost" || address === "::1" || address === "0:0:0:0:0:0:0:1" || address.startsWith("127.");
 }
 
+function hasAdminModeAccess(request) {
+  return String(request.headers["x-myharness-admin-mode"] || "").trim() === "1";
+}
+
 function requireLocalAdminRequest(request, message = "This action can only be performed from the local MyHarness host") {
   const peerAddress = normalizeClientAddress(request.socket?.remoteAddress || "");
   const forwardedAddress = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  if (hasAdminModeAccess(request)) {
+    return;
+  }
   if (!isLoopbackAddress(peerAddress) || (forwardedAddress && !isLoopbackAddress(forwardedAddress))) {
     const error = new Error(message);
     error.status = 403;
@@ -1266,7 +1273,7 @@ function withDownloadedMermaidZoomBridge(content) {
 .myharness-mermaid-zoom-control:hover,.myharness-mermaid-zoom-control:focus-visible{border-color:rgba(37,99,235,.48);color:#1d4ed8;outline:none}
 .myharness-mermaid-zoom-control[data-tooltip]::after{position:absolute;top:calc(100% + 7px);left:50%;z-index:10000;max-width:220px;padding:5px 7px;border-radius:6px;background:rgba(17,24,39,.94);color:#fff;content:attr(data-tooltip);font:12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;opacity:0;pointer-events:none;transform:translate(-50%,2px);transition:opacity 120ms ease,transform 120ms ease;white-space:nowrap}
 .myharness-mermaid-zoom-control:hover::after,.myharness-mermaid-zoom-control:focus-visible::after{opacity:1;transform:translate(-50%,0)}
-.myharness-mermaid-zoom-viewport{flex:1;overflow:hidden;display:grid;place-items:center;background:radial-gradient(circle,rgba(100,116,139,.24) 0 1px,transparent 1.2px),#eef0f2;background-size:18px 18px,auto;cursor:grab}
+.myharness-mermaid-zoom-viewport{flex:1;overflow:hidden;display:grid;place-items:center;background:radial-gradient(circle,rgba(100,116,139,.24) 0 1px,transparent 1.2px),#eef0f2;background-size:18px 18px,auto;cursor:grab;touch-action:none;user-select:none}
 .myharness-mermaid-zoom-viewport.dragging{cursor:grabbing}
 .myharness-mermaid-zoom-canvas{transform-origin:0 0;transition:transform 120ms ease}
 .myharness-mermaid-zoom-canvas svg{display:block;max-width:none;height:auto}
@@ -1278,7 +1285,6 @@ function withDownloadedMermaidZoomBridge(content) {
   const icon = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 3H3v5"></path><path d="M3 3l7 7"></path><path d="M16 3h5v5"></path><path d="m21 3-7 7"></path><path d="M8 21H3v-5"></path><path d="m3 21 7-7"></path><path d="M16 21h5v-5"></path><path d="m21 21-7-7"></path></svg>';
   const controlIcons = {
     close: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
-    fit: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 9V5h4"></path><path d="M19 9V5h-4"></path><path d="M5 15v4h4"></path><path d="M19 15v4h-4"></path><path d="M12 8v8"></path><path d="M8 12h8"></path></svg>',
     reset: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7v5h5"></path><path d="M5.7 12A7 7 0 0 1 17 6.5"></path><path d="M18.3 12A7 7 0 0 1 7 17.5"></path></svg>',
     zoomIn: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>',
     zoomOut: '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14"></path></svg>'
@@ -1424,7 +1430,6 @@ function withDownloadedMermaidZoomBridge(content) {
       control("축소", "축소", "zoomOut", () => zoomAt(zoom / 1.2)),
       zoomValue,
       control("확대", "확대", "zoomIn", () => zoomAt(zoom * 1.2)),
-      control("화면에 맞춤", "Fit", "fit", fitView),
       control("이동 초기화", "Reset", "reset", fitView),
       control("닫기", "닫기", "close", closeViewer)
     );
@@ -1444,6 +1449,7 @@ function withDownloadedMermaidZoomBridge(content) {
     viewport.addEventListener("pointerdown", (event) => {
       if (typeof event.button === "number" && event.button !== 0) return;
       event.preventDefault();
+      window.getSelection()?.removeAllRanges?.();
       dragging = true;
       pointerId = event.pointerId;
       lastX = event.clientX;
@@ -1463,9 +1469,10 @@ function withDownloadedMermaidZoomBridge(content) {
   const attachButton = (svg) => {
     if (!svg || svg.closest(".myharness-mermaid-zoom-backdrop")) return;
     const host = findHost(svg);
-    if (!host || host.hasAttribute(attachedAttribute)) return;
+    if (!host) return;
     host.setAttribute(attachedAttribute, "true");
     host.classList.add("myharness-mermaid-zoom-host");
+    if (host.querySelector(".myharness-mermaid-expand-button")) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "myharness-mermaid-expand-button";
@@ -2533,6 +2540,135 @@ async function writeJsonFileAtomic(path, payload) {
   const tmpPath = `${path}.${process.pid}.${Date.now()}-${crypto.randomUUID()}.tmp`;
   await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   await rename(tmpPath, path);
+}
+
+function cleanRuntimePreference(value) {
+  return String(value || "").trim();
+}
+
+function normalizeRuntimeEffortValue(value) {
+  const clean = cleanRuntimePreference(value).toLowerCase();
+  return clean === "auto" ? "none" : clean;
+}
+
+function normalizeSharedRuntimePreferences(raw = {}) {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const next = { version: 1 };
+  const activeProfile = cleanRuntimePreference(source.active_profile || source.activeProfile);
+  if (activeProfile) {
+    next.active_profile = activeProfile;
+  }
+  const hasModel = (
+    Object.prototype.hasOwnProperty.call(source, "model")
+    || Object.prototype.hasOwnProperty.call(source, "runtime_model")
+    || Object.prototype.hasOwnProperty.call(source, "runtimeModel")
+  );
+  const model = cleanRuntimePreference(source.model || source.runtime_model || source.runtimeModel);
+  if (hasModel && model && model.toLowerCase() !== "default") {
+    next.model = model;
+  }
+  const effort = normalizeRuntimeEffortValue(source.effort || source.reasoning_effort || source.reasoningEffort);
+  if (effort) {
+    next.effort = effort;
+  }
+  return next;
+}
+
+function hasSharedRuntimePreferences(preferences) {
+  return Boolean(preferences?.active_profile || preferences?.model || preferences?.effort);
+}
+
+function isSharedWorkspaceScope(scope) {
+  return workspaceScopeOrDefault(scope).mode === "shared";
+}
+
+async function readSharedRuntimePreferences() {
+  const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
+  return normalizeSharedRuntimePreferences(settings.web_shared_runtime_preferences);
+}
+
+async function applySharedRuntimePreferencesToSessionOptions(options, workspaceScope) {
+  if (!isSharedWorkspaceScope(workspaceScope)) {
+    return options;
+  }
+  const preferences = await readSharedRuntimePreferences();
+  if (!hasSharedRuntimePreferences(preferences)) {
+    return options;
+  }
+  if (preferences.active_profile) {
+    options.activeProfile = preferences.active_profile;
+    delete options.active_profile;
+  }
+  if (preferences.model) {
+    options.model = preferences.model;
+  } else {
+    delete options.model;
+  }
+  if (preferences.effort) {
+    options.effort = preferences.effort;
+  }
+  return options;
+}
+
+function runtimePreferencesFromSession(session) {
+  const preferences = session?.runtimePreferences || {};
+  return normalizeSharedRuntimePreferences({
+    active_profile: preferences.activeProfile || preferences.active_profile,
+    model: preferences.model,
+    effort: preferences.effort,
+  });
+}
+
+function sharedRuntimeChoiceFromPayload(payload) {
+  if (!payload || payload.type !== "apply_select_command") {
+    return null;
+  }
+  const command = cleanRuntimePreference(payload.command);
+  if (!["provider", "model", "effort"].includes(command)) {
+    return null;
+  }
+  const value = cleanRuntimePreference(payload.value);
+  if (!value) {
+    return null;
+  }
+  return { type: "apply_select_command", command, value };
+}
+
+async function saveSharedRuntimeChoice(session, choice) {
+  const settingsPath = join(globalConfigDir(), "settings.json");
+  const settings = await readJsonFileIfExists(settingsPath) || {};
+  const previous = normalizeSharedRuntimePreferences(settings.web_shared_runtime_preferences);
+  const sessionRuntime = runtimePreferencesFromSession(session);
+  const next = normalizeSharedRuntimePreferences(previous);
+
+  if (choice.command === "provider") {
+    next.active_profile = choice.value;
+    delete next.model;
+  } else if (choice.command === "model") {
+    if (sessionRuntime.active_profile && (!next.active_profile || next.active_profile === sessionRuntime.active_profile)) {
+      next.active_profile = sessionRuntime.active_profile;
+    }
+    if (choice.value.toLowerCase() === "default") {
+      delete next.model;
+    } else {
+      next.model = choice.value;
+    }
+  } else if (choice.command === "effort") {
+    if (!next.active_profile && sessionRuntime.active_profile) {
+      next.active_profile = sessionRuntime.active_profile;
+    }
+    const sessionRuntimeMatchesProfile = !sessionRuntime.active_profile
+      || !next.active_profile
+      || sessionRuntime.active_profile === next.active_profile;
+    if (!next.model && sessionRuntime.model && sessionRuntimeMatchesProfile) {
+      next.model = sessionRuntime.model;
+    }
+    next.effort = normalizeRuntimeEffortValue(choice.value);
+  }
+
+  settings.web_shared_runtime_preferences = normalizeSharedRuntimePreferences(next);
+  await writeJsonFile(settingsPath, settings);
+  return settings.web_shared_runtime_preferences;
 }
 
 function conflictError(message = "파일이 다른 사용자 또는 세션에서 변경되었습니다. 새로고침 후 다시 시도하세요.") {
@@ -3794,6 +3930,75 @@ function sendBackend(session, payload) {
   return true;
 }
 
+function isSharedWorkspaceSession(session) {
+  return isSharedWorkspaceScope(session?.workspace?.scope);
+}
+
+function queueSharedRuntimeChoice(session, choice) {
+  if (!session || !choice) {
+    return;
+  }
+  const pending = Array.isArray(session.pendingSharedRuntimeChoices)
+    ? session.pendingSharedRuntimeChoices
+    : [];
+  const withoutReplaced = pending.filter((item) => {
+    if (choice.command === "provider") {
+      return item.command !== "provider" && item.command !== "model";
+    }
+    return item.command !== choice.command;
+  });
+  session.pendingSharedRuntimeChoices = [...withoutReplaced, choice];
+}
+
+function flushPendingSharedRuntimeChoices(session) {
+  if (
+    !session
+    || session.shuttingDown
+    || session.busy
+    || !session.ready
+    || !Array.isArray(session.pendingSharedRuntimeChoices)
+    || !session.pendingSharedRuntimeChoices.length
+  ) {
+    return;
+  }
+  const choices = session.pendingSharedRuntimeChoices;
+  session.pendingSharedRuntimeChoices = [];
+  for (let index = 0; index < choices.length; index += 1) {
+    const choice = choices[index];
+    const ok = sendBackend(session, choice);
+    if (!ok) {
+      session.pendingSharedRuntimeChoices = [choice, ...choices.slice(index + 1), ...session.pendingSharedRuntimeChoices];
+      return;
+    }
+  }
+}
+
+function sendOrQueueSharedRuntimeChoice(session, choice) {
+  if (!session || !choice || session.shuttingDown) {
+    return;
+  }
+  if (!session.ready || session.busy) {
+    queueSharedRuntimeChoice(session, choice);
+    return;
+  }
+  const ok = sendBackend(session, choice);
+  if (!ok) {
+    queueSharedRuntimeChoice(session, choice);
+  }
+}
+
+function broadcastSharedRuntimeChoice(sourceSession, choice) {
+  if (!sourceSession || !choice) {
+    return;
+  }
+  for (const session of sessions.values()) {
+    if (session.id === sourceSession.id || !isSharedWorkspaceSession(session)) {
+      continue;
+    }
+    sendOrQueueSharedRuntimeChoice(session, choice);
+  }
+}
+
 function trimShellOutput(value) {
   const text = String(value || "");
   if (text.length <= shellOutputMaxChars) {
@@ -4672,6 +4877,13 @@ async function createBackendSession(options = {}) {
     clientId,
     clientAddress,
     busy: false,
+    ready: false,
+    runtimePreferences: {
+      activeProfile: cleanRuntimePreference(options.activeProfile || options.active_profile),
+      model: cleanRuntimePreference(options.model),
+      effort: normalizeRuntimeEffortValue(options.effort),
+    },
+    pendingSharedRuntimeChoices: [],
     savedSessionId: "",
     title: "",
     shuttingDown: false,
@@ -4766,6 +4978,19 @@ function updateSessionStateFromBackendEvent(session, event) {
   if (!event || typeof event !== "object") {
     return;
   }
+  if (event.type === "ready") {
+    session.ready = true;
+  }
+  if (event.type === "shutdown") {
+    session.ready = false;
+  }
+  if ((event.type === "ready" || event.type === "state_snapshot") && event.state && typeof event.state === "object") {
+    session.runtimePreferences = {
+      activeProfile: cleanRuntimePreference(event.state.active_profile || session.runtimePreferences?.activeProfile),
+      model: cleanRuntimePreference(event.state.model || session.runtimePreferences?.model),
+      effort: normalizeRuntimeEffortValue(event.state.effort || session.runtimePreferences?.effort),
+    };
+  }
   if (event.type === "active_session") {
     session.savedSessionId = String(event.value || "").trim();
   }
@@ -4787,6 +5012,7 @@ function updateSessionStateFromBackendEvent(session, event) {
     session.busy = false;
     scheduleIdleClientClose(session);
   }
+  flushPendingSharedRuntimeChoices(session);
 }
 
 function liveSessionPayload(session) {
@@ -5065,6 +5291,7 @@ async function handleApi(request, response, pathname) {
       const options = await readJson(request);
       options.workspaceScope = workspaceScope;
       options.clientAddress = clientAddress;
+      await applySharedRuntimePreferencesToSessionOptions(options, workspaceScope);
       const session = await createBackendSession(options);
       json(response, 200, { sessionId: session.id, workspace: session.workspace });
     } catch (error) {
@@ -5091,6 +5318,7 @@ async function handleApi(request, response, pathname) {
         systemPrompt: body.systemPrompt,
         workspaceScope,
       };
+      await applySharedRuntimePreferencesToSessionOptions(options, workspaceScope);
       writeRuntimeLog("backend_session_restart_requested", {
         old_session_id: oldSessionId,
         old_child_pid: oldSession?.process?.pid || null,
@@ -5626,7 +5854,14 @@ async function handleApi(request, response, pathname) {
       if (payload?.type === "set_mcp_enabled") {
         await updateMcpPreferenceFiles(payload.value, payload.enabled, session);
       }
+      const sharedRuntimeChoice = isSharedWorkspaceScope(workspaceScope)
+        ? sharedRuntimeChoiceFromPayload(payload)
+        : null;
       const ok = sendBackend(session, payload);
+      if (ok && sharedRuntimeChoice) {
+        await saveSharedRuntimeChoice(session, sharedRuntimeChoice);
+        broadcastSharedRuntimeChoice(session, sharedRuntimeChoice);
+      }
       json(response, ok ? 200 : 409, { ok });
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not respond to session" });

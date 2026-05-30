@@ -570,6 +570,40 @@ describe("Composer", () => {
     expect(input).toHaveProperty("value", "/review");
   });
 
+  it("submits an exact slash command with Enter while suggestions are open", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          commands: [
+            { name: "show-help", description: "도움말 보기" },
+            { name: "help", description: "도움말" },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    await user.type(input, "/help");
+
+    expect(screen.getByRole("option", { selected: true }).textContent).toContain("/show-help");
+
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "/help",
+      suppressUserTranscript: true,
+    }));
+  });
+
   it("shows every enabled skill suggestion when the draft starts with dollar", async () => {
     const user = userEvent.setup();
     const skills = Array.from({ length: 10 }, (_, index) => ({
@@ -2001,13 +2035,13 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("질문 (3개)")).toBeTruthy();
+    expect(screen.getByText("질문 (1/3)")).toBeTruthy();
     expect(screen.getByText("보고서의 대상 독자는 누구인가요?")).toBeTruthy();
-    expect(screen.getByText("원하는 톤은 어떻게 할까요?")).toBeTruthy();
-    expect(screen.getByText("분량은 어느 정도가 좋을까요?")).toBeTruthy();
+    expect(screen.queryByText("원하는 톤은 어떻게 할까요?")).toBeNull();
+    expect(screen.queryByText("분량은 어느 정도가 좋을까요?")).toBeNull();
   });
 
-  it("renders batched backend clarification questions as multiple question-answer pairs", async () => {
+  it("renders batched backend clarification questions one at a time", async () => {
     const user = userEvent.setup();
     render(
       <AppStateProvider
@@ -2033,17 +2067,24 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("질문 (3개)")).toBeTruthy();
+    expect(screen.getByText("질문 (1/3)")).toBeTruthy();
     expect(screen.getByText("피해금액은 얼마인가요?")).toBeTruthy();
+    expect(screen.queryByText("송금한 날짜와 시간은 언제인가요?")).toBeNull();
+
+    await user.type(screen.getByPlaceholderText("답변 입력..."), "10만원");
+    await user.click(screen.getByRole("button", { name: "답변" }));
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(screen.getByText("질문 (2/3)")).toBeTruthy();
     expect(screen.getByText("송금한 날짜와 시간은 언제인가요?")).toBeTruthy();
+
+    await user.type(screen.getByPlaceholderText("답변 입력..."), "2026-05-05 10시");
+    await user.click(screen.getByRole("button", { name: "답변" }));
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(screen.getByText("질문 (3/3)")).toBeTruthy();
     expect(screen.getByText("현재 상태는 무엇인가요?")).toBeTruthy();
 
-    const answerInputs = screen.getAllByPlaceholderText("답변 입력...");
-    expect(answerInputs).toHaveLength(3);
-    await user.type(answerInputs[0], "10만원");
-    await user.type(answerInputs[1], "2026-05-05 10시");
-    await user.type(answerInputs[2], "연락두절");
-    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
+    await user.type(screen.getByPlaceholderText("답변 입력..."), "연락두절");
+    await user.click(screen.getByRole("button", { name: "답변" }));
 
     await waitFor(() => {
       expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
@@ -2058,7 +2099,7 @@ describe("Composer", () => {
     });
   });
 
-  it("renders batched multiple-choice backend questions as one shared choice set", async () => {
+  it("renders batched multiple-choice backend questions one at a time with choices", async () => {
     const user = userEvent.setup();
     render(
       <AppStateProvider
@@ -2088,22 +2129,39 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByText("질문 (3개)")).toBeTruthy();
+    expect(screen.getByText("질문 (1/3)")).toBeTruthy();
     expect(screen.getByText("피해금액은 얼마인가요?")).toBeTruthy();
-    expect(screen.getByText("송금한 날짜와 시간은 언제인가요?")).toBeTruthy();
-    expect(screen.getAllByPlaceholderText("답변 입력...")).toHaveLength(3);
+    expect(screen.queryByText("송금한 날짜와 시간은 언제인가요?")).toBeNull();
+    expect(screen.queryByPlaceholderText("답변 입력...")).toBeNull();
     expect(screen.getByPlaceholderText("기타 직접 입력...")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /정보가 아직 부족함/ }));
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(screen.getByText("질문 (2/3)")).toBeTruthy();
+    expect(screen.getByText("송금한 날짜와 시간은 언제인가요?")).toBeTruthy();
 
-    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
-      type: "question_response",
-      request_id: "question-1",
-      answer: "정보가 아직 부족함",
+    await user.click(screen.getByRole("button", { name: /직접 입력 양식/ }));
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(screen.getByText("질문 (3/3)")).toBeTruthy();
+
+    await user.type(screen.getByPlaceholderText("기타 직접 입력..."), "연락두절");
+    await user.click(screen.getByRole("button", { name: "직접 답변 보내기" }));
+
+    await waitFor(() => {
+      expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+        type: "question_response",
+        request_id: "question-1",
+        answer: [
+          "(1/3) 피해금액은 얼마인가요?\n답변: 정보가 아직 부족함",
+          "(2/3) 송금한 날짜와 시간은 언제인가요?\n답변: 직접 입력 양식",
+          "(3/3) 현재 상태는 무엇인가요?\n답변: 연락두절",
+        ].join("\n\n"),
+      });
     });
   });
 
-  it("does not duplicate visible numbering when backend choice labels already include list markers", () => {
+  it("does not duplicate visible numbering when backend choice labels already include list markers", async () => {
+    const user = userEvent.setup();
     render(
       <AppStateProvider
         initialState={{
@@ -2130,6 +2188,9 @@ describe("Composer", () => {
         <Composer />
       </AppStateProvider>,
     );
+
+    await user.type(screen.getByPlaceholderText("답변 입력..."), "친근하게");
+    await user.click(screen.getByRole("button", { name: "답변" }));
 
     expect(screen.getByRole("button", { name: /A1\s*친근한 톤 \+ 짧은 선택형/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /A1\s*1\.\s*친근한 톤/ })).toBeNull();
@@ -2165,17 +2226,22 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    const answerInputs = screen.getAllByPlaceholderText("답변 입력...");
-    expect(answerInputs).toHaveLength(1);
-    await user.type(answerInputs[0], "친근하게");
+    expect(screen.getByPlaceholderText("답변 입력...")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /A1\s*친근한 톤 \+ 짧은 선택형/ })).toBeNull();
+
+    await user.type(screen.getByPlaceholderText("답변 입력..."), "친근하게");
+    await user.click(screen.getByRole("button", { name: "답변" }));
+    expect(screen.queryByPlaceholderText("답변 입력...")).toBeNull();
     await user.click(screen.getByRole("button", { name: /A1\s*친근한 톤 \+ 짧은 선택형/ }));
-    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
 
     await waitFor(() => {
       expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
         type: "question_response",
         request_id: "question-1",
-        answer: expect.stringContaining("친근한 톤 + 짧은 선택형"),
+        answer: [
+          "(1/2) 오늘 답변은 어떤 톤으로 드릴까요?\n답변: 친근하게",
+          "(2/2) 제가 다음에 해볼 테스트 유형을 골라주세요.\n답변: 친근한 톤 + 짧은 선택형",
+        ].join("\n\n"),
       });
     });
   });
@@ -2210,8 +2276,12 @@ describe("Composer", () => {
     );
 
     await user.type(screen.getByPlaceholderText("답변 입력..."), "확인할 동작 정리");
+    await user.click(screen.getByRole("button", { name: "답변" }));
+    expect(screen.queryByPlaceholderText("답변 입력...")).toBeNull();
+    expect(screen.getByText("질문 (2/2)")).toBeTruthy();
+
     await user.type(screen.getByPlaceholderText("기타 직접 입력..."), "표와 짧은 설명 혼합");
-    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
+    await user.click(screen.getByRole("button", { name: "직접 답변 보내기" }));
 
     expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
       type: "question_response",
@@ -2254,11 +2324,11 @@ describe("Composer", () => {
 
     const input = screen.getByPlaceholderText("답변 입력...");
     expect(input).toBeTruthy();
-    expect(screen.getByRole("button", { name: "질문별 답변 보내기" })).toHaveProperty("disabled", true);
 
     await user.type(input, "주관식 입력칸 유지");
+    await user.click(screen.getByRole("button", { name: "답변" }));
+    expect(screen.getByText("질문 (2/2)")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /불릿 목록 답변/ }));
-    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
 
     await waitFor(() => {
       expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
@@ -2302,8 +2372,11 @@ describe("Composer", () => {
     );
 
     await user.type(screen.getByPlaceholderText("답변 입력..."), "혼합형 입력 확인");
+    await user.click(screen.getByRole("button", { name: "답변" }));
+    expect(screen.getByText("질문 (2/2)")).toBeTruthy();
+
     await user.type(screen.getByPlaceholderText("기타 직접 입력..."), "표 형태 답변");
-    await user.click(screen.getByRole("button", { name: "질문별 답변 보내기" }));
+    await user.click(screen.getByRole("button", { name: "직접 답변 보내기" }));
 
     await waitFor(() => {
       expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {

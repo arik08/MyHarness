@@ -45,8 +45,8 @@ from myharness.permissions.mutation_lock import (
 from myharness.tools.base import ToolExecutionContext
 from myharness.tools.base import ToolRegistry
 
-AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
-REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
+AUTO_COMPACT_STATUS_MESSAGE = "컨텍스트 초과를 막기 위해 이전 대화를 요약합니다."
+REACTIVE_COMPACT_STATUS_MESSAGE = "컨텍스트 한도를 넘어 이전 대화를 요약한 뒤 다시 시도합니다."
 
 log = logging.getLogger(__name__)
 
@@ -266,6 +266,7 @@ def _add_usage(left: UsageSnapshot, right: UsageSnapshot) -> UsageSnapshot:
     return UsageSnapshot(
         input_tokens=left.input_tokens + right.input_tokens,
         output_tokens=left.output_tokens + right.output_tokens,
+        cached_input_tokens=left.cached_input_tokens + right.cached_input_tokens,
     )
 
 
@@ -851,6 +852,12 @@ async def run_query(
         last_compaction_result = await task
         return
 
+    def _adopt_compaction_result() -> bool:
+        compacted_messages, was_compacted = last_compaction_result
+        if was_compacted and compacted_messages is not messages:
+            messages[:] = compacted_messages
+        return was_compacted
+
     turn_count = 0
     continuation_start_index: int | None = None
     continued_text_parts: list[str] = []
@@ -862,7 +869,7 @@ async def run_query(
         # --- auto-compact check before calling the model ---------------
         async for event, usage in _stream_compaction(trigger="auto"):
             yield event, usage
-        messages, was_compacted = last_compaction_result
+        _adopt_compaction_result()
         steering_count = await _drain_steering_messages(context, messages)
         if steering_count:
             yield StatusEvent(
@@ -918,8 +925,7 @@ async def run_query(
                 yield StatusEvent(message=REACTIVE_COMPACT_STATUS_MESSAGE), None
                 async for event, usage in _stream_compaction(trigger="reactive", force=True):
                     yield event, usage
-                messages, was_compacted = last_compaction_result
-                if was_compacted:
+                if _adopt_compaction_result():
                     continue
             if _is_network_error_message(error_msg):
                 yield ErrorEvent(message=f"Network error: {error_msg}. Check your internet connection and try again."), None

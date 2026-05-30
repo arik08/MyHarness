@@ -686,6 +686,84 @@ describe("MessageList", () => {
     expect(document.querySelector(".message-kind-queued")).toBeTruthy();
   });
 
+  it("renders question answer records with a dedicated badge", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          messages: [
+            {
+              id: "qa-1",
+              role: "user",
+              text: "질문\n대상 기간은?\n\n답변\n2026년",
+              kind: "question_answer",
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("질문 답변")).toBeTruthy();
+    expect(screen.getByText(/대상 기간은/)).toBeTruthy();
+    expect(document.querySelector(".message-kind-question-answer")).toBeTruthy();
+  });
+
+  it("shows a token and cost popover next to the share action", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionUsage: {
+            provider: "openai",
+            model: "gpt-5.4",
+            input_tokens: 2200,
+            cached_input_tokens: 900,
+            uncached_input_tokens: 1300,
+            output_tokens: 500,
+            total_tokens: 2700,
+            estimated_cost_usd: 0.010975,
+            cost_supported: true,
+          },
+          messages: [
+            {
+              id: "assistant-usage",
+              role: "assistant",
+              text: "완료했습니다.",
+              isComplete: true,
+              usage: {
+                provider: "openai",
+                model: "gpt-5.4",
+                input_tokens: 1200,
+                cached_input_tokens: 900,
+                uncached_input_tokens: 300,
+                output_tokens: 200,
+                total_tokens: 1400,
+                estimated_cost_usd: 0.003675,
+                cost_supported: true,
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const shareButton = screen.getByLabelText("채팅 링크 공유");
+    const usageButton = screen.getByLabelText("토큰/비용 보기");
+    expect(shareButton.compareDocumentPosition(usageButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(usageButton.getAttribute("title")).toBeNull();
+
+    fireEvent.mouseEnter(usageButton);
+    expect(screen.getByText("이 답변")).toBeTruthy();
+    expect(screen.getByText("세션 누적")).toBeTruthy();
+    expect(screen.getByText("Cache hit 적용")).toBeTruthy();
+    expect(screen.getByText("$0.0037")).toBeTruthy();
+    expect(screen.getByText("2,700")).toBeTruthy();
+  });
+
   it("renders workflow directly under the active user turn before the answer", () => {
     render(
       <AppStateProvider

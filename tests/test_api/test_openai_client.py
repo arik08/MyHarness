@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -214,6 +215,53 @@ class TestNormalizeOpenAIBaseUrl:
 
     def test_strips_trailing_slash_without_dropping_path(self):
         assert _normalize_openai_base_url("https://api.example.com/openai/v1/") == "https://api.example.com/openai/v1"
+
+
+class TestUsageParsing:
+    def test_extracts_cached_tokens_from_sdk_usage_object(self):
+        usage = SimpleNamespace(
+            prompt_tokens=1200,
+            completion_tokens=300,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=900),
+        )
+
+        assert OpenAICompatibleClient._cached_tokens_from_usage(usage) == 900
+
+    def test_capture_usage_extracts_cached_tokens_from_raw_sse_payload(self):
+        usage_data: dict[str, int] = {}
+
+        OpenAICompatibleClient._capture_usage(
+            {
+                "usage": {
+                    "prompt_tokens": 1500,
+                    "completion_tokens": 250,
+                    "prompt_tokens_details": {"cached_tokens": 1100},
+                }
+            },
+            usage_data,
+        )
+
+        assert usage_data == {
+            "input_tokens": 1500,
+            "output_tokens": 250,
+            "cached_input_tokens": 1100,
+        }
+
+    def test_capture_usage_supports_input_token_details_shape(self):
+        usage_data: dict[str, int] = {}
+
+        OpenAICompatibleClient._capture_usage(
+            {
+                "usage": {
+                    "input_tokens": 1600,
+                    "output_tokens": 260,
+                    "input_tokens_details": {"cached_tokens": 1200},
+                }
+            },
+            usage_data,
+        )
+
+        assert usage_data["cached_input_tokens"] == 1200
 
 
 class TestTokenLimitParams:

@@ -146,12 +146,13 @@ def load_skills_from_dirs(
             content = path.read_text(encoding="utf-8")
             default_name = path.parent.name
             name, description = _parse_skill_markdown(default_name, content)
+            skill_source = _parse_skill_source(content, source)
             skills.append(
                 SkillDefinition(
                     name=name,
                     description=description,
                     content=content,
-                    source=source,
+                    source=skill_source,
                     path=str(path),
                 )
             )
@@ -212,3 +213,26 @@ def _parse_skill_markdown(default_name: str, content: str) -> tuple[str, str]:
     if not description:
         description = f"Skill: {name}"
     return name, description
+
+
+def _parse_skill_source(content: str, default_source: str) -> str:
+    """Parse an optional source override for MCP-routed skills only."""
+    if not content.startswith("---\n"):
+        return default_source
+    end_index = content.find("\n---\n", 4)
+    if end_index == -1:
+        return default_source
+    try:
+        metadata = yaml.safe_load(content[4:end_index])
+    except yaml.YAMLError:
+        return default_source
+    if not isinstance(metadata, dict):
+        return default_source
+    raw_source = metadata.get("source")
+    if not isinstance(raw_source, str):
+        return default_source
+    source = raw_source.strip()
+    normalized = source.lower()
+    if normalized == "skill-mcp" or normalized.startswith(("skill-mcp:", "mcp:")):
+        return source
+    return default_source

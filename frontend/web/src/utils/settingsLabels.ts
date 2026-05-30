@@ -9,6 +9,10 @@ export function isLocalBrowserHost(hostname = window.location.hostname) {
   return isLocalBrowserHostname(hostname);
 }
 
+export function canUseServerHostSettings(localBrowserHost = isLocalBrowserHost(), adminMode = false) {
+  return localBrowserHost || adminMode;
+}
+
 export function shellPreferenceLabel(value: AppSettings["shell"]) {
   return {
     auto: "자동: PowerShell 우선",

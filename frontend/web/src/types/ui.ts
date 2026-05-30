@@ -1,4 +1,4 @@
-import type { ArtifactSummary, Attachment, CommandItem, HistoryItem, McpServerItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, TranscriptItem, Workspace, WorkspaceScope } from "./backend";
+import type { ArtifactSummary, Attachment, CommandItem, HistoryItem, McpServerItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, TranscriptItem, UsageCostSummary, Workspace, WorkspaceScope } from "./backend";
 
 export type StatusKind =
   | "connecting"
@@ -23,6 +23,7 @@ export type ChatMessage = {
   isError?: boolean;
   isComplete?: boolean;
   suppressActions?: boolean;
+  usage?: UsageCostSummary;
   terminal?: {
     command: string;
     output?: string;
@@ -47,6 +48,7 @@ export type LiveSessionView = {
   todoCollapsed: boolean;
   swarmTeammates: SwarmTeammateSnapshot[];
   swarmNotifications: SwarmNotificationSnapshot[];
+  sessionUsage?: UsageCostSummary | null;
 };
 
 export type WorkflowEventStatus = "running" | "done" | "error" | "warning";
@@ -142,6 +144,7 @@ export type AppState = {
   todoCollapsed: boolean;
   swarmTeammates: SwarmTeammateSnapshot[];
   swarmNotifications: SwarmNotificationSnapshot[];
+  sessionUsage?: UsageCostSummary | null;
   swarmPopupOpen: boolean;
   workflowEvents: WorkflowEvent[];
   workflowDurationSeconds: number | null;

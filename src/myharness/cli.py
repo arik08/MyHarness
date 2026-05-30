@@ -2412,6 +2412,8 @@ def main(
                 api_key=api_key,
                 restore_messages=session_data.get("messages"),
                 restore_tool_metadata=session_data.get("tool_metadata"),
+                restore_usage=session_data.get("usage") if isinstance(session_data.get("usage"), dict) else None,
+                restore_usage_accounting=session_data.get("usage_accounting") if isinstance(session_data.get("usage_accounting"), dict) else None,
                 permission_mode=permission_mode,
                 api_format=api_format,
                 effort=effort,

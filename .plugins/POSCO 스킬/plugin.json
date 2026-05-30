@@ -1,0 +1,20 @@
+{
+  "name": "POSCO 스킬",
+  "version": "0.1.0",
+  "description": "포스코 업무 자료 정리와 보고 준비를 지원하는 스킬 카탈로그입니다.",
+  "enabled_by_default": true,
+  "skills_dir": "skills",
+  "author": {
+    "name": "MyHarness"
+  },
+  "interface": {
+    "displayName": "POSCO 스킬",
+    "shortDescription": "업무 자료 정리",
+    "category": "POSCO Demo",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "brandColor": "#005BAC"
+  }
+}

@@ -37,6 +37,7 @@ from myharness.engine.stream_events import (
 )
 from myharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, sanitize_conversation_messages
 from myharness.engine.query import format_internal_steering_update
+from myharness.engine.cost_tracker import usage_accounting_delta
 from myharness.output_styles import load_output_styles
 from myharness.permissions.mutation_lock import release_mutation_lock
 from myharness.project_preferences import (
@@ -107,7 +108,7 @@ _SWARM_DELEGATION_HINT = (
     "Do not use raw ASCII art or the old `workflow` fence for the workflow. "
     "Use the `agent` tool now only for the current independent wave of focused background workers. "
     "Do not spawn serial downstream roles prematurely: roles with unmet prerequisites wait until their inputs exist. "
-    "Keep each wave controlled: usually use at most 5 workers per wave, give each worker a non-overlapping scope, "
+    "Keep each wave controlled: usually use at most 10 workers per wave, give each worker a non-overlapping scope, "
     "and size the expected depth to the assignment. For quick slices, ask for concise bullets; for substantial analysis, "
     "ask for enough evidence, calculations, caveats, and intermediate tables to support a reliable synthesis. "
     "Prefer more workers only when they reduce wall-clock time. "
@@ -964,6 +965,33 @@ def _normalize_question_choices(choices: list[dict[str, object]]) -> list[dict[s
     return normalized
 
 
+def _question_choice_label(answer: str, choices: list[dict[str, str]]) -> str:
+    normalized_answer = answer.strip()
+    if not normalized_answer:
+        return ""
+    for choice in choices:
+        if choice.get("value", "").strip() == normalized_answer:
+            label = choice.get("label", "").strip()
+            return label if label and label != normalized_answer else ""
+    return ""
+
+
+def _format_question_answer_transcript(question: str, answer: str, choices: list[dict[str, str]]) -> str:
+    question_text = question.strip() or "추가 정보가 필요합니다."
+    answer_text = answer.strip()
+    parts = [
+        "질문",
+        question_text,
+        "",
+        "답변",
+        answer_text or "(빈 답변)",
+    ]
+    choice_label = _question_choice_label(answer_text, choices)
+    if choice_label:
+        parts.extend(["", "선택지 표시", choice_label])
+    return "\n".join(parts)
+
+
 def _provider_select_options(settings: Settings) -> list[dict[str, object]]:
     statuses = AuthManager(settings).get_profile_statuses()
     hidden_profiles = {"copilot", "moonshot", "minimax"}
@@ -1124,6 +1152,8 @@ class BackendHostConfig:
     cwd: str | None = None
     restore_messages: list[dict] | None = None
     restore_tool_metadata: dict[str, object] | None = None
+    restore_usage: dict[str, object] | None = None
+    restore_usage_accounting: dict[str, object] | None = None
     enforce_max_turns: bool = True
     permission_mode: str | None = None
     session_backend: SessionBackend | None = None
@@ -1143,6 +1173,7 @@ class ReactBackendHost:
         self._queued_line_queue: asyncio.Queue[str] = asyncio.Queue()
         self._permission_requests: dict[str, asyncio.Future[bool]] = {}
         self._question_requests: dict[str, asyncio.Future[str]] = {}
+        self._question_request_details: dict[str, dict[str, object]] = {}
         self._permission_lock = asyncio.Lock()
         self._busy = False
         self._active_request_task: asyncio.Task[bool] | None = None
@@ -1174,6 +1205,8 @@ class ReactBackendHost:
             cwd=self._config.cwd,
             restore_messages=self._config.restore_messages,
             restore_tool_metadata=self._config.restore_tool_metadata,
+            restore_usage=self._config.restore_usage,
+            restore_usage_accounting=self._config.restore_usage_accounting,
             permission_prompt=self._ask_permission,
             ask_user_prompt=self._ask_question,
             enforce_max_turns=self._config.enforce_max_turns,
@@ -1183,18 +1216,18 @@ class ReactBackendHost:
             extra_plugin_roots=self._config.extra_plugin_roots,
         )
         await start_runtime(self._bundle)
-        await self._emit(
-            BackendEvent.ready(
-                self._bundle.app_state.get(),
-                get_task_manager().list_tasks(),
-                [
-                    {"name": f"/{command.name}", "description": command.description}
-                    for command in self._bundle.commands.list_commands()
-                ],
-                self._skill_snapshots(),
-                self._plugin_snapshots(),
-            )
+        ready_event = BackendEvent.ready(
+            self._bundle.app_state.get(),
+            get_task_manager().list_tasks(),
+            [
+                {"name": f"/{command.name}", "description": command.description}
+                for command in self._bundle.commands.list_commands()
+            ],
+            self._skill_snapshots(),
+            self._plugin_snapshots(),
         )
+        ready_event.session_usage = self._bundle.engine.usage_cost_summary()
+        await self._emit(ready_event)
         await self._emit(BackendEvent(type="active_session", value=self._bundle.session_id))
         await self._emit(BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[]))
         await self._emit(self._status_snapshot())
@@ -1667,11 +1700,30 @@ class ReactBackendHost:
                 continue
             if request.type == "question_response" and request.request_id in self._question_requests:
                 future = self._question_requests[request.request_id]
+                detail = self._question_request_details.get(request.request_id, {})
+                choices = detail.get("choices")
+                await self._emit(
+                    BackendEvent(
+                        type="transcript_item",
+                        item=TranscriptItem(
+                            role="user",
+                            text=_format_question_answer_transcript(
+                                str(detail.get("question") or ""),
+                                request.answer or "",
+                                choices if isinstance(choices, list) else [],
+                            ),
+                            kind="question_answer",
+                        ),
+                    )
+                )
                 if not future.done():
                     future.set_result(request.answer or "")
                 continue
             if request.type == "cancel_current":
                 await self._cancel_current_request()
+                continue
+            if request.type == "task_output":
+                await self._handle_task_output(request.task_id or "", request.max_bytes or 12000)
                 continue
             if request.type == "steer_line":
                 if self._busy:
@@ -1732,6 +1784,8 @@ class ReactBackendHost:
         ]
         is_shell_shortcut = not image_blocks and not client_attachment_refs and line.lstrip().startswith("!")
         selected_mcp = None if image_blocks or is_shell_shortcut else self._parse_forced_mcp_line(line)
+        if selected_mcp is None and not image_blocks and not is_shell_shortcut:
+            selected_mcp = self._parse_forced_mcp_routed_skill_line(line)
         if selected_mcp is not None:
             await self._ensure_forced_mcp_available(selected_mcp[0])
         effective_line = line if image_blocks or is_shell_shortcut else self._line_with_forced_skill(line)
@@ -1790,6 +1844,7 @@ class ReactBackendHost:
         assistant_progress_seen: set[str] = set()
         assistant_artifact_filter = _AssistantArtifactFilter()
         assistant_artifacts: list[dict[str, Any]] = []
+        turn_usage_start = copy.deepcopy(self._bundle.engine.usage_accounting)
 
         async def _emit_assistant_progress(messages: list[str]) -> None:
             for message in messages:
@@ -1953,6 +2008,16 @@ class ReactBackendHost:
                     await _flush_buffered_assistant_delta()
                 else:
                     assistant_delta_buffer.clear()
+                is_final_answer = not bool(event.message.tool_uses)
+                usage_payload = None
+                session_usage_payload = None
+                if is_final_answer:
+                    turn_accounting = usage_accounting_delta(
+                        self._bundle.engine.usage_accounting,
+                        turn_usage_start,
+                    )
+                    usage_payload = self._bundle.engine.usage_cost_summary(turn_accounting)
+                    session_usage_payload = self._bundle.engine.usage_cost_summary()
                 await self._emit(
                     BackendEvent(
                         type="assistant_complete",
@@ -1960,6 +2025,8 @@ class ReactBackendHost:
                         item=TranscriptItem(role="assistant", text=complete_text.strip()),
                         has_tool_uses=bool(event.message.tool_uses),
                         artifacts=_dedupe_assistant_artifacts(assistant_artifacts),
+                        usage=usage_payload,
+                        session_usage=session_usage_payload,
                     )
                 )
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
@@ -2239,6 +2306,7 @@ class ReactBackendHost:
             session_id=self._bundle.session_id,
             tool_metadata=metadata,
             history_events=self._history_events,
+            usage_accounting=self._bundle.engine.usage_accounting,
         )
 
     async def _generate_session_title(self, messages: list[ConversationMessage]) -> str:
@@ -2359,6 +2427,7 @@ class ReactBackendHost:
             session_id=self._bundle.session_id,
             tool_metadata=metadata,
             history_events=[],
+            usage_accounting=self._bundle.engine.usage_accounting,
         )
 
     def _save_current_session_snapshot(self) -> None:
@@ -2375,6 +2444,7 @@ class ReactBackendHost:
             session_id=self._bundle.session_id,
             tool_metadata=metadata,
             history_events=self._history_events,
+            usage_accounting=self._bundle.engine.usage_accounting,
         )
 
     def _skill_snapshots(self) -> list[SkillSnapshot]:
@@ -2666,6 +2736,28 @@ class ReactBackendHost:
             return status.name, user_request
         return None
 
+    def _parse_forced_mcp_routed_skill_line(self, line: str) -> tuple[str, str] | None:
+        parsed = self._parse_forced_skill_line(line)
+        if parsed is None:
+            return None
+        skill_name, user_request = parsed
+        skill = self._loaded_skill_by_name(skill_name)
+        if skill is None:
+            return None
+        server_name = self._mcp_server_name_from_skill_source(skill.source)
+        if not server_name:
+            return None
+        return server_name, user_request
+
+    def _mcp_server_name_from_skill_source(self, source: str) -> str:
+        normalized = str(source or "").strip()
+        lowered = normalized.lower()
+        if lowered.startswith("skill-mcp:"):
+            return normalized.split(":", 1)[1].strip()
+        if lowered.startswith("mcp:"):
+            return normalized.split(":", 1)[1].strip()
+        return ""
+
     def _mcp_name_aliases(self, name: str) -> set[str]:
         return {
             self._mcp_name_key(name),
@@ -2833,6 +2925,12 @@ class ReactBackendHost:
             if isinstance(item, dict) and str(item.get("type") or "").strip()
         ]
         self._bundle.engine.load_messages(messages)
+        self._bundle.engine.load_usage(
+            usage=snapshot.get("usage") if isinstance(snapshot.get("usage"), dict) else None,
+            accounting=snapshot.get("usage_accounting") if isinstance(snapshot.get("usage_accounting"), dict) else None,
+            provider=str((snapshot.get("tool_metadata") if isinstance(snapshot.get("tool_metadata"), dict) else {}).get("provider") or ""),
+            model=str(snapshot.get("model") or self._bundle.engine.model),
+        )
         self._restore_session_tool_metadata(snapshot)
         self._set_saved_session_id(selected)
         await self._emit(BackendEvent(type="clear_transcript"))
@@ -2895,12 +2993,14 @@ class ReactBackendHost:
 
     def _status_snapshot(self) -> BackendEvent:
         assert self._bundle is not None
-        return BackendEvent.status_snapshot(
+        event = BackendEvent.status_snapshot(
             state=self._bundle.app_state.get(),
             mcp_servers=self._mcp_statuses_for_snapshot(),
             plugins=self._plugin_snapshots(),
             bridge_sessions=get_bridge_manager().list_sessions(),
         )
+        event.session_usage = self._bundle.engine.usage_cost_summary()
+        return event
 
     def _mcp_statuses_for_snapshot(self) -> list[McpConnectionStatus]:
         assert self._bundle is not None
@@ -3175,6 +3275,7 @@ class ReactBackendHost:
             session_id=self._bundle.session_id,
             tool_metadata=metadata,
             history_events=self._history_events,
+            usage_accounting=self._bundle.engine.usage_accounting,
         )
         await self._emit(BackendEvent(type="session_title", message=title))
 
@@ -3444,6 +3545,10 @@ class ReactBackendHost:
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self._question_requests[request_id] = future
         normalized_choices = _normalize_question_choices(choices or [])
+        self._question_request_details[request_id] = {
+            "question": question,
+            "choices": normalized_choices,
+        }
         await self._emit(
             BackendEvent(
                 type="modal_request",
@@ -3459,6 +3564,7 @@ class ReactBackendHost:
             return await future
         finally:
             self._question_requests.pop(request_id, None)
+            self._question_request_details.pop(request_id, None)
 
     def _append_history_event(self, event: dict[str, object]) -> None:
         if not str(event.get("type") or "").strip():
@@ -3494,6 +3600,10 @@ class ReactBackendHost:
                 }
                 if artifacts:
                     payload["artifacts"] = artifacts
+                if isinstance(event.usage, dict):
+                    payload["usage"] = event.usage
+                if isinstance(event.session_usage, dict):
+                    payload["session_usage"] = event.session_usage
                 self._append_history_event(
                     payload
                 )
@@ -3592,6 +3702,8 @@ async def run_backend_host(
     api_client: SupportsStreamingMessages | None = None,
     restore_messages: list[dict] | None = None,
     restore_tool_metadata: dict[str, object] | None = None,
+    restore_usage: dict[str, object] | None = None,
+    restore_usage_accounting: dict[str, object] | None = None,
     enforce_max_turns: bool = True,
     permission_mode: str | None = None,
     session_backend: SessionBackend | None = None,
@@ -3617,6 +3729,8 @@ async def run_backend_host(
             cwd=cwd,
             restore_messages=restore_messages,
             restore_tool_metadata=restore_tool_metadata,
+            restore_usage=restore_usage,
+            restore_usage_accounting=restore_usage_accounting,
             enforce_max_turns=enforce_max_turns,
             permission_mode=permission_mode,
             session_backend=session_backend,

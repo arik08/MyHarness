@@ -781,8 +781,18 @@ export function Composer() {
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (suggestions[activeSuggestionIndex]) {
-        applySuggestion(suggestions[activeSuggestionIndex]);
+      const activeSuggestion = suggestions[activeSuggestionIndex];
+      const currentSuggestionToken = suggestionToken
+        ? draft.slice(suggestionToken.start, suggestionToken.end).trim().toLowerCase()
+        : "";
+      const exactCommandSuggestion = suggestions.find((suggestion) => (
+        suggestion.kind === "command" && suggestion.value.toLowerCase() === currentSuggestionToken
+      ));
+      const shouldSubmitExactCommand = !state.busy
+        && Boolean(exactCommandSuggestion)
+        && draft.trim().toLowerCase() === currentSuggestionToken;
+      if (activeSuggestion && !shouldSubmitExactCommand) {
+        applySuggestion(activeSuggestion);
         return;
       }
       if (state.busy) {

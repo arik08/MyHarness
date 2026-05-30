@@ -309,9 +309,9 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             provider="openai",
             api_format="openai",
             auth_source="pgpt_api_key",
-            default_model="gpt-5.5",
+            default_model="gpt-5.4",
             base_url="http://pgpt.posco.com/s0la01-gpt/v1",
-            allowed_models=["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
+            allowed_models=["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"],
         ),
         "codex": ProviderProfile(
             label="Codex Subscription",
@@ -454,7 +454,7 @@ def resolve_model_setting(
             )
         if is_claude_family_provider(provider):
             return _CLAUDE_ALIAS_TARGETS["sonnet"]
-        return "gpt-5.5"
+        return "gpt-5.4"
 
     if is_claude_family_provider(provider):
         if normalized == "best":
@@ -467,7 +467,9 @@ def resolve_model_setting(
             return _CLAUDE_ALIAS_TARGETS[normalized]
         return normalize_anthropic_model_name(configured)
 
-    if provider in {"openai", "openai_codex", "copilot"} and normalized in {"default", "best"}:
+    if provider in {"openai", "openai_codex", "copilot"} and normalized == "default":
+        return "gpt-5.4"
+    if provider in {"openai", "openai_codex", "copilot"} and normalized == "best":
         return "gpt-5.5"
 
     return configured
@@ -636,7 +638,7 @@ class Settings(BaseModel):
     vim_mode: bool = False
     voice_mode: bool = False
     fast_mode: bool = False
-    effort: str = "medium"
+    effort: str = "low"
     shell: str = "auto"
     passes: int = 1
     verbose: bool = False
@@ -672,8 +674,6 @@ class Settings(BaseModel):
                     profile_updates["allowed_models"] = allowed_models
                 if profile.default_model != builtin.default_model:
                     profile_updates["default_model"] = builtin.default_model
-                    if (profile.last_model or "").strip() == profile.default_model:
-                        profile_updates["last_model"] = None
                 if profile_updates:
                     profile = profile.model_copy(update=profile_updates)
             merged[name] = profile

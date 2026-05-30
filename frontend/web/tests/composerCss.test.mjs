@@ -24,3 +24,17 @@ test("keeps chat viewport height owned by the panel while messages handle scroll
   assert.match(messages, /overflow-y:\s*auto;/);
   assert.match(composer, /position:\s*absolute;/);
 });
+
+test("keeps the expanded todo checklist width stable while progress text wraps", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const dock = css.match(/\.todo-checklist-dock\s*{[\s\S]*?^}/m)?.[0] ?? "";
+  const card = css.match(/\.composer-todo-card\s*{[\s\S]*?^}/m)?.[0] ?? "";
+  const activityLine = css.match(/\.todo-activity-line\s*{[\s\S]*?^}/m)?.[0] ?? "";
+
+  assert.match(dock, /width:\s*min\(560px,\s*100%\);/);
+  assert.match(card, /width:\s*100%;/);
+  assert.doesNotMatch(card, /width:\s*max-content;/);
+  assert.match(activityLine, /overflow-wrap:\s*anywhere;/);
+  assert.match(activityLine, /white-space:\s*normal;/);
+  assert.match(activityLine, /word-break:\s*break-word;/);
+});

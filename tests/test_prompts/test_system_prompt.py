@@ -99,6 +99,19 @@ def test_build_system_prompt_encourages_parallel_research_tools():
     assert "Do not use `insane-search` for simple web searches" in prompt
 
 
+def test_build_system_prompt_requires_external_source_attribution():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+
+    assert "important user-facing information comes from an external source" in prompt
+    assert "cite that source in the answer or artifact" in prompt
+    assert "web search/fetch results, MCP tools or resources, vector databases" in prompt
+    assert "database query results" in prompt
+    assert "MCP/vector DB server, resource, document id, table, or query identifier" in prompt
+    assert "instead of inventing one" in prompt
+    assert "Skip citations for trivial operational details" in prompt
+
+
 def test_build_system_prompt_plans_substantial_tasks_first():
     env = _make_env()
     prompt = build_system_prompt(env=env)
@@ -255,8 +268,25 @@ def test_visual_artifact_contains_report_design_rules_and_routes_a4_to_a4_skill(
     assert "ECharts" in skill_text
     assert "Lucide or similar icon sets" in skill_text
     assert "For standalone HTML reports or web reports, use Mermaid" in skill_text
+    assert "organization-change diagrams" in skill_text
+    assert "same app Mermaid renderer used for chat" in skill_text
     assert "use both this skill and `html-a4-landscape-report`" in skill_text
     assert "let `html-a4-landscape-report` own the page-based layout workflow" in skill_text
+
+
+def test_visual_artifact_cites_important_external_sources():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "external knowledge such as web research" not in prompt
+    assert "external knowledge such as web research" in skill_text
+    assert "MCP/vector database results" in skill_text
+    assert "source documents, or database queries" in skill_text
+    assert "URL/title, document page/path, MCP server/resource, document id, table name, or query label" in skill_text
+    assert "Do not invent citations" in skill_text
 
 
 def test_visual_artifact_flags_empty_report_panels_as_layout_defects():

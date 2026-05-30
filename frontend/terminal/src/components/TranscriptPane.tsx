@@ -27,7 +27,13 @@ export function TranscriptPane({
 }
 
 function labelFor(item: TranscriptItem): string {
-	const kind = item.kind === 'steering' ? ':스티어링' : item.kind === 'queued' ? ':대기열' : '';
+	const kind = item.kind === 'steering'
+		? ':스티어링'
+		: item.kind === 'queued'
+			? ':대기열'
+			: item.kind === 'question_answer'
+				? ':질문답변'
+				: '';
 	const role = item.role;
 	switch (role) {
 		case 'tool':

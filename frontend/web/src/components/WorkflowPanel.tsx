@@ -1260,6 +1260,31 @@ function latestWorkflowActivityStatusEvent(visibleEvents: WorkflowEvent[], allEv
   return activityEvent;
 }
 
+function isContextCompactionEvent(event: WorkflowEvent) {
+  return event.toolName === "context_compaction";
+}
+
+function isCompactOnlyScaffoldEvent(event: WorkflowEvent) {
+  return !event.toolName && (event.title === "요청 이해" || event.role === "planning");
+}
+
+function contextCompactionLabel(event: WorkflowEvent) {
+  if (event.status === "error") return "컨텍스트 자동 압축 실패";
+  if (event.status === "done") return "컨텍스트 자동 압축 완료";
+  return "컨텍스트 자동 압축 중";
+}
+
+function ContextCompactionDivider({ event }: { event: WorkflowEvent }) {
+  return (
+    <div
+      className={`workflow-context-compact-divider ${event.status}`}
+      aria-live={event.status === "running" ? "polite" : undefined}
+    >
+      <span>{contextCompactionLabel(event)}</span>
+    </div>
+  );
+}
+
 function WorkflowStep({
   event,
   detail,
@@ -1629,8 +1654,6 @@ export function WorkflowPanel({
   const runningSinceRef = useRef<Record<string, number>>({});
   const onVisibleProgressChangeRef = useRef(onVisibleProgressChange);
 
-  const runningCount = activeWorkflowCount(events);
-
   useEffect(() => {
     const runningIds = new Set(events.filter((event) => event.status === "running").map((event) => event.id));
     const since = runningSinceRef.current;
@@ -1695,9 +1718,15 @@ export function WorkflowPanel({
     [events],
   );
   const visibleTimelineEvents = useMemo(
-    () => visibleEvents.filter((event) => !isWorkflowActivityEvent(event)),
+    () => visibleEvents.filter((event) => !isWorkflowActivityEvent(event) && !isContextCompactionEvent(event)),
     [visibleEvents],
   );
+  const cardEvents = useMemo(
+    () => events.filter((event) => !isContextCompactionEvent(event)),
+    [events],
+  );
+  const compactProgressEvent = events.find((event) => isContextCompactionEvent(event) && event.status === "running");
+  const hasCompactProgressEvent = events.some(isContextCompactionEvent);
   const latestVisibleActivityEvent = useMemo(
     () => latestWorkflowActivityStatusEvent(visibleEvents, events),
     [events, visibleEvents],
@@ -1706,11 +1735,15 @@ export function WorkflowPanel({
   const hasOutputPreview = outputPreviewEvents.length > 0;
   const hasLongReportOutline = Boolean(longReportOutlineEvent);
   const displayedDurationSeconds = totalDurationSeconds ?? liveTotalDurationSeconds;
-  const latestVisibleEventId = visibleEvents.at(-1)?.id || "";
+  const latestVisibleEventId = visibleTimelineEvents.at(-1)?.id || "";
+  const cardRunningCount = activeWorkflowCount(cardEvents);
+  const hasMeaningfulCardEvents = cardEvents.some((event) => !isCompactOnlyScaffoldEvent(event));
+  const showWorkflowCard = (rows.length > 0 || Boolean(latestVisibleActivityEvent))
+    && (hasMeaningfulCardEvents || !hasCompactProgressEvent);
   const countLabel = [
-    `${events.length}개 기록`,
+    `${cardEvents.length}개 기록`,
     displayedDurationSeconds !== null ? `(${formatDuration(displayedDurationSeconds)})` : "",
-    runningCount ? `· ${runningCount}개 실행 중` : "",
+    cardRunningCount ? `· ${cardRunningCount}개 실행 중` : "",
   ].filter(Boolean).join(" ");
 
   useLayoutEffect(() => {
@@ -1729,7 +1762,7 @@ export function WorkflowPanel({
     hasOutputPreview,
     latestVisibleEventId,
     rows.length,
-    runningCount,
+    cardRunningCount,
     visibleEvents.length,
   ]);
 
@@ -1737,80 +1770,92 @@ export function WorkflowPanel({
     return null;
   }
 
+  if (!compactProgressEvent && !showWorkflowCard && !hasOutputPreview && !hasLongReportOutline) {
+    return null;
+  }
+
   return (
-    <article className="message assistant workflow-message" aria-label="도구 진행 상황">
-      <details className="workflow-card" open={!eventOverride && state.busy || runningCount > 0 || hasOutputPreview || hasLongReportOutline}>
-        <summary>
-          <span className="workflow-title">작업 진행</span>
-          <span className="workflow-count">
-            {countLabel}
-          </span>
-        </summary>
-        <div className="workflow-body">
-          <div className="workflow-list">
-            {rows.map((row) => (
-              <Fragment key={row.type === "group" ? row.parent.id : row.event.id}>
-                {row.type === "group" ? (
-                  <div
-                    className={`workflow-group ${row.parent.status}`}
-                    data-workflow-group-id={row.parent.groupId}
-                  >
-                    <WorkflowStep
-                      event={row.parent}
-                      detail={eventDetail(row.parent)}
-                      rawDetail={row.parent.detail}
-                      animate={animateActiveWorkflow}
-                      quietDone={quietCompletedStep(row.parent, latestVisibleEventId)}
-                    />
-                    {row.children.length ? (
-                      <div className="workflow-children" role="group" aria-label={`${row.parent.title} 하위 단계`}>
-                        {row.children.map((child) => (
-                          <WorkflowStep
-                            event={child}
-                            detail={eventDetail(child)}
-                            rawDetail={child.detail}
-                            animate={animateActiveWorkflow}
-                            quietDone={quietCompletedStep(child, latestVisibleEventId)}
-                            key={child.id}
-                          />
-                        ))}
+    <article
+      className={`message assistant workflow-message${compactProgressEvent ? " context-compact-message" : ""}`}
+      aria-label="도구 진행 상황"
+    >
+      {compactProgressEvent ? <ContextCompactionDivider event={compactProgressEvent} /> : null}
+      {showWorkflowCard || hasOutputPreview || hasLongReportOutline ? (
+        <details className="workflow-card" open={!eventOverride && state.busy || cardRunningCount > 0 || hasOutputPreview || hasLongReportOutline}>
+          <summary>
+            <span className="workflow-title">작업 진행</span>
+            <span className="workflow-count">
+              {countLabel}
+            </span>
+          </summary>
+          <div className="workflow-body">
+            {showWorkflowCard ? (
+              <div className="workflow-list">
+                {rows.map((row) => (
+                  <Fragment key={row.type === "group" ? row.parent.id : row.event.id}>
+                    {row.type === "group" ? (
+                      <div
+                        className={`workflow-group ${row.parent.status}`}
+                        data-workflow-group-id={row.parent.groupId}
+                      >
+                        <WorkflowStep
+                          event={row.parent}
+                          detail={eventDetail(row.parent)}
+                          rawDetail={row.parent.detail}
+                          animate={animateActiveWorkflow}
+                          quietDone={quietCompletedStep(row.parent, latestVisibleEventId)}
+                        />
+                        {row.children.length ? (
+                          <div className="workflow-children" role="group" aria-label={`${row.parent.title} 하위 단계`}>
+                            {row.children.map((child) => (
+                              <WorkflowStep
+                                event={child}
+                                detail={eventDetail(child)}
+                                rawDetail={child.detail}
+                                animate={animateActiveWorkflow}
+                                quietDone={quietCompletedStep(child, latestVisibleEventId)}
+                                key={child.id}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <WorkflowStep
-                    event={row.event}
-                    detail={eventDetail(row.event)}
-                    rawDetail={row.event.detail}
-                    animate={animateActiveWorkflow}
-                    quietDone={quietCompletedStep(row.event, latestVisibleEventId)}
+                    ) : (
+                      <WorkflowStep
+                        event={row.event}
+                        detail={eventDetail(row.event)}
+                        rawDetail={row.event.detail}
+                        animate={animateActiveWorkflow}
+                        quietDone={quietCompletedStep(row.event, latestVisibleEventId)}
+                      />
+                    )}
+                  </Fragment>
+                ))}
+                {latestVisibleActivityEvent ? (
+                  <WorkflowActivityStatus
+                    event={latestVisibleActivityEvent}
+                    detail={eventDetail(latestVisibleActivityEvent)}
+                    rawDetail={latestVisibleActivityEvent.detail}
                   />
-                )}
-              </Fragment>
-            ))}
-            {latestVisibleActivityEvent ? (
-              <WorkflowActivityStatus
-                event={latestVisibleActivityEvent}
-                detail={eventDetail(latestVisibleActivityEvent)}
-                rawDetail={latestVisibleActivityEvent.detail}
-              />
+                ) : null}
+              </div>
+            ) : null}
+            {longReportOutlineEvent ? <WorkflowLongReportOutline event={longReportOutlineEvent} /> : null}
+            {outputPreviewEvents.length ? (
+              <div className="workflow-output-list">
+                {outputPreviewEvents.map(({ event, source }) => (
+                  <WorkflowOutputPreview
+                    event={event}
+                    source={source}
+                    revealDurationMs={state.appSettings.streamRevealDurationMs}
+                    key={event.id}
+                  />
+                ))}
+              </div>
             ) : null}
           </div>
-          {longReportOutlineEvent ? <WorkflowLongReportOutline event={longReportOutlineEvent} /> : null}
-          {outputPreviewEvents.length ? (
-            <div className="workflow-output-list">
-              {outputPreviewEvents.map(({ event, source }) => (
-                <WorkflowOutputPreview
-                  event={event}
-                  source={source}
-                  revealDurationMs={state.appSettings.streamRevealDurationMs}
-                  key={event.id}
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </details>
+        </details>
+      ) : null}
     </article>
   );
 }

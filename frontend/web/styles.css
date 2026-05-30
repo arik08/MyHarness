@@ -1230,7 +1230,8 @@ a:focus-visible {
   color: var(--muted);
 }
 
-.history-item.hidden-history::before {
+.history-item.hidden-history::before,
+.history-item.active::before {
   content: "";
   position: absolute;
   left: 2px;
@@ -1238,8 +1239,15 @@ a:focus-visible {
   bottom: 7px;
   width: 3px;
   border-radius: 999px;
-  background: rgba(190, 45, 45, 0.78);
   pointer-events: none;
+}
+
+.history-item.hidden-history::before {
+  background: rgba(190, 45, 45, 0.78);
+}
+
+.history-item.active::before {
+  background: var(--accent);
 }
 
 .history-title {
@@ -3094,7 +3102,8 @@ a:focus-visible {
 }
 
 .message.user.message-kind-steering,
-.message.user.message-kind-queued {
+.message.user.message-kind-queued,
+.message.user.message-kind-question-answer {
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
@@ -3230,10 +3239,110 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.assistant-action-button:not([data-tooltip])::after {
+  display: none;
+}
+
 .assistant-action-button:hover::after,
 .assistant-action-button:focus-visible::after {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+.assistant-usage-control {
+  position: relative;
+  display: inline-flex;
+}
+
+.assistant-usage-button:hover,
+.assistant-usage-button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  color: color-mix(in srgb, var(--accent) 86%, var(--ink));
+}
+
+.assistant-usage-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: grid;
+  width: min(278px, calc(100vw - 32px));
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.16);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.25;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.assistant-usage-control:hover .assistant-usage-popover,
+.assistant-usage-control:focus-within .assistant-usage-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.assistant-usage-cache {
+  justify-self: start;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.assistant-usage-cache.hit {
+  border-color: color-mix(in srgb, var(--success) 34%, transparent);
+  color: color-mix(in srgb, var(--success) 84%, var(--ink));
+}
+
+.assistant-usage-section {
+  display: grid;
+  gap: 4px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+
+.assistant-usage-section h4 {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+
+.assistant-usage-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.assistant-usage-row span {
+  color: var(--muted);
+}
+
+.assistant-usage-row strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 740;
+}
+
+.assistant-usage-empty {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12px;
 }
 
 .assistant-action-status {
@@ -3327,6 +3436,11 @@ a:focus-visible {
 .message-kind-queued .message-kind-label {
   border-color: color-mix(in srgb, var(--success) 32%, transparent);
   color: color-mix(in srgb, var(--success) 76%, var(--ink));
+}
+
+.message-kind-question-answer .message-kind-label {
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: color-mix(in srgb, var(--accent) 76%, var(--ink));
 }
 
 .message.user .bubble:has(.message-attachments) {
@@ -4506,6 +4620,41 @@ a:focus-visible {
   margin-bottom: 2px;
 }
 
+.workflow-message.context-compact-message {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.workflow-context-compact-divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  gap: 10px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  text-align: center;
+}
+
+.workflow-context-compact-divider::before,
+.workflow-context-compact-divider::after {
+  content: "";
+  flex: 1 1 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--line) 84%, transparent);
+}
+
+.workflow-context-compact-divider span {
+  flex: 0 0 auto;
+  max-width: min(240px, 80%);
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workflow-narration {
   margin: -1px 0 6px 43px;
   padding: 0;
@@ -4536,8 +4685,8 @@ a:focus-visible {
 .todo-checklist-dock {
   display: flex;
   justify-content: center;
-  width: fit-content;
-  max-width: min(804px, 100%);
+  width: min(560px, 100%);
+  max-width: min(720px, 100%);
   margin: 0 auto 7px;
   pointer-events: auto;
 }
@@ -4548,9 +4697,9 @@ a:focus-visible {
 
 .composer-todo-card {
   box-sizing: border-box;
-  width: max-content;
-  min-width: min(260px, 100%);
-  max-width: min(720px, 100%);
+  width: 100%;
+  min-width: min(300px, 100%);
+  max-width: 100%;
   max-height: min(28dvh, 230px);
   margin: 0;
   overflow-x: hidden;
@@ -5165,6 +5314,8 @@ a:focus-visible {
   gap: 5px;
   min-width: 0;
   overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .todo-activity-line::before {
@@ -6394,6 +6545,307 @@ a:focus-visible {
 .skill-plugin-group[data-skill-group-tone="virtual"],
 .skill-tone-scope[data-skill-group-tone="virtual"] {
   --skill-group-accent: var(--accent);
+}
+
+.posco-skill-tree {
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.posco-skill-tree-header {
+  min-height: 28px;
+}
+
+.posco-skill-tree-root,
+.posco-skill-tree-actions,
+.posco-skill-tree-root-title {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.posco-skill-tree-root {
+  flex: 1 1 auto;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.posco-skill-tree-root-title {
+  gap: 6px;
+}
+
+.posco-skill-tree-actions {
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.posco-skill-tree-status,
+.posco-skill-tree-state {
+  flex: 0 0 auto;
+  min-height: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--skill-group-badge-bg);
+  color: var(--skill-group-accent);
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.5;
+}
+
+.posco-skill-tree-status,
+.posco-skill-tree-state {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.posco-skill-tree-status:hover,
+.posco-skill-tree-status:focus-visible,
+.posco-skill-tree-state:hover,
+.posco-skill-tree-state:focus-visible {
+  background: color-mix(in srgb, var(--skill-group-accent) 17%, transparent);
+}
+
+.posco-skill-tree-status:focus-visible,
+.posco-skill-tree-state:focus-visible,
+.posco-skill-tree-root:focus-visible,
+.posco-skill-tree-expander:focus-visible,
+.posco-skill-tree-node:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--skill-group-accent) 38%, transparent);
+  outline-offset: 2px;
+}
+
+.posco-skill-tree-expander {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--skill-group-accent);
+  cursor: pointer;
+}
+
+.posco-skill-tree-icon {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+}
+
+.posco-skill-tree-icon::before,
+.posco-skill-tree-icon::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 9px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+  transform: translate(-50%, -50%);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.posco-skill-tree-icon::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.posco-skill-tree-icon.expanded::after {
+  opacity: 0;
+  transform: translate(-50%, -50%) rotate(90deg) scaleX(0.2);
+}
+
+.posco-skill-tree-root:hover .posco-skill-tree-icon,
+.posco-skill-tree-expander:hover .posco-skill-tree-icon,
+.posco-skill-tree-root:focus-visible .posco-skill-tree-icon,
+.posco-skill-tree-expander:focus-visible .posco-skill-tree-icon {
+  background: color-mix(in srgb, var(--skill-group-accent) 11%, transparent);
+}
+
+.posco-skill-tree-list,
+.posco-skill-tree-skills {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.posco-skill-tree-list {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.posco-skill-tree-item {
+  position: relative;
+  min-width: 0;
+}
+
+.posco-skill-tree-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid color-mix(in srgb, var(--skill-group-accent) 20%, var(--line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--skill-group-accent) 3%, var(--panel-raised));
+}
+
+.posco-skill-tree-row:hover {
+  border-color: color-mix(in srgb, var(--skill-group-accent) 36%, var(--line));
+  background: color-mix(in srgb, var(--skill-group-accent) 6%, var(--panel-raised));
+}
+
+.posco-skill-tree-node {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.posco-skill-tree-node strong {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.posco-skill-tree-node small {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.posco-skill-tree-item.disabled {
+  opacity: 0.62;
+}
+
+.posco-skill-tree-item.disabled .posco-skill-tree-state {
+  background: var(--sidebar-hover);
+  color: var(--faint);
+}
+
+.posco-skill-tree-skills {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 2px 10px;
+  padding-left: 16px;
+  border-left: 1px solid color-mix(in srgb, var(--skill-group-accent) 24%, var(--line));
+}
+
+.posco-skill-tree-leaf {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  padding: 3px 5px 3px 2px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 720;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.posco-skill-tree-leaf:hover {
+  background: color-mix(in srgb, var(--skill-group-accent) 5%, transparent);
+}
+
+.posco-skill-tree-leaf:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--skill-group-accent) 38%, transparent);
+  outline-offset: 2px;
+}
+
+.posco-skill-tree-leaf.disabled {
+  opacity: 0.62;
+}
+
+.posco-skill-tree-leaf.disabled .posco-skill-tree-state {
+  background: var(--sidebar-hover);
+  color: var(--faint);
+}
+
+.posco-skill-tree-dot {
+  display: block;
+  flex: 0 0 auto;
+  justify-self: center;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--skill-group-accent) 76%, var(--muted));
+}
+
+.posco-skill-tree-leaf-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.posco-skill-tree-leaf-copy strong,
+.posco-skill-tree-leaf-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.posco-skill-tree-leaf-copy strong {
+  flex: 0 0 auto;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 760;
+}
+
+.posco-skill-tree-leaf-copy small {
+  flex: 1 1 auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.posco-skill-tree.disabled .posco-skill-tree-status {
+  background: var(--sidebar-hover);
+  color: var(--faint);
 }
 
 .skill-plugin-group.disabled {
@@ -8786,6 +9238,11 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   background: var(--sidebar-hover);
 }
 
+[data-react-webui="true"] .history-item.active .history-open,
+[data-react-webui="true"] .history-item.active .history-open:hover {
+  background: var(--accent-soft);
+}
+
 [data-react-webui="true"] .history-open small {
   overflow: hidden;
   color: var(--muted);
@@ -10433,8 +10890,8 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   }
 
   .todo-checklist-dock {
-    width: fit-content;
-    max-width: min(760px, calc(100% - 24px));
+    width: min(560px, calc(100% - 24px));
+    max-width: calc(100% - 24px);
   }
 
   .message.user .bubble {

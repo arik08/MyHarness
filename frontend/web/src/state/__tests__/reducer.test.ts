@@ -326,6 +326,45 @@ describe("appReducer", () => {
     expect(next.messages).toHaveLength(0);
   });
 
+  it("shows compact progress as workflow UI without adding chat noise", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "큰 자료를 분석해줘" },
+    });
+    const started = appReducer(active, {
+      type: "backend_event",
+      event: { type: "compact_progress", compact_phase: "compact_start", compact_trigger: "auto" },
+    });
+    const completed = appReducer(started, {
+      type: "backend_event",
+      event: { type: "compact_progress", compact_phase: "compact_end", compact_trigger: "auto" },
+    });
+
+    const compactEvent = completed.workflowEvents.find((event) => event.toolName === "context_compaction");
+    expect(started.statusText).toBe("컨텍스트 자동 압축 중");
+    expect(started.messages.map((message) => message.text)).toEqual(["큰 자료를 분석해줘"]);
+    expect(started.workflowEvents.find((event) => event.toolName === "context_compaction")?.detail).toContain("컨텍스트 초과");
+    expect(compactEvent?.title).toBe("컨텍스트 자동 압축");
+    expect(compactEvent?.status).toBe("done");
+    expect(compactEvent?.detail).toContain("작업을 계속합니다");
+  });
+
+  it("labels reactive compaction as a context-limit retry", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "방금 작업 계속해줘" },
+    });
+    const next = appReducer(active, {
+      type: "backend_event",
+      event: { type: "compact_progress", compact_phase: "compact_start", compact_trigger: "reactive" },
+    });
+
+    const compactEvent = next.workflowEvents.find((event) => event.toolName === "context_compaction");
+    expect(next.statusText).toBe("컨텍스트 자동 압축 후 재시도 중");
+    expect(compactEvent?.detail).toContain("컨텍스트 한도");
+    expect(next.messages.map((message) => message.text)).toEqual(["방금 작업 계속해줘"]);
+  });
+
   it("rebuilds a live streaming answer and workflow from replayed snapshot events", () => {
     const cleared = appReducer(
       {
@@ -915,6 +954,84 @@ describe("appReducer", () => {
     expect(next.messages).toHaveLength(1);
     expect(next.messages[0].text).toBe("추가 지시");
     expect(next.messages[0].kind).toBe("steering");
+  });
+
+  it("keeps question answer transcript visible without starting a new user turn", () => {
+    const active = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: "초기 요청" } },
+    });
+    const next = appReducer(active, {
+      type: "backend_event",
+      event: {
+        type: "transcript_item",
+        item: {
+          role: "user",
+          text: "질문\n어떤 색으로 진행할까요?\n\n답변\nblue",
+          kind: "question_answer",
+        },
+      },
+    });
+
+    expect(next.messages).toHaveLength(2);
+    expect(next.messages[1].kind).toBe("question_answer");
+    expect(next.workflowAnchorMessageId).toBe(active.workflowAnchorMessageId);
+    expect(next.workflowEvents[0]?.detail).toContain("초기 요청");
+  });
+
+  it("keeps repeated question answer records for auditability", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "transcript_item",
+        item: { role: "user", text: "질문\n대상 기간은?\n\n답변\n2026년", kind: "question_answer" },
+      },
+    });
+    const second = appReducer(first, {
+      type: "backend_event",
+      event: {
+        type: "transcript_item",
+        item: { role: "user", text: "질문\n대상 기간은?\n\n답변\n2026년", kind: "question_answer" },
+      },
+    });
+
+    expect(second.messages).toHaveLength(2);
+    expect(second.messages.every((message) => message.kind === "question_answer")).toBe(true);
+  });
+
+  it("stores assistant usage and session usage from completion events", () => {
+    const next = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "완료했습니다.",
+        usage: {
+          provider: "openai",
+          model: "gpt-5.4",
+          input_tokens: 1200,
+          cached_input_tokens: 900,
+          uncached_input_tokens: 300,
+          output_tokens: 200,
+          total_tokens: 1400,
+          estimated_cost_usd: 0.003675,
+          cost_supported: true,
+        },
+        session_usage: {
+          provider: "openai",
+          model: "gpt-5.4",
+          input_tokens: 2200,
+          cached_input_tokens: 900,
+          uncached_input_tokens: 1300,
+          output_tokens: 500,
+          total_tokens: 2700,
+          estimated_cost_usd: 0.010975,
+          cost_supported: true,
+        },
+      },
+    });
+
+    expect(next.messages[0].usage?.cached_input_tokens).toBe(900);
+    expect(next.sessionUsage?.total_tokens).toBe(2700);
   });
 
   it("hides plan mode steering transcript items", () => {
@@ -1590,6 +1707,28 @@ describe("appReducer", () => {
     expect(shellEvent?.output).toBe("passed");
     expect(busy.workflowEvents).toHaveLength(0);
     expect(busy.workflowAnchorMessageId).toBeNull();
+  });
+
+  it("restores question answer records without treating them as separate prompts", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "보고서 작성" },
+          { type: "user", text: "질문\n대상 기간은?\n\n답변\n2026년", kind: "question_answer" },
+          { type: "assistant", text: "작성했습니다." },
+        ],
+      },
+    });
+
+    expect(restored.messages.map((message) => [message.role, message.kind || "", message.text])).toEqual([
+      ["user", "", "보고서 작성"],
+      ["user", "question_answer", "질문\n대상 기간은?\n\n답변\n2026년"],
+      ["assistant", "", "작성했습니다."],
+    ]);
+    expect(restored.workflowAnchorMessageId).toBeNull();
+    expect(Object.values(restored.workflowEventsByMessageId).flat()).toHaveLength(0);
   });
 
   it("does not restore a stale running planning step for simple history turns", () => {

@@ -509,6 +509,13 @@ def test_get_autocompact_threshold_respects_manual_override():
     ) == 12345
 
 
+def test_get_autocompact_threshold_caps_large_context_models_at_safe_ratio():
+    assert get_autocompact_threshold("gpt-5.5") == 787_500
+    assert get_autocompact_threshold("gpt-5") == 300_000
+    assert get_autocompact_threshold("claude-sonnet-4-6") == 150_000
+    assert get_autocompact_threshold("gpt-5.3-codex-spark") == 95_000
+
+
 def test_get_context_window_uses_current_openai_model_limits():
     assert get_context_window("gpt-5.5") == 1_050_000
     assert get_context_window("gpt-5.5-pro") == 1_050_000

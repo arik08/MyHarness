@@ -7,7 +7,7 @@ import type { Workspace } from "../types/backend";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { SettingsModal } from "./SettingsModal";
 
-export { isLocalBrowserHostname } from "../utils/settingsLabels";
+export { canUseServerHostSettings, isLocalBrowserHostname } from "../utils/settingsLabels";
 
 function taskOutputForDisplay(value: unknown) {
   const raw = value == null ? "" : String(value);

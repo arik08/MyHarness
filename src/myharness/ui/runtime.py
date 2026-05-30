@@ -254,6 +254,8 @@ async def build_runtime(
     ask_user_prompt: AskUserPrompt | None = None,
     restore_messages: list[dict] | None = None,
     restore_tool_metadata: dict[str, object] | None = None,
+    restore_usage: dict[str, object] | None = None,
+    restore_usage_accounting: dict[str, object] | None = None,
     enforce_max_turns: bool = True,
     session_backend: SessionBackend | None = None,
     permission_mode: str | None = None,
@@ -420,6 +422,13 @@ async def build_runtime(
             [ConversationMessage.model_validate(m) for m in restore_messages]
         )
         engine.load_messages(restored)
+    if restore_usage or restore_usage_accounting:
+        engine.load_usage(
+            usage=restore_usage,
+            accounting=restore_usage_accounting,
+            provider=str(restored_metadata.get("provider") or provider.name),
+            model=settings.model,
+        )
 
     # Start Docker sandbox if configured
     if settings.sandbox.enabled and settings.sandbox.backend == "docker":
@@ -690,6 +699,7 @@ async def handle_line(
                 usage=bundle.engine.total_usage,
                 session_id=bundle.session_id,
                 tool_metadata=bundle.engine.tool_metadata,
+                usage_accounting=bundle.engine.usage_accounting,
             )
         if result.continue_pending:
             settings = bundle.current_settings()
@@ -724,6 +734,7 @@ async def handle_line(
                 usage=bundle.engine.total_usage,
                 session_id=bundle.session_id,
                 tool_metadata=bundle.engine.tool_metadata,
+                usage_accounting=bundle.engine.usage_accounting,
             )
         sync_app_state(bundle)
         return not result.should_exit
@@ -759,6 +770,7 @@ async def handle_line(
             usage=bundle.engine.total_usage,
             session_id=bundle.session_id,
             tool_metadata=bundle.engine.tool_metadata,
+            usage_accounting=bundle.engine.usage_accounting,
         )
         sync_app_state(bundle)
         return True
@@ -770,6 +782,7 @@ async def handle_line(
         usage=bundle.engine.total_usage,
         session_id=bundle.session_id,
         tool_metadata=bundle.engine.tool_metadata,
+        usage_accounting=bundle.engine.usage_accounting,
     )
     sync_app_state(bundle)
     return True
