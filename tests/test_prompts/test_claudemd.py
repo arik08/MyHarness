@@ -145,6 +145,35 @@ def test_build_runtime_system_prompt_includes_active_repo_context(tmp_path: Path
     assert "fix issue #98" in prompt
 
 
+def test_build_runtime_system_prompt_continuation_keeps_stable_prefix_and_skips_volatile_context(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    get_project_active_repo_context_path(repo).write_text(
+        "# Active Repo Context\n\n- Volatile focus: fix issue #98\n",
+        encoding="utf-8",
+    )
+
+    first = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="fix issue #98")
+    second = build_runtime_system_prompt(
+        Settings(),
+        cwd=repo,
+        latest_user_prompt="continue",
+        prompt_profile="continuation",
+    )
+    marker = "# Session Continuation"
+
+    assert first.startswith(second.split(marker, 1)[0].rstrip())
+    assert "Active Repo Context" in first
+    assert "Volatile focus" in first
+    assert "Session Continuation" in second
+    assert "Active Repo Context" not in second
+    assert "Volatile focus" not in second
+
+
 def test_build_runtime_system_prompt_uses_coordinator_prompt_when_enabled(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
@@ -222,6 +251,34 @@ def test_build_runtime_system_prompt_lists_subagent_presets_without_bodies(tmp_p
     assert "omit `subagent_type` and write a self-contained ad-hoc worker prompt" in prompt
     assert "You are a cost analysis worker" not in prompt
     assert "generic worker" not in prompt
+
+
+def test_build_runtime_system_prompt_passes_settings_and_cwd_to_subagent_presets(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    seen: dict[str, object] = {}
+
+    def _fake_agents(*, settings, cwd):
+        seen["settings"] = settings
+        seen["cwd"] = cwd
+        return [
+            AgentDefinition(
+                name="office-subagent-presets:cost-analyst",
+                description="Use for cost and margin analysis.",
+                subagent_type="cost-analyst",
+                source="plugin",
+            )
+        ]
+
+    monkeypatch.setattr("myharness.prompts.context.get_all_agent_definitions", _fake_agents)
+
+    prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="원가 분석해줘")
+
+    assert "`cost-analyst`" in prompt
+    assert seen["settings"].model == Settings().model
+    assert seen["cwd"] == repo
 
 
 def test_build_runtime_system_prompt_guides_explicit_extra_long_report_generation(tmp_path: Path, monkeypatch):

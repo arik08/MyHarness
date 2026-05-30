@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 from myharness.config.paths import (
     get_project_active_repo_context_path,
@@ -109,10 +109,22 @@ def _build_delegation_section() -> str:
     )
 
 
-def _build_subagent_presets_section() -> str | None:
+PromptProfile = Literal["full", "continuation"]
+
+
+def _build_subagent_presets_section(
+    cwd: str | Path,
+    *,
+    settings: Settings | None = None,
+) -> str | None:
     """Build a compact catalog of subagent presets without agent prompt bodies."""
     try:
-        agents = get_all_agent_definitions()
+        agents = get_all_agent_definitions(settings=settings, cwd=cwd)
+    except TypeError:
+        try:
+            agents = get_all_agent_definitions()
+        except Exception:
+            return None
     except Exception:
         return None
     rows = [
@@ -204,6 +216,18 @@ def _build_long_report_section() -> str:
     )
 
 
+def _build_continuation_appendix() -> str:
+    """Build a small volatile appendix for follow-up turns."""
+    return "\n".join(
+        [
+            "# Session Continuation",
+            "",
+            "The stable system, project, skill, tool, delegation, and report instructions above remain active.",
+            "Use the existing conversation history for recent context. Fetch or inspect additional dynamic context only when needed for the current request.",
+        ]
+    )
+
+
 def build_runtime_system_prompt(
     settings: Settings,
     *,
@@ -212,6 +236,7 @@ def build_runtime_system_prompt(
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
     task_worker: bool = False,
+    prompt_profile: PromptProfile = "full",
 ) -> str:
     """Build the runtime system prompt with project instructions and memory."""
     coordinator_mode = is_coordinator_mode() and not task_worker
@@ -248,7 +273,7 @@ def build_runtime_system_prompt(
         sections.append(_build_task_worker_section())
     elif not coordinator_mode:
         sections.append(_build_delegation_section())
-        subagent_presets_section = _build_subagent_presets_section()
+        subagent_presets_section = _build_subagent_presets_section(cwd, settings=settings)
         if subagent_presets_section:
             sections.append(subagent_presets_section)
         sections.append(_build_long_report_section())
@@ -260,6 +285,10 @@ def build_runtime_system_prompt(
     local_rules = load_local_rules()
     if local_rules:
         sections.append(f"# Local Environment Rules\n\n{local_rules}")
+
+    if prompt_profile == "continuation":
+        sections.append(_build_continuation_appendix())
+        return "\n\n".join(section for section in sections if section.strip())
 
     for title, path in (
         ("Issue Context", get_project_issue_file(cwd)),

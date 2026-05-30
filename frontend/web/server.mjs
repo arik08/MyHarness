@@ -1221,7 +1221,7 @@ async function handleShare(request, response, pathname) {
       let body = null;
       if (payload.ext === ".html" || payload.ext === ".htm") {
         const htmlPayload = await readArtifactPreview(session, artifactPath);
-        body = injectHtmlBase(htmlPayload.content || "", htmlPayload.assetBaseUrl || "");
+        body = withDownloadedMermaidZoomBridge(injectHtmlBase(htmlPayload.content || "", htmlPayload.assetBaseUrl || ""));
       }
       response.writeHead(200, {
         "Content-Type": payload.mime,
@@ -1258,7 +1258,11 @@ function withDownloadedMermaidZoomBridge(content) {
   if (!/\bmermaid\b/i.test(value) || /data-myharness-mermaid-zoom-script/i.test(value)) {
     return value;
   }
+  const renderer = hasDownloadedRawMermaid(value) && !/data-myharness-mermaid-renderer-script/i.test(value)
+    ? downloadedMermaidRendererBridge()
+    : "";
   const bridge = `
+${renderer}
 <style data-myharness-mermaid-zoom-style="true">
 .myharness-mermaid-zoom-host{position:relative!important}
 .myharness-mermaid-expand-button{position:absolute;top:10px;right:10px;z-index:50;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid rgba(17,24,39,.16);border-radius:6px;background:rgba(255,255,255,.94);color:#17212f;box-shadow:0 8px 22px rgba(15,23,42,.14);cursor:pointer}
@@ -1503,9 +1507,82 @@ function withDownloadedMermaidZoomBridge(content) {
 })();
 </script>`;
   if (/<\/body\s*>/i.test(value)) {
-    return value.replace(/<\/body\s*>/i, `${bridge}</body>`);
+    return value.replace(/<\/body\s*>/i, () => `${bridge}</body>`);
   }
   return `${value}${bridge}`;
+}
+
+let downloadedMermaidRuntimeCache = "";
+
+function hasDownloadedRawMermaid(content) {
+  const value = String(content || "");
+  if (/language-mermaid|lang-mermaid/i.test(value)) {
+    return true;
+  }
+  return /class\s*=\s*["'][^"']*\bmermaid\b[^"']*["'][^>]*>(?!\s*<svg\b)[\s\S]*?<\/[a-z][^>]*>/i.test(value);
+}
+
+function downloadedMermaidRuntimeScript() {
+  if (!downloadedMermaidRuntimeCache) {
+    downloadedMermaidRuntimeCache = readFileSync(join(vendorRoot, "mermaid/dist/mermaid.min.js"), "utf8")
+      .replace(/<\/script/gi, "<\\/script");
+  }
+  return downloadedMermaidRuntimeCache;
+}
+
+function downloadedMermaidRendererBridge() {
+  return `
+<script data-myharness-mermaid-renderer-script="true">
+${downloadedMermaidRuntimeScript()}
+</script>
+<script data-myharness-mermaid-renderer-init="true">
+(() => {
+  const collectRawMermaidNodes = () => {
+    const nodes = [];
+    document.querySelectorAll("pre > code.language-mermaid, pre > code.lang-mermaid").forEach((code) => {
+      const source = (code.textContent || "").trim();
+      const pre = code.closest("pre");
+      if (!source || !pre) return;
+      const target = document.createElement("div");
+      target.className = "mermaid";
+      target.textContent = source;
+      pre.replaceWith(target);
+      nodes.push(target);
+    });
+    document.querySelectorAll(".mermaid").forEach((element) => {
+      if (element.querySelector("svg") || element.getAttribute("data-processed") === "true") return;
+      if (!(element.textContent || "").trim()) return;
+      nodes.push(element);
+    });
+    return Array.from(new Set(nodes));
+  };
+  const renderMermaid = async () => {
+    const mermaid = window.mermaid;
+    if (!mermaid?.initialize) return;
+    const nodes = collectRawMermaidNodes();
+    if (!nodes.length) return;
+    try {
+      mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+      if (typeof mermaid.run === "function") {
+        await mermaid.run({ nodes });
+      } else if (typeof mermaid.init === "function") {
+        mermaid.init(undefined, nodes);
+      }
+    } catch {
+      nodes.forEach((node) => {
+        if (node.querySelector("svg")) return;
+        node.classList.add("mermaid-error");
+        node.textContent = "Mermaid 다이어그램을 렌더링하지 못했습니다.";
+      });
+    }
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => { void renderMermaid(); }, { once: true });
+  } else {
+    void renderMermaid();
+  }
+})();
+</script>`;
 }
 
 async function readDownloadableArtifactBody(target, ext) {

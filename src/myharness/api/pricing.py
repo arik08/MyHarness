@@ -21,7 +21,14 @@ OPENAI_PRICING: dict[str, TokenPricing] = {
     "gpt-5.4-mini": TokenPricing(0.75, 0.075, 4.5),
 }
 
-OPENAI_PRICING_PROVIDERS = {"openai", "openai-compatible", "openai_compat"}
+OPENAI_PRICING_PROVIDERS = {
+    "codex",
+    "openai",
+    "openai-compatible",
+    "openai_compat",
+    "openai_codex",
+    "pgpt",
+}
 
 
 def normalize_pricing_model(model: str) -> str:

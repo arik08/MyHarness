@@ -67,6 +67,46 @@ MAX_AUTO_CONTINUATIONS = 4
 PROVIDER_STREAM_IDLE_FIRST_SECONDS = 7.0
 PROVIDER_STREAM_IDLE_REPEAT_SECONDS = 10.0
 PROVIDER_STREAM_IDLE_MAX_SECONDS = 600.0
+ALWAYS_AVAILABLE_TOOL_NAMES = {"ask_user_question", "tool_search"}
+CODE_WORK_TOOL_NAMES = {
+    "ask_user_question",
+    "bash",
+    "cmd",
+    "edit_file",
+    "glob",
+    "grep",
+    "lsp",
+    "read_file",
+    "todo_write",
+    "tool_search",
+    "write_file",
+}
+REPORT_WORK_TOOL_NAMES = {
+    "ask_user_question",
+    "generate_image",
+    "todo_write",
+    "tool_search",
+    "web_fetch",
+    "web_search",
+    "write_file",
+}
+AGENT_WORK_TOOL_NAMES = {
+    "agent",
+    "ask_user_question",
+    "send_message",
+    "task_get",
+    "task_list",
+    "task_output",
+    "task_stop",
+    "tool_search",
+}
+TOOL_SCHEMA_PRESET_ORDER = ("minimal", "code", "report", "agent")
+TOOL_SCHEMA_PRESETS = {
+    "minimal": ALWAYS_AVAILABLE_TOOL_NAMES,
+    "code": CODE_WORK_TOOL_NAMES,
+    "report": REPORT_WORK_TOOL_NAMES,
+    "agent": AGENT_WORK_TOOL_NAMES,
+}
 ASYNC_AGENT_FINALIZATION_BLOCK_MESSAGE = (
     "아직 pending worker가 있습니다. 최종 산출물을 만들기 전에 `task_output`/`task_get`으로 worker 결과를 먼저 확인하거나, "
     "필요하면 worker를 중단, 교체, relay, 또는 승계하세요."
@@ -80,6 +120,14 @@ TRUNCATED_AFTER_CONTINUATIONS_NOTICE = (
     "\n\n[응답이 출력 한도에 여러 번 도달해 여기까지 표시했습니다. "
     "이어서 더 작성하려면 계속 요청해주세요.]"
 )
+
+
+def _is_codex_cache_preferred_metadata(metadata: dict[str, object] | None) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    provider = str(metadata.get("provider") or "").strip().lower().replace("_", "-")
+    active_profile = str(metadata.get("active_profile") or "").strip().lower()
+    return provider in {"codex", "openai-codex"} or active_profile == "codex"
 
 
 def _is_prompt_too_long_error(exc: Exception) -> bool:
@@ -98,6 +146,245 @@ def _is_prompt_too_long_error(exc: Exception) -> bool:
             "maximum context length",
         )
     )
+
+
+def _tool_schema_by_name(context: "QueryContext") -> dict[str, dict[str, Any]]:
+    return {
+        str(schema.get("name") or ""): schema
+        for schema in context.tool_registry.to_api_schema()
+        if schema.get("name")
+    }
+
+
+def _stable_tool_schemas(
+    context: "QueryContext",
+    names: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    schemas = _tool_schema_by_name(context)
+    if names is None:
+        selected = schemas.values()
+    else:
+        selected = [schemas[name] for name in names if name in schemas]
+    return sorted(selected, key=lambda schema: str(schema.get("name") or ""))
+
+
+def _all_tool_schema_names(context: "QueryContext") -> set[str]:
+    return set(_tool_schema_by_name(context))
+
+
+def _tool_schema_names_for_preset(context: "QueryContext", preset: str) -> set[str]:
+    if preset == "full":
+        return _all_tool_schema_names(context)
+    return set(TOOL_SCHEMA_PRESETS.get(preset, ALWAYS_AVAILABLE_TOOL_NAMES))
+
+
+def _stored_tool_schema_preset(metadata: dict[str, object], context: "QueryContext") -> str:
+    preset = str(metadata.get("active_tool_schema_preset") or "").strip().lower()
+    if preset in {*TOOL_SCHEMA_PRESET_ORDER, "full"}:
+        return preset
+
+    raw_names = metadata.get("active_tool_schema_names")
+    if not isinstance(raw_names, list):
+        return ""
+    names = {str(name) for name in raw_names if str(name) in _all_tool_schema_names(context)}
+    if not names:
+        return ""
+    return _smallest_tool_schema_preset_for_names(context, names)
+
+
+def _store_tool_schema_preset(metadata: dict[str, object], context: "QueryContext", preset: str) -> str:
+    normalized = preset if preset in {*TOOL_SCHEMA_PRESET_ORDER, "full"} else "minimal"
+    available = _all_tool_schema_names(context)
+    selected = {name for name in _tool_schema_names_for_preset(context, normalized) if name in available}
+    metadata["active_tool_schema_preset"] = normalized
+    metadata["active_tool_schema_names"] = sorted(selected)
+    metadata["tool_schema_full_sent"] = selected == available
+    return normalized
+
+
+def _smallest_tool_schema_preset_for_names(context: "QueryContext", names: set[str]) -> str:
+    available_names = {name for name in names if name in _all_tool_schema_names(context)}
+    if not available_names:
+        return "minimal"
+    for preset in TOOL_SCHEMA_PRESET_ORDER:
+        preset_names = {name for name in _tool_schema_names_for_preset(context, preset) if name in _all_tool_schema_names(context)}
+        if available_names.issubset(preset_names):
+            return preset
+    return "full"
+
+
+def _merge_tool_schema_presets(context: "QueryContext", current: str, candidate: str) -> str:
+    if current == candidate or candidate == "minimal":
+        return current
+    if current == "minimal":
+        return candidate
+    current_names = _tool_schema_names_for_preset(context, current)
+    candidate_names = _tool_schema_names_for_preset(context, candidate)
+    if candidate_names.issubset(current_names):
+        return current
+    if current_names.issubset(candidate_names):
+        return candidate
+    return "full"
+
+
+def _recent_tool_names(messages: list[ConversationMessage], *, limit: int = 6) -> set[str]:
+    names: list[str] = []
+    for message in reversed(messages):
+        for block in reversed(message.content):
+            if not isinstance(block, ToolUseBlock):
+                continue
+            if block.name in names:
+                names.remove(block.name)
+            names.append(block.name)
+            if len(names) >= limit:
+                return set(names)
+    return set(names)
+
+
+def _tool_search_result_names(messages: list[ConversationMessage], context: "QueryContext") -> set[str]:
+    available = set(_tool_schema_by_name(context))
+    tool_names_by_id: dict[str, str] = {}
+    for message in messages:
+        for block in message.content:
+            if isinstance(block, ToolUseBlock):
+                tool_names_by_id[block.id] = block.name
+    discovered: set[str] = set()
+    for message in reversed(messages[-6:]):
+        for block in message.content:
+            if not isinstance(block, ToolResultBlock):
+                continue
+            if tool_names_by_id.get(block.tool_use_id) != "tool_search":
+                continue
+            for line in block.content.splitlines():
+                name = line.split(":", 1)[0].strip()
+                if name in available:
+                    discovered.add(name)
+    return discovered
+
+
+def _recent_user_text(messages: list[ConversationMessage], *, limit: int = 3) -> str:
+    texts: list[str] = []
+    for message in reversed(messages):
+        if message.role != "user":
+            continue
+        if any(isinstance(block, ToolResultBlock) for block in message.content):
+            continue
+        text = message.text.strip()
+        if not text:
+            continue
+        texts.append(text)
+        if len(texts) >= limit:
+            break
+    return "\n\n".join(reversed(texts))
+
+
+def _starter_tool_schema_preset_for_text(text: str) -> str:
+    lowered = text.lower()
+    if not lowered:
+        return "minimal"
+    if any(
+        marker in lowered
+        for marker in (
+            "agent",
+            "subagent",
+            "task",
+            "worker",
+            "에이전트",
+            "워커",
+            "작업자",
+            "하위",
+            "팀",
+        )
+    ):
+        return "agent"
+    if any(
+        marker in lowered
+        for marker in (
+            "dashboard",
+            "html",
+            "infographic",
+            "report",
+            "web search",
+            "검색",
+            "대시보드",
+            "보고서",
+            "인포그래픽",
+            "자료",
+            "조사",
+        )
+    ):
+        return "report"
+    if re.search(r"(```|[/\\][\w.-]+|[A-Za-z]:\\|[\w.-]+\.(py|ts|tsx|js|jsx|json|md|css|html|yml|yaml|toml))", text):
+        return "code"
+    if any(
+        marker in lowered
+        for marker in (
+            "bug",
+            "code",
+            "file",
+            "fix",
+            "implement",
+            "refactor",
+            "test",
+            "구현",
+            "리팩터",
+            "버그",
+            "수정",
+            "코드",
+            "테스트",
+            "파일",
+        )
+    ):
+        return "code"
+    return "minimal"
+
+
+def _starter_tool_names_for_text(text: str) -> set[str]:
+    return set(TOOL_SCHEMA_PRESETS[_starter_tool_schema_preset_for_text(text)])
+
+
+def _select_tool_schemas(
+    context: "QueryContext",
+    messages: list[ConversationMessage],
+    *,
+    was_compacted: bool,
+) -> list[dict[str, Any]]:
+    metadata = context.tool_metadata if isinstance(context.tool_metadata, dict) else {}
+    if context.tool_metadata is None:
+        context.tool_metadata = metadata
+    if was_compacted or bool(metadata.pop("force_full_tool_schema_next", False)):
+        preset = _store_tool_schema_preset(metadata, context, "full")
+        return _stable_tool_schemas(context, _tool_schema_names_for_preset(context, preset))
+
+    selected_preset = _stored_tool_schema_preset(metadata, context)
+    if not selected_preset:
+        selected_preset = _store_tool_schema_preset(
+            metadata,
+            context,
+            _starter_tool_schema_preset_for_text(_recent_user_text(messages)),
+        )
+
+    recent_names = _recent_tool_names(messages)
+    if recent_names:
+        candidate_preset = _smallest_tool_schema_preset_for_names(
+            context,
+            recent_names | ALWAYS_AVAILABLE_TOOL_NAMES | _tool_search_result_names(messages, context),
+        )
+        selected_preset = _store_tool_schema_preset(
+            metadata,
+            context,
+            _merge_tool_schema_presets(context, selected_preset, candidate_preset),
+        )
+
+    candidate_preset = _starter_tool_schema_preset_for_text(_recent_user_text(messages))
+    if candidate_preset != "minimal":
+        selected_preset = _store_tool_schema_preset(
+            metadata,
+            context,
+            _merge_tool_schema_presets(context, selected_preset, candidate_preset),
+        )
+
+    return _stable_tool_schemas(context, _tool_schema_names_for_preset(context, selected_preset))
 
 
 def _is_network_error_message(message: str) -> bool:
@@ -856,6 +1143,11 @@ async def run_query(
         compacted_messages, was_compacted = last_compaction_result
         if was_compacted and compacted_messages is not messages:
             messages[:] = compacted_messages
+        if was_compacted:
+            if context.tool_metadata is None:
+                context.tool_metadata = {}
+            context.tool_metadata["force_full_prompt_next"] = True
+            context.tool_metadata["force_full_tool_schema_next"] = True
         return was_compacted
 
     turn_count = 0
@@ -869,7 +1161,7 @@ async def run_query(
         # --- auto-compact check before calling the model ---------------
         async for event, usage in _stream_compaction(trigger="auto"):
             yield event, usage
-        _adopt_compaction_result()
+        was_compacted = _adopt_compaction_result()
         steering_count = await _drain_steering_messages(context, messages)
         if steering_count:
             yield StatusEvent(
@@ -887,8 +1179,9 @@ async def run_query(
                 messages=messages,
                 system_prompt=context.system_prompt,
                 max_tokens=context.max_tokens,
-                tools=context.tool_registry.to_api_schema(),
+                tools=_select_tool_schemas(context, messages, was_compacted=was_compacted),
                 reasoning_effort=context.reasoning_effort,
+                session_id=str((context.tool_metadata or {}).get("session_id") or "") or None,
             )
             async for event in _stream_provider_events_with_idle_status(context, request):
                 if isinstance(event, StatusEvent):

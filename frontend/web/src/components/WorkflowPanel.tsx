@@ -773,6 +773,7 @@ function WorkflowOutputPreview({
   const [openingPath, setOpeningPath] = useState("");
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
+  const succeeded = event.status === "done";
   const displayContent = workflowVisiblePreviewContent(event, source.content);
   const visibleDisplayContent = useSmoothWorkflowPreviewText(displayContent, !done, revealDurationMs);
   const bodyClassName = [
@@ -782,14 +783,14 @@ function WorkflowOutputPreview({
   ].filter(Boolean).join(" ");
   const fileName = workflowPreviewFileName(source.path);
   const prefix = source.kind === "diff"
-    ? done ? "수정 완료" : "수정 미리보기"
-    : done ? "작성 완료" : "작성 중인 결과물";
+    ? event.status === "error" ? "수정 실패" : done ? "수정 완료" : "수정 미리보기"
+    : event.status === "error" ? "작성 실패" : done ? "작성 완료" : "작성 중인 결과물";
   const count = source.kind === "diff"
     ? formatWorkflowDiffCount(source.content)
     : isLongReportWorkflowTool(event.toolName)
       ? formatWorkflowLongReportCount(event, source.content)
       : formatWorkflowContentCount(source.content);
-  const artifact = workflowPreviewArtifact(source, done);
+  const artifact = workflowPreviewArtifact(source, succeeded);
   const artifactDisplay = artifact ? artifactDisplayName(artifact) : fileName;
 
   async function openWorkflowArtifact() {

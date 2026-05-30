@@ -4,6 +4,8 @@
   --panel: #ffffff;
   --sidebar: #f1f4f7;
   --sidebar-hover: #e7ecf2;
+  --history-active-bg: #d6eafa;
+  --history-active-open-bg: #d6eafa;
   --ink: #17202c;
   --muted: #526171;
   --faint: #8b96a3;
@@ -77,6 +79,8 @@
   --panel: #ffffff;
   --sidebar: #f7f7f5;
   --sidebar-hover: #eeeeeb;
+  --history-active-bg: var(--sidebar-hover);
+  --history-active-open-bg: var(--accent-soft);
   --ink: #33322f;
   --muted: #74716b;
   --faint: #a6a29b;
@@ -138,6 +142,8 @@
   --panel: #0a1624;
   --sidebar: #091522;
   --sidebar-hover: #12263b;
+  --history-active-bg: var(--sidebar-hover);
+  --history-active-open-bg: var(--accent-soft);
   --ink: #edf6ff;
   --muted: #a2b3c6;
   --faint: #6f8194;
@@ -200,6 +206,8 @@
   --panel: #000500;
   --sidebar: #010701;
   --sidebar-hover: #031403;
+  --history-active-bg: var(--sidebar-hover);
+  --history-active-open-bg: var(--accent-soft);
   --ink: #c8ffd0;
   --muted: #31ff46;
   --faint: #00a516;
@@ -262,6 +270,8 @@
   --panel: #070100;
   --sidebar: #080100;
   --sidebar-hover: #1a0500;
+  --history-active-bg: var(--sidebar-hover);
+  --history-active-open-bg: var(--accent-soft);
   --ink: #ffb84d;
   --muted: #ffa733;
   --faint: #ff8f1f;
@@ -1221,9 +1231,12 @@ a:focus-visible {
   text-align: left;
 }
 
-.history-item:hover,
-.history-item.active {
+.history-item:hover {
   background: var(--sidebar-hover);
+}
+
+.history-item.active {
+  background: var(--history-active-bg, var(--sidebar-hover));
 }
 
 .history-item.hidden-history .history-open {
@@ -3282,6 +3295,11 @@ a:focus-visible {
   transition:
     opacity 0.12s ease,
     transform 0.12s ease;
+}
+
+.assistant-usage-popover[data-placement="below"] {
+  top: calc(100% + 8px);
+  bottom: auto;
 }
 
 .assistant-usage-control:hover .assistant-usage-popover,
@@ -9240,7 +9258,7 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 
 [data-react-webui="true"] .history-item.active .history-open,
 [data-react-webui="true"] .history-item.active .history-open:hover {
-  background: var(--accent-soft);
+  background: var(--history-active-open-bg, var(--accent-soft));
 }
 
 [data-react-webui="true"] .history-open small {

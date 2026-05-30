@@ -842,6 +842,7 @@ describe("Composer", () => {
       clientId: "client-1",
       line: "다음 질문",
       mode: "queue",
+      suppressUserTranscript: true,
     }));
   });
 
@@ -869,6 +870,7 @@ describe("Composer", () => {
       clientId: "client-1",
       line: "방금 조건 반영",
       mode: "steer",
+      suppressUserTranscript: true,
     }));
   });
 
@@ -988,6 +990,7 @@ describe("Composer", () => {
       clientId: "client-1",
       line: "지금 이 조건 반영",
       mode: "steer",
+      suppressUserTranscript: true,
     }));
   });
 

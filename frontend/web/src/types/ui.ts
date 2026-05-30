@@ -24,6 +24,7 @@ export type ChatMessage = {
   isComplete?: boolean;
   suppressActions?: boolean;
   usage?: UsageCostSummary;
+  sessionUsage?: UsageCostSummary | null;
   terminal?: {
     command: string;
     output?: string;

@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { saveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { UsageCostSummary } from "../types/backend";
@@ -84,6 +84,7 @@ function UsageSection({ title, usage }: { title: string; usage?: UsageCostSummar
       <h4>{title}</h4>
       <UsageMetricRow label="Input" value={formatTokenCount(usage?.input_tokens)} />
       <UsageMetricRow label="Cached" value={formatTokenCount(usage?.cached_input_tokens)} />
+      <UsageMetricRow label="Uncached" value={formatTokenCount(usage?.uncached_input_tokens)} />
       <UsageMetricRow label="Output" value={formatTokenCount(usage?.output_tokens)} />
       <UsageMetricRow label="Total" value={formatTokenCount(usage?.total_tokens)} />
       <UsageMetricRow label="Cost" value={formatUsageCost(usage)} />
@@ -93,8 +94,25 @@ function UsageSection({ title, usage }: { title: string; usage?: UsageCostSummar
 
 function UsageCostPopover({ answerUsage, sessionUsage }: { answerUsage?: UsageCostSummary; sessionUsage?: UsageCostSummary | null }) {
   const cacheHit = Boolean((answerUsage?.cached_input_tokens || 0) > 0 || (sessionUsage?.cached_input_tokens || 0) > 0);
+  const controlRef = useRef<HTMLSpanElement | null>(null);
+  const popoverRef = useRef<HTMLSpanElement | null>(null);
+  const [placement, setPlacement] = useState<"above" | "below">("above");
+  const updatePlacement = useCallback(() => {
+    const control = controlRef.current;
+    const popover = popoverRef.current;
+    if (!control || !popover) return;
+    const controlRect = control.getBoundingClientRect();
+    const popoverHeight = popover.getBoundingClientRect().height || popover.offsetHeight || 220;
+    setPlacement(controlRect.top - popoverHeight - 8 < 12 ? "below" : "above");
+  }, []);
+
   return (
-    <span className="assistant-usage-control">
+    <span
+      ref={controlRef}
+      className="assistant-usage-control"
+      onFocusCapture={updatePlacement}
+      onMouseEnter={updatePlacement}
+    >
       <button
         className="assistant-action-button assistant-usage-button"
         type="button"
@@ -108,7 +126,7 @@ function UsageCostPopover({ answerUsage, sessionUsage }: { answerUsage?: UsageCo
           <rect x="17" y="4" width="3" height="12" rx="1" />
         </svg>
       </button>
-      <span className="assistant-usage-popover" role="tooltip">
+      <span ref={popoverRef} className="assistant-usage-popover" data-placement={placement} role="tooltip">
         <span className={`assistant-usage-cache ${cacheHit ? "hit" : ""}`}>
           Cache hit {cacheHit ? "적용" : "없음"}
         </span>
@@ -246,7 +264,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
           <path d="m8.6 13.4 6.8 4.2" />
         </svg>
       </button>
-      <UsageCostPopover answerUsage={message.usage} sessionUsage={state.sessionUsage} />
+      <UsageCostPopover answerUsage={message.usage} sessionUsage={message.sessionUsage} />
       {messageTime ? <span className="assistant-action-time">{messageTime}</span> : null}
       <span className="assistant-action-status">{status}</span>
       {children}

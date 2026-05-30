@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from myharness.api.client import ApiMessageRequest
 from myharness.api.errors import AuthenticationFailure
 from myharness.api.openai_client import OpenAICompatibleClient
-from myharness.ui.runtime import MissingAuthClient, build_runtime
+from myharness.ui.runtime import MissingAuthClient, _next_prompt_profile, build_runtime
 
 
 @pytest.mark.asyncio
@@ -65,3 +67,25 @@ async def test_build_runtime_enables_pgpt_raw_sse_with_env_flag(monkeypatch):
 
     assert isinstance(bundle.api_client, OpenAICompatibleClient)
     assert getattr(bundle.api_client, "_raw_stream") is True
+
+
+def test_next_prompt_profile_keeps_codex_full_for_cache_stability():
+    bundle = SimpleNamespace(
+        engine=SimpleNamespace(
+            messages=[object()],
+            tool_metadata={"active_profile": "codex", "provider": "openai_codex"},
+        )
+    )
+
+    assert _next_prompt_profile(bundle) == "full"
+
+
+def test_next_prompt_profile_uses_continuation_for_non_codex_followup():
+    bundle = SimpleNamespace(
+        engine=SimpleNamespace(
+            messages=[object()],
+            tool_metadata={"active_profile": "p-gpt", "provider": "openai"},
+        )
+    )
+
+    assert _next_prompt_profile(bundle) == "continuation"

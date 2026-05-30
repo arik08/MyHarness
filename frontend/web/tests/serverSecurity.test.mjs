@@ -650,7 +650,16 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
     '<div class="mermaid"><svg id="mermaid-test" viewBox="0 0 100 40"><rect width="100" height="40"></rect></svg></div>',
     "</body></html>",
   ].join("");
+  const rawMermaidHtml = [
+    "<!doctype html><html><body>",
+    "<h1>Raw workflow</h1>",
+    '<pre><code class="language-mermaid">flowchart LR',
+    "A --> B",
+    "</code></pre>",
+    "</body></html>",
+  ].join("\n");
   await writeFile(join(workspacePath, "outputs", "workflow.html"), html, "utf8");
+  await writeFile(join(workspacePath, "outputs", "raw-workflow.html"), rawMermaidHtml, "utf8");
   await writeFile(join(workspacePath, "outputs", "plain.html"), "<!doctype html><html><body><h1>Plain</h1></body></html>", "utf8");
 
   const mermaidParams = new URLSearchParams({
@@ -664,9 +673,22 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
   assert.match(downloaded, /data-myharness-mermaid-zoom-script/);
   assert.match(downloaded, /myharness-mermaid-expand-button/);
   assert.match(downloaded, /Mermaid 다이어그램 크게 보기/);
+  assert.doesNotMatch(downloaded, /data-myharness-mermaid-renderer-script/);
   assert.doesNotMatch(downloaded, /mermaid@11\.14\.0/);
   assert.doesNotMatch(downloaded, /renderRawMermaidBlocks/);
   assert.doesNotMatch(downloaded, /화면에 맞춤/);
+
+  const rawMermaidParams = new URLSearchParams({
+    workspacePath,
+    path: "outputs/raw-workflow.html",
+  });
+  const rawDownloadResponse = await fetch(`${app.baseUrl}/api/artifact/download?${rawMermaidParams.toString()}`);
+  const rawDownloaded = await rawDownloadResponse.text();
+  assert.equal(rawDownloadResponse.status, 200);
+  assert.match(rawDownloaded, /data-myharness-mermaid-renderer-script/);
+  assert.match(rawDownloaded, /data-myharness-mermaid-renderer-init/);
+  assert.match(rawDownloaded, /data-myharness-mermaid-zoom-script/);
+  assert.doesNotMatch(rawDownloaded, /"\\\\<\/body>"/);
 
   const plainParams = new URLSearchParams({
     workspacePath,
@@ -676,6 +698,19 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
   const plainDownloaded = await plainResponse.text();
   assert.equal(plainResponse.status, 200);
   assert.doesNotMatch(plainDownloaded, /data-myharness-mermaid-zoom-script/);
+
+  const rawResponse = await fetch(`${app.baseUrl}/share/artifact/raw?${mermaidParams.toString()}`);
+  const rawHtml = await rawResponse.text();
+  assert.equal(rawResponse.status, 200);
+  assert.match(rawHtml, /data-myharness-mermaid-zoom-script/);
+  assert.match(rawHtml, /myharness-mermaid-expand-button/);
+  assert.match(rawHtml, /Mermaid 다이어그램 크게 보기/);
+
+  const sharedRawResponse = await fetch(`${app.baseUrl}/share/artifact/raw?${rawMermaidParams.toString()}`);
+  const sharedRawHtml = await sharedRawResponse.text();
+  assert.equal(sharedRawResponse.status, 200);
+  assert.match(sharedRawHtml, /data-myharness-mermaid-renderer-script/);
+  assert.match(sharedRawHtml, /data-myharness-mermaid-zoom-script/);
 
   downloadDir = await mkdtemp(join(tmpdir(), "myharness-mermaid-download-"));
   const saveCopyResponse = await fetch(`${app.baseUrl}/api/artifact/save-copy`, {
@@ -694,6 +729,22 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
   assert.match(savedHtml, /data-myharness-mermaid-zoom-script/);
   assert.match(savedHtml, /myharness-mermaid-expand-button/);
   assert.doesNotMatch(savedHtml, /renderRawMermaidBlocks/);
+
+  const saveRawCopyResponse = await fetch(`${app.baseUrl}/api/artifact/save-copy`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workspacePath,
+      path: "outputs/raw-workflow.html",
+      folderPath: downloadDir,
+    }),
+  });
+  const saveRawCopyPayload = await saveRawCopyResponse.json();
+  assert.equal(saveRawCopyResponse.status, 200);
+  assert.equal(saveRawCopyPayload.saved.name, "raw-workflow.html");
+  const savedRawHtml = await readFile(join(downloadDir, "raw-workflow.html"), "utf8");
+  assert.match(savedRawHtml, /data-myharness-mermaid-renderer-script/);
+  assert.match(savedRawHtml, /data-myharness-mermaid-zoom-script/);
 });
 
 test("serves shared artifact links read-only from workspace-relative paths", async (t) => {

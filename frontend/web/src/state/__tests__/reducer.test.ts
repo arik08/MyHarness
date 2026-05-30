@@ -956,6 +956,35 @@ describe("appReducer", () => {
     expect(next.messages[0].kind).toBe("steering");
   });
 
+  it("ignores a regular replay transcript for an optimistic steering message", () => {
+    const withOptimisticSteering = appReducer({ ...initialAppState, busy: true }, {
+      type: "append_message",
+      message: { role: "user", text: "너는 누구니", kind: "steering" },
+    });
+    const next = appReducer(withOptimisticSteering, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: "너는 누구니" } },
+    });
+
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0]).toMatchObject({ text: "너는 누구니", kind: "steering" });
+  });
+
+  it("ignores a delayed steering replay transcript for the same active user text", () => {
+    const withRegularUser = appReducer({ ...initialAppState, busy: true }, {
+      type: "append_message",
+      message: { role: "user", text: "너는 누구니" },
+    });
+    const next = appReducer(withRegularUser, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: "너는 누구니", kind: "steering" } },
+    });
+
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].text).toBe("너는 누구니");
+    expect("kind" in next.messages[0]).toBe(false);
+  });
+
   it("keeps question answer transcript visible without starting a new user turn", () => {
     const active = appReducer(initialAppState, {
       type: "backend_event",
@@ -1031,7 +1060,65 @@ describe("appReducer", () => {
     });
 
     expect(next.messages[0].usage?.cached_input_tokens).toBe(900);
+    expect(next.messages[0].sessionUsage?.total_tokens).toBe(2700);
     expect(next.sessionUsage?.total_tokens).toBe(2700);
+  });
+
+  it("freezes assistant session usage at the completion position", () => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "첫 답변",
+        usage: {
+          input_tokens: 10,
+          cached_input_tokens: 4,
+          uncached_input_tokens: 6,
+          output_tokens: 2,
+          total_tokens: 12,
+          estimated_cost_usd: null,
+          cost_supported: false,
+        },
+        session_usage: {
+          input_tokens: 10,
+          cached_input_tokens: 4,
+          uncached_input_tokens: 6,
+          output_tokens: 2,
+          total_tokens: 12,
+          estimated_cost_usd: null,
+          cost_supported: false,
+        },
+      },
+    });
+    const second = appReducer(first, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "두 번째 답변",
+        usage: {
+          input_tokens: 20,
+          cached_input_tokens: 8,
+          uncached_input_tokens: 12,
+          output_tokens: 3,
+          total_tokens: 23,
+          estimated_cost_usd: null,
+          cost_supported: false,
+        },
+        session_usage: {
+          input_tokens: 30,
+          cached_input_tokens: 12,
+          uncached_input_tokens: 18,
+          output_tokens: 5,
+          total_tokens: 35,
+          estimated_cost_usd: null,
+          cost_supported: false,
+        },
+      },
+    });
+
+    expect(second.messages[0].sessionUsage?.total_tokens).toBe(12);
+    expect(second.messages[1].sessionUsage?.total_tokens).toBe(35);
+    expect(second.sessionUsage?.total_tokens).toBe(35);
   });
 
   it("hides plan mode steering transcript items", () => {

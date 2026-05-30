@@ -292,7 +292,7 @@ class CodexApiClient:
         tool_names_by_item_id: dict[str, str] = {}
         current_tool_name: str | None = None
 
-        headers = _build_codex_headers(self._auth_token)
+        headers = _build_codex_headers(self._auth_token, session_id=request.session_id)
         timeout = httpx.Timeout(
             self._timeout,
             connect=min(self._timeout, 30.0),

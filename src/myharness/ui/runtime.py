@@ -30,7 +30,7 @@ from myharness.engine.messages import (
     ToolUseBlock,
     sanitize_conversation_messages,
 )
-from myharness.engine.query import MaxTurnsExceeded, SteeringProvider
+from myharness.engine.query import MaxTurnsExceeded, SteeringProvider, _is_codex_cache_preferred_metadata
 from myharness.engine.stream_events import StreamEvent, ToolExecutionCompleted, ToolExecutionStarted
 from myharness.hooks import HookEvent, HookExecutionContext, HookExecutor, load_hook_registry
 from myharness.hooks.hot_reload import HookReloader
@@ -352,6 +352,7 @@ async def build_runtime(
         extra_skill_dirs=normalized_skill_dirs,
         extra_plugin_roots=normalized_plugin_roots,
         task_worker=task_worker,
+        prompt_profile="full",
     )
     from uuid import uuid4
 
@@ -422,6 +423,8 @@ async def build_runtime(
             [ConversationMessage.model_validate(m) for m in restore_messages]
         )
         engine.load_messages(restored)
+        engine.tool_metadata["force_full_prompt_next"] = True
+        engine.tool_metadata["force_full_tool_schema_next"] = True
     if restore_usage or restore_usage_accounting:
         engine.load_usage(
             usage=restore_usage,
@@ -553,6 +556,17 @@ def _format_pending_tool_results(messages: list[ConversationMessage]) -> str | N
     return "\n".join(lines)
 
 
+def _next_prompt_profile(bundle: RuntimeBundle) -> str:
+    metadata = bundle.engine.tool_metadata
+    if bool(metadata.pop("force_full_prompt_next", False)):
+        return "full"
+    if _is_codex_cache_preferred_metadata(metadata):
+        return "full"
+    if not bundle.engine.messages:
+        return "full"
+    return "continuation"
+
+
 def sync_app_state(bundle: RuntimeBundle) -> None:
     """Refresh UI state from current settings and dynamic keybindings."""
     settings = bundle.current_settings()
@@ -611,6 +625,8 @@ def refresh_runtime_client(bundle: RuntimeBundle) -> None:
         )
     bundle.engine.set_model(settings.model)
     bundle.engine.set_max_tokens(settings.effective_max_tokens())
+    bundle.engine.tool_metadata["force_full_prompt_next"] = True
+    bundle.engine.tool_metadata["force_full_tool_schema_next"] = True
     sync_app_state(bundle)
 
 
@@ -675,6 +691,7 @@ async def handle_line(
                 extra_skill_dirs=bundle.extra_skill_dirs,
                 extra_plugin_roots=bundle.extra_plugin_roots,
                 task_worker=bundle.task_worker,
+                prompt_profile=_next_prompt_profile(bundle),
             )
             bundle.engine.set_system_prompt(system_prompt)
             try:
@@ -712,6 +729,7 @@ async def handle_line(
                 extra_skill_dirs=bundle.extra_skill_dirs,
                 extra_plugin_roots=bundle.extra_plugin_roots,
                 task_worker=bundle.task_worker,
+                prompt_profile=_next_prompt_profile(bundle),
             )
             bundle.engine.set_system_prompt(system_prompt)
             turns = result.continue_turns if result.continue_turns is not None else bundle.engine.max_turns
@@ -749,6 +767,7 @@ async def handle_line(
         extra_skill_dirs=bundle.extra_skill_dirs,
         extra_plugin_roots=bundle.extra_plugin_roots,
         task_worker=bundle.task_worker,
+        prompt_profile=_next_prompt_profile(bundle),
     )
     bundle.engine.set_system_prompt(system_prompt)
     try:

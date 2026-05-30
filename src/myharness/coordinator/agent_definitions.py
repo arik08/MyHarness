@@ -902,7 +902,7 @@ def _get_user_agents_dir() -> Path:
     return get_config_dir() / "agents"
 
 
-def get_all_agent_definitions() -> list[AgentDefinition]:
+def get_all_agent_definitions(settings=None, cwd: str | Path | None = None) -> list[AgentDefinition]:
     """Return all agent definitions: built-in + user + plugin.
 
     Merge order (last writer wins for same ``name``):
@@ -928,12 +928,14 @@ def get_all_agent_definitions() -> list[AgentDefinition]:
     try:
         from myharness.plugins.loader import load_plugins  # noqa: PLC0415
         from myharness.config.settings import load_settings  # noqa: PLC0415
+        from myharness.project_preferences import apply_project_preferences_to_settings  # noqa: PLC0415
 
-        settings = load_settings()
+        resolved_settings = settings or load_settings()
         import os  # noqa: PLC0415
 
-        cwd = os.getcwd()
-        for plugin in load_plugins(settings, cwd, include_program_plugins=True):
+        resolved_cwd = str(Path(cwd or os.getcwd()).expanduser().resolve())
+        resolved_settings = apply_project_preferences_to_settings(resolved_settings, resolved_cwd)
+        for plugin in load_plugins(resolved_settings, resolved_cwd, include_program_plugins=True):
             if not plugin.enabled:
                 continue
             for agent_def in getattr(plugin, "agents", []):

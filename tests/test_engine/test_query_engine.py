@@ -461,33 +461,34 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     sample = tmp_path / "hello.txt"
     sample.write_text("alpha\nbeta\n", encoding="utf-8")
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        TextBlock(text="I will inspect the file."),
+                        ToolUseBlock(
+                            id="toolu_123",
+                            name="read_file",
+                            input={"path": str(sample), "offset": 0, "limit": 2},
+                        ),
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="The file contains alpha and beta.")],
+                ),
+                usage=UsageSnapshot(input_tokens=8, output_tokens=6),
+            ),
+        ]
+    )
 
     engine = QueryEngine(
-        api_client=FakeApiClient(
-            [
-                _FakeResponse(
-                    message=ConversationMessage(
-                        role="assistant",
-                        content=[
-                            TextBlock(text="I will inspect the file."),
-                            ToolUseBlock(
-                                id="toolu_123",
-                                name="read_file",
-                                input={"path": str(sample), "offset": 0, "limit": 2},
-                            ),
-                        ],
-                    ),
-                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
-                ),
-                _FakeResponse(
-                    message=ConversationMessage(
-                        role="assistant",
-                        content=[TextBlock(text="The file contains alpha and beta.")],
-                    ),
-                    usage=UsageSnapshot(input_tokens=8, output_tokens=6),
-                ),
-            ]
-        ),
+        api_client=api_client,
         tool_registry=create_default_tool_registry(),
         permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
         cwd=tmp_path,
@@ -504,6 +505,261 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
     assert isinstance(events[-1], AssistantTurnComplete)
     assert "alpha and beta" in events[-1].message.text
     assert len(engine.messages) == 4
+    first_tool_names = [tool["name"] for tool in api_client.requests[0].tools]
+    second_tool_names = [tool["name"] for tool in api_client.requests[1].tools]
+    assert first_tool_names == sorted(first_tool_names)
+    assert second_tool_names == sorted(second_tool_names)
+    assert set(first_tool_names) == {
+        _command_tool_name(),
+        "ask_user_question",
+        "edit_file",
+        "glob",
+        "grep",
+        "lsp",
+        "read_file",
+        "todo_write",
+        "tool_search",
+        "write_file",
+    }
+    assert second_tool_names == first_tool_names
+
+
+@pytest.mark.asyncio
+async def test_query_engine_uses_starter_tool_subset_after_full_schema_sent(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="I can fix it.")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            )
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={"tool_schema_full_sent": True},
+    )
+
+    events = [event async for event in engine.submit_message("fix src/app.py and run tests")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    tool_names = [tool["name"] for tool in api_client.requests[0].tools]
+    assert tool_names == sorted(tool_names)
+    assert set(tool_names) == {
+        _command_tool_name(),
+        "ask_user_question",
+        "edit_file",
+        "glob",
+        "grep",
+        "lsp",
+        "read_file",
+        "todo_write",
+        "tool_search",
+        "write_file",
+    }
+
+
+@pytest.mark.asyncio
+async def test_query_engine_uses_minimal_subset_for_no_signal_followup(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="I am MyHarness.")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            )
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={"tool_schema_full_sent": True},
+    )
+
+    events = [event async for event in engine.submit_message("너는 누구니?")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    tool_names = [tool["name"] for tool in api_client.requests[0].tools]
+    assert tool_names == sorted(tool_names)
+    assert set(tool_names) == {"ask_user_question", "tool_search"}
+    assert engine.tool_metadata["active_tool_schema_preset"] == "minimal"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_keeps_codex_schema_subset_stable_for_cache_prefix(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="I am MyHarness.")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            )
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="gpt-5.5",
+        system_prompt="system",
+            tool_metadata={
+                "active_profile": "codex",
+                "provider": "openai_codex",
+                "session_id": "session-abc",
+                "tool_schema_full_sent": True,
+            },
+        )
+
+    events = [event async for event in engine.submit_message("너는 누구니?")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    tool_names = [tool["name"] for tool in api_client.requests[0].tools]
+    assert tool_names == sorted(tool_names)
+    assert set(tool_names) == {"ask_user_question", "tool_search"}
+    assert api_client.requests[0].session_id == "session-abc"
+    assert engine.tool_metadata["active_tool_schema_preset"] == "minimal"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_uses_same_tool_schema_preset_across_new_sessions(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    request_text = "fix src/app.py and run tests"
+    captured: list[tuple[str, list[str]]] = []
+
+    for index in range(2):
+        api_client = FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text=f"done {index}")]),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                )
+            ]
+        )
+        engine = QueryEngine(
+            api_client=api_client,
+            tool_registry=create_default_tool_registry(),
+            permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+            cwd=tmp_path,
+            model="claude-test",
+            system_prompt="system",
+        )
+
+        events = [event async for event in engine.submit_message(request_text)]
+
+        assert isinstance(events[-1], AssistantTurnComplete)
+        captured.append((
+            str(engine.tool_metadata["active_tool_schema_preset"]),
+            [tool["name"] for tool in api_client.requests[0].tools],
+        ))
+
+    assert captured[0][0] == "code"
+    assert captured[1][0] == "code"
+    assert captured[0][1] == captured[1][1]
+
+
+@pytest.mark.asyncio
+async def test_query_engine_uses_recent_task_signal_for_short_followup(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="I will proceed.")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            )
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={"tool_schema_full_sent": True},
+    )
+    engine.load_messages(
+        [
+            ConversationMessage.from_user_text("PLEASE IMPLEMENT THIS PLAN: edit files and run tests."),
+            ConversationMessage(role="assistant", content=[TextBlock(text="확인했습니다.")]),
+        ]
+    )
+
+    events = [event async for event in engine.submit_message("진행 고")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    tool_names = [tool["name"] for tool in api_client.requests[0].tools]
+    assert tool_names == sorted(tool_names)
+    assert set(tool_names) == {
+        _command_tool_name(),
+        "ask_user_question",
+        "edit_file",
+        "glob",
+        "grep",
+        "lsp",
+        "read_file",
+        "todo_write",
+        "tool_search",
+        "write_file",
+    }
+    assert engine.tool_metadata["active_tool_schema_preset"] == "code"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_expands_subset_from_recent_tool_search_results(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="Use the discovered tools.")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            )
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={"tool_schema_full_sent": True},
+    )
+    engine.load_messages(
+        [
+            ConversationMessage.from_user_text("Find file editing tools."),
+            ConversationMessage(
+                role="assistant",
+                content=[ToolUseBlock(id="toolu_search", name="tool_search", input={"query": "file editing"})],
+            ),
+            ConversationMessage(
+                role="user",
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="toolu_search",
+                        content="read_file: Read files.\nwrite_file: Write files.\nunknown_tool: Ignore me.",
+                    )
+                ],
+            ),
+        ]
+    )
+
+    events = [event async for event in engine.submit_message("Use the search result.")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    tool_names = [tool["name"] for tool in api_client.requests[0].tools]
+    assert tool_names == sorted(tool_names)
+    assert {"ask_user_question", "read_file", "tool_search", "write_file"}.issubset(set(tool_names))
+    assert engine.tool_metadata["active_tool_schema_preset"] == "code"
 
 
 @pytest.mark.asyncio

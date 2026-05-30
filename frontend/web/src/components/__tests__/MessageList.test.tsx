@@ -743,6 +743,17 @@ describe("MessageList", () => {
                 estimated_cost_usd: 0.003675,
                 cost_supported: true,
               },
+              sessionUsage: {
+                provider: "openai",
+                model: "gpt-5.4",
+                input_tokens: 2200,
+                cached_input_tokens: 900,
+                uncached_input_tokens: 1300,
+                output_tokens: 500,
+                total_tokens: 2700,
+                estimated_cost_usd: 0.010975,
+                cost_supported: true,
+              },
             },
           ],
         }}
@@ -760,8 +771,68 @@ describe("MessageList", () => {
     expect(screen.getByText("이 답변")).toBeTruthy();
     expect(screen.getByText("세션 누적")).toBeTruthy();
     expect(screen.getByText("Cache hit 적용")).toBeTruthy();
+    expect(screen.getAllByText("Uncached").length).toBe(2);
+    expect(screen.getByText("300")).toBeTruthy();
+    expect(screen.getByText("1,300")).toBeTruthy();
     expect(screen.getByText("$0.0037")).toBeTruthy();
     expect(screen.getByText("2,700")).toBeTruthy();
+  });
+
+  it("opens the token and cost popover below the action when there is not enough top space", () => {
+    const rect = (top: number, height: number) => ({
+      x: 100,
+      y: top,
+      width: 24,
+      height,
+      top,
+      left: 100,
+      right: 124,
+      bottom: top + height,
+      toJSON: () => ({}),
+    }) as DOMRect;
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionUsage: null,
+          messages: [
+            {
+              id: "assistant-usage-top",
+              role: "assistant",
+              text: "완료했습니다.",
+              isComplete: true,
+              usage: {
+                provider: "openai",
+                model: "gpt-5.4",
+                input_tokens: 1200,
+                cached_input_tokens: 900,
+                uncached_input_tokens: 300,
+                output_tokens: 200,
+                total_tokens: 1400,
+                estimated_cost_usd: 0.003675,
+                cost_supported: true,
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const usageButton = screen.getByLabelText("토큰/비용 보기");
+    const control = usageButton.closest(".assistant-usage-control") as HTMLElement;
+    const popover = document.querySelector(".assistant-usage-popover") as HTMLElement;
+    vi.spyOn(control, "getBoundingClientRect").mockReturnValue(rect(84, 24));
+    vi.spyOn(popover, "getBoundingClientRect").mockReturnValue(rect(0, 200));
+
+    fireEvent.mouseEnter(usageButton);
+    expect(popover.getAttribute("data-placement")).toBe("below");
+
+    vi.spyOn(control, "getBoundingClientRect").mockReturnValue(rect(360, 24));
+    fireEvent.focus(usageButton);
+    expect(popover.getAttribute("data-placement")).toBe("above");
   });
 
   it("renders workflow directly under the active user turn before the answer", () => {
@@ -1546,6 +1617,40 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-list + .workflow-output-list .workflow-output-preview")).toBeTruthy();
     expect(document.querySelector(".workflow-step .workflow-output-preview")).toBeFalsy();
     expect(document.querySelector(".workflow-card")?.hasAttribute("open")).toBe(true);
+  });
+
+  it("labels errored write previews as failed and does not offer an artifact open button", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          workflowAnchorMessageId: "user-1",
+          messages: [
+            { id: "user-1", role: "user", text: "Mermaid 보고서 만들어줘" },
+          ],
+          workflowEvents: [
+            {
+              id: "workflow-1",
+              toolName: "write_file",
+              title: "write_file",
+              detail: "Mermaid preflight failed; sample.html was not written.",
+              status: "error",
+              level: "child",
+              toolInput: {
+                path: "outputs/sample.html",
+                content: "<html><body><div class=\"mermaid\">gantt</div></body></html>",
+              },
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("작성 실패 - sample.html")).toBeTruthy();
+    expect(screen.queryByText("작성 완료 - sample.html")).toBeNull();
+    expect(screen.queryByRole("button", { name: /sample\.html 미리보기 열기/ })).toBeNull();
   });
 
   it("shows output previews immediately even when workflow steps are still staggered", () => {

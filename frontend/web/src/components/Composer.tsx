@@ -730,6 +730,7 @@ export function Composer() {
         line,
         attachments: [],
         mode,
+        suppressUserTranscript: true,
       });
     } catch (error) {
       dispatch({

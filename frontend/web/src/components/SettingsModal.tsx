@@ -68,7 +68,6 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
   const { state } = useAppState();
   const localBrowserHost = isLocalBrowserHost();
   const serverHostSettingsAccess = canUseServerHostSettings(localBrowserHost, state.adminMode);
-  const adminModeRequiredLabel = "Admin mode에서 변경";
   return (
     <>
       <div className="settings-home-header">
@@ -111,14 +110,18 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
           <strong>파일 저장경로</strong>
           <small>{downloadModeLabel(state.appSettings, serverHostSettingsAccess)}</small>
         </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("shell")} disabled={!serverHostSettingsAccess}>
-          <strong>명령어 셀 (CLI)</strong>
-          <small>{serverHostSettingsAccess ? shellPreferenceLabel(state.appSettings.shell) : adminModeRequiredLabel}</small>
-        </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("yolo")} disabled={!serverHostSettingsAccess}>
-          <strong>Yolo 모드</strong>
-          <small>{serverHostSettingsAccess ? "명령 실행과 파일 작업 권한 자동 승인 여부를 정합니다." : adminModeRequiredLabel}</small>
-        </button>
+        {state.adminMode ? (
+          <>
+            <button type="button" className="settings-row" onClick={() => onSelect("shell")} disabled={!serverHostSettingsAccess}>
+              <strong>명령어 셀 (CLI)</strong>
+              <small>{shellPreferenceLabel(state.appSettings.shell)}</small>
+            </button>
+            <button type="button" className="settings-row" onClick={() => onSelect("yolo")} disabled={!serverHostSettingsAccess}>
+              <strong>Yolo 모드</strong>
+              <small>명령 실행과 파일 작업 권한 자동 승인 여부를 정합니다.</small>
+            </button>
+          </>
+        ) : null}
         <button type="button" className="settings-row" onClick={() => onSelect("stats")}>
           <strong>IP별 사용 통계</strong>
           <small>DAU / 접속횟수 / IP별 집계</small>
@@ -127,18 +130,22 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
           <strong>터미널 세션 재시작</strong>
           <small>{state.sessionId ? "현재 세션 강제 재연결" : "새 세션 시작"}</small>
         </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("workspace")} disabled={!serverHostSettingsAccess}>
-          <strong>작업공간 범위</strong>
-          <small>{serverHostSettingsAccess ? (state.workspaceScope.mode === "ip" ? "IP별 프로젝트/스킬 분리" : "공용 프로젝트/스킬") : adminModeRequiredLabel}</small>
-        </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("learned-skills")} disabled={!serverHostSettingsAccess}>
-          <strong>자동학습 스킬 표시</strong>
-          <small>{serverHostSettingsAccess ? "학습된 스킬을 표시하거나 숨깁니다." : adminModeRequiredLabel}</small>
-        </button>
-        <button type="button" className="settings-row" onClick={() => onSelect("pgpt")} disabled={!serverHostSettingsAccess}>
-          <strong>P-GPT API 키</strong>
-          <small>{serverHostSettingsAccess ? "API 키, 직원번호, 회사번호를 저장합니다." : adminModeRequiredLabel}</small>
-        </button>
+        {state.adminMode ? (
+          <>
+            <button type="button" className="settings-row" onClick={() => onSelect("workspace")} disabled={!serverHostSettingsAccess}>
+              <strong>작업공간 범위</strong>
+              <small>{state.workspaceScope.mode === "ip" ? "IP별 프로젝트/스킬 분리" : "공용 프로젝트/스킬"}</small>
+            </button>
+            <button type="button" className="settings-row" onClick={() => onSelect("learned-skills")} disabled={!serverHostSettingsAccess}>
+              <strong>자동학습 스킬 표시</strong>
+              <small>학습된 스킬을 표시하거나 숨깁니다.</small>
+            </button>
+            <button type="button" className="settings-row" onClick={() => onSelect("pgpt")} disabled={!serverHostSettingsAccess}>
+              <strong>P-GPT API 키</strong>
+              <small>API 키, 직원번호, 회사번호를 저장합니다.</small>
+            </button>
+          </>
+        ) : null}
       </div>
     </>
   );

@@ -1,4 +1,10 @@
-import mermaid from "mermaid";
+import { JSDOM } from "jsdom";
+
+const dom = new JSDOM("<!doctype html><html><body></body></html>");
+globalThis.window = dom.window;
+globalThis.document = dom.window.document;
+
+const mermaid = (await import("mermaid")).default;
 
 mermaid.initialize({
   startOnLoad: false,

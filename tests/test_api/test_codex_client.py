@@ -212,6 +212,7 @@ async def test_codex_client_streams_text(monkeypatch):
         messages=[ConversationMessage.from_user_text("hi")],
         system_prompt="Be helpful.",
         reasoning_effort="high",
+        session_id="session-123",
     )
     events = [event async for event in client.stream_message(request)]
 
@@ -224,6 +225,7 @@ async def test_codex_client_streams_text(monkeypatch):
     assert sink["json"]["instructions"] == "Be helpful."
     assert sink["json"]["reasoning"] == {"effort": "high"}
     assert sink["headers"]["OpenAI-Beta"] == "responses=experimental"
+    assert sink["headers"]["session_id"] == "session-123"
 
 
 @pytest.mark.asyncio

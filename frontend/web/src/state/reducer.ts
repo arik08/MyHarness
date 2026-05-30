@@ -637,6 +637,14 @@ function isDuplicateActiveUserTranscript(state: AppState, text: string) {
   if (last?.role === "user" && canonicalUserTranscriptText(last.text) === canonicalText && !last.kind) {
     return true;
   }
+  if (
+    state.busy
+    && last?.role === "user"
+    && canonicalUserTranscriptText(last.text) === canonicalText
+    && isDeduplicatedUserTranscriptKind(last.kind)
+  ) {
+    return true;
+  }
   if (!state.busy || !state.workflowAnchorMessageId) {
     return false;
   }
@@ -650,6 +658,14 @@ function isDuplicateKindedUserTranscript(state: AppState, text: string, kind: Ch
   }
   const canonicalText = canonicalUserTranscriptText(text);
   const last = state.messages[state.messages.length - 1];
+  if (
+    state.busy
+    && last?.role === "user"
+    && canonicalUserTranscriptText(last.text) === canonicalText
+    && !last.kind
+  ) {
+    return true;
+  }
   return last?.role === "user" && canonicalUserTranscriptText(last.text) === canonicalText && last.kind === kind;
 }
 
@@ -2058,6 +2074,7 @@ function reduceHistoryRestoreEvent(
             createdAt: timestampMsFromRecord(record),
             artifacts: artifacts.length ? artifacts : undefined,
             usage,
+            sessionUsage,
           }));
           currentTurnHasAssistant = true;
         } else {
@@ -2690,13 +2707,20 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const isFinalAnswer = event.has_tool_uses !== true;
     const usage = normalizeUsageCostSummary(event.usage);
     const sessionUsage = normalizeUsageCostSummary(event.session_usage);
+    const nextSessionUsage = sessionUsage || state.sessionUsage;
     if (isFinalAnswer && isDuplicateAssistantCompletion(last, value, artifacts)) {
       return {
         ...state,
         busy: false,
         status: "ready",
         statusText: "준비됨",
-        sessionUsage: sessionUsage || state.sessionUsage,
+        messages: last
+          ? [
+              ...state.messages.slice(0, -1),
+              { ...last, usage: usage || last.usage, sessionUsage: nextSessionUsage },
+            ]
+          : state.messages,
+        sessionUsage: nextSessionUsage,
       };
     }
     const shouldCompleteTodo = isFinalAnswer && artifacts.length > 0 && Boolean(state.todoMarkdown.trim());
@@ -2713,11 +2737,12 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
                 createdAt: Date.now(),
                 artifacts: mergeAssistantArtifacts(last.artifacts, artifacts),
                 usage: usage || last.usage,
+                sessionUsage: nextSessionUsage,
               },
             ]
-          : appendMessage(state.messages, { role: "assistant", text: value, isComplete: true, createdAt: Date.now(), artifacts, usage })
+          : appendMessage(state.messages, { role: "assistant", text: value, isComplete: true, createdAt: Date.now(), artifacts, usage, sessionUsage: nextSessionUsage })
         : last?.role === "assistant"
-          ? [...state.messages.slice(0, -1), { ...last, isComplete: true, createdAt: Date.now(), artifacts: mergeAssistantArtifacts(last.artifacts, artifacts), usage: usage || last.usage }]
+          ? [...state.messages.slice(0, -1), { ...last, isComplete: true, createdAt: Date.now(), artifacts: mergeAssistantArtifacts(last.artifacts, artifacts), usage: usage || last.usage, sessionUsage: nextSessionUsage }]
           : state.messages
       : completePendingAssistantMessage(state.messages, value, true, artifacts);
     return {
@@ -2735,7 +2760,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       status: event.has_tool_uses === true ? "processing" : "ready",
       statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
       artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
-      sessionUsage: sessionUsage || state.sessionUsage,
+      sessionUsage: nextSessionUsage,
       todoMarkdown,
       todoCollapsed: isFinalAnswer && todoMarkdown.trim() ? true : state.todoCollapsed,
     };
