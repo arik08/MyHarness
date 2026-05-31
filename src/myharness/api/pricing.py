@@ -49,13 +49,15 @@ def _coerce_usage(value: Any) -> UsageSnapshot:
     return UsageSnapshot()
 
 
-def _usage_payload_fields(usage: UsageSnapshot) -> dict[str, int]:
+def _usage_payload_fields(usage: UsageSnapshot) -> dict[str, Any]:
+    cache_hit_ratio = usage.cached_input_tokens / usage.input_tokens if usage.input_tokens > 0 else 0.0
     return {
         "input_tokens": usage.input_tokens,
         "cached_input_tokens": usage.cached_input_tokens,
         "uncached_input_tokens": usage.uncached_input_tokens,
         "output_tokens": usage.output_tokens,
         "total_tokens": usage.total_tokens,
+        "cache_hit_ratio": cache_hit_ratio,
     }
 
 
@@ -70,6 +72,10 @@ def estimate_usage_cost(provider: str, model: str, usage: UsageSnapshot) -> dict
         "model": model_name,
         **_usage_payload_fields(usage),
         "estimated_cost_usd": None,
+        "estimated_cache_savings_usd": None,
+        "estimated_uncached_input_cost_usd": None,
+        "estimated_cached_input_cost_usd": None,
+        "estimated_output_cost_usd": None,
         "cost_supported": False,
         "cost_note": "unsupported_provider",
     }
@@ -79,14 +85,21 @@ def estimate_usage_cost(provider: str, model: str, usage: UsageSnapshot) -> dict
     if pricing is None:
         payload["cost_note"] = "unsupported_model"
         return payload
-    cost = (
-        usage.uncached_input_tokens * pricing.input_usd_per_million
-        + usage.cached_input_tokens * pricing.cached_input_usd_per_million
+    uncached_input_cost = usage.uncached_input_tokens * pricing.input_usd_per_million / 1_000_000
+    cached_input_cost = usage.cached_input_tokens * pricing.cached_input_usd_per_million / 1_000_000
+    output_cost = usage.output_tokens * pricing.output_usd_per_million / 1_000_000
+    cost = uncached_input_cost + cached_input_cost + output_cost
+    uncached_baseline_cost = (
+        usage.input_tokens * pricing.input_usd_per_million
         + usage.output_tokens * pricing.output_usd_per_million
     ) / 1_000_000
     payload.update(
         {
             "estimated_cost_usd": cost,
+            "estimated_cache_savings_usd": max(0.0, uncached_baseline_cost - cost),
+            "estimated_uncached_input_cost_usd": uncached_input_cost,
+            "estimated_cached_input_cost_usd": cached_input_cost,
+            "estimated_output_cost_usd": output_cost,
             "cost_supported": True,
             "cost_note": "openai_pricing_estimate",
         }
@@ -118,12 +131,36 @@ def usage_cost_summary(accounting: dict[str, Any], *, provider: str = "", model:
         if all_supported
         else None
     )
+    total_savings = (
+        sum(float(item.get("estimated_cache_savings_usd") or 0.0) for item in supported_breakdown)
+        if all_supported
+        else None
+    )
+    total_uncached_input_cost = (
+        sum(float(item.get("estimated_uncached_input_cost_usd") or 0.0) for item in supported_breakdown)
+        if all_supported
+        else None
+    )
+    total_cached_input_cost = (
+        sum(float(item.get("estimated_cached_input_cost_usd") or 0.0) for item in supported_breakdown)
+        if all_supported
+        else None
+    )
+    total_output_cost = (
+        sum(float(item.get("estimated_output_cost_usd") or 0.0) for item in supported_breakdown)
+        if all_supported
+        else None
+    )
     note = "openai_pricing_estimate" if all_supported else (
         breakdown[0].get("cost_note") if len(breakdown) == 1 else "mixed_or_unsupported_models"
     )
     if not breakdown and not (total_usage.total_tokens or total_usage.cached_input_tokens):
         note = "no_usage"
         total_cost = 0.0
+        total_savings = 0.0
+        total_uncached_input_cost = 0.0
+        total_cached_input_cost = 0.0
+        total_output_cost = 0.0
         all_supported = True
 
     return {
@@ -131,6 +168,10 @@ def usage_cost_summary(accounting: dict[str, Any], *, provider: str = "", model:
         "model": str(model or ""),
         **_usage_payload_fields(total_usage),
         "estimated_cost_usd": total_cost,
+        "estimated_cache_savings_usd": total_savings,
+        "estimated_uncached_input_cost_usd": total_uncached_input_cost,
+        "estimated_cached_input_cost_usd": total_cached_input_cost,
+        "estimated_output_cost_usd": total_output_cost,
         "cost_supported": all_supported,
         "cost_note": note,
         "model_breakdown": breakdown,

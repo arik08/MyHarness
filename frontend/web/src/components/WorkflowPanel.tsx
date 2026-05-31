@@ -610,6 +610,30 @@ function decodedUrlText(value: string) {
   }
 }
 
+const failedWorkflowSourceFaviconOrigins = new Set<string>();
+
+function faviconUrlForSourceUrl(url: string) {
+  try {
+    const origin = new URL(url).origin;
+    return failedWorkflowSourceFaviconOrigins.has(origin) ? "" : `${origin}/favicon.ico`;
+  } catch {
+    return "";
+  }
+}
+
+function sourceOriginForUrl(url: string) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
+function sourceInitialForSource(source: WebInvestigationSource) {
+  const text = (source.domain || source.label || source.url).trim().replace(/^www\./i, "");
+  return Array.from(text)[0]?.toUpperCase() || "";
+}
+
 function sourcePartsForUrl(url: string) {
   try {
     const parsed = new URL(url);
@@ -1616,17 +1640,33 @@ export function WebInvestigationSources({ sources, queries }: { sources: WebInve
         ) : null}
         {sources.length ? (
           <ul className="workflow-web-source-list">
-            {sources.map((source, index) => (
-              <li key={source.url}>
-                <a href={source.url} target="_blank" rel="noreferrer">
-                  <span className="workflow-web-source-index" aria-hidden="true">{index + 1}</span>
-                  <span className="workflow-web-source-copy">
-                    <span className="workflow-web-source-domain">{source.domain}</span>
-                    {source.path ? <span className="workflow-web-source-path">{source.path}</span> : null}
-                  </span>
-                </a>
-              </li>
-            ))}
+            {sources.map((source) => {
+              const faviconUrl = faviconUrlForSourceUrl(source.url);
+              return (
+                <li key={source.url}>
+                  <a href={source.url} target="_blank" rel="noreferrer">
+                    <span className="workflow-web-source-favicon" aria-hidden="true">
+                      {sourceInitialForSource(source)}
+                      {faviconUrl ? (
+                        <img
+                          src={faviconUrl}
+                          alt=""
+                          loading="lazy"
+                          onError={(event) => {
+                            const origin = sourceOriginForUrl(source.url);
+                            if (origin) {
+                              failedWorkflowSourceFaviconOrigins.add(origin);
+                            }
+                            event.currentTarget.remove();
+                          }}
+                        />
+                      ) : null}
+                    </span>
+                    <span className="workflow-web-source-label">{source.label}</span>
+                  </a>
+                </li>
+              );
+            })}
           </ul>
         ) : null}
       </div>

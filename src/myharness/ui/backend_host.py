@@ -1666,9 +1666,13 @@ class ReactBackendHost:
 
     async def _promote_next_queued_line(self) -> None:
         if self._queued_line_queue.empty():
-            return
-        line = self._queued_line_queue.get_nowait()
-        await self._emit(BackendEvent(type="status", message="대기열 질문을 전송합니다."))
+            if self._steering_queue.empty():
+                return
+            line = self._steering_queue.get_nowait()
+            await self._emit(BackendEvent(type="status", message="스티어링 요청을 후속 질문으로 전송합니다."))
+        else:
+            line = self._queued_line_queue.get_nowait()
+            await self._emit(BackendEvent(type="status", message="대기열 질문을 전송합니다."))
         await self._request_queue.put(
             FrontendRequest(type="submit_line", line=line, suppress_user_transcript=True)
         )

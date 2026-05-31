@@ -22,6 +22,7 @@ from myharness.api.openai_client import (
     _convert_messages_to_openai,
     _convert_tools_to_openai,
     _normalize_openai_base_url,
+    _prompt_cache_key_for_request,
     _strip_think_blocks,
     _token_limit_param_for_model,
 )
@@ -289,9 +290,14 @@ class _FakeChunk:
 class _FakeCompletions:
     def __init__(self) -> None:
         self.last_kwargs: dict[str, object] | None = None
+        self.calls: list[dict[str, object]] = []
+        self.fail_first_with: Exception | None = None
 
     async def create(self, **kwargs):
         self.last_kwargs = kwargs
+        self.calls.append(kwargs)
+        if self.fail_first_with is not None and len(self.calls) == 1:
+            raise self.fail_first_with
 
         async def _stream():
             yield _FakeChunk()
@@ -411,11 +417,153 @@ def test_openai_client_init_passes_timeout(monkeypatch):
     assert captured["timeout"] == 45.0
 
 
+def test_openai_completion_params_place_static_tools_before_messages_for_cache_prefix(monkeypatch):
+    monkeypatch.delenv("MYHARNESS_PROMPT_CACHE_RETENTION", raising=False)
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
+    )
+    params = client._completion_params(
+        ApiMessageRequest(
+            model="gpt-5.4",
+            messages=[ConversationMessage.from_user_text("hi")],
+            system_prompt="system",
+            tools=[{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
+        )
+    )
+
+    keys = list(params)
+    assert keys.index("tools") < keys.index("messages")
+    assert params["stream_options"] == {"include_usage": True}
+    assert params["prompt_cache_key"].startswith("myharness:")
+    assert params["prompt_cache_retention"] == "24h"
+
+
+def test_prompt_cache_key_is_stable_for_same_model_system_and_tools():
+    tools = [
+        {"name": "b_tool", "description": "B", "input_schema": {"type": "object"}},
+        {"name": "a_tool", "description": "A", "input_schema": {"type": "object"}},
+    ]
+    request_one = ApiMessageRequest(
+        model="gpt-5.4",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("긴 첫 턴")],
+        tools=tools,
+    )
+    request_two = ApiMessageRequest(
+        model="gpt-5.4",
+        system_prompt="stable system",
+        messages=[
+            ConversationMessage.from_user_text("긴 첫 턴"),
+            ConversationMessage(role="assistant", content=[TextBlock(text="long answer")]),
+            ConversationMessage.from_user_text("짧은 질문"),
+        ],
+        tools=list(reversed(tools)),
+    )
+
+    assert _prompt_cache_key_for_request(request_one) == _prompt_cache_key_for_request(request_two)
+
+
+def test_openai_completion_params_keep_static_tool_prefix_stable_between_new_sessions(monkeypatch):
+    monkeypatch.delenv("MYHARNESS_PROMPT_CACHE_RETENTION", raising=False)
+    tools = [
+        {"name": "b_tool", "description": "B", "input_schema": {"type": "object"}},
+        {"name": "a_tool", "description": "A", "input_schema": {"type": "object"}},
+    ]
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
+    )
+    request_one = ApiMessageRequest(
+        model="gpt-5.4",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("안녕")],
+        tools=tools,
+    )
+    request_two = ApiMessageRequest(
+        model="gpt-5.4",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("넌 누구니")],
+        tools=list(reversed(tools)),
+    )
+
+    params_one = client._completion_params(request_one)
+    params_two = client._completion_params(request_two)
+
+    assert params_one["prompt_cache_key"] == params_two["prompt_cache_key"]
+    assert params_one["prompt_cache_retention"] == params_two["prompt_cache_retention"] == "24h"
+    assert params_one["tools"] == params_two["tools"]
+    assert params_one["messages"][0] == params_two["messages"][0] == {
+        "role": "system",
+        "content": "stable system",
+    }
+    assert params_one["messages"][1] != params_two["messages"][1]
+    assert list(params_one).index("tools") < list(params_one).index("messages")
+
+
 def test_openai_client_retries_sdk_timeout_errors():
     class APITimeoutError(Exception):
         pass
 
     assert OpenAICompatibleClient._is_retryable(APITimeoutError("read timed out")) is True
+
+
+@pytest.mark.asyncio
+async def test_openai_client_falls_back_when_prompt_cache_key_is_unsupported():
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
+    )
+    fake_sdk = _FakeOpenAIClient()
+    fake_sdk.chat.completions.fail_first_with = ValueError("Unknown parameter: prompt_cache_key")
+    client._client = fake_sdk
+
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("hi")],
+        system_prompt="system",
+        tools=[{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert events
+    first, second = fake_sdk.chat.completions.calls
+    assert "prompt_cache_key" in first
+    assert "prompt_cache_key" not in second
+    assert second["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_openai_client_falls_back_when_prompt_cache_retention_is_unsupported():
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
+    )
+    fake_sdk = _FakeOpenAIClient()
+    fake_sdk.chat.completions.fail_first_with = ValueError("Unknown parameter: prompt_cache_retention")
+    client._client = fake_sdk
+
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("hi")],
+        system_prompt="system",
+        tools=[{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert events
+    first, second = fake_sdk.chat.completions.calls
+    assert "prompt_cache_key" in first
+    assert first["prompt_cache_retention"] == "24h"
+    assert "prompt_cache_key" in second
+    assert "prompt_cache_retention" not in second
+    assert second["stream_options"] == {"include_usage": True}
 
 
 @pytest.mark.asyncio
@@ -444,6 +592,8 @@ async def test_pgpt_raw_stream_emits_tool_argument_deltas_and_diagnostics(monkey
         base_url="http://pgpt.posco.com/s0la01-gpt/v1",
         raw_stream=True,
         diagnostics_label="P-GPT",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
     )
     request = ApiMessageRequest(
         model="gpt-5.4",
@@ -457,6 +607,9 @@ async def test_pgpt_raw_stream_emits_tool_argument_deltas_and_diagnostics(monkey
     assert sink["headers"]["Accept"] == "text/event-stream"
     assert sink["headers"]["Cache-Control"] == "no-cache"
     assert sink["json"]["stream"] is True
+    assert sink["json"]["prompt_cache_key"].startswith("myharness:")
+    assert sink["json"]["prompt_cache_retention"] == "24h"
+    assert list(sink["json"]).index("tools") < list(sink["json"]).index("messages")
     text_events = [event for event in events if isinstance(event, ApiTextDeltaEvent)]
     assert [event.text for event in text_events] == ["준비 중\n"]
     deltas = [event for event in events if isinstance(event, ApiToolCallDeltaEvent)]

@@ -457,6 +457,62 @@ async def test_query_engine_applies_internal_steering_without_user_facing_status
 
 
 @pytest.mark.asyncio
+async def test_query_engine_keeps_system_and_tool_prefix_stable_for_short_followups(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+
+    class _CacheProbeInput(BaseModel):
+        pass
+
+    class _CacheProbeTool(BaseTool):
+        name = "cache_probe"
+        description = "Probe tool schema stability."
+        input_model = _CacheProbeInput
+
+        async def execute(self, arguments: _CacheProbeInput, context: ToolExecutionContext) -> ToolResult:
+            del arguments, context
+            return ToolResult(output="ok")
+
+    registry = ToolRegistry()
+    registry.register(_CacheProbeTool())
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="긴 답변")]),
+                usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="짧은 답변 2")]),
+                usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="짧은 답변 3")]),
+                usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="gpt-5.4",
+        system_prompt="stable system",
+    )
+
+    [event async for event in engine.submit_message("긴 첫 턴입니다. " * 200)]
+    [event async for event in engine.submit_message("요약?")]
+    [event async for event in engine.submit_message("한 줄로?")]
+
+    assert [request.system_prompt for request in api_client.requests] == [
+        "stable system",
+        "stable system",
+        "stable system",
+    ]
+    tool_names = [[tool["name"] for tool in request.tools] for request in api_client.requests]
+    assert tool_names == [["cache_probe"], ["cache_probe"], ["cache_probe"]]
+
+
+@pytest.mark.asyncio
 async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     sample = tmp_path / "hello.txt"
@@ -507,25 +563,15 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
     assert len(engine.messages) == 4
     first_tool_names = [tool["name"] for tool in api_client.requests[0].tools]
     second_tool_names = [tool["name"] for tool in api_client.requests[1].tools]
+    assert len(first_tool_names) > 20
     assert first_tool_names == sorted(first_tool_names)
     assert second_tool_names == sorted(second_tool_names)
-    assert set(first_tool_names) == {
-        _command_tool_name(),
-        "ask_user_question",
-        "edit_file",
-        "glob",
-        "grep",
-        "lsp",
-        "read_file",
-        "todo_write",
-        "tool_search",
-        "write_file",
-    }
     assert second_tool_names == first_tool_names
+    assert engine.tool_metadata["active_tool_schema_preset"] == "full"
 
 
 @pytest.mark.asyncio
-async def test_query_engine_uses_starter_tool_subset_after_full_schema_sent(tmp_path: Path, monkeypatch):
+async def test_query_engine_uses_full_schema_baseline_for_code_request(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     api_client = FakeApiClient(
         [
@@ -550,22 +596,12 @@ async def test_query_engine_uses_starter_tool_subset_after_full_schema_sent(tmp_
     assert isinstance(events[-1], AssistantTurnComplete)
     tool_names = [tool["name"] for tool in api_client.requests[0].tools]
     assert tool_names == sorted(tool_names)
-    assert set(tool_names) == {
-        _command_tool_name(),
-        "ask_user_question",
-        "edit_file",
-        "glob",
-        "grep",
-        "lsp",
-        "read_file",
-        "todo_write",
-        "tool_search",
-        "write_file",
-    }
+    assert len(tool_names) > 20
+    assert engine.tool_metadata["active_tool_schema_preset"] == "full"
 
 
 @pytest.mark.asyncio
-async def test_query_engine_uses_minimal_subset_for_no_signal_followup(tmp_path: Path, monkeypatch):
+async def test_query_engine_uses_full_schema_baseline_for_no_signal_followup(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     api_client = FakeApiClient(
         [
@@ -590,12 +626,12 @@ async def test_query_engine_uses_minimal_subset_for_no_signal_followup(tmp_path:
     assert isinstance(events[-1], AssistantTurnComplete)
     tool_names = [tool["name"] for tool in api_client.requests[0].tools]
     assert tool_names == sorted(tool_names)
-    assert set(tool_names) == {"ask_user_question", "tool_search"}
-    assert engine.tool_metadata["active_tool_schema_preset"] == "minimal"
+    assert len(tool_names) > 20
+    assert engine.tool_metadata["active_tool_schema_preset"] == "full"
 
 
 @pytest.mark.asyncio
-async def test_query_engine_keeps_codex_schema_subset_stable_for_cache_prefix(tmp_path: Path, monkeypatch):
+async def test_query_engine_keeps_codex_full_schema_baseline_for_cache_prefix(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     api_client = FakeApiClient(
         [
@@ -612,26 +648,24 @@ async def test_query_engine_keeps_codex_schema_subset_stable_for_cache_prefix(tm
         cwd=tmp_path,
         model="gpt-5.5",
         system_prompt="system",
-            tool_metadata={
-                "active_profile": "codex",
-                "provider": "openai_codex",
-                "session_id": "session-abc",
-                "tool_schema_full_sent": True,
-            },
-        )
+        tool_metadata={
+            "active_profile": "codex",
+            "provider": "openai_codex",
+            "tool_schema_full_sent": True,
+        },
+    )
 
     events = [event async for event in engine.submit_message("너는 누구니?")]
 
     assert isinstance(events[-1], AssistantTurnComplete)
     tool_names = [tool["name"] for tool in api_client.requests[0].tools]
     assert tool_names == sorted(tool_names)
-    assert set(tool_names) == {"ask_user_question", "tool_search"}
-    assert api_client.requests[0].session_id == "session-abc"
-    assert engine.tool_metadata["active_tool_schema_preset"] == "minimal"
+    assert len(tool_names) > 20
+    assert engine.tool_metadata["active_tool_schema_preset"] == "full"
 
 
 @pytest.mark.asyncio
-async def test_query_engine_uses_same_tool_schema_preset_across_new_sessions(tmp_path: Path, monkeypatch):
+async def test_query_engine_uses_same_full_tool_schema_preset_across_new_sessions(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     request_text = "fix src/app.py and run tests"
     captured: list[tuple[str, list[str]]] = []
@@ -662,9 +696,10 @@ async def test_query_engine_uses_same_tool_schema_preset_across_new_sessions(tmp
             [tool["name"] for tool in api_client.requests[0].tools],
         ))
 
-    assert captured[0][0] == "code"
-    assert captured[1][0] == "code"
+    assert captured[0][0] == "full"
+    assert captured[1][0] == "full"
     assert captured[0][1] == captured[1][1]
+    assert len(captured[0][1]) > 20
 
 
 @pytest.mark.asyncio
@@ -699,19 +734,8 @@ async def test_query_engine_uses_recent_task_signal_for_short_followup(tmp_path:
     assert isinstance(events[-1], AssistantTurnComplete)
     tool_names = [tool["name"] for tool in api_client.requests[0].tools]
     assert tool_names == sorted(tool_names)
-    assert set(tool_names) == {
-        _command_tool_name(),
-        "ask_user_question",
-        "edit_file",
-        "glob",
-        "grep",
-        "lsp",
-        "read_file",
-        "todo_write",
-        "tool_search",
-        "write_file",
-    }
-    assert engine.tool_metadata["active_tool_schema_preset"] == "code"
+    assert len(tool_names) > 20
+    assert engine.tool_metadata["active_tool_schema_preset"] == "full"
 
 
 @pytest.mark.asyncio
@@ -759,7 +783,8 @@ async def test_query_engine_expands_subset_from_recent_tool_search_results(tmp_p
     tool_names = [tool["name"] for tool in api_client.requests[0].tools]
     assert tool_names == sorted(tool_names)
     assert {"ask_user_question", "read_file", "tool_search", "write_file"}.issubset(set(tool_names))
-    assert engine.tool_metadata["active_tool_schema_preset"] == "code"
+    assert len(tool_names) > 20
+    assert engine.tool_metadata["active_tool_schema_preset"] == "full"
 
 
 @pytest.mark.asyncio
@@ -864,19 +889,20 @@ async def test_query_engine_emits_compact_progress_before_reply(tmp_path: Path, 
     long_text = "alpha " * 50000
     monkeypatch.setattr("myharness.services.compact.try_session_memory_compaction", lambda *args, **kwargs: None)
     monkeypatch.setattr("myharness.services.compact.should_autocompact", lambda *args, **kwargs: True)
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="<summary>trimmed</summary>")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="after compact")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
     engine = QueryEngine(
-        api_client=FakeApiClient(
-            [
-                _FakeResponse(
-                    message=ConversationMessage(role="assistant", content=[TextBlock(text="<summary>trimmed</summary>")]),
-                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
-                ),
-                _FakeResponse(
-                    message=ConversationMessage(role="assistant", content=[TextBlock(text="after compact")]),
-                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
-                ),
-            ]
-        ),
+        api_client=api_client,
         tool_registry=create_default_tool_registry(),
         permission_checker=PermissionChecker(PermissionSettings()),
         cwd=tmp_path,
@@ -906,6 +932,9 @@ async def test_query_engine_emits_compact_progress_before_reply(tmp_path: Path, 
     assert any(isinstance(event, CompactProgressEvent) and event.phase == "compact_end" for event in events)
     assert engine.messages[0].text.startswith("[Compact boundary marker]")
     assert engine.messages[-1].text == "after compact"
+    assert "force_full_prompt_next" not in engine.tool_metadata
+    assert "force_full_tool_schema_next" not in engine.tool_metadata
+    assert api_client.requests[-1].cache_event == "compaction_rewrite"
 
 
 @pytest.mark.asyncio

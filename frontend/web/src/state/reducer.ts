@@ -406,6 +406,18 @@ function normalizeUsageCostSummary(value: unknown): UsageCostSummary | undefined
   const estimated = raw.estimated_cost_usd === null || raw.estimated_cost_usd === undefined
     ? null
     : Number(raw.estimated_cost_usd);
+  const estimatedSavings = raw.estimated_cache_savings_usd === null || raw.estimated_cache_savings_usd === undefined
+    ? null
+    : Number(raw.estimated_cache_savings_usd);
+  const estimatedUncachedInputCost = raw.estimated_uncached_input_cost_usd === null || raw.estimated_uncached_input_cost_usd === undefined
+    ? null
+    : Number(raw.estimated_uncached_input_cost_usd);
+  const estimatedCachedInputCost = raw.estimated_cached_input_cost_usd === null || raw.estimated_cached_input_cost_usd === undefined
+    ? null
+    : Number(raw.estimated_cached_input_cost_usd);
+  const estimatedOutputCost = raw.estimated_output_cost_usd === null || raw.estimated_output_cost_usd === undefined
+    ? null
+    : Number(raw.estimated_output_cost_usd);
   const breakdown = Array.isArray(raw.model_breakdown)
     ? raw.model_breakdown
         .map((item) => normalizeUsageCostSummary(item))
@@ -419,7 +431,12 @@ function normalizeUsageCostSummary(value: unknown): UsageCostSummary | undefined
     uncached_input_tokens: finiteUsageNumber(raw.uncached_input_tokens) || Math.max(0, inputTokens - cachedInputTokens),
     output_tokens: outputTokens,
     total_tokens: totalTokens,
+    cache_hit_ratio: Math.max(0, Math.min(1, finiteUsageNumber(raw.cache_hit_ratio))),
     estimated_cost_usd: estimated !== null && Number.isFinite(estimated) ? estimated : null,
+    estimated_cache_savings_usd: estimatedSavings !== null && Number.isFinite(estimatedSavings) ? estimatedSavings : null,
+    estimated_uncached_input_cost_usd: estimatedUncachedInputCost !== null && Number.isFinite(estimatedUncachedInputCost) ? estimatedUncachedInputCost : null,
+    estimated_cached_input_cost_usd: estimatedCachedInputCost !== null && Number.isFinite(estimatedCachedInputCost) ? estimatedCachedInputCost : null,
+    estimated_output_cost_usd: estimatedOutputCost !== null && Number.isFinite(estimatedOutputCost) ? estimatedOutputCost : null,
     cost_supported: raw.cost_supported === true,
     cost_note: typeof raw.cost_note === "string" ? raw.cost_note : undefined,
     model_breakdown: breakdown?.length ? breakdown : undefined,
@@ -469,6 +486,22 @@ function workflowEventArtifactCandidates(events: WorkflowEvent[]) {
     })
     .map((event) => workflowOutputArtifactPath(event.toolInput))
     .filter((path) => path && isKnownArtifactPath(path)));
+}
+
+function shouldRefreshArtifactsAfterToolCompletion(
+  toolName: string,
+  isError: boolean,
+  input?: Record<string, unknown> | null,
+) {
+  if (isError) {
+    return false;
+  }
+  const lowerToolName = toolName.toLowerCase();
+  if (lowerToolName !== "write_file" && lowerToolName !== "write_long_report") {
+    return false;
+  }
+  const path = workflowOutputArtifactPath(input);
+  return Boolean(path && isKnownArtifactPath(path));
 }
 
 const staleSessionMessage = "세션 연결이 끊겼습니다. 페이지를 새로고침하거나 새 세션을 시작한 뒤 다시 시도해주세요.";
@@ -2490,6 +2523,9 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
       workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
       status: "processing",
       statusText: followupCopy.statusText,
+      artifactRefreshKey: shouldRefreshArtifactsAfterToolCompletion(toolName, isError, lastToolInput)
+        ? state.artifactRefreshKey + 1
+        : state.artifactRefreshKey,
     };
   }
 
@@ -2711,9 +2747,9 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     if (isFinalAnswer && isDuplicateAssistantCompletion(last, value, artifacts)) {
       return {
         ...state,
-        busy: false,
-        status: "ready",
-        statusText: "준비됨",
+        busy: true,
+        status: "processing",
+        statusText: "마무리 중",
         messages: last
           ? [
               ...state.messages.slice(0, -1),
@@ -2747,7 +2783,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       : completePendingAssistantMessage(state.messages, value, true, artifacts);
     return {
       ...state,
-      busy: event.has_tool_uses === true,
+      busy: true,
       messages,
       workflowEvents: isFinalAnswer
         ? finishFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())
@@ -2757,8 +2793,8 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
               value,
             )
           : removeWorkflowEventsByRole(state.workflowEvents, "final"),
-      status: event.has_tool_uses === true ? "processing" : "ready",
-      statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "준비됨",
+      status: "processing",
+      statusText: event.has_tool_uses === true ? "도구 실행 준비 중" : "마무리 중",
       artifactRefreshKey: isFinalAnswer ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
       sessionUsage: nextSessionUsage,
       todoMarkdown,

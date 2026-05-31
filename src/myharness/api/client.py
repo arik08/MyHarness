@@ -46,7 +46,7 @@ class ApiMessageRequest:
     max_tokens: int = 4096
     tools: list[dict[str, Any]] = field(default_factory=list)
     reasoning_effort: str | None = None
-    session_id: str | None = None
+    cache_event: str | None = None
 
 
 @dataclass(frozen=True)

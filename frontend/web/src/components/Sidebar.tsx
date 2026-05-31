@@ -631,17 +631,24 @@ export function Sidebar() {
   const conversationTitle = currentConversationTitle(state);
   const activeHistoryDescription = currentConversationHistoryTitle(state);
   const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
-  const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !activeHistoryDeleted && !hasActiveHistoryItem && (state.pendingFreshChat || state.busy || activeHistoryDescription)
+  const shouldRenderActiveHistory = Boolean(
+    state.pendingFreshChat
+    || state.busy
+    || activeHistoryDescription
+    || state.activeHistoryId,
+  );
+  const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !activeHistoryDeleted && !hasActiveHistoryItem && shouldRenderActiveHistory
     ? [
         {
           value: activeHistoryValue,
           label: "진행 중",
-          description: activeHistoryDescription || (state.pendingFreshChat ? "새 대화" : "진행 중인 대화"),
+          description: activeHistoryDescription || (state.busy ? "진행 중인 대화" : "새 대화"),
           workspace: state.workspacePath || state.workspaceName
             ? { name: state.workspaceName, path: state.workspacePath }
             : null,
           live: state.pendingFreshChat ? true : undefined,
           liveSessionId: state.pendingFreshChat ? activeHistoryValue : undefined,
+          pending: !activeHistoryDescription && !state.busy,
         },
         ...visibleHistory,
       ]
@@ -802,7 +809,7 @@ export function Sidebar() {
               const isBusy = isActiveBusy || isPendingRestore || (item.live === true && item.busy === true);
               const isDeleting = deletingHistoryId === item.value;
               const actionsExpanded = expandedHistoryActionId === item.value;
-              const canPin = !isLiveOnlyHistoryItem(item);
+              const canPin = !item.pending && !isLiveOnlyHistoryItem(item);
               const canDelete = !isCurrentLiveHistoryItem(item, state.sessionId);
               const isHidden = isHistoryItemHidden(item, state.hiddenHistoryKeys, state.workspacePath, state.workspaceName);
               const showActions = !isBusy && !isDeleting && (canDelete || canPin);

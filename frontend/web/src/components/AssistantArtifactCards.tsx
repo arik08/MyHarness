@@ -18,6 +18,7 @@ import {
   shouldResolveArtifactCandidate,
 } from "../utils/artifacts";
 import { MarkdownMessage } from "./MarkdownMessage";
+import type { SourceEvidenceByUrl } from "./MarkdownMessage";
 import { StreamingAssistantMessage } from "./StreamingAssistantMessage";
 
 type ResolvedArtifact = ArtifactSummary & {
@@ -257,11 +258,13 @@ export function AssistantArtifactContent({
   settings,
   active,
   onVisibleTextChange,
+  sourceEvidenceByUrl,
 }: {
   message: ChatMessage;
   settings: AppSettings;
   active: boolean;
   onVisibleTextChange?: () => void;
+  sourceEvidenceByUrl?: SourceEvidenceByUrl;
 }) {
   const { artifactBySourcePath, artifacts, loadingPath, openArtifact } = useMessageArtifacts(message);
   const hasStructuredArtifacts = Boolean(message.artifacts?.length);
@@ -318,6 +321,7 @@ export function AssistantArtifactContent({
           settings={settings}
           active={active}
           onVisibleTextChange={onVisibleTextChange}
+          sourceEvidenceByUrl={sourceEvidenceByUrl}
         />
         {resolvedReferences.length && hasMermaidFence(message.text) ? (
           <div className="artifact-cards" aria-label="답변 산출물">
@@ -342,7 +346,7 @@ export function AssistantArtifactContent({
       {parts.map((part, index) => (
         <Fragment key={part.type === "artifact" ? `${part.artifact.path}-${index}` : `markdown-${index}`}>
           {part.type === "markdown" ? (
-            <MarkdownMessage text={part.text} />
+            <MarkdownMessage text={part.text} sourceEvidenceByUrl={sourceEvidenceByUrl} />
           ) : (
             <div className="assistant-artifact-inline" aria-label="답변 산출물">
               <ArtifactCard artifact={part.artifact} loadingPath={loadingPath} onOpen={(artifact) => void openArtifact(artifact)} />

@@ -9,9 +9,11 @@ Faithfully translated from Claude Code's compaction system:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
@@ -52,19 +54,21 @@ TIME_BASED_MC_CLEARED_MESSAGE = "[Old tool result content cleared]"
 # Auto-compact thresholds
 AUTOCOMPACT_BUFFER_TOKENS = 13_000
 AUTOCOMPACT_CONTEXT_RATIO = 0.75
-MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
+MAX_OUTPUT_TOKENS_FOR_SUMMARY = 4_000
 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
 COMPACT_TIMEOUT_SECONDS = 25
 MAX_COMPACT_STREAMING_RETRIES = 2
 MAX_PTL_RETRIES = 3
-SESSION_MEMORY_KEEP_RECENT = 12
+SESSION_MEMORY_KEEP_RECENT = 6
 SESSION_MEMORY_MAX_LINES = 48
 SESSION_MEMORY_MAX_CHARS = 4_000
+SESSION_MEMORY_TAIL_TOKEN_BUDGET = 6_000
 CONTEXT_COLLAPSE_TEXT_CHAR_LIMIT = 2_400
 CONTEXT_COLLAPSE_HEAD_CHARS = 900
 CONTEXT_COLLAPSE_TAIL_CHARS = 500
 MAX_COMPACT_ATTACHMENTS = 6
 MAX_DISCOVERED_TOOLS = 12
+MAX_ARCHIVE_REFS_IN_CONTEXT = 8
 
 # Microcompact defaults
 DEFAULT_KEEP_RECENT = 5
@@ -383,6 +387,110 @@ def _extract_discovered_tools(messages: list[ConversationMessage]) -> list[str]:
     return discovered
 
 
+def _is_archivable_user_message(message: ConversationMessage) -> bool:
+    if message.role != "user" or any(isinstance(block, ToolResultBlock) for block in message.content):
+        return False
+    text = message.text.strip()
+    if not text:
+        return False
+    synthetic_prefixes = (
+        "[Compact boundary marker]",
+        "[Compact attachment:",
+        "[conversation summary]",
+        "This session is being continued",
+        "Session memory summary from earlier",
+    )
+    return not text.startswith(synthetic_prefixes)
+
+
+def _archive_short_hint(text: str) -> str:
+    clean = " ".join(text.split())
+    if len(clean) <= 180:
+        return clean
+    return clean[:177].rstrip() + "..."
+
+
+def _archive_entry_id(turn_index: int, text: str) -> str:
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+    return f"user-{turn_index:04d}-{digest}"
+
+
+def archive_user_inputs(
+    messages: list[ConversationMessage],
+    metadata: dict[str, Any] | None,
+    *,
+    start_index: int = 0,
+) -> list[dict[str, Any]]:
+    """Persist user-authored text so omitted summary details can be recovered later."""
+
+    if metadata is None:
+        return []
+    existing = metadata.get("user_input_archive")
+    archive = [dict(item) for item in existing if isinstance(item, dict)] if isinstance(existing, list) else []
+    seen_texts = {str(item.get("text") or "") for item in archive if str(item.get("text") or "").strip()}
+    seen_ids = {str(item.get("id") or "") for item in archive if str(item.get("id") or "").strip()}
+    now_ms = int(time.time() * 1000)
+    added: list[dict[str, Any]] = []
+    for offset, message in enumerate(messages):
+        if not _is_archivable_user_message(message):
+            continue
+        text = message.text.strip()
+        if text in seen_texts:
+            continue
+        turn_index = start_index + offset
+        entry_id = _archive_entry_id(turn_index, text)
+        suffix = 1
+        while entry_id in seen_ids:
+            suffix += 1
+            entry_id = f"{_archive_entry_id(turn_index, text)}-{suffix}"
+        entry = {
+            "id": entry_id,
+            "turn_index": turn_index,
+            "timestamp": now_ms,
+            "text": text,
+            "short_hint": _archive_short_hint(text),
+        }
+        archive.append(entry)
+        added.append(entry)
+        seen_texts.add(text)
+        seen_ids.add(entry_id)
+    metadata["user_input_archive"] = [
+        item
+        for item in archive
+        if str(item.get("id") or "").strip() and str(item.get("text") or "").strip()
+    ]
+    return added
+
+
+def _archive_refs_from_metadata(metadata: dict[str, Any] | None, *, limit: int = MAX_ARCHIVE_REFS_IN_CONTEXT) -> list[str]:
+    if metadata is None:
+        return []
+    archive = metadata.get("user_input_archive")
+    if not isinstance(archive, list):
+        return []
+    refs: list[str] = []
+    for item in archive[-limit:]:
+        if not isinstance(item, dict):
+            continue
+        entry_id = str(item.get("id") or "").strip()
+        hint = str(item.get("short_hint") or "").strip()
+        if entry_id and hint:
+            refs.append(f"Archived user input: {entry_id} - {hint}")
+    return refs
+
+
+def _build_archive_reference_message(metadata: dict[str, Any] | None) -> ConversationMessage | None:
+    refs = _archive_refs_from_metadata(metadata)
+    if not refs:
+        return None
+    text = (
+        "Recoverable user input archive refs. Do not copy long archived text into the compact summary unless it is "
+        "currently essential; cite the ID so it can be recovered with conversation_history_search if needed.\n"
+        + "\n".join(f"- {ref}" for ref in refs)
+    )
+    return ConversationMessage.from_user_text(text)
+
+
 def _create_attachment(kind: str, title: str, lines: list[str], *, metadata: dict[str, Any] | None = None) -> CompactAttachment | None:
     filtered = [line.rstrip() for line in lines if line and line.strip()]
     if not filtered:
@@ -484,6 +592,33 @@ def _split_preserving_tool_pairs(
     return older, newer
 
 
+def _split_preserving_tail_budget(
+    messages: list[ConversationMessage],
+    *,
+    preserve_recent: int,
+    tail_token_budget: int,
+) -> tuple[list[ConversationMessage], list[ConversationMessage]]:
+    """Split recent context by count, then trim it to a token budget."""
+
+    older, newer = _split_preserving_tool_pairs(messages, preserve_recent=preserve_recent)
+    if tail_token_budget <= 0:
+        return older, newer
+    split_index = len(older)
+    while len(newer) > 1 and estimate_message_tokens(newer) > tail_token_budget:
+        candidate_index = split_index + 1
+        while (
+            candidate_index < len(messages)
+            and _boundary_crosses_tool_pair(messages[candidate_index - 1], messages[candidate_index])
+        ):
+            candidate_index += 1
+        if candidate_index >= len(messages):
+            break
+        split_index = candidate_index
+        older = list(messages[:split_index])
+        newer = sanitize_conversation_messages(list(messages[split_index:]))
+    return older, newer
+
+
 def _sanitize_compaction_segments(result: CompactionResult) -> None:
     """Normalize summary+preserved messages into a provider-safe sequence."""
 
@@ -542,6 +677,21 @@ def create_recent_files_attachment_if_needed(
             lines.append(f"  Preview: {preview}")
         entries.append({"path": path, "span": span, "preview": preview, "timestamp": timestamp})
     return _create_attachment("recent_files", "Recently read files", lines, metadata={"entries": entries})
+
+
+def create_user_input_archive_attachment_if_needed(metadata: dict[str, Any]) -> CompactAttachment | None:
+    refs = _archive_refs_from_metadata(metadata)
+    if not refs:
+        return None
+    return _create_attachment(
+        "user_input_archive",
+        "Recoverable user input archive",
+        [
+            "Older user-authored inputs are archived verbatim. Use conversation_history_search by ID if an omitted "
+            "past user question becomes relevant again.",
+        ] + [f"- {ref}" for ref in refs],
+        metadata={"refs": refs},
+    )
 
 
 def create_task_focus_attachment_if_needed(
@@ -728,6 +878,7 @@ def _build_compact_attachments(
     attachment_paths = _extract_attachment_paths(messages)
     builders = [
         create_task_focus_attachment_if_needed(metadata),
+        create_user_input_archive_attachment_if_needed(metadata),
         create_recent_verified_work_attachment_if_needed(metadata.get("recent_verified_work")),
         _create_recent_attachments_attachment_if_needed(attachment_paths),
         create_recent_files_attachment_if_needed(metadata.get("read_file_state")),
@@ -866,8 +1017,17 @@ def _summarize_message_for_memory(message: ConversationMessage) -> str:
     return f"{message.role}: [non-text content]"
 
 
-def _build_session_memory_message(messages: list[ConversationMessage]) -> ConversationMessage | None:
-    lines: list[str] = []
+def _build_session_memory_message(
+    messages: list[ConversationMessage],
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> ConversationMessage | None:
+    lines: list[str] = ["Session handoff from earlier in this conversation:"]
+    archive_refs = _archive_refs_from_metadata(metadata, limit=4)
+    if archive_refs:
+        lines.append("Recoverable user inputs:")
+        lines.extend(f"- {ref}" for ref in archive_refs)
+        lines.append("Condensed conversation state:")
     total_chars = 0
     for message in messages:
         line = _summarize_message_for_memory(message)
@@ -882,23 +1042,27 @@ def _build_session_memory_message(messages: list[ConversationMessage]) -> Conver
     if not lines:
         return None
     body = "\n".join(lines)
-    return ConversationMessage.from_user_text(
-        "Session memory summary from earlier in this conversation:\n" + body
-    )
+    return ConversationMessage.from_user_text(body)
 
 
 def try_session_memory_compaction(
     messages: list[ConversationMessage],
     *,
     preserve_recent: int = SESSION_MEMORY_KEEP_RECENT,
+    tail_token_budget: int = SESSION_MEMORY_TAIL_TOKEN_BUDGET,
     trigger: CompactTrigger = "auto",
     metadata: dict[str, Any] | None = None,
 ) -> CompactionResult | None:
     """Cheap deterministic compaction for long chats before full LLM compaction."""
     if len(messages) <= preserve_recent + 4:
         return None
-    older, newer = _split_preserving_tool_pairs(messages, preserve_recent=preserve_recent)
-    summary_message = _build_session_memory_message(older)
+    older, newer = _split_preserving_tail_budget(
+        messages,
+        preserve_recent=preserve_recent,
+        tail_token_budget=tail_token_budget,
+    )
+    archive_user_inputs(older, metadata)
+    summary_message = _build_session_memory_message(older, metadata=metadata)
     if summary_message is None:
         return None
     provisional = [summary_message, *newer]
@@ -913,8 +1077,14 @@ def try_session_memory_compaction(
         "pre_compact_message_count": len(messages),
         "pre_compact_token_count": estimate_message_tokens(messages),
         "preserve_recent": preserve_recent,
+        "tail_token_budget": tail_token_budget,
         "used_session_memory": True,
         "pre_compact_discovered_tools": _extract_discovered_tools(older),
+        "archived_user_input_count": len(
+            metadata.get("user_input_archive", [])
+            if isinstance(metadata, dict) and isinstance(metadata.get("user_input_archive"), list)
+            else []
+        ),
         "attachments": _extract_attachment_paths(older),
     }
     result = CompactionResult(
@@ -945,26 +1115,28 @@ CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
 """
 
 BASE_COMPACT_PROMPT = """\
-Your task is to create a detailed summary of the conversation so far. This summary will replace the earlier messages, so it must capture all important information.
+Your task is to create a compact handoff for the conversation so far. This handoff will replace earlier messages, so it must preserve what is needed to continue the task without copying recoverable bulk content.
 
 First, draft your analysis inside <analysis> tags. Walk through the conversation chronologically and extract:
-- Every user request and intent (explicit and implicit)
-- The approach taken and technical decisions made
-- Specific code, files, and configurations discussed (with paths and line numbers where available)
-- All errors encountered and how they were fixed
-- Any user feedback or corrections
+- Current user goal, constraints, preferences, and acceptance criteria
+- Important user-provided content that must remain verbatim
+- Recoverable user-input archive IDs for older details that may be needed later
+- Specific files, symbols, commands, tests, and error identifiers needed to resume
+- Current state, unresolved tasks, and the next action
 
 Then, produce a structured summary inside <summary> tags with these sections:
 
-1. **Primary Request and Intent**: All user requests in full detail, including nuances and constraints.
-2. **Key Technical Concepts**: Technologies, frameworks, patterns, and conventions discussed.
-3. **Files and Code Sections**: Every file examined or modified, with specific code snippets and line numbers.
-4. **Errors and Fixes**: Every error encountered, its cause, and how it was resolved.
-5. **Problem Solving**: Problems solved and approaches that worked vs. didn't work.
-6. **All User Messages**: Non-tool-result user messages (preserve exact wording for context).
-7. **Pending Tasks**: Explicitly requested work that hasn't been completed yet.
-8. **Current Work**: Detailed description of the last task being worked on before compaction.
-9. **Optional Next Step**: The single most logical next step, directly aligned with the user's recent request.
+1. **Current Goal**: The active request and success criteria.
+2. **Important User Inputs**: Preserve important user-authored text verbatim when it affects future answers or implementation. Unimportant or stale user text may be summarized.
+3. **Recoverable User Inputs**: For older user text that may matter later but is too bulky for this handoff, include `Archived user input: <id> - <short_hint>` instead of copying the full text.
+4. **State and Evidence Pointers**: Files, symbols, commands, tests, pass/fail results, and short error identifiers. Use pointers instead of copying long file contents, terminal logs, raw tool output, or resolved intermediate traces.
+5. **Pending Tasks and Next Step**: What remains and exactly what to do next.
+
+Rules:
+- User-authored content has priority over assistant/tool output. If it is important, preserve it verbatim.
+- Do not copy long raw tool output, terminal logs, or file contents unless there is no recoverable pointer and the exact text is essential.
+- If a future answer may need older user text that is not included verbatim, include the archive ID so it can be recovered with conversation_history_search.
+- Keep the handoff concise. Do not produce a full chronological transcript.
 """
 
 NO_TOOLS_TRAILER = """
@@ -1144,11 +1316,20 @@ async def compact_conversation(
     log.info("Compacting conversation: %d messages, ~%d tokens", len(messages), pre_compact_tokens)
 
     # Step 2: split into older (summarize) and newer (preserve)
-    older, newer = _split_preserving_tool_pairs(messages, preserve_recent=preserve_recent)
+    older, newer = _split_preserving_tail_budget(
+        messages,
+        preserve_recent=preserve_recent,
+        tail_token_budget=SESSION_MEMORY_TAIL_TOKEN_BUDGET,
+    )
+    archive_user_inputs(older, carryover_metadata)
 
     # Step 3: build compact request — send older messages + compact prompt
     compact_prompt = get_compact_prompt(custom_instructions)
-    compact_messages = list(older) + [ConversationMessage.from_user_text(compact_prompt)]
+    archive_refs_message = _build_archive_reference_message(carryover_metadata)
+    compact_messages = list(older)
+    if archive_refs_message is not None:
+        compact_messages.append(archive_refs_message)
+    compact_messages.append(ConversationMessage.from_user_text(compact_prompt))
     attachment_paths = _extract_attachment_paths(older)
     discovered_tools = _extract_discovered_tools(older)
     hook_payload = {
@@ -1387,6 +1568,11 @@ async def compact_conversation(
         "preserve_recent": preserve_recent,
         "tokens_freed_by_microcompact": tokens_freed,
         "pre_compact_discovered_tools": discovered_tools,
+        "archived_user_input_count": len(
+            carryover_metadata.get("user_input_archive", [])
+            if isinstance(carryover_metadata, dict) and isinstance(carryover_metadata.get("user_input_archive"), list)
+            else []
+        ),
         "used_head_truncation_retry": ptl_retries > 0,
         "used_context_collapse": _metadata_has_checkpoint(carryover_metadata, "query_context_collapse_end"),
         "used_session_memory": False,
@@ -1564,7 +1750,7 @@ async def auto_compact_if_needed(
 
     session_memory = try_session_memory_compaction(
         messages,
-        preserve_recent=max(preserve_recent, SESSION_MEMORY_KEEP_RECENT),
+        preserve_recent=preserve_recent,
         trigger=trigger,
         metadata=carryover_metadata,
     )
@@ -1704,6 +1890,7 @@ __all__ = [
     "COMPACTABLE_TOOLS",
     "TIME_BASED_MC_CLEARED_MESSAGE",
     "auto_compact_if_needed",
+    "archive_user_inputs",
     "build_post_compact_messages",
     "build_compact_summary_message",
     "compact_conversation",

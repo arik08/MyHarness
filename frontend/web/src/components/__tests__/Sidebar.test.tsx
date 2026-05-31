@@ -1102,6 +1102,37 @@ describe("Sidebar", () => {
     expect(restartSession).not.toHaveBeenCalled();
   });
 
+  it("shows the initial active empty chat as a history row", async () => {
+    const { container } = render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "backend-process",
+          activeHistoryId: "saved-initial",
+          clientId: "client-1",
+          busy: false,
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+        }}
+      >
+        <Sidebar />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("새 대화");
+    expect(screen.getByRole("button", { name: "새 대화 작업 더보기" })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "새 대화 작업 더보기" }));
+    await userEvent.click(screen.getByRole("button", { name: "새 대화 삭제" }));
+
+    await waitFor(() => expect(hideHistory).toHaveBeenCalledWith("saved-initial", "C:/demo", "Default"));
+    expect(deleteHistory).not.toHaveBeenCalled();
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(screen.getByTestId("active-history").textContent).toBe("");
+    expect(container.querySelector(".history-item.active .history-title")?.textContent || "").not.toBe("새 대화");
+  });
+
   it("hides an immediately saved new chat without deleting it in normal mode", async () => {
     const { container } = render(
       <AppStateProvider

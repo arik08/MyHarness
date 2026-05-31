@@ -15,8 +15,10 @@ from myharness.api.client import (
 )
 from myharness.api.codex_client import (
     CodexApiClient,
+    _codex_cache_session_id,
     _convert_messages_to_codex,
     _format_codex_stream_error,
+    _prompt_cache_key_for_request,
     _resolve_codex_url,
 )
 from myharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
@@ -35,6 +37,7 @@ class _FakeStreamResponse:
         self._lines = lines or []
         self._body = body.encode("utf-8")
         self._error_after_lines = error_after_lines
+        self.request = httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses")
 
     async def __aenter__(self) -> "_FakeStreamResponse":
         return self
@@ -91,6 +94,7 @@ class _SequenceAsyncClient:
         self._sink["url"] = url
         self._sink["headers"] = headers
         self._sink["json"] = json
+        self._sink.setdefault("calls", []).append(json)
         return self._responses.pop(0)
 
 
@@ -162,6 +166,84 @@ def test_convert_multimodal_user_message_to_codex():
     }]
 
 
+def test_convert_messages_to_codex_prepends_developer_instructions_for_cache_prefix():
+    converted = _convert_messages_to_codex(
+        [ConversationMessage.from_user_text("hi")],
+        developer_instructions="Stable instructions",
+    )
+
+    assert converted[0] == {
+        "role": "developer",
+        "content": [{"type": "input_text", "text": "Stable instructions"}],
+    }
+    assert converted[1] == {
+        "role": "user",
+        "content": [{"type": "input_text", "text": "hi"}],
+    }
+
+
+def test_codex_prompt_cache_key_is_stable_for_same_active_tools_and_changes_for_tool_changes():
+    tools = [
+        {"name": "b_tool", "description": "B", "input_schema": {"type": "object"}},
+        {"name": "a_tool", "description": "A", "input_schema": {"type": "object"}},
+    ]
+    request_one = ApiMessageRequest(
+        model="gpt-5.5",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("hi")],
+        tools=tools,
+    )
+    request_two = ApiMessageRequest(
+        model="gpt-5.5",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("hi again")],
+        tools=list(reversed(tools)),
+    )
+    request_three = ApiMessageRequest(
+        model="gpt-5.5",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("hi")],
+        tools=tools[:1],
+    )
+
+    assert _prompt_cache_key_for_request(request_one) == _prompt_cache_key_for_request(request_two)
+    assert _prompt_cache_key_for_request(request_one) != _prompt_cache_key_for_request(request_three)
+
+
+def test_codex_request_body_keeps_active_tool_prefix_stable_between_new_sessions():
+    tools = [
+        {"name": "b_tool", "description": "B", "input_schema": {"type": "object"}},
+        {"name": "a_tool", "description": "A", "input_schema": {"type": "object"}},
+    ]
+    client = CodexApiClient(_fake_codex_token())
+    request_one = ApiMessageRequest(
+        model="gpt-5.5",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("안녕")],
+        tools=tools,
+    )
+    request_two = ApiMessageRequest(
+        model="gpt-5.5",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("넌 누구니")],
+        tools=list(reversed(tools)),
+    )
+
+    body_one = client._request_body(request_one, request_one.messages)
+    body_two = client._request_body(request_two, request_two.messages)
+
+    assert body_one["prompt_cache_key"] == body_two["prompt_cache_key"]
+    assert "prompt_cache_retention" not in body_one
+    assert "prompt_cache_retention" not in body_two
+    assert body_one["instructions"] == body_two["instructions"] == "You are MyHarness."
+    assert body_one["tools"] == body_two["tools"]
+    assert body_one["input"][0] == body_two["input"][0] == {
+        "role": "developer",
+        "content": [{"type": "input_text", "text": "stable system"}],
+    }
+    assert body_one["input"][1] != body_two["input"][1]
+
+
 def test_resolve_codex_url_ignores_unrelated_base_url():
     assert _resolve_codex_url("https://api.moonshot.cn/anthropic") == "https://chatgpt.com/backend-api/codex/responses"
 
@@ -212,7 +294,7 @@ async def test_codex_client_streams_text(monkeypatch):
         messages=[ConversationMessage.from_user_text("hi")],
         system_prompt="Be helpful.",
         reasoning_effort="high",
-        session_id="session-123",
+        tools=[{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
     )
     events = [event async for event in client.stream_message(request)]
 
@@ -222,10 +304,19 @@ async def test_codex_client_streams_text(monkeypatch):
     assert complete.usage.input_tokens == 12
     assert complete.usage.output_tokens == 3
     assert sink["url"].endswith("/codex/responses")
-    assert sink["json"]["instructions"] == "Be helpful."
+    assert sink["json"]["instructions"] == "You are MyHarness."
+    assert sink["json"]["input"][0] == {
+        "role": "developer",
+        "content": [{"type": "input_text", "text": "Be helpful."}],
+    }
     assert sink["json"]["reasoning"] == {"effort": "high"}
+    assert sink["json"]["prompt_cache_key"] == _prompt_cache_key_for_request(request)
+    assert "prompt_cache_retention" not in sink["json"]
+    assert list(sink["json"]).index("tools") < list(sink["json"]).index("input")
+    assert sink["json"]["tool_choice"] == "auto"
+    assert sink["json"]["parallel_tool_calls"] is True
     assert sink["headers"]["OpenAI-Beta"] == "responses=experimental"
-    assert sink["headers"]["session_id"] == "session-123"
+    assert sink["headers"]["session_id"] == _codex_cache_session_id(_prompt_cache_key_for_request(request))
 
 
 @pytest.mark.asyncio
@@ -259,10 +350,57 @@ async def test_codex_client_drops_dangling_tool_call_before_provider_request(mon
     events = [event async for event in client.stream_message(request)]
 
     assert events
+    assert sink["json"]["instructions"] == "You are MyHarness."
     assert sink["json"]["input"] == [
+        {"role": "developer", "content": [{"type": "input_text", "text": "You are MyHarness."}]},
         {"role": "user", "content": [{"type": "input_text", "text": "Run a tool"}]},
         {"role": "user", "content": [{"type": "input_text", "text": "New prompt"}]},
     ]
+    assert "tools" not in sink["json"]
+    assert "tool_choice" not in sink["json"]
+    assert "parallel_tool_calls" not in sink["json"]
+
+
+@pytest.mark.asyncio
+async def test_codex_client_keeps_prompt_cache_key_when_retention_is_unsupported(monkeypatch):
+    sink: dict[str, Any] = {}
+    responses = [
+        _FakeStreamResponse(
+            status_code=400,
+            body='{"error":{"message":"Unknown parameter: prompt_cache_retention"}}',
+        ),
+        _FakeStreamResponse(
+            lines=[
+                'data: {"type":"response.output_text.delta","delta":"ok"}',
+                "",
+                'data: {"type":"response.completed","response":{"status":"completed"}}',
+                "",
+            ],
+        ),
+    ]
+    monkeypatch.setattr(
+        "myharness.api.codex_client.httpx.AsyncClient",
+        lambda *args, **kwargs: _SequenceAsyncClient(responses, sink),
+    )
+
+    client = CodexApiClient(_fake_codex_token(), prompt_cache_retention="24h")
+    request = ApiMessageRequest(
+        model="gpt-5.5",
+        messages=[ConversationMessage.from_user_text("hi")],
+        system_prompt="Be helpful.",
+        tools=[{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert events
+    assert sink["attempts"] == 2
+    first, second = sink["calls"]
+    assert first["prompt_cache_key"] == _prompt_cache_key_for_request(request)
+    assert first["prompt_cache_retention"] == "24h"
+    assert second["prompt_cache_key"] == _prompt_cache_key_for_request(request)
+    assert "prompt_cache_retention" not in second
+    assert second["tools"] == first["tools"]
 
 
 @pytest.mark.asyncio

@@ -38,7 +38,12 @@ export type UsageCostSummary = {
   uncached_input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+  cache_hit_ratio?: number;
   estimated_cost_usd?: number | null;
+  estimated_cache_savings_usd?: number | null;
+  estimated_uncached_input_cost_usd?: number | null;
+  estimated_cached_input_cost_usd?: number | null;
+  estimated_output_cost_usd?: number | null;
   cost_supported?: boolean;
   cost_note?: string;
   model_breakdown?: UsageCostSummary[];
@@ -152,6 +157,7 @@ export type HistoryItem = {
   busy?: boolean;
   pinned?: boolean;
   pending?: boolean;
+  lastAssistantAt?: number;
 };
 
 export type ArtifactSummary = {

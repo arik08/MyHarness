@@ -772,6 +772,7 @@ def create_default_command_registry(
                 system_prompt=context.engine.system_prompt,
                 preserve_recent=preserve_recent,
                 trigger="manual",
+                carryover_metadata=context.engine.tool_metadata,
             )
             compacted = build_post_compact_messages(compacted_result)
         except Exception:

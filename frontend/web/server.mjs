@@ -9,7 +9,7 @@ import { basename, delimiter, dirname, extname, isAbsolute, join, normalize, rel
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 import { countTokens } from "gpt-tokenizer";
-import { historyOrderTimestamp } from "./modules/historyOrder.js";
+import { compareHistoryItems, historyOrderTimestamp, lastAssistantActivityTimestamp } from "./modules/historyOrder.js";
 import {
   artifactCategoryForPath,
   isDefaultProjectFileCandidate,
@@ -2205,12 +2205,16 @@ async function submitAiArtifactEdit(session, artifactPath, comments) {
     await writeFile(targetFile, sourceContent, { encoding: "utf8", flag: "wx" });
     targetPrepared = true;
     invalidateProjectFileCache(session.workspace.path);
+    emit(session, {
+      type: "transcript_item",
+      item: { role: "user", text: transcriptLine },
+    });
     const ok = sendBackend(session, {
       type: "submit_line",
       line: prompt,
       attachments: [],
       transcript_line: transcriptLine,
-      suppress_user_transcript: false,
+      suppress_user_transcript: true,
       isolated_context: true,
     });
     if (!ok) {
@@ -3531,6 +3535,7 @@ async function readSessionListItem(path) {
     || fileName.replace(/^session-/, "").replace(/\.json$/i, "");
   const summary = compactText(data.summary) || firstUserSummary(data.messages) || "새 대화";
   const createdAt = historyOrderTimestamp(data, info);
+  const lastAssistantAt = lastAssistantActivityTimestamp(data, info);
   const date = new Date(createdAt * (createdAt < 10_000_000_000 ? 1000 : 1));
   const labelDate = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
   const messageCount = Number(data.message_count || (Array.isArray(data.messages) ? data.messages.length : 0));
@@ -3539,6 +3544,7 @@ async function readSessionListItem(path) {
     label: `${labelDate}  ${messageCount}msg  ${summary}`,
     description: summary,
     createdAt,
+    lastAssistantAt,
     pinned: data.pinned === true,
   };
 }
@@ -3590,30 +3596,6 @@ async function listWorkspaceHistory(workspace, options = {}) {
     return sorted;
   }
   return sorted.map(({ createdAt, ...item }) => item);
-}
-
-function historyTitleForSort(item) {
-  return String(item.titleSortKey || item.description || item.label || item.value || "").trim();
-}
-
-function compareHistoryTitle(left, right) {
-  return (
-    historyTitleForSort(left).localeCompare(historyTitleForSort(right), "ko", {
-      numeric: true,
-      sensitivity: "base",
-    })
-    || String(left.value || "").localeCompare(String(right.value || ""), "ko")
-  );
-}
-
-function compareHistoryItems(left, right) {
-  const byPinned = Number(right.pinned === true) - Number(left.pinned === true);
-  if (byPinned) return byPinned;
-  if (left.pinned === true && right.pinned === true) {
-    const byTitle = compareHistoryTitle(left, right);
-    if (byTitle) return byTitle;
-  }
-  return (right.createdAt || 0) - (left.createdAt || 0);
 }
 
 function sortHistoryItems(items) {
@@ -4969,6 +4951,8 @@ async function createBackendSession(options = {}) {
     forceKillTimer: null,
     aiEditHeartbeat: null,
     aiEditHeartbeatTimer: null,
+    stdoutReader: null,
+    stderrReader: null,
   };
   sessions.set(id, session);
 
@@ -4979,7 +4963,8 @@ async function createBackendSession(options = {}) {
     workspace,
   });
 
-  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+  session.stdoutReader = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+  session.stdoutReader.on("line", (line) => {
     if (!line.startsWith(protocolPrefix)) {
       if (isNoisyBackendLogLine(line)) {
         return;
@@ -4997,7 +4982,8 @@ async function createBackendSession(options = {}) {
     }
   });
 
-  readline.createInterface({ input: child.stderr }).on("line", (line) => {
+  session.stderrReader = readline.createInterface({ input: child.stderr, crlfDelay: Infinity });
+  session.stderrReader.on("line", (line) => {
     if (isNoisyBackendLogLine(line)) {
       return;
     }
@@ -5018,6 +5004,8 @@ async function createBackendSession(options = {}) {
       session.clientCloseTimer = null;
     }
     clearAiEditHeartbeat(session);
+    session.stdoutReader?.close?.();
+    session.stderrReader?.close?.();
     writeRuntimeLog("backend_session_exit", {
       session_id: id,
       code: code ?? null,
@@ -5507,11 +5495,13 @@ async function handleApi(request, response, pathname) {
         writeSseEvent(response, event);
       }
     }
-    request.on("close", () => {
+    const cleanupClient = () => {
       clearInterval(heartbeat);
       session.clients.delete(response);
       scheduleIdleClientClose(session);
-    });
+    };
+    response.socket?.on("close", cleanupClient);
+    response.on("error", cleanupClient);
     return true;
   }
 

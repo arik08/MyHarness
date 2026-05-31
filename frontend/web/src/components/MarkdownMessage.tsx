@@ -28,6 +28,7 @@ const chatMarkdown = new Marked({
 const htmlPreviewUrlCache = new Map<string, string>();
 const htmlPreviewSourceCache = new Map<string, string>();
 const mermaidSourceCache = new Map<string, string>();
+const failedInlineSourceFaviconOrigins = new Set<string>();
 let mermaidRenderId = 0;
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
 let markdownEnhancementObserver: MutationObserver | null = null;
@@ -47,6 +48,143 @@ function sanitizeRenderedHtml(html: string) {
         element.removeAttribute(attr.name);
       }
     }
+  }
+  return template.innerHTML;
+}
+
+function sourceLinkOrigin(value: string) {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return "";
+  }
+}
+
+function sourceLinkDomain(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./i, "");
+  } catch {
+    return "";
+  }
+}
+
+function inlineSourceLabel(value: string) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:출처|참고)\s*:\s*/i, "")
+    .trim();
+}
+
+function createInlineSourceIcon(label: string, href: string) {
+  const icon = document.createElement("span");
+  icon.className = "markdown-inline-source-favicon";
+  icon.setAttribute("aria-hidden", "true");
+  const fallback = document.createElement("span");
+  fallback.textContent = Array.from(label.trim())[0]?.toUpperCase() || "";
+  icon.appendChild(fallback);
+
+  const origin = sourceLinkOrigin(href);
+  if (origin && !failedInlineSourceFaviconOrigins.has(origin)) {
+    const image = document.createElement("img");
+    image.src = `${origin}/favicon.ico`;
+    image.alt = "";
+    image.loading = "lazy";
+    image.dataset.sourceOrigin = origin;
+    icon.appendChild(image);
+  }
+  return icon;
+}
+
+export type SourceEvidenceByUrl = Record<string, string>;
+
+function normalizedSourceUrlKey(value: string) {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/g, "");
+  } catch {
+    return String(value || "").trim().replace(/\/$/g, "");
+  }
+}
+
+function textBeforeLink(link: HTMLAnchorElement) {
+  const parts: string[] = [];
+  let node: ChildNode | null = link.previousSibling;
+  while (node) {
+    parts.unshift(node.textContent || "");
+    node = node.previousSibling;
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim().slice(-240);
+}
+
+function sourceEvidenceTokens(value: string) {
+  return new Set(
+    String(value || "")
+      .toLowerCase()
+      .match(/[가-힣a-z0-9][가-힣a-z0-9,.·%-]{1,}/g) || [],
+  );
+}
+
+function sourceEvidenceChunks(value: string) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .split(/(?<=[.!?。！？]|[다요음임됨함됨])\s+|\n+/)
+    .map((chunk) => chunk.replace(/\s+/g, " ").trim())
+    .filter((chunk) => chunk.length >= 18 && !/^URL:|^상태:|^Content-Type:/i.test(chunk))
+    .map((chunk) => (chunk.length > 160 ? `${chunk.slice(0, 157).trim()}...` : chunk))
+    .slice(0, 80);
+}
+
+function sourceEvidenceForLink(link: HTMLAnchorElement, sourceEvidenceByUrl?: SourceEvidenceByUrl) {
+  const href = link.getAttribute("href") || "";
+  const sourceText = sourceEvidenceByUrl?.[normalizedSourceUrlKey(href)];
+  if (!sourceText) {
+    return "";
+  }
+  const contextTokens = sourceEvidenceTokens(textBeforeLink(link));
+  let best = "";
+  let bestScore = 0;
+  for (const chunk of sourceEvidenceChunks(sourceText)) {
+    const chunkTokens = sourceEvidenceTokens(chunk);
+    let score = 0;
+    contextTokens.forEach((token) => {
+      if (chunkTokens.has(token)) {
+        score += /\d/.test(token) ? 3 : 1;
+      }
+    });
+    if (score > bestScore) {
+      bestScore = score;
+      best = chunk;
+    }
+  }
+  if (bestScore > 0) {
+    return best;
+  }
+  return sourceEvidenceChunks(sourceText)[0] || "";
+}
+
+function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: SourceEvidenceByUrl) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  for (const link of [...template.content.querySelectorAll<HTMLAnchorElement>("a[href]")]) {
+    const rawLabel = link.textContent || "";
+    if (!/^(?:출처|참고)\s*:/i.test(rawLabel.trim())) {
+      continue;
+    }
+    const href = link.getAttribute("href") || "";
+    const label = inlineSourceLabel(rawLabel) || link.hostname || "source";
+    const extractedEvidence = sourceEvidenceForLink(link, sourceEvidenceByUrl);
+    const evidence = String(link.getAttribute("title") || "").replace(/\s+/g, " ").trim();
+    const domain = sourceLinkDomain(href);
+    const tooltip = extractedEvidence || evidence;
+    link.classList.add("markdown-inline-source-chip");
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noreferrer noopener");
+    link.setAttribute("data-tooltip", tooltip && domain ? `${domain}\n${tooltip}` : domain || tooltip || href);
+    link.removeAttribute("title");
+    link.setAttribute("aria-label", `출처 ${label} 열기`);
+    link.replaceChildren(createInlineSourceIcon(label, href), document.createTextNode(label));
   }
   return template.innerHTML;
 }
@@ -1509,6 +1647,29 @@ function replaceMermaidPreviewPlaceholders(root: HTMLElement | null) {
   });
 }
 
+function enhanceInlineSourceFavicons(root: HTMLElement | null) {
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll<HTMLImageElement>(".markdown-inline-source-favicon img").forEach((image) => {
+    const origin = image.dataset.sourceOrigin || sourceLinkOrigin(image.currentSrc || image.src);
+    if (origin && failedInlineSourceFaviconOrigins.has(origin)) {
+      image.remove();
+      return;
+    }
+    if (image.dataset.inlineSourceFaviconEnhanced === "yes") {
+      return;
+    }
+    image.dataset.inlineSourceFaviconEnhanced = "yes";
+    image.onerror = () => {
+      if (origin) {
+        failedInlineSourceFaviconOrigins.add(origin);
+      }
+      image.remove();
+    };
+  });
+}
+
 function enhanceMarkdownRoot(root: HTMLElement | null) {
   replaceMermaidPreviewPlaceholders(root);
   replaceHtmlPreviewPlaceholders(root);
@@ -1518,6 +1679,7 @@ function enhanceMarkdownRoot(root: HTMLElement | null) {
   enhanceCodeBlocks(root);
   enhancePromptTokens(root);
   enhanceCompanyColumnRowspans(root);
+  enhanceInlineSourceFavicons(root);
 }
 
 function markdownRootForNode(node: Node | null) {
@@ -1691,10 +1853,12 @@ export function MarkdownMessage({
   text,
   deferIncompleteTables = false,
   className = "",
+  sourceEvidenceByUrl,
 }: {
   text: string;
   deferIncompleteTables?: boolean;
   className?: string;
+  sourceEvidenceByUrl?: SourceEvidenceByUrl;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const html = useMemo(() => {
@@ -1704,8 +1868,11 @@ export function MarkdownMessage({
       replaceHtmlFencesWithPreviewPlaceholders(mermaidMarkdown),
     );
     const rendered = chatMarkdown.parse(renderMathInMarkdown(previewMarkdown), { async: false }) as string;
-    return enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered))));
-  }, [deferIncompleteTables, text]);
+    return enhanceRenderedInlineSourceHtml(
+      enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered)))),
+      sourceEvidenceByUrl,
+    );
+  }, [deferIncompleteTables, sourceEvidenceByUrl, text]);
 
   const setRootRef = useCallback((node: HTMLDivElement | null) => {
     ref.current = node;

@@ -1151,6 +1151,26 @@ async def test_promote_next_queued_line_submits_after_current_turn():
 
 
 @pytest.mark.asyncio
+async def test_promote_next_queued_line_submits_late_steering_after_current_turn():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await host._steering_queue.put("late follow up")
+
+    await host._promote_next_queued_line()
+
+    queued = await host._request_queue.get()
+    assert queued.type == "submit_line"
+    assert queued.line == "late follow up"
+    assert queued.suppress_user_transcript is True
+    assert any(event.type == "status" and "후속 질문" in (event.message or "") for event in events)
+
+
+@pytest.mark.asyncio
 async def test_backend_host_processes_command(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))

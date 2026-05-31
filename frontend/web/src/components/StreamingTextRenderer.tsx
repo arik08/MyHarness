@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AppSettings } from "../types/ui";
 import { isStandaloneHtmlDocument, MarkdownMessage } from "./MarkdownMessage";
+import type { SourceEvidenceByUrl } from "./MarkdownMessage";
 
 const StableMarkdownMessage = memo(MarkdownMessage);
 
@@ -435,6 +436,57 @@ function hasStreamingMarkdownTable(text: string) {
   return false;
 }
 
+function incompleteInlineSourceLinkStart(text: string) {
+  const source = String(text || "");
+  const linkStart = source.search(/\[(?:출처|참고)\s*:[^\]]*$/);
+  const completeLinkStart = Math.max(source.lastIndexOf("[출처:"), source.lastIndexOf("[참고:"));
+  if (linkStart >= 0) {
+    return linkStart;
+  }
+  if (completeLinkStart < 0) {
+    return -1;
+  }
+  const tail = source.slice(completeLinkStart);
+  if (!/^\[(?:출처|참고)\s*:/i.test(tail)) {
+    return -1;
+  }
+  const closeLabel = tail.indexOf("]");
+  if (closeLabel < 0) {
+    return completeLinkStart;
+  }
+  const afterLabel = tail.slice(closeLabel + 1);
+  if (!afterLabel.startsWith("(")) {
+    return -1;
+  }
+  let escaped = false;
+  let quoted = "";
+  for (let index = 1; index < afterLabel.length; index += 1) {
+    const char = afterLabel[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quoted) {
+      if (char === quoted) {
+        quoted = "";
+      }
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quoted = char;
+      continue;
+    }
+    if (char === ")") {
+      return -1;
+    }
+  }
+  return completeLinkStart;
+}
+
 function pendingHtmlSourceLength(text: string) {
   const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
   const lines = source.split("\n");
@@ -542,12 +594,29 @@ function TableStreamPending() {
   );
 }
 
+function InlineSourceStreamPending() {
+  const dots = usePendingDots(true);
+  return (
+    <span className="inline-source-stream-pending" role="status">
+      <span className="markdown-inline-source-favicon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"></path>
+          <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07L13 19.07"></path>
+        </svg>
+      </span>
+      <span>출처 정리 중{dots}</span>
+    </span>
+  );
+}
+
 function StreamingMarkdownMessage({
   text,
   complete = false,
+  sourceEvidenceByUrl,
 }: {
   text: string;
   complete?: boolean;
+  sourceEvidenceByUrl?: SourceEvidenceByUrl;
 }) {
   const normalizedText = String(text || "").replace(/\r\n/g, "\n");
   const { prefix, liveTail } = useMemo(() => {
@@ -559,6 +628,10 @@ function StreamingMarkdownMessage({
   const liveTailFenceLanguage = incompleteFenceLanguage(liveTail);
   const liveTailHasIncompleteFence = hasIncompleteFence(liveTail);
   const liveTailHasStreamingTable = hasStreamingMarkdownTable(liveTail);
+  const incompleteSourceLinkStart = incompleteInlineSourceLinkStart(liveTail);
+  const liveTailBeforeIncompleteSourceLink = incompleteSourceLinkStart >= 0
+    ? liveTail.slice(0, incompleteSourceLinkStart).trimEnd()
+    : "";
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
   let chunkCursor = 0;
   const chunkOccurrences = new Map<string, number>();
@@ -575,6 +648,7 @@ function StreamingMarkdownMessage({
           <StableMarkdownMessage
             key={`${chunkHash}:${chunkOccurrence}`}
             text={chunk}
+            sourceEvidenceByUrl={sourceEvidenceByUrl}
           />
         );
       })}
@@ -584,12 +658,24 @@ function StreamingMarkdownMessage({
         <MermaidStreamPending />
       ) : liveTailHasStreamingTable ? (
         <TableStreamPending />
+      ) : incompleteSourceLinkStart >= 0 ? (
+        <>
+          {liveTailBeforeIncompleteSourceLink ? (
+            <StableMarkdownMessage
+              text={liveTailBeforeIncompleteSourceLink}
+              deferIncompleteTables
+              className="stream-live-text"
+              sourceEvidenceByUrl={sourceEvidenceByUrl}
+            />
+          ) : null}
+          <InlineSourceStreamPending />
+        </>
       ) : liveTailHasIncompleteFence ? (
         <div className="markdown-body react-markdown stream-live-text">
           <StreamingPlainText text={liveTail} />
         </div>
       ) : liveTail ? (
-        <StableMarkdownMessage text={liveTail} deferIncompleteTables className="stream-live-text" />
+        <StableMarkdownMessage text={liveTail} deferIncompleteTables className="stream-live-text" sourceEvidenceByUrl={sourceEvidenceByUrl} />
       ) : null}
     </div>
   );
@@ -600,11 +686,13 @@ export function StreamingTextRenderer({
   settings,
   streaming,
   onVisibleTextChange,
+  sourceEvidenceByUrl,
 }: {
   text: string;
   settings: Pick<AppSettings, "streamStartBufferMs" | "streamRevealDurationMs">;
   streaming: boolean;
   onVisibleTextChange?: () => void;
+  sourceEvidenceByUrl?: SourceEvidenceByUrl;
 }) {
   const { visibleText, revealing } = useStreamingText(
     text,
@@ -624,6 +712,7 @@ export function StreamingTextRenderer({
       <StreamingMarkdownMessage
         text={revealing ? visibleText : text}
         complete={!revealing}
+        sourceEvidenceByUrl={sourceEvidenceByUrl}
       />
     </div>
   );

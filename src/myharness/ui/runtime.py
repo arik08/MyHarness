@@ -30,7 +30,7 @@ from myharness.engine.messages import (
     ToolUseBlock,
     sanitize_conversation_messages,
 )
-from myharness.engine.query import MaxTurnsExceeded, SteeringProvider, _is_codex_cache_preferred_metadata
+from myharness.engine.query import MaxTurnsExceeded, SteeringProvider
 from myharness.engine.stream_events import StreamEvent, ToolExecutionCompleted, ToolExecutionStarted
 from myharness.hooks import HookEvent, HookExecutionContext, HookExecutor, load_hook_registry
 from myharness.hooks.hot_reload import HookReloader
@@ -202,11 +202,17 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
                 timeout=settings.timeout,
                 raw_stream=_pgpt_raw_sse_enabled(),
                 diagnostics_label="P-GPT",
+                enable_prompt_cache_options=True,
+                include_usage_with_tools=True,
+                prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
             )
         return OpenAICompatibleClient(
             api_key=api_key,
             base_url=settings.base_url,
             timeout=settings.timeout,
+            enable_prompt_cache_options=settings.provider == "openai",
+            include_usage_with_tools=settings.provider == "openai",
+            prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
         )
     auth = _safe_resolve_auth()
     return AnthropicApiClient(
@@ -348,7 +354,7 @@ async def build_runtime(
     system_prompt_text = build_runtime_system_prompt(
         settings,
         cwd=cwd,
-        latest_user_prompt=prompt,
+        latest_user_prompt=None,
         extra_skill_dirs=normalized_skill_dirs,
         extra_plugin_roots=normalized_plugin_roots,
         task_worker=task_worker,
@@ -423,8 +429,7 @@ async def build_runtime(
             [ConversationMessage.model_validate(m) for m in restore_messages]
         )
         engine.load_messages(restored)
-        engine.tool_metadata["force_full_prompt_next"] = True
-        engine.tool_metadata["force_full_tool_schema_next"] = True
+        engine.tool_metadata["cache_prefix_event"] = "session_restore"
     if restore_usage or restore_usage_accounting:
         engine.load_usage(
             usage=restore_usage,
@@ -558,13 +563,27 @@ def _format_pending_tool_results(messages: list[ConversationMessage]) -> str | N
 
 def _next_prompt_profile(bundle: RuntimeBundle) -> str:
     metadata = bundle.engine.tool_metadata
-    if bool(metadata.pop("force_full_prompt_next", False)):
-        return "full"
-    if _is_codex_cache_preferred_metadata(metadata):
-        return "full"
-    if not bundle.engine.messages:
-        return "full"
-    return "continuation"
+    metadata.pop("force_full_prompt_next", None)
+    return "full"
+
+
+def _runtime_system_prompt(bundle: RuntimeBundle, latest_user_prompt: str | None = None) -> str:
+    """Return the stable runtime prompt, rebuilding only after explicit setting changes."""
+    del latest_user_prompt
+    metadata = bundle.engine.tool_metadata
+    force_rebuild = bool(metadata.pop("force_full_prompt_next", False))
+    if bundle.engine.system_prompt and not force_rebuild:
+        return bundle.engine.system_prompt
+    settings = bundle.current_settings()
+    return build_runtime_system_prompt(
+        settings,
+        cwd=bundle.cwd,
+        latest_user_prompt=None,
+        extra_skill_dirs=bundle.extra_skill_dirs,
+        extra_plugin_roots=bundle.extra_plugin_roots,
+        task_worker=bundle.task_worker,
+        prompt_profile="full",
+    )
 
 
 def sync_app_state(bundle: RuntimeBundle) -> None:
@@ -626,7 +645,7 @@ def refresh_runtime_client(bundle: RuntimeBundle) -> None:
     bundle.engine.set_model(settings.model)
     bundle.engine.set_max_tokens(settings.effective_max_tokens())
     bundle.engine.tool_metadata["force_full_prompt_next"] = True
-    bundle.engine.tool_metadata["force_full_tool_schema_next"] = True
+    bundle.engine.tool_metadata["cache_prefix_event"] = "provider_settings_changed"
     sync_app_state(bundle)
 
 
@@ -684,15 +703,7 @@ async def handle_line(
                 bundle.engine.set_model(result.submit_model)
             settings = bundle.current_settings()
             submit_prompt = result.submit_prompt
-            system_prompt = build_runtime_system_prompt(
-                settings,
-                cwd=bundle.cwd,
-                latest_user_prompt=submit_prompt,
-                extra_skill_dirs=bundle.extra_skill_dirs,
-                extra_plugin_roots=bundle.extra_plugin_roots,
-                task_worker=bundle.task_worker,
-                prompt_profile=_next_prompt_profile(bundle),
-            )
+            system_prompt = _runtime_system_prompt(bundle, submit_prompt)
             bundle.engine.set_system_prompt(system_prompt)
             try:
                 async for event in bundle.engine.submit_message(
@@ -722,15 +733,7 @@ async def handle_line(
             settings = bundle.current_settings()
             if bundle.enforce_max_turns:
                 bundle.engine.set_max_turns(settings.max_turns)
-            system_prompt = build_runtime_system_prompt(
-                settings,
-                cwd=bundle.cwd,
-                latest_user_prompt=_last_user_text(bundle.engine.messages),
-                extra_skill_dirs=bundle.extra_skill_dirs,
-                extra_plugin_roots=bundle.extra_plugin_roots,
-                task_worker=bundle.task_worker,
-                prompt_profile=_next_prompt_profile(bundle),
-            )
+            system_prompt = _runtime_system_prompt(bundle, _last_user_text(bundle.engine.messages))
             bundle.engine.set_system_prompt(system_prompt)
             turns = result.continue_turns if result.continue_turns is not None else bundle.engine.max_turns
             try:
@@ -760,15 +763,7 @@ async def handle_line(
     settings = bundle.current_settings()
     if bundle.enforce_max_turns:
         bundle.engine.set_max_turns(settings.max_turns)
-    system_prompt = build_runtime_system_prompt(
-        settings,
-        cwd=bundle.cwd,
-        latest_user_prompt=line_text,
-        extra_skill_dirs=bundle.extra_skill_dirs,
-        extra_plugin_roots=bundle.extra_plugin_roots,
-        task_worker=bundle.task_worker,
-        prompt_profile=_next_prompt_profile(bundle),
-    )
+    system_prompt = _runtime_system_prompt(bundle, line_text)
     bundle.engine.set_system_prompt(system_prompt)
     try:
         async for event in bundle.engine.submit_message(

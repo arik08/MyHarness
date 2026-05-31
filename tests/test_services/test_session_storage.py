@@ -46,6 +46,15 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
         tool_metadata={
             "task_focus_state": {"goal": "Fix compact carry-over"},
             "recent_verified_work": ["Focused session storage test passed"],
+            "user_input_archive": [
+                {
+                    "id": "user-0001-alpha",
+                    "turn_index": 1,
+                    "timestamp": 123,
+                    "text": "중요한 과거 사용자 입력",
+                    "short_hint": "중요한 과거 사용자 입력",
+                }
+            ],
         },
     )
 
@@ -60,6 +69,7 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
     assert snapshot["usage_accounting"]["by_model"][0]["usage"]["cached_input_tokens"] == 1
     assert snapshot["tool_metadata"]["task_focus_state"]["goal"] == "Fix compact carry-over"
     assert snapshot["tool_metadata"]["recent_verified_work"] == ["Focused session storage test passed"]
+    assert snapshot["tool_metadata"]["user_input_archive"][0]["text"] == "중요한 과거 사용자 입력"
 
 
 def test_worker_snapshots_are_hidden_from_history(tmp_path: Path, monkeypatch):
@@ -192,6 +202,92 @@ def test_overwriting_session_snapshot_keeps_original_created_at(
 
     assert snapshot is not None
     assert snapshot["created_at"] == 100.0
+
+
+def test_overwriting_session_snapshot_updates_last_assistant_activity(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    times = iter([100.0, 200.0])
+    monkeypatch.setattr("myharness.services.session_storage.time.time", lambda: next(times))
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="첫 질문")])],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        session_id="active-order",
+    )
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[
+            ConversationMessage(role="user", content=[TextBlock(text="첫 질문")]),
+            ConversationMessage(role="assistant", content=[TextBlock(text="답변")]),
+        ],
+        usage=UsageSnapshot(input_tokens=3, output_tokens=4),
+        session_id="active-order",
+        history_events=[{"type": "assistant", "text": "답변", "timestamp": 1_700_000_300_000}],
+    )
+
+    snapshot = load_session_by_id(project, "active-order")
+
+    assert snapshot is not None
+    assert snapshot["created_at"] == 100.0
+    assert snapshot["last_assistant_at"] == 1_700_000_300_000.0
+
+
+def test_list_session_snapshots_prioritizes_sessions_with_recent_assistant_answers(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    times = iter([100.0, 200.0, 300.0])
+    monkeypatch.setattr("myharness.services.session_storage.time.time", lambda: next(times))
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="오래된 질문")])],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        session_id="old-user-only",
+    )
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="최신 질문")])],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        session_id="new-user-only",
+    )
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[
+            ConversationMessage(role="user", content=[TextBlock(text="답변 있는 질문")]),
+            ConversationMessage(role="assistant", content=[TextBlock(text="답변")]),
+        ],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        session_id="answered",
+        history_events=[{"type": "assistant", "text": "답변", "timestamp": 1_700_000_150_000}],
+    )
+
+    sessions = list_session_snapshots(project, limit=None)
+
+    assert [item["session_id"] for item in sessions] == [
+        "answered",
+        "new-user-only",
+        "old-user-only",
+    ]
 
 
 def test_export_session_markdown(tmp_path: Path, monkeypatch):

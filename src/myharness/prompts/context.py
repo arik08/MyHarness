@@ -210,6 +210,11 @@ def _build_long_report_section() -> str:
             "If the report also asks for research, investigation, current facts, market data, policy/regulation checks, sources, "
             "or source-backed claims, gather the evidence first with `web_search`/`web_fetch` or an office research worker. "
             "Keep concise source notes in context so the final direct artifact can cite important external claims reliably. "
+            "For chat summaries, cite each source-backed fact item on the same line as that claim, using a short inline link "
+            "like `[출처: 데일리안](https://...)` at the end of the sentence or bullet. Do not add evidence snippets "
+            "to Markdown link titles; the UI derives hover excerpts from existing web_search/web_fetch tool outputs to save tokens. "
+            "Do not replace item-level links with "
+            "a separate final `참고:` or `출처:` line, and do not group several unrelated article sources into one trailing note. "
             "For web sources keep URLs/titles; for MCP, vector database, knowledge-base, document, or database-query results keep "
             "the server/resource/document/table/query identifiers that let the reader understand where the information came from.",
         ]

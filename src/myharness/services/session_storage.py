@@ -29,6 +29,7 @@ _PERSISTED_TOOL_METADATA_KEYS = (
     "task_focus_state",
     "compact_checkpoints",
     "compact_last",
+    "user_input_archive",
     "session_title",
     "session_title_source",
     "session_title_user_edited",
@@ -324,6 +325,52 @@ def _raw_message_summary(message: dict[str, Any]) -> str:
     return _with_image_marker(text, has_image)
 
 
+def _timestamp_millis(value: Any) -> float:
+    try:
+        timestamp = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if timestamp <= 0:
+        return 0.0
+    return timestamp * 1000 if timestamp < 10_000_000_000 else timestamp
+
+
+def _message_has_assistant_content(message: ConversationMessage) -> bool:
+    if message.role != "assistant":
+        return False
+    return bool(message.text.strip() or message.tool_uses)
+
+
+def _last_assistant_activity_timestamp(
+    *,
+    messages: list[ConversationMessage],
+    history_events: list[dict[str, Any]] | None,
+    existing_last_assistant_at: float = 0.0,
+    fallback_now: float = 0.0,
+) -> float:
+    latest = _timestamp_millis(existing_last_assistant_at)
+    if isinstance(history_events, list):
+        for event in history_events:
+            if not isinstance(event, dict) or event.get("type") != "assistant":
+                continue
+            has_content = bool(str(event.get("text") or "").strip() or event.get("artifacts"))
+            if not has_content:
+                continue
+            latest = max(
+                latest,
+                _timestamp_millis(
+                    event.get("timestamp")
+                    or event.get("createdAt")
+                    or event.get("created_at")
+                ),
+            )
+    if latest > 0:
+        return latest
+    if any(_message_has_assistant_content(message) for message in messages):
+        return _timestamp_millis(fallback_now)
+    return 0.0
+
+
 def get_project_session_dir(cwd: str | Path) -> Path:
     """Return the session directory for a project."""
     session_dir = get_project_config_dir(cwd) / "sessions"
@@ -349,10 +396,12 @@ def save_session_snapshot(
     session_path = session_dir / f"session-{sid}.json"
     existing_pinned = False
     existing_created_at: float | None = None
+    existing_last_assistant_at = 0.0
     if session_path.exists():
         try:
             existing = json.loads(session_path.read_text(encoding="utf-8"))
             existing_pinned = bool(existing.get("pinned"))
+            existing_last_assistant_at = _timestamp_millis(existing.get("last_assistant_at"))
             try:
                 created_at = float(existing.get("created_at") or 0)
                 if created_at > 0:
@@ -379,6 +428,12 @@ def save_session_snapshot(
         summary = first_user_summary[:80]
 
     persisted_usage_accounting = _sanitize_usage_accounting(usage_accounting, model=model, usage=usage)
+    last_assistant_at = _last_assistant_activity_timestamp(
+        messages=messages,
+        history_events=history_events,
+        existing_last_assistant_at=existing_last_assistant_at,
+        fallback_now=now,
+    )
     payload = {
         "session_id": sid,
         "cwd": str(Path(cwd).resolve()),
@@ -390,6 +445,7 @@ def save_session_snapshot(
         "usage_accounting": persisted_usage_accounting,
         "tool_metadata": _persistable_tool_metadata(tool_metadata),
         "created_at": existing_created_at or now,
+        "last_assistant_at": last_assistant_at,
         "summary": summary,
         "message_count": len(messages),
         "pinned": existing_pinned,
@@ -568,6 +624,7 @@ def _snapshot_list_item(
         "message_count": data.get("message_count", message_count),
         "model": data.get("model", ""),
         "created_at": data.get("created_at", path.stat().st_mtime),
+        "last_assistant_at": _timestamp_millis(data.get("last_assistant_at")),
     }
 
 
@@ -609,18 +666,14 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[di
         sid = str(data.get("session_id", path.stem.replace("session-", "")))
         seen_ids.add(sid)
         sessions.append(_snapshot_list_item(data, session_id=sid, path=path))
-        if limit is not None and len(sessions) >= limit:
-            break
 
     # Also include latest.json if it has no corresponding session file
     latest_path = session_dir / "latest.json"
-    if latest_path.exists() and (limit is None or len(sessions) < limit):
+    if latest_path.exists():
         data = _load_snapshot_file(latest_path)
         if data is not None:
-            if _is_hidden_worker_snapshot(data):
-                return sessions if limit is None else sessions[:limit]
             sid = str(data.get("session_id", "latest"))
-            if sid not in seen_ids:
+            if sid not in seen_ids and not _is_hidden_worker_snapshot(data):
                 sessions.append(
                     _snapshot_list_item(
                         data,
@@ -630,8 +683,14 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[di
                     )
                 )
 
-    # Sort by created_at descending
-    sessions.sort(key=lambda s: s.get("created_at", 0), reverse=True)
+    sessions.sort(
+        key=lambda s: (
+            1 if s.get("last_assistant_at", 0) else 0,
+            s.get("last_assistant_at", 0) or 0,
+            s.get("created_at", 0),
+        ),
+        reverse=True,
+    )
     return sessions if limit is None else sessions[:limit]
 
 

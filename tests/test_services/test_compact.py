@@ -22,8 +22,11 @@ from myharness.services import (
 )
 from myharness.services.compact import (
     AutoCompactState,
+    MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+    archive_user_inputs,
     auto_compact_if_needed,
     get_autocompact_threshold,
+    get_compact_prompt,
     get_context_window,
     should_autocompact,
     try_context_collapse,
@@ -106,9 +109,10 @@ def test_compact_messages_drops_dangling_preserved_tool_use():
 class _CompactApiClient:
     def __init__(self, responses):
         self._responses = list(responses)
+        self.requests = []
 
     async def stream_message(self, request):
-        del request
+        self.requests.append(request)
         response = self._responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -147,13 +151,45 @@ def test_try_session_memory_compaction_reduces_long_history():
         for index in range(20)
     ]
 
-    result = try_session_memory_compaction(messages)
+    metadata: dict[str, object] = {}
+    result = try_session_memory_compaction(messages, metadata=metadata)
 
     assert result is not None
     rebuilt = build_post_compact_messages(result)
     assert len(rebuilt) < len(messages)
     assert rebuilt[0].text.startswith("[Compact boundary marker]")
-    assert any("Session memory summary" in message.text for message in rebuilt)
+    assert any("Session handoff" in message.text for message in rebuilt)
+    assert result.compact_metadata["preserve_recent"] == 6
+    assert isinstance(metadata.get("user_input_archive"), list)
+    assert any("user 0" in entry["text"] for entry in metadata["user_input_archive"])
+
+
+def test_archive_user_inputs_deduplicates_and_skips_tool_results():
+    metadata: dict[str, object] = {}
+    messages = [
+        ConversationMessage.from_user_text("중요한 사용자 요구사항 원문"),
+        ConversationMessage.from_user_text("중요한 사용자 요구사항 원문"),
+        ConversationMessage(role="user", content=[ToolResultBlock(tool_use_id="toolu_1", content="tool output")]),
+        ConversationMessage.from_user_text("This session is being continued from compact history"),
+    ]
+
+    added = archive_user_inputs(messages, metadata)
+
+    assert len(added) == 1
+    archive = metadata.get("user_input_archive")
+    assert isinstance(archive, list)
+    assert archive[0]["text"] == "중요한 사용자 요구사항 원문"
+    assert archive[0]["id"].startswith("user-")
+
+
+def test_compact_prompt_prefers_user_verbatim_and_archive_recovery_over_transcript_copy():
+    prompt = get_compact_prompt()
+
+    assert "User-authored content has priority" in prompt
+    assert "preserve it verbatim" in prompt
+    assert "conversation_history_search" in prompt
+    assert "Do not produce a full chronological transcript" in prompt
+    assert "All User Messages" not in prompt
 
 
 def test_try_context_collapse_trims_oversized_messages():
@@ -329,6 +365,38 @@ async def test_compact_conversation_runs_hooks_and_preserves_carryover_state(tmp
     assert "[Compact attachment: async_agents]" in joined
     assert "[Compact attachment: recent_work_log]" in joined
     assert "41 passed" in joined
+
+
+@pytest.mark.asyncio
+async def test_compact_conversation_archives_older_user_inputs_and_limits_summary_tokens():
+    api_client = _CompactApiClient(["<summary>condensed</summary>"])
+    metadata: dict[str, object] = {}
+    long_user_context = "사용자가 붙여넣은 긴 근거 " + ("중요자료 " * 400)
+    messages = [
+        ConversationMessage.from_user_text(long_user_context),
+        ConversationMessage(role="assistant", content=[TextBlock(text="noted")]),
+        ConversationMessage.from_user_text("요약에서는 너무 길면 archive id로 회수하게 해줘"),
+        ConversationMessage(role="assistant", content=[TextBlock(text="working")]),
+        ConversationMessage.from_user_text("최근 요구는 원문으로 남겨줘"),
+    ]
+
+    compacted = await compact_conversation(
+        messages,
+        api_client=api_client,
+        model="claude-test",
+        preserve_recent=2,
+        carryover_metadata=metadata,
+    )
+
+    assert api_client.requests[0].max_tokens == MAX_OUTPUT_TOKENS_FOR_SUMMARY == 4_000
+    archive = metadata.get("user_input_archive")
+    assert isinstance(archive, list)
+    assert archive[0]["text"] == long_user_context.strip()
+    prompt_text = "\n".join(message.text for message in api_client.requests[0].messages)
+    assert "Archived user input:" in prompt_text
+    rebuilt_text = "\n".join(message.text for message in build_post_compact_messages(compacted))
+    assert "[Compact attachment: user_input_archive]" in rebuilt_text
+    assert long_user_context.strip() not in rebuilt_text
 
 
 @pytest.mark.asyncio
@@ -513,7 +581,7 @@ def test_get_autocompact_threshold_caps_large_context_models_at_safe_ratio():
     assert get_autocompact_threshold("gpt-5.5") == 787_500
     assert get_autocompact_threshold("gpt-5") == 300_000
     assert get_autocompact_threshold("claude-sonnet-4-6") == 150_000
-    assert get_autocompact_threshold("gpt-5.3-codex-spark") == 95_000
+    assert get_autocompact_threshold("gpt-5.3-codex-spark") == 96_000
 
 
 def test_get_context_window_uses_current_openai_model_limits():

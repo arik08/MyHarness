@@ -13,6 +13,7 @@ from myharness.tools.bash_tool import BashTool, BashToolInput
 from myharness.tools.base import ToolExecutionContext
 from myharness.tools.brief_tool import BriefTool, BriefToolInput
 from myharness.tools.cron_create_tool import CronCreateTool, CronCreateToolInput
+from myharness.tools.conversation_history_search_tool import ConversationHistorySearchTool, ConversationHistorySearchInput
 from myharness.tools.cron_delete_tool import CronDeleteTool, CronDeleteToolInput
 from myharness.tools.cron_list_tool import CronListTool, CronListToolInput
 from myharness.tools.enter_plan_mode_tool import EnterPlanModeTool, EnterPlanModeToolInput
@@ -325,6 +326,43 @@ async def test_tool_search_and_brief_tools(tmp_path: Path):
         ToolExecutionContext(cwd=tmp_path),
     )
     assert brief_result.output == "abcdefghijklmnopqrst..."
+
+
+@pytest.mark.asyncio
+async def test_conversation_history_search_returns_archived_user_inputs(tmp_path: Path):
+    shared_metadata = {
+        "user_input_archive": [
+            {
+                "id": "user-0001-alpha",
+                "turn_index": 1,
+                "timestamp": 123,
+                "text": "경쟁사 보고서에는 POSCO와 현대제철 비교를 반드시 포함해줘.",
+                "short_hint": "경쟁사 보고서에는 POSCO와 현대제철 비교를 반드시 포함해줘.",
+            },
+            {
+                "id": "user-0003-beta",
+                "turn_index": 3,
+                "timestamp": 456,
+                "text": "UI는 툴팁 없이 compact하게 보여줘.",
+                "short_hint": "UI는 툴팁 없이 compact하게 보여줘.",
+            },
+        ]
+    }
+    context = ToolExecutionContext(cwd=tmp_path, metadata={"_shared_tool_metadata": shared_metadata})
+
+    search_result = await ConversationHistorySearchTool().execute(
+        ConversationHistorySearchInput(query="현대제철"),
+        context,
+    )
+    exact_result = await ConversationHistorySearchTool().execute(
+        ConversationHistorySearchInput(id="user-0003-beta"),
+        context,
+    )
+
+    assert "user-0001-alpha" in search_result.output
+    assert "현대제철" in search_result.output
+    assert "UI는 툴팁 없이 compact하게 보여줘." in exact_result.output
+    assert ConversationHistorySearchTool().is_read_only(ConversationHistorySearchInput(query="x")) is True
 
 
 @pytest.mark.asyncio

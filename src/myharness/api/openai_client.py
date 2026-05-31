@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, AsyncIterator
@@ -45,6 +47,25 @@ MAX_RETRIES = 3
 BASE_DELAY = 1.0
 MAX_DELAY = 30.0
 _MAX_COMPLETION_TOKEN_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_CACHE_OPTION_KEYS = ("prompt_cache_key", "prompt_cache_retention", "stream_options")
+_PROMPT_CACHE_RETENTION_VALUES = {"in_memory", "24h"}
+_CACHE_EVENT_REASONS = {
+    "system_prompt_changed",
+    "tool_schema_changed",
+    "compaction_rewrite",
+    "provider_settings_changed",
+    "session_restore",
+    "unknown",
+}
+_UNSUPPORTED_OPTION_TERMS = (
+    "unsupported",
+    "unrecognized",
+    "unknown",
+    "invalid",
+    "unexpected",
+    "extra inputs",
+    "not permitted",
+)
 
 
 def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
@@ -61,6 +82,71 @@ def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
     return {"max_tokens": max_tokens}
 
 
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _stable_hash(value: Any, *, length: int = 32) -> str:
+    payload = value if isinstance(value, str) else _stable_json(value)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:length]
+
+
+def _stable_tool_schema_payload(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        [
+            {
+                "name": str(tool.get("name") or ""),
+                "description": str(tool.get("description") or ""),
+                "input_schema": tool.get("input_schema") or {},
+            }
+            for tool in tools
+        ],
+        key=lambda item: item["name"],
+    )
+
+
+def _prompt_cache_key_for_request(request: ApiMessageRequest) -> str:
+    """Build a stable routing key without embedding raw prompt text."""
+    payload = {
+        "model": str(request.model or "").strip().lower(),
+        "system_prompt_hash": _stable_hash(request.system_prompt or ""),
+        "tool_schema_hash": _stable_hash(_stable_tool_schema_payload(request.tools)),
+    }
+    return f"myharness:{_stable_hash(payload)}"
+
+
+def _prompt_cache_retention_from_env() -> str | None:
+    raw_value = os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION")
+    if raw_value is None:
+        return "24h"
+    value = raw_value.strip()
+    if value in _PROMPT_CACHE_RETENTION_VALUES:
+        return value
+    if value:
+        log.warning(
+            "Ignoring unsupported MYHARNESS_PROMPT_CACHE_RETENTION=%r; allowed values are %s",
+            value,
+            ", ".join(sorted(_PROMPT_CACHE_RETENTION_VALUES)),
+        )
+    return None
+
+
+def _message_content_length(message: dict[str, Any]) -> int:
+    content = message.get("content")
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        total = 0
+        for item in content:
+            if isinstance(item, dict):
+                total += len(str(item.get("text") or ""))
+                image_url = item.get("image_url")
+                if isinstance(image_url, dict):
+                    total += len(str(image_url.get("url") or ""))
+        return total
+    return 0
+
+
 def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Anthropic tool schemas to OpenAI function-calling format.
 
@@ -70,7 +156,7 @@ def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]
         {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
     """
     result = []
-    for tool in tools:
+    for tool in sorted(tools, key=lambda item: str(item.get("name") or "")):
         result.append({
             "type": "function",
             "function": {
@@ -245,12 +331,21 @@ class OpenAICompatibleClient:
         timeout: float | None = None,
         raw_stream: bool = False,
         diagnostics_label: str | None = None,
+        enable_prompt_cache_options: bool = False,
+        include_usage_with_tools: bool = False,
+        prompt_cache_retention: str | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = _normalize_openai_base_url(base_url)
         self._timeout = timeout
         self._raw_stream = raw_stream
         self._diagnostics_label = diagnostics_label or ""
+        self._enable_prompt_cache_options = enable_prompt_cache_options
+        self._include_usage_with_tools = include_usage_with_tools
+        retention = prompt_cache_retention if prompt_cache_retention is not None else _prompt_cache_retention_from_env()
+        self._prompt_cache_retention = retention if retention in _PROMPT_CACHE_RETENTION_VALUES else None
+        self._unsupported_cache_option_names: set[str] = set()
+        self._last_cache_diagnostic_snapshot: dict[str, Any] | None = None
         kwargs: dict[str, Any] = {"api_key": api_key}
         if self._base_url:
             kwargs["base_url"] = self._base_url
@@ -298,13 +393,27 @@ class OpenAICompatibleClient:
 
         params: dict[str, Any] = {
             "model": request.model,
-            "messages": openai_messages,
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
-        params.update(_token_limit_param_for_model(request.model, request.max_tokens))
         if openai_tools:
             params["tools"] = openai_tools
+        if (
+            (not openai_tools or self._include_usage_with_tools)
+            and "stream_options" not in self._unsupported_cache_option_names
+        ):
+            params["stream_options"] = {"include_usage": True}
+        params.update(_token_limit_param_for_model(request.model, request.max_tokens))
+        if self._enable_prompt_cache_options:
+            if "prompt_cache_key" not in self._unsupported_cache_option_names:
+                params["prompt_cache_key"] = _prompt_cache_key_for_request(request)
+            if (
+                self._prompt_cache_retention
+                and "prompt_cache_retention" not in self._unsupported_cache_option_names
+                and "prompt_cache_key" in params
+            ):
+                params["prompt_cache_retention"] = self._prompt_cache_retention
+        params["messages"] = openai_messages
+        if openai_tools and not self._include_usage_with_tools:
             # Some providers (Kimi) error on empty reasoning_content in
             # tool-call follow-ups.  Omit the entire stream_options key if
             # tools are present – avoids triggering model-side thinking mode
@@ -315,6 +424,7 @@ class OpenAICompatibleClient:
     async def _stream_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Single attempt: stream an OpenAI chat completion."""
         params = self._completion_params(request)
+        self._write_cache_diagnostic("request_start", request, params)
 
         # Collect full response while streaming text deltas
         collected_content = ""
@@ -325,7 +435,7 @@ class OpenAICompatibleClient:
         # Buffer to strip inline <think>…</think> blocks across streaming chunks.
         _think_buf = ""
 
-        stream = await self._client.chat.completions.create(**params)
+        stream = await self._create_sdk_stream(request, params)
         async for chunk in stream:
             if not chunk.choices:
                 # Usage-only chunk (some providers send this at the end)
@@ -385,6 +495,7 @@ class OpenAICompatibleClient:
                 usage_data = {
                     "input_tokens": chunk.usage.prompt_tokens or 0,
                     "output_tokens": chunk.usage.completion_tokens or 0,
+                    "cached_input_tokens": self._cached_tokens_from_usage(chunk.usage),
                 }
 
         # Build the final ConversationMessage
@@ -414,19 +525,32 @@ class OpenAICompatibleClient:
         if collected_reasoning:
             final_message._reasoning = collected_reasoning  # type: ignore[attr-defined]
 
+        usage_snapshot = UsageSnapshot(
+            input_tokens=usage_data.get("input_tokens", 0),
+            output_tokens=usage_data.get("output_tokens", 0),
+            cached_input_tokens=usage_data.get("cached_input_tokens", 0),
+        )
+        self._write_cache_diagnostic("message_complete", request, params, usage=usage_snapshot)
         yield ApiMessageCompleteEvent(
             message=final_message,
-            usage=UsageSnapshot(
-                input_tokens=usage_data.get("input_tokens", 0),
-                output_tokens=usage_data.get("output_tokens", 0),
-                cached_input_tokens=usage_data.get("cached_input_tokens", 0),
-            ),
+            usage=usage_snapshot,
             stop_reason=finish_reason,
         )
+
+    async def _create_sdk_stream(self, request: ApiMessageRequest, params: dict[str, Any]) -> Any:
+        try:
+            return await self._client.chat.completions.create(**params)
+        except Exception as exc:
+            if not self._disable_unsupported_cache_options(str(exc), params):
+                raise
+            fallback_params = self._completion_params(request)
+            self._write_cache_diagnostic("request_fallback", request, fallback_params)
+            return await self._client.chat.completions.create(**fallback_params)
 
     async def _stream_raw_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Single attempt using a direct SSE reader for OpenAI-compatible providers."""
         params = self._completion_params(request)
+        self._write_cache_diagnostic("request_start", request, params)
         collected_content = ""
         collected_reasoning = ""
         collected_tool_calls: dict[int, dict[str, Any]] = {}
@@ -444,100 +568,106 @@ class OpenAICompatibleClient:
             pool=30.0,
         )
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            async with client.stream(
-                "POST",
-                self._chat_completions_url(),
-                headers=self._raw_stream_headers(),
-                json=params,
-            ) as response:
-                if response.status_code >= 400:
-                    payload = await response.aread()
-                    message = payload.decode("utf-8", "replace") or f"HTTP {response.status_code}"
-                    raise httpx.HTTPStatusError(message, request=response.request, response=response)
-
-                async for payload in self._iter_raw_sse_payloads(response):
-                    self._capture_usage(payload, usage_data)
-                    choices = payload.get("choices")
-                    if not isinstance(choices, list) or not choices:
-                        continue
-                    for choice in choices:
-                        if not isinstance(choice, dict):
+            for option_attempt in range(2):
+                async with client.stream(
+                    "POST",
+                    self._chat_completions_url(),
+                    headers=self._raw_stream_headers(),
+                    json=params,
+                ) as response:
+                    if response.status_code >= 400:
+                        payload = await response.aread()
+                        message = payload.decode("utf-8", "replace") or f"HTTP {response.status_code}"
+                        if option_attempt == 0 and self._disable_unsupported_cache_options(message, params):
+                            params = self._completion_params(request)
+                            self._write_cache_diagnostic("request_fallback", request, params)
                             continue
-                        choice_finish = choice.get("finish_reason")
-                        if isinstance(choice_finish, str) and choice_finish:
-                            finish_reason = choice_finish
-                        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
-                        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+                        raise httpx.HTTPStatusError(message, request=response.request, response=response)
 
-                        reasoning_piece = str(delta.get("reasoning_content") or "")
-                        if reasoning_piece:
-                            collected_reasoning += reasoning_piece
-                            self._write_stream_diagnostic(
-                                "reasoning_delta",
-                                elapsed_ms=self._elapsed_ms(started_at),
-                                text_length=len(reasoning_piece),
-                            )
+                    async for payload in self._iter_raw_sse_payloads(response):
+                        self._capture_usage(payload, usage_data)
+                        choices = payload.get("choices")
+                        if not isinstance(choices, list) or not choices:
+                            continue
+                        for choice in choices:
+                            if not isinstance(choice, dict):
+                                continue
+                            choice_finish = choice.get("finish_reason")
+                            if isinstance(choice_finish, str) and choice_finish:
+                                finish_reason = choice_finish
+                            delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+                            message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
 
-                        content_piece = delta.get("content")
-                        if isinstance(content_piece, str) and content_piece:
-                            think_buf += content_piece
-                            visible, think_buf = _strip_think_blocks(think_buf)
-                            if visible:
-                                collected_content += visible
+                            reasoning_piece = str(delta.get("reasoning_content") or "")
+                            if reasoning_piece:
+                                collected_reasoning += reasoning_piece
                                 self._write_stream_diagnostic(
-                                    "text_delta",
+                                    "reasoning_delta",
                                     elapsed_ms=self._elapsed_ms(started_at),
-                                    text_length=len(visible),
-                                )
-                                yield ApiTextDeltaEvent(text=visible)
-
-                        if isinstance(message.get("content"), str) and message.get("content") and not collected_content:
-                            collected_content = str(message["content"])
-
-                        for tc_delta in self._iter_tool_call_dicts(delta.get("tool_calls")):
-                            idx = tc_delta["index"]
-                            entry = collected_tool_calls.setdefault(
-                                idx,
-                                {"id": "", "name": "", "arguments": ""},
-                            )
-                            if tc_delta["id"]:
-                                entry["id"] = tc_delta["id"]
-                            if tc_delta["name"]:
-                                entry["name"] = tc_delta["name"]
-                            if tc_delta["arguments"]:
-                                entry["arguments"] += tc_delta["arguments"]
-                                self._write_stream_diagnostic(
-                                    "tool_delta",
-                                    elapsed_ms=self._elapsed_ms(started_at),
-                                    index=idx,
-                                    tool_name=entry["name"],
-                                    arguments_length=len(tc_delta["arguments"]),
-                                )
-                                yield ApiToolCallDeltaEvent(
-                                    index=idx,
-                                    name=entry["name"] or None,
-                                    arguments_delta=tc_delta["arguments"],
+                                    text_length=len(reasoning_piece),
                                 )
 
-                        for tc_final in self._iter_tool_call_dicts(message.get("tool_calls")):
-                            idx = tc_final["index"]
-                            entry = collected_tool_calls.setdefault(
-                                idx,
-                                {"id": "", "name": "", "arguments": ""},
-                            )
-                            if tc_final["id"]:
-                                entry["id"] = tc_final["id"]
-                            if tc_final["name"]:
-                                entry["name"] = tc_final["name"]
-                            if tc_final["arguments"]:
-                                entry["arguments"] = tc_final["arguments"]
-                                self._write_stream_diagnostic(
-                                    "tool_final",
-                                    elapsed_ms=self._elapsed_ms(started_at),
-                                    index=idx,
-                                    tool_name=entry["name"],
-                                    arguments_length=len(tc_final["arguments"]),
+                            content_piece = delta.get("content")
+                            if isinstance(content_piece, str) and content_piece:
+                                think_buf += content_piece
+                                visible, think_buf = _strip_think_blocks(think_buf)
+                                if visible:
+                                    collected_content += visible
+                                    self._write_stream_diagnostic(
+                                        "text_delta",
+                                        elapsed_ms=self._elapsed_ms(started_at),
+                                        text_length=len(visible),
+                                    )
+                                    yield ApiTextDeltaEvent(text=visible)
+
+                            if isinstance(message.get("content"), str) and message.get("content") and not collected_content:
+                                collected_content = str(message["content"])
+
+                            for tc_delta in self._iter_tool_call_dicts(delta.get("tool_calls")):
+                                idx = tc_delta["index"]
+                                entry = collected_tool_calls.setdefault(
+                                    idx,
+                                    {"id": "", "name": "", "arguments": ""},
                                 )
+                                if tc_delta["id"]:
+                                    entry["id"] = tc_delta["id"]
+                                if tc_delta["name"]:
+                                    entry["name"] = tc_delta["name"]
+                                if tc_delta["arguments"]:
+                                    entry["arguments"] += tc_delta["arguments"]
+                                    self._write_stream_diagnostic(
+                                        "tool_delta",
+                                        elapsed_ms=self._elapsed_ms(started_at),
+                                        index=idx,
+                                        tool_name=entry["name"],
+                                        arguments_length=len(tc_delta["arguments"]),
+                                    )
+                                    yield ApiToolCallDeltaEvent(
+                                        index=idx,
+                                        name=entry["name"] or None,
+                                        arguments_delta=tc_delta["arguments"],
+                                    )
+
+                            for tc_final in self._iter_tool_call_dicts(message.get("tool_calls")):
+                                idx = tc_final["index"]
+                                entry = collected_tool_calls.setdefault(
+                                    idx,
+                                    {"id": "", "name": "", "arguments": ""},
+                                )
+                                if tc_final["id"]:
+                                    entry["id"] = tc_final["id"]
+                                if tc_final["name"]:
+                                    entry["name"] = tc_final["name"]
+                                if tc_final["arguments"]:
+                                    entry["arguments"] = tc_final["arguments"]
+                                    self._write_stream_diagnostic(
+                                        "tool_final",
+                                        elapsed_ms=self._elapsed_ms(started_at),
+                                        index=idx,
+                                        tool_name=entry["name"],
+                                        arguments_length=len(tc_final["arguments"]),
+                                    )
+                    break
 
         content: list[ContentBlock] = []
         if collected_content:
@@ -564,13 +694,15 @@ class OpenAICompatibleClient:
             tool_calls=len(collected_tool_calls),
             finish_reason=finish_reason or "",
         )
+        usage_snapshot = UsageSnapshot(
+            input_tokens=usage_data.get("input_tokens", 0),
+            output_tokens=usage_data.get("output_tokens", 0),
+            cached_input_tokens=usage_data.get("cached_input_tokens", 0),
+        )
+        self._write_cache_diagnostic("message_complete", request, params, usage=usage_snapshot)
         yield ApiMessageCompleteEvent(
             message=final_message,
-            usage=UsageSnapshot(
-                input_tokens=usage_data.get("input_tokens", 0),
-                output_tokens=usage_data.get("output_tokens", 0),
-                cached_input_tokens=usage_data.get("cached_input_tokens", 0),
-            ),
+            usage=usage_snapshot,
             stop_reason=finish_reason,
         )
 
@@ -692,6 +824,124 @@ class OpenAICompatibleClient:
                 handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
         except Exception:
             log.debug("failed to write provider stream diagnostic", exc_info=True)
+
+    def _disable_unsupported_cache_options(self, message: str, params: dict[str, Any]) -> bool:
+        text = message.lower()
+        if not any(term in text for term in _UNSUPPORTED_OPTION_TERMS):
+            return False
+        disabled: set[str] = set()
+        for key in _CACHE_OPTION_KEYS:
+            if key in params and key.lower() in text:
+                disabled.add(key)
+        if "include_usage" in text and "stream_options" in params:
+            disabled.add("stream_options")
+        if not disabled and "cache" in text:
+            if "prompt_cache_key" in params:
+                disabled.add("prompt_cache_key")
+            if "prompt_cache_retention" in params:
+                disabled.add("prompt_cache_retention")
+        if not disabled:
+            return False
+        self._unsupported_cache_option_names.update(disabled)
+        self._write_cache_diagnostic(
+            "options_disabled",
+            None,
+            params,
+            disabled_options=sorted(disabled),
+            error_class="unsupported_parameter",
+        )
+        return True
+
+    def _cache_diagnostic_snapshot(self, request: ApiMessageRequest, params: dict[str, Any]) -> dict[str, Any]:
+        messages = params.get("messages") if isinstance(params.get("messages"), list) else []
+        tools = params.get("tools") if isinstance(params.get("tools"), list) else []
+        message_roles = [str(item.get("role") or "") for item in messages if isinstance(item, dict)]
+        message_prefix = messages[:-1] if messages else []
+        provider_settings = {
+            "model": params.get("model"),
+            "base_url": self._base_url or "https://api.openai.com/v1",
+            "has_prompt_cache_key": "prompt_cache_key" in params,
+            "prompt_cache_retention": params.get("prompt_cache_retention") or "",
+            "include_usage": bool(params.get("stream_options", {}).get("include_usage"))
+            if isinstance(params.get("stream_options"), dict)
+            else False,
+            "unsupported_options": sorted(self._unsupported_cache_option_names),
+        }
+        system_prompt = request.system_prompt or ""
+        snapshot = {
+            "model": str(request.model or ""),
+            "cache_event": request.cache_event or "",
+            "prompt_cache_key": params.get("prompt_cache_key") or "",
+            "prompt_cache_retention": params.get("prompt_cache_retention") or "",
+            "system_prompt_hash": _stable_hash(system_prompt),
+            "system_prompt_chars": len(system_prompt),
+            "tool_schema_hash": _stable_hash(_stable_tool_schema_payload(request.tools)),
+            "tool_count": len(tools),
+            "message_prefix_hash": _stable_hash(message_prefix),
+            "message_count": len(messages),
+            "message_roles": message_roles,
+            "message_content_chars": sum(_message_content_length(item) for item in messages if isinstance(item, dict)),
+            "provider_settings_hash": _stable_hash(provider_settings),
+            "unsupported_cache_options": sorted(self._unsupported_cache_option_names),
+        }
+        snapshot["prefix_change_reason"] = self._infer_prefix_change_reason(snapshot)
+        self._last_cache_diagnostic_snapshot = snapshot
+        return snapshot
+
+    def _infer_prefix_change_reason(self, snapshot: dict[str, Any]) -> str:
+        cache_event = str(snapshot.get("cache_event") or "")
+        if cache_event in _CACHE_EVENT_REASONS:
+            return cache_event
+        previous = self._last_cache_diagnostic_snapshot
+        if previous is None:
+            return "first_request"
+        if snapshot.get("provider_settings_hash") != previous.get("provider_settings_hash"):
+            return "provider_settings_changed"
+        if snapshot.get("system_prompt_hash") != previous.get("system_prompt_hash"):
+            return "system_prompt_changed"
+        if snapshot.get("tool_schema_hash") != previous.get("tool_schema_hash"):
+            return "tool_schema_changed"
+        if snapshot.get("message_prefix_hash") != previous.get("message_prefix_hash"):
+            return "unknown"
+        return "stable_prefix"
+
+    def _write_cache_diagnostic(
+        self,
+        event: str,
+        request: ApiMessageRequest | None,
+        params: dict[str, Any],
+        *,
+        usage: UsageSnapshot | None = None,
+        **fields: Any,
+    ) -> None:
+        if not self._enable_prompt_cache_options and not os.environ.get("MYHARNESS_PROMPT_CACHE_DIAGNOSTICS"):
+            return
+        try:
+            snapshot = self._cache_diagnostic_snapshot(request, params) if request is not None else {}
+            cached = int(usage.cached_input_tokens if usage is not None else 0)
+            input_tokens = int(usage.input_tokens if usage is not None else 0)
+            payload = {
+                "ts": time.time(),
+                "provider": self._diagnostics_label or "openai-compatible",
+                "event": event,
+                **snapshot,
+                **fields,
+            }
+            if usage is not None:
+                payload.update(
+                    {
+                        "input_tokens": input_tokens,
+                        "cached_input_tokens": cached,
+                        "uncached_input_tokens": max(0, input_tokens - cached),
+                        "output_tokens": int(usage.output_tokens),
+                        "cache_hit_ratio": (cached / input_tokens) if input_tokens > 0 else 0.0,
+                    }
+                )
+            path = get_logs_dir() / "prompt-cache-diagnostics.jsonl"
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception:
+            log.debug("failed to write prompt cache diagnostic", exc_info=True)
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:

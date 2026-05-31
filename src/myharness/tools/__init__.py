@@ -7,6 +7,7 @@ from myharness.tools.bash_tool import BashTool, CmdTool
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from myharness.tools.brief_tool import BriefTool
 from myharness.tools.config_tool import ConfigTool
+from myharness.tools.conversation_history_search_tool import ConversationHistorySearchTool
 from myharness.tools.cron_create_tool import CronCreateTool
 from myharness.tools.cron_delete_tool import CronDeleteTool
 from myharness.tools.cron_list_tool import CronListTool
@@ -88,6 +89,7 @@ def create_default_tool_registry(mcp_manager=None, *, task_worker: bool = False)
         WebFetchTool(),
         WebSearchTool(),
         ConfigTool(),
+        ConversationHistorySearchTool(),
         BriefTool(),
         SleepTool(),
         EnterWorktreeTool(),

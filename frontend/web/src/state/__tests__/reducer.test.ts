@@ -423,7 +423,15 @@ describe("appReducer", () => {
     expect(completed.messages).toHaveLength(1);
     expect(completed.messages[0].text).toBe("최종 답변");
     expect(completed.messages[0].isComplete).toBe(true);
-    expect(completed.busy).toBe(false);
+    expect(completed.busy).toBe(true);
+    expect(completed.statusText).toBe("마무리 중");
+
+    const finished = appReducer(completed, {
+      type: "backend_event",
+      event: { type: "line_complete" },
+    });
+
+    expect(finished.busy).toBe(false);
   });
 
   it("shows assistant completion even when no delta streamed first", () => {
@@ -435,7 +443,7 @@ describe("appReducer", () => {
     expect(completed.messages).toHaveLength(1);
     expect(completed.messages[0].text).toBe("AI 팀 작업자가 아직 진행 중입니다.");
     expect(completed.messages[0].isComplete).toBe(true);
-    expect(completed.busy).toBe(false);
+    expect(completed.busy).toBe(true);
   });
 
   it("does not shrink streamed assistant text when completion only repeats the tail", () => {
@@ -1190,7 +1198,7 @@ describe("appReducer", () => {
     expect(Object.values(completed.workflowEventsByMessageId).flat()).toHaveLength(0);
   });
 
-  it("refreshes artifacts only when the final assistant answer completes", () => {
+  it("refreshes artifacts when the final assistant answer completes", () => {
     const withToolCall = appReducer(initialAppState, {
       type: "backend_event",
       event: { type: "assistant_complete", message: "도구 호출 준비", has_tool_uses: true },
@@ -2744,7 +2752,53 @@ describe("appReducer", () => {
       kind: "html",
       content: "<html><body><h1>Current preview</h1></body></html>",
     });
-    expect(completed.artifactRefreshKey).toBe(streaming.artifactRefreshKey);
+    expect(completed.artifactRefreshKey).toBe(streaming.artifactRefreshKey + 1);
+  });
+
+  it("refreshes artifacts as soon as a successful write_file completes", () => {
+    const started = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_input: { path: "outputs/instant-preview.html", content: "<!doctype html><h1>Ready</h1>" },
+      },
+    });
+    const completed = appReducer(started, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "write_file",
+        output: "Wrote outputs/instant-preview.html",
+        is_error: false,
+      },
+    });
+
+    expect(completed.busy).toBe(true);
+    expect(completed.artifactRefreshKey).toBe(started.artifactRefreshKey + 1);
+    expect(completed.statusText).toBe("후속 응답 대기 중");
+  });
+
+  it("does not refresh artifacts when write_file fails", () => {
+    const started = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_input: { path: "outputs/broken.html", content: "<!doctype html><h1>Broken</h1>" },
+      },
+    });
+    const completed = appReducer(started, {
+      type: "backend_event",
+      event: {
+        type: "tool_completed",
+        tool_name: "write_file",
+        output: "Mermaid preflight failed; broken.html was not written.",
+        is_error: true,
+      },
+    });
+
+    expect(completed.artifactRefreshKey).toBe(started.artifactRefreshKey);
   });
 
   it("keeps the streamed write_file preview row when the tool starts and completes", () => {

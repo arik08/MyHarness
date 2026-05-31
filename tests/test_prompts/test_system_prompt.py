@@ -108,6 +108,12 @@ def test_build_system_prompt_requires_external_source_attribution():
     assert "web search/fetch results, MCP tools or resources, vector databases" in prompt
     assert "database query results" in prompt
     assert "MCP/vector DB server, resource, document id, table, or query identifier" in prompt
+    assert "cite each source-backed fact item on the same line as the claim" in prompt
+    assert "`[출처: 데일리안](https://...)`" in prompt
+    assert "Do not add evidence snippets to Markdown link titles" in prompt
+    assert "the UI derives hover excerpts from existing web_search/web_fetch tool outputs to save tokens" in prompt
+    assert "Do not replace item-level links with a separate final `참고:` or `출처:` line" in prompt
+    assert "do not group several unrelated article sources into one trailing note" in prompt
     assert "instead of inventing one" in prompt
     assert "Skip citations for trivial operational details" in prompt
 
