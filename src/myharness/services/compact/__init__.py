@@ -69,6 +69,9 @@ CONTEXT_COLLAPSE_TAIL_CHARS = 500
 MAX_COMPACT_ATTACHMENTS = 6
 MAX_DISCOVERED_TOOLS = 12
 MAX_ARCHIVE_REFS_IN_CONTEXT = 8
+RECENT_USER_INPUT_ATTACHMENT_KEEP = 3
+RECENT_USER_INPUT_VERBATIM_CHAR_LIMIT = 1_200
+RECENT_ASSISTANT_OUTPUT_ATTACHMENT_KEEP = 3
 
 # Microcompact defaults
 DEFAULT_KEEP_RECENT = 5
@@ -694,6 +697,71 @@ def create_user_input_archive_attachment_if_needed(metadata: dict[str, Any]) -> 
     )
 
 
+def create_recent_user_inputs_attachment_if_needed(metadata: dict[str, Any]) -> CompactAttachment | None:
+    archive = metadata.get("user_input_archive")
+    if not isinstance(archive, list):
+        return None
+    entries = [
+        item
+        for item in archive
+        if isinstance(item, dict)
+        and str(item.get("id") or "").strip()
+        and str(item.get("text") or "").strip()
+    ][-RECENT_USER_INPUT_ATTACHMENT_KEEP:]
+    if not entries:
+        return None
+
+    lines = [
+        "Recent user-authored inputs are preserved verbatim because user intent outranks internal tool output.",
+    ]
+    for entry in entries:
+        entry_id = str(entry.get("id") or "").strip()
+        turn = entry.get("turn_index")
+        text = str(entry.get("text") or "").strip()
+        lines.append(f"ID: {entry_id} (turn {turn})")
+        if len(text) <= RECENT_USER_INPUT_VERBATIM_CHAR_LIMIT:
+            lines.append(text)
+        else:
+            hint = str(entry.get("short_hint") or "").strip()
+            if hint:
+                lines.append(f"Hint: {hint}")
+            lines.append("Full text is archived; retrieve it with conversation_history_search by ID if needed.")
+    return _create_attachment(
+        "recent_user_inputs",
+        "Recent user-authored inputs",
+        lines,
+        metadata={
+            "ids": [str(entry.get("id") or "").strip() for entry in entries],
+            "count": len(entries),
+        },
+    )
+
+
+def create_recent_assistant_outputs_attachment_if_needed(messages: list[ConversationMessage]) -> CompactAttachment | None:
+    entries = [
+        message.text.strip()
+        for message in messages
+        if message.role == "assistant" and not message.tool_uses and message.text.strip()
+    ][-RECENT_ASSISTANT_OUTPUT_ATTACHMENT_KEEP:]
+    if not entries:
+        return None
+
+    lines = [
+        "Recent final assistant outputs and result pointers are preserved because they are user-visible work products.",
+    ]
+    for index, text in enumerate(entries, start=1):
+        lines.extend([
+            f"Output {index}:",
+            text,
+        ])
+    return _create_attachment(
+        "recent_assistant_outputs",
+        "Recent final assistant outputs",
+        lines,
+        metadata={"count": len(entries)},
+    )
+
+
 def create_task_focus_attachment_if_needed(
     metadata: dict[str, Any],
 ) -> CompactAttachment | None:
@@ -878,6 +946,8 @@ def _build_compact_attachments(
     attachment_paths = _extract_attachment_paths(messages)
     builders = [
         create_task_focus_attachment_if_needed(metadata),
+        create_recent_user_inputs_attachment_if_needed(metadata),
+        create_recent_assistant_outputs_attachment_if_needed(messages),
         create_user_input_archive_attachment_if_needed(metadata),
         create_recent_verified_work_attachment_if_needed(metadata.get("recent_verified_work")),
         _create_recent_attachments_attachment_if_needed(attachment_paths),

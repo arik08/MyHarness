@@ -368,7 +368,7 @@ async def test_compact_conversation_runs_hooks_and_preserves_carryover_state(tmp
 
 
 @pytest.mark.asyncio
-async def test_compact_conversation_archives_older_user_inputs_and_limits_summary_tokens():
+async def test_compact_conversation_archives_and_preserves_recent_user_inputs():
     api_client = _CompactApiClient(["<summary>condensed</summary>"])
     metadata: dict[str, object] = {}
     long_user_context = "사용자가 붙여넣은 긴 근거 " + ("중요자료 " * 400)
@@ -395,8 +395,80 @@ async def test_compact_conversation_archives_older_user_inputs_and_limits_summar
     prompt_text = "\n".join(message.text for message in api_client.requests[0].messages)
     assert "Archived user input:" in prompt_text
     rebuilt_text = "\n".join(message.text for message in build_post_compact_messages(compacted))
+    assert "[Compact attachment: recent_user_inputs]" in rebuilt_text
     assert "[Compact attachment: user_input_archive]" in rebuilt_text
     assert long_user_context.strip() not in rebuilt_text
+    assert "Full text is archived; retrieve it with conversation_history_search by ID if needed." in rebuilt_text
+
+
+@pytest.mark.asyncio
+async def test_compact_conversation_preserves_user_prompt_when_tool_loop_pushes_it_out():
+    important_prompt = "사용자가 직접 쓴 매우 중요한 지시: 이 요구사항 원문은 다음 답변에도 그대로 필요합니다."
+    messages = [ConversationMessage.from_user_text(important_prompt)]
+    for index in range(4):
+        tool_id = f"call_search_{index}"
+        messages.extend([
+            ConversationMessage(
+                role="assistant",
+                content=[ToolUseBlock(id=tool_id, name="web_search", input={"query": f"topic {index}"})],
+            ),
+            ConversationMessage(
+                role="user",
+                content=[ToolResultBlock(tool_use_id=tool_id, content=("검색 결과 " * 500), is_error=False)],
+            ),
+        ])
+    messages.append(ConversationMessage(role="assistant", content=[TextBlock(text="final")]))
+
+    compacted = await compact_conversation(
+        messages,
+        api_client=_CompactApiClient(["<summary>condensed</summary>"]),
+        model="claude-test",
+        preserve_recent=3,
+        carryover_metadata={},
+    )
+
+    rebuilt_text = "\n".join(message.text for message in build_post_compact_messages(compacted))
+    assert "[Compact attachment: recent_user_inputs]" in rebuilt_text
+    assert important_prompt in rebuilt_text
+
+
+@pytest.mark.asyncio
+async def test_compact_conversation_preserves_final_assistant_output_over_tool_results():
+    final_output = "최종 결과물: outputs/포스코_언론동향_브리핑.html 파일 작성을 완료했습니다."
+    messages = [
+        ConversationMessage.from_user_text("포스코 언론동향 웹보고서를 작성해줘"),
+        ConversationMessage(role="assistant", content=[TextBlock(text="검색을 진행합니다.")]),
+    ]
+    for index in range(3):
+        tool_id = f"call_fetch_{index}"
+        messages.extend([
+            ConversationMessage(
+                role="assistant",
+                content=[ToolUseBlock(id=tool_id, name="web_fetch", input={"url": f"https://example.com/{index}"})],
+            ),
+            ConversationMessage(
+                role="user",
+                content=[ToolResultBlock(tool_use_id=tool_id, content=("기사 본문 " * 600), is_error=False)],
+            ),
+        ])
+    messages.extend([
+        ConversationMessage(role="assistant", content=[TextBlock(text=final_output)]),
+        ConversationMessage.from_user_text("다른 주제로 이어서 질문합니다"),
+        ConversationMessage(role="assistant", content=[TextBlock(text="다음 작업을 시작합니다.")]),
+        ConversationMessage.from_user_text("계속"),
+    ])
+
+    compacted = await compact_conversation(
+        messages,
+        api_client=_CompactApiClient(["<summary>condensed</summary>"]),
+        model="claude-test",
+        preserve_recent=2,
+        carryover_metadata={},
+    )
+
+    rebuilt_text = "\n".join(message.text for message in build_post_compact_messages(compacted))
+    assert "[Compact attachment: recent_assistant_outputs]" in rebuilt_text
+    assert final_output in rebuilt_text
 
 
 @pytest.mark.asyncio
