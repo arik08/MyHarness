@@ -176,6 +176,7 @@ async def test_file_write_expands_html_source_footnote_css_marker(tmp_path: Path
     assert '<sup class="source-ref"><a href="https://example.com/report"' in saved
     assert '(<a href="#source-1">1</a>)' not in saved
     assert ".myharness-source-tooltip" in saved
+    assert "border-radius:50%" in saved
     assert ".sources a,.source-list a{color:#0b65c2;text-decoration:none!important" in saved
     assert "data-tooltip=\"example.com" in saved
     assert "&quot;POSCO announced 17 trillion won in revenue and 700 billion won in operating profit" in saved

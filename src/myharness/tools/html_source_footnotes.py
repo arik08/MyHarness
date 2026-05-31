@@ -18,7 +18,7 @@ SOURCE_TOOLTIP_PLACEHOLDERS = {
 
 SOURCE_FOOTNOTE_CSS = """<style id="myharness-source-footnotes">
 .source-ref{display:inline-flex;align-items:center;justify-content:center;vertical-align:baseline;line-height:1;margin-left:4px;white-space:nowrap}
-.source-ref a{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;padding:0 4px;border:1px solid #bfdbfe;border-radius:4px;background:#eff6ff;color:#075985;font:750 10px/1 Arial,'Noto Sans KR',sans-serif;text-decoration:none;border-bottom:0}
+.source-ref a{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;padding:0;border:1px solid #bfdbfe;border-radius:50%;background:#eff6ff;color:#075985;font:750 10px/1 Arial,'Noto Sans KR',sans-serif;text-decoration:none;border-bottom:0}
 .sources,.source-list{font-size:12px;line-height:1.55;color:#475569}
 .sources a,.source-list a{color:#0b65c2;text-decoration:none!important;border-bottom:0!important}
 .sources a:hover,.sources a:focus-visible,.source-list a:hover,.source-list a:focus-visible,.source-ref a:hover,.source-ref a:focus-visible{text-decoration:none}

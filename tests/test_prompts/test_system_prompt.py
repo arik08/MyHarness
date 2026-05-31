@@ -120,7 +120,7 @@ def test_build_system_prompt_requires_external_source_attribution():
     assert "the `write_file` tool expands that marker into the fixed CSS" in prompt
     assert "fills `data-tooltip` from prior `web_search`/`web_fetch` evidence" in prompt
     assert "Do not spend output tokens writing excerpt text into `data-tooltip`" in prompt
-    assert "small rounded square badge containing only the source number" in prompt
+    assert "small circular badge containing only the source number" in prompt
     assert "source address on the first line and a short verbatim excerpt" in prompt
     assert "verbatim excerpt line is wrapped in double quotes" in prompt
     assert "instead of inventing one" in prompt
@@ -306,7 +306,7 @@ def test_visual_artifact_cites_important_external_sources():
     assert "HTML Source Footnotes" in skill_text
     assert "`<!-- myharness:source-footnotes-css -->` once in the HTML `<head>`" in skill_text
     assert "write_file` tool expands this marker into the fixed tooltip CSS" in skill_text
-    assert "small rounded square badge containing only the number" in skill_text
+    assert "small circular badge containing only the number" in skill_text
     assert "Leave `data-tooltip` absent or empty" in skill_text
     assert "`write_file` fills it from stored tool evidence" in skill_text
     assert "short verbatim excerpt directly taken from the source/tool result" in skill_text
