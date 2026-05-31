@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +33,7 @@ from myharness.services.compact import (
     try_context_collapse,
     try_session_memory_compaction,
 )
+from myharness.services.session_documents import get_session_document_dir
 
 
 def test_token_estimation_helpers():
@@ -230,6 +232,50 @@ def test_try_context_collapse_can_trim_recent_tool_results():
     tool_result = result[-1].content[0]
     assert isinstance(tool_result, ToolResultBlock)
     assert "[collapsed" in tool_result.content
+
+
+@pytest.mark.asyncio
+async def test_auto_compact_stores_oversized_current_user_input_as_session_document(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    long_text = "\n".join(
+        f"{index:05d}. 조직업무분장 자료: 부서별 임무와 정원, 현안, 개편 영향 검토가 모두 중요합니다."
+        for index in range(12000)
+    )
+    messages = [
+        ConversationMessage.from_user_text(
+            f"{long_text}\n\n위 조직업무분장 자료 전체를 근거로 조직 개편안을 검토해줘."
+        )
+    ]
+    metadata: dict[str, object] = {"session_id": "abc123def456"}
+
+    compacted, was_compacted = await auto_compact_if_needed(
+        messages,
+        api_client=_PromptTooLargeApiClient(),
+        model="gpt-5.5",
+        state=AutoCompactState(),
+        carryover_metadata=metadata,
+        cwd=tmp_path,
+        context_window_tokens=4000,
+    )
+
+    assert was_compacted is True
+    assert len(compacted) == 1
+    compacted_text = compacted[0].text
+    assert "Session document stored" in compacted_text
+    assert "session_document_search" in compacted_text
+    assert "session_document_read" in compacted_text
+    assert "03000. 조직업무분장 자료" not in compacted_text
+    assert estimate_conversation_tokens(compacted, model="gpt-5.5") < 8000
+    docs = metadata.get("session_documents")
+    assert isinstance(docs, list)
+    assert len(docs) == 1
+    entry = docs[0]
+    assert isinstance(entry, dict)
+    assert entry["line_count"] >= 12000
+    document_path = Path(str(entry["path"]))
+    assert document_path.is_file()
+    assert document_path.parent == get_session_document_dir(tmp_path, "abc123def456")
+    assert "11999. 조직업무분장 자료" in document_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

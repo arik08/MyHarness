@@ -975,6 +975,49 @@ async def test_query_engine_reactive_compacts_after_prompt_too_long(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_query_engine_stores_oversized_current_user_input_before_model_request(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    long_text = "\n".join(
+        f"{index:05d}. 조직업무분장 자료: 부서별 임무와 정원, 현안, 개편 영향 검토가 모두 중요합니다."
+        for index in range(12000)
+    )
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="after document storage")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            )
+        ]
+    )
+    metadata: dict[str, object] = {"session_id": "abc123def456"}
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="gpt-5.5",
+        system_prompt="system",
+        tool_metadata=metadata,
+        context_window_tokens=4000,
+    )
+
+    events = [event async for event in engine.submit_message(f"{long_text}\n\n조직 개편안을 검토해줘.")]
+
+    request_text = api_client.requests[0].messages[0].text
+    assert "Session document stored" in request_text
+    assert "session_document_search" in request_text
+    assert "03000. 조직업무분장 자료" not in request_text
+    assert any(
+        isinstance(event, CompactProgressEvent) and event.phase == "session_document_store_end"
+        for event in events
+    )
+    docs = metadata.get("session_documents")
+    assert isinstance(docs, list)
+    assert Path(str(docs[0]["path"])).is_file()
+    assert engine.messages[-1].text == "after document storage"
+
+
+@pytest.mark.asyncio
 async def test_query_engine_tracks_recent_read_files_and_skills(tmp_path: Path):
     sample = tmp_path / "hello.txt"
     sample.write_text("alpha\nbeta\n", encoding="utf-8")

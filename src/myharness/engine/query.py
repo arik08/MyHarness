@@ -885,6 +885,7 @@ async def run_query(
                 trigger=trigger,
                 hook_executor=context.hook_executor,
                 carryover_metadata=context.tool_metadata,
+                cwd=context.cwd,
                 context_window_tokens=context.context_window_tokens,
                 auto_compact_threshold_tokens=context.auto_compact_threshold_tokens,
             )

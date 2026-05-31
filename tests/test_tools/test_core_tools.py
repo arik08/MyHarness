@@ -31,6 +31,12 @@ from myharness.tools.grep_tool import GrepTool, GrepToolInput
 from myharness.tools.lsp_tool import LspTool, LspToolInput
 from myharness.tools.notebook_edit_tool import NotebookEditTool, NotebookEditToolInput
 from myharness.tools.remote_trigger_tool import RemoteTriggerTool, RemoteTriggerToolInput
+from myharness.tools.session_document_tool import (
+    SessionDocumentReadTool,
+    SessionDocumentReadToolInput,
+    SessionDocumentSearchTool,
+    SessionDocumentSearchToolInput,
+)
 from myharness.tools.skill_tool import SkillTool, SkillToolInput
 from myharness.tools.todo_write_tool import TodoWriteTool, TodoWriteToolInput
 from myharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
@@ -412,6 +418,52 @@ async def test_conversation_history_search_returns_archived_user_inputs(tmp_path
     assert "현대제철" in search_result.output
     assert "UI는 툴팁 없이 compact하게 보여줘." in exact_result.output
     assert ConversationHistorySearchTool().is_read_only(ConversationHistorySearchInput(query="x")) is True
+
+
+@pytest.mark.asyncio
+async def test_session_document_search_and_read_tools_return_matching_ranges(tmp_path: Path):
+    document_path = tmp_path / ".myharness" / "sessions" / "session-documents" / "abc123def456" / "doc-abcdef123456.txt"
+    document_path.parent.mkdir(parents=True)
+    lines = [
+        "총무팀은 복무, 보안, 의전 업무를 담당합니다.",
+        "인사팀은 채용과 평가 제도를 운영합니다.",
+        "조직개편안은 총무팀 보안 기능을 안전관리실로 이관합니다.",
+        "재무팀은 예산 편성과 결산을 담당합니다.",
+    ]
+    document_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    shared_metadata = {
+        "session_documents": [
+            {
+                "id": "doc-abcdef123456",
+                "session_id": "abc123def456",
+                "path": str(document_path),
+                "line_count": len(lines),
+                "char_count": len(document_path.read_text(encoding="utf-8")),
+                "estimated_tokens": 100,
+                "created_at": 123,
+                "short_hint": "조직업무분장 자료",
+            }
+        ]
+    }
+    context = ToolExecutionContext(cwd=tmp_path, metadata={"_shared_tool_metadata": shared_metadata})
+
+    search_result = await SessionDocumentSearchTool().execute(
+        SessionDocumentSearchToolInput(document_id="doc-abcdef123456", query="보안 기능 이관"),
+        context,
+    )
+    read_result = await SessionDocumentReadTool().execute(
+        SessionDocumentReadToolInput(document_id="doc-abcdef123456", start_line=2, limit=2),
+        context,
+    )
+
+    assert search_result.is_error is False
+    assert "doc-abcdef123456" in search_result.output
+    assert "lines 1-4" in search_result.output
+    assert "보안 기능" in search_result.output
+    assert read_result.is_error is False
+    assert "     2\t인사팀은 채용과 평가 제도를 운영합니다." in read_result.output
+    assert "     3\t조직개편안은 총무팀 보안 기능을 안전관리실로 이관합니다." in read_result.output
+    assert SessionDocumentSearchTool().is_read_only(SessionDocumentSearchToolInput(document_id="doc-abcdef123456", query="x")) is True
 
 
 @pytest.mark.asyncio
