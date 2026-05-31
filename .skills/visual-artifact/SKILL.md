@@ -45,6 +45,15 @@ quarterly trends, sources, or a report:
 - For financial/company reports, include a compact source note area and make uncertainty explicit.
 - If important claims, numbers, charts, or recommendations rely on external knowledge such as web research, MCP/vector database results, source documents, or database queries, cite the source in the report using a compact footnote, source note, or sources section. Use the most specific identifier available: URL/title, document page/path, MCP server/resource, document id, table name, or query label. Do not invent citations when source metadata is missing; state the limitation instead.
 
+## HTML Source Footnotes
+
+- For standalone HTML reports, cite source-backed facts with compact clickable source links where the whole parenthesized marker is rendered as superscript instead of long inline URLs or visible source chips.
+- Use this fixed markup pattern next to the sourced fact: `<sup class="source-ref">(<a href="https://example.com" target="_blank" rel="noreferrer">3</a>)</sup>`.
+- Put `<!-- myharness:source-footnotes-css -->` once in the HTML `<head>`. Do not write custom CSS for `.source-ref`; the `write_file` tool expands this marker into the fixed tooltip CSS when saving the artifact.
+- The visible mark should stay short, such as `(3)`, and the entire parenthesized marker must be superscripted as a unit. The click target opens the original source link in a new tab.
+- For web sources gathered through `web_search`/`web_fetch`, do not write the excerpt yourself. Leave `data-tooltip` absent or empty; `write_file` fills it from stored tool evidence when saving. The filled tooltip contains the short source address on the first line and a short verbatim excerpt directly taken from the source/tool result on the second line. The excerpt line is wrapped in double quotes to show it was copied unchanged. Do not summarize the excerpt in your own words when a direct source sentence is available.
+- Keep a compact `Sources`/`출처` list near the end of the HTML that maps the same numbers to site names or titles and URLs.
+
 ## Visual direction
 
 - Choose a visual concept before writing CSS. Keep it business-appropriate, but vary the format to fit the subject instead of reusing the same card grid every time.

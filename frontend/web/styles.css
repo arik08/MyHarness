@@ -8013,6 +8013,14 @@ a:focus-visible {
   object-fit: cover;
 }
 
+.markdown-body.inline-source-pending-prefix {
+  display: inline;
+}
+
+.markdown-body.inline-source-pending-prefix > p {
+  display: inline;
+}
+
 .inline-source-stream-pending {
   display: inline-flex;
   position: relative;

@@ -664,7 +664,7 @@ function StreamingMarkdownMessage({
             <StableMarkdownMessage
               text={liveTailBeforeIncompleteSourceLink}
               deferIncompleteTables
-              className="stream-live-text"
+              className="stream-live-text inline-source-pending-prefix"
               sourceEvidenceByUrl={sourceEvidenceByUrl}
             />
           ) : null}

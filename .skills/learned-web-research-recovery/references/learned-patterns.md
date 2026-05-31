@@ -1,31 +1,3 @@
-## Consolidated Evidence
-
-Merged from:
-- `learned-category-web-fetch`
-- `learned-web-fetch-404-newsroom-posco-com`
-- `learned-web-fetch-web-fetch-failed-client-error-400-bad-requ`
-- `learned-web-fetch-web-fetch-failed-client-error-403-forbidde`
-- `learned-web-fetch-web-fetch-failed-client-error-404-not-foun`
-- `learned-web-fetch-web-fetch-실패-client-error-403-forbidden-fo`
-- `learned-web-search-검색-결과가-없습니다`
-- `learned-web-search-no-results`
-- `learned-web-search-no-search-results-found`
-- `learned-web-search-web-search-실패-client-error-403-forbidden-`
-
-Reusable patterns:
-- Korean no-result searches often recover through bilingual terms, official source pages, RSS, or direct newsroom/investor pages.
-- 403s on official pages require alternate official or source-specific routes, not a guess from a saved report.
-- Wikipedia, vendor blogs, and corporate/news pages may require Jina Reader, a public API, or a better primary source.
-- Raw GitHub 404s should be handled by listing repository contents and branch names first.
-- Some generated evidence was low quality because it treated local artifact inspection as web-source recovery; keep that as an anti-pattern, not as a recommended path.
-
-## Evidence bd12408a47de3d3a
-- Confidence: 0.85
-- Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.naver.com 포스코 최근 일주일: 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Fetched remote content from https://biz.chosun.com/stock/market_trend/2026/05/22/TFUYSQMUSNDJ7GR4NCFHQ6OUL4/
-- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
-
 ## Evidence 8e3c9005d5668523
 - Confidence: 0.95
 - Signature: `web-search-no-results`
@@ -59,4 +31,25 @@ Reusable patterns:
 - Signature: `web-search-no-results`
 - Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.google.com 포스코 2026 5 30: 검색 결과가 없습니다.
 - Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.ferrotimes.com/news/articleView.html?idxno=48266
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence bc05fd22ad729833
+- Confidence: 0.95
+- Signature: `web-search-no-results`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search input="포스코퓨처엠" "LFP 양극재 공장" "30일": 검색 결과가 없습니다.
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.wowglobal.co.kr/News/NewsView?articleId=A202605290588
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence e73d8c6d4f3a4510
+- Confidence: 0.95
+- Signature: `web-search-no-results`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.nate.com 포스코 20260529 경제: 검색 결과가 없습니다.
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.youthdaily.co.kr/news/article.html?no=219907
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence 226be90481550f5a
+- Confidence: 0.95
+- Signature: `web-search-no-results`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.google.com 포스코 2026-05-30: 검색 결과가 없습니다.
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.news1.kr/industry/general-industry/6180732
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

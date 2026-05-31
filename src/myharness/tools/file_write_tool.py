@@ -12,6 +12,10 @@ from myharness.tools.mermaid_preflight import (
     format_mermaid_preflight_errors,
     mermaid_preflight_errors,
 )
+from myharness.tools.html_source_footnotes import (
+    SOURCE_FOOTNOTE_CSS_MARKER,
+    prepare_source_footnotes_html,
+)
 from myharness.tools.path_display import display_tool_path
 from myharness.services.token_estimation import estimate_tokens
 
@@ -37,7 +41,9 @@ class FileWriteTool(BaseTool):
         "For human-facing HTML, Markdown, PDF, DOCX, XLSX, and PPTX artifacts, prefer concise readable Korean filenames with underscores between words when the user/content is Korean; "
         "English snake/kebab-style filenames are fine for code, scripts, configs, and data such as PY, JS, JSON, or CSV. "
         "Avoid generic names like index.html for newly created artifacts unless the user explicitly asks for that name "
-        "or a required app/framework/hosting entrypoint would otherwise break."
+        "or a required app/framework/hosting entrypoint would otherwise break. "
+        f"For standalone HTML artifacts with numbered source footnotes, put `{SOURCE_FOOTNOTE_CSS_MARKER}` in the `<head>` instead of writing custom tooltip CSS; "
+        "this tool expands it into the fixed source footnote CSS when saving the file."
     )
     input_model = FileWriteToolInput
 
@@ -62,16 +68,17 @@ class FileWriteTool(BaseTool):
         version_guard = _active_artifact_version_guard(path, context)
         if version_guard:
             return ToolResult(output=version_guard, is_error=True)
-        mermaid_errors = mermaid_preflight_errors(path, arguments.content)
+        content = prepare_source_footnotes_html(arguments.content, path.suffix, context.metadata)
+        mermaid_errors = mermaid_preflight_errors(path, content)
         if mermaid_errors:
             return ToolResult(
                 output=format_mermaid_preflight_errors(path, mermaid_errors, action="written"),
                 is_error=True,
             )
-        path.write_text(arguments.content, encoding="utf-8")
+        path.write_text(content, encoding="utf-8")
         display_path = display_tool_path(path, context.cwd)
         output = f"Wrote {display_path}"
-        target_note = _target_length_feedback(arguments.content, path, context)
+        target_note = _target_length_feedback(content, path, context)
         if not target_note:
             return ToolResult(output=output)
         return ToolResult(

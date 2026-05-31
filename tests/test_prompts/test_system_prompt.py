@@ -114,6 +114,15 @@ def test_build_system_prompt_requires_external_source_attribution():
     assert "the UI derives hover excerpts from existing web_search/web_fetch tool outputs to save tokens" in prompt
     assert "Do not replace item-level links with a separate final `참고:` or `출처:` line" in prompt
     assert "do not group several unrelated article sources into one trailing note" in prompt
+    assert "whole parenthesized marker rendered as superscript" in prompt
+    assert "<sup class=\"source-ref\">" in prompt
+    assert "<!-- myharness:source-footnotes-css -->" in prompt
+    assert "the `write_file` tool expands that marker into the fixed CSS" in prompt
+    assert "fills `data-tooltip` from prior `web_search`/`web_fetch` evidence" in prompt
+    assert "Do not spend output tokens writing excerpt text into `data-tooltip`" in prompt
+    assert "full visible marker, such as `(3)`, should be short, superscripted as a unit" in prompt
+    assert "source address on the first line and a short verbatim excerpt" in prompt
+    assert "verbatim excerpt line is wrapped in double quotes" in prompt
     assert "instead of inventing one" in prompt
     assert "Skip citations for trivial operational details" in prompt
 
@@ -191,6 +200,7 @@ def test_build_system_prompt_defaults_report_requests_to_html_artifacts():
     assert "load and follow the `visual-artifact` skill" in prompt
     assert "charts for trends/comparisons/proportions" in prompt
     assert "workflow/timeline diagrams when process or causal flow matters" in prompt
+    assert "Mark source-backed facts with compact clickable superscript source links" in prompt
     assert "Do not expose production metadata" in prompt
     assert "instead of a plain article wrapped in HTML" in prompt
     assert "aim for roughly 10,000 substantive body tokens by default" in prompt
@@ -293,6 +303,14 @@ def test_visual_artifact_cites_important_external_sources():
     assert "source documents, or database queries" in skill_text
     assert "URL/title, document page/path, MCP server/resource, document id, table name, or query label" in skill_text
     assert "Do not invent citations" in skill_text
+    assert "HTML Source Footnotes" in skill_text
+    assert "`<!-- myharness:source-footnotes-css -->` once in the HTML `<head>`" in skill_text
+    assert "write_file` tool expands this marker into the fixed tooltip CSS" in skill_text
+    assert "entire parenthesized marker must be superscripted as a unit" in skill_text
+    assert "Leave `data-tooltip` absent or empty" in skill_text
+    assert "`write_file` fills it from stored tool evidence" in skill_text
+    assert "short verbatim excerpt directly taken from the source/tool result" in skill_text
+    assert "excerpt line is wrapped in double quotes" in skill_text
 
 
 def test_visual_artifact_flags_empty_report_panels_as_layout_defects():

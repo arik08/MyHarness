@@ -164,6 +164,11 @@ function sourceEvidenceForLink(link: HTMLAnchorElement, sourceEvidenceByUrl?: So
   return sourceEvidenceChunks(sourceText)[0] || "";
 }
 
+function quotedSourceExcerpt(value: string) {
+  const text = String(value || "").trim();
+  return text ? `"${text}"` : "";
+}
+
 function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: SourceEvidenceByUrl) {
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -181,7 +186,7 @@ function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: Sou
     link.classList.add("markdown-inline-source-chip");
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noreferrer noopener");
-    link.setAttribute("data-tooltip", tooltip && domain ? `${domain}\n${tooltip}` : domain || tooltip || href);
+    link.setAttribute("data-tooltip", tooltip && domain ? `${domain}\n${quotedSourceExcerpt(tooltip)}` : domain || quotedSourceExcerpt(tooltip) || href);
     link.removeAttribute("title");
     link.setAttribute("aria-label", `출처 ${label} 열기`);
     link.replaceChildren(createInlineSourceIcon(label, href), document.createTextNode(label));

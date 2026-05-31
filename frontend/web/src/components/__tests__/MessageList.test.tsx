@@ -303,7 +303,7 @@ describe("MessageList", () => {
     expect(chip?.textContent).toContain("데일리안");
     expect(chip?.getAttribute("href")).toBe("https://dailian.co.kr/news/view/1640740");
     expect(chip?.getAttribute("target")).toBe("_blank");
-    expect(chip?.getAttribute("data-tooltip")).toBe("dailian.co.kr\n기사 본문은 약 8,600억 원 규모 투자와 세제·외환 규제 완화 기대를 전했습니다.");
+    expect(chip?.getAttribute("data-tooltip")).toBe("dailian.co.kr\n\"기사 본문은 약 8,600억 원 규모 투자와 세제·외환 규제 완화 기대를 전했습니다.\"");
     expect(chip?.hasAttribute("title")).toBe(false);
     expect(document.querySelector(".markdown-inline-source-favicon")?.textContent).toBe("데");
     expect(document.querySelector(".markdown-inline-source-favicon img")?.getAttribute("src")).toBe("https://dailian.co.kr/favicon.ico");
@@ -333,7 +333,7 @@ describe("MessageList", () => {
     );
 
     const chip = document.querySelector(".markdown-inline-source-chip") as HTMLAnchorElement | null;
-    expect(chip?.getAttribute("data-tooltip")).toBe("dailian.co.kr\n약 8,600억 원 규모 투자와 세제·외환 규제 완화 기대");
+    expect(chip?.getAttribute("data-tooltip")).toBe("dailian.co.kr\n\"약 8,600억 원 규모 투자와 세제·외환 규제 완화 기대\"");
     expect(chip?.hasAttribute("title")).toBe(false);
   });
 
@@ -3086,7 +3086,7 @@ describe("MessageList", () => {
     expect(articles[1]).not.toContain("출처");
     expect(articles[2]).toContain("문서에는 1분기 실적과 주주환원 정책이 정리돼 있습니다.");
     expect(articles[2]).toContain("출처");
-    expect(document.querySelector(".markdown-inline-source-chip")?.getAttribute("data-tooltip")).toBe("example.com\n문서에는 MyHarness 1분기 실적과 주주환원 정책이 정리돼 있습니다.");
+    expect(document.querySelector(".markdown-inline-source-chip")?.getAttribute("data-tooltip")).toBe("example.com\n\"문서에는 MyHarness 1분기 실적과 주주환원 정책이 정리돼 있습니다.\"");
 
     expect(screen.getByText("출처")).toBeTruthy();
     expect(screen.getByText(/2개 사이트/)).toBeTruthy();
@@ -4717,6 +4717,7 @@ describe("MessageList", () => {
 
     expect(screen.getByText("단기적으로는 생산 차질 우려가 완화됐습니다.")).toBeTruthy();
     expect(document.querySelector(".inline-source-stream-pending")).toBeTruthy();
+    expect(document.querySelector(".inline-source-pending-prefix")).toBeTruthy();
     expect(document.body.textContent || "").toContain("출처 정리 중.");
     expect(document.body.textContent || "").not.toContain("articleView.html");
 

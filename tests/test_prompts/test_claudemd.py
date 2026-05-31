@@ -107,6 +107,12 @@ def test_build_runtime_system_prompt_guides_item_level_source_links(tmp_path: Pa
     assert "the UI derives hover excerpts from existing web_search/web_fetch tool outputs to save tokens" in prompt
     assert "Do not replace item-level links with" in prompt
     assert "do not group several unrelated article sources into one trailing note" in prompt
+    assert "For standalone HTML artifacts, mark source-backed facts with compact clickable source links where the whole" in prompt
+    assert "parenthesized marker is superscripted" in prompt
+    assert "<!-- myharness:source-footnotes-css -->" in prompt
+    assert "write_file` fills `data-tooltip` from prior `web_search`/`web_fetch` evidence" in prompt
+    assert "source address first and a short verbatim excerpt" in prompt
+    assert "excerpt line wrapped in double quotes" in prompt
 
 
 def test_build_runtime_system_prompt_guides_artifact_filenames(tmp_path: Path, monkeypatch):

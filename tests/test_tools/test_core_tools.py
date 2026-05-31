@@ -24,6 +24,8 @@ from myharness.tools.exit_worktree_tool import ExitWorktreeTool, ExitWorktreeToo
 from myharness.tools.file_edit_tool import FileEditTool, FileEditToolInput
 from myharness.tools.file_read_tool import FileReadTool, FileReadToolInput
 from myharness.tools.file_write_tool import FileWriteTool, FileWriteToolInput
+from myharness.tools.html_source_footnotes import SOURCE_FOOTNOTE_CSS_MARKER
+from myharness.tools.source_evidence import SOURCE_EVIDENCE_METADATA_KEY
 from myharness.tools.glob_tool import GlobTool, GlobToolInput
 from myharness.tools.grep_tool import GrepTool, GrepToolInput
 from myharness.tools.lsp_tool import LspTool, LspToolInput
@@ -141,6 +143,42 @@ async def test_active_artifact_versioning_blocks_original_write_and_edit(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_file_write_expands_html_source_footnote_css_marker(tmp_path: Path):
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            SOURCE_EVIDENCE_METADATA_KEY: {
+                "https://example.com/report": (
+                    "Example Report. POSCO announced 17 trillion won in revenue and 700 billion won in operating profit. "
+                    "Another unrelated sentence appears later."
+                ),
+            },
+        },
+    )
+    content = (
+        "<!doctype html><html><head>"
+        f"{SOURCE_FOOTNOTE_CSS_MARKER}"
+        "</head><body><p>POSCO announced 17 trillion won in revenue"
+        '<sup class="source-ref">(<a href="https://example.com/report" target="_blank" rel="noreferrer">1</a>)</sup>'
+        "</p></body></html>"
+    )
+
+    write_result = await FileWriteTool().execute(
+        FileWriteToolInput(path="outputs/report.html", content=content),
+        context,
+    )
+
+    saved = (tmp_path / "outputs" / "report.html").read_text(encoding="utf-8")
+    assert write_result.is_error is False
+    assert SOURCE_FOOTNOTE_CSS_MARKER not in saved
+    assert 'id="myharness-source-footnotes"' in saved
+    assert ".source-ref a[data-tooltip]::after" in saved
+    assert "data-tooltip=\"example.com" in saved
+    assert "&quot;POSCO announced 17 trillion won in revenue and 700 billion won in operating profit" in saved
+    assert "operating profit.&quot;" in saved
+
+
+@pytest.mark.asyncio
 async def test_file_write_blocks_invalid_mermaid_before_writing(tmp_path: Path, monkeypatch):
     from myharness.tools import mermaid_preflight
 
@@ -206,6 +244,8 @@ def test_file_write_tool_description_guides_human_artifact_filenames():
     assert "Korean filenames" in description
     assert "underscores between words" in description
     assert "PY, JS, JSON, or CSV" in description
+    assert SOURCE_FOOTNOTE_CSS_MARKER in description
+    assert "expands it into the fixed source footnote CSS" in description
 
 
 @pytest.mark.asyncio

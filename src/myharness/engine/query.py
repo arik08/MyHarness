@@ -44,6 +44,7 @@ from myharness.permissions.mutation_lock import (
 )
 from myharness.tools.base import ToolExecutionContext
 from myharness.tools.base import ToolRegistry
+from myharness.tools.source_evidence import remember_web_fetch_evidence, remember_web_search_evidence
 
 AUTO_COMPACT_STATUS_MESSAGE = "컨텍스트 초과를 막기 위해 이전 대화를 요약합니다."
 REACTIVE_COMPACT_STATUS_MESSAGE = "컨텍스트 한도를 넘어 이전 대화를 요약한 뒤 다시 시도합니다."
@@ -783,9 +784,11 @@ def _record_tool_carryover(
     elif tool_name == "web_fetch":
         url = str(tool_input.get("url") or "").strip()
         if url:
+            remember_web_fetch_evidence(context.tool_metadata, url, tool_output)
             _remember_active_artifact(context.tool_metadata, url)
             _remember_verified_work(context.tool_metadata, f"Fetched remote content from {url}")
     elif tool_name == "web_search":
+        remember_web_search_evidence(context.tool_metadata, tool_output)
         query = str(tool_input.get("query") or "").strip()
         if query:
             _remember_verified_work(context.tool_metadata, f"Ran web search for {query[:180]}")
