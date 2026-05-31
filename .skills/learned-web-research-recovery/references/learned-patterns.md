@@ -1,10 +1,3 @@
-## Evidence 8e3c9005d5668523
-- Confidence: 0.95
-- Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input=POSCO Holdings May 2026 news safety organization executive appointment: 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Fetched remote content from https://biz.chosun.com/industry/company/2026/05/28/MWRX4SQVF5BDLGDCEUWNVZAFZQ/
-- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
-
 ## Evidence 8c49424797e012ab
 - Confidence: 0.95
 - Signature: `web-search-no-results`
@@ -52,4 +45,11 @@
 - Signature: `web-search-no-results`
 - Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.google.com 포스코 2026-05-30: 검색 결과가 없습니다.
 - Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.news1.kr/industry/general-industry/6180732
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence 6bd75acaabdfda19
+- Confidence: 0.85
+- Signature: `web-search-no-results`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.naver.com 포스코퓨처엠 2026.05.30: 검색 결과가 없습니다.
+- Do next time: Start by applying the verified corrective path: Fetched remote content from http://www.thecommoditiesnews.com/news/articleView.html?idxno=11243
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
