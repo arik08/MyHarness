@@ -658,8 +658,15 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
     "</code></pre>",
     "</body></html>",
   ].join("\n");
+  const dataMermaidHtml = [
+    "<!doctype html><html><body>",
+    "<h1>Manual workflow</h1>",
+    '<div data-mermaid="flowchart LR"><svg id="manual-flow" viewBox="0 0 100 40"><rect width="100" height="40"></rect></svg></div>',
+    "</body></html>",
+  ].join("");
   await writeFile(join(workspacePath, "outputs", "workflow.html"), html, "utf8");
   await writeFile(join(workspacePath, "outputs", "raw-workflow.html"), rawMermaidHtml, "utf8");
+  await writeFile(join(workspacePath, "outputs", "data-workflow.html"), dataMermaidHtml, "utf8");
   await writeFile(join(workspacePath, "outputs", "plain.html"), "<!doctype html><html><body><h1>Plain</h1></body></html>", "utf8");
 
   const mermaidParams = new URLSearchParams({
@@ -689,6 +696,16 @@ test("enhances downloaded Mermaid HTML artifacts with zoom controls", async (t) 
   assert.match(rawDownloaded, /data-myharness-mermaid-renderer-init/);
   assert.match(rawDownloaded, /data-myharness-mermaid-zoom-script/);
   assert.doesNotMatch(rawDownloaded, /"\\\\<\/body>"/);
+
+  const dataMermaidParams = new URLSearchParams({
+    workspacePath,
+    path: "outputs/data-workflow.html",
+  });
+  const dataMermaidDownloadResponse = await fetch(`${app.baseUrl}/api/artifact/download?${dataMermaidParams.toString()}`);
+  const dataMermaidDownloaded = await dataMermaidDownloadResponse.text();
+  assert.equal(dataMermaidDownloadResponse.status, 200);
+  assert.match(dataMermaidDownloaded, /data-myharness-mermaid-zoom-script/);
+  assert.match(dataMermaidDownloaded, /\[data-mermaid\] svg/);
 
   const plainParams = new URLSearchParams({
     workspacePath,

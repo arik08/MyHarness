@@ -257,11 +257,12 @@ function iframeMermaidZoomBridge(content: string) {
   };
 
   const hasMermaidClass = (element) => /(^|\\s)mermaid(?:-|\\s|$)/i.test(classText(element));
+  const hasMermaidHostMarker = (element) => element?.hasAttribute?.("data-mermaid") || hasMermaidClass(element);
 
   const findHost = (svg) => {
-    let fallback = svg.closest?.(".mermaid, .mermaid-chart") || svg.parentElement;
+    let fallback = svg.closest?.("[data-mermaid], .mermaid, .mermaid-chart") || svg.parentElement;
     for (let node = svg.parentElement; node && node !== document.body; node = node.parentElement) {
-      if (hasMermaidClass(node)) {
+      if (hasMermaidHostMarker(node)) {
         fallback = node;
       }
       const style = getComputedStyle(node);
@@ -474,7 +475,7 @@ function iframeMermaidZoomBridge(content: string) {
   };
 
   const enhance = () => {
-    const selectors = ".mermaid svg, .mermaid-chart svg, svg[id^='mermaid-']";
+    const selectors = "[data-mermaid] svg, .mermaid svg, .mermaid-chart svg, svg[id^='mermaid-']";
     document.querySelectorAll(selectors).forEach(attachButton);
   };
 

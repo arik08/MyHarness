@@ -716,6 +716,44 @@ describe("ArtifactPanel", () => {
     expect(canvas?.style.transform).toContain("translate(");
   });
 
+  it("attaches the Mermaid expand control to data-mermaid HTML preview charts", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          artifactPanelOpen: true,
+          activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+          activeArtifactPayload: {
+            kind: "html",
+            content: [
+              "<html><body>",
+              "<section>",
+              "<div class=\"chart-shell\" data-mermaid=\"flowchart LR\">",
+              "<svg id=\"manual-flow\" viewBox=\"0 0 220 80\"><text>수동 렌더링</text></svg>",
+              "</div>",
+              "</section>",
+              "</body></html>",
+            ].join("\n"),
+          },
+        }}
+      >
+        <ArtifactPanel />
+      </AppStateProvider>,
+    );
+
+    const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+    const dom = await loadPreviewDom(frame.srcdoc);
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 30));
+
+    const host = dom.window.document.querySelector<HTMLElement>("[data-mermaid]");
+    const openButton = host?.querySelector<HTMLButtonElement>(".myharness-mermaid-expand-button");
+    expect(openButton).toBeTruthy();
+    openButton?.click();
+
+    const dialog = dom.window.document.querySelector(".myharness-mermaid-zoom-backdrop");
+    expect(dialog?.querySelector(".myharness-mermaid-zoom-canvas svg#manual-flow")).toBeTruthy();
+  });
+
   it("injects the inline comment picker through the unified body edit mode", async () => {
     render(
       <AppStateProvider

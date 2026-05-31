@@ -1299,10 +1299,11 @@ ${renderer}
     return String(raw?.baseVal || "");
   };
   const hasMermaidClass = (element) => /(^|\\s)mermaid(?:-|\\s|$)/i.test(classText(element));
+  const hasMermaidHostMarker = (element) => element?.hasAttribute?.("data-mermaid") || hasMermaidClass(element);
   const findHost = (svg) => {
-    let fallback = svg.closest?.(".mermaid, .mermaid-chart") || svg.parentElement;
+    let fallback = svg.closest?.("[data-mermaid], .mermaid, .mermaid-chart") || svg.parentElement;
     for (let node = svg.parentElement; node && node !== document.body; node = node.parentElement) {
-      if (hasMermaidClass(node)) fallback = node;
+      if (hasMermaidHostMarker(node)) fallback = node;
       const style = getComputedStyle(node);
       const overflow = [style.overflow, style.overflowX, style.overflowY].join(" ");
       if (/(auto|scroll)/i.test(overflow) && (node.scrollWidth > node.clientWidth + 8 || node.scrollHeight > node.clientHeight + 8)) return node;
@@ -1490,7 +1491,7 @@ ${renderer}
     host.prepend(button);
   };
   const enhance = () => {
-    document.querySelectorAll(".mermaid svg, .mermaid-chart svg, svg[id^='mermaid-']").forEach(attachButton);
+    document.querySelectorAll("[data-mermaid] svg, .mermaid svg, .mermaid-chart svg, svg[id^='mermaid-']").forEach(attachButton);
   };
   const schedule = () => requestAnimationFrame(() => {
     enhance();
