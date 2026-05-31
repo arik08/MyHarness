@@ -2979,7 +2979,7 @@ a:focus-visible {
 }
 
 .messages.streaming-follow {
-  padding-bottom: calc(var(--composer-stack-height, 64px) + 48px + var(--stream-follow-lead, 140px));
+  padding-bottom: calc(var(--composer-stack-height, 64px) + 48px + var(--stream-follow-lead, 70px));
 }
 
 .welcome {

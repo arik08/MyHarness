@@ -9,6 +9,24 @@ describe("appReducer", () => {
     expect(initialAppState.appSettings.downloadMode).toBe("browser");
   });
 
+  it("uses a compact stream follow lead by default", () => {
+    expect(initialAppState.appSettings.streamFollowLeadPx).toBe(70);
+  });
+
+  it("migrates the previous stream follow lead default once", async () => {
+    localStorage.removeItem("myharness:streamFollowLeadDefaultMigrated");
+    localStorage.setItem("myharness:appSettings", JSON.stringify({ streamFollowLeadPx: 140 }));
+    vi.resetModules();
+    try {
+      const { initialAppState: migratedInitialState } = await import("../reducer");
+      expect(migratedInitialState.appSettings.streamFollowLeadPx).toBe(70);
+      expect(localStorage.getItem("myharness:streamFollowLeadDefaultMigrated")).toBe("1");
+    } finally {
+      localStorage.removeItem("myharness:appSettings");
+      localStorage.removeItem("myharness:streamFollowLeadDefaultMigrated");
+    }
+  });
+
   it("keeps all supported file save modes when settings change", () => {
     const browser = appReducer(initialAppState, {
       type: "set_app_settings",
