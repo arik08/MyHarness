@@ -4298,7 +4298,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".react-streaming-text")).toBeNull();
   });
 
-  it("applies the follow lead setting while streaming", () => {
+  it("applies half of the displayed follow lead setting while streaming", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -4319,10 +4319,10 @@ describe("MessageList", () => {
 
     const messages = document.querySelector(".messages") as HTMLElement;
     expect(messages.classList.contains("streaming-follow")).toBe(true);
-    expect(messages.style.getPropertyValue("--stream-follow-lead")).toBe("120px");
+    expect(messages.style.getPropertyValue("--stream-follow-lead")).toBe("60px");
   });
 
-  it("uses the follow lead setting as extra near-bottom rejoin room while streaming", () => {
+  it("uses half of the follow lead setting as extra near-bottom rejoin room while streaming", () => {
     const scrollHeights = new WeakMap<Element, number>();
     const clientHeights = new WeakMap<Element, number>();
     const scrollTopValues = new WeakMap<Element, number>();

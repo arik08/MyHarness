@@ -81,7 +81,8 @@ export function useMessageAutoFollow({
   const isActiveWorkflowGrowing = state.busy && Boolean(state.workflowAnchorMessageId && state.workflowEvents.length);
   const shouldFollowGrowingTail = isLastAssistantStreaming || isActiveWorkflowGrowing;
   const scrollSessionId = state.activeHistoryId || state.sessionId;
-  const streamFollowLeadPx = Math.max(0, Math.min(maxStreamFollowLeadPx, state.appSettings.streamFollowLeadPx));
+  const configuredStreamFollowLeadPx = Math.max(0, Math.min(maxStreamFollowLeadPx, state.appSettings.streamFollowLeadPx));
+  const streamFollowLeadPx = configuredStreamFollowLeadPx / 2;
 
   streamScrollDurationMsRef.current = Math.max(0, Number(state.appSettings.streamScrollDurationMs));
   streamFollowLeadPxRef.current = streamFollowLeadPx;

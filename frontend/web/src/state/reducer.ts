@@ -6,16 +6,13 @@ import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 
 const clientSessionKey = "myharness:clientSessionId";
 const appSettingsKey = "myharness:appSettings";
-const streamFollowLeadDefaultMigrationKey = "myharness:streamFollowLeadDefaultMigrated";
 const adminModeStorageKey = "myharness:adminMode";
 const hiddenHistoryKeysStorageKey = "myharness:hiddenHistoryKeys";
-
-const previousDefaultStreamFollowLeadPx = 140;
 
 const defaultAppSettings: AppSettings = {
   streamScrollDurationMs: 2000,
   streamStartBufferMs: 180,
-  streamFollowLeadPx: 70,
+  streamFollowLeadPx: 140,
   streamRevealDurationMs: 420,
   downloadMode: "browser",
   downloadFolderPath: "",
@@ -145,25 +142,9 @@ function normalizeAppSettings(value: Partial<AppSettings> = {}): AppSettings {
   };
 }
 
-function migrateAppSettingsDefaults(value: Partial<AppSettings>) {
-  if (loadLocalStorageValue(streamFollowLeadDefaultMigrationKey) === "1") {
-    return value;
-  }
-  const next = { ...value };
-  if (next.streamFollowLeadPx === previousDefaultStreamFollowLeadPx) {
-    next.streamFollowLeadPx = defaultAppSettings.streamFollowLeadPx;
-  }
-  try {
-    localStorage.setItem(streamFollowLeadDefaultMigrationKey, "1");
-  } catch {
-    // Embedded/private contexts may block localStorage.
-  }
-  return next;
-}
-
 function loadAppSettings(): AppSettings {
   try {
-    return normalizeAppSettings(migrateAppSettingsDefaults(JSON.parse(localStorage.getItem(appSettingsKey) || "{}") as Partial<AppSettings>));
+    return normalizeAppSettings(JSON.parse(localStorage.getItem(appSettingsKey) || "{}") as Partial<AppSettings>);
   } catch {
     return { ...defaultAppSettings };
   }
