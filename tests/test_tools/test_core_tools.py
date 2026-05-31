@@ -159,8 +159,8 @@ async def test_file_write_expands_html_source_footnote_css_marker(tmp_path: Path
         "<!doctype html><html><head>"
         f"{SOURCE_FOOTNOTE_CSS_MARKER}"
         "</head><body><p>POSCO announced 17 trillion won in revenue"
-        '<sup class="source-ref">(<a href="https://example.com/report" target="_blank" rel="noreferrer">1</a>)</sup>'
-        "</p></body></html>"
+        '<sup class="source-ref">(<a href="#source-1">1</a>)</sup>'
+        '</p><ol class="sources"><li><a id="source-1" href="https://example.com/report">Example Report</a></li></ol></body></html>'
     )
 
     write_result = await FileWriteTool().execute(
@@ -172,7 +172,11 @@ async def test_file_write_expands_html_source_footnote_css_marker(tmp_path: Path
     assert write_result.is_error is False
     assert SOURCE_FOOTNOTE_CSS_MARKER not in saved
     assert 'id="myharness-source-footnotes"' in saved
-    assert ".source-ref a[data-tooltip]::after" in saved
+    assert 'id="myharness-source-footnotes-script"' in saved
+    assert '<sup class="source-ref"><a href="https://example.com/report"' in saved
+    assert '(<a href="#source-1">1</a>)' not in saved
+    assert ".myharness-source-tooltip" in saved
+    assert ".sources a,.source-list a{color:#0b65c2;text-decoration:none!important" in saved
     assert "data-tooltip=\"example.com" in saved
     assert "&quot;POSCO announced 17 trillion won in revenue and 700 billion won in operating profit" in saved
     assert "operating profit.&quot;" in saved

@@ -502,6 +502,109 @@ function iframeMermaidZoomBridge(content: string) {
   return `${value}${bridge}`;
 }
 
+function iframeSourceFootnotesBridge(content: string) {
+  const hasSourceFootnotes = content.includes("source-ref") || content.includes("class=\"sources\"") || content.includes("class='sources'") || content.includes("source-list") || content.includes("myharness:source-footnotes-css");
+  if (!hasSourceFootnotes) return content;
+  const stripExistingAssets = (value: string) => value
+    .replace(/<style\b(?=[^>]*\bid=(["'])myharness-source-footnotes\1)[^>]*>[\s\S]*?<\/style>\s*/gi, "")
+    .replace(/<script\b(?=[^>]*\bid=(["'])myharness-source-footnotes-script\1)[^>]*>[\s\S]*?<\/script>\s*/gi, "");
+  const assets = `<style id="myharness-source-footnotes">
+.source-ref{display:inline-flex;align-items:center;justify-content:center;vertical-align:baseline;line-height:1;margin-left:4px;white-space:nowrap}
+.source-ref a{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;padding:0 4px;border:1px solid #bfdbfe;border-radius:4px;background:#eff6ff;color:#075985;font:750 10px/1 Arial,'Noto Sans KR',sans-serif;text-decoration:none;border-bottom:0}
+.sources,.source-list{font-size:12px;line-height:1.55;color:#475569}
+.sources a,.source-list a{color:#0b65c2;text-decoration:none!important;border-bottom:0!important}
+.sources a:hover,.sources a:focus-visible,.source-list a:hover,.source-list a:focus-visible,.source-ref a:hover,.source-ref a:focus-visible{text-decoration:none}
+.myharness-source-tooltip{position:fixed;z-index:2147483647;max-width:min(430px,calc(100vw - 24px));padding:8px 10px;border-radius:7px;background:#111827;color:#fff;box-shadow:0 10px 24px rgba(15,23,42,.22);font:650 11px/1.38 Arial,'Noto Sans KR',sans-serif;white-space:pre-line;pointer-events:none}
+@media print{.myharness-source-tooltip{display:none}}
+</style>
+<script id="myharness-source-footnotes-script">
+(() => {
+  if (window.__myharnessSourceFootnotesReady) return;
+  window.__myharnessSourceFootnotesReady = true;
+  const tooltip = document.createElement("div");
+  tooltip.className = "myharness-source-tooltip";
+  tooltip.hidden = true;
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+  const domain = (href) => {
+    try { return new URL(href, document.baseURI).hostname.replace(/^www\\./, ""); } catch { return href || ""; }
+  };
+  const quoted = (value) => {
+    const text = String(value || "").replace(/\\s+/g, " ").trim();
+    return text ? '"' + text + '"' : "";
+  };
+  const sourceLinks = () => Array.from(document.querySelectorAll(".sources a[href], .source-list a[href]"));
+  const normalizeLinks = () => {
+    const links = sourceLinks();
+    document.querySelectorAll(".source-ref a").forEach((anchor) => {
+      const index = Number((anchor.textContent || "").replace(/\\D+/g, ""));
+      const source = Number.isFinite(index) && index > 0 ? links[index - 1] : null;
+      const href = anchor.getAttribute("href") || "";
+      if (source && (!href || href.startsWith("#"))) {
+        anchor.href = source.href;
+      }
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      const host = anchor.closest(".source-ref");
+      if (host && host.firstElementChild !== anchor) {
+        host.replaceChildren(anchor);
+      }
+      if (!anchor.dataset.tooltip) {
+        const label = source ? source.textContent : "";
+        anchor.dataset.tooltip = [domain(anchor.href), quoted(label)].filter(Boolean).join("\\n");
+      }
+    });
+  };
+  const hide = () => { tooltip.hidden = true; };
+  const show = (anchor) => {
+    const text = anchor?.dataset?.tooltip || anchor?.href || "";
+    if (!text) return;
+    tooltip.textContent = text;
+    if (!tooltip.parentNode) document.body.appendChild(tooltip);
+    tooltip.hidden = false;
+    const rect = anchor.getBoundingClientRect();
+    const tip = tooltip.getBoundingClientRect();
+    const top = rect.top - tip.height - 8 >= 8 ? rect.top - tip.height - 8 : rect.bottom + 8;
+    tooltip.style.top = Math.round(clamp(top, 8, window.innerHeight - tip.height - 8)) + "px";
+    tooltip.style.left = Math.round(clamp(rect.left + rect.width / 2 - tip.width / 2, 8, window.innerWidth - tip.width - 8)) + "px";
+  };
+  const scheduleNormalize = () => {
+    normalizeLinks();
+    setTimeout(normalizeLinks, 120);
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scheduleNormalize, { once: true });
+  } else {
+    scheduleNormalize();
+  }
+  window.addEventListener("load", scheduleNormalize);
+  new MutationObserver(scheduleNormalize).observe(document.documentElement, { childList: true, subtree: true });
+  document.addEventListener("mouseover", (event) => {
+    const anchor = event.target?.closest?.(".source-ref a[data-tooltip]");
+    if (anchor) show(anchor);
+  }, true);
+  document.addEventListener("focusin", (event) => {
+    const anchor = event.target?.closest?.(".source-ref a[data-tooltip]");
+    if (anchor) show(anchor);
+  }, true);
+  document.addEventListener("mouseout", (event) => {
+    if (event.target?.closest?.(".source-ref a[data-tooltip]")) hide();
+  }, true);
+  document.addEventListener("focusout", hide, true);
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("resize", hide);
+})();
+</script>`;
+  const marker = "<!-- myharness:source-footnotes-css -->";
+  if (content.includes(marker)) {
+    return stripExistingAssets(content).replace(marker, assets);
+  }
+  content = stripExistingAssets(content);
+  if (/<\/head\s*>/i.test(content)) {
+    return content.replace(/<\/head\s*>/i, `${assets}</head>`);
+  }
+  return `${assets}${content}`;
+}
+
 function iframeBackBridge(content: string) {
   const bridge = `
 <script>
@@ -1936,13 +2039,14 @@ export function ArtifactPreview({
     if (htmlEditFrameRef.current?.key !== editFrameKey || !htmlFrameElementRef.current) {
       const editableContent = iframeHtmlEditorBridge(iframeEditorAssetBase(frameContent, frameAssetBaseUrl), artifact.path);
       const previewContent = iframeHtmlAiSelectionBridge(editableContent, artifact.path, aiEditComments);
+      const sourcedContent = iframeSourceFootnotesBridge(previewContent);
       const restoredScroll = htmlScrollPositionsRef.current.get(artifact.path);
       htmlEditFrameRef.current = {
         key: editFrameKey,
-        srcDoc: iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(previewContent), artifact.path, restoredScroll)),
+        srcDoc: iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(sourcedContent), artifact.path, restoredScroll)),
       };
     }
-    return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts" srcDoc={htmlEditFrameRef.current.srcDoc} />;
+    return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts allow-popups" srcDoc={htmlEditFrameRef.current.srcDoc} />;
   }
   if (kind === "image") {
     return <img className="artifact-image" src={dataUrl} alt={displayName} />;

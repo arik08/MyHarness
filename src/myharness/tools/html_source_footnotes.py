@@ -17,16 +17,91 @@ SOURCE_TOOLTIP_PLACEHOLDERS = {
 }
 
 SOURCE_FOOTNOTE_CSS = """<style id="myharness-source-footnotes">
-.source-ref{font-size:.72em;line-height:0;vertical-align:super;white-space:nowrap}
-.source-ref a{position:relative;color:#0b65c2;font-weight:750;text-decoration:none}
-.source-ref a:hover,.source-ref a:focus-visible{text-decoration:underline;text-underline-offset:2px}
-.source-ref a[data-tooltip]::after{position:absolute;left:50%;bottom:calc(100% + 8px);z-index:80;width:min(420px,calc(100vw - 32px));padding:8px 10px;border-radius:7px;background:#111827;color:#fff;box-shadow:0 10px 24px rgba(15,23,42,.22);content:attr(data-tooltip);font-size:11px;font-weight:650;line-height:1.38;opacity:0;pointer-events:none;transform:translate(-50%,4px);transition:opacity .12s ease,transform .12s ease;white-space:pre-line}
-.source-ref a[data-tooltip]:hover::after,.source-ref a[data-tooltip]:focus-visible::after{opacity:1;transform:translate(-50%,0)}
-.sources{font-size:12px;line-height:1.55;color:#475569}
-.sources a{color:#0b65c2;text-decoration:none}
-.sources a:hover,.sources a:focus-visible{text-decoration:underline;text-underline-offset:2px}
-@media print{.source-ref a[data-tooltip]::after{display:none}}
-</style>"""
+.source-ref{display:inline-flex;align-items:center;justify-content:center;vertical-align:baseline;line-height:1;margin-left:4px;white-space:nowrap}
+.source-ref a{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;padding:0 4px;border:1px solid #bfdbfe;border-radius:4px;background:#eff6ff;color:#075985;font:750 10px/1 Arial,'Noto Sans KR',sans-serif;text-decoration:none;border-bottom:0}
+.sources,.source-list{font-size:12px;line-height:1.55;color:#475569}
+.sources a,.source-list a{color:#0b65c2;text-decoration:none!important;border-bottom:0!important}
+.sources a:hover,.sources a:focus-visible,.source-list a:hover,.source-list a:focus-visible,.source-ref a:hover,.source-ref a:focus-visible{text-decoration:none}
+.myharness-source-tooltip{position:fixed;z-index:2147483647;max-width:min(430px,calc(100vw - 24px));padding:8px 10px;border-radius:7px;background:#111827;color:#fff;box-shadow:0 10px 24px rgba(15,23,42,.22);font:650 11px/1.38 Arial,'Noto Sans KR',sans-serif;white-space:pre-line;pointer-events:none}
+@media print{.myharness-source-tooltip{display:none}}
+</style>
+<script id="myharness-source-footnotes-script">
+(() => {
+  if (window.__myharnessSourceFootnotesReady) return;
+  window.__myharnessSourceFootnotesReady = true;
+  const tooltip = document.createElement("div");
+  tooltip.className = "myharness-source-tooltip";
+  tooltip.hidden = true;
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+  const domain = (href) => {
+    try { return new URL(href, document.baseURI).hostname.replace(/^www\\./, ""); } catch { return href || ""; }
+  };
+  const quoted = (value) => {
+    const text = String(value || "").replace(/\\s+/g, " ").trim();
+    return text ? '"' + text + '"' : "";
+  };
+  const sourceLinks = () => Array.from(document.querySelectorAll(".sources a[href], .source-list a[href]"));
+  const normalizeLinks = () => {
+    const links = sourceLinks();
+    document.querySelectorAll(".source-ref a").forEach((anchor) => {
+      const index = Number((anchor.textContent || "").replace(/\\D+/g, ""));
+      const source = Number.isFinite(index) && index > 0 ? links[index - 1] : null;
+      const href = anchor.getAttribute("href") || "";
+      if (source && (!href || href.startsWith("#"))) {
+        anchor.href = source.href;
+      }
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      const host = anchor.closest(".source-ref");
+      if (host && host.firstElementChild !== anchor) {
+        host.replaceChildren(anchor);
+      }
+      if (!anchor.dataset.tooltip) {
+        const label = source ? source.textContent : "";
+        anchor.dataset.tooltip = [domain(anchor.href), quoted(label)].filter(Boolean).join("\\n");
+      }
+    });
+  };
+  const hide = () => { tooltip.hidden = true; };
+  const show = (anchor) => {
+    const text = anchor?.dataset?.tooltip || anchor?.href || "";
+    if (!text) return;
+    tooltip.textContent = text;
+    if (!tooltip.parentNode) document.body.appendChild(tooltip);
+    tooltip.hidden = false;
+    const rect = anchor.getBoundingClientRect();
+    const tip = tooltip.getBoundingClientRect();
+    const top = rect.top - tip.height - 8 >= 8 ? rect.top - tip.height - 8 : rect.bottom + 8;
+    tooltip.style.top = Math.round(clamp(top, 8, window.innerHeight - tip.height - 8)) + "px";
+    tooltip.style.left = Math.round(clamp(rect.left + rect.width / 2 - tip.width / 2, 8, window.innerWidth - tip.width - 8)) + "px";
+  };
+  const scheduleNormalize = () => {
+    normalizeLinks();
+    setTimeout(normalizeLinks, 120);
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scheduleNormalize, { once: true });
+  } else {
+    scheduleNormalize();
+  }
+  window.addEventListener("load", scheduleNormalize);
+  new MutationObserver(scheduleNormalize).observe(document.documentElement, { childList: true, subtree: true });
+  document.addEventListener("mouseover", (event) => {
+    const anchor = event.target?.closest?.(".source-ref a[data-tooltip]");
+    if (anchor) show(anchor);
+  }, true);
+  document.addEventListener("focusin", (event) => {
+    const anchor = event.target?.closest?.(".source-ref a[data-tooltip]");
+    if (anchor) show(anchor);
+  }, true);
+  document.addEventListener("mouseout", (event) => {
+    if (event.target?.closest?.(".source-ref a[data-tooltip]")) hide();
+  }, true);
+  document.addEventListener("focusout", hide, true);
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("resize", hide);
+})();
+</script>"""
 
 
 def source_evidence_tokens(value: str) -> set[str]:
@@ -73,6 +148,41 @@ def html_text_context(value: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 
+def _has_http_url(value: str) -> bool:
+    return bool(re.match(r"https?://", value or "", flags=re.I))
+
+
+def _source_list_links(content: str) -> list[tuple[str, str]]:
+    list_pattern = re.compile(
+        r"<(?P<tag>ol|ul)\b(?=[^>]*\bclass=(['\"])[^'\"]*\b(?:sources|source-list)\b[^'\"]*\2)[^>]*>(?P<body>.*?)</(?P=tag)>",
+        flags=re.I | re.S,
+    )
+    link_pattern = re.compile(r"<a\b(?P<attrs>[^>]*)>(?P<label>.*?)</a>", flags=re.I | re.S)
+    links: list[tuple[str, str]] = []
+    for list_match in list_pattern.finditer(content):
+        for link_match in link_pattern.finditer(list_match.group("body")):
+            href = _attr_value(link_match.group("attrs"), "href")
+            if href:
+                links.append((href, html_text_context(link_match.group("label"))))
+    return links
+
+
+def _source_ref_number(value: str) -> int | None:
+    text = html_text_context(value)
+    match = re.search(r"\d+", text)
+    if not match:
+        return None
+    return int(match.group(0))
+
+
+def normalize_source_ref_markers(content: str) -> str:
+    pattern = re.compile(
+        r"(?P<open><sup\b(?=[^>]*\bclass=(['\"])[^'\"]*\bsource-ref\b[^'\"]*\2)[^>]*>)\s*\(\s*(?P<link><a\b[^>]*>.*?</a>)\s*\)\s*(?P<close></sup>)",
+        flags=re.I | re.S,
+    )
+    return pattern.sub(lambda match: f'{match.group("open")}{match.group("link")}{match.group("close")}', content)
+
+
 def _attr_value(attrs: str, name: str) -> str:
     match = re.search(rf"\b{re.escape(name)}=(['\"])(.*?)\1", attrs, flags=re.I | re.S)
     return html.unescape(match.group(2)) if match else ""
@@ -96,6 +206,7 @@ def _should_replace_tooltip(value: str) -> bool:
 def populate_source_footnote_tooltips(content: str, metadata: dict[str, Any] | None) -> str:
     """Populate HTML source-ref tooltip excerpts from stored web evidence."""
 
+    source_links = _source_list_links(content)
     pattern = re.compile(
         r"(?P<before><sup\b(?=[^>]*\bclass=(['\"])[^'\"]*\bsource-ref\b[^'\"]*\2)[^>]*>.*?<a\b)(?P<attrs>[^>]*)(?P<after>>.*?</a>.*?</sup>)",
         flags=re.I | re.S,
@@ -104,18 +215,25 @@ def populate_source_footnote_tooltips(content: str, metadata: dict[str, Any] | N
     def replace(match: re.Match[str]) -> str:
         attrs = match.group("attrs")
         href = _attr_value(attrs, "href")
+        number = _source_ref_number(match.group(0))
+        source_link = source_links[number - 1] if number and 0 < number <= len(source_links) else None
+        if (not href or not _has_http_url(href)) and source_link:
+            href = source_link[0]
+            attrs = _set_or_add_attr(attrs, "href", href)
         if not href:
             return match.group(0)
+        attrs = _set_or_add_attr(attrs, "target", "_blank")
+        attrs = _set_or_add_attr(attrs, "rel", "noreferrer")
         existing = _attr_value(attrs, "data-tooltip")
         if existing and not _should_replace_tooltip(existing):
-            return match.group(0)
+            return f'{match.group("before")}{attrs}{match.group("after")}'
         evidence = source_evidence_for_url(metadata, href)
-        if not evidence:
-            return match.group(0)
         context = html_text_context(content[:match.start()])
-        excerpt = best_source_excerpt(evidence, context)
+        excerpt = best_source_excerpt(evidence, context) if evidence else ""
+        if not excerpt and source_link:
+            excerpt = source_link[1]
         if not excerpt:
-            return match.group(0)
+            return f'{match.group("before")}{attrs}{match.group("after")}'
         domain = source_domain(href) or href
         tooltip = f"{domain}\n{quoted_source_excerpt(excerpt)}"
         return f'{match.group("before")}{_set_or_add_attr(attrs, "data-tooltip", tooltip)}{match.group("after")}'
@@ -123,15 +241,48 @@ def populate_source_footnote_tooltips(content: str, metadata: dict[str, Any] | N
     return pattern.sub(replace, content)
 
 
+def _needs_source_footnote_assets(content: str) -> bool:
+    return bool(
+        re.search(r"\bclass=(['\"])[^'\"]*\bsource-ref\b[^'\"]*\1", content, flags=re.I)
+        or re.search(r"\bclass=(['\"])[^'\"]*\bsources\b[^'\"]*\1", content, flags=re.I)
+        or re.search(r"\bclass=(['\"])[^'\"]*\bsource-list\b[^'\"]*\1", content, flags=re.I)
+    )
+
+
+def _strip_source_footnote_assets(content: str) -> str:
+    content = re.sub(
+        r"<style\b(?=[^>]*\bid=(['\"])myharness-source-footnotes\1)[^>]*>.*?</style>\s*",
+        "",
+        content,
+        flags=re.I | re.S,
+    )
+    return re.sub(
+        r"<script\b(?=[^>]*\bid=(['\"])myharness-source-footnotes-script\1)[^>]*>.*?</script>\s*",
+        "",
+        content,
+        flags=re.I | re.S,
+    )
+
+
+def _insert_source_footnote_assets(content: str) -> str:
+    if SOURCE_FOOTNOTE_CSS_MARKER in content:
+        return _strip_source_footnote_assets(content).replace(SOURCE_FOOTNOTE_CSS_MARKER, SOURCE_FOOTNOTE_CSS)
+    content = _strip_source_footnote_assets(content)
+    if re.search(r"</head\s*>", content, flags=re.I):
+        return re.sub(r"</head\s*>", lambda _match: f"{SOURCE_FOOTNOTE_CSS}\n</head>", content, count=1, flags=re.I)
+    return f"{SOURCE_FOOTNOTE_CSS}\n{content}"
+
+
 def prepare_source_footnotes_html(content: str, suffix: str, metadata: dict[str, Any] | None) -> str:
     """Expand the fixed CSS marker and populate source-footnote tooltips."""
 
     if suffix.lower() not in {".html", ".htm"}:
         return content
+    content = normalize_source_ref_markers(content)
     content = populate_source_footnote_tooltips(content, metadata)
-    if SOURCE_FOOTNOTE_CSS_MARKER not in content:
+    if SOURCE_FOOTNOTE_CSS_MARKER not in content and not _needs_source_footnote_assets(content):
         return content
-    return content.replace(SOURCE_FOOTNOTE_CSS_MARKER, SOURCE_FOOTNOTE_CSS)
+    return _insert_source_footnote_assets(content)
 
 
 def expand_source_footnote_css_marker(content: str, suffix: str) -> str:

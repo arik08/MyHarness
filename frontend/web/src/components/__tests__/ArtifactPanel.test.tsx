@@ -70,6 +70,10 @@ function collectHighlightText(dom: { window: Window & typeof globalThis }) {
     .join("");
 }
 
+function tick(ms = 0) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function loadPreviewDom(srcdoc: string) {
   const dom = new JSDOM(srcdoc, { pretendToBeVisual: true, runScripts: "dangerously", url: "http://localhost/" });
   const rangePrototype = dom.window.Range.prototype as unknown as {
@@ -529,6 +533,44 @@ describe("ArtifactPanel", () => {
     const code = document.querySelector(".artifact-source code.language-html");
     expect(code?.textContent || "").toContain("<h1>Hello</h1>");
     expect(screen.queryByText("완료된 HTML 원문은 우측 미리보기에서 생략했습니다. 렌더링 결과는 미리보기 탭에서 확인하세요.")).toBeNull();
+  });
+
+  it("injects source footnote badge behavior into HTML artifact previews", async () => {
+    const content = [
+      "<html><head><style>.sources a{text-decoration:underline}</style></head><body>",
+      '<p>Fact<sup class="source-ref">(<a href="#source-1">1</a>)</sup></p>',
+      '<ol class="sources"><li><a id="source-1" href="https://example.com/report">Example source sentence</a></li></ol>',
+      "</body></html>",
+    ].join("");
+
+    const { container, unmount } = render(
+      <ArtifactPreview
+        artifact={{ path: "outputs/report.html", name: "report.html", kind: "html" }}
+        payload={{ kind: "html", content }}
+        draftContent={content}
+        sourceMode={false}
+        downloadUrl="#"
+        htmlEditMode
+        aiSelectionEnabled={false}
+        aiEditComments={[]}
+        onDraftContentChange={vi.fn()}
+      />,
+    );
+    const frame = container.querySelector("iframe") as HTMLIFrameElement;
+    expect(frame.getAttribute("sandbox")).toContain("allow-popups");
+    expect(frame.srcdoc).toContain('id="myharness-source-footnotes"');
+    expect(frame.srcdoc).toContain(".myharness-source-tooltip");
+
+    const dom = await loadPreviewDom(frame.srcdoc);
+    await tick(160);
+    const ref = dom.window.document.querySelector(".source-ref") as HTMLElement;
+    const link = dom.window.document.querySelector(".source-ref a") as HTMLAnchorElement;
+    expect(ref.textContent).toBe("1");
+    expect(link.href).toBe("https://example.com/report");
+    expect(link.target).toBe("_blank");
+    expect(link.dataset.tooltip).toContain("example.com");
+    expect(link.dataset.tooltip).toContain('"Example source sentence"');
+    unmount();
   });
 
   it("shows direct edit actions only for HTML artifacts", () => {

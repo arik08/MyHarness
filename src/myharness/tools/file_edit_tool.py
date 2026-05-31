@@ -12,6 +12,7 @@ from myharness.tools.mermaid_preflight import (
     format_mermaid_preflight_errors,
     mermaid_preflight_errors,
 )
+from myharness.tools.html_source_footnotes import prepare_source_footnotes_html
 from myharness.tools.path_display import display_tool_path
 
 
@@ -109,6 +110,7 @@ class FileEditTool(BaseTool):
                 applied_count += 1
                 updated = updated.replace(edit.old_str, edit.new_str, 1)
 
+        updated = prepare_source_footnotes_html(updated, path.suffix, context.metadata)
         mermaid_errors = mermaid_preflight_errors(path, updated)
         if mermaid_errors:
             return ToolResult(
