@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from difflib import SequenceMatcher
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ from myharness.api.usage import UsageSnapshot
 from myharness.config.paths import get_project_config_dir
 from myharness.engine.messages import ConversationMessage, ImageBlock, sanitize_conversation_messages, strip_internal_message_text
 from myharness.utils.fs import atomic_write_text
+from myharness.services.session_documents import session_document_dir_for_delete
 
 
 _PERSISTED_TOOL_METADATA_KEYS = (
@@ -30,6 +32,7 @@ _PERSISTED_TOOL_METADATA_KEYS = (
     "compact_checkpoints",
     "compact_last",
     "user_input_archive",
+    "session_documents",
     "session_title",
     "session_title_source",
     "session_title_user_edited",
@@ -731,6 +734,11 @@ def delete_session_by_id(cwd: str | Path, session_id: str) -> bool:
             if data is not None and data.get("session_id") == session_id:
                 latest_path.unlink()
                 deleted = True
+
+    documents_dir = session_document_dir_for_delete(cwd, session_id)
+    if documents_dir is not None and documents_dir.exists() and documents_dir.is_dir():
+        shutil.rmtree(documents_dir)
+        deleted = True
 
     return deleted
 

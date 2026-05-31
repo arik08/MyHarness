@@ -430,6 +430,28 @@ def test_delete_session_by_id_ignores_non_object_latest_json(tmp_path: Path, mon
     assert latest.exists()
 
 
+def test_delete_session_by_id_removes_matching_session_documents_only(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+    target_dir = get_project_session_dir(project)
+    session_path = target_dir / "session-abc123def456.json"
+    session_path.write_text('{"session_id":"abc123def456"}', encoding="utf-8")
+    target_docs = target_dir / "session-documents" / "abc123def456"
+    other_docs = target_dir / "session-documents" / "def456abc123"
+    target_docs.mkdir(parents=True)
+    other_docs.mkdir(parents=True)
+    (target_docs / "doc.txt").write_text("secret organization duties", encoding="utf-8")
+    (other_docs / "doc.txt").write_text("keep this", encoding="utf-8")
+
+    assert delete_session_by_id(project, "abc123def456") is True
+
+    assert not session_path.exists()
+    assert not target_docs.exists()
+    assert other_docs.exists()
+    assert (other_docs / "doc.txt").read_text(encoding="utf-8") == "keep this"
+
+
 def test_korean_report_prompt_fallback_title_is_not_prompt_echo():
     prompt = (
         "삼성전자 메모리 경쟁사를 정의하고, 그 회사들의 최근 1주일 내 근황을 정리하여 "

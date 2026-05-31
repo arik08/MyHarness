@@ -31,6 +31,11 @@ from myharness.engine.messages import (
 from myharness.engine.stream_events import CompactProgressEvent
 from myharness.hooks import HookEvent, HookExecutor
 from myharness.services.token_estimation import estimate_tokens
+from myharness.services.session_documents import (
+    SESSION_DOCUMENT_TOKEN_FLOOR,
+    build_session_document_message,
+    store_session_document,
+)
 
 log = logging.getLogger(__name__)
 
@@ -1331,6 +1336,59 @@ def should_autocompact(
     return token_count >= threshold
 
 
+def _extract_user_request(text: str) -> str:
+    parts = [part.strip() for part in re.split(r"\n\s*\n", text.strip()) if part.strip()]
+    if len(parts) >= 2:
+        return parts[-1][:1200]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    tail = "\n".join(lines[-3:])
+    return tail[:1200]
+
+
+def try_session_document_compaction(
+    messages: list[ConversationMessage],
+    *,
+    cwd: str | Path | None,
+    model: str,
+    metadata: dict[str, Any] | None,
+    context_window_tokens: int | None = None,
+    auto_compact_threshold_tokens: int | None = None,
+) -> tuple[list[ConversationMessage], dict[str, Any]] | None:
+    """Store a single oversized current user input as a recoverable session document."""
+
+    if cwd is None or metadata is None or not messages:
+        return None
+    latest = messages[-1]
+    if latest.role != "user" or any(isinstance(block, ToolResultBlock) for block in latest.content):
+        return None
+    source_text = latest.text.strip()
+    if not source_text:
+        return None
+    token_count = estimate_message_tokens([latest], model=model)
+    threshold = get_autocompact_threshold(
+        model,
+        context_window_tokens=context_window_tokens,
+        auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+    )
+    if token_count < SESSION_DOCUMENT_TOKEN_FLOOR and token_count < max(1, threshold // 2):
+        return None
+    session_id = str(metadata.get("session_id") or "").strip().lower()
+    if not session_id:
+        return None
+    entry = store_session_document(
+        cwd=cwd,
+        session_id=session_id,
+        text=source_text,
+        model=model,
+        metadata=metadata,
+    )
+    compacted_message = build_session_document_message(entry, _extract_user_request(source_text), source_text)
+    compacted = [*messages[:-1], compacted_message]
+    return compacted, entry
+
+
 # ---------------------------------------------------------------------------
 # Full compact execution (calls the LLM)
 # ---------------------------------------------------------------------------
@@ -1722,6 +1780,7 @@ async def auto_compact_if_needed(
     trigger: CompactTrigger = "auto",
     hook_executor: HookExecutor | None = None,
     carryover_metadata: dict[str, Any] | None = None,
+    cwd: str | Path | None = None,
     context_window_tokens: int | None = None,
     auto_compact_threshold_tokens: int | None = None,
 ) -> tuple[list[ConversationMessage], bool]:
@@ -1732,6 +1791,64 @@ async def auto_compact_if_needed(
     Returns:
         (messages, was_compacted) — if compacted, messages is the new list.
     """
+    session_document_result = try_session_document_compaction(
+        messages,
+        cwd=cwd,
+        model=model,
+        metadata=carryover_metadata,
+        context_window_tokens=context_window_tokens,
+        auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+    )
+    if session_document_result is not None:
+        messages, document_entry = session_document_result
+        await _emit_progress(
+            progress_callback,
+            phase="session_document_store_start",
+            trigger=trigger,
+            message="Storing oversized pasted input as a searchable session document.",
+            checkpoint="query_session_document_store_start",
+            metadata=_record_compact_checkpoint(
+                carryover_metadata,
+                checkpoint="query_session_document_store_start",
+                trigger=trigger,
+                message_count=len(messages),
+                token_count=estimate_message_tokens(messages),
+                details={"document_id": document_entry.get("id")},
+            ),
+        )
+        await _emit_progress(
+            progress_callback,
+            phase="session_document_store_end",
+            trigger=trigger,
+            message="Session document storage complete.",
+            checkpoint="query_session_document_store_end",
+            metadata=_record_compact_checkpoint(
+                carryover_metadata,
+                checkpoint="query_session_document_store_end",
+                trigger=trigger,
+                message_count=len(messages),
+                token_count=estimate_message_tokens(messages),
+                details={
+                    "document_id": document_entry.get("id"),
+                    "line_count": document_entry.get("line_count"),
+                    "original_estimated_tokens": document_entry.get("estimated_tokens"),
+                },
+            ),
+        )
+        post_document_tokens = estimate_message_tokens(messages, model=model)
+        if post_document_tokens < SESSION_DOCUMENT_TOKEN_FLOOR or (not force and not should_autocompact(
+            messages,
+            model,
+            state,
+            context_window_tokens=context_window_tokens,
+            auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+        )):
+            state.compacted = True
+            state.turn_counter += 1
+            state.turn_id = uuid4().hex
+            state.consecutive_failures = 0
+            return messages, True
+
     if not force and not should_autocompact(
         messages,
         model,
