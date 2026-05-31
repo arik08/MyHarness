@@ -3338,6 +3338,94 @@ describe("MessageList", () => {
     expect(assistantContent).not.toContain("요약 보고서");
   });
 
+  it("does not show internal TODO.md artifact cards", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact/resolve?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            path: "outputs/포스코_기사동향_웹보고서.html",
+            name: "포스코_기사동향_웹보고서.html",
+            kind: "html",
+            size: 14_700,
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "작성 완료했습니다.",
+              isComplete: true,
+              artifacts: [
+                { path: "TODO.md", kind: "markdown" },
+                { path: "outputs/포스코_기사동향_웹보고서.html", kind: "html" },
+              ],
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "포스코_기사동향_웹보고서.html 미리보기 열기" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "TODO.md 미리보기 열기" })).toBeNull();
+    const resolvedPaths = fetchSpy.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.startsWith("/api/artifact/resolve?"))
+      .map((url) => new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("path"));
+    expect(resolvedPaths).toEqual(["outputs/포스코_기사동향_웹보고서.html"]);
+  });
+
+  it("hides artifact cards when the resolver reports the file is missing", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/artifact/resolve?")) {
+        return {
+          ok: false,
+          status: 404,
+          text: async () => JSON.stringify({ error: "Artifact not found" }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-a",
+          clientId: "client-a",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              text: "정리 완료했습니다.\n\n- 보고서: `outputs/missing-report.html`",
+              isComplete: true,
+            },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector(".artifact-card")).toBeNull();
+    });
+  });
+
   it("replaces artifact labels and multiline wrappers with only the artifact card", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

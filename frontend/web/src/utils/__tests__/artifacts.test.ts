@@ -103,6 +103,7 @@ describe("artifact utilities", () => {
     expect(collectArtifactCandidates("Three.js 기반으로 작성했습니다.")).toEqual([]);
     expect(collectArtifactCandidates("파일: script.js")).toEqual([{ path: "script.js", name: "script.js", kind: "text", label: "텍스트" }]);
     expect(collectArtifactCandidates("보고서.html 파일을 확인하세요.").map((artifact) => artifact.path)).toEqual(["보고서.html"]);
+    expect(collectArtifactCandidates("작업 목록은 TODO.md에 정리했습니다.")).toEqual([]);
   });
 
   it("does not collect artifact paths from markdown table cells", () => {
@@ -122,6 +123,7 @@ describe("artifact utilities", () => {
 
     expect(shouldResolveArtifactCandidate("outputs/report.html", workspace)).toBe(true);
     expect(shouldResolveArtifactCandidate(`${workspace}/outputs/report.html`, workspace)).toBe(true);
+    expect(shouldResolveArtifactCandidate("TODO.md", workspace)).toBe(false);
     expect(shouldResolveArtifactCandidate("C:/Users/Myeongcheol/Desktop/Documents/Programing/MyHarness/.plugins/workflow-kit/skills/internal/SKILL.md", workspace)).toBe(false);
   });
 

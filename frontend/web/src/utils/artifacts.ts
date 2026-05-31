@@ -119,6 +119,11 @@ function isRootSourceCodePath(path: string) {
   return !hasPathSeparator(path) && !hasDrivePrefix(path) && sourceCodeExtensions.has(artifactExtension(path));
 }
 
+function isInternalArtifactCandidatePath(path: string) {
+  const normalized = normalizeProjectFilePath(normalizeArtifactPath(path)).toLowerCase();
+  return normalized === "todo.md";
+}
+
 export function artifactKind(path: string) {
   const ext = artifactExtension(path);
   if (ext === "html" || ext === "htm") return "html";
@@ -193,7 +198,7 @@ export function isSourceCodeArtifact(artifact: ArtifactSummary) {
 
 export function shouldResolveArtifactCandidate(path: string, workspacePath?: string) {
   const normalizedPath = normalizeArtifactPath(path);
-  if (!normalizedPath || !isKnownArtifactPath(normalizedPath)) {
+  if (!normalizedPath || !isKnownArtifactPath(normalizedPath) || isInternalArtifactCandidatePath(normalizedPath)) {
     return false;
   }
   if (!hasDrivePrefix(normalizedPath)) {
@@ -415,7 +420,7 @@ function expandArtifactReferenceRange(value: string, start: number, end: number)
 function artifactReferenceFromRange(value: string, start: number, end: number, replaceStart = start, replaceEnd = end): ArtifactReference | null {
   const trimmed = trimArtifactCandidateRange(value, start, end);
   const path = normalizeArtifactPath(value.slice(trimmed.start, trimmed.end));
-  if (!path || !isKnownArtifactPath(path) || /^https?:\/\//i.test(path)) {
+  if (!path || !isKnownArtifactPath(path) || isInternalArtifactCandidatePath(path) || /^https?:\/\//i.test(path)) {
     return null;
   }
   const expanded = expandArtifactReferenceRange(value, replaceStart, replaceEnd);

@@ -150,7 +150,11 @@ function useMessageArtifacts(message: ChatMessage) {
               workspace: payload.workspace || artifact.workspace,
               label: payload.label || artifactLabelForPath(payload.path || artifact.path, payload.kind || artifact.kind),
             };
-          } catch {
+          } catch (error) {
+            const errorWithStatus = error as Error & { status?: number };
+            if (errorWithStatus.status === 404) {
+              return null;
+            }
             return { ...artifact, sourcePath: artifact.path };
           }
         }),
