@@ -9,7 +9,7 @@
     "gpt-5.4-mini": 42000
   },
   "base_url": "http://pgpt.posco.com/s0la01-gpt/v1",
-  "timeout": 180.0,
+  "timeout": 180,
   "context_window_tokens": null,
   "auto_compact_threshold_tokens": null,
   "api_format": "openai",
@@ -182,7 +182,7 @@
     "docker": {
       "image": "myharness-sandbox:latest",
       "auto_build_image": true,
-      "cpu_limit": 0.0,
+      "cpu_limit": 0,
       "memory_limit": "",
       "extra_mounts": [],
       "extra_env": {}
@@ -200,5 +200,11 @@
   "effort": "low",
   "shell": "auto",
   "passes": 1,
-  "verbose": false
+  "verbose": false,
+  "web_shared_runtime_preferences": {
+    "version": 1,
+    "active_profile": "codex",
+    "model": "gpt-5.5",
+    "effort": "low"
+  }
 }
