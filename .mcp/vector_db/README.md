@@ -80,7 +80,7 @@ Use cases:
 - Detailed 업무, 정책, 절차, 역할, comparison questions: the agent should call `retrieve_context` with `mode="hybrid"`.
 - Source listing or health checks: the agent should call `list_sources` or `store_status`.
 
-MCP tool results include `document_name`, `source_path`, `heading_path`, `org_path`, and `lines`. Keep these identifiers in final answers when citing evidence.
+MCP tool results include `source_label`, `citation`, `excerpt`, `document_name`, `source_path`, `heading_path`, `org_path`, and `lines`. Keep these identifiers in final answers when citing evidence. Cite local VectorDB evidence as plain text such as `[출처: 업무문서 A, doc-a.md lines 7-12]`; do not create Markdown links with `vector_db`, `vector-db://`, file paths, or other non-browser URLs.
 
 ## 5. Storage Policy
 

@@ -137,6 +137,10 @@ def test_retrieve_context_filters_by_document_name_and_expands_graph(tmp_path: P
     assert {item["document_name"] for item in result["results"]} == {"업무문서 B"}
     assert any(item["graph_context"] for item in result["results"])
     assert any("계약 관리" in " > ".join(item["heading_path"]) for item in result["results"])
+    first = result["results"][0]
+    assert first["source_label"] == "업무문서 B"
+    assert first["citation"] == "업무문서 B (doc-b.md lines 8-9)"
+    assert "대행사 계약 검토" in first["excerpt"]
 
 
 def test_explore_org_returns_hierarchy_for_matching_document(tmp_path: Path) -> None:

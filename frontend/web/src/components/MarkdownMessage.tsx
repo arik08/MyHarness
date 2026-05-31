@@ -54,7 +54,8 @@ function sanitizeRenderedHtml(html: string) {
 
 function sourceLinkOrigin(value: string) {
   try {
-    return new URL(value).origin;
+    const parsed = new URL(value, window.location.href);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : "";
   } catch {
     return "";
   }
@@ -62,9 +63,22 @@ function sourceLinkOrigin(value: string) {
 
 function sourceLinkDomain(value: string) {
   try {
-    return new URL(value).hostname.replace(/^www\./i, "");
+    const parsed = new URL(value, window.location.href);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "";
+    }
+    return parsed.hostname.replace(/^www\./i, "");
   } catch {
     return "";
+  }
+}
+
+function isBrowserOpenableSourceHref(value: string) {
+  try {
+    const parsed = new URL(value, window.location.href);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
   }
 }
 
@@ -183,6 +197,17 @@ function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: Sou
     const evidence = String(link.getAttribute("title") || "").replace(/\s+/g, " ").trim();
     const domain = sourceLinkDomain(href);
     const tooltip = extractedEvidence || evidence;
+    if (!isBrowserOpenableSourceHref(href)) {
+      const chip = document.createElement("span");
+      chip.className = "markdown-inline-source-chip markdown-inline-source-chip-static";
+      chip.setAttribute("role", "note");
+      chip.setAttribute("aria-label", `출처 ${label}`);
+      chip.tabIndex = 0;
+      chip.setAttribute("data-tooltip", tooltip ? `${label}\n${quotedSourceExcerpt(tooltip)}` : label || href);
+      chip.replaceChildren(createInlineSourceIcon(label, ""), document.createTextNode(label));
+      link.replaceWith(chip);
+      continue;
+    }
     link.classList.add("markdown-inline-source-chip");
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noreferrer noopener");

@@ -10,12 +10,12 @@ import os
 import re
 import sqlite3
 import sys
+from array import array
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-import numpy as np
 import yaml
 
 
@@ -61,7 +61,7 @@ class Chunk:
     line_start: int
     line_end: int
     text: str
-    embedding: np.ndarray
+    embedding: array
 
 
 def default_base_dir() -> Path:
@@ -672,16 +672,17 @@ def _chunk_from_blocks(
     )
 
 
-def embed_text(text: str, dimensions: int = DEFAULT_DIMENSIONS) -> np.ndarray:
-    vector = np.zeros(dimensions, dtype=np.float32)
+def embed_text(text: str, dimensions: int = DEFAULT_DIMENSIONS) -> array:
+    vector = array("f", [0.0]) * dimensions
     for token in _tokens(text):
         digest = hashlib.blake2b(token.encode("utf-8", errors="ignore"), digest_size=8).digest()
         bucket = int.from_bytes(digest[:4], "little") % dimensions
         sign = 1.0 if digest[4] & 1 else -1.0
         vector[bucket] += sign
-    norm = float(np.linalg.norm(vector))
+    norm = math.sqrt(sum(value * value for value in vector))
     if norm > 0:
-        vector /= norm
+        for index, value in enumerate(vector):
+            vector[index] = value / norm
     return vector
 
 
@@ -785,7 +786,7 @@ def _insert_chunk(db: sqlite3.Connection, chunk: Chunk) -> None:
             chunk.line_start,
             chunk.line_end,
             chunk.text,
-            chunk.embedding.astype(np.float32).tobytes(),
+            chunk.embedding.tobytes(),
         ),
     )
     _insert_edge(db, chunk.document_id, chunk.section_node_id, chunk.chunk_node_id, "contains")
@@ -837,8 +838,9 @@ def _vector_search(
     query_vector = embed_text(query)
     scored: list[dict[str, Any]] = []
     for row in rows:
-        embedding = np.frombuffer(row["embedding"], dtype=np.float32)
-        score = float(np.dot(query_vector, embedding))
+        embedding = array("f")
+        embedding.frombytes(row["embedding"])
+        score = sum(left * right for left, right in zip(query_vector, embedding))
         if score <= 0:
             continue
         scored.append(_chunk_row_to_result(row, score))
@@ -873,6 +875,8 @@ def _pack_hybrid_results(
 def _chunk_row_to_result(row: sqlite3.Row, score: float) -> dict[str, Any]:
     heading_path = _read_json_list(row["heading_path"])
     org_path = _read_json_list(row["org_path"])
+    line_start = row["line_start"]
+    line_end = row["line_end"]
     return {
         "chunk_id": row["chunk_id"],
         "chunk_node_id": row["chunk_node_id"],
@@ -880,9 +884,12 @@ def _chunk_row_to_result(row: sqlite3.Row, score: float) -> dict[str, Any]:
         "document_id": row["document_id"],
         "document_name": row["document_name"],
         "source_path": row["source_path"],
-        "lines": f"{row['line_start']}-{row['line_end']}",
-        "line_start": row["line_start"],
-        "line_end": row["line_end"],
+        "source_label": row["document_name"],
+        "citation": _source_citation(row["document_name"], row["source_path"], line_start, line_end),
+        "excerpt": _source_excerpt(row["text"]),
+        "lines": f"{line_start}-{line_end}",
+        "line_start": line_start,
+        "line_end": line_end,
         "heading_path": heading_path,
         "heading_path_text": " > ".join(heading_path),
         "org_path": org_path,
@@ -959,6 +966,14 @@ def _expanded_chunks_for_chunk(db: sqlite3.Connection, hit: dict[str, Any]) -> l
         {
             "document_name": row["document_name"],
             "source_path": row["source_path"],
+            "source_label": row["document_name"],
+            "citation": _source_citation(
+                row["document_name"],
+                row["source_path"],
+                row["line_start"],
+                row["line_end"],
+            ),
+            "excerpt": _source_excerpt(row["text"]),
             "lines": f"{row['line_start']}-{row['line_end']}",
             "heading_path": _read_json_list(row["heading_path"]),
             "text": _short_text(row["text"], 900),
@@ -1049,6 +1064,8 @@ def _org_tree(db: sqlite3.Connection, node_id: str, depth: int) -> dict[str, Any
         **_node_summary(row),
         "document_name": row["document_name"],
         "source_path": row["source_path"],
+        "source_label": row["document_name"],
+        "citation": _source_citation(row["document_name"], row["source_path"], row["line_start"], row["line_end"]),
         "children": children,
     }
 
@@ -1201,6 +1218,14 @@ def _short_text(text: str, limit: int) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 3].rstrip() + "..."
+
+
+def _source_excerpt(text: str, limit: int = 220) -> str:
+    return _short_text(re.sub(r"\s+", " ", str(text or "")).strip(), limit)
+
+
+def _source_citation(document_name: str, source_path: str, line_start: int, line_end: int) -> str:
+    return f"{document_name} ({source_path} lines {line_start}-{line_end})"
 
 
 def _looks_like_org_query(query: str) -> bool:

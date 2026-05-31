@@ -351,6 +351,21 @@ describe("MessageList", () => {
     expect(chip?.hasAttribute("title")).toBe(false);
   });
 
+  it("renders non-browser source links as static source chips", () => {
+    render(
+      <MarkdownMessage
+        text={'브랜드팀은 캠페인 운영을 담당합니다. [출처: 업무문서 A](vector-db://doc/doc-a#L7-L12 "브랜드 캠페인 기획")'}
+      />,
+    );
+
+    expect(document.querySelector("a.markdown-inline-source-chip")).toBeNull();
+    const chip = document.querySelector(".markdown-inline-source-chip") as HTMLElement | null;
+    expect(chip?.tagName).toBe("SPAN");
+    expect(chip?.textContent).toContain("업무문서 A");
+    expect(chip?.getAttribute("data-tooltip")).toBe("업무문서 A\n\"브랜드 캠페인 기획\"");
+    expect(chip?.hasAttribute("href")).toBe(false);
+  });
+
   it("keeps Korean tilde ranges literal instead of rendering strikethrough", () => {
     render(
       <MarkdownMessage

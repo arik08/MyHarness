@@ -7929,7 +7929,7 @@ a:focus-visible {
   text-underline-offset: 3px;
 }
 
-.markdown-body a.markdown-inline-source-chip {
+.markdown-body .markdown-inline-source-chip {
   display: inline-flex;
   position: relative;
   align-items: center;
@@ -7952,12 +7952,14 @@ a:focus-visible {
 }
 
 .markdown-body a.markdown-inline-source-chip:hover,
-.markdown-body a.markdown-inline-source-chip:focus-visible {
+.markdown-body a.markdown-inline-source-chip:focus-visible,
+.markdown-body span.markdown-inline-source-chip:hover,
+.markdown-body span.markdown-inline-source-chip:focus-visible {
   background: color-mix(in srgb, var(--accent-soft) 52%, transparent);
   border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
 }
 
-.markdown-body a.markdown-inline-source-chip::after {
+.markdown-body .markdown-inline-source-chip::after {
   position: absolute;
   bottom: calc(100% + 7px);
   left: 50%;
@@ -7984,7 +7986,9 @@ a:focus-visible {
 }
 
 .markdown-body a.markdown-inline-source-chip:hover::after,
-.markdown-body a.markdown-inline-source-chip:focus-visible::after {
+.markdown-body a.markdown-inline-source-chip:focus-visible::after,
+.markdown-body span.markdown-inline-source-chip:hover::after,
+.markdown-body span.markdown-inline-source-chip:focus-visible::after {
   opacity: 1;
   transform: translate(-50%, 0);
 }
