@@ -509,12 +509,12 @@ function iframeSourceFootnotesBridge(content: string) {
     .replace(/<style\b(?=[^>]*\bid=(["'])myharness-source-footnotes\1)[^>]*>[\s\S]*?<\/style>\s*/gi, "")
     .replace(/<script\b(?=[^>]*\bid=(["'])myharness-source-footnotes-script\1)[^>]*>[\s\S]*?<\/script>\s*/gi, "");
   const assets = `<style id="myharness-source-footnotes">
-.source-ref{display:inline-flex;align-items:center;justify-content:center;vertical-align:baseline;line-height:1;margin-left:4px;white-space:nowrap}
+.source-ref{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;line-height:1;margin-left:4px;white-space:nowrap;transform:translateY(-1px)}
 .source-ref a{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;padding:0;border:1px solid #bfdbfe;border-radius:50%;background:#eff6ff;color:#075985;font:750 10px/1 Arial,'Noto Sans KR',sans-serif;text-decoration:none;border-bottom:0}
-.sources,.source-list{font-size:12px;line-height:1.55;color:#475569}
+.sources,.source-list{font-size:14px;line-height:1.7;color:#475569}
 .sources a,.source-list a{color:#0b65c2;text-decoration:none!important;border-bottom:0!important}
 .sources a:hover,.sources a:focus-visible,.source-list a:hover,.source-list a:focus-visible,.source-ref a:hover,.source-ref a:focus-visible{text-decoration:none}
-.myharness-source-tooltip{position:fixed;z-index:2147483647;max-width:min(430px,calc(100vw - 24px));padding:8px 10px;border-radius:7px;background:#111827;color:#fff;box-shadow:0 10px 24px rgba(15,23,42,.22);font:650 11px/1.38 Arial,'Noto Sans KR',sans-serif;white-space:pre-line;pointer-events:none}
+.myharness-source-tooltip{position:fixed;z-index:2147483647;max-width:min(460px,calc(100vw - 24px));padding:9px 11px;border-radius:7px;background:#111827;color:#fff;box-shadow:0 10px 24px rgba(15,23,42,.22);font:650 13px/1.45 Arial,'Noto Sans KR',sans-serif;white-space:pre-line;pointer-events:none}
 @media print{.myharness-source-tooltip{display:none}}
 </style>
 <script id="myharness-source-footnotes-script">

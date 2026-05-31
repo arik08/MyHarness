@@ -560,6 +560,10 @@ describe("ArtifactPanel", () => {
     expect(frame.getAttribute("sandbox")).toContain("allow-popups");
     expect(frame.srcdoc).toContain('id="myharness-source-footnotes"');
     expect(frame.srcdoc).toContain(".myharness-source-tooltip");
+    expect(frame.srcdoc).toContain("font:650 13px/1.45");
+    expect(frame.srcdoc).toContain(".sources,.source-list{font-size:14px;line-height:1.7");
+    expect(frame.srcdoc).toContain("vertical-align:middle");
+    expect(frame.srcdoc).toContain("transform:translateY(-1px)");
     expect(frame.srcdoc).toContain("border-radius:50%");
 
     const dom = await loadPreviewDom(frame.srcdoc);
