@@ -29,6 +29,7 @@ from myharness.services.cron import (
 )
 from myharness.sandbox import SandboxUnavailableError
 from myharness.utils.shell import create_shell_subprocess
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,7 @@ def _force_kill(pid: int) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            **hidden_subprocess_kwargs(),
         )
     except OSError:
         pass
@@ -377,6 +379,7 @@ def start_daemon() -> int:
         creationflags = 0
         creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+        creationflags |= hidden_subprocess_kwargs().get("creationflags", 0)
         process = subprocess.Popen(
             [
                 sys.executable,

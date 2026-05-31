@@ -9,6 +9,7 @@ import re
 from pydantic import BaseModel, Field
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 
 class EnterWorktreeToolInput(BaseModel):
@@ -50,6 +51,7 @@ class EnterWorktreeTool(BaseTool):
             capture_output=True,
             text=True,
             check=False,
+            **hidden_subprocess_kwargs(),
         )
         output = (result.stdout or result.stderr).strip() or f"Created worktree {worktree_path}"
         if result.returncode != 0:
@@ -64,6 +66,7 @@ def _git_output(cwd: Path, *args: str) -> str | None:
         capture_output=True,
         text=True,
         check=False,
+        **hidden_subprocess_kwargs(),
     )
     if result.returncode != 0:
         return None

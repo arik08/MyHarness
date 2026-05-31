@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 
 class ExitWorktreeToolInput(BaseModel):
@@ -37,6 +38,7 @@ class ExitWorktreeTool(BaseTool):
             capture_output=True,
             text=True,
             check=False,
+            **hidden_subprocess_kwargs(),
         )
         output = (result.stdout or result.stderr).strip() or f"Removed worktree {path}"
         return ToolResult(output=output, is_error=result.returncode != 0)

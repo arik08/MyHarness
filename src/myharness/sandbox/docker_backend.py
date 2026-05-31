@@ -12,6 +12,7 @@ from pathlib import Path
 from myharness.config import Settings
 from myharness.platforms import get_platform, get_platform_capabilities
 from myharness.sandbox.adapter import SandboxAvailability, SandboxUnavailableError
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ def get_docker_availability(settings: Settings) -> SandboxAvailability:
             capture_output=True,
             timeout=5,
             check=True,
+            **hidden_subprocess_kwargs(),
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return SandboxAvailability(
@@ -148,6 +150,7 @@ class DockerSandboxSession:
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **hidden_subprocess_kwargs(),
         )
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
@@ -171,6 +174,7 @@ class DockerSandboxSession:
                 self._container_name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **hidden_subprocess_kwargs(),
             )
             await asyncio.wait_for(process.communicate(), timeout=15)
         except (asyncio.TimeoutError, OSError) as exc:
@@ -189,6 +193,7 @@ class DockerSandboxSession:
                 [docker, "stop", "-t", "3", self._container_name],
                 capture_output=True,
                 timeout=10,
+                **hidden_subprocess_kwargs(),
             )
         except (subprocess.TimeoutExpired, OSError):
             pass
@@ -229,4 +234,5 @@ class DockerSandboxSession:
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,
+            **hidden_subprocess_kwargs(),
         )

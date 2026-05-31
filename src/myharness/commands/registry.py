@@ -74,6 +74,7 @@ from myharness.skills.routing import is_mcp_routed_skill
 from myharness.skills.state import set_skill_enabled, toggle_skill_enabled
 from myharness.tasks import get_task_manager
 from myharness.plugins.types import PluginCommandDefinition
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 if TYPE_CHECKING:
     from myharness.state import AppStateStore
@@ -306,6 +307,7 @@ def _run_git_command(cwd: str, *args: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             check=False,
+            **hidden_subprocess_kwargs(),
         )
     except FileNotFoundError:
         return False, "git is not installed."
@@ -322,7 +324,14 @@ def _copy_to_clipboard(text: str) -> tuple[bool, str]:
     except Exception:
         for command in (["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard"]):
             try:
-                subprocess.run(command, input=text, text=True, check=True, capture_output=True)
+                subprocess.run(
+                    command,
+                    input=text,
+                    text=True,
+                    check=True,
+                    capture_output=True,
+                    **hidden_subprocess_kwargs(),
+                )
                 return True, "clipboard"
             except Exception:
                 continue

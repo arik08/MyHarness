@@ -7,6 +7,8 @@ import logging
 import shutil
 from pathlib import Path
 
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_IMAGE = "myharness-sandbox:latest"
@@ -36,6 +38,7 @@ async def _image_exists(image: str) -> bool:
         image,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        **hidden_subprocess_kwargs(),
     )
     await process.communicate()
     return process.returncode == 0
@@ -62,6 +65,7 @@ async def build_default_image(image: str = _DEFAULT_IMAGE) -> bool:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **hidden_subprocess_kwargs(),
         )
     else:
         process = await asyncio.create_subprocess_exec(
@@ -69,6 +73,7 @@ async def build_default_image(image: str = _DEFAULT_IMAGE) -> bool:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **hidden_subprocess_kwargs(),
         )
         await process.communicate(input=_DOCKERFILE_CONTENT.encode("utf-8"))
         if process.returncode == 0:

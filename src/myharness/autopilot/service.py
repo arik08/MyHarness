@@ -38,6 +38,7 @@ from myharness.config.paths import (
 )
 from myharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete, ErrorEvent
 from myharness.swarm.worktree import WorktreeManager
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 from myharness.utils.fs import atomic_write_text
 
 _SOURCE_BASE_SCORES: dict[RepoTaskSource, int] = {
@@ -1242,6 +1243,7 @@ class RepoAutopilotStore:
             timeout=timeout,
             shell=shell,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": ""},
+            **hidden_subprocess_kwargs(),
         )
         if check and completed.returncode != 0:
             output = (completed.stderr or completed.stdout).strip() or f"Command failed: {command}"
@@ -1996,6 +1998,7 @@ class RepoAutopilotStore:
                 capture_output=True,
                 text=True,
                 check=False,
+                **hidden_subprocess_kwargs(),
             )
         except FileNotFoundError as exc:
             raise ValueError("gh CLI is not installed.") from exc
@@ -2125,6 +2128,7 @@ class RepoAutopilotStore:
                     capture_output=True,
                     check=False,
                     timeout=1800,
+                    **hidden_subprocess_kwargs(),
                 )
                 steps.append(
                     RepoVerificationStep(

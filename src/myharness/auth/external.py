@@ -18,6 +18,7 @@ from typing import Any
 
 from myharness.auth.storage import ExternalAuthBinding
 from myharness.utils.fs import atomic_write_text
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 CODEX_PROVIDER = "openai_codex"
 CLAUDE_PROVIDER = "anthropic_claude"
@@ -366,6 +367,7 @@ def get_claude_code_version() -> str:
                 text=True,
                 timeout=5,
                 check=False,
+                **hidden_subprocess_kwargs(),
             )
         except Exception:
             continue
