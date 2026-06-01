@@ -673,6 +673,39 @@ def test_skill_mcp_entries_are_classified_as_mcp_capabilities(tmp_path: Path, mo
     assert "- browser-qa [활성] (skill-mcp): Route browser checks through the MCP browser capability" in mcp_section
 
 
+def test_skill_mcp_wrapper_hides_wrapped_server_in_capability_list(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    settings = Settings(
+        mcp_servers={
+            "browser": McpStdioServerConfig(
+                command="python",
+                args=["browser_server.py"],
+                description="Raw browser MCP server",
+            ),
+            "sqlite_analysis": McpStdioServerConfig(
+                command="python",
+                args=["sqlite_server.py"],
+                description="SQLite analysis server",
+            ),
+        }
+    )
+    skills = [
+        SkillDefinition(
+            name="browser-qa",
+            description="Route browser checks through the MCP browser capability",
+            content="Use the MCP browser tools through this routing skill.",
+            source="skill-mcp:browser",
+        ),
+    ]
+
+    text = registry_module._format_capability_management_text(settings, [], skills, tmp_path)
+    mcp_section = text.split("MCP 서버:", 1)[1].split("플러그인:", 1)[0]
+
+    assert "- browser-qa [활성] (skill-mcp): Route browser checks through the MCP browser capability" in mcp_section
+    assert "- browser [활성] (stdio)" not in mcp_section
+    assert "- sqlite_analysis [활성] (stdio): SQLite analysis server" in mcp_section
+
+
 @pytest.mark.asyncio
 async def test_mcp_command_toggles_server_usage(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))

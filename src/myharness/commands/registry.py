@@ -71,7 +71,7 @@ from myharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionB
 from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
-from myharness.skills.routing import is_mcp_routed_skill
+from myharness.skills.routing import is_mcp_routed_skill, mcp_server_name_from_skill_source
 from myharness.skills.state import set_skill_enabled, toggle_skill_enabled
 from myharness.tasks import get_task_manager
 from myharness.plugins.types import PluginCommandDefinition
@@ -120,8 +120,15 @@ def _format_mcp_management_text(settings, plugins, cwd: str | Path, mcp_skills=(
     if not servers and not mcp_skill_list:
         return "MCP 서버:\n(설정된 MCP 서버가 없습니다)"
     disabled = set(settings.disabled_mcp_servers or set())
+    wrapped_server_names = {
+        server_name.lower()
+        for server_name in (mcp_server_name_from_skill_source(skill.source) for skill in mcp_skill_list)
+        if server_name
+    }
     lines = ["MCP 서버:"]
     for name, config in sorted(servers.items()):
+        if name.lower() in wrapped_server_names:
+            continue
         status = "비활성" if name in disabled else "활성"
         transport = getattr(config, "type", "알 수 없음")
         description = str(getattr(config, "description", "") or "").strip()

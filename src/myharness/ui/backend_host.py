@@ -56,7 +56,7 @@ from myharness.services.session_storage import (
 from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
-from myharness.skills.routing import is_mcp_routed_skill_source
+from myharness.skills.routing import is_mcp_routed_skill_source, mcp_server_name_from_skill_source
 from myharness.skills.state import apply_skill_enabled_state
 from myharness.skills.types import SkillDefinition
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
@@ -2760,13 +2760,7 @@ class ReactBackendHost:
         return server_name, user_request
 
     def _mcp_server_name_from_skill_source(self, source: str) -> str:
-        normalized = str(source or "").strip()
-        lowered = normalized.lower()
-        if lowered.startswith("skill-mcp:"):
-            return normalized.split(":", 1)[1].strip()
-        if lowered.startswith("mcp:"):
-            return normalized.split(":", 1)[1].strip()
-        return ""
+        return mcp_server_name_from_skill_source(source)
 
     def _mcp_name_aliases(self, name: str) -> set[str]:
         return {
