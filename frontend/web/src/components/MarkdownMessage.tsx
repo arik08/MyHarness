@@ -153,7 +153,16 @@ function quotedSourceExcerpt(value: string) {
   return text ? `"${text}"` : "";
 }
 
-function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: SourceEvidenceByUrl) {
+export function countInlineSourceLinksInMarkdown(markdown: string) {
+  const template = document.createElement("template");
+  const rendered = chatMarkdown.parse(renderMathInMarkdown(markdown || ""), { async: false }) as string;
+  template.innerHTML = sanitizeRenderedHtml(rendered);
+  return [...template.content.querySelectorAll<HTMLAnchorElement>("a[href]")]
+    .filter((link) => /^(?:출처|참고)\s*:/i.test((link.textContent || "").trim()))
+    .length;
+}
+
+function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: SourceEvidenceByUrl, sourceNumberOffset = 0) {
   const template = document.createElement("template");
   template.innerHTML = html;
   let sourceNumber = 0;
@@ -165,7 +174,7 @@ function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: Sou
     sourceNumber += 1;
     const href = link.getAttribute("href") || "";
     const label = inlineSourceLabel(rawLabel) || link.hostname || "source";
-    const numberLabel = String(sourceNumber);
+    const numberLabel = String(sourceNumberOffset + sourceNumber);
     const extractedEvidence = sourceEvidenceForLink(link, sourceEvidenceByUrl);
     const evidence = String(link.getAttribute("title") || "").replace(/\s+/g, " ").trim();
     const domain = sourceLinkDomain(href);
@@ -1833,11 +1842,13 @@ export function MarkdownMessage({
   deferIncompleteTables = false,
   className = "",
   sourceEvidenceByUrl,
+  sourceNumberOffset = 0,
 }: {
   text: string;
   deferIncompleteTables?: boolean;
   className?: string;
   sourceEvidenceByUrl?: SourceEvidenceByUrl;
+  sourceNumberOffset?: number;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const html = useMemo(() => {
@@ -1850,8 +1861,9 @@ export function MarkdownMessage({
     return enhanceRenderedInlineSourceHtml(
       enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered)))),
       sourceEvidenceByUrl,
+      sourceNumberOffset,
     );
-  }, [deferIncompleteTables, sourceEvidenceByUrl, text]);
+  }, [deferIncompleteTables, sourceEvidenceByUrl, sourceNumberOffset, text]);
 
   const setRootRef = useCallback((node: HTMLDivElement | null) => {
     ref.current = node;

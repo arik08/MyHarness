@@ -311,6 +311,32 @@ describe("MessageList", () => {
     expect(document.querySelector(".markdown-body p")?.textContent).toContain("규모 투자 기대가 언급됐습니다.");
   });
 
+  it("continues source chip numbering across split assistant markdown chunks", () => {
+    render(
+      <StreamingAssistantMessage
+        message={{
+          id: "assistant-sources",
+          role: "assistant",
+          isComplete: true,
+          text: [
+            "첫 번째 문단입니다. [출처: 첫출처](https://example.com/first)",
+            "",
+            "두 번째 문단입니다. [출처: 둘째출처](https://example.com/second)",
+          ].join("\n"),
+        }}
+        settings={initialAppState.appSettings}
+        active={false}
+      />,
+    );
+
+    const chips = [...document.querySelectorAll(".markdown-inline-source-chip")] as HTMLAnchorElement[];
+    expect(chips.map((chip) => chip.textContent)).toEqual(["1", "2"]);
+    expect(chips.map((chip) => chip.getAttribute("aria-label"))).toEqual([
+      "출처 1 첫출처 열기",
+      "출처 2 둘째출처 열기",
+    ]);
+  });
+
   it("uses a Markdown link title as inline source tooltip only when no tool evidence is available", () => {
     render(
       <MarkdownMessage

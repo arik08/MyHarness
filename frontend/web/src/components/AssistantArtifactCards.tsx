@@ -17,7 +17,7 @@ import {
   normalizeArtifactPath,
   shouldResolveArtifactCandidate,
 } from "../utils/artifacts";
-import { MarkdownMessage } from "./MarkdownMessage";
+import { countInlineSourceLinksInMarkdown, MarkdownMessage } from "./MarkdownMessage";
 import type { SourceEvidenceByUrl } from "./MarkdownMessage";
 import { StreamingAssistantMessage } from "./StreamingAssistantMessage";
 
@@ -316,6 +316,16 @@ export function AssistantArtifactContent({
       ? removeArtifactReferenceRanges(message.text, resolvedReferences.map((item) => item.reference))
       : structuredArtifactText
   ), [message.isComplete, message.text, resolvedReferences, structuredArtifactText]);
+  const partSourceNumberOffsets = useMemo(() => {
+    let total = 0;
+    return parts.map((part) => {
+      const offset = total;
+      if (part.type === "markdown") {
+        total += countInlineSourceLinksInMarkdown(part.text);
+      }
+      return offset;
+    });
+  }, [parts]);
 
   if (!parts.length) {
     return (
@@ -350,7 +360,7 @@ export function AssistantArtifactContent({
       {parts.map((part, index) => (
         <Fragment key={part.type === "artifact" ? `${part.artifact.path}-${index}` : `markdown-${index}`}>
           {part.type === "markdown" ? (
-            <MarkdownMessage text={part.text} sourceEvidenceByUrl={sourceEvidenceByUrl} />
+            <MarkdownMessage text={part.text} sourceEvidenceByUrl={sourceEvidenceByUrl} sourceNumberOffset={partSourceNumberOffsets[index] || 0} />
           ) : (
             <div className="assistant-artifact-inline" aria-label="답변 산출물">
               <ArtifactCard artifact={part.artifact} loadingPath={loadingPath} onOpen={(artifact) => void openArtifact(artifact)} />

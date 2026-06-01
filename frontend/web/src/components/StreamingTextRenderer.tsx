@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AppSettings } from "../types/ui";
-import { isStandaloneHtmlDocument, MarkdownMessage } from "./MarkdownMessage";
+import { countInlineSourceLinksInMarkdown, isStandaloneHtmlDocument, MarkdownMessage } from "./MarkdownMessage";
 import type { SourceEvidenceByUrl } from "./MarkdownMessage";
 
 const StableMarkdownMessage = memo(MarkdownMessage);
@@ -633,12 +633,21 @@ function StreamingMarkdownMessage({
     ? liveTail.slice(0, incompleteSourceLinkStart).trimEnd()
     : "";
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
+  const prefixSourceNumbering = useMemo(() => {
+    let total = 0;
+    const offsets = prefixChunks.map((chunk) => {
+      const offset = total;
+      total += countInlineSourceLinksInMarkdown(chunk);
+      return offset;
+    });
+    return { offsets, total };
+  }, [prefixChunks]);
   let chunkCursor = 0;
   const chunkOccurrences = new Map<string, number>();
 
   return (
     <div className="assistant-markdown-flow">
-      {prefixChunks.map((chunk) => {
+      {prefixChunks.map((chunk, index) => {
         const chunkStart = prefix.indexOf(chunk, chunkCursor);
         chunkCursor = chunkStart >= 0 ? chunkStart + chunk.length : chunkCursor + chunk.length;
         const chunkHash = stableChunkHash(chunk);
@@ -649,6 +658,7 @@ function StreamingMarkdownMessage({
             key={`${chunkHash}:${chunkOccurrence}`}
             text={chunk}
             sourceEvidenceByUrl={sourceEvidenceByUrl}
+            sourceNumberOffset={prefixSourceNumbering.offsets[index] || 0}
           />
         );
       })}
@@ -666,6 +676,7 @@ function StreamingMarkdownMessage({
               deferIncompleteTables
               className="stream-live-text inline-source-pending-prefix"
               sourceEvidenceByUrl={sourceEvidenceByUrl}
+              sourceNumberOffset={prefixSourceNumbering.total}
             />
           ) : null}
           <InlineSourceStreamPending />
@@ -675,7 +686,7 @@ function StreamingMarkdownMessage({
           <StreamingPlainText text={liveTail} />
         </div>
       ) : liveTail ? (
-        <StableMarkdownMessage text={liveTail} deferIncompleteTables className="stream-live-text" sourceEvidenceByUrl={sourceEvidenceByUrl} />
+        <StableMarkdownMessage text={liveTail} deferIncompleteTables className="stream-live-text" sourceEvidenceByUrl={sourceEvidenceByUrl} sourceNumberOffset={prefixSourceNumbering.total} />
       ) : null}
     </div>
   );
