@@ -1640,27 +1640,30 @@ export function WebInvestigationSources({ sources, queries }: { sources: WebInve
         ) : null}
         {sources.length ? (
           <ul className="workflow-web-source-list">
-            {sources.map((source) => {
+            {sources.map((source, index) => {
               const faviconUrl = faviconUrlForSourceUrl(source.url);
               return (
                 <li key={source.url}>
                   <a href={source.url} target="_blank" rel="noreferrer">
-                    <span className="workflow-web-source-favicon" aria-hidden="true">
-                      {sourceInitialForSource(source)}
-                      {faviconUrl ? (
-                        <img
-                          src={faviconUrl}
-                          alt=""
-                          loading="lazy"
-                          onError={(event) => {
-                            const origin = sourceOriginForUrl(source.url);
-                            if (origin) {
-                              failedWorkflowSourceFaviconOrigins.add(origin);
-                            }
-                            event.currentTarget.remove();
-                          }}
-                        />
-                      ) : null}
+                    <span className="workflow-web-source-markers" aria-hidden="true">
+                      <span className="workflow-web-source-favicon">
+                        {sourceInitialForSource(source)}
+                        {faviconUrl ? (
+                          <img
+                            src={faviconUrl}
+                            alt=""
+                            loading="lazy"
+                            onError={(event) => {
+                              const origin = sourceOriginForUrl(source.url);
+                              if (origin) {
+                                failedWorkflowSourceFaviconOrigins.add(origin);
+                              }
+                              event.currentTarget.remove();
+                            }}
+                          />
+                        ) : null}
+                      </span>
+                      <span className="workflow-web-source-index">{index + 1}</span>
                     </span>
                     <span className="workflow-web-source-label">{source.label}</span>
                   </a>

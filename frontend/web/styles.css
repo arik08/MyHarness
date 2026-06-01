@@ -6343,7 +6343,7 @@ a:focus-visible {
 
 .workflow-web-source-list a {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   gap: 7px;
   align-items: center;
   min-height: 31px;
@@ -6361,6 +6361,13 @@ a:focus-visible {
   background: color-mix(in srgb, var(--panel-raised) 78%, var(--accent-soft) 22%);
   border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
   transform: translateY(-1px);
+}
+
+.workflow-web-source-markers {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .workflow-web-source-favicon {
@@ -6383,6 +6390,22 @@ a:focus-visible {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.workflow-web-source-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-soft) 58%, var(--panel-raised) 42%);
+  color: color-mix(in srgb, var(--accent) 80%, var(--ink));
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1;
 }
 
 .workflow-web-source-label {

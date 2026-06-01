@@ -3123,7 +3123,7 @@ describe("MessageList", () => {
     expect((document.querySelector(".answer-web-sources") as HTMLDetailsElement | null)?.open).toBe(true);
     expect(screen.getByRole("link", { name: /example\.com.*\/docs/ }).getAttribute("href")).toBe("https://example.com/docs");
     expect(screen.getByRole("link", { name: /github\.com.*\/example\/myharness/ }).getAttribute("href")).toBe("https://github.com/example/myharness");
-    expect(document.querySelector(".workflow-web-source-index")).toBeNull();
+    expect([...document.querySelectorAll(".workflow-web-source-index")].map((node) => node.textContent)).toEqual(["1", "2"]);
     expect(document.querySelector(".workflow-web-source-path")).toBeNull();
     expect(document.querySelector(".workflow-web-source-favicon")?.textContent).toBe("E");
     expect(document.querySelector(".workflow-web-source-favicon img")?.getAttribute("src")).toBe("https://example.com/favicon.ico");
