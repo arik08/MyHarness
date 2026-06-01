@@ -203,30 +203,8 @@ class CoordinatorLoopApiClient:
     async def stream_message(self, request):
         self.requests.append(request)
         self._calls += 1
-        if self._calls == 1:
-            yield ApiMessageCompleteEvent(
-                message=ConversationMessage(
-                    role="assistant",
-                    content=[
-                        TextBlock(text="Launching a worker."),
-                        ToolUseBlock(
-                            id="toolu_agent_1",
-                            name="agent",
-                            input={
-                                "description": "inspect coordinator wiring",
-                                "prompt": "check whether coordinator mode is active",
-                                "subagent_type": "worker",
-                                "mode": "in_process_teammate",
-                            },
-                        ),
-                    ],
-                ),
-                usage=UsageSnapshot(input_tokens=2, output_tokens=2),
-                stop_reason=None,
-            )
-            return
         yield ApiMessageCompleteEvent(
-            message=ConversationMessage(role="assistant", content=[TextBlock(text="Worker launched; coordinator mode is active.")]),
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="Coordinator mode is active without workers.")]),
             usage=UsageSnapshot(input_tokens=2, output_tokens=2),
             stop_reason=None,
         )
@@ -788,7 +766,7 @@ async def test_query_engine_expands_subset_from_recent_tool_search_results(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_query_engine_coordinator_mode_uses_coordinator_prompt_and_runs_agent_loop(tmp_path: Path, monkeypatch):
+async def test_query_engine_coordinator_mode_uses_disabled_subagent_prompt(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
 
@@ -805,19 +783,16 @@ async def test_query_engine_coordinator_mode_uses_coordinator_prompt_and_runs_ag
 
     events = [event async for event in engine.submit_message("investigate issue")]
 
-    assert len(api_client.requests) == 2
-    assert "You are a **coordinator**." in api_client.requests[0].system_prompt
+    assert len(api_client.requests) == 1
+    assert "Subagents Disabled" in api_client.requests[0].system_prompt
     assert "Coordinator User Context" not in api_client.requests[0].system_prompt
     coordinator_context_messages = [
         msg for msg in api_client.requests[0].messages if msg.role == "user" and "Coordinator User Context" in msg.text
     ]
-    assert len(coordinator_context_messages) == 1
-    assert "Workers spawned via the agent tool have access to these tools" in coordinator_context_messages[0].text
-    assert any(isinstance(event, ToolExecutionStarted) and event.tool_name == "agent" for event in events)
-    agent_results = [event for event in events if isinstance(event, ToolExecutionCompleted) and event.tool_name == "agent"]
-    assert len(agent_results) == 1
+    assert coordinator_context_messages == []
+    assert not any(isinstance(event, ToolExecutionStarted) and event.tool_name == "agent" for event in events)
     assert isinstance(events[-1], AssistantTurnComplete)
-    assert "coordinator mode is active" in events[-1].message.text
+    assert "without workers" in events[-1].message.text
 
 
 @pytest.mark.asyncio
@@ -1194,15 +1169,22 @@ async def test_query_engine_auto_learning_persists_repeated_verified_failure(
 
 @pytest.mark.asyncio
 async def test_query_engine_tracks_async_agent_activity(tmp_path: Path, monkeypatch):
+    class _AgentInput(BaseModel):
+        description: str
+        prompt: str
+
+    class _FakeAgentTool(BaseTool):
+        name = "agent"
+        description = "Fake agent tool for async activity tracking."
+        input_model = _AgentInput
+
+        async def execute(self, arguments, context):
+            del arguments, context
+            return ToolResult(output="Spawned agent worker@team (task_id=task_123, backend=subprocess)")
+
     registry = create_default_tool_registry()
-    agent_tool = registry.get("agent")
-    assert agent_tool is not None
-
-    async def _fake_execute(arguments, context):
-        del arguments, context
-        return ToolResult(output="Spawned agent worker@team (task_id=task_123, backend=subprocess)")
-
-    monkeypatch.setattr(agent_tool, "execute", _fake_execute)
+    assert registry.get("agent") is None
+    registry.register(_FakeAgentTool())
     engine = QueryEngine(
         api_client=FakeApiClient(
             [

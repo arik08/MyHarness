@@ -15,7 +15,6 @@ from myharness.coordinator.coordinator_mode import (
     match_session_mode,
     parse_task_notification,
 )
-from myharness.platforms import get_platform
 
 
 # ---------------------------------------------------------------------------
@@ -107,10 +106,10 @@ def test_is_coordinator_mode_false_for_garbage(monkeypatch):
 
 def test_get_coordinator_tools_returns_expected():
     tools = get_coordinator_tools()
-    assert "agent" in tools
-    assert "send_message" in tools
+    assert "agent" not in tools
+    assert "send_message" not in tools
     assert "task_stop" in tools
-    assert len(tools) == 3
+    assert len(tools) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -161,42 +160,38 @@ def test_coordinator_user_context_includes_tools(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SIMPLE", raising=False)
     ctx = get_coordinator_user_context()
     assert "workerToolsContext" in ctx
-    command_tool = "cmd" if get_platform() == "windows" else "bash"
-    assert command_tool in ctx["workerToolsContext"]
+    assert "서브에이전트 호출 기능은 현재 비활성화" in ctx["workerToolsContext"]
 
 
 def test_coordinator_user_context_with_mcp_clients(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
     ctx = get_coordinator_user_context(mcp_clients=[{"name": "my-server"}])
-    assert "my-server" in ctx["workerToolsContext"]
+    assert "my-server" not in ctx["workerToolsContext"]
+    assert "서브에이전트 호출 기능은 현재 비활성화" in ctx["workerToolsContext"]
 
 
 def test_coordinator_user_context_with_scratchpad(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
     ctx = get_coordinator_user_context(scratchpad_dir="/tmp/scratch")
-    assert "/tmp/scratch" in ctx["workerToolsContext"]
+    assert "/tmp/scratch" not in ctx["workerToolsContext"]
+    assert "서브에이전트 호출 기능은 현재 비활성화" in ctx["workerToolsContext"]
 
 
-def test_coordinator_system_prompt_guides_straggler_recovery(monkeypatch):
+def test_coordinator_system_prompt_reports_disabled_subagents(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SIMPLE", raising=False)
     prompt = get_coordinator_system_prompt()
 
-    assert "Stragglers" in prompt
-    assert "If most workers finish within a few minutes but one worker" in prompt
-    assert "stop it with task_stop" in prompt
-    assert "Do not let one lagging worker block the whole task" in prompt
+    assert "Subagents Disabled" in prompt
+    assert "서브에이전트 호출 기능은 현재 비활성화" in prompt
+    assert "Do not call agent, send_message, or create local-agent tasks" in prompt
 
 
 def test_coordinator_system_prompt_preserves_external_source_attribution(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SIMPLE", raising=False)
     prompt = get_coordinator_system_prompt()
 
-    assert "## Source Attribution" in prompt
-    assert "important user-facing information comes from external knowledge" in prompt
-    assert "web search/fetch results, MCP tools or resources, vector databases" in prompt
-    assert "Preserve source identifiers from worker outputs" in prompt
-    assert "document ids, table names, or query labels" in prompt
-    assert "Include source identifiers for important claims so the final answer can cite them" in prompt
+    assert "Subagents Disabled" in prompt
+    assert "directly" in prompt
 
 
 # ---------------------------------------------------------------------------

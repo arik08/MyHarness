@@ -1721,7 +1721,7 @@ async def test_backend_host_refines_initial_title_once_from_early_conversation(t
 
 
 @pytest.mark.asyncio
-async def test_backend_host_steers_divided_work_to_swarm_agents(tmp_path, monkeypatch):
+async def test_backend_host_reports_disabled_subagents_for_divided_work(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
@@ -1752,22 +1752,8 @@ async def test_backend_host_steers_divided_work_to_swarm_agents(tmp_path, monkey
 
     assert should_continue is True
     assert len(steering_lines) == 1
-    assert "`agent` tool" in steering_lines[0]
-    assert "조사, 정리, and 검토" in steering_lines[0]
-    assert "workflow/DAG" in steering_lines[0]
-    assert "fenced `mermaid` block" in steering_lines[0]
-    assert "flowchart" in steering_lines[0]
-    assert "fenced `workflow` block" not in steering_lines[0]
-    assert "Do not spawn serial downstream roles prematurely" in steering_lines[0]
-    assert "at most 10 workers" in steering_lines[0]
-    assert "non-overlapping scope" in steering_lines[0]
-    assert "substantial analysis" in steering_lines[0]
-    assert "intermediate tables" in steering_lines[0]
-    assert "one worker" in steering_lines[0]
-    assert "`task_stop`" in steering_lines[0]
-    assert "send_message" in steering_lines[0]
-    assert 'model="inherit"' in steering_lines[0]
-    assert "Do not let one lagging worker block" in steering_lines[0]
+    assert "서브에이전트 호출 기능은 현재 비활성화" in steering_lines[0]
+    assert "Do not use the `agent` tool" in steering_lines[0]
     assert any(event.type == "status" and event.message == "역할을 나눠 진행하겠습니다." for event in events)
     assert not any(event.type == "status" and "지시" in (event.message or "") for event in events)
 

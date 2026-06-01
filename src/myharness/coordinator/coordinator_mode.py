@@ -9,6 +9,7 @@ from typing import Optional
 from xml.sax.saxutils import escape, unescape
 
 from myharness.platforms import get_platform
+from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +220,8 @@ def match_session_mode(session_mode: Optional[str]) -> Optional[str]:
 
 def get_coordinator_tools() -> list[str]:
     """Return the tool names reserved for the coordinator."""
+    if not is_subagent_invocation_enabled():
+        return [_TASK_STOP_TOOL_NAME]
     return [_AGENT_TOOL_NAME, _SEND_MESSAGE_TOOL_NAME, _TASK_STOP_TOOL_NAME]
 
 
@@ -229,6 +232,8 @@ def get_coordinator_user_context(
     """Build the workerToolsContext injected into the coordinator's user turn."""
     if not is_coordinator_mode():
         return {}
+    if not is_subagent_invocation_enabled():
+        return {"workerToolsContext": SUBAGENT_INVOCATION_DISABLED_MESSAGE}
 
     is_simple = os.environ.get("CLAUDE_CODE_SIMPLE", "").lower() in {"1", "true", "yes"}
     command_tool = _command_tool_name()
@@ -257,6 +262,15 @@ def get_coordinator_user_context(
 
 def get_coordinator_system_prompt() -> str:
     """Return the system prompt injected when running in coordinator mode."""
+    if not is_subagent_invocation_enabled():
+        return f"""You are Claude Code, an AI assistant that helps the user achieve their goal directly.
+
+## Subagents Disabled
+
+{SUBAGENT_INVOCATION_DISABLED_MESSAGE}
+
+Do not call {_AGENT_TOOL_NAME}, {_SEND_MESSAGE_TOOL_NAME}, or create local-agent tasks. Use your own available tools and report progress directly to the user."""
+
     is_simple = os.environ.get("CLAUDE_CODE_SIMPLE", "").lower() in {"1", "true", "yes"}
 
     if is_simple:

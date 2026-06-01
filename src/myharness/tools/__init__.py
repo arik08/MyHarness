@@ -3,6 +3,7 @@
 from myharness.tools.ask_user_question_tool import AskUserQuestionTool
 from myharness.tools.agent_tool import AgentTool
 from myharness.platforms import get_platform
+from myharness.subagents import is_subagent_invocation_enabled
 from myharness.tools.bash_tool import BashTool, CmdTool
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from myharness.tools.brief_tool import BriefTool
@@ -65,7 +66,7 @@ def create_default_tool_registry(mcp_manager=None, *, task_worker: bool = False)
     )
     coordination_tools = (
         ()
-        if task_worker
+        if task_worker or not is_subagent_invocation_enabled()
         else (
             AgentTool(),
             SendMessageTool(),

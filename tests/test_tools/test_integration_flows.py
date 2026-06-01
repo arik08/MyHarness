@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from myharness.subagents import is_subagent_invocation_enabled
 from myharness.tasks.manager import get_task_manager
 from myharness.tools import create_default_tool_registry
 from myharness.tools.base import ToolExecutionContext
@@ -142,6 +143,10 @@ async def test_skill_and_config_flow_across_registry(tmp_path: Path, monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    not is_subagent_invocation_enabled(),
+    reason="subagent invocation is currently disabled",
+)
 async def test_agent_send_message_flow_restarts_completed_agent(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     registry = create_default_tool_registry()

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from myharness.coordinator.coordinator_mode import get_team_registry
+from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 from myharness.tasks.manager import TASK_PROGRESS_EVENT_PREFIX
 from myharness.tasks import get_task_manager
 from myharness.tools import create_default_tool_registry
@@ -17,6 +18,11 @@ from myharness.tools.task_create_tool import TaskCreateTool, TaskCreateToolInput
 from myharness.tools.task_output_tool import TaskOutputTool, TaskOutputToolInput
 from myharness.tools.task_update_tool import TaskUpdateTool, TaskUpdateToolInput
 from myharness.tools.team_create_tool import TeamCreateTool, TeamCreateToolInput
+
+subagents_enabled = pytest.mark.skipif(
+    not is_subagent_invocation_enabled(),
+    reason="subagent invocation is currently disabled",
+)
 
 
 async def _wait_for_terminal_task(task_id: str, *, timeout_seconds: float = 2.0) -> None:
@@ -74,6 +80,28 @@ async def test_task_create_tool_reports_process_start_errors(tmp_path: Path, mon
 
     assert result.is_error is True
     assert result.output
+
+
+@pytest.mark.asyncio
+async def test_task_create_tool_blocks_local_agent_tasks(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    result = await TaskCreateTool().execute(
+        TaskCreateToolInput(type="local_agent", description="agent", prompt="hi"),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is True
+    assert result.output == SUBAGENT_INVOCATION_DISABLED_MESSAGE
+    assert get_task_manager().list_tasks() == []
+
+
+def test_default_tool_registry_hides_subagent_invocation_tools():
+    registry = create_default_tool_registry()
+
+    for name in ("agent", "send_message", "team_create", "team_delete"):
+        assert registry.get(name) is None
+    assert registry.get("task_create") is not None
 
 
 @pytest.mark.asyncio
@@ -180,13 +208,13 @@ async def test_task_update_tool_emits_parent_progress_when_worker_cannot_see_tas
 
 
 @pytest.mark.asyncio
-async def test_agent_tool_rejects_empty_worker_prompt(tmp_path: Path, monkeypatch):
+async def test_agent_tool_blocks_direct_subagent_invocation(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     result = await AgentTool().execute(
         AgentToolInput(
-            description="빈 작업",
-            prompt="   ",
+            description="조사 담당",
+            prompt="자료 확인",
             subagent_type="worker",
             command='python -u -c "import sys; print(sys.stdin.readline().strip())"',
         ),
@@ -194,7 +222,7 @@ async def test_agent_tool_rejects_empty_worker_prompt(tmp_path: Path, monkeypatc
     )
 
     assert result.is_error is True
-    assert "prompt is required" in result.output
+    assert result.output == SUBAGENT_INVOCATION_DISABLED_MESSAGE
     assert get_task_manager().list_tasks() == []
 
 
@@ -207,6 +235,7 @@ def test_agent_tool_skips_project_mutation_lock_without_being_read_only():
 
 
 @pytest.mark.asyncio
+@subagents_enabled
 async def test_agent_tool_treats_office_worker_as_lightweight_research_agent(
     tmp_path: Path,
     monkeypatch,
@@ -261,6 +290,7 @@ async def test_agent_tool_treats_office_worker_as_lightweight_research_agent(
 
 
 @pytest.mark.asyncio
+@subagents_enabled
 async def test_agent_tool_routes_review_roles_to_stronger_gpt_model(tmp_path: Path, monkeypatch):
     from myharness.swarm.registry import get_backend_registry
     from myharness.swarm.types import SpawnResult
@@ -313,6 +343,7 @@ def test_task_worker_registry_keeps_progress_tool_without_parent_task_queries():
 
 
 @pytest.mark.asyncio
+@subagents_enabled
 async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
     tmp_path: Path, monkeypatch
 ):
@@ -372,6 +403,7 @@ async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
 
 
 @pytest.mark.asyncio
+@subagents_enabled
 async def test_agent_tool_records_display_role_from_description(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(
@@ -458,6 +490,7 @@ def test_send_message_input_accepts_to_alias():
 
 
 @pytest.mark.asyncio
+@subagents_enabled
 async def test_agent_tool_creates_missing_team_when_team_argument_is_provided(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     get_team_registry()._teams.clear()
@@ -481,6 +514,7 @@ async def test_agent_tool_creates_missing_team_when_team_argument_is_provided(tm
 
 
 @pytest.mark.asyncio
+@subagents_enabled
 async def test_agent_tool_supports_remote_and_teammate_modes(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(cwd=tmp_path)

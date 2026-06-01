@@ -39,6 +39,7 @@ from myharness.config.settings import (
 )
 from myharness.coordinator.agent_definitions import get_all_agent_definitions
 from myharness.engine.messages import ConversationMessage, sanitize_conversation_messages
+from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 from myharness.engine.query_engine import QueryEngine
 from myharness.learning import get_default_learning_skills_dir
 from myharness.memory import (
@@ -1041,12 +1042,9 @@ def create_default_command_registry(
         tokens = args.split(maxsplit=1)
         guide = (
             "서브에이전트 안내:\n"
-            "- 백그라운드 작업이나 병렬 조사가 필요할 때 모델에게 에이전트 도구로 위임하라고 요청하세요.\n"
-            '- 일반적인 작업자 형태는 subagent_type="worker"입니다.\n'
-            "- /agents presets 는 현재 등록된 subagent preset을 보여줍니다.\n"
+            f"- {SUBAGENT_INVOCATION_DISABLED_MESSAGE}\n"
             "- /agents 는 알려진 작업자 태스크를 나열합니다.\n"
             "- /agents show TASK_ID 는 특정 작업자의 출력과 메타데이터를 보여줍니다.\n"
-            "- send_message(task_id=..., message=...) 로 생성된 작업자에게 후속 메시지를 보낼 수 있습니다.\n"
             "- task_output(task_id=...) 로 작업자의 최신 출력을 읽을 수 있습니다."
         )
         if tokens and tokens[0] in {"help", "usage"}:
@@ -1054,6 +1052,8 @@ def create_default_command_registry(
                 message=guide
             )
         if tokens and tokens[0] in {"presets", "preset"}:
+            if not is_subagent_invocation_enabled():
+                return CommandResult(message=SUBAGENT_INVOCATION_DISABLED_MESSAGE)
             agents = sorted(get_all_agent_definitions(), key=lambda agent: (agent.source, agent.name))
             rows = [
                 agent
@@ -2427,8 +2427,8 @@ def create_default_command_registry(
     registry.register(SlashCommand("rate-limit-options", "요청 제한 부담을 줄이는 방법을 보여줍니다", _rate_limit_options_handler))
     registry.register(SlashCommand("release-notes", "최근 MyHarness 릴리스 노트를 보여줍니다", _release_notes_handler))
     registry.register(SlashCommand("upgrade", "업그레이드 안내를 보여줍니다", _upgrade_handler))
-    registry.register(SlashCommand("agents", "에이전트와 팀 작업을 나열하거나 확인합니다", _agents_handler))
-    registry.register(SlashCommand("subagents", "서브에이전트 사용량과 작업자 태스크를 확인합니다", _agents_handler))
+    registry.register(SlashCommand("agents", "에이전트 작업 기록을 확인합니다", _agents_handler))
+    registry.register(SlashCommand("subagents", "비활성화된 서브에이전트 상태와 작업 기록을 확인합니다", _agents_handler))
     registry.register(SlashCommand("tasks", "백그라운드 작업을 관리합니다", _tasks_handler))
     for command in [*_create_autopilot_commands(), *_create_repo_commands()]:
         registry.register(command)

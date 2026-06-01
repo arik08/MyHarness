@@ -21,6 +21,7 @@ from myharness.prompts import (
     load_project_instructions_prompt,
 )
 from myharness.config.settings import Settings
+from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE
 
 
 def test_discover_claude_md_files(tmp_path: Path):
@@ -207,7 +208,8 @@ def test_build_runtime_system_prompt_uses_coordinator_prompt_when_enabled(tmp_pa
 
     prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="investigate")
 
-    assert "You are a **coordinator**." in prompt
+    assert "Subagents Disabled" in prompt
+    assert SUBAGENT_INVOCATION_DISABLED_MESSAGE in prompt
     assert "Coordinator User Context" not in prompt
     assert "Workers spawned via the agent tool have access to these tools" not in prompt
 
@@ -222,29 +224,11 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
 
     assert "Coordinator User Context" not in prompt
     assert "You are a **coordinator**." not in prompt
-    assert "Delegation And Subagents" in prompt
-    assert 'subagent_type="worker"' in prompt
-    assert "조사, 정리, 검토" in prompt
-    assert "workflow/DAG" in prompt
-    assert "fenced `mermaid` block" in prompt
-    assert "flowchart" in prompt
-    assert "fenced `workflow` block" not in prompt
-    assert "Do not spawn serial downstream roles prematurely" in prompt
-    assert "use at most 10 workers" in prompt
-    assert "non-overlapping scope" in prompt
-    assert "substantial analysis" in prompt
-    assert "intermediate tables" in prompt
-    assert "ask for source identifiers alongside important findings" in prompt
-    assert "URLs/titles, file paths/pages, MCP server/resource names, document ids, table names, and query labels" in prompt
-    assert "Act as the main orchestrator" in prompt
-    assert "send_message" in prompt
-    assert 'model="inherit"' in prompt
-    assert "If most workers finish within a few minutes but one worker" in prompt
-    assert "stop it with `task_stop`" in prompt
-    assert "spawn a narrower replacement" in prompt
-    assert "complete the remaining slice yourself" in prompt
-    assert "Do not let one lagging worker block the whole task" in prompt
-    assert "/agents show TASK_ID" in prompt
+    assert "Subagents Disabled" in prompt
+    assert SUBAGENT_INVOCATION_DISABLED_MESSAGE in prompt
+    assert "Do not call `agent`, `send_message`, or create `local_agent` tasks" in prompt
+    assert "Delegation And Subagents" not in prompt
+    assert 'subagent_type="worker"' not in prompt
     assert "Environment" in prompt
 
 
@@ -269,11 +253,10 @@ def test_build_runtime_system_prompt_lists_subagent_presets_without_bodies(tmp_p
 
     prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="원가 분석해줘")
 
-    assert "Available Subagent Presets" in prompt
-    assert "`cost-analyst` — when to use: Use for cost and margin analysis." in prompt
-    assert 'subagent_type="<route>"' in prompt
-    assert "the selected worker receives the full preset instructions separately" in prompt
-    assert "omit `subagent_type` and write a self-contained ad-hoc worker prompt" in prompt
+    assert "Subagents Disabled" in prompt
+    assert "Available Subagent Presets" not in prompt
+    assert "`cost-analyst`" not in prompt
+    assert 'subagent_type="<route>"' not in prompt
     assert "You are a cost analysis worker" not in prompt
     assert "generic worker" not in prompt
 
@@ -301,9 +284,8 @@ def test_build_runtime_system_prompt_passes_settings_and_cwd_to_subagent_presets
 
     prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="원가 분석해줘")
 
-    assert "`cost-analyst`" in prompt
-    assert seen["settings"].model == Settings().model
-    assert seen["cwd"] == repo
+    assert "`cost-analyst`" not in prompt
+    assert seen == {}
 
 
 def test_build_runtime_system_prompt_guides_explicit_extra_long_report_generation(tmp_path: Path, monkeypatch):

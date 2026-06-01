@@ -18,6 +18,7 @@ from myharness.personalization.rules import load_local_rules
 from myharness.prompts.project_instructions import load_project_instructions_prompt
 from myharness.prompts.system_prompt import build_system_prompt
 from myharness.skills.loader import load_skill_registry
+from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 
 
 def _build_skills_section(
@@ -109,6 +110,19 @@ def _build_delegation_section() -> str:
     )
 
 
+def _build_subagents_disabled_section() -> str:
+    """Build guidance for runs where new subagents are disabled."""
+    return "\n".join(
+        [
+            "# Subagents Disabled",
+            "",
+            SUBAGENT_INVOCATION_DISABLED_MESSAGE,
+            "Do not call `agent`, `send_message`, or create `local_agent` tasks. "
+            "Handle the work directly in the current session.",
+        ]
+    )
+
+
 PromptProfile = Literal["full", "continuation"]
 
 
@@ -118,6 +132,8 @@ def _build_subagent_presets_section(
     settings: Settings | None = None,
 ) -> str | None:
     """Build a compact catalog of subagent presets without agent prompt bodies."""
+    if not is_subagent_invocation_enabled():
+        return None
     try:
         agents = get_all_agent_definitions(settings=settings, cwd=cwd)
     except TypeError:
@@ -289,10 +305,13 @@ def build_runtime_system_prompt(
     if task_worker:
         sections.append(_build_task_worker_section())
     elif not coordinator_mode:
-        sections.append(_build_delegation_section())
-        subagent_presets_section = _build_subagent_presets_section(cwd, settings=settings)
-        if subagent_presets_section:
-            sections.append(subagent_presets_section)
+        if is_subagent_invocation_enabled():
+            sections.append(_build_delegation_section())
+            subagent_presets_section = _build_subagent_presets_section(cwd, settings=settings)
+            if subagent_presets_section:
+                sections.append(subagent_presets_section)
+        else:
+            sections.append(_build_subagents_disabled_section())
         sections.append(_build_long_report_section())
 
     project_instructions = load_project_instructions_prompt(cwd)

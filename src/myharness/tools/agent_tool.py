@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from myharness.coordinator.agent_definitions import get_agent_definition, resolve_agent_system_prompt
 from myharness.coordinator.coordinator_mode import get_team_registry
 from myharness.hooks import HookEvent
+from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 from myharness.swarm.types import TeammateSpawnConfig
 from myharness.tasks import get_task_manager
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
@@ -226,6 +227,8 @@ class AgentTool(BaseTool):
         return False
 
     async def execute(self, arguments: AgentToolInput, context: ToolExecutionContext) -> ToolResult:
+        if not is_subagent_invocation_enabled():
+            return ToolResult(output=SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_error=True)
         if arguments.mode not in {"local_agent", "remote_agent", "in_process_teammate"}:
             return ToolResult(
                 output="Invalid mode. Use local_agent, remote_agent, or in_process_teammate.",

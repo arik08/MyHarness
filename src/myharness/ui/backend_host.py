@@ -59,6 +59,7 @@ from myharness.skills.loader import is_learned_skill
 from myharness.skills.routing import is_mcp_routed_skill_source
 from myharness.skills.state import apply_skill_enabled_state
 from myharness.skills.types import SkillDefinition
+from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 from myharness.tasks import get_task_manager
 from myharness.tools import ToolRegistry
 from myharness.tools.mcp_tool import McpToolAdapter, _sanitize_tool_segment
@@ -479,6 +480,11 @@ def _swarm_delegation_hint_for_prompt(prompt: str) -> str | None:
     )
     role_split = "조사" in text and "정리" in text and "검토" in text
     if explicit_team or role_split:
+        if not is_subagent_invocation_enabled():
+            return (
+                f"{SUBAGENT_INVOCATION_DISABLED_MESSAGE} "
+                "Do not use the `agent` tool or create local-agent tasks; handle the request directly."
+            )
         return _SWARM_DELEGATION_HINT
     return None
 
