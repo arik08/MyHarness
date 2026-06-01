@@ -28,7 +28,6 @@ const chatMarkdown = new Marked({
 const htmlPreviewUrlCache = new Map<string, string>();
 const htmlPreviewSourceCache = new Map<string, string>();
 const mermaidSourceCache = new Map<string, string>();
-const failedInlineSourceFaviconOrigins = new Set<string>();
 let mermaidRenderId = 0;
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
 let markdownEnhancementObserver: MutationObserver | null = null;
@@ -50,15 +49,6 @@ function sanitizeRenderedHtml(html: string) {
     }
   }
   return template.innerHTML;
-}
-
-function sourceLinkOrigin(value: string) {
-  try {
-    const parsed = new URL(value, window.location.href);
-    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : "";
-  } catch {
-    return "";
-  }
 }
 
 function sourceLinkDomain(value: string) {
@@ -88,26 +78,6 @@ function inlineSourceLabel(value: string) {
     .trim()
     .replace(/^(?:출처|참고)\s*:\s*/i, "")
     .trim();
-}
-
-function createInlineSourceIcon(label: string, href: string) {
-  const icon = document.createElement("span");
-  icon.className = "markdown-inline-source-favicon";
-  icon.setAttribute("aria-hidden", "true");
-  const fallback = document.createElement("span");
-  fallback.textContent = Array.from(label.trim())[0]?.toUpperCase() || "";
-  icon.appendChild(fallback);
-
-  const origin = sourceLinkOrigin(href);
-  if (origin && !failedInlineSourceFaviconOrigins.has(origin)) {
-    const image = document.createElement("img");
-    image.src = `${origin}/favicon.ico`;
-    image.alt = "";
-    image.loading = "lazy";
-    image.dataset.sourceOrigin = origin;
-    icon.appendChild(image);
-  }
-  return icon;
 }
 
 export type SourceEvidenceByUrl = Record<string, string>;
@@ -186,13 +156,16 @@ function quotedSourceExcerpt(value: string) {
 function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: SourceEvidenceByUrl) {
   const template = document.createElement("template");
   template.innerHTML = html;
+  let sourceNumber = 0;
   for (const link of [...template.content.querySelectorAll<HTMLAnchorElement>("a[href]")]) {
     const rawLabel = link.textContent || "";
     if (!/^(?:출처|참고)\s*:/i.test(rawLabel.trim())) {
       continue;
     }
+    sourceNumber += 1;
     const href = link.getAttribute("href") || "";
     const label = inlineSourceLabel(rawLabel) || link.hostname || "source";
+    const numberLabel = String(sourceNumber);
     const extractedEvidence = sourceEvidenceForLink(link, sourceEvidenceByUrl);
     const evidence = String(link.getAttribute("title") || "").replace(/\s+/g, " ").trim();
     const domain = sourceLinkDomain(href);
@@ -201,10 +174,10 @@ function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: Sou
       const chip = document.createElement("span");
       chip.className = "markdown-inline-source-chip markdown-inline-source-chip-static";
       chip.setAttribute("role", "note");
-      chip.setAttribute("aria-label", `출처 ${label}`);
+      chip.setAttribute("aria-label", `출처 ${numberLabel} ${label}`);
       chip.tabIndex = 0;
       chip.setAttribute("data-tooltip", tooltip ? `${label}\n${quotedSourceExcerpt(tooltip)}` : label || href);
-      chip.replaceChildren(createInlineSourceIcon(label, ""), document.createTextNode(label));
+      chip.textContent = numberLabel;
       link.replaceWith(chip);
       continue;
     }
@@ -213,8 +186,8 @@ function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: Sou
     link.setAttribute("rel", "noreferrer noopener");
     link.setAttribute("data-tooltip", tooltip && domain ? `${domain}\n${quotedSourceExcerpt(tooltip)}` : domain || quotedSourceExcerpt(tooltip) || href);
     link.removeAttribute("title");
-    link.setAttribute("aria-label", `출처 ${label} 열기`);
-    link.replaceChildren(createInlineSourceIcon(label, href), document.createTextNode(label));
+    link.setAttribute("aria-label", `출처 ${numberLabel} ${label} 열기`);
+    link.textContent = numberLabel;
   }
   return template.innerHTML;
 }
@@ -1677,29 +1650,6 @@ function replaceMermaidPreviewPlaceholders(root: HTMLElement | null) {
   });
 }
 
-function enhanceInlineSourceFavicons(root: HTMLElement | null) {
-  if (!root) {
-    return;
-  }
-  root.querySelectorAll<HTMLImageElement>(".markdown-inline-source-favicon img").forEach((image) => {
-    const origin = image.dataset.sourceOrigin || sourceLinkOrigin(image.currentSrc || image.src);
-    if (origin && failedInlineSourceFaviconOrigins.has(origin)) {
-      image.remove();
-      return;
-    }
-    if (image.dataset.inlineSourceFaviconEnhanced === "yes") {
-      return;
-    }
-    image.dataset.inlineSourceFaviconEnhanced = "yes";
-    image.onerror = () => {
-      if (origin) {
-        failedInlineSourceFaviconOrigins.add(origin);
-      }
-      image.remove();
-    };
-  });
-}
-
 function enhanceMarkdownRoot(root: HTMLElement | null) {
   replaceMermaidPreviewPlaceholders(root);
   replaceHtmlPreviewPlaceholders(root);
@@ -1709,7 +1659,6 @@ function enhanceMarkdownRoot(root: HTMLElement | null) {
   enhanceCodeBlocks(root);
   enhancePromptTokens(root);
   enhanceCompanyColumnRowspans(root);
-  enhanceInlineSourceFavicons(root);
 }
 
 function markdownRootForNode(node: Node | null) {

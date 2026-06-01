@@ -289,40 +289,26 @@ describe("MessageList", () => {
     expect(screen.queryByText("병렬 조사")).toBeNull();
   });
 
-  it("renders source links as inline favicon chips", () => {
+  it("renders source links as inline numbered chips", () => {
     render(
       <MarkdownMessage
-        text="약 8,600억 원 규모 투자 기대가 언급됐습니다. [출처: 데일리안](https://dailian.co.kr/news/view/1640740)"
+        text="약 8,600억 원 규모 투자 기대가 언급됐습니다. [출처: 데일리안](https://dailian.co.kr/news/view/1640740) 추가 근거입니다. [참고: 산업부](https://www.motie.go.kr/report)"
         sourceEvidenceByUrl={{
           "https://dailian.co.kr/news/view/1640740": "기사 본문은 약 8,600억 원 규모 투자와 세제·외환 규제 완화 기대를 전했습니다.",
         }}
       />,
     );
 
-    const chip = document.querySelector(".markdown-inline-source-chip") as HTMLAnchorElement | null;
-    expect(chip?.textContent).toContain("데일리안");
+    const chips = [...document.querySelectorAll(".markdown-inline-source-chip")] as HTMLAnchorElement[];
+    const chip = chips[0];
+    expect(chips.map((item) => item.textContent)).toEqual(["1", "2"]);
     expect(chip?.getAttribute("href")).toBe("https://dailian.co.kr/news/view/1640740");
     expect(chip?.getAttribute("target")).toBe("_blank");
     expect(chip?.getAttribute("data-tooltip")).toBe("dailian.co.kr\n\"기사 본문은 약 8,600억 원 규모 투자와 세제·외환 규제 완화 기대를 전했습니다.\"");
+    expect(chip?.getAttribute("aria-label")).toBe("출처 1 데일리안 열기");
     expect(chip?.hasAttribute("title")).toBe(false);
-    expect(document.querySelector(".markdown-inline-source-favicon")?.textContent).toBe("데");
-    expect(document.querySelector(".markdown-inline-source-favicon img")?.getAttribute("src")).toBe("https://dailian.co.kr/favicon.ico");
+    expect(document.querySelector(".markdown-inline-source-favicon")).toBeNull();
     expect(document.querySelector(".markdown-body p")?.textContent).toContain("규모 투자 기대가 언급됐습니다.");
-  });
-
-  it("does not retry failed inline source favicons across rerenders", () => {
-    const text = "관련 보도가 있었습니다. [출처: 미싱](https://missing-inline-favicon.example/article)";
-    const { rerender } = render(<MarkdownMessage text={text} sourceEvidenceByUrl={{}} />);
-
-    const image = document.querySelector(".markdown-inline-source-favicon img") as HTMLImageElement | null;
-    expect(image?.getAttribute("src")).toBe("https://missing-inline-favicon.example/favicon.ico");
-
-    fireEvent.error(image as HTMLImageElement);
-    expect(document.querySelector(".markdown-inline-source-favicon img")).toBeNull();
-
-    rerender(<MarkdownMessage text={text} sourceEvidenceByUrl={{}} />);
-    expect(document.querySelector(".markdown-inline-source-favicon")?.textContent).toBe("미");
-    expect(document.querySelector(".markdown-inline-source-favicon img")).toBeNull();
   });
 
   it("uses a Markdown link title as inline source tooltip only when no tool evidence is available", () => {
@@ -361,8 +347,9 @@ describe("MessageList", () => {
     expect(document.querySelector("a.markdown-inline-source-chip")).toBeNull();
     const chip = document.querySelector(".markdown-inline-source-chip") as HTMLElement | null;
     expect(chip?.tagName).toBe("SPAN");
-    expect(chip?.textContent).toContain("업무문서 A");
+    expect(chip?.textContent).toBe("1");
     expect(chip?.getAttribute("data-tooltip")).toBe("업무문서 A\n\"브랜드 캠페인 기획\"");
+    expect(chip?.getAttribute("aria-label")).toBe("출처 1 업무문서 A");
     expect(chip?.hasAttribute("href")).toBe(false);
   });
 
@@ -4751,7 +4738,8 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelector(".inline-source-stream-pending")).toBeNull();
-    expect(document.querySelector(".markdown-inline-source-chip")?.textContent).toContain("페로타임즈");
+    expect(document.querySelector(".markdown-inline-source-chip")?.textContent).toBe("1");
+    expect(document.querySelector(".markdown-inline-source-chip")?.getAttribute("aria-label")).toBe("출처 1 페로타임즈 열기");
   });
 
   it("animates the streaming source link pending dots slowly", () => {
