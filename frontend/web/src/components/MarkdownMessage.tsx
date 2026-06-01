@@ -81,6 +81,7 @@ function inlineSourceLabel(value: string) {
 }
 
 export type SourceEvidenceByUrl = Record<string, string>;
+export type SourceNumberByKey = Record<string, number>;
 
 function normalizedSourceUrlKey(value: string) {
   try {
@@ -90,6 +91,54 @@ function normalizedSourceUrlKey(value: string) {
   } catch {
     return String(value || "").trim().replace(/\/$/g, "");
   }
+}
+
+function inlineSourceLinks(root: ParentNode) {
+  return [...root.querySelectorAll<HTMLAnchorElement>("a[href]")]
+    .filter((link) => /^(?:출처|참고)\s*:/i.test((link.textContent || "").trim()));
+}
+
+function sourceNumberKey(value: string) {
+  return normalizedSourceUrlKey(value).toLowerCase();
+}
+
+function nextSourceNumber(sourceNumberByKey: SourceNumberByKey, sourceNumberOffset = 0) {
+  return Math.max(sourceNumberOffset, 0, ...Object.values(sourceNumberByKey).filter(Number.isFinite));
+}
+
+function sourceLinkKeysInMarkdown(markdown: string) {
+  const template = document.createElement("template");
+  const rendered = chatMarkdown.parse(renderMathInMarkdown(markdown || ""), { async: false }) as string;
+  template.innerHTML = sanitizeRenderedHtml(rendered);
+  return inlineSourceLinks(template.content)
+    .map((link) => sourceNumberKey(link.getAttribute("href") || ""))
+    .filter(Boolean);
+}
+
+export function inlineSourceNumberingForMarkdown(markdown: string, initialNumberByKey: SourceNumberByKey = {}, sourceNumberOffset = 0) {
+  const sourceNumberByKey = { ...initialNumberByKey };
+  let number = nextSourceNumber(sourceNumberByKey, sourceNumberOffset);
+  for (const key of sourceLinkKeysInMarkdown(markdown)) {
+    if (sourceNumberByKey[key]) {
+      continue;
+    }
+    number += 1;
+    sourceNumberByKey[key] = number;
+  }
+  return sourceNumberByKey;
+}
+
+export function isInlineSourceOnlyMarkdown(markdown: string) {
+  const template = document.createElement("template");
+  const rendered = chatMarkdown.parse(renderMathInMarkdown(markdown || ""), { async: false }) as string;
+  template.innerHTML = sanitizeRenderedHtml(rendered);
+  const links = inlineSourceLinks(template.content);
+  if (!links.length) {
+    return false;
+  }
+  const clone = template.content.cloneNode(true) as DocumentFragment;
+  inlineSourceLinks(clone).forEach((link) => link.remove());
+  return !(clone.textContent || "").replace(/\s+/g, "").trim();
 }
 
 function textBeforeLink(link: HTMLAnchorElement) {
@@ -154,31 +203,75 @@ function quotedSourceExcerpt(value: string) {
 }
 
 export function countInlineSourceLinksInMarkdown(markdown: string) {
-  const template = document.createElement("template");
-  const rendered = chatMarkdown.parse(renderMathInMarkdown(markdown || ""), { async: false }) as string;
-  template.innerHTML = sanitizeRenderedHtml(rendered);
-  return [...template.content.querySelectorAll<HTMLAnchorElement>("a[href]")]
-    .filter((link) => /^(?:출처|참고)\s*:/i.test((link.textContent || "").trim()))
-    .length;
+  return sourceLinkKeysInMarkdown(markdown).length;
 }
 
-function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: SourceEvidenceByUrl, sourceNumberOffset = 0) {
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  let sourceNumber = 0;
-  for (const link of [...template.content.querySelectorAll<HTMLAnchorElement>("a[href]")]) {
-    const rawLabel = link.textContent || "";
-    if (!/^(?:출처|참고)\s*:/i.test(rawLabel.trim())) {
+function isSourceOnlyParagraph(paragraph: Element) {
+  const chips = [...paragraph.querySelectorAll<HTMLElement>(".markdown-inline-source-chip")];
+  if (!chips.length) {
+    return false;
+  }
+  const chipText = chips.map((chip) => chip.textContent || "").join("").replace(/\s+/g, "");
+  const paragraphText = (paragraph.textContent || "").replace(/\s+/g, "");
+  return paragraphText === chipText;
+}
+
+function inlineSourceAttachTarget(element: Element) {
+  if (element.matches("p, li, td, th")) {
+    return element;
+  }
+  return element.querySelector("p:last-child, li:last-child, td:last-child, th:last-child") || element;
+}
+
+function attachSourceOnlyParagraphs(root: DocumentFragment) {
+  for (const paragraph of [...root.querySelectorAll("p")]) {
+    if (!isSourceOnlyParagraph(paragraph)) {
       continue;
     }
-    sourceNumber += 1;
+    const previous = paragraph.previousElementSibling;
+    if (!previous) {
+      continue;
+    }
+    const target = inlineSourceAttachTarget(previous);
+    for (const chip of [...paragraph.querySelectorAll(".markdown-inline-source-chip")]) {
+      target.appendChild(chip);
+    }
+    paragraph.remove();
+  }
+}
+
+function trimWhitespaceBeforeInlineSource(link: HTMLAnchorElement) {
+  const previous = link.previousSibling;
+  if (previous?.nodeType === Node.TEXT_NODE && previous.textContent) {
+    previous.textContent = previous.textContent.replace(/\s+$/u, "");
+  }
+}
+
+function enhanceRenderedInlineSourceHtml(
+  html: string,
+  sourceEvidenceByUrl?: SourceEvidenceByUrl,
+  sourceNumberOffset = 0,
+  initialSourceNumberByKey: SourceNumberByKey = {},
+) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const sourceNumberByKey = { ...initialSourceNumberByKey };
+  let sourceNumber = nextSourceNumber(sourceNumberByKey, sourceNumberOffset);
+  for (const link of inlineSourceLinks(template.content)) {
+    const rawLabel = link.textContent || "";
     const href = link.getAttribute("href") || "";
     const label = inlineSourceLabel(rawLabel) || link.hostname || "source";
-    const numberLabel = String(sourceNumberOffset + sourceNumber);
+    const sourceKey = sourceNumberKey(href) || inlineSourceLabel(rawLabel).toLowerCase();
+    if (!sourceNumberByKey[sourceKey]) {
+      sourceNumber += 1;
+      sourceNumberByKey[sourceKey] = sourceNumber;
+    }
+    const numberLabel = String(sourceNumberByKey[sourceKey]);
     const extractedEvidence = sourceEvidenceForLink(link, sourceEvidenceByUrl);
     const evidence = String(link.getAttribute("title") || "").replace(/\s+/g, " ").trim();
     const domain = sourceLinkDomain(href);
     const tooltip = extractedEvidence || evidence;
+    trimWhitespaceBeforeInlineSource(link);
     if (!isBrowserOpenableSourceHref(href)) {
       const chip = document.createElement("span");
       chip.className = "markdown-inline-source-chip markdown-inline-source-chip-static";
@@ -198,6 +291,7 @@ function enhanceRenderedInlineSourceHtml(html: string, sourceEvidenceByUrl?: Sou
     link.setAttribute("aria-label", `출처 ${numberLabel} ${label} 열기`);
     link.textContent = numberLabel;
   }
+  attachSourceOnlyParagraphs(template.content);
   return template.innerHTML;
 }
 
@@ -1843,12 +1937,14 @@ export function MarkdownMessage({
   className = "",
   sourceEvidenceByUrl,
   sourceNumberOffset = 0,
+  sourceNumberByKey,
 }: {
   text: string;
   deferIncompleteTables?: boolean;
   className?: string;
   sourceEvidenceByUrl?: SourceEvidenceByUrl;
   sourceNumberOffset?: number;
+  sourceNumberByKey?: SourceNumberByKey;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const html = useMemo(() => {
@@ -1862,8 +1958,9 @@ export function MarkdownMessage({
       enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered)))),
       sourceEvidenceByUrl,
       sourceNumberOffset,
+      sourceNumberByKey,
     );
-  }, [deferIncompleteTables, sourceEvidenceByUrl, sourceNumberOffset, text]);
+  }, [deferIncompleteTables, sourceEvidenceByUrl, sourceNumberByKey, sourceNumberOffset, text]);
 
   const setRootRef = useCallback((node: HTMLDivElement | null) => {
     ref.current = node;

@@ -1,8 +1,14 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AppSettings } from "../types/ui";
-import { countInlineSourceLinksInMarkdown, isStandaloneHtmlDocument, MarkdownMessage } from "./MarkdownMessage";
-import type { SourceEvidenceByUrl } from "./MarkdownMessage";
+import {
+  countInlineSourceLinksInMarkdown,
+  inlineSourceNumberingForMarkdown,
+  isInlineSourceOnlyMarkdown,
+  isStandaloneHtmlDocument,
+  MarkdownMessage,
+} from "./MarkdownMessage";
+import type { SourceEvidenceByUrl, SourceNumberByKey } from "./MarkdownMessage";
 
 const StableMarkdownMessage = memo(MarkdownMessage);
 
@@ -279,7 +285,11 @@ function splitStableMarkdownChunks(text: string) {
   const pushCurrent = () => {
     const chunk = current.join("\n").trimEnd();
     if (chunk.trim()) {
-      chunks.push(chunk);
+      if (chunks.length && isInlineSourceOnlyMarkdown(chunk)) {
+        chunks[chunks.length - 1] = `${chunks[chunks.length - 1]}\n\n${chunk}`;
+      } else {
+        chunks.push(chunk);
+      }
     }
     current = [];
   };
@@ -634,13 +644,13 @@ function StreamingMarkdownMessage({
     : "";
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
   const prefixSourceNumbering = useMemo(() => {
-    let total = 0;
-    const offsets = prefixChunks.map((chunk) => {
-      const offset = total;
-      total += countInlineSourceLinksInMarkdown(chunk);
-      return offset;
+    let sourceNumberByKey: SourceNumberByKey = {};
+    const chunkNumberByKey = prefixChunks.map((chunk) => {
+      const numberByKey = countInlineSourceLinksInMarkdown(chunk) ? { ...sourceNumberByKey } : undefined;
+      sourceNumberByKey = inlineSourceNumberingForMarkdown(chunk, sourceNumberByKey);
+      return numberByKey;
     });
-    return { offsets, total };
+    return { chunkNumberByKey, sourceNumberByKey };
   }, [prefixChunks]);
   let chunkCursor = 0;
   const chunkOccurrences = new Map<string, number>();
@@ -658,7 +668,7 @@ function StreamingMarkdownMessage({
             key={`${chunkHash}:${chunkOccurrence}`}
             text={chunk}
             sourceEvidenceByUrl={sourceEvidenceByUrl}
-            sourceNumberOffset={prefixSourceNumbering.offsets[index] || 0}
+            sourceNumberByKey={prefixSourceNumbering.chunkNumberByKey[index]}
           />
         );
       })}
@@ -676,7 +686,7 @@ function StreamingMarkdownMessage({
               deferIncompleteTables
               className="stream-live-text inline-source-pending-prefix"
               sourceEvidenceByUrl={sourceEvidenceByUrl}
-              sourceNumberOffset={prefixSourceNumbering.total}
+              sourceNumberByKey={countInlineSourceLinksInMarkdown(liveTailBeforeIncompleteSourceLink) ? prefixSourceNumbering.sourceNumberByKey : undefined}
             />
           ) : null}
           <InlineSourceStreamPending />
@@ -686,7 +696,13 @@ function StreamingMarkdownMessage({
           <StreamingPlainText text={liveTail} />
         </div>
       ) : liveTail ? (
-        <StableMarkdownMessage text={liveTail} deferIncompleteTables className="stream-live-text" sourceEvidenceByUrl={sourceEvidenceByUrl} sourceNumberOffset={prefixSourceNumbering.total} />
+        <StableMarkdownMessage
+          text={liveTail}
+          deferIncompleteTables
+          className="stream-live-text"
+          sourceEvidenceByUrl={sourceEvidenceByUrl}
+          sourceNumberByKey={countInlineSourceLinksInMarkdown(liveTail) ? prefixSourceNumbering.sourceNumberByKey : undefined}
+        />
       ) : null}
     </div>
   );

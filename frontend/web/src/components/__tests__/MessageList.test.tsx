@@ -309,6 +309,7 @@ describe("MessageList", () => {
     expect(chip?.hasAttribute("title")).toBe(false);
     expect(document.querySelector(".markdown-inline-source-favicon")).toBeNull();
     expect(document.querySelector(".markdown-body p")?.textContent).toContain("규모 투자 기대가 언급됐습니다.");
+    expect(document.querySelector(".markdown-body p")?.textContent).toContain("언급됐습니다.1");
   });
 
   it("continues source chip numbering across split assistant markdown chunks", () => {
@@ -334,6 +335,78 @@ describe("MessageList", () => {
     expect(chips.map((chip) => chip.getAttribute("aria-label"))).toEqual([
       "출처 1 첫출처 열기",
       "출처 2 둘째출처 열기",
+    ]);
+  });
+
+  it("keeps a source-only paragraph attached to the previous assistant body line", () => {
+    render(
+      <MarkdownMessage
+        text={[
+          "문서에는 1분기 실적과 주주환원 정책이 정리돼 있습니다.",
+          "",
+          "[출처: Example](https://example.com/docs)",
+        ].join("\n")}
+      />,
+    );
+
+    const paragraphs = [...document.querySelectorAll(".markdown-body p")];
+    expect(paragraphs).toHaveLength(1);
+    expect(paragraphs[0]?.textContent).toBe("문서에는 1분기 실적과 주주환원 정책이 정리돼 있습니다.1");
+    expect(paragraphs[0]?.querySelector(".markdown-inline-source-chip")?.textContent).toBe("1");
+  });
+
+  it("keeps a streaming source-only chunk attached to the previous assistant body line", () => {
+    render(
+      <StreamingAssistantMessage
+        message={{
+          id: "assistant-source-only-chunk",
+          role: "assistant",
+          isComplete: true,
+          text: [
+            "문서에는 1분기 실적과 주주환원 정책이 정리돼 있습니다.",
+            "",
+            "[출처: Example](https://example.com/docs)",
+            "",
+            "추가로 비용 절감 계획도 언급됩니다.",
+          ].join("\n"),
+        }}
+        settings={initialAppState.appSettings}
+        active={false}
+      />,
+    );
+
+    const flowItems = [...document.querySelectorAll(".assistant-markdown-flow > .markdown-body")];
+    expect(flowItems).toHaveLength(2);
+    expect(flowItems[0]?.querySelector("p")?.textContent).toBe("문서에는 1분기 실적과 주주환원 정책이 정리돼 있습니다.1");
+    expect(flowItems[0]?.querySelector(".markdown-inline-source-chip")?.textContent).toBe("1");
+  });
+
+  it("reuses the same source chip number for repeated source URLs", () => {
+    render(
+      <StreamingAssistantMessage
+        message={{
+          id: "assistant-repeated-sources",
+          role: "assistant",
+          isComplete: true,
+          text: [
+            "첫 번째 근거입니다. [출처: Example A](https://example.com/docs#section-a)",
+            "",
+            "같은 문서의 다른 문장입니다. [출처: Example B](https://example.com/docs#section-b)",
+            "",
+            "다른 문서도 확인했습니다. [출처: Other](https://other.example/report)",
+          ].join("\n"),
+        }}
+        settings={initialAppState.appSettings}
+        active={false}
+      />,
+    );
+
+    const chips = [...document.querySelectorAll(".markdown-inline-source-chip")] as HTMLAnchorElement[];
+    expect(chips.map((chip) => chip.textContent)).toEqual(["1", "1", "2"]);
+    expect(chips.map((chip) => chip.getAttribute("aria-label"))).toEqual([
+      "출처 1 Example A 열기",
+      "출처 1 Example B 열기",
+      "출처 2 Other 열기",
     ]);
   });
 
