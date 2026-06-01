@@ -7959,6 +7959,10 @@ a:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
 }
 
+.markdown-body span.markdown-inline-source-chip {
+  cursor: help;
+}
+
 .markdown-body .markdown-inline-source-chip::after {
   position: absolute;
   bottom: calc(100% + 7px);

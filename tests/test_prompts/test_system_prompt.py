@@ -108,11 +108,13 @@ def test_build_system_prompt_requires_external_source_attribution():
     assert "web search/fetch results, MCP tools or resources, vector databases" in prompt
     assert "database query results" in prompt
     assert "MCP/vector DB server, resource, document id, table, or query identifier" in prompt
-    assert "cite each source-backed fact item on the same line as the claim" in prompt
+    assert "cite source-backed claims with a compact source chip" in prompt
     assert "`[출처: 데일리안](https://...)`" in prompt
-    assert "Only use Markdown link syntax for browser-openable http(s) URLs" in prompt
-    assert "For MCP/vector/local document sources without a real URL, cite them as plain text" in prompt
-    assert "Do not add evidence snippets to Markdown link titles" in prompt
+    assert "Use the provided source_chip when a tool result includes one" in prompt
+    assert "For MCP/vector/local document sources without a real browser URL, use a short static source chip" in prompt
+    assert "Do not cite every sentence or every line" in prompt
+    assert "Prefer one chip per paragraph, bullet, or source change" in prompt
+    assert "Do not add evidence snippets to web Markdown link titles" in prompt
     assert "the UI derives hover excerpts from existing web_search/web_fetch tool outputs to save tokens" in prompt
     assert "Do not replace item-level links with a separate final `참고:` or `출처:` line" in prompt
     assert "do not group several unrelated article sources into one trailing note" in prompt

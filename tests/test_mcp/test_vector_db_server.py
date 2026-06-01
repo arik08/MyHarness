@@ -139,8 +139,10 @@ def test_retrieve_context_filters_by_document_name_and_expands_graph(tmp_path: P
     assert any("계약 관리" in " > ".join(item["heading_path"]) for item in result["results"])
     first = result["results"][0]
     assert first["source_label"] == "업무문서 B"
-    assert first["citation"] == "업무문서 B (doc-b.md lines 8-9)"
+    assert first["citation"] == "업무문서 B"
     assert "대행사 계약 검토" in first["excerpt"]
+    assert first["source_chip"].startswith("[출처: 업무문서 B](source:vector-db/")
+    assert "대행사 계약 검토" in first["source_chip"]
 
 
 def test_explore_org_returns_hierarchy_for_matching_document(tmp_path: Path) -> None:

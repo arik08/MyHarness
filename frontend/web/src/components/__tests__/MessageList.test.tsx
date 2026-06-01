@@ -354,7 +354,7 @@ describe("MessageList", () => {
   it("renders non-browser source links as static source chips", () => {
     render(
       <MarkdownMessage
-        text={'브랜드팀은 캠페인 운영을 담당합니다. [출처: 업무문서 A](vector-db://doc/doc-a#L7-L12 "브랜드 캠페인 기획")'}
+        text={'브랜드팀은 캠페인 운영을 담당합니다. [출처: 업무문서 A](source:vector-db/doc-a "브랜드 캠페인 기획")'}
       />,
     );
 

@@ -885,8 +885,9 @@ def _chunk_row_to_result(row: sqlite3.Row, score: float) -> dict[str, Any]:
         "document_name": row["document_name"],
         "source_path": row["source_path"],
         "source_label": row["document_name"],
-        "citation": _source_citation(row["document_name"], row["source_path"], line_start, line_end),
+        "citation": _source_citation(row["document_name"]),
         "excerpt": _source_excerpt(row["text"]),
+        "source_chip": _source_chip(row["document_name"], row["document_id"], row["text"]),
         "lines": f"{line_start}-{line_end}",
         "line_start": line_start,
         "line_end": line_end,
@@ -967,13 +968,9 @@ def _expanded_chunks_for_chunk(db: sqlite3.Connection, hit: dict[str, Any]) -> l
             "document_name": row["document_name"],
             "source_path": row["source_path"],
             "source_label": row["document_name"],
-            "citation": _source_citation(
-                row["document_name"],
-                row["source_path"],
-                row["line_start"],
-                row["line_end"],
-            ),
+            "citation": _source_citation(row["document_name"]),
             "excerpt": _source_excerpt(row["text"]),
+            "source_chip": _source_chip(row["document_name"], row["document_id"], row["text"]),
             "lines": f"{row['line_start']}-{row['line_end']}",
             "heading_path": _read_json_list(row["heading_path"]),
             "text": _short_text(row["text"], 900),
@@ -1065,7 +1062,7 @@ def _org_tree(db: sqlite3.Connection, node_id: str, depth: int) -> dict[str, Any
         "document_name": row["document_name"],
         "source_path": row["source_path"],
         "source_label": row["document_name"],
-        "citation": _source_citation(row["document_name"], row["source_path"], row["line_start"], row["line_end"]),
+        "citation": _source_citation(row["document_name"]),
         "children": children,
     }
 
@@ -1224,8 +1221,18 @@ def _source_excerpt(text: str, limit: int = 220) -> str:
     return _short_text(re.sub(r"\s+", " ", str(text or "")).strip(), limit)
 
 
-def _source_citation(document_name: str, source_path: str, line_start: int, line_end: int) -> str:
-    return f"{document_name} ({source_path} lines {line_start}-{line_end})"
+def _source_citation(document_name: str) -> str:
+    return document_name
+
+
+def _source_chip(document_name: str, document_id: str, text: str) -> str:
+    label = _escape_markdown_link_label(f"출처: {document_name}")
+    title = _source_excerpt(text).replace("\\", "\\\\").replace('"', '\\"')
+    return f'[{label}](source:vector-db/{document_id} "{title}")'
+
+
+def _escape_markdown_link_label(value: str) -> str:
+    return str(value or "").replace("[", "\\[").replace("]", "\\]")
 
 
 def _looks_like_org_query(query: str) -> bool:

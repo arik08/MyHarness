@@ -101,9 +101,12 @@ def test_build_runtime_system_prompt_guides_item_level_source_links(tmp_path: Pa
 
     prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="포스코 기사 동향 조사해줘")
 
-    assert "cite each source-backed fact item on the same line as that claim" in prompt
+    assert "cite source-backed claims with compact source chips" in prompt
     assert "`[출처: 데일리안](https://...)`" in prompt
-    assert "Do not add evidence snippets to Markdown link titles" in prompt
+    assert "Do not cite every sentence or every line" in prompt
+    assert "Prefer one chip per paragraph, bullet, or source change" in prompt
+    assert "Use the provided source_chip when a tool result includes one" in prompt
+    assert "Do not add web evidence snippets to Markdown link titles" in prompt
     assert "the UI derives hover excerpts from existing web_search/web_fetch tool outputs to save tokens" in prompt
     assert "Do not replace item-level links with" in prompt
     assert "do not group several unrelated article sources into one trailing note" in prompt
