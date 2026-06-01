@@ -2633,6 +2633,22 @@ function normalizeRuntimeEffortValue(value) {
   return clean === "auto" ? "none" : clean;
 }
 
+function normalizeBooleanMarker(value) {
+  if (value === true || value === false) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  return undefined;
+}
+
 function normalizeSharedRuntimePreferences(raw = {}) {
   const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const next = { version: 1 };
@@ -2653,6 +2669,10 @@ function normalizeSharedRuntimePreferences(raw = {}) {
   if (effort) {
     next.effort = effort;
   }
+  const pgptAvailable = normalizeBooleanMarker(source.pgpt_available ?? source.pgptAvailable);
+  if (pgptAvailable !== undefined) {
+    next.pgpt_available = pgptAvailable;
+  }
   return next;
 }
 
@@ -2669,11 +2689,50 @@ async function readSharedRuntimePreferences() {
   return normalizeSharedRuntimePreferences(settings.web_shared_runtime_preferences);
 }
 
+async function isPgptRuntimeAvailable() {
+  const envApiKey = cleanRuntimePreference(process.env.PGPT_API_KEY);
+  const envEmployeeNo = cleanRuntimePreference(
+    process.env.PGPT_EMPLOYEE_NO || process.env.PGPT_SYSTEM_CODE || process.env.POSCO_EMP_NO,
+  );
+  if (envApiKey && envEmployeeNo) {
+    return true;
+  }
+
+  const credentials = await readJsonFileIfExists(join(globalConfigDir(), "credentials.json")) || {};
+  const entry = credentials.pgpt && typeof credentials.pgpt === "object" ? credentials.pgpt : {};
+  return Boolean(cleanRuntimePreference(entry.api_key) && cleanRuntimePreference(entry.employee_no || entry.system_code));
+}
+
+function shouldUsePgptDefaultRuntimePreferences(preferences, pgptAvailable) {
+  if (!pgptAvailable) {
+    return false;
+  }
+  if (!hasSharedRuntimePreferences(preferences)) {
+    return true;
+  }
+  if (preferences.pgpt_available === true || preferences.active_profile === "p-gpt") {
+    return false;
+  }
+  return true;
+}
+
+function applyPgptDefaultRuntimePreferences(options) {
+  options.activeProfile = "p-gpt";
+  delete options.active_profile;
+  options.model = "gpt-5.4";
+  options.effort = "low";
+  return options;
+}
+
 async function applySharedRuntimePreferencesToSessionOptions(options, workspaceScope) {
   if (!isSharedWorkspaceScope(workspaceScope)) {
     return options;
   }
   const preferences = await readSharedRuntimePreferences();
+  const pgptAvailable = await isPgptRuntimeAvailable();
+  if (shouldUsePgptDefaultRuntimePreferences(preferences, pgptAvailable)) {
+    return applyPgptDefaultRuntimePreferences(options);
+  }
   if (!hasSharedRuntimePreferences(preferences)) {
     return options;
   }
@@ -2748,6 +2807,7 @@ async function saveSharedRuntimeChoice(session, choice) {
     next.effort = normalizeRuntimeEffortValue(choice.value);
   }
 
+  next.pgpt_available = await isPgptRuntimeAvailable();
   settings.web_shared_runtime_preferences = normalizeSharedRuntimePreferences(next);
   await writeJsonFile(settingsPath, settings);
   return settings.web_shared_runtime_preferences;

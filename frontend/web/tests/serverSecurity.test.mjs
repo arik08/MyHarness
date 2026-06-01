@@ -316,12 +316,11 @@ test("shares main runtime choices across shared workspace sessions", async (t) =
   await peerEffortUpdate;
 
   const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
-  assert.deepEqual(settings.web_shared_runtime_preferences, {
-    version: 1,
-    active_profile: "openai-compatible",
-    model: "gpt-5.4-mini",
-    effort: "high",
-  });
+  assert.equal(settings.web_shared_runtime_preferences.version, 1);
+  assert.equal(settings.web_shared_runtime_preferences.active_profile, "openai-compatible");
+  assert.equal(settings.web_shared_runtime_preferences.model, "gpt-5.4-mini");
+  assert.equal(settings.web_shared_runtime_preferences.effort, "high");
+  assert.equal(typeof settings.web_shared_runtime_preferences.pgpt_available, "boolean");
 
   const newcomer = await createRuntimeSession("runtime-newcomer", {
     model: "gpt-5.5",
@@ -330,6 +329,90 @@ test("shares main runtime choices across shared workspace sessions", async (t) =
   assert.equal(newcomer.ready.state.active_profile, "openai-compatible");
   assert.equal(newcomer.ready.state.model, "gpt-5.4-mini");
   assert.equal(newcomer.ready.state.effort, "high");
+});
+
+test("defaults shared runtime sessions to pgpt when pgpt credentials are available", async (t) => {
+  const app = await startWebServer({
+    env: {
+      MYHARNESS_WORKSPACE_SCOPE: "shared",
+      PGPT_API_KEY: "pgpt-test-key",
+      PGPT_EMPLOYEE_NO: "612345",
+    },
+  });
+  t.after(() => app.stop());
+
+  await writeFile(join(app.configDir, "settings.json"), JSON.stringify({
+    web_shared_runtime_preferences: {
+      version: 1,
+      active_profile: "codex",
+      model: "gpt-5.5",
+      effort: "high",
+    },
+  }, null, 2));
+
+  const response = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      clientId: "pgpt-default",
+      activeProfile: "codex",
+      model: "gpt-5.5",
+      effort: "high",
+    }),
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(payload.sessionId);
+
+  const ready = await waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${payload.sessionId}&clientId=pgpt-default`,
+    (event) => event.type === "ready" && event.state?.model,
+    { timeoutMs: 20_000 },
+  );
+
+  assert.equal(ready.state.active_profile, "p-gpt");
+  assert.equal(ready.state.model, "gpt-5.4");
+  assert.equal(ready.state.effort, "low");
+});
+
+test("honors shared runtime choices made while pgpt is available", async (t) => {
+  const app = await startWebServer({
+    env: {
+      MYHARNESS_WORKSPACE_SCOPE: "shared",
+      PGPT_API_KEY: "pgpt-test-key",
+      PGPT_EMPLOYEE_NO: "612345",
+    },
+  });
+  t.after(() => app.stop());
+
+  await writeFile(join(app.configDir, "settings.json"), JSON.stringify({
+    web_shared_runtime_preferences: {
+      version: 1,
+      active_profile: "codex",
+      model: "gpt-5.5",
+      effort: "high",
+      pgpt_available: true,
+    },
+  }, null, 2));
+
+  const response = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId: "pgpt-saved-choice" }),
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(payload.sessionId);
+
+  const ready = await waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${payload.sessionId}&clientId=pgpt-saved-choice`,
+    (event) => event.type === "ready" && event.state?.model,
+    { timeoutMs: 20_000 },
+  );
+
+  assert.equal(ready.state.active_profile, "codex");
+  assert.equal(ready.state.model, "gpt-5.5");
+  assert.equal(ready.state.effort, "high");
 });
 
 test("keeps main runtime choices client-scoped for ip workspace sessions", async (t) => {
