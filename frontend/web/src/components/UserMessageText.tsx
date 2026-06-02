@@ -1,43 +1,10 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import type { PromptTokenReferences } from "../utils/promptTokens";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { isActionablePromptToken, promptTokenKind, promptTokenLabel, splitPromptToken } from "../utils/promptTokens";
 
-function promptTokenKind(rawToken: string) {
-  if (rawToken.startsWith("@")) return "file";
-  const lower = rawToken.toLowerCase();
-  if (lower.startsWith("$mcp:")) return "mcp";
-  if (lower.startsWith("$plugin:")) return "plugin";
-  return "skill";
-}
-
-function splitPromptToken(rawToken: string) {
-  const token = String(rawToken || "");
-  const match = token.match(/^(.+?)([.,;:)\]]+)$/);
-  return match ? { token: match[1], trailing: match[2] } : { token, trailing: "" };
-}
-
-function titleCaseToken(value: string) {
-  return value
-    .replace(/[-_]+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function promptTokenLabel(rawToken: string) {
-  const token = rawToken.trim();
-  if (token.startsWith("@")) {
-    const name = token.slice(1).split(/[\\/]/).filter(Boolean).pop() || token.slice(1);
-    return name || token;
-  }
-  const normalized = token.slice(1).replace(/^["']|["']$/g, "").trim();
-  const lower = normalized.toLowerCase();
-  if (lower.startsWith("mcp:") || lower.startsWith("plugin:")) {
-    return titleCaseToken(normalized.slice(normalized.indexOf(":") + 1)) || normalized;
-  }
-  return normalized || token;
-}
-
-function renderPromptParts(text: string) {
+function renderPromptParts(text: string, references: PromptTokenReferences) {
   const value = String(text || "");
   const tokenPattern = /(^|\s)(\$"[^"]+"|\$'[^']+'|\$[^\s]+|@[A-Za-z0-9_][A-Za-z0-9_.\\/-]*)/gi;
   const parts: ReactNode[] = [];
@@ -61,11 +28,15 @@ function renderPromptParts(text: string) {
     const tokenStart = (match.index || 0) + leading.length;
     pushText(value.slice(cursor, tokenStart), `text-${cursor}`);
     const { token, trailing } = splitPromptToken(rawToken);
-    parts.push(
-      <span className={`prompt-token ${promptTokenKind(token)}`} aria-label={token} key={`token-${tokenStart}-${rawToken}`}>
-        {promptTokenLabel(token)}
-      </span>,
-    );
+    if (isActionablePromptToken(token, references)) {
+      parts.push(
+        <span className={`prompt-token ${promptTokenKind(token)}`} aria-label={token} key={`token-${tokenStart}-${rawToken}`}>
+          {promptTokenLabel(token)}
+        </span>,
+      );
+    } else {
+      parts.push(token);
+    }
     if (trailing) {
       parts.push(trailing);
     }
@@ -127,7 +98,7 @@ function UserMessageCopyButton({ text }: { text: string }) {
   );
 }
 
-export function UserMessageText({ text }: { text: string }) {
+export function UserMessageText({ text, promptTokenReferences }: { text: string; promptTokenReferences: PromptTokenReferences }) {
   const value = String(text || "");
   const [expanded, setExpanded] = useState(false);
   const collapsible = shouldCollapseUserMessage(value);
@@ -140,9 +111,9 @@ export function UserMessageText({ text }: { text: string }) {
         </div>
         <div className="user-message-body">
           {expanded ? (
-            <p className="react-message-text prompt-line">{renderPromptParts(value)}</p>
+            <p className="react-message-text prompt-line">{renderPromptParts(value, promptTokenReferences)}</p>
           ) : (
-            <p className="user-message-preview prompt-line">{renderPromptParts(previewText(value))}</p>
+            <p className="user-message-preview prompt-line">{renderPromptParts(previewText(value), promptTokenReferences)}</p>
           )}
         </div>
         <div className="user-message-toggle-row">
@@ -164,7 +135,7 @@ export function UserMessageText({ text }: { text: string }) {
       <div className="user-message-toolbar">
         <UserMessageCopyButton text={value} />
       </div>
-      <p className="react-message-text prompt-line">{renderPromptParts(value)}</p>
+      <p className="react-message-text prompt-line">{renderPromptParts(value, promptTokenReferences)}</p>
     </div>
   );
 }

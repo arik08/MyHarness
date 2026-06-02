@@ -23,3 +23,7 @@ export function useAppState() {
   }
   return value;
 }
+
+export function useOptionalAppState() {
+  return useContext(AppStateContext);
+}

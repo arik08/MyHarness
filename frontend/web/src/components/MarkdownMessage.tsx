@@ -5,6 +5,8 @@ import type { Tokens } from "marked";
 import hljs from "highlight.js/lib/common";
 import katex from "katex";
 import { copyTextToClipboard } from "../utils/clipboard";
+import type { PromptTokenReferences } from "../utils/promptTokens";
+import { isActionablePromptToken, promptTokenKind, promptTokenLabel, splitPromptToken } from "../utils/promptTokens";
 import { normalizeMermaidSource } from "./markdownMermaid";
 
 const chatMarkdown = new Marked({
@@ -544,43 +546,11 @@ function applyMermaidLabelReplacements(svg: string, replacements: Array<[string,
   return template.innerHTML;
 }
 
-function promptTokenKind(rawToken: string) {
-  if (rawToken.startsWith("@")) return "file";
-  const lower = rawToken.toLowerCase();
-  if (lower.startsWith("$mcp:")) return "mcp";
-  if (lower.startsWith("$plugin:")) return "plugin";
-  return "skill";
-}
-
-function splitPromptToken(rawToken: string) {
-  const token = String(rawToken || "");
-  const match = token.match(/^(.+?)([.,;:)\]]+)$/);
-  return match ? { token: match[1], trailing: match[2] } : { token, trailing: "" };
-}
-
-function titleCaseToken(value: string) {
-  return value
-    .replace(/[-_]+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function promptTokenLabel(rawToken: string) {
-  const token = rawToken.trim();
-  if (token.startsWith("@")) {
-    const name = token.slice(1).split(/[\\/]/).filter(Boolean).pop() || token.slice(1);
-    return name || token;
-  }
-  const normalized = token.slice(1).replace(/^["']|["']$/g, "").trim();
-  const lower = normalized.toLowerCase();
-  if (lower.startsWith("mcp:") || lower.startsWith("plugin:")) {
-    return titleCaseToken(normalized.slice(normalized.indexOf(":") + 1)) || normalized;
-  }
-  return normalized || token;
-}
-
-function createPromptToken(rawToken: string) {
+function createPromptToken(rawToken: string, references: PromptTokenReferences) {
   const { token } = splitPromptToken(rawToken);
+  if (!isActionablePromptToken(token, references)) {
+    return document.createTextNode(rawToken);
+  }
   const span = document.createElement("span");
   span.className = `prompt-token ${promptTokenKind(token)}`;
   span.setAttribute("aria-label", token);
@@ -596,7 +566,7 @@ function isSinglePromptToken(value: string) {
   return /^(\$"[^"]+"|\$'[^']+'|\$[A-Za-z][A-Za-z0-9_.:-]*|@[A-Za-z0-9_][A-Za-z0-9_.\\/-]*)$/.test(value.trim());
 }
 
-function replacePromptTokensInTextNode(node: Text) {
+function replacePromptTokensInTextNode(node: Text, references: PromptTokenReferences) {
   const value = node.nodeValue || "";
   const pattern = promptTokenPattern();
   if (!pattern.test(value)) {
@@ -614,7 +584,7 @@ function replacePromptTokensInTextNode(node: Text) {
       fragment.append(document.createTextNode(before));
     }
     const { token, trailing } = splitPromptToken(rawToken);
-    fragment.append(createPromptToken(token));
+    fragment.append(createPromptToken(token, references));
     if (trailing) {
       fragment.append(document.createTextNode(trailing));
     }
@@ -627,7 +597,7 @@ function replacePromptTokensInTextNode(node: Text) {
   node.replaceWith(fragment);
 }
 
-function enhancePromptTokens(root: HTMLElement | null) {
+function enhancePromptTokens(root: HTMLElement | null, references: PromptTokenReferences) {
   if (!root) {
     return;
   }
@@ -640,7 +610,7 @@ function enhancePromptTokens(root: HTMLElement | null) {
     if (isSinglePromptToken(value)) {
       const { token, trailing } = splitPromptToken(value.trim());
       const fragment = document.createDocumentFragment();
-      fragment.append(createPromptToken(token));
+      fragment.append(createPromptToken(token, references));
       if (trailing) {
         fragment.append(document.createTextNode(trailing));
       }
@@ -661,13 +631,13 @@ function enhancePromptTokens(root: HTMLElement | null) {
   while (walker.nextNode()) {
     textNodes.push(walker.currentNode as Text);
   }
-  textNodes.forEach(replacePromptTokensInTextNode);
+  textNodes.forEach((node) => replacePromptTokensInTextNode(node, references));
 }
 
-function enhanceRenderedPromptTokenHtml(html: string) {
+function enhanceRenderedPromptTokenHtml(html: string, references: PromptTokenReferences) {
   const container = document.createElement("div");
   container.innerHTML = html;
-  enhancePromptTokens(container);
+  enhancePromptTokens(container, references);
   return container.innerHTML;
 }
 
@@ -1760,7 +1730,7 @@ function enhanceMarkdownRoot(root: HTMLElement | null) {
   enhanceMermaidCharts(root);
   enhanceHtmlPreviews(root);
   enhanceCodeBlocks(root);
-  enhancePromptTokens(root);
+  enhancePromptTokens(root, {});
   enhanceCompanyColumnRowspans(root);
 }
 
@@ -1938,6 +1908,7 @@ export function MarkdownMessage({
   sourceEvidenceByUrl,
   sourceNumberOffset = 0,
   sourceNumberByKey,
+  promptTokenReferences = {},
 }: {
   text: string;
   deferIncompleteTables?: boolean;
@@ -1945,6 +1916,7 @@ export function MarkdownMessage({
   sourceEvidenceByUrl?: SourceEvidenceByUrl;
   sourceNumberOffset?: number;
   sourceNumberByKey?: SourceNumberByKey;
+  promptTokenReferences?: PromptTokenReferences;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const html = useMemo(() => {
@@ -1955,12 +1927,12 @@ export function MarkdownMessage({
     );
     const rendered = chatMarkdown.parse(renderMathInMarkdown(previewMarkdown), { async: false }) as string;
     return enhanceRenderedInlineSourceHtml(
-      enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered)))),
+      enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered), promptTokenReferences))),
       sourceEvidenceByUrl,
       sourceNumberOffset,
       sourceNumberByKey,
     );
-  }, [deferIncompleteTables, sourceEvidenceByUrl, sourceNumberByKey, sourceNumberOffset, text]);
+  }, [deferIncompleteTables, promptTokenReferences, sourceEvidenceByUrl, sourceNumberByKey, sourceNumberOffset, text]);
 
   const setRootRef = useCallback((node: HTMLDivElement | null) => {
     ref.current = node;

@@ -3,6 +3,7 @@ import { readArtifact, resolveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary } from "../types/backend";
 import type { AppSettings, ChatMessage } from "../types/ui";
+import type { PromptTokenReferences } from "../utils/promptTokens";
 import {
   artifactDisplayName,
   artifactIcon,
@@ -263,12 +264,14 @@ export function AssistantArtifactContent({
   active,
   onVisibleTextChange,
   sourceEvidenceByUrl,
+  promptTokenReferences,
 }: {
   message: ChatMessage;
   settings: AppSettings;
   active: boolean;
   onVisibleTextChange?: () => void;
   sourceEvidenceByUrl?: SourceEvidenceByUrl;
+  promptTokenReferences?: PromptTokenReferences;
 }) {
   const { artifactBySourcePath, artifacts, loadingPath, openArtifact } = useMessageArtifacts(message);
   const hasStructuredArtifacts = Boolean(message.artifacts?.length);
@@ -338,6 +341,7 @@ export function AssistantArtifactContent({
           active={active}
           onVisibleTextChange={onVisibleTextChange}
           sourceEvidenceByUrl={sourceEvidenceByUrl}
+          promptTokenReferences={promptTokenReferences}
         />
         {resolvedReferences.length && hasMermaidFence(message.text) ? (
           <div className="artifact-cards" aria-label="답변 산출물">
@@ -362,7 +366,12 @@ export function AssistantArtifactContent({
       {parts.map((part, index) => (
         <Fragment key={part.type === "artifact" ? `${part.artifact.path}-${index}` : `markdown-${index}`}>
           {part.type === "markdown" ? (
-            <MarkdownMessage text={part.text} sourceEvidenceByUrl={sourceEvidenceByUrl} sourceNumberByKey={partSourceNumbering[index]} />
+            <MarkdownMessage
+              text={part.text}
+              sourceEvidenceByUrl={sourceEvidenceByUrl}
+              sourceNumberByKey={partSourceNumbering[index]}
+              promptTokenReferences={promptTokenReferences}
+            />
           ) : (
             <div className="assistant-artifact-inline" aria-label="답변 산출물">
               <ArtifactCard artifact={part.artifact} loadingPath={loadingPath} onOpen={(artifact) => void openArtifact(artifact)} />

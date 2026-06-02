@@ -239,6 +239,9 @@ describe("MessageList", () => {
       <AppStateProvider
         initialState={{
           ...initialAppState,
+          skills: [{ name: "gstack-autoplan", description: "자동 계획", enabled: true }],
+          plugins: [{ name: "vercel", description: "Vercel", enabled: true }],
+          artifacts: [{ path: "outputs/report.md", kind: "file", size: 100 }],
           messages: [
             { id: "user-1", role: "user", text: "안녕하세요 $gstack-autoplan 당신은 누구입니까 $plugin:vercel 나는 @outputs/report.md" },
           ],
@@ -255,6 +258,30 @@ describe("MessageList", () => {
     expect(plugin.className).toContain("prompt-token plugin");
     expect(file.className).toContain("prompt-token file");
     expect(document.querySelector(".react-message-text")?.textContent).toContain("당신은 누구입니까");
+  });
+
+  it("leaves unmatched dollar and at-sign tokens as plain user message text", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          skills: [{ name: "gstack-autoplan", description: "자동 계획", enabled: true }],
+          plugins: [{ name: "vercel", description: "Vercel", enabled: true }],
+          artifacts: [{ path: "outputs/report.md", kind: "file", size: 100 }],
+          messages: [
+            { id: "user-1", role: "user", text: "재무실에서 $6.4 달러와 $없는스킬 그리고 @없는파일.md 확인" },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const message = document.querySelector(".react-message-text");
+    expect(message?.textContent).toContain("$6.4 달러");
+    expect(message?.textContent).toContain("$없는스킬");
+    expect(message?.textContent).toContain("@없는파일.md");
+    expect(message?.querySelector(".prompt-token")).toBeNull();
   });
 
   it("renders workflow code fences as readable stage diagrams", () => {
@@ -795,6 +822,7 @@ describe("MessageList", () => {
       <AppStateProvider
         initialState={{
           ...initialAppState,
+          artifacts: [{ path: "outputs/report.md", kind: "file", size: 100 }],
           messages: [
             { id: "user-1", role: "user", text: "@: 현재 프로젝트 파일을 선택합니다." },
             { id: "assistant-1", role: "assistant", text: "입력 단축키\n\n- @: 현재 프로젝트 파일을 선택합니다.\n- @outputs/report.md: 파일 참조" },
@@ -814,6 +842,7 @@ describe("MessageList", () => {
       <AppStateProvider
         initialState={{
           ...initialAppState,
+          skills: [{ name: "dispatching-parallel-agents", description: "병렬 작업", enabled: true }],
           messages: [
             { id: "assistant-1", role: "assistant", text: "`$dispatching-parallel-agents` 는 병렬 작업용 스킬입니다." },
           ],

@@ -1,4 +1,4 @@
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useRef } from "react";
 import { useMessageAutoFollow } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
 import type { AppState, ChatMessage, WorkflowEvent } from "../types/ui";
@@ -210,6 +210,21 @@ export function MessageList() {
   const { state, dispatch } = useAppState();
   const lastMessage = state.messages.at(-1);
   const renderMessages = useMemo(() => mergeAdjacentLogMessages(state.messages), [state.messages]);
+  const promptTokenReferencesRef = useRef({
+    skills: state.skills,
+    plugins: state.plugins,
+    mcpServers: state.mcpServers,
+    artifacts: state.artifacts,
+  });
+  if (!state.messages.length) {
+    promptTokenReferencesRef.current = {
+      skills: state.skills,
+      plugins: state.plugins,
+      mcpServers: state.mcpServers,
+      artifacts: state.artifacts,
+    };
+  }
+  const promptTokenReferences = promptTokenReferencesRef.current;
   const activeWorkflowFollowSignature = useMemo(
     () => state.workflowEvents.map((event) => [
       event.id,
@@ -310,6 +325,7 @@ export function MessageList() {
                       active={isLastAssistantStreaming && message.id === lastMessage?.id}
                       onVisibleTextChange={handleVisibleTextChange}
                       sourceEvidenceByUrl={sourceEvidenceByUrl}
+                      promptTokenReferences={promptTokenReferences}
                     />
                     <AssistantActions message={message}>
                       <WebInvestigationSources sources={answerWebSources.sources} queries={answerWebSources.queries} />
@@ -318,7 +334,7 @@ export function MessageList() {
                 ) : message.terminal ? (
                   <TerminalCommandMessage message={message} />
                 ) : (
-                  <UserMessageText text={message.text} />
+                  <UserMessageText text={message.text} promptTokenReferences={promptTokenReferences} />
                 )}
               </div>
             </article>

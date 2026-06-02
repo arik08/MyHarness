@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AppSettings } from "../types/ui";
+import type { PromptTokenReferences } from "../utils/promptTokens";
 import {
   countInlineSourceLinksInMarkdown,
   inlineSourceNumberingForMarkdown,
@@ -623,10 +624,12 @@ function StreamingMarkdownMessage({
   text,
   complete = false,
   sourceEvidenceByUrl,
+  promptTokenReferences,
 }: {
   text: string;
   complete?: boolean;
   sourceEvidenceByUrl?: SourceEvidenceByUrl;
+  promptTokenReferences?: PromptTokenReferences;
 }) {
   const normalizedText = String(text || "").replace(/\r\n/g, "\n");
   const { prefix, liveTail } = useMemo(() => {
@@ -669,6 +672,7 @@ function StreamingMarkdownMessage({
             text={chunk}
             sourceEvidenceByUrl={sourceEvidenceByUrl}
             sourceNumberByKey={prefixSourceNumbering.chunkNumberByKey[index]}
+            promptTokenReferences={promptTokenReferences}
           />
         );
       })}
@@ -687,6 +691,7 @@ function StreamingMarkdownMessage({
               className="stream-live-text inline-source-pending-prefix"
               sourceEvidenceByUrl={sourceEvidenceByUrl}
               sourceNumberByKey={countInlineSourceLinksInMarkdown(liveTailBeforeIncompleteSourceLink) ? prefixSourceNumbering.sourceNumberByKey : undefined}
+              promptTokenReferences={promptTokenReferences}
             />
           ) : null}
           <InlineSourceStreamPending />
@@ -702,6 +707,7 @@ function StreamingMarkdownMessage({
           className="stream-live-text"
           sourceEvidenceByUrl={sourceEvidenceByUrl}
           sourceNumberByKey={countInlineSourceLinksInMarkdown(liveTail) ? prefixSourceNumbering.sourceNumberByKey : undefined}
+          promptTokenReferences={promptTokenReferences}
         />
       ) : null}
     </div>
@@ -714,12 +720,14 @@ export function StreamingTextRenderer({
   streaming,
   onVisibleTextChange,
   sourceEvidenceByUrl,
+  promptTokenReferences,
 }: {
   text: string;
   settings: Pick<AppSettings, "streamStartBufferMs" | "streamRevealDurationMs">;
   streaming: boolean;
   onVisibleTextChange?: () => void;
   sourceEvidenceByUrl?: SourceEvidenceByUrl;
+  promptTokenReferences?: PromptTokenReferences;
 }) {
   const { visibleText, revealing } = useStreamingText(
     text,
@@ -740,6 +748,7 @@ export function StreamingTextRenderer({
         text={revealing ? visibleText : text}
         complete={!revealing}
         sourceEvidenceByUrl={sourceEvidenceByUrl}
+        promptTokenReferences={promptTokenReferences}
       />
     </div>
   );
