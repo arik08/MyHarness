@@ -43,6 +43,7 @@ from myharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 from myharness.tools import create_default_tool_registry
 from myharness.tools.ask_user_question_tool import AskUserQuestionTool
 from myharness.config.settings import load_settings
+from myharness.services.session_documents import store_session_document
 
 
 def _python_stdout_command(text: str) -> str:
@@ -466,6 +467,51 @@ async def test_session_document_search_and_read_tools_return_matching_ranges(tmp
     assert SessionDocumentSearchTool().is_read_only(SessionDocumentSearchToolInput(document_id="doc-abcdef123456", query="x")) is True
     assert "recoverable source document" in SessionDocumentSearchTool.description
     assert "recoverable source document" in SessionDocumentReadTool.description
+
+
+@pytest.mark.asyncio
+async def test_session_document_search_uses_chunk_index_for_stored_documents(tmp_path: Path):
+    overview = "\n".join(
+        f"overview filler line {index:03d}: unrelated governance background"
+        for index in range(180)
+    )
+    payment = "\n".join(
+        [
+            "## Payment Gateway Outage",
+            "Incident marker PG-5523 shows the retry storm began after the cache warmer failed.",
+            "The decisive evidence is the payment-gateway retry counter and the webhook timeout.",
+        ]
+    )
+    appendix = "\n".join(
+        f"appendix filler line {index:03d}: unrelated glossary"
+        for index in range(180)
+    )
+    metadata: dict[str, object] = {"session_id": "abc123def456"}
+    entry = store_session_document(
+        cwd=tmp_path,
+        session_id="abc123def456",
+        text=f"# Overview\n{overview}\n{payment}\n## Appendix\n{appendix}",
+        metadata=metadata,
+        source_kind="tool_output",
+        source_label="web_fetch: https://example.test/payment",
+        tool_name="web_fetch",
+        tool_use_id="toolu_fetch",
+        original_estimated_tokens=12000,
+    )
+    context = ToolExecutionContext(cwd=tmp_path, metadata={"_shared_tool_metadata": metadata})
+
+    search_result = await SessionDocumentSearchTool().execute(
+        SessionDocumentSearchToolInput(document_id=str(entry["id"]), query="PG-5523 retry storm"),
+        context,
+    )
+
+    assert search_result.is_error is False
+    assert entry["chunk_count"] > 1
+    assert Path(str(entry["index_path"])).is_file()
+    assert f"{entry['id']} chunk " in search_result.output
+    assert 'heading "Payment Gateway Outage"' in search_result.output
+    assert "PG-5523" in search_result.output
+    assert "overview filler line 000" not in search_result.output
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from pathlib import Path
@@ -17,6 +18,16 @@ SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 DOCUMENT_ID_RE = re.compile(r"^doc-[0-9a-f]{12}$")
 SESSION_DOCUMENT_TOKEN_FLOOR = 80_000
 SESSION_DOCUMENT_PREVIEW_CHARS = 1_200
+SESSION_DOCUMENT_INDEX_VERSION = 1
+SESSION_DOCUMENT_CHUNK_TARGET_LINES = 160
+SESSION_DOCUMENT_CHUNK_OVERLAP_LINES = 20
+
+MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+HTML_HEADING_RE = re.compile(r"<h[1-6][^>]*>(.*?)</h[1-6]>", re.IGNORECASE)
+SECTION_HEADING_RE = re.compile(
+    r"^\s*(?:(?:section|chapter)\s+)?(?:[A-Z]|[IVXLC]+|\d{1,3}(?:\.\d{1,3})*)[.)]\s+(.+)$",
+    re.IGNORECASE,
+)
 
 
 def get_session_document_root(cwd: str | Path) -> Path:
@@ -50,6 +61,10 @@ def _document_id(text: str) -> str:
     return f"doc-{digest}"
 
 
+def _document_index_path(document_path: Path) -> Path:
+    return document_path.with_suffix(".index.json")
+
+
 def _short_hint(text: str) -> str:
     clean = " ".join(text.split())
     if len(clean) <= 180:
@@ -73,6 +88,94 @@ def _metadata_documents(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(item) for item in existing if isinstance(item, dict)] if isinstance(existing, list) else []
 
 
+def _heading_from_line(line: str) -> str:
+    clean = line.strip()
+    if not clean or len(clean) > 180:
+        return ""
+    markdown_match = MARKDOWN_HEADING_RE.match(clean)
+    if markdown_match:
+        return markdown_match.group(1).strip()
+    html_match = HTML_HEADING_RE.search(clean)
+    if html_match:
+        return re.sub(r"<[^>]+>", "", html_match.group(1)).strip()
+    section_match = SECTION_HEADING_RE.match(clean)
+    if section_match:
+        return section_match.group(1).strip()
+    return ""
+
+
+def _chunk_preview(lines: list[str]) -> str:
+    clean = " ".join(line.strip() for line in lines if line.strip())
+    if len(clean) <= 240:
+        return clean
+    return clean[:237].rstrip() + "..."
+
+
+def _split_line_segment(start: int, end: int, heading: str) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    current = start
+    while current <= end:
+        chunk_end = min(end, current + SESSION_DOCUMENT_CHUNK_TARGET_LINES - 1)
+        chunks.append(
+            {
+                "start_line": current + 1,
+                "end_line": chunk_end + 1,
+                "heading": heading,
+            }
+        )
+        if chunk_end >= end:
+            break
+        current = max(current + 1, chunk_end - SESSION_DOCUMENT_CHUNK_OVERLAP_LINES + 1)
+    return chunks
+
+
+def _line_chunks(lines: list[str]) -> list[dict[str, Any]]:
+    if not lines:
+        return []
+    headings = [(index, heading) for index, line in enumerate(lines) if (heading := _heading_from_line(line))]
+    if not headings:
+        return _split_line_segment(0, len(lines) - 1, "")
+
+    chunks: list[dict[str, Any]] = []
+    first_heading_index = headings[0][0]
+    if first_heading_index > 0:
+        chunks.extend(_split_line_segment(0, first_heading_index - 1, ""))
+    for position, (start, heading) in enumerate(headings):
+        next_start = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
+        chunks.extend(_split_line_segment(start, next_start - 1, heading))
+    return chunks
+
+
+def _write_session_document_index(document_id: str, document_path: Path, text: str) -> dict[str, Any]:
+    lines = text.splitlines()
+    chunks: list[dict[str, Any]] = []
+    for index, chunk in enumerate(_line_chunks(lines), start=1):
+        start_line = int(chunk["start_line"])
+        end_line = int(chunk["end_line"])
+        chunk_lines = lines[start_line - 1 : end_line]
+        chunks.append(
+            {
+                "chunk_index": index,
+                "start_line": start_line,
+                "end_line": end_line,
+                "heading": chunk.get("heading") or "",
+                "preview": _chunk_preview(chunk_lines),
+            }
+        )
+    index_data = {
+        "version": SESSION_DOCUMENT_INDEX_VERSION,
+        "document_id": document_id,
+        "line_count": len(lines),
+        "chunk_count": len(chunks),
+        "chunks": chunks,
+    }
+    atomic_write_text(
+        _document_index_path(document_path),
+        json.dumps(index_data, ensure_ascii=False, sort_keys=True) + "\n",
+    )
+    return index_data
+
+
 def store_session_document(
     *,
     cwd: str | Path,
@@ -93,6 +196,7 @@ def store_session_document(
     document_path = document_dir / f"{document_id}.txt"
     if not document_path.exists():
         atomic_write_text(document_path, text if text.endswith("\n") else f"{text}\n")
+    index_data = _write_session_document_index(document_id, document_path, text)
     line_count = len(text.splitlines())
     estimated_tokens = estimate_tokens(text, model=model)
     normalized_source_kind = source_kind or "user_input"
@@ -101,8 +205,10 @@ def store_session_document(
         "session_id": session_id,
         "path": str(document_path.resolve()),
         "line_count": line_count,
+        "chunk_count": index_data["chunk_count"],
         "char_count": len(text),
         "estimated_tokens": estimated_tokens,
+        "index_path": str(_document_index_path(document_path).resolve()),
         "source_kind": normalized_source_kind,
         "source_label": source_label or (
             "User input" if normalized_source_kind == "user_input" else normalized_source_kind
@@ -129,6 +235,7 @@ def build_session_document_message(entry: dict[str, Any], user_request: str, sou
         "Session document stored from an oversized pasted user input.\n\n"
         f"- document_id: {document_id}\n"
         f"- line_count: {entry.get('line_count')}\n"
+        f"- chunk_count: {entry.get('chunk_count')}\n"
         f"- char_count: {entry.get('char_count')}\n"
         f"- estimated_tokens: {entry.get('estimated_tokens')}\n"
         f"- short_hint: {entry.get('short_hint')}\n\n"
@@ -162,6 +269,25 @@ def resolve_session_document_path(cwd: str | Path, metadata: dict[str, Any], doc
     if not raw_path:
         return None
     path = Path(raw_path).expanduser().resolve()
+    root = get_session_document_root(cwd).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    if not path.is_file():
+        return None
+    return path
+
+
+def resolve_session_document_index_path(cwd: str | Path, metadata: dict[str, Any], document_id: str) -> Path | None:
+    entry = find_session_document(metadata, document_id)
+    if entry is None:
+        return None
+    document_path = resolve_session_document_path(cwd, metadata, document_id)
+    if document_path is None:
+        return None
+    raw_path = str(entry.get("index_path") or "").strip()
+    path = Path(raw_path).expanduser().resolve() if raw_path else _document_index_path(document_path).resolve()
     root = get_session_document_root(cwd).resolve()
     try:
         path.relative_to(root)

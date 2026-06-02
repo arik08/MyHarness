@@ -1439,6 +1439,7 @@ def _build_tool_output_document_content(
         f"- tool_name: {tool_name}",
         f"- source_label: {entry.get('source_label')}",
         f"- line_count: {entry.get('line_count')}",
+        f"- chunk_count: {entry.get('chunk_count')}",
         f"- char_count: {entry.get('char_count')}",
         f"- estimated_tokens: {entry.get('estimated_tokens')}",
         "",

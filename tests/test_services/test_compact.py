@@ -325,8 +325,11 @@ def test_tool_output_document_compaction_stores_recoverable_marker(tmp_path: Pat
     assert entry["tool_name"] == "read_file"
     assert entry["tool_use_id"] == "toolu_read"
     assert entry["original_estimated_tokens"] == entry["estimated_tokens"]
+    assert entry["chunk_count"] > 1
+    assert "chunk_count:" in compacted.content
     document_path = Path(str(entry["path"]))
     assert document_path.is_file()
+    assert Path(str(entry["index_path"])).is_file()
     assert "PG-5523" in document_path.read_text(encoding="utf-8")
 
 
