@@ -52,12 +52,13 @@ def _score(text: str, query: str) -> int:
 
 
 class SessionDocumentSearchTool(BaseTool):
-    """Search a session-scoped oversized source document."""
+    """Search a session-scoped recoverable source document."""
 
     name = "session_document_search"
     description = (
-        "Search an oversized pasted source document stored for this chat session. "
-        "Use this before making source-backed judgments about long user-provided documents."
+        "Search a session-scoped recoverable source document stored for this chat session, "
+        "including oversized user inputs and large tool outputs. Use this before making "
+        "source-backed judgments about stored context."
     )
     input_model = SessionDocumentSearchToolInput
 
@@ -95,12 +96,13 @@ class SessionDocumentSearchTool(BaseTool):
 
 
 class SessionDocumentReadTool(BaseTool):
-    """Read line ranges from a session-scoped oversized source document."""
+    """Read line ranges from a session-scoped recoverable source document."""
 
     name = "session_document_read"
     description = (
-        "Read original line ranges from an oversized pasted source document stored for this chat session. "
-        "Use this after session_document_search to verify the exact source text."
+        "Read original line ranges from a session-scoped recoverable source document stored for this chat session, "
+        "including oversized user inputs and large tool outputs. Use this after session_document_search "
+        "to verify the exact source text."
     )
     input_model = SessionDocumentReadToolInput
 

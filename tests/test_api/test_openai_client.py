@@ -503,6 +503,27 @@ def test_openai_completion_params_keep_static_tool_prefix_stable_between_new_ses
     assert list(params_one).index("tools") < list(params_one).index("messages")
 
 
+def test_openai_cache_diagnostic_recognizes_context_ccr_rewrite_event():
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
+    )
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("tool output was rewritten")],
+        tools=[{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
+        cache_event="context_ccr_rewrite",
+    )
+
+    params = client._completion_params(request)
+    snapshot = client._cache_diagnostic_snapshot(request, params)
+
+    assert snapshot["cache_event"] == "context_ccr_rewrite"
+    assert snapshot["prefix_change_reason"] == "context_ccr_rewrite"
+
+
 def test_openai_client_retries_sdk_timeout_errors():
     class APITimeoutError(Exception):
         pass

@@ -1454,6 +1454,8 @@ async def test_notification_hook_fires_on_permission_prompt(tmp_path: Path, monk
 async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("myharness.tools.is_subagent_invocation_enabled", lambda: True)
+    monkeypatch.setattr("myharness.tools.agent_tool.is_subagent_invocation_enabled", lambda: True)
     recorder = _RecordingHookExecutor()
     engine = QueryEngine(
         api_client=FakeApiClient(
@@ -1857,6 +1859,10 @@ class _OkInput(BaseModel):
     pass
 
 
+class _LargeReadFileInput(BaseModel):
+    path: str
+
+
 class _OkTool(BaseTool):
     name = "ok_tool"
     description = "Returns success."
@@ -1929,6 +1935,29 @@ class _NeverTool(BaseTool):
         del arguments, context
         await asyncio.Event().wait()
         return ToolResult(output="unreachable")
+
+
+class _LargeReadFileTool(BaseTool):
+    name = "read_file"
+    description = "Returns a large read_file output."
+    input_model = _LargeReadFileInput
+
+    def is_read_only(self, arguments: _LargeReadFileInput) -> bool:
+        del arguments
+        return True
+
+    async def execute(self, arguments: _LargeReadFileInput, context: ToolExecutionContext) -> ToolResult:
+        del context
+        lines = [
+            f"{index:05d} INFO service warmup complete"
+            for index in range(3000)
+        ]
+        lines.append("3000 ERROR payment-gateway PG-5523 failed after retry")
+        lines.extend(
+            f"{index:05d} INFO service cleanup complete"
+            for index in range(3001, 5200)
+        )
+        return ToolResult(output="\n".join(lines), metadata={"model_output": "\n".join(lines)})
 
 
 @pytest.mark.asyncio
@@ -2032,6 +2061,68 @@ async def test_query_engine_keeps_display_output_out_of_model_context(tmp_path: 
     assert result_block.transcript_content == "full source for transcript"
     assert "full source" not in str(api_client.requests[1].messages[-1].to_api_param())
     assert "model-only" in str(api_client.requests[1].messages[-1].to_api_param())
+
+
+@pytest.mark.asyncio
+async def test_query_engine_stores_large_tool_output_as_recoverable_context(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    registry = ToolRegistry()
+    registry.register(_LargeReadFileTool())
+    metadata: dict[str, object] = {"session_id": "abc123def456"}
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_large_read",
+                            name="read_file",
+                            input={"path": "logs/payment.log"},
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="checked")]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="gpt-5.5",
+        system_prompt="system",
+        tool_metadata=metadata,
+    )
+
+    events = [event async for event in engine.submit_message("inspect the large log")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert len(api_client.requests) == 2
+    request_tool_result = api_client.requests[1].messages[-1].content[0]
+    assert isinstance(request_tool_result, ToolResultBlock)
+    assert "Recoverable tool output stored" in request_tool_result.content
+    assert "session_document_search" in request_tool_result.content
+    assert "PG-5523" in request_tool_result.content
+    assert "01000 INFO service warmup complete" not in request_tool_result.content
+    assert api_client.requests[1].cache_event == "context_ccr_rewrite"
+    docs = metadata.get("session_documents")
+    assert isinstance(docs, list)
+    assert docs[0]["source_kind"] == "tool_output"
+    assert docs[0]["tool_name"] == "read_file"
+    assert docs[0]["tool_use_id"] == "toolu_large_read"
+    assert "PG-5523" in Path(str(docs[0]["path"])).read_text(encoding="utf-8")
+    stored_tool_message = [
+        message
+        for message in engine.messages
+        if message.role == "user" and any(isinstance(block, ToolResultBlock) for block in message.content)
+    ][0]
+    assert stored_tool_message.content[0].content == request_tool_result.content
 
 
 @pytest.mark.asyncio

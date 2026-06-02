@@ -53,6 +53,7 @@ _CACHE_EVENT_REASONS = {
     "system_prompt_changed",
     "tool_schema_changed",
     "compaction_rewrite",
+    "context_ccr_rewrite",
     "provider_settings_changed",
     "session_restore",
     "unknown",

@@ -1312,6 +1312,20 @@ async def _execute_tool_call(
         display_content=str(display_output) if display_output is not None else None,
         transcript_content=str(transcript_output) if transcript_output is not None else None,
     )
+    from myharness.services.compact import try_tool_output_document_compaction
+
+    compacted_tool_result = try_tool_output_document_compaction(
+        tool_result,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        cwd=context.cwd,
+        model=context.model,
+        metadata=context.tool_metadata,
+    )
+    if compacted_tool_result is not None:
+        tool_result = compacted_tool_result
+        if context.tool_metadata is not None:
+            context.tool_metadata["cache_prefix_event"] = "context_ccr_rewrite"
     _record_tool_carryover(
         context,
         tool_name=tool_name,

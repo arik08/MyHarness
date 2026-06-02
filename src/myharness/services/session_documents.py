@@ -80,6 +80,11 @@ def store_session_document(
     text: str,
     model: str | None = None,
     metadata: dict[str, Any] | None = None,
+    source_kind: str = "user_input",
+    source_label: str | None = None,
+    tool_name: str | None = None,
+    tool_use_id: str | None = None,
+    original_estimated_tokens: int | None = None,
 ) -> dict[str, Any]:
     if not SESSION_ID_RE.fullmatch(session_id):
         raise ValueError(f"Invalid session id for session document storage: {session_id}")
@@ -89,13 +94,24 @@ def store_session_document(
     if not document_path.exists():
         atomic_write_text(document_path, text if text.endswith("\n") else f"{text}\n")
     line_count = len(text.splitlines())
+    estimated_tokens = estimate_tokens(text, model=model)
+    normalized_source_kind = source_kind or "user_input"
     entry = {
         "id": document_id,
         "session_id": session_id,
         "path": str(document_path.resolve()),
         "line_count": line_count,
         "char_count": len(text),
-        "estimated_tokens": estimate_tokens(text, model=model),
+        "estimated_tokens": estimated_tokens,
+        "source_kind": normalized_source_kind,
+        "source_label": source_label or (
+            "User input" if normalized_source_kind == "user_input" else normalized_source_kind
+        ),
+        "tool_name": tool_name or "",
+        "tool_use_id": tool_use_id or "",
+        "original_estimated_tokens": (
+            original_estimated_tokens if original_estimated_tokens is not None else estimated_tokens
+        ),
         "created_at": int(time.time() * 1000),
         "short_hint": _short_hint(text),
     }

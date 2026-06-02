@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import logging
 import re
 import time
@@ -55,6 +56,18 @@ COMPACTABLE_TOOLS: frozenset[str] = frozenset({
 })
 
 TIME_BASED_MC_CLEARED_MESSAGE = "[Old tool result content cleared]"
+TOOL_OUTPUT_CCR_TOOLS: frozenset[str] = frozenset({
+    "read_file",
+    "grep",
+    "glob",
+    "web_fetch",
+    "web_search",
+    "bash",
+    "cmd",
+})
+TOOL_OUTPUT_CCR_TOKEN_FLOOR = 16_000
+TOOL_OUTPUT_CCR_CHAR_FLOOR = 64_000
+TOOL_OUTPUT_CCR_MARKER = "Recoverable tool output stored as a session document."
 
 # Auto-compact thresholds
 AUTOCOMPACT_BUFFER_TOKENS = 13_000
@@ -1060,6 +1073,7 @@ def microcompact_messages(
                 isinstance(block, ToolResultBlock)
                 and block.tool_use_id in clear_set
                 and block.content != TIME_BASED_MC_CLEARED_MESSAGE
+                and not _is_recoverable_tool_output_marker(block.content)
             ):
                 tokens_saved += estimate_tokens(block.content)
                 new_content.append(
@@ -1345,6 +1359,156 @@ def _extract_user_request(text: str) -> str:
         return ""
     tail = "\n".join(lines[-3:])
     return tail[:1200]
+
+
+def _compact_whitespace(text: str, *, limit: int) -> str:
+    clean = " ".join(text.split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _tool_input_hint(tool_name: str, tool_input: dict[str, object]) -> str:
+    key_order = ("path", "file_path", "url", "query", "pattern", "command", "root")
+    for key in key_order:
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return _compact_whitespace(f"{tool_name}: {value}", limit=240)
+    try:
+        stable = json.dumps(tool_input, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+        stable = str(tool_input)
+    return _compact_whitespace(f"{tool_name}: {stable}", limit=240)
+
+
+def _tool_output_sample(text: str) -> str:
+    clean = text.strip()
+    if not clean:
+        return "(empty)"
+    head = clean[:500].rstrip()
+    midpoint = max(0, len(clean) // 2 - 250)
+    middle = clean[midpoint : midpoint + 500].strip()
+    tail = clean[-500:].lstrip()
+    return "\n...\n".join(part for part in (head, middle, tail) if part)
+
+
+def _tool_output_candidate_lines(text: str, *, limit: int = 6) -> list[str]:
+    terms = (
+        "error",
+        "failed",
+        "failure",
+        "traceback",
+        "exception",
+        "fatal",
+        "panic",
+        "timeout",
+        "denied",
+        "not found",
+    )
+    candidates: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        lowered = line.lower()
+        if not any(term in lowered for term in terms):
+            continue
+        candidates.append(f"line {line_number}: {_compact_whitespace(line, limit=240)}")
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def _is_recoverable_tool_output_marker(text: str) -> bool:
+    return text.startswith(TOOL_OUTPUT_CCR_MARKER)
+
+
+def _build_tool_output_document_content(
+    entry: dict[str, Any],
+    *,
+    tool_name: str,
+    tool_input_hint: str,
+    source_text: str,
+) -> str:
+    document_id = str(entry.get("id") or "")
+    candidate_lines = _tool_output_candidate_lines(source_text)
+    lines = [
+        TOOL_OUTPUT_CCR_MARKER,
+        "",
+        f"- document_id: {document_id}",
+        f"- source_kind: {entry.get('source_kind')}",
+        f"- tool_name: {tool_name}",
+        f"- source_label: {entry.get('source_label')}",
+        f"- line_count: {entry.get('line_count')}",
+        f"- char_count: {entry.get('char_count')}",
+        f"- estimated_tokens: {entry.get('estimated_tokens')}",
+        "",
+        "Tool input hint:",
+        tool_input_hint,
+        "",
+        "Potential error/failure lines:",
+    ]
+    if candidate_lines:
+        lines.extend(f"- {line}" for line in candidate_lines)
+    else:
+        lines.append("- (none detected)")
+    lines.extend([
+        "",
+        "Output sample only, not a replacement for the source:",
+        _tool_output_sample(source_text),
+        "",
+        "Important instructions:",
+        "- Do not rely on this sample alone for substantive conclusions.",
+        f"- Search the full original output with session_document_search(document_id=\"{document_id}\", query=...).",
+        f"- Read exact original line ranges with session_document_read(document_id=\"{document_id}\", start_line=..., limit=...).",
+        "- Never paste the full source document back into the conversation.",
+    ])
+    return "\n".join(lines)
+
+
+def try_tool_output_document_compaction(
+    tool_result: ToolResultBlock,
+    *,
+    tool_name: str,
+    tool_input: dict[str, object],
+    cwd: str | Path | None,
+    model: str,
+    metadata: dict[str, Any] | None,
+) -> ToolResultBlock | None:
+    """Store a large tool output as recoverable session context."""
+    if cwd is None or metadata is None or tool_name not in TOOL_OUTPUT_CCR_TOOLS:
+        return None
+    source_text = tool_result.content.strip()
+    if not source_text or _is_recoverable_tool_output_marker(source_text):
+        return None
+    token_count = estimate_tokens(source_text, model=model)
+    if token_count < TOOL_OUTPUT_CCR_TOKEN_FLOOR and len(source_text) < TOOL_OUTPUT_CCR_CHAR_FLOOR:
+        return None
+    session_id = str(metadata.get("session_id") or "").strip().lower()
+    if not session_id:
+        return None
+    input_hint = _tool_input_hint(tool_name, tool_input)
+    entry = store_session_document(
+        cwd=cwd,
+        session_id=session_id,
+        text=source_text,
+        model=model,
+        metadata=metadata,
+        source_kind="tool_output",
+        source_label=input_hint,
+        tool_name=tool_name,
+        tool_use_id=tool_result.tool_use_id,
+        original_estimated_tokens=token_count,
+    )
+    return ToolResultBlock(
+        tool_use_id=tool_result.tool_use_id,
+        content=_build_tool_output_document_content(
+            entry,
+            tool_name=tool_name,
+            tool_input_hint=input_hint,
+            source_text=source_text,
+        ),
+        is_error=tool_result.is_error,
+    )
 
 
 def try_session_document_compaction(

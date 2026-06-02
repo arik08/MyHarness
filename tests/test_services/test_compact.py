@@ -24,6 +24,7 @@ from myharness.services import (
 from myharness.services.compact import (
     AutoCompactState,
     MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+    TIME_BASED_MC_CLEARED_MESSAGE,
     archive_user_inputs,
     auto_compact_if_needed,
     get_autocompact_threshold,
@@ -31,7 +32,9 @@ from myharness.services.compact import (
     get_context_window,
     should_autocompact,
     try_context_collapse,
+    microcompact_messages,
     try_session_memory_compaction,
+    try_tool_output_document_compaction,
 )
 from myharness.services.session_documents import get_session_document_dir
 
@@ -276,6 +279,93 @@ async def test_auto_compact_stores_oversized_current_user_input_as_session_docum
     assert document_path.is_file()
     assert document_path.parent == get_session_document_dir(tmp_path, "abc123def456")
     assert "11999. 조직업무분장 자료" in document_path.read_text(encoding="utf-8")
+
+
+def test_tool_output_document_compaction_stores_recoverable_marker(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    output = "\n".join(
+        f"{index:05d} INFO worker completed normally"
+        for index in range(3000)
+    )
+    output += "\n3000 ERROR payment-gateway PG-5523 failed after retry\n"
+    output += "\n".join(
+        f"{index:05d} INFO cleanup complete"
+        for index in range(3001, 5200)
+    )
+    metadata: dict[str, object] = {"session_id": "abc123def456"}
+    original = ToolResultBlock(tool_use_id="toolu_read", content=output)
+
+    compacted = try_tool_output_document_compaction(
+        original,
+        tool_name="read_file",
+        tool_input={"path": "logs/payment.log"},
+        cwd=tmp_path,
+        model="gpt-5.5",
+        metadata=metadata,
+    )
+
+    assert compacted is not None
+    assert compacted.tool_use_id == "toolu_read"
+    assert "Recoverable tool output stored" in compacted.content
+    assert "document_id:" in compacted.content
+    assert "read_file" in compacted.content
+    assert "logs/payment.log" in compacted.content
+    assert "session_document_search" in compacted.content
+    assert "session_document_read" in compacted.content
+    assert "3000 ERROR payment-gateway PG-5523 failed after retry" in compacted.content
+    assert "01000 INFO worker completed normally" not in compacted.content
+    assert estimate_tokens(compacted.content, model="gpt-5.5") < 2000
+    docs = metadata.get("session_documents")
+    assert isinstance(docs, list)
+    assert len(docs) == 1
+    entry = docs[0]
+    assert isinstance(entry, dict)
+    assert entry["source_kind"] == "tool_output"
+    assert entry["source_label"] == "read_file: logs/payment.log"
+    assert entry["tool_name"] == "read_file"
+    assert entry["tool_use_id"] == "toolu_read"
+    assert entry["original_estimated_tokens"] == entry["estimated_tokens"]
+    document_path = Path(str(entry["path"]))
+    assert document_path.is_file()
+    assert "PG-5523" in document_path.read_text(encoding="utf-8")
+
+
+def test_microcompact_preserves_recoverable_tool_output_marker():
+    ccr_marker = (
+        "Recoverable tool output stored as a session document.\n"
+        "- document_id: doc-abcdef123456\n"
+        "Use session_document_read to recover details."
+    )
+    messages = [
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="toolu_ccr", name="read_file", input={"path": "large.log"})],
+        ),
+        ConversationMessage(role="user", content=[ToolResultBlock(tool_use_id="toolu_ccr", content=ccr_marker)]),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="toolu_raw", name="read_file", input={"path": "old.log"})],
+        ),
+        ConversationMessage(role="user", content=[ToolResultBlock(tool_use_id="toolu_raw", content="raw output " * 200)]),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="toolu_recent", name="read_file", input={"path": "recent.log"})],
+        ),
+        ConversationMessage(role="user", content=[ToolResultBlock(tool_use_id="toolu_recent", content="recent output")]),
+    ]
+
+    compacted, tokens_saved = microcompact_messages(messages, keep_recent=1)
+
+    assert tokens_saved > 0
+    contents = [
+        block.content
+        for message in compacted
+        for block in message.content
+        if isinstance(block, ToolResultBlock)
+    ]
+    assert ccr_marker in contents
+    assert TIME_BASED_MC_CLEARED_MESSAGE in contents
+    assert "recent output" in contents
 
 
 @pytest.mark.asyncio
