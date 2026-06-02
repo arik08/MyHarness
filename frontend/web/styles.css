@@ -7959,7 +7959,7 @@ a:focus-visible {
   justify-content: center;
   width: 16px;
   height: 16px;
-  margin-left: 0;
+  margin-left: 4px;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
   border-radius: 50%;
