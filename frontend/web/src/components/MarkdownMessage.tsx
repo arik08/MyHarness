@@ -161,12 +161,31 @@ function sourceEvidenceTokens(value: string) {
   );
 }
 
+function isNoisySourceEvidenceChunk(value: string) {
+  const text = String(value || "");
+  const lower = text.toLowerCase();
+  if (/%pdf-\d/i.test(text) || /(?:^|\s)\d+\s+\d+\s+obj\b/i.test(text)) {
+    return true;
+  }
+  const pdfMarkers = [
+    "/type/catalog",
+    "/structtreeroot",
+    "/markinfo",
+    "/metadata",
+    "/viewerpreferences",
+    "startxref",
+    "%%eof",
+  ];
+  const markerCount = pdfMarkers.filter((marker) => lower.includes(marker)).length;
+  return markerCount >= 2 || ((text.match(/[<>/]/g) || []).length >= 12 && markerCount >= 1);
+}
+
 function sourceEvidenceChunks(value: string) {
   return String(value || "")
     .replace(/\r\n/g, "\n")
     .split(/(?<=[.!?。！？]|[다요음임됨함됨])\s+|\n+/)
     .map((chunk) => chunk.replace(/\s+/g, " ").trim())
-    .filter((chunk) => chunk.length >= 18 && !/^URL:|^상태:|^Content-Type:/i.test(chunk))
+    .filter((chunk) => chunk.length >= 18 && !/^URL:|^상태:|^Content-Type:/i.test(chunk) && !isNoisySourceEvidenceChunk(chunk))
     .map((chunk) => (chunk.length > 160 ? `${chunk.slice(0, 157).trim()}...` : chunk))
     .slice(0, 80);
 }

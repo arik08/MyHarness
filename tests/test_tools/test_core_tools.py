@@ -195,6 +195,41 @@ async def test_file_write_expands_html_source_footnote_css_marker(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_file_write_source_footnote_tooltip_ignores_pdf_metadata_noise(tmp_path: Path):
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            SOURCE_EVIDENCE_METADATA_KEY: {
+                "https://tatasteel.com": (
+                    "%PDF-1.7 " + "\\ufffd" * 4 + " 1 0 obj <</Type/Catalog/Pages 2 0 R/Lang(en)"
+                    "/StructTreeRoot 78 0 R/MarkInfo<</Marked true>>/Metadata 530 0 R"
+                    "/ViewerPreferences 531 0 R>> endobj"
+                ),
+            },
+        },
+    )
+    content = (
+        "<!doctype html><html><head>"
+        f"{SOURCE_FOOTNOTE_CSS_MARKER}"
+        "</head><body><p>Tata Steel은 유럽 구조조정과 인도 성장 전략을 병행합니다"
+        '<sup class="source-ref">(<a href="#source-1">1</a>)</sup>'
+        '</p><ol class="sources"><li><a id="source-1" href="https://tatasteel.com">Tata Steel official reference</a></li></ol></body></html>'
+    )
+
+    write_result = await FileWriteTool().execute(
+        FileWriteToolInput(path="outputs/tata.html", content=content),
+        context,
+    )
+
+    saved = (tmp_path / "outputs" / "tata.html").read_text(encoding="utf-8")
+    assert write_result.is_error is False
+    assert 'data-tooltip="tatasteel.com' in saved
+    assert "Tata Steel official reference" in saved
+    assert "%PDF" not in saved
+    assert "/Type/Catalog" not in saved
+
+
+@pytest.mark.asyncio
 async def test_file_write_blocks_invalid_mermaid_before_writing(tmp_path: Path, monkeypatch):
     from myharness.tools import mermaid_preflight
 

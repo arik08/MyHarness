@@ -449,6 +449,23 @@ describe("MessageList", () => {
     expect(chip?.hasAttribute("title")).toBe(false);
   });
 
+  it("does not use PDF metadata noise as an inline source tooltip", () => {
+    render(
+      <MarkdownMessage
+        text={'Tata Steel은 유럽 구조조정과 인도 성장 전략을 병행합니다. [출처: Tata Steel](https://tatasteel.com "Tata Steel official reference")'}
+        sourceEvidenceByUrl={{
+          "https://tatasteel.com": "%PDF-1.7 \ufffd\ufffd\ufffd\ufffd 1 0 obj <</Type/Catalog/Pages 2 0 R/Lang(en)/StructTreeRoot 78 0 R/MarkInfo<</Marked true>>/Metadata 530 0 R/ViewerPreferences 531 0 R>> endobj",
+        }}
+      />,
+    );
+
+    const chip = document.querySelector(".markdown-inline-source-chip") as HTMLAnchorElement | null;
+    const tooltip = chip?.getAttribute("data-tooltip") || "";
+    expect(tooltip).toBe("tatasteel.com\n\"Tata Steel official reference\"");
+    expect(tooltip).not.toContain("%PDF");
+    expect(tooltip).not.toContain("/Type/Catalog");
+  });
+
   it("falls back to the source URL when an inline source chip has no evidence title", () => {
     render(
       <MarkdownMessage

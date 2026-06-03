@@ -108,12 +108,30 @@ def source_evidence_tokens(value: str) -> set[str]:
     return set(re.findall(r"[가-힣a-z0-9][가-힣a-z0-9,.·%-]{1,}", value.lower()))
 
 
+def noisy_source_evidence_chunk(value: str) -> bool:
+    text = str(value or "")
+    lower = text.lower()
+    if re.search(r"%pdf-\d|(?:^|\s)\d+\s+\d+\s+obj\b", text, flags=re.I):
+        return True
+    pdf_markers = (
+        "/type/catalog",
+        "/structtreeroot",
+        "/markinfo",
+        "/metadata",
+        "/viewerpreferences",
+        "startxref",
+        "%%eof",
+    )
+    marker_count = sum(1 for marker in pdf_markers if marker in lower)
+    return marker_count >= 2 or (len(re.findall(r"[<>/]", text)) >= 12 and marker_count >= 1)
+
+
 def source_evidence_chunks(value: str) -> list[str]:
     chunks = re.split(r"(?<=[.!?。！？]|[다요음임됨함])\s+|\n+", value)
     cleaned: list[str] = []
     for chunk in chunks:
         text = re.sub(r"\s+", " ", chunk).strip()
-        if len(text) < 18 or re.match(r"^(?:URL|상태|Content-Type):", text, re.I):
+        if len(text) < 18 or re.match(r"^(?:URL|상태|Content-Type):", text, re.I) or noisy_source_evidence_chunk(text):
             continue
         cleaned.append(f"{text[:177].strip()}..." if len(text) > 180 else text)
         if len(cleaned) >= 80:
