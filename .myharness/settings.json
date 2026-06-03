@@ -205,6 +205,7 @@
     "version": 1,
     "active_profile": "codex",
     "model": "gpt-5.5",
-    "effort": "low"
+    "effort": "low",
+    "pgpt_available": true
   }
 }
