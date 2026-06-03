@@ -4,12 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clampSidebarWidth, Sidebar } from "../Sidebar";
 import { Composer } from "../Composer";
+import { ModalHost } from "../ModalHost";
 import { StatusPill } from "../StatusPill";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { deleteHistory, hideHistory, toggleHistoryPin } from "../../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../../api/session";
-import { sendBackendRequest } from "../../api/messages";
+import { sendBackendRequest, sendMessage } from "../../api/messages";
 import type { Workspace } from "../../types/backend";
 import { historyVisibilityKey } from "../../utils/history";
 
@@ -111,6 +112,30 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "새 대화" }).getAttribute("data-tooltip")).toBe("새 대화");
     expect(screen.getByRole("button", { name: "새 대화" }).getAttribute("data-tooltip-placement")).toBe("right");
     expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
+  });
+
+  it("opens command help from the sidebar without contacting the chat session", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          clientId: "client-1",
+          commands: [{ name: "help", description: "도움말" }],
+          skills: [{ name: "frontend-design", description: "UI 작업", source: "skill", enabled: true }],
+        }}
+      >
+        <Sidebar />
+        <ModalHost />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "명령어" }));
+
+    expect(screen.getByRole("dialog", { name: "명령어" })).toBeTruthy();
+    expect(screen.getByText("스킬")).toBeTruthy();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
   it("shows Light before Claude in the theme cycle", async () => {

@@ -9,6 +9,7 @@ import type { HistoryItem, Workspace } from "../types/backend";
 import type { RuntimePickerOption } from "../types/ui";
 import type { ThemeId } from "../types/ui";
 import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
+import { frontendHelpText } from "../utils/helpText";
 import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
 import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/runtimePreferences";
 
@@ -326,6 +327,20 @@ export function Sidebar() {
   }
 
   async function runCommand(command: string) {
+    if (/^\/help(?:\s|$)/i.test(command.trim())) {
+      dispatch({
+        type: "open_modal",
+        modal: {
+          kind: "backend",
+          payload: {
+            kind: "command_help",
+            title: "명령어",
+            text: frontendHelpText(state),
+          },
+        },
+      });
+      return;
+    }
     if (!state.sessionId) return;
     dispatch({ type: "set_busy", value: true });
     try {
