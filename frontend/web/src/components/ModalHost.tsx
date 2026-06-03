@@ -5,6 +5,7 @@ import { createWorkspace, deleteWorkspace } from "../api/workspaces";
 import { useAppState } from "../state/app-state";
 import type { Workspace } from "../types/backend";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
+import { CommandHelpMessage } from "./CommandHelpMessage";
 import { SettingsModal } from "./SettingsModal";
 
 export { canUseServerHostSettings, isLocalBrowserHostname } from "../utils/settingsLabels";
@@ -242,6 +243,24 @@ export function ModalHost() {
             </button>
             <h2>{title}</h2>
             <pre className="task-output-log">{output}</pre>
+          </div>
+        </div>
+      );
+    }
+    if (kind === "command_help") {
+      const title = String(payload.title || "명령어");
+      const text = String(payload.text || payload.message || "");
+      return (
+        <div className="modal-backdrop" data-modal-kind="command-help" onClick={(event) => handleBackdropClick(event, close)}>
+          <div className="modal-card command-help-layer" role="dialog" aria-modal="true" aria-label={title}>
+            <button className="modal-close" type="button" aria-label="닫기" onClick={close}>
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M6 6l12 12" />
+                <path d="M18 6L6 18" />
+              </svg>
+            </button>
+            <h2>{title}</h2>
+            <CommandHelpMessage text={text} />
           </div>
         </div>
       );

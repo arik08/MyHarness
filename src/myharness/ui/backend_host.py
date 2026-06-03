@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from myharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, SupportsStreamingMessages
 from myharness.auth.manager import AuthManager
+from myharness.commands import CommandContext
 from myharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, Settings, resolve_model_setting
 from myharness.bridge import get_bridge_manager
 from myharness.mcp.config import load_mcp_server_configs
@@ -1823,6 +1824,9 @@ class ReactBackendHost:
             )
             suffix = f" [file attachments: {names or len(client_attachment_refs)}]"
             transcript_text = f"{transcript_text}{suffix}" if transcript_text else suffix.strip()
+        first_token = (line.strip().split(maxsplit=1) or [""])[0].lower()
+        if not attachments and not attachment_refs and first_token == "/help":
+            return await self._emit_command_help_modal(line)
         is_internal_task_notification = (
             not emit_user_transcript
             and isinstance(effective_prompt, str)
@@ -2118,7 +2122,6 @@ class ReactBackendHost:
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
 
-        first_token = (line.strip().split(maxsplit=1) or [""])[0].lower()
         started_at = time.monotonic()
         original_messages = self._bundle.engine.messages if isolated_context else None
         original_conversation_state = (
@@ -2261,6 +2264,47 @@ class ReactBackendHost:
                 self._bundle.engine.tool_metadata.pop(key, None)
             await _stop_all_tool_progress()
             release_mutation_lock(self._bundle.engine.tool_metadata.pop("mutation_lock_token", None))
+
+    async def _emit_command_help_modal(self, line: str) -> bool:
+        assert self._bundle is not None
+        parsed = self._bundle.commands.lookup(line) or self._bundle.commands.lookup("/help")
+        if parsed is None:
+            await self._emit(BackendEvent(type="error", message="도움말 명령을 찾을 수 없습니다."))
+            await self._emit(self._status_snapshot())
+            await self._emit(BackendEvent(type="line_complete", quiet=True))
+            return True
+        command, args = parsed
+        result = await command.handler(
+            args,
+            CommandContext(
+                engine=self._bundle.engine,
+                hooks_summary=self._bundle.hook_summary(),
+                mcp_summary=self._bundle.mcp_summary(),
+                plugin_summary=self._bundle.plugin_summary(),
+                cwd=self._bundle.cwd,
+                tool_registry=self._bundle.tool_registry,
+                app_state=self._bundle.app_state,
+                session_backend=self._bundle.session_backend,
+                session_id=self._bundle.session_id,
+                extra_skill_dirs=self._bundle.extra_skill_dirs,
+                extra_plugin_roots=self._bundle.extra_plugin_roots,
+            ),
+        )
+        if result.refresh_runtime:
+            refresh_runtime_client(self._bundle)
+        await self._emit(
+            BackendEvent(
+                type="modal_request",
+                modal={
+                    "kind": "command_help",
+                    "title": "명령어",
+                    "text": result.message or "",
+                },
+            )
+        )
+        await self._emit(self._status_snapshot())
+        await self._emit(BackendEvent(type="line_complete", quiet=True))
+        return not result.should_exit
 
     async def _maybe_update_session_title_from_prompt(self, user_text: str) -> None:
         assert self._bundle is not None

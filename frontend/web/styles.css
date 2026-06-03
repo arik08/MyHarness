@@ -9444,6 +9444,27 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
     0 2px 10px rgba(39, 35, 30, 0.08);
 }
 
+.modal-card.command-help-layer {
+  display: grid;
+  gap: 12px;
+  width: min(960px, calc(100vw - 40px));
+  max-height: min(86vh, 900px);
+  padding: 18px;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.modal-card.command-help-layer h2 {
+  margin: 0 40px 0 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.command-help-layer .command-help-stack {
+  max-height: calc(min(86vh, 900px) - 70px);
+  padding-right: 6px;
+}
+
 .modal-card .modal-close {
   position: absolute;
   top: -34px;
@@ -10971,6 +10992,16 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 @media (max-width: 640px) {
   .modal-card .modal-close {
     right: 0;
+  }
+
+  .modal-card.command-help-layer {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    padding: 14px;
+  }
+
+  .command-help-layer .command-help-stack {
+    max-height: calc(100vh - 92px);
   }
 
   .output-token-row {

@@ -1203,6 +1203,39 @@ async def test_backend_host_processes_command(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_processes_help_as_quiet_modal(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("/help anything")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    help_modals = [
+        event.modal
+        for event in events
+        if event.type == "modal_request" and event.modal and event.modal.get("kind") == "command_help"
+    ]
+    assert len(help_modals) == 1
+    assert "사용 가능한 명령어:" in help_modals[0]["text"]
+    assert "사용 가능한 스킬:" in help_modals[0]["text"]
+    assert not any(event.type == "transcript_item" for event in events)
+    assert any(event.type == "line_complete" and event.quiet is True for event in events)
+
+
+@pytest.mark.asyncio
 async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))

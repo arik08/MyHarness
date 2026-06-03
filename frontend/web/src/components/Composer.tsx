@@ -647,6 +647,7 @@ export function Composer() {
 
     submittingRef.current = true;
     const shellShortcut = line.trim().startsWith("!") && !hasAnyAttachment;
+    const quietHelpCommand = /^\/help(?:\s|$)/i.test(line.trim()) && !hasAnyAttachment;
     const attachments = state.composer.attachments;
     const attachmentRefs = uploadedAttachments;
     const composeOptions = composeOptionsPayload();
@@ -661,7 +662,9 @@ export function Composer() {
         }
       : { role: "user" as const, text: visibleText || "(파일 첨부)" };
     dispatch({ type: "set_busy", value: true });
-    dispatch({ type: "append_message", message: userMessage, skipHistory: state.pendingFreshChat });
+    if (!quietHelpCommand) {
+      dispatch({ type: "append_message", message: userMessage, skipHistory: state.pendingFreshChat });
+    }
     dispatch({ type: "clear_composer" });
     resetExpandedPanel();
 

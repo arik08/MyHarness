@@ -235,6 +235,71 @@ describe("ModalHost task output", () => {
   });
 });
 
+describe("ModalHost command help", () => {
+  const helpText = [
+    "입력 단축키:",
+    "- /: 슬래시 명령어를 선택하거나 실행합니다.",
+    "",
+    "사용 가능한 명령어:",
+    "/help 도움말",
+    "",
+    "사용 가능한 스킬:",
+    "- frontend-design [skill] [활성]: UI 작업",
+    "",
+    "MCP 서버:",
+    "- docs [활성] (stdio): 문서 검색",
+    "",
+    "플러그인:",
+    "- Browser [활성]: 브라우저",
+  ].join("\n");
+
+  function renderCommandHelpModal() {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          modal: {
+            kind: "backend",
+            payload: {
+              kind: "command_help",
+              title: "명령어",
+              text: helpText,
+            },
+          },
+        }}
+      >
+        <ModalHost />
+      </AppStateProvider>,
+    );
+  }
+
+  it("renders command help in a layered popup with a close button", () => {
+    renderCommandHelpModal();
+
+    expect(screen.getByRole("dialog", { name: "명령어" })).toBeTruthy();
+    expect(document.querySelector(".command-help-layer")).toBeTruthy();
+    expect(screen.getByText("스킬")).toBeTruthy();
+    expect(screen.getByText("MCP")).toBeTruthy();
+    expect(screen.getByText("플러그인")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "닫기" })).toBeTruthy();
+  });
+
+  it("closes command help from the blurred backdrop or the close button", async () => {
+    renderCommandHelpModal();
+
+    const backdrop = document.querySelector('.modal-backdrop[data-modal-kind="command-help"]') as HTMLElement;
+    expect(backdrop).toBeTruthy();
+    await userEvent.click(backdrop);
+    expect(screen.queryByRole("dialog", { name: "명령어" })).toBeNull();
+
+    renderCommandHelpModal();
+    await userEvent.click(screen.getByRole("button", { name: "닫기" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "명령어" })).toBeNull();
+    });
+  });
+});
+
 describe("ModalHost workspace deletion", () => {
   beforeEach(() => {
     vi.clearAllMocks();

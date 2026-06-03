@@ -604,6 +604,30 @@ describe("Composer", () => {
     }));
   });
 
+  it("does not append a chat message for the help command", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          commands: [{ name: "help", description: "도움말" }],
+        }}
+      >
+        <MessageList />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    await user.type(input, "/help");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(document.querySelectorAll("article.message")).toHaveLength(0);
+  });
+
   it("shows every enabled skill suggestion when the draft starts with dollar", async () => {
     const user = userEvent.setup();
     const skills = Array.from({ length: 10 }, (_, index) => ({
