@@ -6719,13 +6719,33 @@ a:focus-visible {
 }
 
 .command-card[open] > :not(summary) {
-  animation: command-help-reveal 0.14s ease-out;
+  animation: command-help-reveal 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.command-card[open] .command-grid > *,
+.command-card[open] .skill-section,
+.command-card[open] .skill-plugin-group,
+.posco-skill-tree-list > *,
+.posco-skill-tree-skills > * {
+  animation: command-help-item-reveal 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes command-help-reveal {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes command-help-item-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
 
   to {
@@ -6962,7 +6982,7 @@ a:focus-visible {
 .posco-skill-tree-list,
 .posco-skill-tree-skills,
 .skill-plugin-group:not(.collapsed) .command-grid {
-  animation: command-help-reveal 0.14s ease-out;
+  animation: command-help-reveal 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .posco-skill-tree-item {
@@ -9338,8 +9358,13 @@ a:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .command-card[open] > :not(summary),
+  .command-card[open] .command-grid > *,
+  .command-card[open] .skill-section,
+  .command-card[open] .skill-plugin-group,
   .posco-skill-tree-list,
+  .posco-skill-tree-list > *,
   .posco-skill-tree-skills,
+  .posco-skill-tree-skills > *,
   .skill-plugin-group:not(.collapsed) .command-grid,
   .composer-box > #sendButton.is-stop svg {
     animation: none;
