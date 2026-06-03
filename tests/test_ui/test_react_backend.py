@@ -3101,7 +3101,7 @@ async def test_backend_host_apply_select_command_shows_single_segment_transcript
 
 
 @pytest.mark.asyncio
-async def test_backend_host_apply_provider_select_command_shows_single_segment_transcript(tmp_path, monkeypatch):
+async def test_backend_host_apply_provider_select_command_updates_runtime_without_transcript(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
@@ -3125,8 +3125,33 @@ async def test_backend_host_apply_provider_select_command_shows_single_segment_t
     assert should_continue is True
     assert metadata_profile == "claude-api"
     assert metadata_provider == "anthropic"
-    user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
-    assert user_event.item.text == "/provider"
+    assert not any(item.type == "transcript_item" for item in events)
+
+
+@pytest.mark.asyncio
+async def test_backend_host_apply_model_select_command_updates_runtime_without_transcript(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._apply_select_command("model", "gpt-5.4-mini")
+        metadata_model = host._bundle.engine.tool_metadata["runtime_model"]
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert metadata_model == "gpt-5.4-mini"
+    assert not any(item.type == "transcript_item" for item in events)
 
 
 @pytest.mark.asyncio
@@ -3154,8 +3179,7 @@ async def test_backend_host_apply_subagent_model_select_command_updates_tool_met
     assert should_continue is True
     assert state.subagent_model == "gpt-5.4-nano"
     assert metadata_model == "gpt-5.4-nano"
-    user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
-    assert user_event.item.text == "/subagent_model"
+    assert not any(item.type == "transcript_item" for item in events)
 
 
 @pytest.mark.asyncio
@@ -3174,6 +3198,7 @@ async def test_backend_host_apply_subagent_effort_select_command_updates_tool_me
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
+        previous_effort = host._bundle.app_state.get().effort
         should_continue = await host._apply_select_command("subagent_effort", "high")
         state = host._bundle.app_state.get()
         metadata_effort = host._bundle.engine.tool_metadata["subagent_effort"]
@@ -3182,10 +3207,9 @@ async def test_backend_host_apply_subagent_effort_select_command_updates_tool_me
 
     assert should_continue is True
     assert state.subagent_effort == "high"
-    assert state.effort == "medium"
+    assert state.effort == previous_effort
     assert metadata_effort == "high"
-    user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
-    assert user_event.item.text == "/subagent_effort"
+    assert not any(item.type == "transcript_item" for item in events)
 
 
 def test_forced_mcp_line_builds_selected_server_prompt():

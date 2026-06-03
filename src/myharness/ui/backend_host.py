@@ -1317,6 +1317,13 @@ class ReactBackendHost:
                     await self._handle_task_stop(request.task_id or "")
                     continue
                 if request.type == "apply_select_command":
+                    command = (request.command or "").strip().lstrip("/").lower()
+                    if command in {"provider", "model", "subagent_model", "effort", "subagent_effort"}:
+                        if self._busy:
+                            await self._emit(BackendEvent(type="error", message="Session is busy"))
+                            continue
+                        await self._apply_select_command(command, request.value or "")
+                        continue
                     if self._busy:
                         await self._emit(BackendEvent(type="error", message="Session is busy"))
                         continue
@@ -1324,7 +1331,7 @@ class ReactBackendHost:
                     try:
                         self._active_request_task = asyncio.create_task(
                             self._apply_select_command(
-                                request.command or "",
+                                command,
                                 request.value or "",
                             )
                         )
@@ -2943,11 +2950,8 @@ class ReactBackendHost:
                 subagent_model=updated.subagent_model,
                 subagent_effort=updated.subagent_effort,
             )
-        await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=f"/{command}")))
-        if command == "provider":
-            await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=message)))
         await self._emit(self._status_snapshot())
-        await self._emit(BackendEvent(type="line_complete", quiet=command in {"model", "subagent_model", "effort", "subagent_effort"}))
+        await self._emit(BackendEvent(type="line_complete", quiet=True))
 
     async def _restore_history_snapshot(self, session_id: str) -> None:
         assert self._bundle is not None
