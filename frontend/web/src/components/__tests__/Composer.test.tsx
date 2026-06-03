@@ -604,7 +604,7 @@ describe("Composer", () => {
     }));
   });
 
-  it("does not append a chat message for the help command", async () => {
+  it("opens help immediately without appending a chat message or contacting the chat session", async () => {
     const user = userEvent.setup();
     render(
       <AppStateProvider
@@ -613,9 +613,13 @@ describe("Composer", () => {
           sessionId: "session-1",
           clientId: "client-1",
           commands: [{ name: "help", description: "도움말" }],
+          skills: [{ name: "frontend-design", description: "UI 작업", source: "skill", enabled: true }],
+          mcpServers: [{ name: "docs", state: "connected", detail: "문서 검색", transport: "stdio" }],
+          plugins: [{ name: "Browser", description: "브라우저", enabled: true }],
         }}
       >
         <MessageList />
+        <ModalHost />
         <Composer />
       </AppStateProvider>,
     );
@@ -624,8 +628,40 @@ describe("Composer", () => {
     await user.type(input, "/help");
     await user.keyboard("{Enter}");
 
-    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
-    expect(document.querySelectorAll("article.message")).toHaveLength(0);
+    expect(screen.getByRole("dialog", { name: "명령어" })).toBeTruthy();
+    expect(screen.getByText("스킬")).toBeTruthy();
+    expect(screen.getByText("MCP")).toBeTruthy();
+    expect(screen.getByText("플러그인")).toBeTruthy();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(document.querySelectorAll(".messages > article.message")).toHaveLength(0);
+    expect((input as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("opens help without an active backend session", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "",
+          clientId: "client-1",
+          commands: [{ name: "help", description: "도움말" }],
+        }}
+      >
+        <MessageList />
+        <ModalHost />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    await user.type(input, "/help");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByRole("dialog", { name: "명령어" })).toBeTruthy();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+    expect(document.querySelectorAll(".messages > article.message")).toHaveLength(0);
   });
 
   it("shows every enabled skill suggestion when the draft starts with dollar", async () => {

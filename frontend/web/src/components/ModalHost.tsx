@@ -252,15 +252,20 @@ export function ModalHost() {
       const text = String(payload.text || payload.message || "");
       return (
         <div className="modal-backdrop" data-modal-kind="command-help" onClick={(event) => handleBackdropClick(event, close)}>
-          <div className="modal-card command-help-layer" role="dialog" aria-modal="true" aria-label={title}>
+          <div className="command-help-layer" role="dialog" aria-modal="true" aria-label={title}>
             <button className="modal-close" type="button" aria-label="닫기" onClick={close}>
               <svg aria-hidden="true" viewBox="0 0 24 24">
                 <path d="M6 6l12 12" />
                 <path d="M18 6L6 18" />
               </svg>
             </button>
-            <h2>{title}</h2>
-            <CommandHelpMessage text={text} />
+            <div className="command-help-layer-messages">
+              <article className="message assistant command-output">
+                <div className="bubble">
+                  <CommandHelpMessage text={text} />
+                </div>
+              </article>
+            </div>
           </div>
         </div>
       );

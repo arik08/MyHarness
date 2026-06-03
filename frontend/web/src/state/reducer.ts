@@ -1985,6 +1985,26 @@ function rememberBackendModalForActiveSession(state: AppState, modal: BackendMod
   return keys.reduce((next, key) => ({ ...next, [key]: modal }), state.backendModalsBySessionId);
 }
 
+function isCommandHelpModal(modal: ModalState | null) {
+  return modal?.kind === "backend" && String(modal.payload?.kind || "") === "command_help";
+}
+
+function commandHelpTextNeedsCatalogRefresh(currentText: string, nextText: string) {
+  const currentIsEmpty = [
+    "(사용자 스킬이 없습니다)",
+    "(설정된 MCP 서버가 없습니다)",
+    "(발견된 플러그인이 없습니다)",
+  ].some((marker) => currentText.includes(marker));
+  if (!currentIsEmpty) {
+    return false;
+  }
+  return [
+    "(사용자 스킬이 없습니다)",
+    "(설정된 MCP 서버가 없습니다)",
+    "(발견된 플러그인이 없습니다)",
+  ].some((marker) => !nextText.includes(marker));
+}
+
 function backendModalForSession(
   backendModalsBySessionId: AppState["backendModalsBySessionId"],
   sessionId: string,
@@ -2841,6 +2861,13 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const payload = event.modal && typeof event.modal === "object"
       ? event.modal as Record<string, unknown>
       : {};
+    if (String(payload.kind || "") === "command_help" && isCommandHelpModal(state.modal)) {
+      const currentText = String(state.modal?.kind === "backend" ? state.modal.payload?.text || "" : "");
+      const nextText = String(payload.text || "");
+      if (!commandHelpTextNeedsCatalogRefresh(currentText, nextText)) {
+        return state;
+      }
+    }
     const modal: BackendModalState = { kind: "backend", payload };
     return {
       ...state,

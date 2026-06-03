@@ -28,6 +28,60 @@ describe("appReducer", () => {
     expect(folder.appSettings.downloadMode).toBe("folder");
   });
 
+  it("keeps an already open command help modal when the backend refresh arrives", () => {
+    const state = {
+      ...initialAppState,
+      modal: {
+        kind: "backend" as const,
+        payload: { kind: "command_help", title: "명령어", text: "즉시 도움말" },
+      },
+    };
+
+    const refreshed = appReducer(state, {
+      type: "backend_event",
+      event: {
+        type: "modal_request",
+        modal: { kind: "command_help", title: "명령어", text: "늦은 도움말" },
+      },
+    });
+
+    expect(refreshed.modal).toBe(state.modal);
+  });
+
+  it("allows a backend command help refresh when the immediate modal has empty catalogs", () => {
+    const state = {
+      ...initialAppState,
+      modal: {
+        kind: "backend" as const,
+        payload: {
+          kind: "command_help",
+          title: "명령어",
+          text: "사용 가능한 스킬:\n(사용자 스킬이 없습니다)\n\nMCP 서버:\n(설정된 MCP 서버가 없습니다)",
+        },
+      },
+    };
+
+    const refreshed = appReducer(state, {
+      type: "backend_event",
+      event: {
+        type: "modal_request",
+        modal: {
+          kind: "command_help",
+          title: "명령어",
+          text: "사용 가능한 스킬:\n- visual-artifact [skill] [활성]: 보고서\n\nMCP 서버:\n- docs [활성] (stdio): 문서",
+        },
+      },
+    });
+
+    expect(refreshed.modal).not.toBe(state.modal);
+    expect(refreshed.modal?.kind).toBe("backend");
+    if (refreshed.modal?.kind !== "backend") {
+      throw new Error("Expected backend modal");
+    }
+    const payload = refreshed.modal.payload || {};
+    expect(payload.text).toContain("visual-artifact");
+  });
+
   it("hides history rows in normal mode and persists the hidden key", () => {
     localStorage.removeItem("myharness:hiddenHistoryKeys");
     const historyItem = {
