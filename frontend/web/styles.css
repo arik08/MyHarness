@@ -6718,6 +6718,22 @@ a:focus-visible {
   display: none;
 }
 
+.command-card[open] > :not(summary) {
+  animation: command-help-reveal 0.14s ease-out;
+}
+
+@keyframes command-help-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .command-count {
   flex: 0 0 auto;
   color: var(--faint);
@@ -6941,6 +6957,12 @@ a:focus-visible {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.posco-skill-tree-list,
+.posco-skill-tree-skills,
+.skill-plugin-group:not(.collapsed) .command-grid {
+  animation: command-help-reveal 0.14s ease-out;
 }
 
 .posco-skill-tree-item {
@@ -9315,6 +9337,10 @@ a:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .command-card[open] > :not(summary),
+  .posco-skill-tree-list,
+  .posco-skill-tree-skills,
+  .skill-plugin-group:not(.collapsed) .command-grid,
   .composer-box > #sendButton.is-stop svg {
     animation: none;
   }
