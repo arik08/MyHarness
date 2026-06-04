@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { listProjectFiles } from "../api/artifacts";
-import { listHistory } from "../api/history";
+import { historyPageSize, listHistory } from "../api/history";
 import { listLiveSessions } from "../api/session";
 import { listWorkspaces } from "../api/workspaces";
 import { useAppState } from "../state/app-state";
@@ -100,7 +100,7 @@ export function useWorkspaceData() {
 
     dispatch({ type: "set_history_loading", value: true });
     void Promise.all([
-      listHistory({ workspacePath: state.workspacePath, workspaceName: state.workspaceName }),
+      listHistory({ workspacePath: state.workspacePath, workspaceName: state.workspaceName, limit: historyPageSize, offset: 0 }),
       state.clientId
         ? listLiveSessions({
           clientId: state.clientId,
@@ -112,7 +112,12 @@ export function useWorkspaceData() {
         if (!cancelled) {
           const history = Array.isArray(data.options) ? data.options : [];
           const liveSessions = Array.isArray(liveData.sessions) ? liveData.sessions : [];
-          dispatch({ type: "set_history", history: mergeLiveSessions(history, liveSessions, state.sessionId) });
+          dispatch({
+            type: "set_history",
+            history: mergeLiveSessions(history, liveSessions, state.sessionId),
+            hasMore: data.hasMore === true,
+            nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : history.length,
+          });
         }
       })
       .catch((error) => {
@@ -130,7 +135,6 @@ export function useWorkspaceData() {
     state.activeHistoryId,
     state.busy,
     state.clientId,
-    state.history.length,
     state.historyReadOnly,
     state.historyRefreshKey,
     state.pendingHistoryId,

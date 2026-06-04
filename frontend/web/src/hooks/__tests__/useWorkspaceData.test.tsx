@@ -13,6 +13,7 @@ vi.mock("../../api/artifacts", () => ({
 }));
 
 vi.mock("../../api/history", () => ({
+  historyPageSize: 25,
   listHistory: vi.fn(),
 }));
 
@@ -81,6 +82,35 @@ describe("useWorkspaceData", () => {
       });
       expect(history[1]).toMatchObject({ value: "saved-old" });
     });
+  });
+
+  it("loads only the first saved history page on workspace startup", async () => {
+    vi.mocked(listHistory).mockResolvedValue({
+      options: [{ value: "session-1", label: "5/4 10:00 2 msg", description: "첫 대화" }],
+      hasMore: true,
+      nextOffset: 25,
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          clientId: "client-1",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
+      workspacePath: "C:/demo",
+      workspaceName: "Default",
+      limit: 25,
+      offset: 0,
+    }));
   });
 
   it("keeps the saved title when a history item is also an open backend session", async () => {
@@ -237,6 +267,8 @@ describe("useWorkspaceData", () => {
     await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
       workspacePath: "C:/demo",
       workspaceName: "Default",
+      limit: 25,
+      offset: 0,
     }));
     await waitFor(() => {
       const history = JSON.parse(screen.getByTestId("history").textContent || "[]");
@@ -367,6 +399,8 @@ describe("useWorkspaceData", () => {
     await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
       workspacePath: "C:/demo",
       workspaceName: "Default",
+      limit: 25,
+      offset: 0,
     }));
     await waitFor(() => {
       const history = JSON.parse(screen.getByTestId("history").textContent || "[]");

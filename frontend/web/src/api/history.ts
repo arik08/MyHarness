@@ -1,12 +1,23 @@
 import { deleteJson, getJson, postJson } from "./http";
-import type { HistoryItem } from "../types/backend";
+import type { HistoryItem, Workspace } from "../types/backend";
 
-export function listHistory(params: { workspacePath?: string; workspaceName?: string } = {}) {
+export const historyPageSize = 25;
+
+export type HistoryListResponse = {
+  workspace?: Workspace | null;
+  options: HistoryItem[];
+  hasMore?: boolean;
+  nextOffset?: number;
+};
+
+export function listHistory(params: { workspacePath?: string; workspaceName?: string; limit?: number; offset?: number } = {}) {
   const query = new URLSearchParams();
   if (params.workspacePath) query.set("workspacePath", params.workspacePath);
   if (params.workspaceName) query.set("workspaceName", params.workspaceName);
+  if (typeof params.limit === "number") query.set("limit", String(params.limit));
+  if (typeof params.offset === "number") query.set("offset", String(params.offset));
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  return getJson<{ options: HistoryItem[] }>(`/api/history${suffix}`);
+  return getJson<HistoryListResponse>(`/api/history${suffix}`);
 }
 
 export function deleteHistory(sessionId: string, workspacePath: string, workspaceName: string) {

@@ -1440,6 +1440,14 @@ a:focus-visible {
   line-height: 1.5;
 }
 
+.history-loading-more {
+  margin: 5px 8px 2px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+}
+
 .sidebar-footer {
   display: grid;
   position: relative;

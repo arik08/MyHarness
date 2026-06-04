@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode, RefObject, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, ReactNode, RefObject, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import { useAppState } from "../state/app-state";
-import { deleteHistory, hideHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
+import { deleteHistory, hideHistory, historyPageSize, listHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import { currentConversationHistoryTitle, currentConversationTitle } from "../state/selectors";
@@ -58,6 +58,7 @@ export function Sidebar() {
   const [deletingHistoryId, setDeletingHistoryId] = useState("");
   const [expandedHistoryActionId, setExpandedHistoryActionId] = useState("");
   const [visiblePendingHistoryId, setVisiblePendingHistoryId] = useState<string | null>(null);
+  const historyLoadingMoreRef = useRef(false);
   const [runtimePickerGeometry, setRuntimePickerGeometry] = useState<RuntimePickerGeometry>({
     left: null,
     top: null,
@@ -312,6 +313,45 @@ export function Sidebar() {
     } finally {
       setEditingHistoryId("");
       setEditingHistoryTitle("");
+    }
+  }
+
+  async function loadMoreHistory() {
+    if (!state.historyHasMore || state.historyLoading || state.historyLoadingMore || historyLoadingMoreRef.current) {
+      return;
+    }
+    historyLoadingMoreRef.current = true;
+    dispatch({ type: "set_history_loading_more", value: true });
+    try {
+      const data = await listHistory({
+        workspacePath: state.workspacePath,
+        workspaceName: state.workspaceName,
+        limit: historyPageSize,
+        offset: state.historyNextOffset,
+      });
+      const history = Array.isArray(data.options) ? data.options : [];
+      dispatch({
+        type: "append_history",
+        history,
+        hasMore: data.hasMore === true,
+        nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : state.historyNextOffset + history.length,
+      });
+    } catch (error) {
+      dispatch({ type: "set_history_loading_more", value: false });
+      dispatch({
+        type: "open_modal",
+        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+      });
+    } finally {
+      historyLoadingMoreRef.current = false;
+    }
+  }
+
+  function handleHistoryScroll(event: ReactUIEvent<HTMLDivElement>) {
+    const target = event.currentTarget;
+    const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (distanceToBottom <= 24) {
+      void loadMoreHistory();
     }
   }
 
@@ -807,7 +847,11 @@ export function Sidebar() {
             재시작
           </button>
         </div>
-        <div className="history-list" aria-busy={state.historyLoading ? "true" : "false"}>
+        <div
+          className="history-list"
+          aria-busy={(state.historyLoading || state.historyLoadingMore) ? "true" : "false"}
+          onScroll={handleHistoryScroll}
+        >
           {state.historyLoading && !renderedHistory.length ? (
             <p className="empty">대화 내역을 불러오는 중...</p>
           ) : sortedRenderedHistory.length ? (
@@ -929,6 +973,7 @@ export function Sidebar() {
           ) : (
             <p className="empty">저장된 세션이 아직 없습니다.</p>
           )}
+          {state.historyLoadingMore ? <p className="history-loading-more">이전 대화 불러오는 중...</p> : null}
         </div>
       </section>
 

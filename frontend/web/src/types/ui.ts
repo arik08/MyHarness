@@ -116,6 +116,9 @@ export type AppState = {
   history: HistoryItem[];
   hiddenHistoryKeys: string[];
   historyLoading: boolean;
+  historyLoadingMore: boolean;
+  historyHasMore: boolean;
+  historyNextOffset: number;
   historyRefreshKey: number;
   activeHistoryId: string | null;
   pendingHistoryId: string | null;

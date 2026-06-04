@@ -8,7 +8,7 @@ import { ModalHost } from "../ModalHost";
 import { StatusPill } from "../StatusPill";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { deleteHistory, hideHistory, toggleHistoryPin } from "../../api/history";
+import { deleteHistory, hideHistory, listHistory, toggleHistoryPin } from "../../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../../api/session";
 import { sendBackendRequest, sendMessage } from "../../api/messages";
 import type { Workspace } from "../../types/backend";
@@ -23,7 +23,9 @@ vi.mock("../../api/session", () => ({
 
 vi.mock("../../api/history", () => ({
   deleteHistory: vi.fn(),
+  historyPageSize: 25,
   hideHistory: vi.fn(),
+  listHistory: vi.fn(),
   toggleHistoryPin: vi.fn(),
   updateHistoryTitle: vi.fn(),
 }));
@@ -66,6 +68,7 @@ describe("Sidebar", () => {
     vi.mocked(startSession).mockResolvedValue({ sessionId: "session-restored" });
     vi.mocked(shutdownSession).mockResolvedValue({ ok: true });
     vi.mocked(hideHistory).mockResolvedValue({ hidden: true });
+    vi.mocked(listHistory).mockResolvedValue({ options: [], hasMore: false, nextOffset: 0 });
     vi.mocked(toggleHistoryPin).mockResolvedValue({ ok: true, pinned: true, sessionId: "session-old" });
     vi.mocked(sendBackendRequest).mockResolvedValue({ ok: true });
   });
@@ -514,6 +517,51 @@ describe("Sidebar", () => {
 
     expect(document.querySelectorAll(".history-item")).toHaveLength(25);
     expect(screen.getByText("대화 25")).toBeTruthy();
+  });
+
+  it("loads the next history page when the history list is scrolled to the bottom", async () => {
+    const initialHistory = Array.from({ length: 25 }, (_, index) => ({
+      value: `session-${index + 1}`,
+      label: `5/3 10:${String(index).padStart(2, "0")} 2 msg`,
+      description: `대화 ${index + 1}`,
+    }));
+    const nextHistory = Array.from({ length: 25 }, (_, index) => ({
+      value: `session-${index + 26}`,
+      label: `5/3 09:${String(index).padStart(2, "0")} 2 msg`,
+      description: `대화 ${index + 26}`,
+    }));
+    vi.mocked(listHistory).mockResolvedValue({ options: nextHistory, hasMore: false, nextOffset: 50 });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: initialHistory,
+          historyHasMore: true,
+          historyNextOffset: 25,
+        } as typeof initialAppState}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const historyList = document.querySelector(".history-list") as HTMLElement;
+    Object.defineProperty(historyList, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(historyList, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(historyList, "scrollTop", { configurable: true, value: 600 });
+    fireEvent.scroll(historyList);
+
+    await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
+      workspacePath: "C:/demo",
+      workspaceName: "Default",
+      limit: 25,
+      offset: 25,
+    }));
+    await waitFor(() => expect(document.querySelectorAll(".history-item")).toHaveLength(50));
+    expect(screen.getByText("대화 50")).toBeTruthy();
   });
 
   it("renders pinned history items before recent items sorted by title", () => {

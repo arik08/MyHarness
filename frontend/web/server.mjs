@@ -3664,6 +3664,27 @@ function sortHistoryItems(items) {
   });
 }
 
+function parseHistoryPageParams(params) {
+  const rawLimit = Number.parseInt(params.get("limit") || "", 10);
+  const rawOffset = Number.parseInt(params.get("offset") || "", 10);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : null;
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+  return { limit, offset };
+}
+
+function paginateHistoryItems(items, page) {
+  if (!page?.limit) {
+    return { options: items, hasMore: false, nextOffset: items.length };
+  }
+  const offset = Math.min(page.offset, items.length);
+  const nextOffset = Math.min(offset + page.limit, items.length);
+  return {
+    options: items.slice(offset, nextOffset),
+    hasMore: nextOffset < items.length,
+    nextOffset,
+  };
+}
+
 async function listAllWorkspaceHistory(scope = defaultWorkspaceScope()) {
   const workspaces = await listWorkspaces(scope);
   const grouped = await Promise.all(workspaces.map(async (workspace) => {
@@ -5333,16 +5354,23 @@ async function handleApi(request, response, pathname) {
       const params = new URL(request.url, `http://localhost:${port}`).searchParams;
       const workspacePath = params.get("workspacePath");
       const workspaceName = params.get("workspaceName");
+      const page = parseHistoryPageParams(params);
       if (workspacePath || workspaceName) {
         const workspace = workspaceFromHistoryRequest({ workspacePath, workspaceName }, workspaceScope);
+        const paged = paginateHistoryItems(await listWorkspaceHistory(workspace), page);
         json(response, 200, {
           workspace,
-          options: (await listWorkspaceHistory(workspace)).map((item) => ({ ...item, workspace })),
+          options: paged.options.map((item) => ({ ...item, workspace })),
+          hasMore: paged.hasMore,
+          nextOffset: paged.nextOffset,
         });
       } else {
+        const paged = paginateHistoryItems(await listAllWorkspaceHistory(workspaceScope), page);
         json(response, 200, {
           workspace: null,
-          options: await listAllWorkspaceHistory(workspaceScope),
+          options: paged.options,
+          hasMore: paged.hasMore,
+          nextOffset: paged.nextOffset,
         });
       }
     } catch (error) {

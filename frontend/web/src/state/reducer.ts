@@ -43,10 +43,12 @@ export type AppAction =
   | { type: "remove_pasted_text"; index: number }
   | { type: "set_workspaces"; workspaces: Workspace[]; scope?: WorkspaceScope }
   | { type: "set_workspace"; workspace: Workspace }
-  | { type: "set_history"; history: HistoryItem[] }
+  | { type: "set_history"; history: HistoryItem[]; hasMore?: boolean; nextOffset?: number }
+  | { type: "append_history"; history: HistoryItem[]; hasMore?: boolean; nextOffset?: number }
   | { type: "hide_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "delete_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "set_history_loading"; value: boolean }
+  | { type: "set_history_loading_more"; value: boolean }
   | { type: "begin_new_chat"; sessionId?: string }
   | { type: "begin_history_restore"; sessionId: string }
   | { type: "finish_history_restore" }
@@ -297,6 +299,9 @@ export const initialAppState: AppState = {
   history: [],
   hiddenHistoryKeys: loadHiddenHistoryKeys(),
   historyLoading: false,
+  historyLoadingMore: false,
+  historyHasMore: false,
+  historyNextOffset: 0,
   historyRefreshKey: 0,
   activeHistoryId: null,
   pendingHistoryId: null,
@@ -1781,6 +1786,20 @@ function visibleHistoryRows(state: AppState, history: HistoryItem[]) {
   return removeLiveHistoryRowsForSession(removeHiddenHistoryRows(state, history), state.sessionId);
 }
 
+function appendHistoryRows(existing: HistoryItem[], incoming: HistoryItem[]) {
+  const seen = new Set<string>();
+  const merged: HistoryItem[] = [];
+  for (const item of [...existing, ...incoming]) {
+    const value = String(item.value || "").trim();
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    merged.push(item);
+  }
+  return merged;
+}
+
 function isCurrentHistoryHidden(state: AppState, sessionId: string) {
   const key = historyVisibilityKey(sessionId, state.workspacePath, state.workspaceName);
   return Boolean(key && state.hiddenHistoryKeys.includes(key));
@@ -3263,13 +3282,29 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         workspaceScope: action.workspace.scope || state.workspaceScope,
       };
 
-    case "set_history":
+    case "set_history": {
+      const history = visibleHistoryRows(state, action.history);
       return {
         ...state,
-        history: visibleHistoryRows(state, action.history),
+        history,
         historyLoading: false,
+        historyLoadingMore: false,
+        historyHasMore: action.hasMore === true,
+        historyNextOffset: typeof action.nextOffset === "number" ? action.nextOffset : history.length,
         modal: isResumeSelectModal(state.modal) ? null : state.modal,
       };
+    }
+
+    case "append_history": {
+      const history = visibleHistoryRows(state, appendHistoryRows(state.history, action.history));
+      return {
+        ...state,
+        history,
+        historyLoadingMore: false,
+        historyHasMore: action.hasMore === true,
+        historyNextOffset: typeof action.nextOffset === "number" ? action.nextOffset : history.length,
+      };
+    }
 
     case "hide_history_local": {
       const hiddenKey = historyVisibilityKeyFromAction(action);
@@ -3310,6 +3345,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "set_history_loading":
       return { ...state, historyLoading: action.value };
+
+    case "set_history_loading_more":
+      return { ...state, historyLoadingMore: action.value };
 
     case "begin_new_chat": {
       const savedSessionId = String(action.sessionId || "").trim();
