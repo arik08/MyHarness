@@ -214,6 +214,7 @@ _GEMINI_ALLOWED_MODELS = [
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite",
 ]
+_DEPRECATED_BUILTIN_PROVIDER_PROFILE_NAMES = {"gemini-compatible"}
 
 
 def _normalize_model_family(model: str) -> str:
@@ -368,15 +369,6 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
         "gemini": ProviderProfile(
             label="Google Gemini",
             provider="gemini",
-            api_format="openai",
-            auth_source="gemini_api_key",
-            default_model="gemini-3.5-flash",
-            base_url=_GEMINI_OPENAI_BASE_URL,
-            allowed_models=list(_GEMINI_ALLOWED_MODELS),
-        ),
-        "gemini-compatible": ProviderProfile(
-            label="Gemini Compatible",
-            provider="openai",
             api_format="openai",
             auth_source="gemini_api_key",
             default_model="gemini-3.5-flash",
@@ -667,6 +659,8 @@ class Settings(BaseModel):
         """Return the saved profiles merged over the built-in catalog."""
         merged = default_provider_profiles()
         for name, raw_profile in self.profiles.items():
+            if name in _DEPRECATED_BUILTIN_PROVIDER_PROFILE_NAMES:
+                continue
             profile = (
                 raw_profile.model_copy(deep=True)
                 if isinstance(raw_profile, ProviderProfile)
@@ -675,10 +669,18 @@ class Settings(BaseModel):
             builtin = merged.get(name)
             if builtin is not None and profile.base_url is None and builtin.base_url is not None:
                 profile = profile.model_copy(update={"base_url": builtin.base_url})
-            if builtin is not None and _matches_builtin_profile(profile, builtin):
+            if builtin is not None and (
+                _matches_builtin_profile(profile, builtin)
+                or (
+                    name == "gemini"
+                    and profile.provider == builtin.provider
+                    and profile.api_format == builtin.api_format
+                    and profile.auth_source == builtin.auth_source
+                )
+            ):
                 allowed_models = (
                     list(builtin.allowed_models)
-                    if name in {"gemini", "gemini-compatible"}
+                    if name == "gemini"
                     else _merge_allowed_models(builtin.allowed_models, profile.allowed_models)
                 )
                 profile_updates: dict[str, object] = {}

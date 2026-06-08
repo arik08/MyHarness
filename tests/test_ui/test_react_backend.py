@@ -3068,13 +3068,8 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
         "gemini-3-flash-preview",
         "gemini-3.1-flash-lite",
     ]
-    assert any(option["value"] == "gemini-compatible" for option in runtime_options["providers"])
-    gemini_compatible_models = [
-        option["value"]
-        for option in runtime_options["models_by_provider"]["gemini-compatible"]
-    ]
-    assert gemini_compatible_models == gemini_models
-    assert runtime_options["models_by_provider"]["gemini-compatible"][0]["description"] == "Gemini 3.5 Flash stable"
+    assert all(option["value"] != "gemini-compatible" for option in runtime_options["providers"])
+    assert "gemini-compatible" not in runtime_options["models_by_provider"]
     assert runtime_options["subagent_model"] == "gpt-5.4-mini"
     assert runtime_options["subagent_effort"] == "medium"
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
