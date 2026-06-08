@@ -207,6 +207,14 @@ _MODEL_OUTPUT_PROFILES: tuple[tuple[str, ModelOutputProfile], ...] = (
 
 _CONFIGURABLE_OUTPUT_TOKEN_MODELS = ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini")
 
+_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+_GEMINI_ALLOWED_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite",
+]
+
 
 def _normalize_model_family(model: str) -> str:
     normalized = model.strip().lower()
@@ -363,13 +371,17 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             api_format="openai",
             auth_source="gemini_api_key",
             default_model="gemini-3.5-flash",
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-            allowed_models=[
-                "gemini-3.5-flash",
-                "gemini-3.1-pro-preview",
-                "gemini-3-flash-preview",
-                "gemini-3.1-flash-lite",
-            ],
+            base_url=_GEMINI_OPENAI_BASE_URL,
+            allowed_models=list(_GEMINI_ALLOWED_MODELS),
+        ),
+        "gemini-compatible": ProviderProfile(
+            label="Gemini Compatible",
+            provider="openai",
+            api_format="openai",
+            auth_source="gemini_api_key",
+            default_model="gemini-3.5-flash",
+            base_url=_GEMINI_OPENAI_BASE_URL,
+            allowed_models=list(_GEMINI_ALLOWED_MODELS),
         ),
         "minimax": ProviderProfile(
             label="MiniMax",
@@ -666,7 +678,7 @@ class Settings(BaseModel):
             if builtin is not None and _matches_builtin_profile(profile, builtin):
                 allowed_models = (
                     list(builtin.allowed_models)
-                    if name == "gemini"
+                    if name in {"gemini", "gemini-compatible"}
                     else _merge_allowed_models(builtin.allowed_models, profile.allowed_models)
                 )
                 profile_updates: dict[str, object] = {}

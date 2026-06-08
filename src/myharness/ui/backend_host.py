@@ -1129,7 +1129,7 @@ def _model_option_description(provider_name: str, model: str) -> str:
         return "Faster and lighter"
     if normalized == "gpt-5.4-nano":
         return "Lowest latency"
-    if provider_name == "gemini":
+    if provider_name == "gemini" or normalized.startswith("gemini-"):
         return {
             "gemini-3.5-flash": "Gemini 3.5 Flash stable",
             "gemini-3.1-pro-preview": "Gemini 3.1 Pro preview",

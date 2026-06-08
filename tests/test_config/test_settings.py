@@ -652,6 +652,25 @@ class TestGeminiProvider:
             "gemini-3.1-flash-lite",
         ]
 
+    def test_gemini_compatible_in_default_provider_profiles(self):
+        from myharness.config.settings import default_provider_profiles
+
+        profiles = default_provider_profiles()
+        assert "gemini-compatible" in profiles
+        profile = profiles["gemini-compatible"]
+        assert profile.label == "Gemini Compatible"
+        assert profile.provider == "openai"
+        assert profile.api_format == "openai"
+        assert profile.auth_source == "gemini_api_key"
+        assert profile.default_model == "gemini-3.5-flash"
+        assert profile.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+        assert profile.allowed_models == [
+            "gemini-3.5-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite",
+        ]
+
     def test_auth_source_provider_name_gemini(self):
         from myharness.config.settings import auth_source_provider_name
 
