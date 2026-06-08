@@ -234,6 +234,47 @@ describe("CommandHelpMessage", () => {
     expect(screen.getByRole("option", { name: /\$review/ })).toBeTruthy();
   });
 
+  it("adds newly discovered snapshot-only skills to the help skill catalog", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- ship [project] [활성]: Shipping checklist",
+      "",
+      "MCP 서버:",
+      "(설정된 MCP 서버가 없습니다)",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            { name: "ship", description: "Shipping checklist", source: "project", enabled: true },
+            { name: "new-skill", description: "Freshly loaded skill", source: "user", enabled: true },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "스킬");
+    const newSkill = screen.getByRole("button", { name: /new-skill/ });
+    expect(newSkill.textContent).toContain("활성");
+    expect(newSkill.textContent).toContain("Freshly loaded skill");
+
+    await user.click(newSkill);
+    expect(sendBackendRequest).toHaveBeenCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_skill_enabled", value: "new-skill", enabled: false },
+    );
+  });
+
   it("adds translated skill descriptions to the shared tooltip layer", async () => {
     const user = userEvent.setup();
     const helpText = [
@@ -558,6 +599,55 @@ describe("CommandHelpMessage", () => {
       "session-1",
       expect.any(String),
       { type: "set_skill_enabled", value: "browser-qa", enabled: false },
+    );
+  });
+
+  it("adds newly discovered snapshot-only skill-mcp entries to the MCP catalog", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "사용 가능한 스킬:",
+      "(사용자 스킬이 없습니다)",
+      "",
+      "MCP 서버:",
+      "(설정된 MCP 서버가 없습니다)",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            {
+              name: "fresh-mcp-skill",
+              description: "Fresh MCP-backed skill",
+              source: "skill-mcp:fresh-server",
+              enabled: true,
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "스킬");
+    const skillDetails = screen.getByText("스킬").closest("details") as HTMLDetailsElement;
+    expect(skillDetails.textContent).not.toContain("fresh-mcp-skill");
+
+    await openHelpSection(user, "MCP");
+    const mcpSkill = screen.getByRole("button", { name: /fresh-mcp-skill/ });
+    expect(mcpSkill.textContent).toContain("활성");
+    expect(mcpSkill.textContent).toContain("Fresh MCP-backed skill");
+
+    await user.click(mcpSkill);
+    expect(sendBackendRequest).toHaveBeenCalledWith(
+      "session-1",
+      expect.any(String),
+      { type: "set_skill_enabled", value: "fresh-mcp-skill", enabled: false },
     );
   });
 

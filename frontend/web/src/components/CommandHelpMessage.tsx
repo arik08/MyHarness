@@ -532,7 +532,8 @@ function mergeSkillState(
   pluginEnabledByName: Map<string, boolean>,
 ) {
   const byName = new Map(skills.map((skill) => [skill.name.toLowerCase(), skill]));
-  return items.map((item) => {
+  const existingNames = new Set(items.map((item) => item.name.toLowerCase()));
+  const merged = items.map((item) => {
     const snapshot = byName.get(item.name.toLowerCase());
     const source = snapshot?.source || item.source;
     const pluginName = pluginNameFromSkillSource(source);
@@ -547,6 +548,23 @@ function mergeSkillState(
       source,
     };
   });
+  for (const skill of skills) {
+    const name = String(skill.name || "").trim();
+    if (!name || existingNames.has(name.toLowerCase()) || isSkillMcpSource(skill.source || "")) {
+      continue;
+    }
+    const source = skill.source || "skill";
+    const pluginName = pluginNameFromSkillSource(source);
+    const pluginEnabled = pluginName ? pluginEnabledByName.get(pluginName) : undefined;
+    merged.push({
+      name,
+      enabled: pluginEnabled === false ? false : skill.enabled !== false,
+      description: displaySkillDescription(name, skill.description || "", source),
+      source,
+    });
+    existingNames.add(name.toLowerCase());
+  }
+  return merged;
 }
 
 function catalogTooltip(item: ToggleEntry, fallback: string) {
@@ -627,7 +645,8 @@ function mergeMcpState(items: ToggleEntry[], servers: McpServerItem[]) {
 
 function mergeSkillMcpState(items: ToggleEntry[], skills: SkillItem[]) {
   const byName = new Map(skills.map((skill) => [skill.name.toLowerCase(), skill]));
-  return items.map((item) => {
+  const existingNames = new Set(items.map((item) => item.name.toLowerCase()));
+  const merged = items.map((item) => {
     if (!isSkillMcpItem(item)) return item;
     const snapshot = byName.get(item.name.toLowerCase());
     if (!snapshot) return item;
@@ -638,6 +657,21 @@ function mergeSkillMcpState(items: ToggleEntry[], skills: SkillItem[]) {
       source: snapshot.source || item.source,
     };
   });
+  for (const skill of skills) {
+    const name = String(skill.name || "").trim();
+    const source = skill.source || "";
+    if (!name || existingNames.has(name.toLowerCase()) || !isSkillMcpSource(source)) {
+      continue;
+    }
+    merged.push({
+      name,
+      description: displaySkillDescription(name, skill.description || "", source),
+      enabled: skill.enabled !== false,
+      source,
+    });
+    existingNames.add(name.toLowerCase());
+  }
+  return merged;
 }
 
 function HelpSummaryTitle({ label }: { label: string }) {
