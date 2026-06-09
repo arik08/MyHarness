@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from myharness.api.client import ApiMessageCompleteEvent
+from myharness.api.client import ApiMessageCompleteEvent, ApiTextDeltaEvent
 from myharness.api.usage import UsageSnapshot
 from myharness.config.settings import Settings
 from myharness.engine.stream_events import (
@@ -74,6 +74,24 @@ class SequencedApiClient:
         text = self._texts.pop(0)
         yield ApiMessageCompleteEvent(
             message=ConversationMessage(role="assistant", content=[TextBlock(text=text)]),
+            usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            stop_reason=None,
+        )
+
+
+class StreamingTextApiClient:
+    """Fake client that emits several text deltas before completion."""
+
+    def __init__(self, deltas: list[str], complete_text: str) -> None:
+        self._deltas = list(deltas)
+        self._complete_text = complete_text
+
+    async def stream_message(self, request):
+        del request
+        for delta in self._deltas:
+            yield ApiTextDeltaEvent(text=delta)
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text=self._complete_text)]),
             usage=UsageSnapshot(input_tokens=2, output_tokens=3),
             stop_reason=None,
         )
@@ -1267,6 +1285,35 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
         and "hello from react backend" in event.item.text
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_backend_host_batches_streaming_text_deltas(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = StreamingTextApiClient(["안", "녕", "하세요"], "안녕하세요")
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("hi")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assistant_deltas = [event for event in events if event.type == "assistant_delta"]
+    assert [event.message for event in assistant_deltas] == ["안녕하세요"]
+    delta_index = events.index(assistant_deltas[0])
+    complete_index = next(index for index, event in enumerate(events) if event.type == "assistant_complete")
+    assert delta_index < complete_index
 
 
 @pytest.mark.asyncio

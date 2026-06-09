@@ -97,11 +97,11 @@ function useStreamingText(
     }
     const backlog = pendingChars.length;
     const maxFrameChunk =
-      backlog > 400 ? 12
-      : backlog > 160 ? 8
-      : backlog > 64 ? 5
-      : backlog > 24 ? 3
-      : 2;
+      backlog > 400 ? 28
+      : backlog > 160 ? 20
+      : backlog > 64 ? 14
+      : backlog > 24 ? 8
+      : 4;
     return Math.max(1, Math.min(backlog, desiredCount, maxFrameChunk));
   }
 

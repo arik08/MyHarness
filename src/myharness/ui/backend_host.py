@@ -81,6 +81,7 @@ _PROTOCOL_PREFIX = "OHJSON:"
 _BUILT_IN_SKILL_SOURCES = {"bundled"}
 _TOOL_PROGRESS_FIRST_DELAY_SECONDS = 2.5
 _TOOL_PROGRESS_INTERVAL_SECONDS = 3.0
+_ASSISTANT_DELTA_FLUSH_INTERVAL_SECONDS = 0.12
 _LONG_REPORT_PROGRESS_FIRST_DELAY_SECONDS = 1.5
 _LONG_REPORT_PROGRESS_INTERVAL_SECONDS = 2.0
 _LONG_REPORT_PROGRESS_READ_LIMIT = 96_000
@@ -1952,27 +1953,55 @@ class ReactBackendHost:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
         assistant_delta_buffer: list[str] = []
+        assistant_delta_flush_task: asyncio.Task[None] | None = None
 
         def _has_pending_async_agents_for_current_session() -> bool:
             if self._bundle is None:
                 return False
             return bool(pending_async_agent_entries(self._bundle.engine.tool_metadata))
 
-        async def _emit_or_buffer_assistant_delta(text: str) -> None:
-            if not text:
+        async def _cancel_assistant_delta_flush_task() -> None:
+            nonlocal assistant_delta_flush_task
+            task = assistant_delta_flush_task
+            assistant_delta_flush_task = None
+            if task is None or task.done() or task is asyncio.current_task():
                 return
-            if _has_pending_async_agents_for_current_session():
-                assistant_delta_buffer.append(text)
-                return
-            await self._emit(BackendEvent(type="assistant_delta", message=text))
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
-        async def _flush_buffered_assistant_delta() -> None:
-            if not assistant_delta_buffer:
+        async def _flush_buffered_assistant_delta(*, cancel_scheduled: bool = True) -> None:
+            nonlocal assistant_delta_flush_task
+            if cancel_scheduled:
+                await _cancel_assistant_delta_flush_task()
+            else:
+                assistant_delta_flush_task = None
+            if _has_pending_async_agents_for_current_session() or not assistant_delta_buffer:
                 return
             text = "".join(assistant_delta_buffer)
             assistant_delta_buffer.clear()
             if text:
                 await self._emit(BackendEvent(type="assistant_delta", message=text))
+
+        async def _delayed_assistant_delta_flush() -> None:
+            try:
+                await asyncio.sleep(_ASSISTANT_DELTA_FLUSH_INTERVAL_SECONDS)
+                await _flush_buffered_assistant_delta(cancel_scheduled=False)
+            except asyncio.CancelledError:
+                raise
+
+        def _schedule_assistant_delta_flush() -> None:
+            nonlocal assistant_delta_flush_task
+            if assistant_delta_flush_task is not None and not assistant_delta_flush_task.done():
+                return
+            assistant_delta_flush_task = asyncio.create_task(_delayed_assistant_delta_flush())
+
+        async def _emit_or_buffer_assistant_delta(text: str) -> None:
+            if not text:
+                return
+            assistant_delta_buffer.append(text)
+            if _has_pending_async_agents_for_current_session():
+                return
+            _schedule_assistant_delta_flush()
 
         async def _render_event(event: StreamEvent) -> None:
             if isinstance(event, AssistantTextDelta):
@@ -1984,6 +2013,7 @@ class ReactBackendHost:
                     await _emit_or_buffer_assistant_delta(visible_text)
                 return
             if isinstance(event, ToolInputDelta):
+                await _flush_buffered_assistant_delta()
                 await self._emit(
                     BackendEvent(
                         type="tool_input_delta",
@@ -1994,6 +2024,7 @@ class ReactBackendHost:
                 )
                 return
             if isinstance(event, CompactProgressEvent):
+                await _flush_buffered_assistant_delta()
                 await self._emit(
                     BackendEvent(
                         type="compact_progress",
@@ -2028,6 +2059,7 @@ class ReactBackendHost:
                 if not pending_agents:
                     await _flush_buffered_assistant_delta()
                 else:
+                    await _cancel_assistant_delta_flush_task()
                     assistant_delta_buffer.clear()
                 is_final_answer = not bool(event.message.tool_uses)
                 usage_payload = None
@@ -2055,6 +2087,7 @@ class ReactBackendHost:
                 self._ensure_swarm_status_monitor()
                 return
             if isinstance(event, ToolExecutionStarted):
+                await _flush_buffered_assistant_delta()
                 self._last_tool_inputs[event.tool_name] = event.tool_input or {}
                 _start_tool_progress(event.tool_name, event.tool_input or {}, event.tool_use_id, event.index)
                 await self._emit(
@@ -2074,6 +2107,7 @@ class ReactBackendHost:
                 )
                 return
             if isinstance(event, ToolExecutionCompleted):
+                await _flush_buffered_assistant_delta()
                 await _stop_tool_progress(event.tool_name, event.tool_use_id, event.index)
                 await self._emit(
                     BackendEvent(
@@ -2113,6 +2147,7 @@ class ReactBackendHost:
                     )
                 return
             if isinstance(event, ErrorEvent):
+                await _flush_buffered_assistant_delta()
                 await self._emit(BackendEvent(type="error", message=event.message))
                 if not quiet:
                     await self._emit(
@@ -2123,6 +2158,7 @@ class ReactBackendHost:
                     )
                 return
             if isinstance(event, StatusEvent):
+                await _flush_buffered_assistant_delta()
                 await self._emit(BackendEvent(type="status", message=event.message))
                 return
 
@@ -2214,6 +2250,7 @@ class ReactBackendHost:
                     else:
                         self._bundle.engine.tool_metadata["conversation_state"] = original_conversation_state
                 raise
+            await _flush_buffered_assistant_delta()
             if original_messages is not None:
                 isolated_messages = self._bundle.engine.messages
                 visible_messages = []
@@ -2270,6 +2307,7 @@ class ReactBackendHost:
             for key in selected_mcp_metadata_keys:
                 self._bundle.engine.tool_metadata.pop(key, None)
             await _stop_all_tool_progress()
+            await _cancel_assistant_delta_flush_task()
             release_mutation_lock(self._bundle.engine.tool_metadata.pop("mutation_lock_token", None))
 
     async def _emit_command_help_modal(self, line: str) -> bool:
