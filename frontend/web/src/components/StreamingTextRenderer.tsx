@@ -86,8 +86,8 @@ function useStreamingText(
 
   function streamingRevealRate(pendingLength: number) {
     const duration = Math.max(80, normalizedRevealDurationMs());
-    const baseCharsPerMs = Math.max(0.018, Math.min(0.12, 34 / duration));
-    const backlogBoost = 1 + Math.min(1.8, pendingLength / 720);
+    const baseCharsPerMs = Math.max(0.026, Math.min(0.16, 54 / duration));
+    const backlogBoost = 1 + Math.min(2.4, pendingLength / 520);
     return baseCharsPerMs * backlogBoost;
   }
 

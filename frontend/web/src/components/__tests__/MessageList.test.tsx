@@ -4411,6 +4411,39 @@ describe("MessageList", () => {
     expect(secondFrameText.length).toBeLessThan(finalText.length);
   });
 
+  it("keeps the default reveal pace responsive when a long backlog arrives", () => {
+    vi.useFakeTimers();
+    const settings = {
+      ...initialAppState.appSettings,
+      streamStartBufferMs: 0,
+    };
+    const initialText = "시작";
+    const finalText = `${initialText}${"가".repeat(500)}`;
+    const { rerender } = render(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: initialText }}
+        settings={settings}
+        active
+      />,
+    );
+
+    rerender(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: finalText, isComplete: true }}
+        settings={settings}
+        active={false}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    const firstFrameText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(firstFrameText.startsWith(initialText)).toBe(true);
+    expect(firstFrameText.length).toBeGreaterThan(initialText.length + 2);
+    expect(firstFrameText.length).toBeLessThan(finalText.length);
+  });
+
   it("uses zero reveal duration as an instant reveal after the configured buffer", () => {
     vi.useFakeTimers();
     render(
