@@ -4247,7 +4247,7 @@ describe("MessageList", () => {
     expect(document.body.textContent || "").not.toContain("스트리밍 답변입니다.");
 
     act(() => {
-      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 50);
+      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 80);
     });
 
     const firstVisibleText = document.querySelector(".stream-live-text p")?.textContent || "";
@@ -4305,7 +4305,7 @@ describe("MessageList", () => {
     expect(document.body.textContent || "").not.toContain("스트리밍 답변입니다.");
 
     act(() => {
-      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 50);
+      vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 80);
     });
 
     const firstParagraph = document.querySelector(".stream-live-text p");
@@ -4442,6 +4442,59 @@ describe("MessageList", () => {
     expect(firstFrameText.startsWith(initialText)).toBe(true);
     expect(firstFrameText.length).toBeGreaterThan(initialText.length + 2);
     expect(firstFrameText.length).toBeLessThan(finalText.length);
+  });
+
+  it("spreads each streamed batch across the expected input interval", () => {
+    vi.useFakeTimers();
+    const settings = {
+      ...initialAppState.appSettings,
+      streamStartBufferMs: 0,
+      streamRevealDurationMs: 120,
+    };
+    const firstBatch = "가".repeat(36);
+    const secondBatch = "나".repeat(36);
+    const { rerender } = render(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: "" }}
+        settings={settings}
+        active
+      />,
+    );
+
+    rerender(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: firstBatch }}
+        settings={settings}
+        active
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+    const midBatchText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(midBatchText.length).toBeGreaterThan(0);
+    expect(midBatchText.length).toBeLessThan(firstBatch.length);
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+    expect(document.querySelector(".stream-live-text p")?.textContent).toBe(firstBatch);
+
+    rerender(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: `${firstBatch}${secondBatch}` }}
+        settings={settings}
+        active
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+    const midSecondBatchText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(midSecondBatchText.length).toBeGreaterThan(firstBatch.length);
+    expect(midSecondBatchText.length).toBeLessThan(firstBatch.length + secondBatch.length);
   });
 
   it("uses zero reveal duration as an instant reveal after the configured buffer", () => {
@@ -4903,6 +4956,9 @@ describe("MessageList", () => {
     expect(screen.getByText("단기적으로는 생산 차질 우려가 완화됐습니다.")).toBeTruthy();
     expect(document.querySelector(".inline-source-stream-pending")).toBeTruthy();
     expect(document.querySelector(".inline-source-pending-prefix")).toBeTruthy();
+    const pendingPrefixParagraph = document.querySelector(".inline-source-pending-prefix p");
+    const pendingChip = document.querySelector(".inline-source-stream-pending");
+    expect(pendingPrefixParagraph?.contains(pendingChip)).toBe(true);
     expect(document.body.textContent || "").toContain("출처 정리 중.");
     expect(document.body.textContent || "").not.toContain("articleView.html");
 

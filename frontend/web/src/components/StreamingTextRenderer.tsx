@@ -25,10 +25,12 @@ function useStreamingText(
   const visibleTextRef = useRef(visibleText);
   const pendingTextRef = useRef("");
   const flushTimerRef = useRef<number | null>(null);
+  const revealDeadlineTimerRef = useRef<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const frameFallbackTimerRef = useRef<number | null>(null);
   const lastFrameAtRef = useRef<number | null>(null);
   const revealBudgetRef = useRef(0);
+  const revealRateRef = useRef(0);
   const displayStartedRef = useRef(false);
   const startBufferMsRef = useRef(startBufferMs);
   const revealDurationMsRef = useRef(revealDurationMs);
@@ -44,6 +46,13 @@ function useStreamingText(
     }
   }
 
+  function clearRevealDeadlineTimer() {
+    if (revealDeadlineTimerRef.current !== null) {
+      window.clearTimeout(revealDeadlineTimerRef.current);
+      revealDeadlineTimerRef.current = null;
+    }
+  }
+
   function clearFrameFallbackTimer() {
     if (frameFallbackTimerRef.current !== null) {
       window.clearTimeout(frameFallbackTimerRef.current);
@@ -53,12 +62,14 @@ function useStreamingText(
 
   function clearAnimationFrame() {
     clearFrameFallbackTimer();
+    clearRevealDeadlineTimer();
     if (animationFrameRef.current !== null) {
       window.cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
     lastFrameAtRef.current = null;
     revealBudgetRef.current = 0;
+    revealRateRef.current = 0;
   }
 
   function resetRevealLoop() {
@@ -76,33 +87,29 @@ function useStreamingText(
     return Math.max(0, Math.min(2000, revealDurationMsRef.current));
   }
 
-  function normalizedRefillBufferMs() {
-    const initialBufferMs = normalizedStartBufferMs();
-    if (initialBufferMs <= 0) {
-      return 0;
-    }
-    return Math.max(32, Math.min(120, Math.round(initialBufferMs * 0.45)));
-  }
-
-  function streamingRevealRate(pendingLength: number) {
-    const duration = Math.max(80, normalizedRevealDurationMs());
-    const baseCharsPerMs = Math.max(0.026, Math.min(0.16, 54 / duration));
-    const backlogBoost = 1 + Math.min(2.4, pendingLength / 520);
-    return baseCharsPerMs * backlogBoost;
-  }
-
   function smoothRevealCount(pendingChars: string[], desiredCount: number) {
     if (!pendingChars.length || desiredCount <= 0) {
       return 0;
     }
-    const backlog = pendingChars.length;
-    const maxFrameChunk =
-      backlog > 400 ? 28
-      : backlog > 160 ? 20
-      : backlog > 64 ? 14
-      : backlog > 24 ? 8
-      : 4;
-    return Math.max(1, Math.min(backlog, desiredCount, maxFrameChunk));
+    return Math.max(1, Math.min(pendingChars.length, desiredCount));
+  }
+
+  function retuneRevealRateForPendingText() {
+    clearRevealDeadlineTimer();
+    const pendingLength = Array.from(pendingTextRef.current).length;
+    const duration = normalizedRevealDurationMs();
+    if (!pendingLength || duration <= 0) {
+      revealRateRef.current = 0;
+      return;
+    }
+    revealRateRef.current = Math.max(1 / 16, pendingLength / duration);
+    revealBudgetRef.current = Math.min(revealBudgetRef.current, Math.max(1, pendingLength * 0.25));
+    if (displayStartedRef.current || normalizedStartBufferMs() <= 0) {
+      revealDeadlineTimerRef.current = window.setTimeout(() => {
+        revealDeadlineTimerRef.current = null;
+        flushAllPendingText();
+      }, duration);
+    }
   }
 
   function scheduleFlush() {
@@ -114,20 +121,13 @@ function useStreamingText(
       return;
     }
     if (displayStartedRef.current) {
-      const delay = normalizedRefillBufferMs();
-      if (delay <= 0) {
-        scheduleRevealFrame();
-        return;
-      }
-      flushTimerRef.current = window.setTimeout(() => {
-        flushTimerRef.current = null;
-        scheduleRevealFrame();
-      }, delay);
+      scheduleRevealFrame();
       return;
     }
     const delay = normalizedStartBufferMs();
     flushTimerRef.current = window.setTimeout(() => {
       flushTimerRef.current = null;
+      retuneRevealRateForPendingText();
       scheduleRevealFrame();
     }, delay);
   }
@@ -165,6 +165,7 @@ function useStreamingText(
     visibleTextRef.current = `${visibleTextRef.current}${pendingTextRef.current}`;
     pendingTextRef.current = "";
     revealBudgetRef.current = 0;
+    revealRateRef.current = 0;
     lastFrameAtRef.current = null;
     setVisibleText(visibleTextRef.current);
   }
@@ -176,13 +177,17 @@ function useStreamingText(
     if (!pendingText) {
       lastFrameAtRef.current = null;
       revealBudgetRef.current = 0;
+      revealRateRef.current = 0;
       return;
     }
     displayStartedRef.current = true;
     const elapsedMs =
       lastFrameAtRef.current === null ? 16 : Math.max(8, Math.min(64, timestamp - lastFrameAtRef.current));
     lastFrameAtRef.current = timestamp;
-    revealBudgetRef.current += elapsedMs * streamingRevealRate(Array.from(pendingText).length);
+    if (revealRateRef.current <= 0) {
+      retuneRevealRateForPendingText();
+    }
+    revealBudgetRef.current += elapsedMs * revealRateRef.current;
     if (revealBudgetRef.current < 1) {
       scheduleRevealFrame();
       return;
@@ -203,11 +208,13 @@ function useStreamingText(
     } else {
       lastFrameAtRef.current = null;
       revealBudgetRef.current = 0;
+      revealRateRef.current = 0;
     }
   }
 
   useEffect(() => () => {
     clearFlushTimer();
+    clearRevealDeadlineTimer();
     clearAnimationFrame();
   }, []);
 
@@ -219,6 +226,7 @@ function useStreamingText(
     }
     clearFlushTimer();
     clearAnimationFrame();
+    retuneRevealRateForPendingText();
     scheduleFlush();
   }, [startBufferMs, revealDurationMs]);
 
@@ -234,6 +242,7 @@ function useStreamingText(
       }
       if (targetText.startsWith(visibleText) && visibleText !== targetText) {
         pendingTextRef.current = targetText.slice(visibleText.length);
+        retuneRevealRateForPendingText();
         scheduleFlush();
         return;
       }
@@ -253,12 +262,14 @@ function useStreamingText(
 
     if (targetText.startsWith(queuedText)) {
       pendingTextRef.current = `${pendingTextRef.current}${targetText.slice(queuedText.length)}`;
+      retuneRevealRateForPendingText();
       scheduleFlush();
       return;
     }
 
     if (targetText.startsWith(visibleText)) {
       pendingTextRef.current = targetText.slice(visibleText.length);
+      retuneRevealRateForPendingText();
       scheduleFlush();
       return;
     }
