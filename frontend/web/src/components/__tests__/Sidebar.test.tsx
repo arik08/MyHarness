@@ -44,6 +44,7 @@ function ChatStateProbe() {
   const { state } = useAppState();
   return (
     <>
+      <output data-testid="session">{state.sessionId || ""}</output>
       <output data-testid="message-count">{state.messages.length}</output>
       <output data-testid="message-texts">{state.messages.map((message) => message.text).join("|")}</output>
       <output data-testid="active-history">{state.activeHistoryId || ""}</output>
@@ -1110,6 +1111,57 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getAllByRole("button", { name: /진행 중인 응답/ })[0]);
 
     await waitFor(() => expect(listLiveSessions).toHaveBeenCalled());
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it("finds a live busy history session outside the current workspace filter before resuming a saved snapshot", async () => {
+    vi.mocked(listLiveSessions)
+      .mockResolvedValueOnce({ sessions: [] })
+      .mockResolvedValueOnce({
+        sessions: [{
+          sessionId: "live-session-original",
+          savedSessionId: "session-original",
+          workspace: { name: "Default", path: "C:/demo" },
+          busy: true,
+          createdAt: 1,
+        }],
+      });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-viewing-other",
+          clientId: "client-1",
+          busy: false,
+          workspaceName: "Other",
+          workspacePath: "C:/other",
+          history: [{
+            value: "session-original",
+            label: "진행 중인 채팅",
+            description: "원래 답변",
+            workspace: { name: "Default", path: "C:/demo" },
+            live: true,
+            liveSessionId: "live-session-original",
+            busy: true,
+          }],
+        }}
+      >
+        <Sidebar />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getAllByRole("button", { name: /원래 답변/ })[0]);
+
+    await waitFor(() => expect(listLiveSessions).toHaveBeenCalledTimes(2));
+    expect(listLiveSessions).toHaveBeenNthCalledWith(1, {
+      clientId: "client-1",
+      workspacePath: "C:/other",
+    });
+    expect(listLiveSessions).toHaveBeenNthCalledWith(2, { clientId: "client-1" });
+    expect(screen.getByTestId("session").textContent).toBe("live-session-original");
     expect(sendBackendRequest).not.toHaveBeenCalled();
     expect(startSession).not.toHaveBeenCalled();
   });

@@ -145,8 +145,8 @@ export function Sidebar() {
     await startFreshChat(workspace);
   }
 
-  async function openHistory(sessionId: string, label: string) {
-    const nextHistoryId = String(sessionId || "").trim();
+  async function openHistory(item: HistoryItem) {
+    const nextHistoryId = String(item.value || "").trim();
     if (!state.sessionId || !nextHistoryId) {
       return;
     }
@@ -159,13 +159,22 @@ export function Sidebar() {
     dispatch({ type: "begin_history_restore", sessionId: nextHistoryId });
     try {
       let targetSessionId = state.sessionId;
+      const findLiveSession = (sessions: Awaited<ReturnType<typeof listLiveSessions>>["sessions"]) => (
+        sessions.find((session) => (
+          session.savedSessionId === nextHistoryId
+          || session.sessionId === nextHistoryId
+          || (item.liveSessionId && session.sessionId === item.liveSessionId)
+        ))
+      );
       const liveSessions = await listLiveSessions({
         clientId: state.clientId,
         workspacePath: state.workspacePath || undefined,
       });
-      const liveSession = liveSessions.sessions.find((item) => (
-        item.savedSessionId === nextHistoryId || item.sessionId === nextHistoryId
-      ));
+      let liveSession = findLiveSession(liveSessions.sessions);
+      if (!liveSession && state.workspacePath) {
+        const allLiveSessions = await listLiveSessions({ clientId: state.clientId });
+        liveSession = findLiveSession(allLiveSessions.sessions);
+      }
       if (liveSession) {
         dispatch({
           type: "session_started",
@@ -903,7 +912,7 @@ export function Sidebar() {
                     <button
                       className="history-open"
                       type="button"
-                      onClick={() => void openHistory(item.value, label)}
+                      onClick={() => void openHistory(item)}
                       onDoubleClick={() => startHistoryRename(item.value, label)}
                     >
                       {item.pinned ? <span className="history-pin-indicator" aria-hidden="true">★</span> : null}

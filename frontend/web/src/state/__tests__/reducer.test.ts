@@ -2115,6 +2115,66 @@ describe("appReducer", () => {
     expect(afterReplayDelta.messages.map((message) => message.text)).toEqual(["보고서 작성해줘", "초안 작성 중 최신 문장"]);
   });
 
+  it("shows replayed streaming text when returning to a busy live session with only the user cached", () => {
+    const activeUser = appReducer(
+      {
+        ...initialAppState,
+        sessionId: "live-a",
+        activeHistoryId: "saved-a",
+        chatTitle: "진행 중 질문",
+      },
+      {
+        type: "append_message",
+        message: { role: "user", text: "보고서 작성해줘" },
+      },
+    );
+    const restoringOther = appReducer(activeUser, { type: "begin_history_restore", sessionId: "saved-b" });
+    const otherSession = appReducer(restoringOther, {
+      type: "session_started",
+      sessionId: "live-b",
+      clientId: "client-1",
+    });
+    const restoredOther = appReducer(otherSession, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        value: "saved-b",
+        history_events: [
+          { type: "user", text: "다른 질문" },
+          { type: "assistant", text: "다른 답변" },
+        ],
+      },
+      sessionId: "live-b",
+    });
+    const returning = appReducer(restoredOther, { type: "begin_history_restore", sessionId: "saved-a" });
+    const reattached = appReducer(returning, {
+      type: "session_started",
+      sessionId: "live-a",
+      clientId: "client-1",
+      busy: true,
+    });
+
+    expect(reattached.messages.map((message) => message.text)).toEqual(["보고서 작성해줘"]);
+
+    const afterReplayClear = appReducer(reattached, {
+      type: "backend_event",
+      event: { type: "clear_transcript" } as any,
+      sessionId: "live-a",
+    });
+    const afterReplayUser = appReducer(afterReplayClear, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: { role: "user", text: "보고서 작성해줘" } },
+      sessionId: "live-a",
+    });
+    const afterReplayDelta = appReducer(afterReplayUser, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "초안 작성 중" },
+      sessionId: "live-a",
+    });
+
+    expect(afterReplayDelta.messages.map((message) => message.text)).toEqual(["보고서 작성해줘", "초안 작성 중"]);
+  });
+
   it("restores swarm status from history snapshots", () => {
     const restored = appReducer(initialAppState, {
       type: "backend_event",
