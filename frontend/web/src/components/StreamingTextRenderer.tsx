@@ -91,12 +91,18 @@ function useStreamingText(
     return baseCharsPerMs * backlogBoost;
   }
 
-  function smoothRevealCount(pendingText: string, desiredCount: number) {
-    const pendingChars = Array.from(pendingText);
+  function smoothRevealCount(pendingChars: string[], desiredCount: number) {
     if (!pendingChars.length || desiredCount <= 0) {
       return 0;
     }
-    return 1;
+    const backlog = pendingChars.length;
+    const maxFrameChunk =
+      backlog > 400 ? 12
+      : backlog > 160 ? 8
+      : backlog > 64 ? 5
+      : backlog > 24 ? 3
+      : 2;
+    return Math.max(1, Math.min(backlog, desiredCount, maxFrameChunk));
   }
 
   function scheduleFlush() {
@@ -182,7 +188,7 @@ function useStreamingText(
       return;
     }
     const pendingChars = Array.from(pendingText);
-    const revealCount = smoothRevealCount(pendingText, Math.floor(revealBudgetRef.current));
+    const revealCount = smoothRevealCount(pendingChars, Math.floor(revealBudgetRef.current));
     if (revealCount <= 0) {
       scheduleRevealFrame();
       return;
@@ -498,14 +504,15 @@ function incompleteInlineSourceLinkStart(text: string) {
   return completeLinkStart;
 }
 
-function pendingHtmlSourceLength(text: string) {
+function pendingHtmlSource(text: string) {
   const source = String(text || "").replace(/\r\n/g, "\n").trimStart();
   const lines = source.split("\n");
-  return Math.max(0, lines.slice(1).join("\n").length);
+  return lines.slice(1).join("\n");
 }
 
 function HtmlStreamPending({ text }: { text: string }) {
-  const sourceLength = pendingHtmlSourceLength(text);
+  const source = pendingHtmlSource(text);
+  const sourceLength = Math.max(0, source.length);
   const label = sourceLength > 0 ? "차트 미리보기 준비 중" : "차트 미리보기 대기 중";
   return (
     <div className="markdown-body react-markdown stream-live-text">
@@ -515,8 +522,13 @@ function HtmlStreamPending({ text }: { text: string }) {
           <span className="workflow-output-line-count">{sourceLength.toLocaleString()}자</span>
         </div>
         <div className="workflow-output-body html-preview-pending-body">
-          <span className="html-preview-spinner" aria-hidden="true"></span>
-          <span>소스를 받은 뒤 바로 렌더링합니다.</span>
+          <div className="html-preview-pending-status">
+            <span className="html-preview-spinner" aria-hidden="true"></span>
+            <span>소스를 받는 중입니다. 닫는 fence가 오면 렌더링합니다.</span>
+          </div>
+          {source.trim() ? (
+            <pre className="html-stream-source"><code>{source}</code></pre>
+          ) : null}
         </div>
       </div>
     </div>

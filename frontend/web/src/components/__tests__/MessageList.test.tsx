@@ -1824,7 +1824,7 @@ describe("MessageList", () => {
     }));
   });
 
-  it("keeps streaming html blocks as a stable preview placeholder instead of flashing code", () => {
+  it("keeps streaming html blocks visible inside a stable preview placeholder", () => {
     vi.useFakeTimers();
     render(
       <AppStateProvider
@@ -1851,7 +1851,7 @@ describe("MessageList", () => {
     expect(screen.getByText("차트 미리보기 준비 중")).toBeTruthy();
     expect(document.querySelector(".html-stream-preview")).toBeTruthy();
     expect(document.querySelector("pre code.language-html")).toBeNull();
-    expect(document.body.textContent || "").not.toContain("<div id=\"chart\">");
+    expect(document.querySelector(".html-stream-source")?.textContent || "").toContain("<div id=\"chart\"><script>");
   });
 
   it("restores code block highlighting and copy actions", async () => {
@@ -4370,7 +4370,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".stream-live-text p")?.textContent).toBe("스트리밍 답변입니다.");
   });
 
-  it("reveals a long streaming backlog one character per frame", () => {
+  it("reveals a long streaming backlog in bounded chunks instead of one character per frame", () => {
     vi.useFakeTimers();
     const settings = {
       ...initialAppState.appSettings,
@@ -4398,12 +4398,17 @@ describe("MessageList", () => {
     act(() => {
       vi.advanceTimersByTime(16);
     });
-    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("시작가");
+    const firstFrameText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(firstFrameText.startsWith(initialText)).toBe(true);
+    expect(firstFrameText.length).toBeGreaterThan(initialText.length + 1);
+    expect(firstFrameText.length).toBeLessThan(finalText.length);
 
     act(() => {
       vi.advanceTimersByTime(16);
     });
-    expect(document.querySelector(".stream-live-text p")?.textContent).toBe("시작가가");
+    const secondFrameText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(secondFrameText.length).toBeGreaterThan(firstFrameText.length);
+    expect(secondFrameText.length).toBeLessThan(finalText.length);
   });
 
   it("uses zero reveal duration as an instant reveal after the configured buffer", () => {

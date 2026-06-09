@@ -751,6 +751,9 @@ function isMermaidFenceInfo(info: string) {
 
 function pendingHtmlPreviewPlaceholder(source: string) {
   const label = source.trim() ? "차트 미리보기 준비 중" : "차트 미리보기 대기 중";
+  const sourcePreview = source.trim()
+    ? `<pre class="html-stream-source"><code>${escapeHtml(source)}</code></pre>`
+    : "";
   return [
     '<div class="workflow-output-preview html-stream-preview" data-html-preview-pending="true">',
     '<div class="workflow-output-title">',
@@ -758,8 +761,11 @@ function pendingHtmlPreviewPlaceholder(source: string) {
     `<span class="workflow-output-line-count">${Math.max(0, source.length).toLocaleString()}자</span>`,
     "</div>",
     '<div class="workflow-output-body html-preview-pending-body">',
+    '<div class="html-preview-pending-status">',
     '<span class="html-preview-spinner" aria-hidden="true"></span>',
-    "<span>소스를 받은 뒤 바로 렌더링합니다.</span>",
+    "<span>소스를 받는 중입니다. 닫는 fence가 오면 렌더링합니다.</span>",
+    "</div>",
+    sourcePreview,
     "</div>",
     "</div>",
   ].join("");
