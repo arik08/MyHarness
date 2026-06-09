@@ -58,7 +58,7 @@ from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
 from myharness.skills.routing import is_mcp_routed_skill_source, mcp_server_name_from_skill_source
-from myharness.skills.state import apply_skill_enabled_state
+from myharness.skills.state import apply_skill_enabled_state, get_skill_usage_counts
 from myharness.skills.types import SkillDefinition
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 from myharness.tasks import get_task_manager
@@ -2549,6 +2549,7 @@ class ReactBackendHost:
     def _skill_snapshots(self) -> list[SkillSnapshot]:
         assert self._bundle is not None
         settings = self._bundle.current_settings()
+        usage_counts = get_skill_usage_counts()
         registry = load_skill_registry(
             self._bundle.cwd,
             extra_skill_dirs=self._bundle.extra_skill_dirs,
@@ -2563,6 +2564,7 @@ class ReactBackendHost:
                 description=display_skill_description(skill),
                 source=skill.source,
                 enabled=skill.enabled,
+                usage_count=usage_counts.get(skill.name.lower(), 0),
             )
             for skill in registry.list_skills()
             if skill.source not in _BUILT_IN_SKILL_SOURCES
@@ -3104,20 +3106,25 @@ class ReactBackendHost:
         disabled = set(self._bundle.current_settings().disabled_mcp_servers or set())
         for name, config in configs.items():
             transport = getattr(config, "type", "unknown")
+            description = str(getattr(config, "description", "") or "").strip()
             if name in disabled:
                 statuses[name] = McpConnectionStatus(
                     name=name,
                     state="disabled",
                     detail="Disabled in settings.",
+                    description=description,
                     transport=str(transport),
                 )
                 continue
             if name in statuses:
+                if description and not statuses[name].description:
+                    statuses[name].description = description
                 continue
             statuses[name] = McpConnectionStatus(
                 name=name,
                 state="pending",
                 detail="Configured; restart or reload backend to connect.",
+                description=description,
                 transport=str(transport),
             )
         return sorted(statuses.values(), key=lambda status: status.name)
@@ -3126,6 +3133,7 @@ class ReactBackendHost:
         assert self._bundle is not None
         preferences = load_project_preferences(self._bundle.cwd)
         disabled_skill_names = set(preferences.disabled_skills) if preferences is not None else set()
+        usage_counts = get_skill_usage_counts()
         return [
             PluginSnapshot(
                 name=plugin.manifest.name,
@@ -3138,6 +3146,7 @@ class ReactBackendHost:
                         description=display_skill_description(skill),
                         source=skill.source,
                         enabled=skill.enabled,
+                        usage_count=usage_counts.get(skill.name.lower(), 0),
                     )
                     for skill in apply_skill_enabled_state(plugin.skills, disabled_skill_names)
                 ],

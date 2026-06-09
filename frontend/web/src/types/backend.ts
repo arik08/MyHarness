@@ -183,6 +183,7 @@ export type SkillItem = {
   description: string;
   source?: string;
   enabled?: boolean;
+  usage_count?: number;
 };
 
 export type PluginItem = {
@@ -199,6 +200,7 @@ export type McpServerItem = {
   name: string;
   state: string;
   detail?: string;
+  description?: string;
   transport?: string;
   tool_count?: number;
   resource_count?: number;

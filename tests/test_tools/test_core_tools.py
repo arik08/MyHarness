@@ -38,6 +38,7 @@ from myharness.tools.session_document_tool import (
     SessionDocumentSearchToolInput,
 )
 from myharness.tools.skill_tool import SkillTool, SkillToolInput
+from myharness.skills.state import get_skill_usage_count, get_skill_usage_counts
 from myharness.tools.todo_write_tool import TodoWriteTool, TodoWriteToolInput
 from myharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 from myharness.tools import create_default_tool_registry
@@ -589,6 +590,27 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
         ToolExecutionContext(cwd=tmp_path),
     )
     assert config_result.output == "설정을 업데이트했습니다: theme"
+
+
+@pytest.mark.asyncio
+async def test_skill_tool_persists_global_usage_counts(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skills_dir = tmp_path / "config" / "skills"
+    skills_dir.mkdir(parents=True)
+    pytest_dir = skills_dir / "pytest"
+    pytest_dir.mkdir()
+    (pytest_dir / "SKILL.md").write_text("# Pytest\nHelpful pytest notes.\n", encoding="utf-8")
+
+    context = ToolExecutionContext(cwd=tmp_path)
+    first = await SkillTool().execute(SkillToolInput(name="Pytest"), context)
+    second = await SkillTool().execute(SkillToolInput(name="pytest"), context)
+    source = await SkillTool().execute(SkillToolInput(name="Pytest", mode="source"), context)
+
+    assert first.is_error is False
+    assert second.is_error is False
+    assert source.is_error is False
+    assert get_skill_usage_count("Pytest") == 2
+    assert get_skill_usage_counts() == {"pytest": 2}
 
 
 @pytest.mark.asyncio

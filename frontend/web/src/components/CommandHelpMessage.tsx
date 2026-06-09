@@ -15,6 +15,7 @@ type ToggleEntry = {
   enabled: boolean;
   description: string;
   source: string;
+  usageCount?: number;
   skillCount?: number;
   skills?: ToggleEntry[];
 };
@@ -164,6 +165,15 @@ function isPoscoSkillPackName(name: string) {
   return normalizeCatalogName(name) === POSCO_SKILL_KEY;
 }
 
+export function formatSkillUsageCount(count: unknown) {
+  if (count === undefined || count === null || count === "") return "";
+  const numeric = Math.floor(Number(count));
+  if (!Number.isFinite(numeric) || numeric < 0) return "";
+  if (numeric < 1_000) return String(numeric);
+  if (numeric < 1_000_000) return `${Math.min(999, Math.floor(numeric / 1_000))}k`;
+  return `${Math.min(999, Math.floor(numeric / 1_000_000))}m`;
+}
+
 function hasCatalogBadgePrefix(text: string) {
   return /^\[가상스킬\]/.test(text);
 }
@@ -283,15 +293,17 @@ function parseSkillCatalog(text: string): ToggleEntry[] {
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
     .map((line) => {
-      const match = line.match(/^-\s+(.+?)(?:\s+\[([^\]]+)\])?\s+\[(enabled|disabled|활성|비활성)\]\s*:\s*(.*)$/i);
+      const match = line.match(/^-\s+(.+?)(?:\s+\[([^\]]+)\])?\s+\[(enabled|disabled|활성|비활성)\](?:\s+\[count:(\d+)\])?\s*:\s*(.*)$/i);
       if (!match) return null;
       const name = match[1].trim();
       const source = (match[2] || "skill").trim();
+      const usageCount = Number(match[4]);
       return {
         name,
         source,
         enabled: ["enabled", "활성"].includes(match[3].toLowerCase()),
-        description: displaySkillDescription(name, (match[4] || "").trim(), source),
+        ...(Number.isFinite(usageCount) ? { usageCount } : {}),
+        description: displaySkillDescription(name, (match[5] || "").trim(), source),
       };
     })
     .filter((item): item is ToggleEntry => Boolean(item));
@@ -414,6 +426,7 @@ function optimisticSkillSnapshot(skills: SkillItem[], items: ToggleEntry[], name
       description: item.description,
       source: item.source,
       enabled: item.enabled,
+      usage_count: item.usageCount,
     }));
   return source.map((skill) => (
     skill.name.toLowerCase() === name.toLowerCase()
@@ -494,13 +507,22 @@ function groupSkillsByPlugin(
       items: [],
       toneIndex: pluginToneByName.get(pluginName) ?? (groups.size + 1) % SKILL_GROUP_TONE_COUNT,
     };
-    const existingNames = new Set(group.items.map((item) => item.name.toLowerCase()));
+    const existingIndexByName = new Map(group.items.map((item, index) => [item.name.toLowerCase(), index]));
     for (const skill of plugin.skills) {
-      if (existingNames.has(skill.name.toLowerCase())) continue;
-      group.items.push({
+      const existingIndex = existingIndexByName.get(skill.name.toLowerCase());
+      const mergedSkill = {
         ...skill,
         enabled: plugin.enabled === false ? false : skill.enabled,
-      });
+      };
+      if (existingIndex !== undefined) {
+        group.items[existingIndex] = {
+          ...group.items[existingIndex],
+          ...mergedSkill,
+        };
+        continue;
+      }
+      group.items.push(mergedSkill);
+      existingIndexByName.set(skill.name.toLowerCase(), group.items.length - 1);
     }
     groups.set(pluginName, group);
   }
@@ -546,6 +568,7 @@ function mergeSkillState(
       enabled: pluginEnabled === false ? false : snapshot.enabled !== false,
       description: displaySkillDescription(snapshot.name || item.name, snapshot.description || item.description, source),
       source,
+      usageCount: snapshot.usage_count,
     };
   });
   for (const skill of skills) {
@@ -561,6 +584,7 @@ function mergeSkillState(
       enabled: pluginEnabled === false ? false : skill.enabled !== false,
       description: displaySkillDescription(name, skill.description || "", source),
       source,
+      usageCount: skill.usage_count,
     });
     existingNames.add(name.toLowerCase());
   }
@@ -625,6 +649,7 @@ function mergePluginState(items: ToggleEntry[], plugins: PluginItem[]) {
           description: displaySkillDescription(skill.name, skill.description || "", skill.source || `plugin:${item.name}`),
           enabled: skill.enabled !== false,
           source: skill.source || `plugin:${item.name}`,
+          usageCount: skill.usage_count,
         }))
         : undefined,
     };
@@ -638,6 +663,7 @@ function mergeMcpState(items: ToggleEntry[], servers: McpServerItem[]) {
     if (!status) return item;
     return {
       ...item,
+      description: status.description || status.detail || item.description,
       enabled: status.state !== "disabled",
     };
   });
@@ -655,6 +681,7 @@ function mergeSkillMcpState(items: ToggleEntry[], skills: SkillItem[]) {
       description: displaySkillDescription(snapshot.name || item.name, snapshot.description || item.description, snapshot.source || item.source),
       enabled: snapshot.enabled !== false,
       source: snapshot.source || item.source,
+      usageCount: snapshot.usage_count,
     };
   });
   for (const skill of skills) {
@@ -668,6 +695,7 @@ function mergeSkillMcpState(items: ToggleEntry[], skills: SkillItem[]) {
       description: displaySkillDescription(name, skill.description || "", source),
       enabled: skill.enabled !== false,
       source,
+      usageCount: skill.usage_count,
     });
     existingNames.add(name.toLowerCase());
   }
@@ -905,6 +933,7 @@ function PoscoSkillPackGroup({
           </span>
         </button>
         <div className="posco-skill-tree-actions">
+          <span>{headquarterCount}개 본부</span>
           <button
             className="posco-skill-tree-status"
             type="button"
@@ -914,7 +943,6 @@ function PoscoSkillPackGroup({
           >
             {group.plugin.enabled ? "활성" : "비활성"}
           </button>
-          <span>{headquarterCount}개 본부</span>
         </div>
       </div>
       {visibleTree ? (
@@ -956,6 +984,7 @@ function PoscoSkillPackGroup({
                     <strong>{item.name}</strong>
                     <small>{description}</small>
                   </button>
+                  <SkillUsageCount count={item.usageCount} />
                   <button
                     className="posco-skill-tree-state"
                     type="button"
@@ -1002,6 +1031,16 @@ function PoscoSkillPackGroup({
         </ul>
       ) : null}
     </section>
+  );
+}
+
+function SkillUsageCount({ count }: { count?: number }) {
+  const label = formatSkillUsageCount(count);
+  if (!label) return null;
+  return (
+    <span className="skill-usage-count" aria-label={`사용 횟수 ${label}`}>
+      {label}
+    </span>
   );
 }
 
@@ -1159,8 +1198,11 @@ function ToggleGrid({
             onClick={() => onToggle(item)}
           >
             <span className="skill-pill-header">
-              <strong>{item.name}</strong>
-              <small>{item.enabled ? "활성" : "비활성"}</small>
+              <span className="skill-pill-title">
+                <strong>{item.name}</strong>
+                <small>{item.enabled ? "활성" : "비활성"}</small>
+              </span>
+              <SkillUsageCount count={item.usageCount} />
             </span>
             <span className="skill-pill-description">{item.description || item.source || label}</span>
           </button>

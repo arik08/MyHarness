@@ -72,7 +72,7 @@ from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
 from myharness.skills.routing import is_mcp_routed_skill, mcp_server_name_from_skill_source
-from myharness.skills.state import set_skill_enabled, toggle_skill_enabled
+from myharness.skills.state import get_skill_usage_counts, set_skill_enabled, toggle_skill_enabled
 from myharness.tasks import get_task_manager
 from myharness.plugins.types import PluginCommandDefinition
 
@@ -106,11 +106,14 @@ def _visible_custom_skills(skills, settings: Settings):
 def _format_skills_management_text(skills) -> str:
     if not skills:
         return "사용 가능한 스킬:\n(사용자 스킬이 없습니다)"
+    usage_counts = get_skill_usage_counts()
     lines = ["사용 가능한 스킬:"]
     for skill in skills:
         status = "활성" if skill.enabled else "비활성"
         source = f" [{skill.source}]"
-        lines.append(f"- {skill.name}{source} [{status}]: {display_skill_description(skill)}")
+        usage_count = usage_counts.get(skill.name.lower(), 0)
+        usage = f" [count:{usage_count}]" if usage_count >= 0 else ""
+        lines.append(f"- {skill.name}{source} [{status}]{usage}: {display_skill_description(skill)}")
     return "\n".join(lines)
 
 

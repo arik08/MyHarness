@@ -4,6 +4,11 @@ function isSkillMcpSource(source: string) {
   return /^(skill-mcp(?::|$)|mcp:)/i.test(String(source || "").trim());
 }
 
+function skillUsageMeta(count: unknown) {
+  const numeric = Math.floor(Number(count));
+  return Number.isFinite(numeric) && numeric >= 0 ? ` [count:${numeric}]` : "";
+}
+
 export function frontendHelpText({
   commands,
   skills,
@@ -31,7 +36,7 @@ export function frontendHelpText({
     .map((skill) => {
       const source = skill.source || "skill";
       const status = skill.enabled === false ? "비활성" : "활성";
-      return `- ${skill.name} [${source}] [${status}]: ${skill.description || source}`;
+      return `- ${skill.name} [${source}] [${status}]${skillUsageMeta(skill.usage_count)}: ${skill.description || source}`;
     });
   const skillMcpLines = skills
     .filter((skill) => isSkillMcpSource(skill.source || ""))
@@ -50,7 +55,7 @@ export function frontendHelpText({
         const disabled = /^(disabled|비활성)$/i.test(state);
         const status = disabled ? "비활성" : "활성";
         const transport = server.transport || state || "mcp";
-        const detail = server.detail || [
+        const detail = server.description || server.detail || [
           typeof server.tool_count === "number" ? `도구 ${server.tool_count}개` : "",
           typeof server.resource_count === "number" ? `리소스 ${server.resource_count}개` : "",
         ].filter(Boolean).join(", ");

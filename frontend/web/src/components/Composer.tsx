@@ -152,7 +152,7 @@ function mcpSuggestions(servers: McpServerItem[], skills: SkillItem[], query: st
         kind: "mcp" as const,
         value: `$mcp:${server.name}`,
         label: `$mcp:${server.name}`,
-        description: details.join(" · ") || server.detail || "MCP 서버",
+        description: server.description || server.detail || details.join(" · ") || "MCP 서버",
       };
     });
   return [...serverSuggestions, ...skillMcpSuggestions(skills, query)];
@@ -644,6 +644,20 @@ export function Composer() {
       });
       dispatch({ type: "clear_composer" });
       resetExpandedPanel();
+      if (state.sessionId) {
+        void sendMessage({
+          sessionId: state.sessionId,
+          clientId: state.clientId,
+          line: "/help",
+          attachments: [],
+          suppressUserTranscript: true,
+        }).catch((error: unknown) => {
+          dispatch({
+            type: "backend_event",
+            event: { type: "error", message: error instanceof Error ? error.message : String(error) },
+          });
+        });
+      }
       return;
     }
     if (state.busy) {

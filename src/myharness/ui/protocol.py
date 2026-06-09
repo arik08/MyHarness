@@ -135,6 +135,7 @@ class SkillSnapshot(BaseModel):
     description: str
     source: str
     enabled: bool = True
+    usage_count: int = 0
 
 
 class PluginSnapshot(BaseModel):
@@ -268,6 +269,7 @@ class BackendEvent(BaseModel):
                     "name": server.name,
                     "state": server.state,
                     "detail": server.detail,
+                    "description": server.description,
                     "transport": server.transport,
                     "auth_configured": server.auth_configured,
                     "tool_count": len(server.tools),

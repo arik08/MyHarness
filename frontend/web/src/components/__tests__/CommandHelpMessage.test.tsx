@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CommandHelpMessage } from "../CommandHelpMessage";
+import { CommandHelpMessage, formatSkillUsageCount } from "../CommandHelpMessage";
 import { Composer } from "../Composer";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
@@ -54,6 +54,18 @@ function expectHelpSectionIcon(label: string) {
 describe("CommandHelpMessage", () => {
   beforeEach(() => {
     vi.mocked(sendBackendRequest).mockClear();
+  });
+
+  it("formats skill usage counts without four-digit labels", () => {
+    expect(formatSkillUsageCount(0)).toBe("0");
+    expect(formatSkillUsageCount(undefined)).toBe("");
+    expect(formatSkillUsageCount(1)).toBe("1");
+    expect(formatSkillUsageCount(999)).toBe("999");
+    expect(formatSkillUsageCount(1_000)).toBe("1k");
+    expect(formatSkillUsageCount(999_999)).toBe("999k");
+    expect(formatSkillUsageCount(1_000_000)).toBe("1m");
+    expect(formatSkillUsageCount(999_999_999)).toBe("999m");
+    expect(formatSkillUsageCount(1_000_000_000)).toBe("999m");
   });
 
   it("starts help catalog sections collapsed", () => {
@@ -234,6 +246,44 @@ describe("CommandHelpMessage", () => {
     expect(screen.getByRole("option", { name: /\$review/ })).toBeTruthy();
   });
 
+  it("shows skill usage counts beside the status pill", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- ship [project] [활성]: Shipping checklist",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            {
+              name: "ship",
+              description: "Shipping checklist",
+              source: "project",
+              enabled: true,
+              usage_count: 1_234,
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "스킬");
+    const ship = screen.getByRole("button", { name: /ship/ });
+    const headerText = ship.querySelector(".skill-pill-header")?.textContent || "";
+    expect(headerText).toContain("활성");
+    expect(headerText).toContain("1k");
+    expect(headerText.indexOf("활성")).toBeLessThan(headerText.indexOf("1k"));
+  });
+
   it("adds newly discovered snapshot-only skills to the help skill catalog", async () => {
     const user = userEvent.setup();
     const helpText = [
@@ -403,6 +453,21 @@ describe("CommandHelpMessage", () => {
             source: "plugin:POSCO 스킬",
             enabled: true,
           })),
+          plugins: [
+            {
+              name: "POSCO 스킬",
+              description: "업무 자료 정리",
+              enabled: true,
+              skill_count: poscoSkills.length,
+              skills: poscoSkills.map((name) => ({
+                name,
+                description: `${name} 업무 자료 정리와 보고 준비를 지원합니다.`,
+                source: "plugin:POSCO 스킬",
+                enabled: true,
+                usage_count: name === "경영기획본부" ? 1_000_000 : undefined,
+              })),
+            },
+          ],
         }}
       >
         <CommandHelpMessage text={helpText} />
@@ -423,6 +488,7 @@ describe("CommandHelpMessage", () => {
     expect(treeNames).toEqual(poscoSkills);
     const planningNode = within(poscoGroup).getByText("경영기획본부").closest("button") as HTMLElement;
     expect(planningNode.querySelector("small")?.textContent).toContain("업무 자료");
+    expect(within(poscoGroup).getByLabelText("사용 횟수 1m")).toBeTruthy();
     expect(planningNode.hasAttribute("data-tooltip")).toBe(false);
     expect(within(poscoGroup).queryByText("부서")).toBeNull();
     expect(within(poscoGroup).queryByText("전략 시나리오")).toBeNull();
@@ -551,6 +617,45 @@ describe("CommandHelpMessage", () => {
 
     await openHelpSection(user, "MCP");
     expect(screen.getByRole("button", { name: /posco-email/ }).textContent).toContain("비활성");
+  });
+
+  it("uses MCP snapshot details as card descriptions over generated counts", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "MCP 서버:",
+      "- vector_db [활성] (stdio): 도구 4개, 리소스 1개",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          mcpServers: [
+            {
+              name: "vector_db",
+              state: "disabled",
+              detail: "Disabled in settings.",
+              description: "로컬 Markdown 조직 업무 문서를 SQLite 기반으로 검색합니다.",
+              transport: "stdio",
+              tool_count: 4,
+              resource_count: 1,
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "MCP");
+    const connector = screen.getByRole("button", { name: /vector_db/ });
+    expect(connector.textContent).toContain("로컬 Markdown 조직 업무 문서를 SQLite 기반으로 검색합니다.");
+    expect(connector.textContent).not.toContain("도구 4개");
+    expect(connector.textContent).not.toContain("Disabled in settings.");
   });
 
   it("treats skill-mcp catalog entries as MCP items that toggle skill state", async () => {

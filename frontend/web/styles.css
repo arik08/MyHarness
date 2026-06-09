@@ -49,9 +49,9 @@
   --code-copy-border: rgba(255, 255, 255, 0.24);
   --code-copy-border-hover: rgba(255, 255, 255, 0.34);
   --code-copy-ink: #f8f8f6;
-  --skill-token-bg: #eef2f7;
-  --skill-token-ink: #375f86;
-  --skill-token-mark-bg: #526171;
+  --skill-token-bg: #efe6ff;
+  --skill-token-ink: #6f3dc6;
+  --skill-token-mark-bg: #7a4ed8;
   --skill-token-mark-ink: #fff;
   --command-token-bg: #e5f2fb;
   --command-token-ink: #0065a8;
@@ -7022,7 +7022,7 @@ a:focus-visible {
 
 .posco-skill-tree-row {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 7px;
   min-width: 0;
@@ -7270,13 +7270,22 @@ a:focus-visible {
 }
 
 .skill-toggle-pill .skill-pill-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
   margin-bottom: 3px;
   overflow: hidden;
   white-space: nowrap;
+}
+
+.skill-toggle-pill .skill-pill-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .skill-toggle-pill .skill-pill-header strong {
@@ -7310,6 +7319,24 @@ a:focus-visible {
 .skill-toggle-pill.disabled small {
   background: var(--sidebar-hover);
   color: var(--faint);
+}
+
+.skill-usage-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  justify-self: end;
+  min-width: 0;
+  max-width: 34px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .skill-toggle-pill .skill-pill-description {

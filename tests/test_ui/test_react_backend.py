@@ -23,8 +23,10 @@ from myharness.engine.stream_events import (
 from myharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
 from myharness.mcp.types import McpConnectionStatus, McpStdioServerConfig, McpToolInfo
 from myharness.project_preferences import load_project_preferences
+from myharness.skills.state import increment_skill_usage_count
 from myharness.services.long_report_progress import write_long_report_progress_state
 from myharness.skills.types import SkillDefinition
+from myharness.state.app_state import AppState
 from myharness.tasks.types import TaskRecord
 from myharness.tools import create_default_tool_registry
 from myharness.ui.backend_host import (
@@ -155,8 +157,74 @@ def test_mcp_snapshot_marks_disabled_server_even_if_connected(tmp_path):
 
     statuses = host._mcp_statuses_for_snapshot()
 
-    assert statuses[0].name == "demo"
-    assert statuses[0].state == "disabled"
+    status = next(item for item in statuses if item.name == "demo")
+    assert status.state == "disabled"
+
+
+def test_status_snapshot_includes_mcp_description():
+    event = BackendEvent.status_snapshot(
+        state=AppState(
+            model="gpt-test",
+            subagent_model="gpt-test-mini",
+            subagent_effort="medium",
+            permission_mode="full-auto",
+            theme="default",
+        ),
+        mcp_servers=[
+            McpConnectionStatus(
+                name="comtrade",
+                state="connected",
+                detail="도구 5개, 리소스 1개",
+                description="UN Comtrade API MCP입니다. 무역 데이터를 조회합니다.",
+                transport="stdio",
+            )
+        ],
+        plugins=[],
+        bridge_sessions=[],
+    )
+
+    assert event.mcp_servers is not None
+    assert event.mcp_servers[0]["description"] == "UN Comtrade API MCP입니다. 무역 데이터를 조회합니다."
+
+
+def test_skills_snapshot_includes_global_usage_count(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    event = BackendEvent.skills_snapshot([
+        SkillSnapshot(
+            name="visual-artifact",
+            description="보고서 작성",
+            source="project",
+            enabled=True,
+            usage_count=increment_skill_usage_count("visual-artifact"),
+        )
+    ])
+
+    payload = event.model_dump(mode="json")
+    assert payload["skills"][0]["usage_count"] == 1
+
+
+def test_skill_snapshot_reads_global_usage_count(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / ".skills" / "counted-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: counted-skill\ndescription: Counted skill.\n---\n# Counted\n",
+        encoding="utf-8",
+    )
+    increment_skill_usage_count("counted-skill")
+    increment_skill_usage_count("Counted-Skill")
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = SimpleNamespace(  # type: ignore[assignment]
+        cwd=tmp_path,
+        extra_skill_dirs=[],
+        extra_plugin_roots=[],
+        current_settings=lambda: Settings(),
+    )
+
+    snapshots = host._skill_snapshots()
+
+    snapshot = next(item for item in snapshots if item.name == "counted-skill")
+    assert snapshot.usage_count == 2
 
 
 @pytest.mark.asyncio
@@ -3345,6 +3413,62 @@ def test_forced_mcp_line_accepts_display_name_without_sticky_followup():
 
     assert "Selected MCP server: sqlite_analysis" in first_prompt
     assert followup_prompt == "간단한 데이터 뽑아봐"
+
+
+def test_mcp_snapshot_uses_config_description_for_disabled_servers(tmp_path):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    settings = Settings(
+        mcp_servers={
+            "vector_db": McpStdioServerConfig(
+                command="python",
+                args=["server.py"],
+                description="로컬 Markdown 조직 업무 문서를 SQLite 기반으로 검색합니다.",
+            )
+        },
+        disabled_mcp_servers={"vector_db"},
+    )
+    host._bundle = SimpleNamespace(  # type: ignore[assignment]
+        cwd=tmp_path,
+        current_settings=lambda: settings,
+        current_plugins=lambda: [],
+        mcp_manager=SimpleNamespace(list_statuses=lambda: []),
+    )
+
+    statuses = host._mcp_statuses_for_snapshot()
+
+    status = next(item for item in statuses if item.name == "vector_db")
+    assert status.state == "disabled"
+    assert status.description == "로컬 Markdown 조직 업무 문서를 SQLite 기반으로 검색합니다."
+    assert status.detail == "Disabled in settings."
+
+
+def test_mcp_snapshot_uses_config_description_for_connected_servers(tmp_path):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    settings = Settings(
+        mcp_servers={
+            "comtrade": McpStdioServerConfig(
+                command="python",
+                args=["server.py"],
+                description="UN Comtrade API MCP입니다. 무역 데이터를 조회합니다.",
+            )
+        },
+    )
+    host._bundle = SimpleNamespace(  # type: ignore[assignment]
+        cwd=tmp_path,
+        current_settings=lambda: settings,
+        current_plugins=lambda: [],
+        mcp_manager=SimpleNamespace(
+            list_statuses=lambda: [
+                McpConnectionStatus(name="comtrade", state="connected", transport="stdio"),
+            ],
+        ),
+    )
+
+    statuses = host._mcp_statuses_for_snapshot()
+
+    status = next(item for item in statuses if item.name == "comtrade")
+    assert status.state == "connected"
+    assert status.description == "UN Comtrade API MCP입니다. 무역 데이터를 조회합니다."
 
 
 def test_selected_mcp_registry_keeps_builtin_tools_and_selected_server_tools():

@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from myharness.skills import load_skill_registry
+from myharness.skills.state import increment_skill_usage_count
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
@@ -60,6 +61,7 @@ class SkillTool(BaseTool):
                     "transcript_output": transcript_output,
                 },
             )
+        increment_skill_usage_count(skill.name)
         return ToolResult(output=_format_skill_output(skill))
 
 

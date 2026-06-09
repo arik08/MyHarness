@@ -604,7 +604,7 @@ describe("Composer", () => {
     }));
   });
 
-  it("opens help immediately without appending a chat message or contacting the chat session", async () => {
+  it("opens help immediately without appending a chat message and refreshes the active session quietly", async () => {
     const user = userEvent.setup();
     render(
       <AppStateProvider
@@ -632,7 +632,13 @@ describe("Composer", () => {
     expect(screen.getByText("스킬")).toBeTruthy();
     expect(screen.getByText("MCP")).toBeTruthy();
     expect(screen.getByText("플러그인")).toBeTruthy();
-    expect(sendMessage).not.toHaveBeenCalled();
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      clientId: "client-1",
+      line: "/help",
+      attachments: [],
+      suppressUserTranscript: true,
+    }));
     expect(document.querySelectorAll(".messages > article.message")).toHaveLength(0);
     expect((input as HTMLTextAreaElement).value).toBe("");
   });

@@ -1675,11 +1675,13 @@ function normalizeSkills(skills: unknown[]): SkillItem[] {
       }
       if (skill && typeof skill === "object") {
         const raw = skill as Record<string, unknown>;
+        const usageCount = Number(raw.usage_count);
         return {
           name: String(raw.name || "").trim(),
           description: String(raw.description || "").trim(),
           source: String(raw.source || "").trim(),
           enabled: raw.enabled !== false,
+          usage_count: Number.isFinite(usageCount) ? usageCount : undefined,
         };
       }
       return { name: "", description: "", enabled: true };
@@ -1729,6 +1731,7 @@ function normalizeMcpServers(servers: unknown[]): AppState["mcpServers"] {
           name: String(raw.name || "").trim(),
           state: String(raw.state || "configured").trim(),
           detail: String(raw.detail || "").trim(),
+          description: String(raw.description || "").trim(),
           transport: String(raw.transport || "").trim(),
           tool_count: Number.isFinite(toolCount) ? toolCount : undefined,
           resource_count: Number.isFinite(resourceCount) ? resourceCount : undefined,
@@ -2009,6 +2012,10 @@ function isCommandHelpModal(modal: ModalState | null) {
 }
 
 function commandHelpTextNeedsCatalogRefresh(currentText: string, nextText: string) {
+  const nextHasCatalog = /(?:사용 가능한 명령어:|Available commands:|사용 가능한 스킬:|Available skills:)/.test(nextText);
+  if (currentText !== nextText && nextText.trim() && nextHasCatalog) {
+    return true;
+  }
   const currentIsEmpty = [
     "(사용자 스킬이 없습니다)",
     "(설정된 MCP 서버가 없습니다)",
