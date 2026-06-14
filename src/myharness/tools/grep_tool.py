@@ -11,6 +11,7 @@ from typing import Callable
 from pydantic import BaseModel, Field
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 
 class GrepToolInput(BaseModel):
@@ -278,6 +279,7 @@ async def _start_rg_process(cmd: list[str], *, cwd: Path):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         limit=8 * 1024 * 1024,  # 8 MB per line avoids LimitOverrunError on long lines.
+        **hidden_subprocess_kwargs(),
     )
 
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from myharness.config import Settings, load_settings
 from myharness.platforms import PlatformName, get_platform
 from myharness.sandbox import wrap_command_for_sandbox
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 
 def resolve_shell_command(
@@ -94,6 +95,7 @@ async def create_shell_subprocess(
     )
     argv, cleanup_path = wrap_command_for_sandbox(argv, settings=resolved_settings)
     subprocess_env = _subprocess_env(env, platform_name=resolved_platform)
+    hidden_window_kwargs = hidden_subprocess_kwargs(platform_name=resolved_platform)
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -103,6 +105,7 @@ async def create_shell_subprocess(
             stdout=stdout,
             stderr=stderr,
             env=subprocess_env,
+            **hidden_window_kwargs,
         )
     except Exception:
         if cleanup_path is not None:
@@ -375,6 +378,7 @@ def _windows_command_prefix_is_usable(prefix: list[str]) -> bool:
             text=True,
             timeout=3,
             check=False,
+            **hidden_subprocess_kwargs(platform_name="windows"),
         )
     except (OSError, subprocess.SubprocessError):
         return False

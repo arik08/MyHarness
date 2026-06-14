@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
+
 
 @dataclass
 class EnvironmentInfo:
@@ -77,6 +79,7 @@ def detect_git_info(cwd: str) -> tuple[bool, str | None]:
             cwd=cwd,
             timeout=5,
             stdin=subprocess.DEVNULL,
+            **hidden_subprocess_kwargs(),
         )
         is_git = result.returncode == 0 and result.stdout.strip() == "true"
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -93,6 +96,7 @@ def detect_git_info(cwd: str) -> tuple[bool, str | None]:
             cwd=cwd,
             timeout=5,
             stdin=subprocess.DEVNULL,
+            **hidden_subprocess_kwargs(),
         )
         branch = result.stdout.strip() if result.returncode == 0 else None
     except (FileNotFoundError, subprocess.TimeoutExpired):

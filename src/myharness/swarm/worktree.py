@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
+
 # ---------------------------------------------------------------------------
 # Slug validation
 # ---------------------------------------------------------------------------
@@ -93,6 +95,7 @@ async def _run_git(*args: str, cwd: Path) -> tuple[int, str, str]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": ""},
+        **hidden_subprocess_kwargs(),
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
     return (

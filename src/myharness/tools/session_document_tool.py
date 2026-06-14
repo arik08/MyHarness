@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+<<<<<<< HEAD
 import json
+=======
+>>>>>>> codex/session-documents
 import re
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+<<<<<<< HEAD
 from myharness.services.session_documents import resolve_session_document_index_path, resolve_session_document_path
+=======
+from myharness.services.session_documents import resolve_session_document_path
+>>>>>>> codex/session-documents
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
@@ -36,10 +43,13 @@ def _document_path(context: ToolExecutionContext, document_id: str) -> Path | No
     return resolve_session_document_path(context.cwd, _shared_metadata(context), document_id)
 
 
+<<<<<<< HEAD
 def _document_index_path(context: ToolExecutionContext, document_id: str) -> Path | None:
     return resolve_session_document_index_path(context.cwd, _shared_metadata(context), document_id)
 
 
+=======
+>>>>>>> codex/session-documents
 def _tokens(text: str) -> list[str]:
     return [token for token in re.split(r"\s+", text.lower().strip()) if token]
 
@@ -56,6 +66,7 @@ def _score(text: str, query: str) -> int:
     return score
 
 
+<<<<<<< HEAD
 def _trim_snippet(text: str, limit: int = 220) -> str:
     clean = " ".join(text.split())
     if len(clean) <= limit:
@@ -120,6 +131,15 @@ class SessionDocumentSearchTool(BaseTool):
         "Search a session-scoped recoverable source document stored for this chat session, "
         "including oversized user inputs and large tool outputs. Use this before making "
         "source-backed judgments about stored context."
+=======
+class SessionDocumentSearchTool(BaseTool):
+    """Search a session-scoped oversized source document."""
+
+    name = "session_document_search"
+    description = (
+        "Search an oversized pasted source document stored for this chat session. "
+        "Use this before making source-backed judgments about long user-provided documents."
+>>>>>>> codex/session-documents
     )
     input_model = SessionDocumentSearchToolInput
 
@@ -132,6 +152,7 @@ class SessionDocumentSearchTool(BaseTool):
         if path is None:
             return ToolResult(output=f"No session document found for id: {arguments.document_id}", is_error=True)
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+<<<<<<< HEAD
         index_path = _document_index_path(context, arguments.document_id)
         indexed_chunks = _load_indexed_chunks(index_path, arguments.document_id, len(lines)) if index_path else []
         if indexed_chunks:
@@ -158,6 +179,8 @@ class SessionDocumentSearchTool(BaseTool):
                 )
             return ToolResult(output="\n".join(output_lines))
 
+=======
+>>>>>>> codex/session-documents
         window_size = 80
         overlap = 20
         step = max(1, window_size - overlap)
@@ -168,7 +191,13 @@ class SessionDocumentSearchTool(BaseTool):
             score = _score(chunk, arguments.query)
             if score <= 0:
                 continue
+<<<<<<< HEAD
             snippet = _trim_snippet(chunk)
+=======
+            snippet = " ".join(chunk.split())
+            if len(snippet) > 220:
+                snippet = snippet[:217].rstrip() + "..."
+>>>>>>> codex/session-documents
             matches.append((score, start + 1, end, snippet))
         if not matches:
             return ToolResult(output="(no matches)")
@@ -181,6 +210,7 @@ class SessionDocumentSearchTool(BaseTool):
 
 
 class SessionDocumentReadTool(BaseTool):
+<<<<<<< HEAD
     """Read line ranges from a session-scoped recoverable source document."""
 
     name = "session_document_read"
@@ -188,6 +218,14 @@ class SessionDocumentReadTool(BaseTool):
         "Read original line ranges from a session-scoped recoverable source document stored for this chat session, "
         "including oversized user inputs and large tool outputs. Use this after session_document_search "
         "to verify the exact source text."
+=======
+    """Read line ranges from a session-scoped oversized source document."""
+
+    name = "session_document_read"
+    description = (
+        "Read original line ranges from an oversized pasted source document stored for this chat session. "
+        "Use this after session_document_search to verify the exact source text."
+>>>>>>> codex/session-documents
     )
     input_model = SessionDocumentReadToolInput
 

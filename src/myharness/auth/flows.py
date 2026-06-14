@@ -7,6 +7,7 @@ performs the interactive authentication and returns the obtained credential.
 from __future__ import annotations
 
 import logging
+import os
 import platform
 import subprocess
 import sys
@@ -82,12 +83,7 @@ class DeviceCodeFlow(AuthFlow):
                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return True
             if plat == "Windows":
-                subprocess.Popen(
-                    ["start", "", url],
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                os.startfile(url)  # type: ignore[attr-defined]
                 return True
             # Linux / WSL
             proc = subprocess.Popen(

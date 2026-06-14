@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 
 class GlobToolInput(BaseModel):
@@ -94,6 +95,7 @@ async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
                 cwd=str(root),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **hidden_subprocess_kwargs(),
             )
 
         lines: list[str] = []

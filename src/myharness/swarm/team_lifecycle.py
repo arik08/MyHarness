@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from myharness.swarm.mailbox import get_team_dir
 from myharness.swarm.types import BackendType
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -724,6 +725,7 @@ async def _destroy_worktree(worktree_path: str) -> None:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                **hidden_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 return

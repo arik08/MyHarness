@@ -10,6 +10,8 @@ import re
 import shutil
 import subprocess
 
+from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
+
 
 _MARKDOWN_MERMAID_RE = re.compile(
     r"(?ms)^ {0,3}(`{3,}|~{3,})[ \t]*(?:mermaid|mmd)\b[^\n]*\n(.*?)\n {0,3}\1[ \t]*$"
@@ -140,6 +142,7 @@ def _run_mermaid_preflight(diagrams: list[MermaidDiagram]) -> list[MermaidPrefli
             cwd=script.parent.parent,
             encoding="utf-8",
             timeout=12,
+            **hidden_subprocess_kwargs(),
         )
     except (OSError, subprocess.SubprocessError, UnicodeError):
         return []

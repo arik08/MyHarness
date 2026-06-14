@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+<<<<<<< HEAD
 import json
+=======
+>>>>>>> codex/session-documents
 import re
 import time
 from pathlib import Path
@@ -18,6 +21,7 @@ SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 DOCUMENT_ID_RE = re.compile(r"^doc-[0-9a-f]{12}$")
 SESSION_DOCUMENT_TOKEN_FLOOR = 80_000
 SESSION_DOCUMENT_PREVIEW_CHARS = 1_200
+<<<<<<< HEAD
 SESSION_DOCUMENT_INDEX_VERSION = 1
 SESSION_DOCUMENT_CHUNK_TARGET_LINES = 160
 SESSION_DOCUMENT_CHUNK_OVERLAP_LINES = 20
@@ -28,6 +32,8 @@ SECTION_HEADING_RE = re.compile(
     r"^\s*(?:(?:section|chapter)\s+)?(?:[A-Z]|[IVXLC]+|\d{1,3}(?:\.\d{1,3})*)[.)]\s+(.+)$",
     re.IGNORECASE,
 )
+=======
+>>>>>>> codex/session-documents
 
 
 def get_session_document_root(cwd: str | Path) -> Path:
@@ -61,10 +67,13 @@ def _document_id(text: str) -> str:
     return f"doc-{digest}"
 
 
+<<<<<<< HEAD
 def _document_index_path(document_path: Path) -> Path:
     return document_path.with_suffix(".index.json")
 
 
+=======
+>>>>>>> codex/session-documents
 def _short_hint(text: str) -> str:
     clean = " ".join(text.split())
     if len(clean) <= 180:
@@ -88,6 +97,7 @@ def _metadata_documents(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(item) for item in existing if isinstance(item, dict)] if isinstance(existing, list) else []
 
 
+<<<<<<< HEAD
 def _heading_from_line(line: str) -> str:
     clean = line.strip()
     if not clean or len(clean) > 180:
@@ -176,6 +186,8 @@ def _write_session_document_index(document_id: str, document_path: Path, text: s
     return index_data
 
 
+=======
+>>>>>>> codex/session-documents
 def store_session_document(
     *,
     cwd: str | Path,
@@ -183,11 +195,14 @@ def store_session_document(
     text: str,
     model: str | None = None,
     metadata: dict[str, Any] | None = None,
+<<<<<<< HEAD
     source_kind: str = "user_input",
     source_label: str | None = None,
     tool_name: str | None = None,
     tool_use_id: str | None = None,
     original_estimated_tokens: int | None = None,
+=======
+>>>>>>> codex/session-documents
 ) -> dict[str, Any]:
     if not SESSION_ID_RE.fullmatch(session_id):
         raise ValueError(f"Invalid session id for session document storage: {session_id}")
@@ -196,15 +211,20 @@ def store_session_document(
     document_path = document_dir / f"{document_id}.txt"
     if not document_path.exists():
         atomic_write_text(document_path, text if text.endswith("\n") else f"{text}\n")
+<<<<<<< HEAD
     index_data = _write_session_document_index(document_id, document_path, text)
     line_count = len(text.splitlines())
     estimated_tokens = estimate_tokens(text, model=model)
     normalized_source_kind = source_kind or "user_input"
+=======
+    line_count = len(text.splitlines())
+>>>>>>> codex/session-documents
     entry = {
         "id": document_id,
         "session_id": session_id,
         "path": str(document_path.resolve()),
         "line_count": line_count,
+<<<<<<< HEAD
         "chunk_count": index_data["chunk_count"],
         "char_count": len(text),
         "estimated_tokens": estimated_tokens,
@@ -218,6 +238,10 @@ def store_session_document(
         "original_estimated_tokens": (
             original_estimated_tokens if original_estimated_tokens is not None else estimated_tokens
         ),
+=======
+        "char_count": len(text),
+        "estimated_tokens": estimate_tokens(text, model=model),
+>>>>>>> codex/session-documents
         "created_at": int(time.time() * 1000),
         "short_hint": _short_hint(text),
     }
@@ -235,7 +259,10 @@ def build_session_document_message(entry: dict[str, Any], user_request: str, sou
         "Session document stored from an oversized pasted user input.\n\n"
         f"- document_id: {document_id}\n"
         f"- line_count: {entry.get('line_count')}\n"
+<<<<<<< HEAD
         f"- chunk_count: {entry.get('chunk_count')}\n"
+=======
+>>>>>>> codex/session-documents
         f"- char_count: {entry.get('char_count')}\n"
         f"- estimated_tokens: {entry.get('estimated_tokens')}\n"
         f"- short_hint: {entry.get('short_hint')}\n\n"
@@ -278,6 +305,7 @@ def resolve_session_document_path(cwd: str | Path, metadata: dict[str, Any], doc
         return None
     return path
 
+<<<<<<< HEAD
 
 def resolve_session_document_index_path(cwd: str | Path, metadata: dict[str, Any], document_id: str) -> Path | None:
     entry = find_session_document(metadata, document_id)
@@ -297,3 +325,5 @@ def resolve_session_document_index_path(cwd: str | Path, metadata: dict[str, Any
         return None
     return path
 
+=======
+>>>>>>> codex/session-documents

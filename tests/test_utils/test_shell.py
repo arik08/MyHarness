@@ -174,6 +174,47 @@ async def test_create_shell_subprocess_defaults_stdin_to_devnull(monkeypatch, tm
     assert captured["kwargs"]["stdin"] is asyncio.subprocess.DEVNULL
 
 
+@pytest.mark.asyncio
+async def test_create_shell_subprocess_hides_console_windows_on_windows(monkeypatch, tmp_path: Path):
+    captured: dict[str, object] = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+        class _FakeProcess:
+            returncode = 0
+
+            async def wait(self):
+                return 0
+
+        return _FakeProcess()
+
+    monkeypatch.setattr("myharness.utils.shell.get_platform", lambda: "windows")
+    monkeypatch.setattr("myharness.utils.shell.subprocess.CREATE_NO_WINDOW", 0x08000000, raising=False)
+    monkeypatch.setattr(
+        "myharness.utils.shell.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    monkeypatch.setattr(
+        "myharness.utils.shell.wrap_command_for_sandbox",
+        lambda argv, settings=None: (argv, None),
+    )
+    monkeypatch.setattr(
+        "myharness.utils.shell.shutil.which",
+        lambda name: {"cmd.exe": "C:/Windows/System32/cmd.exe"}.get(name),
+    )
+    monkeypatch.setattr("myharness.utils.shell.Path.exists", lambda self: False)
+
+    await create_shell_subprocess(
+        "echo hi",
+        cwd=tmp_path,
+        settings=Settings(shell="cmd"),
+    )
+
+    assert captured["kwargs"]["creationflags"] == 0x08000000
+
+
 def test_windows_simple_printf_is_translated_without_shell():
     argv = _resolve_windows_direct_command("printf 'tool task'")
 
