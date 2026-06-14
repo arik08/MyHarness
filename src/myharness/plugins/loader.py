@@ -327,28 +327,11 @@ def _load_plugin_skills(path: Path, plugin_name: str) -> list[SkillDefinition]:
     if not path.exists():
         return []
     skills: list[SkillDefinition] = []
-    direct_skill = path / "SKILL.md"
-    if direct_skill.exists():
-        content = direct_skill.read_text(encoding="utf-8")
-        name, description = _parse_skill_markdown(path.name, content)
-        skills.append(
-            SkillDefinition(
-                name=name,
-                description=description,
-                content=content,
-                source=f"plugin:{plugin_name}",
-                path=str(direct_skill),
-            )
-        )
-        return skills
-    for child in sorted(path.iterdir()):
-        if not child.is_dir():
-            continue
-        skill_path = child / "SKILL.md"
-        if not skill_path.exists():
+    for skill_path in sorted(path.rglob("SKILL.md")):
+        if not skill_path.is_file():
             continue
         content = skill_path.read_text(encoding="utf-8")
-        name, description = _parse_skill_markdown(child.name, content)
+        name, description = _parse_skill_markdown(skill_path.parent.name, content)
         skills.append(
             SkillDefinition(
                 name=name,

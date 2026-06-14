@@ -33,84 +33,8 @@ type HelpIntroSection = {
 };
 
 const SKILL_GROUP_TONE_COUNT = 6;
-const VIRTUAL_SKILL_TONE = "virtual";
-const POSCO_SKILL_NAME = "POSCO 스킬";
-const POSCO_SKILL_KEY = POSCO_SKILL_NAME.toLowerCase();
-const POSCO_HEADQUARTER_ORDER = [
-  "경영 Skill",
-  "안전보건환경본부",
-  "사장직속",
-  "경영기획본부",
-  "전략투자본부",
-  "경영지원본부",
-  "마케팅본부",
-  "구매본부",
-  "포항제철소",
-  "광양제철소",
-  "기술연구원",
-];
-const POSCO_HEADQUARTER_RANK = new Map(POSCO_HEADQUARTER_ORDER.map((name, index) => [name.toLowerCase(), index]));
-const POSCO_HEADQUARTER_SKILLS: Record<string, { name: string; description: string }[]> = {
-  "경영 Skill": [
-    { name: "경영회의 브리핑", description: "회의 안건, 핵심 이슈, 의사결정 포인트를 임원 보고 형식으로 정리합니다." },
-    { name: "핵심지표 요약", description: "매출, 원가, 생산, 투자 등 주요 경영지표의 변동 원인과 시사점을 요약합니다." },
-    { name: "의사결정 메모", description: "대안별 장단점, 리스크, 권고안을 짧은 의사결정 메모로 구성합니다." },
-  ],
-  "안전보건환경본부": [
-    { name: "안전 리스크 점검", description: "현장 안전 이슈와 개선 과제를 위험도 기준으로 정리합니다." },
-    { name: "환경 규제 체크", description: "환경 법규, 인허가, 규제 대응 필요사항을 보고용 체크리스트로 정리합니다." },
-    { name: "SHE 이슈 브리핑", description: "안전·보건·환경 주요 이슈를 회의 브리핑 형태로 요약합니다." },
-  ],
-  "사장직속": [
-    { name: "현안 보고", description: "경영진 현안의 배경, 쟁점, 대응 방향을 간결하게 정리합니다." },
-    { name: "대외 메시지 검토", description: "대외 발표와 메시지의 톤, 리스크, 이해관계자 관점을 점검합니다." },
-    { name: "특명 과제 정리", description: "특명 과제의 목표, 진행 상황, 의사결정 필요사항을 구조화합니다." },
-  ],
-  "경영기획본부": [
-    { name: "전략 시나리오", description: "시장·원가·수요 변화에 따른 전략 시나리오와 대응 방향을 정리합니다." },
-    { name: "사업계획 점검", description: "사업계획의 전제, 목표, 리스크, 보완 필요사항을 검토합니다." },
-    { name: "경영회의 브리핑", description: "회의 안건과 지표를 경영진 보고 흐름에 맞춰 요약합니다." },
-  ],
-  "전략투자본부": [
-    { name: "투자 심의 메모", description: "투자 안건의 목적, 재무성, 리스크, 의사결정 쟁점을 정리합니다." },
-    { name: "포트폴리오 점검", description: "투자 포트폴리오의 성과, 집중도, 조정 필요성을 검토합니다." },
-    { name: "사업성 검토", description: "시장성, 수익성, 실행 리스크를 기준으로 사업성을 요약합니다." },
-  ],
-  "경영지원본부": [
-    { name: "인사 이슈 정리", description: "인력, 조직, 노무 관련 이슈를 의사결정 가능한 형태로 정리합니다." },
-    { name: "규정 검토", description: "사내 규정과 절차의 적용 여부, 예외사항, 확인 필요 지점을 점검합니다." },
-    { name: "지원업무 FAQ", description: "반복 문의와 지원 절차를 실무자가 바로 참고할 수 있게 정리합니다." },
-  ],
-  "마케팅본부": [
-    { name: "시장 브리핑", description: "수요, 가격, 경쟁사, 고객 동향을 짧은 시장 브리핑으로 구성합니다." },
-    { name: "고객 제안서", description: "고객 이슈와 제안 포인트를 영업·마케팅 문서 흐름으로 정리합니다." },
-    { name: "수요 전망", description: "산업 지표와 고객 정보를 바탕으로 수요 전망과 주요 변수를 요약합니다." },
-  ],
-  "구매본부": [
-    { name: "구매 전략 검토", description: "원료·설비 구매 전략의 가격, 공급 안정성, 협상 포인트를 정리합니다." },
-    { name: "협력사 리스크", description: "협력사의 품질, 납기, 재무, ESG 리스크를 점검합니다." },
-    { name: "가격 동향 요약", description: "원료와 자재 가격 동향, 변동 요인, 대응 방향을 요약합니다." },
-  ],
-  "포항제철소": [
-    { name: "조업 이슈 요약", description: "조업 현황, 병목, 품질·안전 이슈를 생산 회의용으로 정리합니다." },
-    { name: "설비 정비 브리핑", description: "정비 일정, 영향 범위, 리스크와 대응책을 브리핑 형태로 요약합니다." },
-    { name: "생산 회의 메모", description: "생산 실적, 이슈, 후속 조치를 회의 메모 형식으로 정리합니다." },
-  ],
-  "광양제철소": [
-    { name: "조업 실적 요약", description: "조업 실적과 변동 원인, 개선 과제를 간결하게 요약합니다." },
-    { name: "품질 이슈 정리", description: "품질 이상, 원인 추정, 대응 현황을 품질 회의용으로 정리합니다." },
-    { name: "정비 계획 브리핑", description: "정비 계획의 일정, 영향, 준비사항을 브리핑 문서로 구성합니다." },
-  ],
-  "기술연구원": [
-    { name: "R&D 과제 요약", description: "연구 과제의 목표, 진행 상황, 성과, 이슈를 요약합니다." },
-    { name: "기술동향 리서치", description: "공정·제품·탄소저감 관련 기술 동향과 시사점을 정리합니다." },
-    { name: "실험결과 정리", description: "실험 조건, 결과, 해석, 후속 검토 사항을 구조화합니다." },
-  ],
-};
-const preferredPluginOrder = [
-  POSCO_SKILL_KEY,
-];
-const virtualSkillPluginNames = new Set([POSCO_SKILL_KEY]);
+const preferredPluginOrder: string[] = [];
+const virtualSkillPluginNames = new Set<string>();
 const introSectionTitles = new Set(["입력 단축키", "알아두면 좋은 기능"]);
 
 const koSkillDescriptionsByName: Record<string, string> = {
@@ -151,22 +75,16 @@ const koSkillDescriptionsByName: Record<string, string> = {
   "writing-plans": "다단계 작업의 명세나 요구사항이 있고 코드를 만지기 전에 구현 계획을 작성해야 할 때 사용합니다.",
 };
 
-const koPluginDescriptionsByName: Record<string, string> = {
-  [POSCO_SKILL_KEY]: "포스코 업무 자료 정리와 보고 준비를 지원합니다.",
-};
+const koPluginDescriptionsByName: Record<string, string> = {};
 
 function normalizeCatalogName(name: string) {
   return String(name || "").trim().toLowerCase();
 }
 
-function isPoscoSkillPackName(name: string) {
-  return normalizeCatalogName(name) === POSCO_SKILL_KEY;
-}
-
 export function formatSkillUsageCount(count: unknown) {
   if (count === undefined || count === null || count === "") return "";
   const numeric = Math.floor(Number(count));
-  if (!Number.isFinite(numeric) || numeric < 0) return "";
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
   if (numeric < 1_000) return String(numeric);
   if (numeric < 1_000_000) return `${Math.min(999, Math.floor(numeric / 1_000))}k`;
   return `${Math.min(999, Math.floor(numeric / 1_000_000))}m`;
@@ -179,7 +97,7 @@ function hasCatalogBadgePrefix(text: string) {
 function withVirtualSkillBadge(description: string, source = "") {
   const pluginName = pluginNameFromSkillSource(source);
   const text = String(description || "").trim();
-  if (!virtualSkillPluginNames.has(pluginName) || hasCatalogBadgePrefix(text) || isPoscoSkillPackName(pluginName)) {
+  if (!virtualSkillPluginNames.has(pluginName) || hasCatalogBadgePrefix(text)) {
     return text;
   }
   return `[가상스킬] ${text}`;
@@ -200,7 +118,7 @@ function displaySkillDescription(name: string, description: string, source = "")
 function displayPluginDescription(name: string, description: string) {
   const normalizedName = normalizeCatalogName(name);
   const text = koPluginDescriptionsByName[normalizedName] || description;
-  if (!isVirtualSkillPluginName(name) || hasCatalogBadgePrefix(text) || isPoscoSkillPackName(name)) {
+  if (!isVirtualSkillPluginName(name) || hasCatalogBadgePrefix(text)) {
     return text;
   }
   return `[가상스킬] ${text}`;
@@ -449,7 +367,7 @@ function isSkillMcpItem(item: ToggleEntry) {
 function pluginToneIndexByName(plugins: ToggleEntry[]) {
   return new Map(plugins.map((plugin, index) => [
     plugin.name.toLowerCase(),
-    isVirtualSkillPluginName(plugin.name) ? VIRTUAL_SKILL_TONE : (index + 1) % SKILL_GROUP_TONE_COUNT,
+    (index + 1) % SKILL_GROUP_TONE_COUNT,
   ]));
 }
 
@@ -599,26 +517,6 @@ function catalogTooltip(item: ToggleEntry, fallback: string) {
 function pluginGroupStatusLabel(group: SkillPluginGroup) {
   if (!group.plugin.enabled) return "비활성";
   return "활성";
-}
-
-function orderPoscoHeadquarterItems(items: ToggleEntry[]) {
-  return [...items].sort((left, right) => {
-    const leftRank = POSCO_HEADQUARTER_RANK.get(left.name.toLowerCase()) ?? POSCO_HEADQUARTER_ORDER.length;
-    const rightRank = POSCO_HEADQUARTER_RANK.get(right.name.toLowerCase()) ?? POSCO_HEADQUARTER_ORDER.length;
-    return leftRank - rightRank || left.name.localeCompare(right.name);
-  });
-}
-
-function poscoHeadquarterDescription(description: string) {
-  return String(description || "업무 스킬");
-}
-
-function poscoHeadquarterSkills(name: string) {
-  return POSCO_HEADQUARTER_SKILLS[name] || [
-    { name: "업무 자료 요약", description: "업무 자료의 핵심 내용과 후속 조치가 필요한 지점을 요약합니다." },
-    { name: "보고 메모 작성", description: "보고 대상과 목적에 맞춰 짧은 메모 형태로 정리합니다." },
-    { name: "이슈 검토", description: "주요 이슈의 배경, 영향, 확인 필요사항을 검토합니다." },
-  ];
 }
 
 function helpSummaryIconName(label: string): IconName {
@@ -895,143 +793,6 @@ export function CommandHelpMessage({ text }: { text: string }) {
   );
 }
 
-function PoscoSkillPackGroup({
-  group,
-  onToggle,
-  onPluginToggle,
-}: {
-  group: SkillPluginGroup;
-  onToggle: (item: ToggleEntry) => void;
-  onPluginToggle: (item: ToggleEntry) => void;
-}) {
-  const [treeExpanded, setTreeExpanded] = useState(true);
-  const [expandedHeadquarters, setExpandedHeadquarters] = useState<Record<string, boolean>>({});
-  const [virtualSkillEnabled, setVirtualSkillEnabled] = useState<Record<string, boolean>>({});
-  const headquarterItems = orderPoscoHeadquarterItems(group.items);
-  const headquarterCount = group.plugin.skillCount ?? headquarterItems.length;
-  const visibleTree = group.plugin.enabled && treeExpanded;
-  return (
-    <section
-      className={`skill-plugin-group posco-skill-tree${group.plugin.enabled ? "" : " disabled"}${visibleTree ? "" : " collapsed"}`}
-      data-skill-group-tone={group.toneIndex}
-      role="group"
-      aria-label="POSCO 스킬"
-    >
-      <div className="skill-section-header plugin-skill-header posco-skill-tree-header">
-        <button
-          className="posco-skill-tree-root"
-          type="button"
-          aria-expanded={visibleTree}
-          aria-label={`POSCO 스킬 트리 ${visibleTree ? "접기" : "펼치기"}`}
-          onClick={() => setTreeExpanded((current) => !current)}
-        >
-          <span className={`posco-skill-tree-icon${visibleTree ? " expanded" : ""}`} aria-hidden="true" />
-          <span className="posco-skill-tree-root-title">
-            <strong>{group.plugin.name}</strong>
-          </span>
-        </button>
-        <div className="posco-skill-tree-actions">
-          <span>{headquarterCount}개 본부</span>
-          <button
-            className="posco-skill-tree-status"
-            type="button"
-            aria-label={`POSCO 스킬 플러그인 ${group.plugin.enabled ? "비활성화" : "활성화"}`}
-            data-skill-group-tone={group.toneIndex}
-            onClick={() => onPluginToggle(group.plugin)}
-          >
-            {group.plugin.enabled ? "활성" : "비활성"}
-          </button>
-        </div>
-      </div>
-      {visibleTree ? (
-        <ul className="posco-skill-tree-list" role="tree" aria-label="POSCO 스킬 본부 목록">
-          {headquarterItems.map((item) => {
-            const skills = poscoHeadquarterSkills(item.name);
-            const expanded = expandedHeadquarters[item.name] === true;
-            const description = poscoHeadquarterDescription(item.description);
-            return (
-              <li
-                className={`posco-skill-tree-item skill-tone-scope${item.enabled ? "" : " disabled"}`}
-                role="treeitem"
-                aria-expanded={expanded}
-                data-skill-group-tone={group.toneIndex}
-                key={`${group.plugin.name}:${item.name}`}
-              >
-                <div className="posco-skill-tree-row">
-                  <button
-                    className="posco-skill-tree-expander"
-                    type="button"
-                    aria-expanded={expanded}
-                    aria-label={`${item.name} 업무 스킬 ${expanded ? "접기" : "펼치기"}`}
-                    onClick={() => setExpandedHeadquarters((current) => ({
-                      ...current,
-                      [item.name]: !expanded,
-                    }))}
-                  >
-                    <span className={`posco-skill-tree-icon${expanded ? " expanded" : ""}`} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="posco-skill-tree-node"
-                    type="button"
-                    aria-expanded={expanded}
-                    onClick={() => setExpandedHeadquarters((current) => ({
-                      ...current,
-                      [item.name]: !expanded,
-                    }))}
-                  >
-                    <strong>{item.name}</strong>
-                    <small>{description}</small>
-                  </button>
-                  <SkillUsageCount count={item.usageCount} />
-                  <button
-                    className="posco-skill-tree-state"
-                    type="button"
-                    aria-label={`${item.name} ${item.enabled ? "비활성화" : "활성화"}`}
-                    onClick={() => onToggle(item)}
-                  >
-                    {item.enabled ? "활성" : "비활성"}
-                  </button>
-                </div>
-                {expanded ? (
-                  <ul className="posco-skill-tree-skills" role="group" aria-label={`${item.name} 업무 스킬`}>
-                    {skills.map((skill) => {
-                      const leafKey = `${item.name}:${skill.name}`;
-                      const leafEnabled = virtualSkillEnabled[leafKey] ?? true;
-                      return (
-                        <li role="treeitem" key={leafKey}>
-                          <button
-                            className={`posco-skill-tree-leaf${leafEnabled ? "" : " disabled"}`}
-                            type="button"
-                            aria-pressed={leafEnabled}
-                            aria-label={`${skill.name} ${leafEnabled ? "비활성화" : "활성화"}`}
-                            onClick={() => setVirtualSkillEnabled((current) => ({
-                              ...current,
-                              [leafKey]: !leafEnabled,
-                            }))}
-                          >
-                            <span className="posco-skill-tree-dot" aria-hidden="true" />
-                            <span className="posco-skill-tree-leaf-copy">
-                              <strong>{skill.name}</strong>
-                              <small>{skill.description}</small>
-                            </span>
-                            <span className="posco-skill-tree-state" aria-hidden="true">
-                              {leafEnabled ? "활성" : "비활성"}
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-    </section>
-  );
-}
-
 function SkillUsageCount({ count }: { count?: number }) {
   const label = formatSkillUsageCount(count);
   if (!label) return null;
@@ -1096,39 +857,30 @@ function SkillCatalog({
             </section>
           ) : null}
           {pluginGroups.map((group) => (
-            isPoscoSkillPackName(group.plugin.name) ? (
-              <PoscoSkillPackGroup
-                group={group}
-                key={`plugin-group:${group.plugin.name}`}
-                onToggle={onToggle}
-                onPluginToggle={onPluginToggle}
-              />
-            ) : (
-              <section
-                className={`skill-plugin-group${group.plugin.enabled ? "" : " disabled collapsed"}`}
-                data-skill-group-tone={group.toneIndex}
-                role="group"
-                aria-label={`${group.plugin.name} 플러그인 스킬`}
-                key={`plugin-group:${group.plugin.name}`}
+            <section
+              className={`skill-plugin-group${group.plugin.enabled ? "" : " disabled collapsed"}`}
+              data-skill-group-tone={group.toneIndex}
+              role="group"
+              aria-label={`${group.plugin.name} 플러그인 스킬`}
+              key={`plugin-group:${group.plugin.name}`}
+            >
+              <button
+                className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
+                type="button"
+                aria-label={`${group.plugin.name} 플러그인 ${group.plugin.enabled ? "비활성화" : "활성화"}`}
+                data-tooltip={`${group.plugin.name}\n클릭하면 플러그인을 ${group.plugin.enabled ? "비활성화하고 스킬 목록을 접습니다." : "활성화합니다."}`}
+                onClick={() => onPluginToggle(group.plugin)}
               >
-                <button
-                  className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
-                  type="button"
-                  aria-label={`${group.plugin.name} 플러그인 ${group.plugin.enabled ? "비활성화" : "활성화"}`}
-                  data-tooltip={`${group.plugin.name}\n클릭하면 플러그인을 ${group.plugin.enabled ? "비활성화하고 스킬 목록을 접습니다." : "활성화합니다."}`}
-                  onClick={() => onPluginToggle(group.plugin)}
-                >
-                  <span>
-                    <strong>{group.plugin.name}</strong>
-                    <small>{pluginGroupStatusLabel(group)}</small>
-                  </span>
-                  <span>{group.plugin.skillCount ?? group.items.length}개</span>
-                </button>
-                {group.plugin.enabled ? (
-                  <ToggleGrid label={group.plugin.name} items={group.items} onToggle={onToggle} />
-                ) : null}
-              </section>
-            )
+                <span>
+                  <strong>{group.plugin.name}</strong>
+                  <small>{pluginGroupStatusLabel(group)}</small>
+                </span>
+                <span>{group.plugin.skillCount ?? group.items.length}개</span>
+              </button>
+              {group.plugin.enabled ? (
+                <ToggleGrid label={group.plugin.name} items={group.items} onToggle={onToggle} />
+              ) : null}
+            </section>
           ))}
         </div>
       ) : (
