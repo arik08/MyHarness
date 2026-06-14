@@ -178,6 +178,147 @@ describe("WorkflowPanel", () => {
     expect(screen.getByText("작성 중인 결과물 - report.html")).toBeTruthy();
   });
 
+  it("continues revealing updated running output preview text without a new chunk buffer", () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
+    const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame");
+
+    const runningWriteEvent = (content: string) => ({
+      id: "write",
+      toolName: "write_file",
+      title: "write_file",
+      detail: "outputs/report.html",
+      status: "running" as const,
+      level: "child" as const,
+      toolInput: {
+        path: "outputs/report.html",
+        content,
+      },
+    });
+
+    const { rerender } = render(
+      <AppStateProvider>
+        <WorkflowPanel events={[runningWriteEvent("first")]} />
+      </AppStateProvider>,
+    );
+
+    setTimeoutSpy.mockClear();
+    requestAnimationFrameSpy.mockClear();
+
+    rerender(
+      <AppStateProvider>
+        <WorkflowPanel events={[runningWriteEvent("first second")]} />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("2 토큰");
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").not.toContain("4 토큰");
+    expect(requestAnimationFrameSpy).toHaveBeenCalled();
+
+    const visualBufferDelays = setTimeoutSpy.mock.calls
+      .map(([, timeout]) => Number(timeout))
+      .filter((timeout) => Number.isFinite(timeout));
+    expect(visualBufferDelays).not.toContain(48);
+  });
+
+  it("uses recent small chunk cadence to pace workflow output preview chunks", () => {
+    vi.useFakeTimers();
+
+    const runningWriteEvent = (content: string) => ({
+      id: "write",
+      toolName: "write_file",
+      title: "write_file",
+      detail: "outputs/report.html",
+      status: "running" as const,
+      level: "child" as const,
+      toolInput: {
+        path: "outputs/report.html",
+        content,
+      },
+    });
+
+    const { rerender } = render(
+      <AppStateProvider>
+        <WorkflowPanel events={[runningWriteEvent("aa")]} />
+      </AppStateProvider>,
+    );
+
+    rerender(
+      <AppStateProvider>
+        <WorkflowPanel events={[runningWriteEvent("aabb")]} />
+      </AppStateProvider>,
+    );
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    rerender(
+      <AppStateProvider>
+        <WorkflowPanel events={[runningWriteEvent("aabbcc")]} />
+      </AppStateProvider>,
+    );
+    act(() => {
+      vi.advanceTimersByTime(64);
+    });
+
+    expect(document.querySelector(".workflow-output-body")?.textContent || "").toBe("aabb");
+
+    act(() => {
+      vi.advanceTimersByTime(40);
+    });
+
+    const pacedText = document.querySelector(".workflow-output-body")?.textContent || "";
+    expect(pacedText.length).toBeGreaterThan(4);
+    expect(pacedText.length).toBeLessThan(6);
+  });
+
+  it("paces the running workflow output token counter with the revealed content", () => {
+    vi.useFakeTimers();
+
+    const runningWriteEvent = (content: string) => ({
+      id: "write",
+      toolName: "write_file",
+      title: "write_file",
+      detail: "outputs/report.html",
+      status: "running" as const,
+      level: "child" as const,
+      toolInput: {
+        path: "outputs/report.html",
+        content,
+      },
+    });
+
+    const { rerender } = render(
+      <AppStateProvider>
+        <WorkflowPanel events={[runningWriteEvent("가".repeat(20))]} />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("20 토큰");
+
+    rerender(
+      <AppStateProvider>
+        <WorkflowPanel events={[runningWriteEvent("가".repeat(100))]} />
+      </AppStateProvider>,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    const firstVisibleLength = document.querySelector(".workflow-output-body")?.textContent?.length || 0;
+    const firstCount = document.querySelector(".workflow-output-line-count")?.textContent || "";
+    expect(firstVisibleLength).toBeGreaterThan(20);
+    expect(firstVisibleLength).toBeLessThan(100);
+    expect(firstCount).toContain(`${firstVisibleLength.toLocaleString()} 토큰`);
+
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("100 토큰");
+  });
+
   it("shows request and planning detail text on parent rows", () => {
     render(
       <AppStateProvider>

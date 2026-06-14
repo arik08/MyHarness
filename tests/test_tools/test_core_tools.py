@@ -501,7 +501,6 @@ async def test_session_document_search_and_read_tools_return_matching_ranges(tmp
     assert "     2\t인사팀은 채용과 평가 제도를 운영합니다." in read_result.output
     assert "     3\t조직개편안은 총무팀 보안 기능을 안전관리실로 이관합니다." in read_result.output
     assert SessionDocumentSearchTool().is_read_only(SessionDocumentSearchToolInput(document_id="doc-abcdef123456", query="x")) is True
-<<<<<<< HEAD
     assert "recoverable source document" in SessionDocumentSearchTool.description
     assert "recoverable source document" in SessionDocumentReadTool.description
 
@@ -549,8 +548,6 @@ async def test_session_document_search_uses_chunk_index_for_stored_documents(tmp
     assert 'heading "Payment Gateway Outage"' in search_result.output
     assert "PG-5523" in search_result.output
     assert "overview filler line 000" not in search_result.output
-=======
->>>>>>> codex/session-documents
 
 
 @pytest.mark.asyncio

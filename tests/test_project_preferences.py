@@ -89,7 +89,7 @@ def test_legacy_default_workspace_plugin_preference_applies_to_empty_workspace(t
             "version": 1,
             "disabled_skills": [],
             "disabled_mcp_servers": [],
-            "enabled_plugins": {"claude-for-legal-lite": False},
+            "enabled_plugins": {"sample-review-plugin": False},
         }),
         encoding="utf-8",
     )
@@ -98,7 +98,7 @@ def test_legacy_default_workspace_plugin_preference_applies_to_empty_workspace(t
 
     settings = apply_project_preferences_to_settings(load_settings(), workspace)
 
-    assert settings.enabled_plugins["claude-for-legal-lite"] is False
+    assert settings.enabled_plugins["sample-review-plugin"] is False
 
 
 def test_project_toggle_writes_portable_json(tmp_path: Path, monkeypatch):
@@ -161,7 +161,7 @@ def test_project_plugin_disable_hides_owned_skills_on_reload(tmp_path: Path, mon
     (plugin_dir / "plugin.json").write_text(
         json.dumps(
             {
-                "name": "claude-for-legal-lite",
+                "name": "sample-review-plugin",
                 "version": "0.1.0",
                 "description": "Legal review skills",
                 "enabled_by_default": True,
@@ -177,7 +177,7 @@ def test_project_plugin_disable_hides_owned_skills_on_reload(tmp_path: Path, mon
     save_settings(Settings(allow_project_plugins=True))
     settings = load_settings()
 
-    set_project_plugin_enabled(workspace, "claude-for-legal-lite", False, settings)
+    set_project_plugin_enabled(workspace, "sample-review-plugin", False, settings)
     effective = apply_project_preferences_to_settings(load_settings(), workspace)
 
     plugins = load_plugins(effective, workspace)

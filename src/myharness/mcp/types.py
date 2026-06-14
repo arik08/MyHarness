@@ -78,6 +78,7 @@ class McpConnectionStatus:
     name: str
     state: Literal["connected", "failed", "pending", "disabled"]
     detail: str = ""
+    description: str = ""
     transport: str = "unknown"
     auth_configured: bool = False
     tools: list[McpToolInfo] = field(default_factory=list)

@@ -4497,6 +4497,65 @@ describe("MessageList", () => {
     expect(midSecondBatchText.length).toBeLessThan(firstBatch.length + secondBatch.length);
   });
 
+  it("uses recent small chunk cadence to avoid draining the next chat chunk in one frame", () => {
+    vi.useFakeTimers();
+    const settings = {
+      ...initialAppState.appSettings,
+      streamStartBufferMs: 0,
+      streamRevealDurationMs: 600,
+    };
+    const { rerender } = render(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: "" }}
+        settings={settings}
+        active
+      />,
+    );
+
+    rerender(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: "aa" }}
+        settings={settings}
+        active
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    rerender(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: "aabb" }}
+        settings={settings}
+        active
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    rerender(
+      <StreamingAssistantMessage
+        message={{ id: "assistant-1", role: "assistant", text: "aabbcc" }}
+        settings={settings}
+        active
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect(document.querySelector(".stream-live-text p")?.textContent || "").toBe("aabb");
+
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+
+    const pacedText = document.querySelector(".stream-live-text p")?.textContent || "";
+    expect(pacedText.length).toBeGreaterThan(4);
+    expect(pacedText.length).toBeLessThan(6);
+  });
+
   it("uses zero reveal duration as an instant reveal after the configured buffer", () => {
     vi.useFakeTimers();
     render(

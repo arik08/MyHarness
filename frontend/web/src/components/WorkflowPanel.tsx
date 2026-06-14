@@ -99,9 +99,48 @@ function countWorkflowPreviewLines(text: string) {
   return value ? value.replace(/\r\n/g, "\n").split("\n").length : 0;
 }
 
+type WorkflowContentCount = {
+  tokens: number;
+  lines: number;
+};
+
+function workflowContentCount(text: string): WorkflowContentCount {
+  return {
+    tokens: estimateTextTokens(text),
+    lines: countWorkflowPreviewLines(text),
+  };
+}
+
+function formatWorkflowContentCountValue(count: WorkflowContentCount) {
+  return `${formatWorkflowTokenCount(count.tokens)} (${Math.max(0, Math.round(count.lines || 0)).toLocaleString()}줄)`;
+}
+
 function formatWorkflowContentCount(text: string) {
-  const lines = countWorkflowPreviewLines(text);
-  return `${formatWorkflowTokenCount(estimateTextTokens(text))} (${lines.toLocaleString()}줄)`;
+  return formatWorkflowContentCountValue(workflowContentCount(text));
+}
+
+function workflowContentCountForVisibleProgress(
+  target: WorkflowContentCount,
+  fullText: string,
+  visibleText: string,
+  enabled: boolean,
+): WorkflowContentCount {
+  if (!enabled) {
+    return target;
+  }
+  const fullLength = Math.max(0, fullText.length);
+  if (!fullLength) {
+    return target;
+  }
+  const visibleLength = Math.max(0, Math.min(fullLength, visibleText.length));
+  if (!visibleLength) {
+    return { tokens: 0, lines: 0 };
+  }
+  const progress = Math.min(1, visibleLength / fullLength);
+  return {
+    tokens: Math.max(1, Math.min(target.tokens, Math.round(target.tokens * progress))),
+    lines: Math.max(1, Math.min(target.lines, Math.round(target.lines * progress))),
+  };
 }
 
 function workflowDiffLineChangeKind(line: string) {
@@ -394,7 +433,17 @@ const workflowEventStaggerMs = 90;
 const workflowPlanningStaggerMs = 220;
 const workflowRunningPreviewFullRenderMaxChars = 80_000;
 const workflowRunningPreviewTailChars = 48_000;
-const workflowPreviewOutputBufferMs = 128;
+const workflowPreviewOutputBufferMs = 48;
+const workflowPreviewChunkPacerSampleSize = 3;
+const workflowPreviewChunkPacerMinIntervalMs = 24;
+const workflowPreviewChunkPacerMaxIntervalMs = 600;
+const workflowPreviewChunkPacerMinRate = 1 / 96;
+const workflowPreviewChunkPacerMaxRate = 0.5;
+
+type WorkflowPreviewChunkSample = {
+  chars: number;
+  intervalMs: number;
+};
 
 function workflowPreviewArtifact(source: WorkflowPreviewSource, done: boolean): ArtifactSummary | null {
   const path = normalizeArtifactPath(source.path);
@@ -420,6 +469,8 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
   const lastFrameAtRef = useRef<number | null>(null);
   const revealBudgetRef = useRef(0);
   const revealDurationMsRef = useRef(revealDurationMs);
+  const recentChunkSamplesRef = useRef<WorkflowPreviewChunkSample[]>([]);
+  const lastChunkAtRef = useRef<number | null>(null);
 
   function clearBufferTimer() {
     if (bufferTimerRef.current !== null) {
@@ -444,22 +495,67 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
     }
     lastFrameAtRef.current = null;
     revealBudgetRef.current = 0;
+    recentChunkSamplesRef.current = [];
+    lastChunkAtRef.current = null;
+  }
+
+  function recordPreviewChunk(chunkText: string) {
+    const chars = Array.from(chunkText).length;
+    if (!chars) {
+      return;
+    }
+    const now = performance.now();
+    const previousChunkAt = lastChunkAtRef.current;
+    lastChunkAtRef.current = now;
+    if (previousChunkAt === null) {
+      return;
+    }
+    const intervalMs = Math.max(
+      workflowPreviewChunkPacerMinIntervalMs,
+      Math.min(workflowPreviewChunkPacerMaxIntervalMs, now - previousChunkAt),
+    );
+    recentChunkSamplesRef.current = [
+      ...recentChunkSamplesRef.current,
+      { chars, intervalMs },
+    ].slice(-workflowPreviewChunkPacerSampleSize);
+  }
+
+  function recentPreviewChunkRevealRate(pendingLength: number) {
+    const samples = recentChunkSamplesRef.current;
+    if (!samples.length) {
+      return null;
+    }
+    const totalChars = samples.reduce((total, sample) => total + sample.chars, 0);
+    const totalIntervalMs = samples.reduce((total, sample) => total + sample.intervalMs, 0);
+    if (totalChars <= 0 || totalIntervalMs <= 0) {
+      return null;
+    }
+    const averageChars = totalChars / samples.length;
+    const baseRate = totalChars / totalIntervalMs;
+    const backlogBoost = 1 + Math.min(2.5, Math.max(0, pendingLength - averageChars * 2) / Math.max(averageChars * 4, 1));
+    return Math.max(
+      workflowPreviewChunkPacerMinRate,
+      Math.min(workflowPreviewChunkPacerMaxRate, baseRate * 0.9 * backlogBoost),
+    );
   }
 
   function previewRevealRate(pendingLength: number) {
+    const recentRate = recentPreviewChunkRevealRate(pendingLength);
+    if (recentRate !== null) {
+      return recentRate;
+    }
     const duration = Math.max(80, Math.min(2000, revealDurationMsRef.current));
     const baseCharsPerMs = Math.max(0.018, Math.min(0.12, 34 / duration));
     const backlogBoost = 1 + Math.min(2.4, pendingLength / 900);
     return baseCharsPerMs * backlogBoost;
   }
 
-  function smoothPreviewRevealCount(pendingText: string, desiredCount: number) {
-    const pendingChars = Array.from(pendingText);
-    if (!pendingChars.length) {
+  function smoothPreviewRevealCount(pendingLength: number, desiredCount: number) {
+    if (!pendingLength) {
       return 0;
     }
-    const maxTickChars = pendingChars.length >= 1400 ? 8 : pendingChars.length >= 700 ? 6 : pendingChars.length >= 220 ? 4 : pendingChars.length >= 80 ? 2 : 1;
-    return Math.min(pendingChars.length, Math.max(1, Math.min(maxTickChars, desiredCount)));
+    const maxTickChars = pendingLength >= 1400 ? 8 : pendingLength >= 700 ? 6 : pendingLength >= 220 ? 4 : pendingLength >= 80 ? 2 : 1;
+    return Math.min(pendingLength, Math.max(1, Math.min(maxTickChars, desiredCount)));
   }
 
   function flushPreviewText(timestamp = performance.now()) {
@@ -474,13 +570,13 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
     const elapsedMs =
       lastFrameAtRef.current === null ? 16 : Math.max(8, Math.min(64, timestamp - lastFrameAtRef.current));
     lastFrameAtRef.current = timestamp;
-    revealBudgetRef.current += elapsedMs * previewRevealRate(Array.from(pendingText).length);
+    revealBudgetRef.current += elapsedMs * previewRevealRate(pendingText.length);
     if (revealBudgetRef.current < 1) {
       schedulePreviewRevealFrame();
       return;
     }
     const pendingChars = Array.from(pendingText);
-    const revealCount = smoothPreviewRevealCount(pendingText, Math.floor(revealBudgetRef.current));
+    const revealCount = smoothPreviewRevealCount(pendingChars.length, Math.floor(revealBudgetRef.current));
     revealBudgetRef.current = Math.max(0, revealBudgetRef.current - revealCount);
     const nextText = pendingChars.slice(0, revealCount).join("");
     pendingTextRef.current = pendingChars.slice(revealCount).join("");
@@ -518,6 +614,10 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
     ) {
       return;
     }
+    if (visibleTextRef.current) {
+      schedulePreviewRevealFrame();
+      return;
+    }
     bufferTimerRef.current = window.setTimeout(() => {
       bufferTimerRef.current = null;
       schedulePreviewRevealFrame();
@@ -549,12 +649,16 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
       return;
     }
     if (targetText.startsWith(queuedText)) {
-      pendingTextRef.current = `${pendingTextRef.current}${targetText.slice(queuedText.length)}`;
+      const nextChunk = targetText.slice(queuedText.length);
+      pendingTextRef.current = `${pendingTextRef.current}${nextChunk}`;
+      recordPreviewChunk(nextChunk);
       schedulePreviewBuffer();
       return;
     }
     if (targetText.startsWith(visibleText)) {
-      pendingTextRef.current = targetText.slice(visibleText.length);
+      const nextChunk = targetText.slice(visibleText.length);
+      pendingTextRef.current = nextChunk;
+      recordPreviewChunk(nextChunk);
       schedulePreviewBuffer();
       return;
     }
@@ -809,11 +913,25 @@ function WorkflowOutputPreview({
   const prefix = source.kind === "diff"
     ? event.status === "error" ? "수정 실패" : done ? "수정 완료" : "수정 미리보기"
     : event.status === "error" ? "작성 실패" : done ? "작성 완료" : "작성 중인 결과물";
-  const count = source.kind === "diff"
-    ? formatWorkflowDiffCount(source.content)
-    : isLongReportWorkflowTool(event.toolName)
-      ? formatWorkflowLongReportCount(event, source.content)
-      : formatWorkflowContentCount(source.content);
+  const longReportTool = isLongReportWorkflowTool(event.toolName);
+  const contentCountTarget = useMemo(() => workflowContentCount(source.content), [source.content]);
+  const visibleContentCount = workflowContentCountForVisibleProgress(
+    contentCountTarget,
+    displayContent,
+    visibleDisplayContent,
+    source.kind !== "diff" && !longReportTool && event.status === "running" && displayContent.length === source.content.length,
+  );
+  const staticCount = useMemo(
+    () => source.kind === "diff"
+      ? formatWorkflowDiffCount(source.content)
+      : longReportTool
+        ? formatWorkflowLongReportCount(event, source.content)
+        : "",
+    [event.output, event.status, event.toolInput, longReportTool, source.content, source.kind],
+  );
+  const count = source.kind !== "diff" && !longReportTool
+    ? formatWorkflowContentCountValue(visibleContentCount)
+    : staticCount;
   const artifact = workflowPreviewArtifact(source, succeeded);
   const artifactDisplay = artifact ? artifactDisplayName(artifact) : fileName;
 

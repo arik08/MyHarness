@@ -1084,7 +1084,7 @@ async def test_agents_presets_reports_disabled_subagents(tmp_path: Path, monkeyp
         lambda: [
             AgentDefinition(name="worker", description="generic worker", subagent_type="worker"),
             AgentDefinition(
-                name="office-subagent-presets:cost-analyst",
+                name="sample-office-presets:cost-analyst",
                 description="cost analysis",
                 subagent_type="cost-analyst",
                 source="plugin",

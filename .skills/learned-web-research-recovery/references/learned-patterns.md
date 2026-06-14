@@ -1,10 +1,3 @@
-## Evidence d3f4299e8e617712
-- Confidence: 0.95
-- Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input=POSCO 2026-05-30 news Korea: 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Fetched remote content from https://newsroom.posco.com/kr/
-- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
-
 ## Evidence 3c983308c60f3988
 - Confidence: 0.95
 - Signature: `web-search-no-results`
@@ -52,4 +45,11 @@
 - Signature: `web-fetch-401-reuters-com`
 - Lesson: A repeated failure was observed and later verified as resolved: web_fetch input=https://www.reuters.com/world/asia-pacific/nippon-steel-sees-better-year-ahead-us-steel-no-capacity-cuts-needed-cfo-says-2026-02-19/: web_fetch 실패: Client error '401 HTTP Forbidden' for url 'https://www.r
 - Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.tatasteel.com/media/25699/4qfy26-and-fy2026-results-presentation.pdf
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence 5970ae50b151a21f
+- Confidence: 0.85
+- Signature: `web-fetch-401-reuters-com`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch input=https://www.reuters.com/world/asia-pacific/china-releases-tougher-steel-capacity-swap-plan-curb-overcapacity-2026-05-18/: web_fetch 실패: Client error '401 HTTP Forbidden' for url 'https://www.reuters.com/w
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.tatasteelnederland.com/nieuws/en/tata-steel-nederland-publishes-annual-report-20252026
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

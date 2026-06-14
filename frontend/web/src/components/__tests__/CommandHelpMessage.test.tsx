@@ -362,11 +362,11 @@ describe("CommandHelpMessage", () => {
     expect(spreadsheetTooltip).not.toContain("spreadsheet is the primary");
   });
 
-  it("translates plugin descriptions in plugin catalog tooltips", async () => {
+  it("shows plugin descriptions in plugin catalog tooltips", async () => {
     const user = userEvent.setup();
     const helpText = [
       "플러그인:",
-      "- claude-for-legal-lite [활성]: Legal review skills",
+      "- sample-review-plugin [활성]: Legal review skills",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -379,20 +379,19 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "플러그인");
-    const legalPlugin = screen.getByRole("button", { name: /claude-for-legal-lite/ });
-    expect(legalPlugin.textContent).toContain("법무 검토");
-    expect(legalPlugin.textContent).not.toContain("Legal review");
-    expect(legalPlugin.getAttribute("data-tooltip")).toContain("계약");
-    expect(legalPlugin.getAttribute("data-tooltip")).not.toContain("Legal review");
+    const legalPlugin = screen.getByRole("button", { name: /sample-review-plugin/ });
+    expect(legalPlugin.textContent).toContain("Legal review");
+    expect(legalPlugin.getAttribute("data-tooltip")).toContain("Legal review");
+    expect(legalPlugin.getAttribute("data-tooltip")).toContain("Legal review");
   });
 
-  it("orders POSCO skill after the existing preferred plugins", async () => {
+  it("orders POSCO skill before ordinary plugins", async () => {
     const user = userEvent.setup();
     const helpText = [
       "플러그인:",
       "- workflow-kit [활성]: Workflow kit skills",
       "- POSCO 스킬 [활성]: 업무 자료 정리",
-      "- claude-for-legal-lite [활성]: Legal review skills",
+      "- sample-review-plugin [활성]: Legal review skills",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -410,9 +409,9 @@ describe("CommandHelpMessage", () => {
     const pluginNames = Array.from(pluginCard?.querySelectorAll("button.skill-toggle-pill strong") ?? [])
       .map((node) => node.textContent);
     expect(pluginNames).toEqual([
-      "claude-for-legal-lite",
       "POSCO 스킬",
       "workflow-kit",
+      "sample-review-plugin",
     ]);
   });
 
@@ -841,8 +840,8 @@ describe("CommandHelpMessage", () => {
       "",
       "플러그인:",
       "- workflow-kit [활성]: Workflow kit skills",
-      "- claude-for-legal-lite [활성]: Legal workflows",
-      "- office-subagent-presets [비활성]: Focused office-work subagent presets",
+      "- sample-review-plugin [활성]: Legal workflows",
+      "- sample-office-presets [비활성]: Focused office-work subagent presets",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -869,7 +868,7 @@ describe("CommandHelpMessage", () => {
               skill_count: 14,
             },
             {
-              name: "claude-for-legal-lite",
+              name: "sample-review-plugin",
               description: "Legal workflows",
               enabled: false,
               skill_count: 10,
@@ -877,13 +876,13 @@ describe("CommandHelpMessage", () => {
                 {
                   name: "legal-contract-review",
                   description: "계약서를 검토합니다.",
-                  source: "plugin:claude-for-legal-lite",
+                  source: "plugin:sample-review-plugin",
                   enabled: true,
                 },
               ],
             },
             {
-              name: "office-subagent-presets",
+              name: "sample-office-presets",
               description: "Focused office-work subagent presets",
               enabled: false,
               skill_count: 0,
@@ -896,16 +895,16 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "스킬");
-    const disabledGroup = screen.getByRole("group", { name: /claude-for-legal-lite 플러그인 스킬/ });
+    const disabledGroup = screen.getByRole("group", { name: /sample-review-plugin 플러그인 스킬/ });
     expect(disabledGroup.textContent).toContain("비활성");
     expect(disabledGroup.textContent).toContain("10개");
     expect(screen.queryByRole("button", { name: /legal-contract-review/ })).toBeNull();
-    expect(screen.queryByRole("group", { name: /office-subagent-presets 플러그인 스킬/ })).toBeNull();
+    expect(screen.queryByRole("group", { name: /sample-office-presets 플러그인 스킬/ })).toBeNull();
 
     await openHelpSection(user, "플러그인");
-    const pluginButtons = screen.getAllByRole("button", { name: /claude-for-legal-lite/ });
+    const pluginButtons = screen.getAllByRole("button", { name: /sample-review-plugin/ });
     expect(pluginButtons.some((button) => button.textContent?.includes("비활성"))).toBe(true);
-    expect(screen.getByRole("button", { name: /office-subagent-presets/ }).textContent).toContain("비활성");
+    expect(screen.getByRole("button", { name: /sample-office-presets/ }).textContent).toContain("비활성");
   });
 
   it("keeps a disabled plugin skill group visible while it is optimistically re-enabled", async () => {
@@ -916,7 +915,7 @@ describe("CommandHelpMessage", () => {
       "",
       "플러그인:",
       "- workflow-kit [활성]: Workflow kit skills",
-      "- claude-for-legal-lite [활성]: Legal workflows",
+      "- sample-review-plugin [활성]: Legal workflows",
       "",
       "사용 가능한 명령어:",
       "- /help 도움말",
@@ -943,7 +942,7 @@ describe("CommandHelpMessage", () => {
               skill_count: 14,
             },
             {
-              name: "claude-for-legal-lite",
+              name: "sample-review-plugin",
               description: "Legal workflows",
               enabled: false,
               skill_count: 10,
@@ -951,7 +950,7 @@ describe("CommandHelpMessage", () => {
                 {
                   name: "legal-contract-review",
                   description: "계약서를 검토합니다.",
-                  source: "plugin:claude-for-legal-lite",
+                  source: "plugin:sample-review-plugin",
                   enabled: true,
                 },
               ],
@@ -964,15 +963,15 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "스킬");
-    await user.click(screen.getByRole("button", { name: "claude-for-legal-lite 플러그인 활성화" }));
+    await user.click(screen.getByRole("button", { name: "sample-review-plugin 플러그인 활성화" }));
 
     expect(sendBackendRequest).toHaveBeenCalledWith(
       "session-1",
       expect.any(String),
-      { type: "set_plugin_enabled", value: "claude-for-legal-lite", enabled: true },
+      { type: "set_plugin_enabled", value: "sample-review-plugin", enabled: true },
     );
-    const enabledGroup = screen.getByRole("group", { name: /claude-for-legal-lite 플러그인 스킬/ });
-    expect(enabledGroup.textContent).toContain("claude-for-legal-lite");
+    const enabledGroup = screen.getByRole("group", { name: /sample-review-plugin 플러그인 스킬/ });
+    expect(enabledGroup.textContent).toContain("sample-review-plugin");
     expect(enabledGroup.textContent).toContain("활성");
     expect(enabledGroup.textContent).toContain("10개");
     expect(screen.getByRole("button", { name: /legal-contract-review/ }).textContent).toContain("활성");
@@ -1060,7 +1059,7 @@ describe("CommandHelpMessage", () => {
       "- review [project] [활성]: Review checklist",
       "",
       "플러그인:",
-      "- claude-for-legal-lite [활성]: Legal review skills",
+      "- sample-review-plugin [활성]: Legal review skills",
       "- deploy [활성]: Deploy skills",
       "- workflow-kit [활성]: Workflow kit skills",
       "",
@@ -1095,7 +1094,7 @@ describe("CommandHelpMessage", () => {
             {
               name: "legal-contract-review",
               description: "계약서를 검토합니다.",
-              source: "plugin:claude-for-legal-lite",
+              source: "plugin:sample-review-plugin",
               enabled: true,
             },
             { name: "review", description: "Review checklist", source: "project", enabled: true },
@@ -1109,10 +1108,10 @@ describe("CommandHelpMessage", () => {
     await openHelpSection(user, "스킬");
     await openHelpSection(user, "플러그인");
 
-    const legalGroup = screen.getByRole("group", { name: /claude-for-legal-lite 플러그인 스킬/ });
+    const legalGroup = screen.getByRole("group", { name: /sample-review-plugin 플러그인 스킬/ });
     expect(legalGroup.textContent).toContain("legal-contract-review");
     expect(legalGroup.getAttribute("data-skill-group-tone")).toBe("1");
-    expect(screen.getByText(/법무 검토를 지원합니다/).closest("button")?.getAttribute("data-skill-group-tone")).toBe("1");
+    expect(screen.getByText(/Legal review skills/).closest("button")?.getAttribute("data-skill-group-tone")).toBe("1");
 
     const deployGroup = screen.getByRole("group", { name: /deploy 플러그인 스킬/ });
     expect(deployGroup.textContent).toContain("deploy-helper");
@@ -1131,7 +1130,7 @@ describe("CommandHelpMessage", () => {
       .map((group) => group.getAttribute("aria-label"));
     expect(pluginGroupNames.filter((name): name is string => Boolean(name))).toEqual([
       "일반 스킬",
-      "claude-for-legal-lite 플러그인 스킬",
+      "sample-review-plugin 플러그인 스킬",
       "deploy 플러그인 스킬",
       "workflow-kit 플러그인 스킬",
     ]);
@@ -1140,7 +1139,7 @@ describe("CommandHelpMessage", () => {
       .find((card) => card.querySelector("summary")?.textContent?.includes("플러그인"));
     const pluginNames = Array.from(pluginCard?.querySelectorAll("button.skill-toggle-pill strong") ?? [])
       .map((node) => node.textContent);
-    expect(pluginNames).toEqual(["claude-for-legal-lite", "deploy", "workflow-kit"]);
+    expect(pluginNames).toEqual(["sample-review-plugin", "deploy", "workflow-kit"]);
 
     const standaloneGroup = screen.getByRole("group", { name: "일반 스킬" });
     expect(standaloneGroup.className).toContain("skill-plugin-group");

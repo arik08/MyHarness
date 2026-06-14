@@ -281,7 +281,6 @@ async def test_auto_compact_stores_oversized_current_user_input_as_session_docum
     assert "11999. 조직업무분장 자료" in document_path.read_text(encoding="utf-8")
 
 
-<<<<<<< HEAD
 def test_tool_output_document_compaction_stores_recoverable_marker(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     output = "\n".join(
@@ -372,8 +371,6 @@ def test_microcompact_preserves_recoverable_tool_output_marker():
     assert "recent output" in contents
 
 
-=======
->>>>>>> codex/session-documents
 @pytest.mark.asyncio
 async def test_forced_auto_compact_returns_collapsed_messages_when_summary_prompt_is_too_large():
     giant = ("search result " * 1000).strip()

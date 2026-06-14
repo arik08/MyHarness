@@ -193,7 +193,7 @@ describe("appReducer", () => {
         },
         plugins: [
           {
-            name: "claude-for-legal-lite",
+            name: "sample-review-plugin",
             description: "Legal workflows",
             enabled: false,
             skill_count: 10,
@@ -201,7 +201,7 @@ describe("appReducer", () => {
               {
                 name: "legal-contract-review",
                 description: "Review contracts.",
-                source: "plugin:claude-for-legal-lite",
+                source: "plugin:sample-review-plugin",
                 enabled: true,
               },
             ],
@@ -215,7 +215,7 @@ describe("appReducer", () => {
     expect(next.workspaceName).toBe("Default");
     expect(next.plugins).toEqual([
       {
-        name: "claude-for-legal-lite",
+        name: "sample-review-plugin",
         description: "Legal workflows",
         enabled: false,
         skill_count: 10,
@@ -223,7 +223,7 @@ describe("appReducer", () => {
           {
             name: "legal-contract-review",
             description: "Review contracts.",
-            source: "plugin:claude-for-legal-lite",
+            source: "plugin:sample-review-plugin",
             enabled: true,
           },
         ],
@@ -238,20 +238,20 @@ describe("appReducer", () => {
       type: "backend_event",
       event: {
         type: "ready",
-        plugins: [{ name: "office-subagent-presets", description: "Office presets", enabled: true }],
+        plugins: [{ name: "sample-office-presets", description: "Office presets", enabled: true }],
       },
     });
     const next = appReducer(ready, {
       type: "backend_event",
       event: {
         type: "state_snapshot",
-        plugins: [{ name: "office-subagent-presets", description: "Office presets", enabled: false }],
+        plugins: [{ name: "sample-office-presets", description: "Office presets", enabled: false }],
       },
     });
 
     expect(next.plugins).toEqual([
       {
-        name: "office-subagent-presets",
+        name: "sample-office-presets",
         description: "Office presets",
         enabled: false,
         skill_count: undefined,

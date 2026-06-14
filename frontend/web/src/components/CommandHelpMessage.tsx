@@ -108,7 +108,6 @@ const POSCO_HEADQUARTER_SKILLS: Record<string, { name: string; description: stri
   ],
 };
 const preferredPluginOrder = [
-  "claude-for-legal-lite",
   POSCO_SKILL_KEY,
 ];
 const virtualSkillPluginNames = new Set([POSCO_SKILL_KEY]);
@@ -153,7 +152,6 @@ const koSkillDescriptionsByName: Record<string, string> = {
 };
 
 const koPluginDescriptionsByName: Record<string, string> = {
-  "claude-for-legal-lite": "사용자가 제공한 문서와 로컬 playbook을 바탕으로 계약, 개인정보, 법무 검토를 지원합니다.",
   [POSCO_SKILL_KEY]: "포스코 업무 자료 정리와 보고 준비를 지원합니다.",
 };
 

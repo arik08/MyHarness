@@ -316,6 +316,31 @@ function enhanceRenderedInlineSourceHtml(
   return template.innerHTML;
 }
 
+function appendInlineTailHtml(html: string, inlineTailHtml?: string) {
+  if (!inlineTailHtml) {
+    return html;
+  }
+  const template = document.createElement("template");
+  template.innerHTML = html || "<p></p>";
+  const targetRoot = template.content.lastElementChild;
+  if (!targetRoot) {
+    return html;
+  }
+  const target = inlineSourceAttachTarget(targetRoot);
+  const tail = document.createElement("template");
+  tail.innerHTML = inlineTailHtml;
+  const tailNodes = [...tail.content.childNodes];
+  if (!tailNodes.length) {
+    return template.innerHTML;
+  }
+  const previous = target.lastChild;
+  if (previous?.nodeType === Node.TEXT_NODE && previous.textContent) {
+    previous.textContent = previous.textContent.replace(/\s+$/u, "");
+  }
+  tailNodes.forEach((node) => target.appendChild(node));
+  return template.innerHTML;
+}
+
 function codeBlockLanguage(code: Element) {
   const className = String(code.getAttribute("class") || "").toLowerCase();
   return className.match(/(?:^|\s)language-([a-z0-9_-]+)/)?.[1] || "";
@@ -1930,6 +1955,7 @@ export function MarkdownMessage({
   text,
   deferIncompleteTables = false,
   className = "",
+  inlineTailHtml,
   sourceEvidenceByUrl,
   sourceNumberOffset = 0,
   sourceNumberByKey,
@@ -1938,6 +1964,7 @@ export function MarkdownMessage({
   text: string;
   deferIncompleteTables?: boolean;
   className?: string;
+  inlineTailHtml?: string;
   sourceEvidenceByUrl?: SourceEvidenceByUrl;
   sourceNumberOffset?: number;
   sourceNumberByKey?: SourceNumberByKey;
@@ -1951,13 +1978,14 @@ export function MarkdownMessage({
       replaceHtmlFencesWithPreviewPlaceholders(mermaidMarkdown),
     );
     const rendered = chatMarkdown.parse(renderMathInMarkdown(previewMarkdown), { async: false }) as string;
-    return enhanceRenderedInlineSourceHtml(
+    const enhanced = enhanceRenderedInlineSourceHtml(
       enhanceRenderedCodeBlockHtml(enhanceRenderedWorkflowDiagramHtml(enhanceRenderedPromptTokenHtml(sanitizeRenderedHtml(rendered), promptTokenReferences))),
       sourceEvidenceByUrl,
       sourceNumberOffset,
       sourceNumberByKey,
     );
-  }, [deferIncompleteTables, promptTokenReferences, sourceEvidenceByUrl, sourceNumberByKey, sourceNumberOffset, text]);
+    return appendInlineTailHtml(enhanced, inlineTailHtml);
+  }, [deferIncompleteTables, inlineTailHtml, promptTokenReferences, sourceEvidenceByUrl, sourceNumberByKey, sourceNumberOffset, text]);
 
   const setRootRef = useCallback((node: HTMLDivElement | null) => {
     ref.current = node;

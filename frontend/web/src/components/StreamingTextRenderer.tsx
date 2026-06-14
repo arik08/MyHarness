@@ -13,6 +13,17 @@ import type { SourceEvidenceByUrl, SourceNumberByKey } from "./MarkdownMessage";
 
 const StableMarkdownMessage = memo(MarkdownMessage);
 
+type StreamingChunkSample = {
+  chars: number;
+  intervalMs: number;
+};
+
+const streamingChunkPacerSampleSize = 3;
+const streamingChunkPacerMinIntervalMs = 24;
+const streamingChunkPacerMaxIntervalMs = 600;
+const streamingChunkPacerMinRate = 1 / 96;
+const streamingChunkPacerMaxRate = 0.5;
+
 function useStreamingText(
   targetText: string,
   visuallyStreaming: boolean,
@@ -34,6 +45,8 @@ function useStreamingText(
   const displayStartedRef = useRef(false);
   const startBufferMsRef = useRef(startBufferMs);
   const revealDurationMsRef = useRef(revealDurationMs);
+  const recentChunkSamplesRef = useRef<StreamingChunkSample[]>([]);
+  const lastChunkAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     visibleTextRef.current = visibleText;
@@ -77,6 +90,8 @@ function useStreamingText(
     clearAnimationFrame();
     pendingTextRef.current = "";
     displayStartedRef.current = false;
+    recentChunkSamplesRef.current = [];
+    lastChunkAtRef.current = null;
   }
 
   function normalizedStartBufferMs() {
@@ -94,6 +109,50 @@ function useStreamingText(
     return Math.max(1, Math.min(pendingChars.length, desiredCount));
   }
 
+  function recordStreamingChunk(chunkText: string) {
+    const chars = Array.from(chunkText).length;
+    if (!chars) {
+      return;
+    }
+    if (!displayStartedRef.current) {
+      lastChunkAtRef.current = null;
+      return;
+    }
+    const now = performance.now();
+    const previousChunkAt = lastChunkAtRef.current;
+    lastChunkAtRef.current = now;
+    if (previousChunkAt === null) {
+      return;
+    }
+    const intervalMs = Math.max(
+      streamingChunkPacerMinIntervalMs,
+      Math.min(streamingChunkPacerMaxIntervalMs, now - previousChunkAt),
+    );
+    recentChunkSamplesRef.current = [
+      ...recentChunkSamplesRef.current,
+      { chars, intervalMs },
+    ].slice(-streamingChunkPacerSampleSize);
+  }
+
+  function recentChunkRevealRate(pendingLength: number) {
+    const samples = recentChunkSamplesRef.current;
+    if (!samples.length) {
+      return null;
+    }
+    const totalChars = samples.reduce((total, sample) => total + sample.chars, 0);
+    const totalIntervalMs = samples.reduce((total, sample) => total + sample.intervalMs, 0);
+    if (totalChars <= 0 || totalIntervalMs <= 0) {
+      return null;
+    }
+    const averageChars = totalChars / samples.length;
+    const baseRate = totalChars / totalIntervalMs;
+    const backlogBoost = 1 + Math.min(2.5, Math.max(0, pendingLength - averageChars * 2) / Math.max(averageChars * 4, 1));
+    return Math.max(
+      streamingChunkPacerMinRate,
+      Math.min(streamingChunkPacerMaxRate, baseRate * 0.9 * backlogBoost),
+    );
+  }
+
   function retuneRevealRateForPendingText() {
     clearRevealDeadlineTimer();
     const pendingLength = Array.from(pendingTextRef.current).length;
@@ -102,7 +161,11 @@ function useStreamingText(
       revealRateRef.current = 0;
       return;
     }
-    revealRateRef.current = Math.max(1 / 16, pendingLength / duration);
+    const recentRate = recentChunkRevealRate(pendingLength);
+    const targetRate = recentRate ?? Math.max(1 / 16, pendingLength / duration);
+    revealRateRef.current = revealRateRef.current > 0
+      ? revealRateRef.current * 0.7 + targetRate * 0.3
+      : targetRate;
     revealBudgetRef.current = Math.min(revealBudgetRef.current, Math.max(1, pendingLength * 0.25));
     if (displayStartedRef.current || normalizedStartBufferMs() <= 0) {
       revealDeadlineTimerRef.current = window.setTimeout(() => {
@@ -261,14 +324,18 @@ function useStreamingText(
     }
 
     if (targetText.startsWith(queuedText)) {
-      pendingTextRef.current = `${pendingTextRef.current}${targetText.slice(queuedText.length)}`;
+      const nextChunk = targetText.slice(queuedText.length);
+      pendingTextRef.current = `${pendingTextRef.current}${nextChunk}`;
+      recordStreamingChunk(nextChunk);
       retuneRevealRateForPendingText();
       scheduleFlush();
       return;
     }
 
     if (targetText.startsWith(visibleText)) {
-      pendingTextRef.current = targetText.slice(visibleText.length);
+      const nextChunk = targetText.slice(visibleText.length);
+      pendingTextRef.current = nextChunk;
+      recordStreamingChunk(nextChunk);
       retuneRevealRateForPendingText();
       scheduleFlush();
       return;
@@ -563,6 +630,10 @@ function usePendingDots(enabled: boolean) {
   return ".".repeat(dotCount);
 }
 
+function inlineSourceStreamPendingHtml(dots: string) {
+  return `<span class="inline-source-stream-pending" role="status"><span class="markdown-inline-source-favicon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"></path><path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07L13 19.07"></path></svg></span><span>출처 정리 중${dots}</span></span>`;
+}
+
 function PendingStatusBox({
   className,
   label,
@@ -628,8 +699,7 @@ function TableStreamPending() {
   );
 }
 
-function InlineSourceStreamPending() {
-  const dots = usePendingDots(true);
+function InlineSourceStreamPending({ dots }: { dots: string }) {
   return (
     <span className="inline-source-stream-pending" role="status">
       <span className="markdown-inline-source-favicon" aria-hidden="true">
@@ -668,6 +738,7 @@ function StreamingMarkdownMessage({
   const liveTailBeforeIncompleteSourceLink = incompleteSourceLinkStart >= 0
     ? liveTail.slice(0, incompleteSourceLinkStart).trimEnd()
     : "";
+  const sourcePendingDots = usePendingDots(incompleteSourceLinkStart >= 0);
   const prefixChunks = useMemo(() => splitStableMarkdownChunks(prefix), [prefix]);
   const prefixSourceNumbering = useMemo(() => {
     let sourceNumberByKey: SourceNumberByKey = {};
@@ -712,12 +783,13 @@ function StreamingMarkdownMessage({
               text={liveTailBeforeIncompleteSourceLink}
               deferIncompleteTables
               className="stream-live-text inline-source-pending-prefix"
+              inlineTailHtml={inlineSourceStreamPendingHtml(sourcePendingDots)}
               sourceEvidenceByUrl={sourceEvidenceByUrl}
               sourceNumberByKey={countInlineSourceLinksInMarkdown(liveTailBeforeIncompleteSourceLink) ? prefixSourceNumbering.sourceNumberByKey : undefined}
               promptTokenReferences={promptTokenReferences}
             />
           ) : null}
-          <InlineSourceStreamPending />
+          {liveTailBeforeIncompleteSourceLink ? null : <InlineSourceStreamPending dots={sourcePendingDots} />}
         </>
       ) : liveTailHasIncompleteFence ? (
         <div className="markdown-body react-markdown stream-live-text">

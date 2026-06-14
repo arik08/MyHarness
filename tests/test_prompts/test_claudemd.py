@@ -240,7 +240,7 @@ def test_build_runtime_system_prompt_lists_subagent_presets_without_bodies(tmp_p
         lambda: [
             AgentDefinition(name="worker", description="generic worker", subagent_type="worker"),
             AgentDefinition(
-                name="office-subagent-presets:cost-analyst",
+                name="sample-office-presets:cost-analyst",
                 description="Use for cost and margin analysis.",
                 subagent_type="cost-analyst",
                 source="plugin",
@@ -273,7 +273,7 @@ def test_build_runtime_system_prompt_passes_settings_and_cwd_to_subagent_presets
         seen["cwd"] = cwd
         return [
             AgentDefinition(
-                name="office-subagent-presets:cost-analyst",
+                name="sample-office-presets:cost-analyst",
                 description="Use for cost and margin analysis.",
                 subagent_type="cost-analyst",
                 source="plugin",
