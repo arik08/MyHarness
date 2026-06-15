@@ -51,3 +51,23 @@ test("caps inline Mermaid chart height while preserving scroll access", async ()
   assert.match(mermaidChart, /overflow:\s*auto;/);
   assert.match(mermaidChart, /overscroll-behavior:\s*contain;/);
 });
+
+test("sizes Mermaid zoom viewer from the viewport instead of small fixed caps", async () => {
+  const [css, markdownMessage, artifactPreview, server] = await Promise.all([
+    readFile(new URL("../styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/MarkdownMessage.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/ArtifactPreview.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../server.mjs", import.meta.url), "utf8"),
+  ]);
+  const backdrop = css.match(/\.mermaid-zoom-backdrop\s*{[\s\S]*?^}/m)?.[0] ?? "";
+  const dialog = css.match(/\.mermaid-zoom-dialog\s*{[\s\S]*?^}/m)?.[0] ?? "";
+
+  assert.match(backdrop, /padding:\s*max\(12px,\s*2vmin\);/);
+  assert.match(dialog, /width:\s*min\(1680px,\s*94vw\);/);
+  assert.match(dialog, /height:\s*min\(1040px,\s*90vh\);/);
+  assert.doesNotMatch(dialog, /1180px|820px/);
+  for (const source of [markdownMessage, artifactPreview, server]) {
+    assert.match(source, /Math\.max\(18,\s*Math\.min\(rect\.width,\s*rect\.height\) \* 0\.035\)/);
+    assert.doesNotMatch(source, /const padding = 56;/);
+  }
+});

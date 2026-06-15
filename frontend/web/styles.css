@@ -7367,6 +7367,14 @@ a:focus-visible {
   -webkit-line-clamp: 2;
 }
 
+.skill-toggle-pill .skill-usage-count {
+  display: inline-flex;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 520;
+  -webkit-line-clamp: unset;
+}
+
 .markdown-body {
   overflow-wrap: anywhere;
   white-space: normal;
@@ -7753,15 +7761,15 @@ a:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: max(12px, 2vmin);
   background: rgba(19, 18, 16, 0.58);
 }
 
 .mermaid-zoom-dialog {
   display: flex;
   flex-direction: column;
-  width: min(1180px, calc(100vw - 40px));
-  height: min(820px, calc(100vh - 40px));
+  width: min(1680px, 94vw);
+  height: min(1040px, 90vh);
   min-height: 360px;
   overflow: hidden;
   color: var(--ink);

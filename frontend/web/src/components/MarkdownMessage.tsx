@@ -1551,7 +1551,7 @@ function openMermaidZoomViewer(source: string) {
   const fitView = () => {
     const rect = viewport.getBoundingClientRect();
     const size = canvasSize();
-    const padding = 56;
+    const padding = Math.max(18, Math.min(rect.width, rect.height) * 0.035);
     const availableWidth = Math.max(1, rect.width - padding);
     const availableHeight = Math.max(1, rect.height - padding);
     fitScale = Math.min(4, Math.max(0.05, Math.min(availableWidth / size.width, availableHeight / size.height)));

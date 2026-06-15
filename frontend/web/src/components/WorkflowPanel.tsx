@@ -433,7 +433,8 @@ const workflowEventStaggerMs = 90;
 const workflowPlanningStaggerMs = 220;
 const workflowRunningPreviewFullRenderMaxChars = 80_000;
 const workflowRunningPreviewTailChars = 48_000;
-const workflowPreviewOutputBufferMs = 48;
+const workflowPreviewOutputBufferMs = 50;
+const workflowPreviewFrameIntervalMs = 50;
 const workflowPreviewChunkPacerSampleSize = 3;
 const workflowPreviewChunkPacerMinIntervalMs = 24;
 const workflowPreviewChunkPacerMaxIntervalMs = 600;
@@ -554,7 +555,7 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
     if (!pendingLength) {
       return 0;
     }
-    const maxTickChars = pendingLength >= 1400 ? 8 : pendingLength >= 700 ? 6 : pendingLength >= 220 ? 4 : pendingLength >= 80 ? 2 : 1;
+    const maxTickChars = pendingLength >= 1400 ? 8 : pendingLength >= 700 ? 6 : pendingLength >= 220 ? 4 : pendingLength >= 20 ? 2 : 1;
     return Math.min(pendingLength, Math.max(1, Math.min(maxTickChars, desiredCount)));
   }
 
@@ -590,20 +591,16 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
     }
   }
 
-  function schedulePreviewRevealFrame() {
+  function schedulePreviewRevealFrame(delayMs = workflowPreviewFrameIntervalMs) {
     if (animationFrameRef.current !== null || frameFallbackTimerRef.current !== null) {
       return;
     }
-    animationFrameRef.current = window.requestAnimationFrame((timestamp) => {
-      flushPreviewText(timestamp);
-    });
     frameFallbackTimerRef.current = window.setTimeout(() => {
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-      flushPreviewText(performance.now());
-    }, 34);
+      frameFallbackTimerRef.current = null;
+      animationFrameRef.current = window.requestAnimationFrame((timestamp) => {
+        flushPreviewText(timestamp);
+      });
+    }, delayMs);
   }
 
   function schedulePreviewBuffer() {
@@ -620,7 +617,7 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
     }
     bufferTimerRef.current = window.setTimeout(() => {
       bufferTimerRef.current = null;
-      schedulePreviewRevealFrame();
+      schedulePreviewRevealFrame(0);
     }, workflowPreviewOutputBufferMs);
   }
 

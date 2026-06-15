@@ -797,7 +797,7 @@ function SkillUsageCount({ count }: { count?: number }) {
   const label = formatSkillUsageCount(count);
   if (!label) return null;
   return (
-    <span className="skill-usage-count" aria-label={`사용 횟수 ${label}`}>
+    <span className="skill-usage-count text-muted" aria-label={`사용 횟수 ${label}`}>
       {label}
     </span>
   );

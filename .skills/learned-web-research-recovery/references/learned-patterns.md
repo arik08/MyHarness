@@ -1,10 +1,3 @@
-## Evidence 3c983308c60f3988
-- Confidence: 0.95
-- Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.google.com 포스코 2026 5 30: 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.ferrotimes.com/news/articleView.html?idxno=48266
-- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
-
 ## Evidence bc05fd22ad729833
 - Confidence: 0.95
 - Signature: `web-search-no-results`
@@ -52,4 +45,11 @@
 - Signature: `web-fetch-401-reuters-com`
 - Lesson: A repeated failure was observed and later verified as resolved: web_fetch input=https://www.reuters.com/world/asia-pacific/china-releases-tougher-steel-capacity-swap-plan-curb-overcapacity-2026-05-18/: web_fetch 실패: Client error '401 HTTP Forbidden' for url 'https://www.reuters.com/w
 - Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.tatasteelnederland.com/nieuws/en/tata-steel-nederland-publishes-annual-report-20252026
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence fbb649461d43c734
+- Confidence: 0.85
+- Signature: `web-fetch-401-reuters-com`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch input=https://www.reuters.com/world/asia-pacific/chinas-baowu-takes-control-simandou-iron-ore-operator-2026-01-30/: web_fetch 실패: Client error '401 HTTP Forbidden' for url 'https://www.reuters.com/world/asia-pa
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://live.euronext.com/en/products/equities/company-news/2026-04-30-arcelormittal-sa-arcelormittal-reports-first-quarter-2026
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

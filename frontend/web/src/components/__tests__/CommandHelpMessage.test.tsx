@@ -279,9 +279,12 @@ describe("CommandHelpMessage", () => {
     await openHelpSection(user, "스킬");
     const ship = screen.getByRole("button", { name: /ship/ });
     const headerText = ship.querySelector(".skill-pill-header")?.textContent || "";
+    const usageCount = ship.querySelector(".skill-usage-count") as HTMLElement | null;
     expect(headerText).toContain("활성");
     expect(headerText).toContain("1k");
     expect(headerText.indexOf("활성")).toBeLessThan(headerText.indexOf("1k"));
+    expect(usageCount).toBeTruthy();
+    expect(usageCount?.className).toContain("text-muted");
   });
 
   it("adds newly discovered snapshot-only skills to the help skill catalog", async () => {

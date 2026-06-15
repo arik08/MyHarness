@@ -2964,6 +2964,28 @@ describe("appReducer", () => {
     expect(waiting.statusText).toBe("AI 후속 응답 대기 중");
   });
 
+  it("does not replace an active child step detail with a provider idle status", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "보고서 구조를 설계해줘" },
+    });
+    const started = appReducer(active, {
+      type: "backend_event",
+      event: {
+        type: "tool_started",
+        tool_name: "web_search",
+        tool_input: { query: "포스코 최근 기사" },
+      },
+    });
+    const waiting = appReducer(started, {
+      type: "backend_event",
+      event: { type: "status", message: "AI 응답을 기다리고 있습니다." },
+    });
+
+    expect(waiting.statusText).toBe("AI 응답을 기다리고 있습니다.");
+    expect(waiting.workflowEvents.some((event) => event.detail.includes("AI 응답을 기다리고 있습니다"))).toBe(false);
+  });
+
   it("merges streamed write previews when backend call ids arrive later", () => {
     const streamed = appReducer(initialAppState, {
       type: "backend_event",

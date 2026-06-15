@@ -1289,6 +1289,20 @@ function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
   if (!cleanDetail) {
     return events;
   }
+  if (providerIdleLabel(cleanDetail)) {
+    const activityIndex = events
+      .map((event, index) => ({ event, index }))
+      .reverse()
+      .find(({ event }) => event.role === "activity" && event.status === "running" && event.level !== "child")?.index ?? -1;
+    if (activityIndex === -1) {
+      return events;
+    }
+    const targetDetail = workflowProgressDetailForTarget(events[activityIndex], cleanDetail);
+    if (compactWorkflowDetail(events[activityIndex].detail) === targetDetail) {
+      return events;
+    }
+    return events.map((event, index) => index === activityIndex ? mergeWorkflowEventPatch(event, { detail: targetDetail }) : event);
+  }
   const runningChild = [...events].reverse().find((event) => (
     event.level === "child" && event.status === "running" && Boolean(event.groupId)
   ));

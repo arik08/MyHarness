@@ -178,7 +178,7 @@ describe("WorkflowPanel", () => {
     expect(screen.getByText("작성 중인 결과물 - report.html")).toBeTruthy();
   });
 
-  it("continues revealing updated running output preview text without a new chunk buffer", () => {
+  it("buffers continued running output preview updates before scheduling the next frame", () => {
     vi.useFakeTimers();
     const setTimeoutSpy = vi.spyOn(window, "setTimeout");
     const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame");
@@ -213,12 +213,22 @@ describe("WorkflowPanel", () => {
 
     expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("2 토큰");
     expect(document.querySelector(".workflow-output-line-count")?.textContent || "").not.toContain("4 토큰");
-    expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
 
     const visualBufferDelays = setTimeoutSpy.mock.calls
       .map(([, timeout]) => Number(timeout))
       .filter((timeout) => Number.isFinite(timeout));
-    expect(visualBufferDelays).not.toContain(48);
+    expect(visualBufferDelays).toContain(50);
+
+    act(() => {
+      vi.advanceTimersByTime(49);
+    });
+    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(requestAnimationFrameSpy).toHaveBeenCalled();
   });
 
   it("uses recent small chunk cadence to pace workflow output preview chunks", () => {
@@ -303,7 +313,14 @@ describe("WorkflowPanel", () => {
     );
 
     act(() => {
-      vi.advanceTimersByTime(16);
+      vi.advanceTimersByTime(49);
+    });
+
+    expect(document.querySelector(".workflow-output-body")?.textContent?.length || 0).toBe(20);
+    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("20 토큰");
+
+    act(() => {
+      vi.advanceTimersByTime(17);
     });
 
     const firstVisibleLength = document.querySelector(".workflow-output-body")?.textContent?.length || 0;
@@ -313,7 +330,7 @@ describe("WorkflowPanel", () => {
     expect(firstCount).toContain(`${firstVisibleLength.toLocaleString()} 토큰`);
 
     act(() => {
-      vi.advanceTimersByTime(2_000);
+      vi.advanceTimersByTime(3_500);
     });
 
     expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("100 토큰");

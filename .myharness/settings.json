@@ -203,8 +203,8 @@
   "verbose": false,
   "web_shared_runtime_preferences": {
     "version": 1,
-    "active_profile": "p-gpt",
-    "model": "gpt-5.4",
+    "active_profile": "codex",
+    "model": "gpt-5.5",
     "effort": "low",
     "pgpt_available": true
   }

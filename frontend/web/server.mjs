@@ -1377,7 +1377,7 @@ ${renderer}
     const rect = viewport.getBoundingClientRect();
     const width = size.width || canvas.scrollWidth || 1;
     const height = size.height || canvas.scrollHeight || 1;
-    const padding = 56;
+    const padding = Math.max(18, Math.min(rect.width, rect.height) * 0.035);
     fitScale = Math.min(4, Math.max(0.05, Math.min(Math.max(1, rect.width - padding) / width, Math.max(1, rect.height - padding) / height)));
     zoom = 1;
     offsetX = (rect.width - width * fitScale) / 2;
