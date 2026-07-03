@@ -446,6 +446,14 @@ async def test_conversation_history_search_returns_archived_user_inputs(tmp_path
         ConversationHistorySearchInput(query="현대제철"),
         context,
     )
+    spaced_result = await ConversationHistorySearchTool().execute(
+        ConversationHistorySearchInput(query="경쟁사보고서"),
+        context,
+    )
+    case_result = await ConversationHistorySearchTool().execute(
+        ConversationHistorySearchInput(query="posco"),
+        context,
+    )
     exact_result = await ConversationHistorySearchTool().execute(
         ConversationHistorySearchInput(id="user-0003-beta"),
         context,
@@ -453,6 +461,8 @@ async def test_conversation_history_search_returns_archived_user_inputs(tmp_path
 
     assert "user-0001-alpha" in search_result.output
     assert "현대제철" in search_result.output
+    assert "user-0001-alpha" in spaced_result.output
+    assert "user-0001-alpha" in case_result.output
     assert "UI는 툴팁 없이 compact하게 보여줘." in exact_result.output
     assert ConversationHistorySearchTool().is_read_only(ConversationHistorySearchInput(query="x")) is True
 

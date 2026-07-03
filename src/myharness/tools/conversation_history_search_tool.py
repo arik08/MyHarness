@@ -44,17 +44,24 @@ def _archive_from_context(context: ToolExecutionContext) -> list[dict[str, Any]]
 
 
 def _tokens(text: str) -> list[str]:
-    return [token for token in re.split(r"\s+", text.lower().strip()) if token]
+    return [token for token in re.split(r"\s+", text.casefold().strip()) if token]
+
+
+def _normalize_search_text(text: str) -> str:
+    return re.sub(r"\s+", "", text.casefold())
 
 
 def _score_entry(entry: dict[str, Any], query: str) -> int:
-    haystack = f"{entry.get('short_hint') or ''}\n{entry.get('text') or ''}".lower()
-    q = query.lower().strip()
+    haystack = f"{entry.get('short_hint') or ''}\n{entry.get('text') or ''}".casefold()
+    q = query.casefold().strip()
     if not q:
         return 1
     score = 0
     if q in haystack:
         score += 100
+    normalized_query = _normalize_search_text(q)
+    if normalized_query and normalized_query in _normalize_search_text(haystack):
+        score += 80
     for token in _tokens(q):
         if token in haystack:
             score += 10
