@@ -1234,6 +1234,7 @@ class ReactBackendHost:
         self._async_agent_monitor_task: asyncio.Task[None] | None = None
         self._swarm_status_monitor_task: asyncio.Task[None] | None = None
         self._swarm_emit_task: asyncio.Task[None] | None = None
+        self._mcp_connect_task: asyncio.Task[None] | None = None
         self._task_update_unregister: Callable[[], None] | None = None
         self._swarm_straggler_alerted_task_ids: set[str] = set()
         self._swarm_no_progress_alerted_task_ids: set[str] = set()
@@ -1268,6 +1269,7 @@ class ReactBackendHost:
             session_backend=self._config.session_backend,
             extra_skill_dirs=self._config.extra_skill_dirs,
             extra_plugin_roots=self._config.extra_plugin_roots,
+            connect_mcp=False,
         )
         await start_runtime(self._bundle)
         ready_event = BackendEvent.ready(
@@ -1285,6 +1287,7 @@ class ReactBackendHost:
         await self._emit(BackendEvent(type="active_session", value=self._bundle.session_id))
         await self._emit(BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[]))
         await self._emit(self._status_snapshot())
+        self._ensure_mcp_connect_task()
         self._register_task_update_listener()
         self._ensure_async_agent_monitor()
         self._ensure_swarm_status_monitor()
@@ -1410,7 +1413,10 @@ class ReactBackendHost:
                 line = (request.line or "").strip()
                 if not line and not request.attachments and not request.attachment_refs:
                     continue
-                await self._refresh_mcp_configs()
+                if self._line_may_need_mcp(line):
+                    await self._wait_for_mcp_connect_if_needed()
+                elif not self._mcp_connect_in_progress():
+                    await self._refresh_mcp_configs()
                 self._busy = True
                 try:
                     self._active_request_task = asyncio.create_task(
@@ -1453,6 +1459,10 @@ class ReactBackendHost:
                 self._swarm_emit_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._swarm_emit_task
+            if self._mcp_connect_task is not None:
+                self._mcp_connect_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._mcp_connect_task
             if self._task_update_unregister is not None:
                 self._task_update_unregister()
                 self._task_update_unregister = None
@@ -1462,6 +1472,69 @@ class ReactBackendHost:
             if self._bundle is not None:
                 await close_runtime(self._bundle)
         return 0
+
+    def _mcp_connect_in_progress(self) -> bool:
+        return self._mcp_connect_task is not None and not self._mcp_connect_task.done()
+
+    def _line_may_need_mcp(self, line: str) -> bool:
+        normalized = line.strip().lower()
+        if not normalized:
+            return False
+        if "mcp" in normalized:
+            return True
+        if self._bundle is None:
+            return False
+        return any(status.name.lower() in normalized for status in self._bundle.mcp_manager.list_statuses())
+
+    async def _wait_for_mcp_connect_if_needed(self) -> None:
+        if self._bundle is None:
+            return
+        if self._mcp_connect_in_progress():
+            await self._emit(
+                BackendEvent(
+                    type="status",
+                    message="MCP 연결을 마저 준비하는 중입니다...",
+                    quiet=True,
+                )
+            )
+            await self._mcp_connect_task
+            return
+        if any(status.state == "pending" for status in self._bundle.mcp_manager.list_statuses()):
+            await self._refresh_mcp_configs()
+
+    def _ensure_mcp_connect_task(self) -> None:
+        if self._bundle is None:
+            return
+        if self._mcp_connect_in_progress():
+            return
+        if not any(status.state == "pending" for status in self._bundle.mcp_manager.list_statuses()):
+            return
+        self._mcp_connect_task = asyncio.create_task(self._connect_mcp_after_ready())
+
+    async def _connect_mcp_after_ready(self) -> None:
+        assert self._bundle is not None
+        try:
+            await self._bundle.mcp_manager.connect_all()
+            for tool_info in self._bundle.mcp_manager.list_tools():
+                self._bundle.tool_registry.register(McpToolAdapter(self._bundle.mcp_manager, tool_info))
+            self._bundle.engine.set_system_prompt(
+                build_runtime_system_prompt(
+                    self._bundle.current_settings(),
+                    cwd=self._bundle.cwd,
+                    latest_user_prompt=None,
+                    extra_skill_dirs=self._bundle.extra_skill_dirs,
+                    extra_plugin_roots=self._bundle.extra_plugin_roots,
+                    task_worker=self._bundle.task_worker,
+                )
+            )
+            sync_app_state(self._bundle)
+            await self._emit(BackendEvent.state_snapshot(self._bundle.app_state.get()))
+            await self._emit(self._status_snapshot())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("background MCP connection failed")
+            await self._emit(self._status_snapshot())
 
     def _ensure_async_agent_monitor(self) -> None:
         if self._bundle is None:

@@ -204,6 +204,21 @@ def test_initial_runtime_state_snapshot_resolves_provider_before_full_startup(tm
     assert snapshot["cwd"] == str(tmp_path)
 
 
+def test_backend_host_detects_explicit_mcp_need_before_first_turn():
+    host = ReactBackendHost(BackendHostConfig())
+    host._bundle = SimpleNamespace(
+        mcp_manager=SimpleNamespace(
+            list_statuses=lambda: [
+                McpConnectionStatus(name="comtrade", state="pending", transport="stdio"),
+            ]
+        )
+    )
+
+    assert host._line_may_need_mcp("MCP 상태를 확인해줘") is True
+    assert host._line_may_need_mcp("comtrade 자료로 수출 통계를 찾아줘") is True
+    assert host._line_may_need_mcp("간단히 보고서 개요만 써줘") is False
+
+
 def test_skills_snapshot_includes_global_usage_count(tmp_path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     event = BackendEvent.skills_snapshot([

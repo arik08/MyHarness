@@ -268,6 +268,7 @@ async def build_runtime(
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
     task_worker: bool = False,
+    connect_mcp: bool = True,
 ) -> RuntimeBundle:
     """Build the shared runtime for an MyHarness session."""
     settings_overrides: dict[str, Any] = {
@@ -302,7 +303,8 @@ async def build_runtime(
         except ValueError as exc:
             resolved_api_client = MissingAuthClient(str(exc))
     mcp_manager = McpClientManager(load_mcp_server_configs(settings, plugins, cwd=cwd))
-    await mcp_manager.connect_all()
+    if connect_mcp:
+        await mcp_manager.connect_all()
     tool_registry = create_default_tool_registry(mcp_manager, task_worker=task_worker)
     # Register plugin-provided tools
     for plugin in plugins:
