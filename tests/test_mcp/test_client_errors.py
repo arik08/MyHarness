@@ -102,6 +102,32 @@ async def test_register_connected_session_tolerates_missing_resources_list():
 
 
 @pytest.mark.asyncio
+async def test_connect_all_connects_servers_concurrently(monkeypatch):
+    manager = McpClientManager(
+        {
+            "first": McpStdioServerConfig(command="python", args=[]),
+            "second": McpStdioServerConfig(command="python", args=[]),
+        }
+    )
+    started: list[str] = []
+    release = asyncio.Event()
+
+    async def _connect_stdio(name, _config):
+        started.append(name)
+        if len(started) == 2:
+            release.set()
+        await asyncio.wait_for(release.wait(), timeout=1)
+        manager._statuses[name] = McpConnectionStatus(name=name, state="connected", transport="stdio")
+
+    monkeypatch.setattr(manager, "_connect_stdio", _connect_stdio)
+
+    await manager.connect_all()
+
+    assert set(started) == {"first", "second"}
+    assert all(status.state == "connected" for status in manager.list_statuses())
+
+
+@pytest.mark.asyncio
 async def test_close_suppresses_known_runtime_error_from_stdio_cleanup():
     manager = McpClientManager({})
     stack = MagicMock()

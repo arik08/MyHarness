@@ -61,6 +61,7 @@ class McpClientManager:
 
     async def connect_all(self) -> None:
         """Connect all configured MCP servers supported by the current build."""
+        connect_tasks: list[asyncio.Task[None]] = []
         for name, config in self._server_configs.items():
             if getattr(config, "auto_connect", True) is False:
                 self._statuses[name] = McpConnectionStatus(
@@ -71,18 +72,23 @@ class McpClientManager:
                     detail="Configured; automatic connection is disabled.",
                 )
                 continue
-            if isinstance(config, McpStdioServerConfig):
-                await self._connect_stdio(name, config)
-            elif isinstance(config, McpHttpServerConfig):
-                await self._connect_http(name, config)
-            else:
-                self._statuses[name] = McpConnectionStatus(
-                    name=name,
-                    state="failed",
-                    transport=config.type,
-                    auth_configured=bool(getattr(config, "headers", None)),
-                    detail=f"Unsupported MCP transport in current build: {config.type}",
-                )
+            connect_tasks.append(asyncio.create_task(self._connect_one(name, config)))
+        if connect_tasks:
+            await asyncio.gather(*connect_tasks)
+
+    async def _connect_one(self, name: str, config: object) -> None:
+        if isinstance(config, McpStdioServerConfig):
+            await self._connect_stdio(name, config)
+        elif isinstance(config, McpHttpServerConfig):
+            await self._connect_http(name, config)
+        else:
+            self._statuses[name] = McpConnectionStatus(
+                name=name,
+                state="failed",
+                transport=getattr(config, "type", "unknown"),
+                auth_configured=bool(getattr(config, "headers", None)),
+                detail=f"Unsupported MCP transport in current build: {getattr(config, 'type', 'unknown')}",
+            )
 
     async def reconnect_all(self) -> None:
         """Reconnect all configured servers."""
