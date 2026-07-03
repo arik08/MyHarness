@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "national-assembly": {
+      "type": "stdio",
+      "description": "대한민국 국회 MCP입니다. 열린국회정보 OpenAPI와 국민참여입법센터 API를 함께 조회합니다.",
+      "command": "python",
+      "args": [
+        ".mcp/national_assembly_bootstrap.py"
+      ],
+      "env": {
+        "ASSEMBLY_API_KEY": "8b90dd60d8484b0eb9d369ee8a324149",
+        "LAWMKING_OC": "arik08",
+        "MCP_PROFILE": "full",
+        "MCP_TRANSPORT": "stdio"
+      },
+      "cwd": "."
+    }
+  }
+}
