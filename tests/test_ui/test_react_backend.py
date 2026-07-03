@@ -36,6 +36,7 @@ from myharness.ui.backend_host import (
     _detect_swarm_orchestration_checkpoint,
     _detect_unresponsive_swarm_teammate,
     _guard_premature_async_agent_final_response,
+    _initial_runtime_state_snapshot,
     _latest_long_report_progress_usage_input,
     _long_report_progress_path,
     _long_report_progress_usage_input,
@@ -185,6 +186,22 @@ def test_status_snapshot_includes_mcp_description():
 
     assert event.mcp_servers is not None
     assert event.mcp_servers[0]["description"] == "UN Comtrade API MCP입니다. 무역 데이터를 조회합니다."
+
+
+def test_initial_runtime_state_snapshot_resolves_provider_before_full_startup(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    snapshot = _initial_runtime_state_snapshot(
+        BackendHostConfig(cwd=str(tmp_path), active_profile="codex", model="gpt-5.4")
+    )
+
+    assert snapshot["provider"] == "openai-codex"
+    assert snapshot["active_profile"] == "codex"
+    assert snapshot["provider_label"] == "Codex Subscription"
+    assert snapshot["model"] == "gpt-5.4"
+    assert snapshot["cwd"] == str(tmp_path)
 
 
 def test_skills_snapshot_includes_global_usage_count(tmp_path, monkeypatch):

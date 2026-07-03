@@ -18,9 +18,10 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from myharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, SupportsStreamingMessages
+from myharness.api.provider import detect_provider
 from myharness.auth.manager import AuthManager
 from myharness.commands import CommandContext
-from myharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, Settings, resolve_model_setting
+from myharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, Settings, load_settings, resolve_model_setting
 from myharness.bridge import get_bridge_manager
 from myharness.mcp.config import load_mcp_server_configs
 from myharness.mcp.types import McpConnectionStatus
@@ -42,6 +43,7 @@ from myharness.engine.cost_tracker import usage_accounting_delta
 from myharness.output_styles import load_output_styles
 from myharness.permissions.mutation_lock import release_mutation_lock
 from myharness.project_preferences import (
+    apply_project_preferences_to_settings,
     load_project_preferences,
     set_project_mcp_enabled,
     set_project_plugin_enabled,
@@ -1169,6 +1171,46 @@ class BackendHostConfig:
     extra_plugin_roots: tuple[str, ...] = ()
 
 
+def _initial_runtime_state_snapshot(config: BackendHostConfig) -> dict[str, object]:
+    """Return the runtime fields that are cheap to know before full startup."""
+    settings_overrides: dict[str, Any] = {
+        "model": config.model,
+        "subagent_model": config.subagent_model,
+        "subagent_effort": config.subagent_effort,
+        "max_turns": config.max_turns,
+        "base_url": config.base_url,
+        "system_prompt": config.system_prompt,
+        "api_key": config.api_key,
+        "api_format": config.api_format,
+        "active_profile": config.active_profile,
+        "effort": config.effort,
+        "permission_mode": config.permission_mode,
+    }
+    cwd = str(Path(config.cwd).expanduser().resolve()) if config.cwd else str(Path.cwd())
+    settings = load_settings().merge_cli_overrides(**settings_overrides)
+    settings = apply_project_preferences_to_settings(settings, cwd)
+    provider = detect_provider(settings)
+    active_profile_name, active_profile = settings.resolve_profile()
+    return {
+        "model": settings.model,
+        "subagent_model": settings.subagent_model,
+        "subagent_effort": settings.subagent_effort,
+        "cwd": cwd,
+        "provider": provider.name,
+        "active_profile": active_profile_name,
+        "provider_label": active_profile.label,
+        "base_url": settings.base_url or "",
+        "permission_mode": settings.permission.mode.value,
+        "theme": settings.theme,
+        "vim_enabled": settings.vim_mode,
+        "voice_enabled": settings.voice_mode,
+        "fast_mode": settings.fast_mode,
+        "effort": settings.effort,
+        "passes": settings.passes,
+        "output_style": settings.output_style,
+    }
+
+
 class ReactBackendHost:
     """Drive the MyHarness runtime over a structured stdin/stdout protocol."""
 
@@ -1198,6 +1240,10 @@ class ReactBackendHost:
         self._swarm_orchestration_last_checkpoint_at = 0.0
 
     async def run(self) -> int:
+        try:
+            await self._emit(BackendEvent(type="state_snapshot", state=_initial_runtime_state_snapshot(self._config)))
+        except Exception:
+            log.exception("failed to emit initial runtime state snapshot")
         self._bundle = await build_runtime(
             model=self._config.model,
             subagent_model=self._config.subagent_model,
