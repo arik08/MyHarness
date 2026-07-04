@@ -139,6 +139,7 @@ function skillMcpSuggestions(skills: SkillItem[], query: string): Suggestion[] {
 
 function mcpSuggestions(servers: McpServerItem[], skills: SkillItem[], query: string): Suggestion[] {
   const normalized = query.replace(/^\$/, "").replace(/^mcp:/i, "").toLowerCase();
+  const serverNames = new Set(servers.map((server) => server.name.toLowerCase()));
   const serverSuggestions = servers
     .filter((server) => server.state !== "disabled" && server.name.toLowerCase().includes(normalized))
     .map((server) => {
@@ -155,7 +156,13 @@ function mcpSuggestions(servers: McpServerItem[], skills: SkillItem[], query: st
         description: server.description || server.detail || details.join(" · ") || "MCP 서버",
       };
     });
-  return [...serverSuggestions, ...skillMcpSuggestions(skills, query)];
+  const routedSkillSuggestions = skillMcpSuggestions(skills, query).filter((suggestion) => {
+    const skillName = suggestion.value.replace(/^\$mcp:/i, "").toLowerCase();
+    const source = skills.find((skill) => skill.name.toLowerCase() === skillName)?.source || "";
+    const serverName = String(source).split(":", 2)[1]?.trim().toLowerCase() || skillName;
+    return !serverNames.has(skillName) && !serverNames.has(serverName);
+  });
+  return [...serverSuggestions, ...routedSkillSuggestions];
 }
 
 function fileSuggestions(artifacts: ArtifactSummary[], query: string): Suggestion[] {

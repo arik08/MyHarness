@@ -583,7 +583,13 @@ function mergeSkillMcpState(items: ToggleEntry[], skills: SkillItem[]) {
   for (const skill of skills) {
     const name = String(skill.name || "").trim();
     const source = skill.source || "";
-    if (!name || existingNames.has(name.toLowerCase()) || !isSkillMcpSource(source)) {
+    const serverName = String(source).split(":", 2)[1]?.trim() || name;
+    if (
+      !name
+      || existingNames.has(name.toLowerCase())
+      || existingNames.has(serverName.toLowerCase())
+      || !isSkillMcpSource(source)
+    ) {
       continue;
     }
     merged.push({

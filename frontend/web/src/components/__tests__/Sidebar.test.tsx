@@ -478,6 +478,39 @@ describe("Sidebar", () => {
     expect(visibleTitle.textContent?.length).toBeLessThanOrEqual(29);
   });
 
+  it("filters chat session titles from the search field below the history heading", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          history: [
+            { value: "session-posco", label: "5/4 10:00 2 msg", description: "POSCO 경쟁사 보고서" },
+            { value: "session-minutes", label: "5/3 10:00 2 msg", description: "회의록 작성" },
+            { value: "session-budget", label: "5/2 10:00 2 msg", description: "예산 검토" },
+          ],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const search = screen.getByRole("searchbox", { name: "채팅 세션 제목 검색" });
+    const historyPanel = document.querySelector(".history-panel");
+    const orderedHistoryElements = Array.from(historyPanel?.children || []).map((element) => element.className);
+
+    expect(orderedHistoryElements.slice(0, 2)).toEqual(["history-heading", "history-search"]);
+
+    await userEvent.type(search, "posco");
+    expect(screen.getByText("POSCO 경쟁사 보고서")).toBeTruthy();
+    expect(screen.queryByText("회의록 작성")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "채팅 세션 제목 검색 지우기" }));
+    await userEvent.type(search, "회의록작성");
+    expect(screen.getByText("회의록 작성")).toBeTruthy();
+    expect(screen.queryByText("예산 검토")).toBeNull();
+  });
+
   it("keeps existing history rows visible while refreshing history", () => {
     render(
       <AppStateProvider

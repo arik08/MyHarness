@@ -1,31 +1,3 @@
-## Evidence bc05fd22ad729833
-- Confidence: 0.95
-- Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input="포스코퓨처엠" "LFP 양극재 공장" "30일": 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.wowglobal.co.kr/News/NewsView?articleId=A202605290588
-- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
-
-## Evidence e73d8c6d4f3a4510
-- Confidence: 0.95
-- Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.nate.com 포스코 20260529 경제: 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.youthdaily.co.kr/news/article.html?no=219907
-- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
-
-## Evidence 226be90481550f5a
-- Confidence: 0.95
-- Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.google.com 포스코 2026-05-30: 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.news1.kr/industry/general-industry/6180732
-- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
-
-## Evidence 6bd75acaabdfda19
-- Confidence: 0.85
-- Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:news.naver.com 포스코퓨처엠 2026.05.30: 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Fetched remote content from http://www.thecommoditiesnews.com/news/articleView.html?idxno=11243
-- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
-
 ## Evidence 18052136ad070f98
 - Confidence: 0.85
 - Signature: `web-fetch-401-reuters-com`
@@ -52,4 +24,32 @@
 - Signature: `web-fetch-401-reuters-com`
 - Lesson: A repeated failure was observed and later verified as resolved: web_fetch input=https://www.reuters.com/world/asia-pacific/chinas-baowu-takes-control-simandou-iron-ore-operator-2026-01-30/: web_fetch 실패: Client error '401 HTTP Forbidden' for url 'https://www.reuters.com/world/asia-pa
 - Do next time: Start by applying the verified corrective path: Fetched remote content from https://live.euronext.com/en/products/equities/company-news/2026-04-30-arcelormittal-sa-arcelormittal-reports-first-quarter-2026
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence a0078aacf0fbe5a7
+- Confidence: 0.95
+- Signature: `web-search-no-results`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search input=site:modernatx.com news Moderna 2026 June July: 검색 결과가 없습니다.
+- Do next time: Start by applying the verified corrective path: Ran web search for Moderna FDA advisory committee mRNA-1010 June 18 2026
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence 7362a08148f53f2a
+- Confidence: 0.95
+- Signature: `web-search-no-results`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search input=ABBV AMGN VRTX MRNA stock price performance 2025 2026 Yahoo Finance: 검색 결과가 없습니다.
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://stockanalysis.com/stocks/vrtx/
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence 293ceef713fc1bfb
+- Confidence: 0.95
+- Signature: `web-search-no-results`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search input=Moderna latest news Reuters June 2025 investor: 검색 결과가 없습니다.
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.newswire.com/view/content/moderna-reports-first-quarter-2026-financial-results-and-provides-business
+- Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
+
+## Evidence eb0bf27864b6b75c
+- Confidence: 0.95
+- Signature: `web-search-no-results`
+- Lesson: A repeated failure was observed and later verified as resolved: web_search input="Moderna Science Day" "INT" "2026": 검색 결과가 없습니다.
+- Do next time: Start by applying the verified corrective path: Fetched remote content from https://www.modernatx.com/science-day
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

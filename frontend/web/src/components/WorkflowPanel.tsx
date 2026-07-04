@@ -1774,6 +1774,7 @@ export function WebInvestigationSources({ sources, queries }: { sources: WebInve
                 <li key={source.url}>
                   <a href={source.url} target="_blank" rel="noreferrer">
                     <span className="workflow-web-source-markers" aria-hidden="true">
+                      <span className="workflow-web-source-index">{index + 1}</span>
                       <span className="workflow-web-source-favicon">
                         {sourceInitialForSource(source)}
                         {faviconUrl ? (
@@ -1791,7 +1792,6 @@ export function WebInvestigationSources({ sources, queries }: { sources: WebInve
                           />
                         ) : null}
                       </span>
-                      <span className="workflow-web-source-index">{index + 1}</span>
                     </span>
                     <span className="workflow-web-source-label">{source.label}</span>
                   </a>

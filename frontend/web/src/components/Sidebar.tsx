@@ -57,6 +57,7 @@ export function Sidebar() {
   const [editingHistoryTitle, setEditingHistoryTitle] = useState("");
   const [deletingHistoryId, setDeletingHistoryId] = useState("");
   const [expandedHistoryActionId, setExpandedHistoryActionId] = useState("");
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [visiblePendingHistoryId, setVisiblePendingHistoryId] = useState<string | null>(null);
   const historyLoadingMoreRef = useRef(false);
   const [runtimePickerGeometry, setRuntimePickerGeometry] = useState<RuntimePickerGeometry>({
@@ -718,6 +719,17 @@ export function Sidebar() {
       ]
     : visibleHistory;
   const sortedRenderedHistory = sortPinnedHistory(renderedHistory);
+  const historySearch = historySearchQuery.trim();
+  const hasHistorySearch = Boolean(historySearch);
+  const titleForHistoryItem = (item: HistoryItem) => {
+    const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
+    return isActive && conversationTitle !== "MyHarness"
+      ? conversationTitle
+      : item.description || item.label;
+  };
+  const filteredRenderedHistory = hasHistorySearch
+    ? sortedRenderedHistory.filter((item) => historyTitleMatches(titleForHistoryItem(item), historySearch))
+    : sortedRenderedHistory;
 
   return (
     <aside
@@ -856,6 +868,34 @@ export function Sidebar() {
             재시작
           </button>
         </div>
+        <label className="history-search">
+          <span aria-hidden="true" className="history-search-icon">
+            <svg viewBox="0 0 24 24">
+              <circle cx="10.5" cy="10.5" r="5.5" />
+              <path d="m15 15 4 4" />
+            </svg>
+          </span>
+          <input
+            aria-label="채팅 세션 제목 검색"
+            type="search"
+            value={historySearchQuery}
+            placeholder="제목 검색"
+            onChange={(event) => setHistorySearchQuery(event.currentTarget.value)}
+          />
+          {historySearchQuery ? (
+            <button
+              className="history-search-clear"
+              type="button"
+              aria-label="채팅 세션 제목 검색 지우기"
+              onClick={() => setHistorySearchQuery("")}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M7 7l10 10" />
+                <path d="M17 7 7 17" />
+              </svg>
+            </button>
+          ) : null}
+        </label>
         <div
           className="history-list"
           aria-busy={(state.historyLoading || state.historyLoadingMore) ? "true" : "false"}
@@ -863,13 +903,11 @@ export function Sidebar() {
         >
           {state.historyLoading && !renderedHistory.length ? (
             <p className="empty">대화 내역을 불러오는 중...</p>
-          ) : sortedRenderedHistory.length ? (
-            sortedRenderedHistory.map((item) => {
+          ) : filteredRenderedHistory.length ? (
+            filteredRenderedHistory.map((item) => {
               const editing = editingHistoryId === item.value;
               const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
-              const label = isActive && conversationTitle !== "MyHarness"
-                ? conversationTitle
-                : item.description || item.label;
+              const label = titleForHistoryItem(item);
               const displayLabel = formatHistoryTitle(label);
               const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
               const isPendingRestore = state.pendingHistoryId === item.value && visiblePendingHistoryId === item.value;
@@ -979,6 +1017,8 @@ export function Sidebar() {
                 </div>
               );
             })
+          ) : hasHistorySearch ? (
+            <p className="empty">검색 결과가 없습니다.</p>
           ) : (
             <p className="empty">저장된 세션이 아직 없습니다.</p>
           )}
@@ -1051,6 +1091,18 @@ function compactHistoryTitle(title: string) {
 
 function historyTitleForSort(item: HistoryItem) {
   return (item.description || item.label || item.value || "").trim();
+}
+
+function normalizeHistorySearchText(value: string) {
+  return String(value || "").toLocaleLowerCase("ko").replace(/\s+/g, "");
+}
+
+function historyTitleMatches(title: string, query: string) {
+  const normalizedQuery = normalizeHistorySearchText(query);
+  if (!normalizedQuery) {
+    return true;
+  }
+  return normalizeHistorySearchText(title).includes(normalizedQuery);
 }
 
 function compareHistoryTitle(left: HistoryItem, right: HistoryItem) {

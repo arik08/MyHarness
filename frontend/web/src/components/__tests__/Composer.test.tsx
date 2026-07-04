@@ -749,6 +749,36 @@ describe("Composer", () => {
     expect(input).toHaveProperty("value", "$mcp:browser-qa ");
   });
 
+  it("does not duplicate skill-mcp suggestions when a matching MCP server exists", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          mcpServers: [
+            { name: "national-assembly", state: "connected", transport: "stdio" },
+          ],
+          skills: [
+            {
+              name: "national-assembly",
+              description: "국회 MCP 라우팅",
+              source: "skill-mcp:national-assembly",
+              enabled: true,
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    await user.type(input, "$mcp:national");
+
+    expect(screen.getAllByRole("option", { name: /\$mcp:national-assembly/ })).toHaveLength(1);
+  });
+
   it("adds a trailing space after applying skill and file suggestions at the cursor", async () => {
     const user = userEvent.setup();
     render(

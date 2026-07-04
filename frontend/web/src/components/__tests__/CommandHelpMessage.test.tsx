@@ -720,6 +720,47 @@ describe("CommandHelpMessage", () => {
     );
   });
 
+  it("does not duplicate a skill-mcp entry when a real MCP server with the same name exists", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "MCP 서버:",
+      "- national-assembly [활성] (stdio): 대한민국 국회 MCP입니다.",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          mcpServers: [
+            {
+              name: "national-assembly",
+              state: "connected",
+              description: "대한민국 국회 MCP입니다.",
+              transport: "stdio",
+            },
+          ],
+          skills: [
+            {
+              name: "national-assembly",
+              description: "열린국회정보와 국민참여입법센터를 조회합니다.",
+              source: "skill-mcp:national-assembly",
+              enabled: true,
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "MCP");
+    expect(screen.getAllByRole("button", { name: /national-assembly/ })).toHaveLength(1);
+  });
+
   it("does not invent POSCO MCP connectors when they are absent from the catalog", async () => {
     const user = userEvent.setup();
     const helpText = [

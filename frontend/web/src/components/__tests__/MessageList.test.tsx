@@ -3243,6 +3243,10 @@ describe("MessageList", () => {
     expect(screen.getByRole("link", { name: /example\.com.*\/docs/ }).getAttribute("href")).toBe("https://example.com/docs");
     expect(screen.getByRole("link", { name: /github\.com.*\/example\/myharness/ }).getAttribute("href")).toBe("https://github.com/example/myharness");
     expect([...document.querySelectorAll(".workflow-web-source-index")].map((node) => node.textContent)).toEqual(["1", "2"]);
+    expect([...document.querySelector(".workflow-web-source-markers")?.children || []].map((node) => (node as Element).className)).toEqual([
+      "workflow-web-source-index",
+      "workflow-web-source-favicon",
+    ]);
     expect(document.querySelector(".workflow-web-source-path")).toBeNull();
     expect(document.querySelector(".workflow-web-source-favicon")?.textContent).toBe("E");
     expect(document.querySelector(".workflow-web-source-favicon img")?.getAttribute("src")).toBe("https://example.com/favicon.ico");

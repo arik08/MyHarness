@@ -13,7 +13,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 - For MyHarness single-file previews, keep CSS and app code in the HTML file when practical so the file card can open it directly; relative external files can break in `iframe srcdoc` previews.
 - If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use the target to plan content depth, but do not crowd the page with walls of prose, cramped tables, or repetitive cards just to hit a length. Preserve visual rhythm with section summaries, charts, callouts, and source notes.
 - Use a short purpose-specific filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it. Prefer concise readable Korean filenames with underscores for Korean-facing reports/previews; use English kebab-case or snake_case for code-heavy demos, games, or English-facing artifacts.
-- Keep dependencies minimal. Use no CDN when CSS/SVG is enough; consider CDN libraries such as ECharts, Mermaid, Three.js, Lucide, Chart.js, Tailwind, React, or ReactDOM only when they materially improve a standalone preview/report or avoid unnecessary build setup.
+- Keep dependencies purposeful. CDN libraries are optional, not mandatory: use React/ReactDOM via CDN only when repeated sections, controls, reusable state, or chart containers would materially benefit from component structure without a build step. Use plain static HTML/CSS/JS when it is sufficient for the artifact.
 - Make the artifact readable in a constrained iframe and in a normal browser window.
 - Do not include secrets or unsanitized user-provided HTML.
 
@@ -62,6 +62,17 @@ quarterly trends, sources, or a report:
 - Let the archetype change the composition: a market map may use broad comparison bands and quadrant visuals; a timeline review may use a strong chronology spine; an executive decision note may use a tight recommendation stack; an intelligence dossier may use compact evidence panels and source trails.
 - Avoid defaulting to the same hero/KPI-card/three-section/table layout unless it is clearly the best fit for the content.
 
+## Interactive Elements
+
+- For MyHarness HTML reports, dashboards, infographics, and interactive previews, actively use interaction when it improves scanning, comparison, or decision-making, but keep the artifact report-first. Prefer interactions that enrich visible content in place, such as hover/focus tooltips, chart hover details, source/excerpt tooltips, inline highlighting, sortable tables, search/filter refinement, and chart-series toggles.
+- Treat interaction as a report-reading aid, not decoration. Each control should answer a reader question such as “which segment matters?”, “what changed by period?”, “where is the risk?”, “what evidence supports this?”, or “how do scenarios compare?”
+- Be cautious with click-to-reveal screens such as tabs, accordions, hidden panels, modal detail views, and multi-step drilldowns. Use them only when space or density genuinely requires it, and never make them the only path to the executive summary, primary recommendation, key risks, or essential evidence.
+- Keep the core conclusion and main narrative visible without requiring interaction. Use controls to refine, annotate, compare, sort, or reveal secondary detail; do not turn the report into an app where the reader must click through hidden screens to understand the message.
+- Make interactive states explicit and polished: selected tabs/filters should be visually clear, empty states should explain what filter/search removed, and charts/tables should update together when they represent the same lens.
+- Prefer compact, businesslike controls: inline search, table sort headers, chart legend toggles, hover/focus tooltips, small filter chips, and restrained segmented controls. Avoid oversized game-like controls, click-heavy navigation, or controls that create layout jumps. Hover-only interaction is fine for supplemental tooltips and excerpts, but not for core meaning.
+- For search/filter interactions, default to case-insensitive and whitespace-tolerant matching when matching labels, titles, names, or evidence snippets.
+- Ensure keyboard and screen-reader basics: use real buttons/inputs where possible, add `aria-label` where text is not sufficient, expose active state with `aria-pressed`/`aria-selected` where appropriate, and keep focus outlines visible.
+
 ## Design bar
 
 - Aim for “usable in a real meeting,” not merely “AI-generated.”
@@ -84,6 +95,7 @@ quarterly trends, sources, or a report:
 - Treat large unused white space inside report panels as a layout defect, especially when a chart or table occupies only the top half of a bordered card. Do not leave a mostly empty card just because its sibling column is taller.
 - Fill report panel space with meaningful content before changing dimensions: key takeaways, interpretation bullets, metric strips, benchmark notes, anomaly explanations, source notes, confidence/limitation notes, or a compact secondary visual. Do not solve sparse panels by merely shrinking everything into a tiny chart.
 - Size charts to their actual data and reading task while preserving readable scale. Use `aspect-ratio`, `min()`/`clamp()`, and explicit `max-height` to prevent accidental oversizing, but prefer adding relevant analysis around the chart when the section has room.
+- In any two-column or multi-card row, adjacent cards must read as one aligned row: matching top edges, matching bottom edges when framed, consistent outer gutters, and comparable internal padding. Do not leave lower-row cards with visibly mismatched heights or dangling side edges unless the composition is intentionally masonry/editorial and unframed.
 - In two-column report sections, do not force equal-height cards when the content is imbalanced unless both cards are intentionally filled. If one side is taller, use the other side to explain what the reader should conclude from the visual rather than leaving blank space.
 - For paired chart-plus-interpretation sections, align the right panel with the left panel deliberately: top edges, right column width, and bottom edges should read as one clean row. If the explanation card is shorter than the chart/table card, fill it with additional analysis, caveats, source notes, ranked implications, or next-step interpretation; do not leave a ragged right-side border floating halfway down the row.
 - Use CSS grid intentionally for paired report panels (`align-items: stretch` only when both sides are content-filled; otherwise change the composition). Avoid accidental masonry-like ragged edges in formal report sections unless the whole section is intentionally unframed and editorial.
@@ -92,6 +104,7 @@ quarterly trends, sources, or a report:
 
 ## Library choices
 
+- **React/ReactDOM via CDN**: optional for MyHarness HTML reports, dashboards, infographics, and interactive previews. Use it when repeated report sections, tabs, filters, search, chart panels, sortable/explorable tables, or reusable UI state would be clearer as component-driven browser JS inside a single HTML file. Skip it when plain static HTML/CSS/JS is simpler and sufficient. Prefer prewritten browser JS over in-browser JSX/Babel when practical to keep load time lower.
 - **ECharts**: multi-chart business dashboards/reports.
 - **Chart.js**: simple common charts.
 - **Lucide or similar icon sets**: restrained semantic icons for reports, dashboards, and visual summaries.
@@ -103,7 +116,7 @@ quarterly trends, sources, or a report:
 ## Workflow
 
 1. Infer audience, output type, size target, reuse goal, and visual archetype. For report requests, choose the visual archetype yourself and proceed; ask only when missing information prevents the factual work or the requested output format is genuinely unclear.
-2. Structure the content before styling: sections, data, charts, interactions, export needs.
+2. Structure the content before styling: sections, data, charts, interactions, export needs. Decide which reader questions deserve interactive controls and which findings must remain visible by default.
 3. Build the single HTML artifact with responsive CSS and print/capture considerations.
 4. Include `@media print` for PDF-friendly output when the artifact is report-like or slide-like.
 5. If the user wants screenshots/PDF, use the `playwright-capture` skill after creating the HTML.
