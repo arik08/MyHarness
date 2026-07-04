@@ -336,6 +336,55 @@ describe("WorkflowPanel", () => {
     expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("100 토큰");
   });
 
+  it("continues the running workflow output token counter when the tab is hidden", () => {
+    vi.useFakeTimers();
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "hidden")
+      || Object.getOwnPropertyDescriptor(document, "hidden");
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+
+    const runningWriteEvent = (content: string) => ({
+      id: "write",
+      toolName: "write_file",
+      title: "write_file",
+      detail: "outputs/report.html",
+      status: "running" as const,
+      level: "child" as const,
+      toolInput: {
+        path: "outputs/report.html",
+        content,
+      },
+    });
+
+    try {
+      const { rerender } = render(
+        <AppStateProvider>
+          <WorkflowPanel events={[runningWriteEvent("가".repeat(20))]} />
+        </AppStateProvider>,
+      );
+
+      rerender(
+        <AppStateProvider>
+          <WorkflowPanel events={[runningWriteEvent("가".repeat(100))]} />
+        </AppStateProvider>,
+      );
+
+      expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("20 토큰");
+
+      act(() => {
+        vi.advanceTimersByTime(180);
+      });
+
+      const hiddenTabCount = document.querySelector(".workflow-output-line-count")?.textContent || "";
+      expect(hiddenTabCount).not.toContain("20 토큰");
+    } finally {
+      if (hiddenDescriptor) {
+        Object.defineProperty(document, "hidden", hiddenDescriptor);
+      } else {
+        delete (document as { hidden?: boolean }).hidden;
+      }
+    }
+  });
+
   it("shows request and planning detail text on parent rows", () => {
     render(
       <AppStateProvider>

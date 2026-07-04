@@ -440,6 +440,7 @@ const workflowPreviewChunkPacerMinIntervalMs = 24;
 const workflowPreviewChunkPacerMaxIntervalMs = 600;
 const workflowPreviewChunkPacerMinRate = 1 / 96;
 const workflowPreviewChunkPacerMaxRate = 0.5;
+const workflowPreviewHiddenFrameFallbackMs = 120;
 
 type WorkflowPreviewChunkSample = {
   chars: number;
@@ -597,9 +598,21 @@ function useSmoothWorkflowPreviewText(targetText: string, running: boolean, reve
     }
     frameFallbackTimerRef.current = window.setTimeout(() => {
       frameFallbackTimerRef.current = null;
+      if (document.hidden) {
+        flushPreviewText(performance.now());
+        return;
+      }
       animationFrameRef.current = window.requestAnimationFrame((timestamp) => {
         flushPreviewText(timestamp);
       });
+      frameFallbackTimerRef.current = window.setTimeout(() => {
+        frameFallbackTimerRef.current = null;
+        if (animationFrameRef.current !== null) {
+          window.cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+        flushPreviewText(performance.now());
+      }, workflowPreviewHiddenFrameFallbackMs);
     }, delayMs);
   }
 
