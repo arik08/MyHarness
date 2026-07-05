@@ -97,6 +97,21 @@ async def test_file_write_result_hides_local_path_before_playground(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_file_write_replaces_spaces_in_generated_filename(tmp_path: Path):
+    context = ToolExecutionContext(cwd=tmp_path)
+
+    write_result = await FileWriteTool().execute(
+        FileWriteToolInput(path="outputs/매출 보고서.html", content="<h1>Report</h1>"),
+        context,
+    )
+
+    assert write_result.is_error is False
+    assert write_result.output == "Wrote outputs/매출_보고서.html"
+    assert (tmp_path / "outputs" / "매출_보고서.html").read_text(encoding="utf-8") == "<h1>Report</h1>"
+    assert not (tmp_path / "outputs" / "매출 보고서.html").exists()
+
+
+@pytest.mark.asyncio
 async def test_file_write_warns_model_when_target_artifact_is_too_short(tmp_path: Path):
     context = ToolExecutionContext(
         cwd=tmp_path,

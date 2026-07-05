@@ -24,6 +24,7 @@ from myharness.tools.long_report_tool import (
     _review_prompt,
     _render_html_blocks,
     _render_html_report,
+    _resolve_output_path,
     _resolve_target_tokens,
     _source_reference_candidates,
     _parse_outline_sections,
@@ -542,6 +543,12 @@ def test_long_report_infers_user_requested_target_tokens():
         _resolve_target_tokens(LongReportToolInput(title="시장 분석", brief="매우 디테일하게 작성해줘"))
         == 160_000
     )
+
+
+def test_long_report_output_path_replaces_spaces_in_filename(tmp_path: Path):
+    path = _resolve_output_path(tmp_path, "outputs/시장 분석 보고서.html", "시장 분석", "html")
+
+    assert path == (tmp_path / "outputs" / "시장_분석_보고서.html").resolve()
 
 
 def test_long_report_keeps_large_target_across_section_continuations():

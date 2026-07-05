@@ -18,6 +18,7 @@ from myharness.tools.html_source_footnotes import (
 )
 from myharness.tools.path_display import display_tool_path
 from myharness.services.token_estimation import estimate_tokens
+from myharness.utils.helpers import replace_filename_whitespace
 
 
 class FileWriteToolInput(BaseModel):
@@ -91,10 +92,12 @@ class FileWriteTool(BaseTool):
         )
 
 
-def _resolve_path(base: Path, candidate: str) -> Path:
+def _resolve_path(base: Path, candidate: str, *, normalize_filename: bool = True) -> Path:
     path = Path(candidate).expanduser()
     if not path.is_absolute():
         path = base / path
+    if normalize_filename:
+        path = replace_filename_whitespace(path)
     return path.resolve()
 
 
@@ -104,7 +107,7 @@ def _active_artifact_version_guard(path: Path, context: ToolExecutionContext) ->
     active = str(context.metadata.get("compose_active_artifact_path") or "").strip()
     if not active:
         return ""
-    active_path = _resolve_path(context.cwd, active)
+    active_path = _resolve_path(context.cwd, active, normalize_filename=False)
     if path != active_path:
         return ""
     next_path = _next_version_path(active_path)

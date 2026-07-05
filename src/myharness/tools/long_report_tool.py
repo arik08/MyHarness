@@ -26,6 +26,7 @@ from myharness.services.long_report_progress import write_long_report_progress_s
 from myharness.services.token_estimation import estimate_tokens
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.tools.path_display import display_tool_path
+from myharness.utils.helpers import replace_filename_whitespace
 
 
 DEFAULT_REPORT_TOKEN_CAP = 12_000
@@ -866,6 +867,7 @@ def _resolve_output_path(cwd: Path, output_path: str, title: str, output_format:
     path = Path(candidate).expanduser()
     if not path.is_absolute():
         path = cwd / path
+    path = replace_filename_whitespace(path)
     return path.resolve()
 
 

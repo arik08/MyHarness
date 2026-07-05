@@ -13,7 +13,7 @@ from pathlib import Path
 
 from myharness.config.paths import get_data_dir
 
-__all__ = ["get_data_path", "safe_filename", "split_message"]
+__all__ = ["get_data_path", "replace_filename_whitespace", "safe_filename", "split_message"]
 
 
 def get_data_path() -> Path:
@@ -58,6 +58,13 @@ def split_message(text: str, max_length: int) -> list[str]:
     if remaining:
         chunks.append(remaining)
     return chunks
+
+
+def replace_filename_whitespace(path: Path) -> Path:
+    """Return ``path`` with whitespace in the final filename changed to underscores."""
+
+    name = re.sub(r"\s+", "_", path.name)
+    return path if name == path.name else path.with_name(name)
 
 
 def safe_filename(value: object, *, max_length: int = 128) -> str:

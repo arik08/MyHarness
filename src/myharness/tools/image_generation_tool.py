@@ -20,6 +20,7 @@ from myharness.auth.storage import load_external_binding
 from myharness.auth.storage import load_credential
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.utils.fs import atomic_write_bytes
+from myharness.utils.helpers import replace_filename_whitespace
 
 
 DEFAULT_IMAGE_MODEL = "gpt-image-2"
@@ -381,7 +382,7 @@ def _resolve_output_path(cwd: Path, arguments: ImageGenerationToolInput) -> Path
         path = Path(arguments.path).expanduser()
         if not path.is_absolute():
             path = cwd / path
-        return path.resolve()
+        return replace_filename_whitespace(path).resolve()
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     slug = _slugify(arguments.prompt)

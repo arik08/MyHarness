@@ -119,6 +119,23 @@ async def test_generate_image_saves_api_image(tmp_path: Path, monkeypatch: pytes
 
 
 @pytest.mark.asyncio
+async def test_generate_image_replaces_spaces_in_output_filename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MYHARNESS_IMAGE_API_KEY", "sk-test")
+    monkeypatch.setattr("myharness.tools.image_generation_tool.AsyncOpenAI", _FakeOpenAI)
+
+    result = await ImageGenerationTool().execute(
+        ImageGenerationToolInput(prompt="small red cube", path="generated images/red cube.png"),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    expected_path = (tmp_path / "generated images" / "red_cube.png").resolve()
+    assert result.is_error is False
+    assert expected_path.read_bytes() == b"fake-png"
+    assert result.metadata["path"] == str(expected_path)
+    assert not (tmp_path / "generated images" / "red cube.png").exists()
+
+
+@pytest.mark.asyncio
 async def test_generate_image_requires_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("MYHARNESS_IMAGE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
