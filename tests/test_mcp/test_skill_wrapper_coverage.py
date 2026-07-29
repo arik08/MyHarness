@@ -26,3 +26,17 @@ def test_every_configured_mcp_has_one_skill_wrapper():
     assert set(wrapper_counts) == configured_servers
     assert all(count == 1 for count in wrapper_counts.values())
     assert all(len(skill.description) <= 180 for skill in skills if is_mcp_routed_skill(skill))
+
+
+def test_posco_placeholder_configs_are_repo_portable():
+    configs = load_mcp_configs_from_dirs([ROOT / ".mcp"])
+    posco_configs = {
+        name: config
+        for name, config in configs.items()
+        if name.startswith("posco-")
+    }
+
+    assert len(posco_configs) == 9
+    for config in posco_configs.values():
+        assert config.cwd == "."
+        assert config.args[0] == ".mcp/posco_connector_stub.py"
