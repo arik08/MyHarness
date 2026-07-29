@@ -85,7 +85,15 @@ test("keeps only the latest status progress message in live replay", () => {
 test("replays a later MCP state snapshot after the ready event", () => {
   const state = createSessionReplayState();
 
-  updateSessionReplayState(state, { type: "state_snapshot", state: { phase: "starting" } });
+  updateSessionReplayState(state, {
+    type: "state_snapshot",
+    state: {
+      phase: "starting",
+      runtime_options: {
+        providers: [{ value: "codex", label: "Codex Subscription" }],
+      },
+    },
+  });
   updateSessionReplayState(state, { type: "ready", mcp_servers: [] });
   updateSessionReplayState(state, {
     type: "state_snapshot",
@@ -97,6 +105,31 @@ test("replays a later MCP state snapshot after the ready event", () => {
 
   assert.deepEqual(replay.map((event) => event.type), ["ready", "state_snapshot"]);
   assert.deepEqual(replay.at(-1).mcp_servers.map((server) => server.name), ["ecos", "kosis", "eia"]);
+  assert.deepEqual(replay.at(-1).state.runtime_options.providers, [
+    { value: "codex", label: "Codex Subscription" },
+  ]);
+});
+
+test("carries runtime options from ready into a later partial state snapshot", () => {
+  const state = createSessionReplayState();
+
+  updateSessionReplayState(state, {
+    type: "ready",
+    state: {
+      runtime_options: {
+        models: [{ value: "gpt-5.4", label: "GPT-5.4" }],
+      },
+    },
+  });
+  updateSessionReplayState(state, {
+    type: "state_snapshot",
+    state: { phase: "ready" },
+  });
+
+  const replay = replayEventsForState(state);
+  assert.deepEqual(replay.at(-1).state.runtime_options.models, [
+    { value: "gpt-5.4", label: "GPT-5.4" },
+  ]);
 });
 
 test("keeps the user transcript when status messages exceed the stable replay limit", () => {

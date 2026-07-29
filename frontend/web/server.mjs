@@ -73,6 +73,11 @@ let server = null;
 const workspaceMutationQueues = new Map();
 const aiEditHeartbeatIntervalMs = 15_000;
 const clipboardImageMaxBytes = 64 * 1024 * 1024;
+const entryPassword = process.env.MYHARNESS_ENTRY_PASSWORD === undefined
+  ? "1212"
+  : String(process.env.MYHARNESS_ENTRY_PASSWORD);
+const entryCookieName = "myharness_entry";
+const entrySessionToken = crypto.randomBytes(32).toString("base64url");
 const reservedWorkspaceNames = new Set([
   "CON",
   "PRN",
@@ -532,6 +537,64 @@ async function readRequestBuffer(request, maxBytes) {
     chunks.push(buffer);
   }
   return Buffer.concat(chunks, total);
+}
+
+function secureEqual(left, right) {
+  const leftDigest = crypto.createHash("sha256").update(String(left)).digest();
+  const rightDigest = crypto.createHash("sha256").update(String(right)).digest();
+  return crypto.timingSafeEqual(leftDigest, rightDigest);
+}
+
+function decodeCookieValue(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return "";
+  }
+}
+
+function requestCookies(request) {
+  return Object.fromEntries(
+    String(request.headers.cookie || "")
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const separator = part.indexOf("=");
+        if (separator < 0) return [part, ""];
+        return [part.slice(0, separator), decodeCookieValue(part.slice(separator + 1))];
+      }),
+  );
+}
+
+function hasEntryAccess(request) {
+  return !entryPassword || secureEqual(requestCookies(request)[entryCookieName] || "", entrySessionToken);
+}
+
+async function handleEntryAuth(request, response, pathname) {
+  if (request.method === "GET" && pathname === "/api/auth/status") {
+    json(response, 200, { authenticated: hasEntryAccess(request) });
+    return true;
+  }
+  if (request.method === "POST" && pathname === "/api/auth/login") {
+    try {
+      const body = await readJson(request);
+      if (!entryPassword || secureEqual(body.password || "", entryPassword)) {
+        response.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Set-Cookie": `${entryCookieName}=${encodeURIComponent(entrySessionToken)}; HttpOnly; SameSite=Strict; Path=/`,
+        });
+        response.end(JSON.stringify({ ok: true }));
+      } else {
+        json(response, 401, { error: "비밀번호가 올바르지 않습니다." });
+      }
+    } catch {
+      json(response, 400, { error: "요청 형식이 올바르지 않습니다." });
+    }
+    return true;
+  }
+  return false;
 }
 
 async function writeWindowsClipboardImage(png) {
@@ -6202,8 +6265,17 @@ server = createServer(async (request, response) => {
       return;
     }
   }
-  if (pathname.startsWith("/api/") && (await handleApi(request, response, pathname))) {
-    return;
+  if (pathname.startsWith("/api/")) {
+    if (await handleEntryAuth(request, response, pathname)) {
+      return;
+    }
+    if (!hasEntryAccess(request)) {
+      json(response, 401, { error: "인증이 필요합니다." });
+      return;
+    }
+    if (await handleApi(request, response, pathname)) {
+      return;
+    }
   }
   if (pathname.startsWith("/share/") && (await handleShare(request, response, pathname))) {
     return;

@@ -48,6 +48,24 @@ function rememberLatestEvent(state, key, event) {
   });
 }
 
+function preserveRuntimeOptions(state, event) {
+  if (event?.state?.runtime_options) {
+    return event;
+  }
+  const runtimeOptions = state.latestEvents.get("state_snapshot")?.event?.state?.runtime_options
+    || state.latestEvents.get("ready")?.event?.state?.runtime_options;
+  if (!runtimeOptions) {
+    return event;
+  }
+  return {
+    ...event,
+    state: {
+      ...event.state,
+      runtime_options: runtimeOptions,
+    },
+  };
+}
+
 function deleteToolStream(state, event) {
   const key = toolCallKey(event);
   state.toolInputDeltas.delete(key);
@@ -164,7 +182,7 @@ export function updateSessionReplayState(state, event) {
     return;
   }
   if (type === "ready" || type === "state_snapshot" || type === "skills_snapshot" || type === "tasks_snapshot") {
-    rememberLatestEvent(state, type, event);
+    rememberLatestEvent(state, type, type === "state_snapshot" ? preserveRuntimeOptions(state, event) : event);
     return;
   }
   if (type === "status" || type === "session_title" || type === "active_session" || type === "todo_update" || type === "plan_mode_change") {

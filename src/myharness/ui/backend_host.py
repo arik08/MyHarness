@@ -1315,6 +1315,7 @@ class ReactBackendHost:
             ],
             self._skill_snapshots(),
             self._plugin_snapshots(),
+            _runtime_picker_options(self._bundle.current_settings()),
         )
         ready_event.session_usage = self._bundle.engine.usage_cost_summary()
         await self._emit(ready_event)

@@ -224,10 +224,14 @@ class BackendEvent(BaseModel):
         commands: list[str | dict[str, Any]],
         skills: list[SkillSnapshot] | None = None,
         plugins: list[PluginSnapshot] | None = None,
+        runtime_options: dict[str, Any] | None = None,
     ) -> "BackendEvent":
+        state_payload = _state_payload(state)
+        if runtime_options is not None:
+            state_payload["runtime_options"] = runtime_options
         return cls(
             type="ready",
-            state=_state_payload(state),
+            state=state_payload,
             tasks=[TaskSnapshot.from_record(task) for task in tasks],
             mcp_servers=[],
             bridge_sessions=[],

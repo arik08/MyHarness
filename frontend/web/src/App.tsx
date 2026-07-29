@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { sendBackendRequest } from "./api/messages";
 import { listLiveSessions, restartSession, startSession } from "./api/session";
 import { AppShell } from "./components/AppShell";
@@ -9,6 +10,109 @@ import { useAppState } from "./state/app-state";
 import { runtimePreferencesFromState } from "./utils/runtimePreferences";
 
 const isDevBuild = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
+
+function EntryGate({ children }: { children: React.ReactNode }) {
+  const { state } = useAppState();
+  const [accessState, setAccessState] = useState<"checking" | "locked" | "unlocked">("checking");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (state.themeId === "light") {
+      delete document.documentElement.dataset.theme;
+    } else {
+      document.documentElement.dataset.theme = state.themeId;
+    }
+  }, [state.themeId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/auth/status", {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller.signal,
+    }).then(async (response) => {
+      const payload = await response.json().catch(() => ({})) as { authenticated?: boolean };
+      if (!controller.signal.aborted) {
+        setAccessState(response.ok && payload.authenticated ? "unlocked" : "locked");
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted) {
+        setAccessState("locked");
+      }
+    });
+    return () => controller.abort();
+  }, []);
+
+  async function unlock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (response.ok) {
+        setAccessState("unlocked");
+        setPassword("");
+        return;
+      }
+    } catch {
+      setError("서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+    setError("비밀번호가 올바르지 않습니다.");
+    setPassword("");
+  }
+
+  if (accessState === "unlocked") {
+    return children;
+  }
+
+  if (accessState === "checking") {
+    return (
+      <main className="entry-gate" aria-busy="true">
+        <section className="entry-gate-card">
+          <div className="entry-gate-brand">MyHarness</div>
+          <p>접근 권한을 확인하고 있습니다.</p>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="entry-gate">
+      <section className="entry-gate-card" aria-labelledby="entry-gate-title">
+        <div className="entry-gate-brand">MyHarness</div>
+        <h1 id="entry-gate-title">MyHarness에 오신 것을 환영합니다</h1>
+        <p>계속하려면 비밀번호를 입력해 주세요.</p>
+        <form className="entry-gate-form" onSubmit={(event) => void unlock(event)}>
+          <label htmlFor="entry-password">비밀번호</label>
+          <input
+            id="entry-password"
+            type="password"
+            value={password}
+            autoComplete="current-password"
+            autoFocus
+            inputMode="numeric"
+            aria-describedby={error ? "entry-password-error" : undefined}
+            aria-invalid={Boolean(error)}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              if (error) setError("");
+            }}
+          />
+          <div id="entry-password-error" className="entry-gate-error" role="alert" aria-live="polite">
+            {error}
+          </div>
+          <button type="submit" disabled={!password}>계속</button>
+        </form>
+      </section>
+    </main>
+  );
+}
 
 function sharedChatLinkParams() {
   const params = new URLSearchParams(window.location.search);
@@ -161,7 +265,9 @@ function AppContent() {
 export default function App() {
   return (
     <AppStateProvider>
-      <AppContent />
+      <EntryGate>
+        <AppContent />
+      </EntryGate>
     </AppStateProvider>
   );
 }

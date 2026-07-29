@@ -5,7 +5,7 @@ import html2canvas from "html2canvas";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactPanel, clampArtifactPanelWidth } from "../ArtifactPanel";
-import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactHtmlEditMessage, artifactHtmlEditModeMessage, selectArtifactCaptureViewportWidth } from "../ArtifactPreview";
+import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactCaptureHorizontalBounds, artifactHtmlEditMessage, artifactHtmlEditModeMessage, selectArtifactCaptureScale, selectArtifactCaptureViewportWidth } from "../ArtifactPreview";
 import { ModalHost } from "../ModalHost";
 import { TooltipLayer } from "../TooltipLayer";
 import { AppStateProvider, useAppState } from "../../state/app-state";
@@ -636,16 +636,137 @@ describe("ArtifactPanel", () => {
     expect(srcdoc).toContain('data-myharness-capture-script="true"');
     expect(srcdoc).toContain("myharness:artifact-capture-request");
     expect(srcdoc).toContain("myharness:artifact-capture-snapshot");
+    expect(srcdoc).toContain("canvas.getBoundingClientRect()");
+    expect(srcdoc).toContain("(rect.width / parentRect.width) * 100");
+    expect(srcdoc).toContain('image.style.width = `${relativeWidth}%`');
+    expect(srcdoc).toContain('image.style.maxWidth = "100%"');
+    expect(srcdoc).toContain('image.style.minWidth = "0"');
+    expect(srcdoc).toContain('image.style.height = "auto"');
+    expect(srcdoc).toContain("const chartHost = rendererHost?.parentElement");
+    expect(srcdoc).toContain('host.style.width = "100%"');
+    expect(srcdoc).not.toContain('host.style.overflow = "hidden"');
+    expect(srcdoc).toContain('ancestor.style.minWidth = "0"');
+    expect(srcdoc).not.toContain("image.width = canvas.width");
   });
 
-  it("uses the first viewport where the report content stops growing", () => {
+  it("keeps rasterized canvas charts inside their captured grid columns", async () => {
+    const srcdoc = renderHtmlPreviewSrcdoc(
+      "<html><body><main><section id=\"chart-card\"><div id=\"chart-host\" style=\"width:766px;height:270px\"><div id=\"renderer-host\" style=\"position:relative;overflow:hidden;width:766px;height:270px\"><canvas aria-label=\"Trend chart\"></canvas></div></div></section></main></body></html>",
+    );
+    const dom = new JSDOM(srcdoc, {
+      pretendToBeVisual: true,
+      runScripts: "dangerously",
+      url: "http://localhost/",
+    });
+    const canvas = dom.window.document.querySelector("canvas") as HTMLCanvasElement;
+    const chartCard = dom.window.document.querySelector("#chart-card") as HTMLElement;
+    const chartHost = dom.window.document.querySelector("#chart-host") as HTMLElement;
+    const rendererHost = dom.window.document.querySelector("#renderer-host") as HTMLElement;
+    const rect = (width: number, height: number) => ({
+      left: 0,
+      top: 0,
+      right: width,
+      bottom: height,
+      width,
+      height,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+    canvas.getBoundingClientRect = () => rect(766, 270);
+    rendererHost.getBoundingClientRect = () => rect(766, 270);
+    chartHost.getBoundingClientRect = () => rect(766, 270);
+    chartCard.getBoundingClientRect = () => rect(500, 300);
+    canvas.toDataURL = () => "data:image/png;base64,cG5n";
+    const snapshot = new Promise<{ html: string }>((resolve) => {
+      dom.window.addEventListener("message", (event: MessageEvent) => {
+        if (event.data?.type === "myharness:artifact-capture-snapshot") {
+          resolve(event.data);
+        }
+      });
+    });
+
+    dom.window.postMessage({
+      type: "myharness:artifact-capture-request",
+      requestId: "capture-grid",
+      path: "outputs/report.html",
+    }, "*");
+    const payload = await snapshot;
+    const captured = new JSDOM(payload.html);
+    const image = captured.window.document.querySelector("img") as HTMLImageElement;
+
+    expect(image.style.width).toBe("100%");
+    expect(image.style.maxWidth).toBe("100%");
+    expect(image.style.minWidth).toBe("0");
+    expect((image.parentElement as HTMLElement).style.width).toBe("100%");
+    expect((image.parentElement as HTMLElement).style.maxWidth).toBe("100%");
+    expect((image.parentElement as HTMLElement).style.minWidth).toBe("0");
+    expect((image.parentElement as HTMLElement).style.overflow).toBe("hidden");
+    expect((image.parentElement?.parentElement as HTMLElement).style.width).toBe("100%");
+    expect((image.parentElement?.parentElement as HTMLElement).style.maxWidth).toBe("100%");
+    expect((image.parentElement?.parentElement as HTMLElement).style.minWidth).toBe("0");
+    expect((image.closest("main") as HTMLElement).style.minWidth).toBe("0");
+  });
+
+  it("uses the narrowest viewport that preserves the report layout height", () => {
     expect(selectArtifactCaptureViewportWidth([
-      { viewportWidth: 960, contentWidth: 880, hasHorizontalOverflow: false },
-      { viewportWidth: 1120, contentWidth: 1040, hasHorizontalOverflow: false },
-      { viewportWidth: 1280, contentWidth: 1200, hasHorizontalOverflow: false },
-      { viewportWidth: 1440, contentWidth: 1200, hasHorizontalOverflow: false },
-      { viewportWidth: 1600, contentWidth: 1200, hasHorizontalOverflow: false },
-    ])).toBe(1280);
+      { viewportWidth: 960, contentWidth: 960, contentHeight: 2800, hasHorizontalOverflow: false },
+      { viewportWidth: 1120, contentWidth: 1120, contentHeight: 2500, hasHorizontalOverflow: false },
+      { viewportWidth: 1280, contentWidth: 1280, contentHeight: 2400, hasHorizontalOverflow: false },
+      { viewportWidth: 1440, contentWidth: 1440, contentHeight: 2380, hasHorizontalOverflow: false },
+      { viewportWidth: 1600, contentWidth: 1600, contentHeight: 2380, hasHorizontalOverflow: false },
+      { viewportWidth: 1920, contentWidth: 1920, contentHeight: 2380, hasHorizontalOverflow: false },
+    ])).toBe(1120);
+  });
+
+  it("uses the browser display scale up to the preferred output width", () => {
+    const displayScale = selectArtifactCaptureScale(1120, 2400, 1.25);
+    expect(displayScale).toBeCloseTo(1280 / 1120);
+    expect(1120 * displayScale).toBe(1280);
+    expect(selectArtifactCaptureScale(1120, 2400, Number.NaN)).toBe(1);
+    expect(selectArtifactCaptureScale(1120, 30_000, 2)).toBeLessThan(2);
+  });
+
+  it("crops the capture to the report container without clipping its contents", () => {
+    const dom = new JSDOM("<!doctype html><html><body><main>Report</main></body></html>");
+    const main = dom.window.document.querySelector("main") as HTMLElement;
+    main.getBoundingClientRect = () => ({
+      left: 40,
+      top: 0,
+      right: 1240,
+      bottom: 2400,
+      width: 1200,
+      height: 2400,
+      x: 40,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+
+    expect(artifactCaptureHorizontalBounds(dom.window.document, 1280)).toEqual({
+      x: 40,
+      width: 1200,
+    });
+  });
+
+  it("crops to a body-level report wrapper when the document has no semantic main", () => {
+    const dom = new JSDOM("<!doctype html><html><body><div class=\"wrap\">Report</div><script></script></body></html>");
+    const wrap = dom.window.document.querySelector(".wrap") as HTMLElement;
+    wrap.getBoundingClientRect = () => ({
+      left: 360,
+      top: 0,
+      right: 1560,
+      bottom: 4471,
+      width: 1200,
+      height: 4471,
+      x: 360,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+
+    expect(artifactCaptureHorizontalBounds(dom.window.document, 1920)).toEqual({
+      x: 360,
+      width: 1200,
+    });
   });
 
   it("copies the PNG returned by the active HTML preview frame", async () => {
@@ -719,9 +840,10 @@ describe("ArtifactPanel", () => {
       expect(vi.mocked(html2canvas)).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
-          width: 1920,
+          x: 0,
+          width: 960,
           height: 900,
-          windowWidth: 1920,
+          windowWidth: 960,
           windowHeight: 900,
         }),
       );

@@ -132,6 +132,7 @@ async function startWebServer({ host = "127.0.0.1", env = {} } = {}) {
     MYHARNESS_DATA_DIR: join(configDir, "data"),
     MYHARNESS_LOGS_DIR: join(configDir, "logs"),
     MYHARNESS_HOME: configDir,
+    MYHARNESS_ENTRY_PASSWORD: "",
     ...env,
   };
 
@@ -190,6 +191,47 @@ async function startWebServer({ host = "127.0.0.1", env = {} } = {}) {
     },
   };
 }
+
+test("requires a server-issued entry cookie before protected API access", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_ENTRY_PASSWORD: "1212" },
+  });
+  t.after(() => app.stop());
+
+  const statusBefore = await fetch(`${app.baseUrl}/api/auth/status`);
+  assert.deepEqual(await statusBefore.json(), { authenticated: false });
+
+  const blocked = await fetch(`${app.baseUrl}/api/live-sessions?clientId=test-client`);
+  assert.equal(blocked.status, 401);
+
+  const wrong = await fetch(`${app.baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password: "9999" }),
+  });
+  assert.equal(wrong.status, 401);
+
+  const login = await fetch(`${app.baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password: "1212" }),
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get("set-cookie");
+  assert.match(cookie || "", /^myharness_entry=/);
+  assert.match(cookie || "", /HttpOnly/i);
+  assert.match(cookie || "", /SameSite=Strict/i);
+
+  const statusAfter = await fetch(`${app.baseUrl}/api/auth/status`, {
+    headers: { cookie },
+  });
+  assert.deepEqual(await statusAfter.json(), { authenticated: true });
+
+  const allowed = await fetch(`${app.baseUrl}/api/live-sessions?clientId=test-client`, {
+    headers: { cookie },
+  });
+  assert.equal(allowed.status, 200);
+});
 
 test("rejects shell command requests without an owned active session", async (t) => {
   const app = await startWebServer({

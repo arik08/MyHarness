@@ -211,6 +211,30 @@ def test_initial_runtime_state_snapshot_resolves_provider_before_full_startup(tm
     ]
 
 
+def test_ready_event_keeps_runtime_options_available_after_startup():
+    runtime_options = {
+        "providers": [{"value": "codex", "label": "Codex Subscription"}],
+        "models_by_provider": {"codex": [{"value": "gpt-5.5", "label": "gpt-5.5"}]},
+    }
+
+    event = BackendEvent.ready(
+        AppState(
+            provider="openai-codex",
+            model="gpt-5.5",
+            subagent_model="gpt-5.4-mini",
+            subagent_effort="medium",
+            permission_mode="default",
+            theme="light",
+        ),
+        [],
+        [],
+        runtime_options=runtime_options,
+    )
+
+    assert event.state is not None
+    assert event.state["runtime_options"] == runtime_options
+
+
 def test_backend_host_detects_explicit_mcp_need_before_first_turn():
     host = ReactBackendHost(BackendHostConfig())
     host._bundle = SimpleNamespace(

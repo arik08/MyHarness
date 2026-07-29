@@ -26,6 +26,7 @@ export type ArtifactCaptureResult = {
 const htmlMermaidCodeSelector = "pre > code.language-mermaid, pre > code.lang-mermaid";
 const artifactCaptureDesktopWidths = [960, 1120, 1280, 1440, 1600, 1920];
 const artifactCaptureDesktopHeight = 900;
+const artifactCapturePreferredOutputWidth = 1280;
 const artifactCaptureMaxDimension = 32767;
 const artifactCaptureMaxPixels = 50_000_000;
 
@@ -674,13 +675,35 @@ function iframeCaptureBridge(content: string, artifactPath: string) {
         const target = snapshotCanvases[index];
         if (!target) return;
         try {
+          const rect = canvas.getBoundingClientRect();
+          const parentRect = canvas.parentElement?.getBoundingClientRect();
+          const relativeWidth = parentRect?.width
+            ? Math.min(100, (rect.width / parentRect.width) * 100)
+            : 100;
           const image = document.createElement("img");
           image.src = canvas.toDataURL("image/png");
           image.alt = canvas.getAttribute("aria-label") || "";
-          image.width = canvas.width;
-          image.height = canvas.height;
           image.setAttribute("style", canvas.getAttribute("style") || "");
+          image.style.width = \`\${relativeWidth}%\`;
+          image.style.maxWidth = "100%";
+          image.style.minWidth = "0";
+          image.style.height = "auto";
+          image.style.display = "block";
+          image.style.objectFit = "contain";
           target.replaceWith(image);
+          const rendererHost = image.parentElement;
+          const chartHost = rendererHost?.parentElement;
+          for (const host of [rendererHost, chartHost]) {
+            if (!host || host.tagName === "BODY" || host.tagName === "HTML") continue;
+            host.style.width = "100%";
+            host.style.maxWidth = "100%";
+            host.style.minWidth = "0";
+          }
+          let ancestor = image.parentElement;
+          while (ancestor && ancestor.tagName !== "BODY" && ancestor.tagName !== "HTML") {
+            ancestor.style.minWidth = "0";
+            ancestor = ancestor.parentElement;
+          }
         } catch {
           // Cross-origin canvas pixels cannot be serialized; keep the canvas element.
         }
@@ -766,6 +789,7 @@ async function optimalArtifactCaptureWidth(
   const measurements: Array<{
     viewportWidth: number;
     contentWidth: number;
+    contentHeight: number;
     hasHorizontalOverflow: boolean;
   }> = [];
   for (const viewportWidth of widths) {
@@ -774,13 +798,10 @@ async function optimalArtifactCaptureWidth(
     const root = document.documentElement;
     const body = document.body;
     const scrollWidth = Math.max(root.scrollWidth, body?.scrollWidth || 0);
+    const contentHeight = Math.max(root.scrollHeight, body?.scrollHeight || 0);
     const contentWidth = renderedReportContentWidth(document) || scrollWidth || viewportWidth;
     const hasHorizontalOverflow = scrollWidth > viewportWidth + 1;
-    measurements.push({ viewportWidth, contentWidth, hasHorizontalOverflow });
-    const selectedWidth = selectArtifactCaptureViewportWidth(measurements);
-    if (selectedWidth !== viewportWidth) {
-      return selectedWidth;
-    }
+    measurements.push({ viewportWidth, contentWidth, contentHeight, hasHorizontalOverflow });
   }
   return selectArtifactCaptureViewportWidth(measurements);
 }
@@ -788,19 +809,49 @@ async function optimalArtifactCaptureWidth(
 export function selectArtifactCaptureViewportWidth(measurements: Array<{
   viewportWidth: number;
   contentWidth: number;
+  contentHeight: number;
   hasHorizontalOverflow: boolean;
 }>) {
-  for (let index = 1; index < measurements.length; index += 1) {
-    const previous = measurements[index - 1];
-    const current = measurements[index];
-    if (current.hasHorizontalOverflow) continue;
-    const growth = current.contentWidth - previous.contentWidth;
-    const plateauThreshold = Math.max(16, Math.round(previous.contentWidth * 0.015));
-    if (growth <= plateauThreshold) {
-      return previous.viewportWidth;
-    }
+  const viable = measurements.filter((measurement) => !measurement.hasHorizontalOverflow);
+  if (viable.length === 0) {
+    return measurements.at(-1)?.viewportWidth || artifactCaptureDesktopWidths[0];
   }
-  return measurements.at(-1)?.viewportWidth || artifactCaptureDesktopWidths[0];
+  const shortestHeight = Math.min(...viable.map((measurement) => measurement.contentHeight));
+  const stableHeightLimit = Math.ceil(shortestHeight * 1.08);
+  return viable.find((measurement) => measurement.contentHeight <= stableHeightLimit)?.viewportWidth
+    || viable.at(-1)!.viewportWidth;
+}
+
+export function selectArtifactCaptureScale(
+  width: number,
+  height: number,
+  devicePixelRatio: number,
+) {
+  const browserScale = Math.max(1, Number.isFinite(devicePixelRatio) ? devicePixelRatio : 1);
+  const preferredWidthScale = Math.max(1, artifactCapturePreferredOutputWidth / width);
+  const desiredScale = Math.min(browserScale, preferredWidthScale);
+  const dimensionScale = Math.min(
+    artifactCaptureMaxDimension / width,
+    artifactCaptureMaxDimension / height,
+  );
+  const pixelScale = Math.sqrt(artifactCaptureMaxPixels / (width * height));
+  return Math.max(1, Math.min(desiredScale, dimensionScale, pixelScale));
+}
+
+export function artifactCaptureHorizontalBounds(document: Document, viewportWidth: number) {
+  const semanticCandidates = Array.from(document.querySelectorAll<HTMLElement>("main, article, [role=\"main\"]"));
+  const bodyCandidates = Array.from(document.body?.children || []) as HTMLElement[];
+  const measuredCandidates = (semanticCandidates.length ? semanticCandidates : bodyCandidates)
+    .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.width > 0 && rect.height > 0 && rect.width <= viewportWidth + 1)
+    .sort((left, right) => (right.rect.width * right.rect.height) - (left.rect.width * left.rect.height));
+  const target = measuredCandidates[0];
+  if (!target) {
+    return { x: 0, width: viewportWidth };
+  }
+  const x = Math.max(0, Math.floor(target.rect.left));
+  const width = Math.min(viewportWidth - x, Math.ceil(target.rect.width));
+  return width > 0 ? { x, width } : { x: 0, width: viewportWidth };
 }
 
 async function captureArtifactSnapshot(snapshot: {
@@ -842,8 +893,10 @@ async function captureArtifactSnapshot(snapshot: {
     await waitForCaptureLayout();
     const root = captureDocument.documentElement;
     const body = captureDocument.body;
-    const width = Math.max(viewportWidth, renderedReportContentWidth(captureDocument));
+    const horizontalBounds = artifactCaptureHorizontalBounds(captureDocument, viewportWidth);
+    const width = horizontalBounds.width;
     const height = Math.max(viewportHeight, root.scrollHeight, body?.scrollHeight || 0);
+    const scale = selectArtifactCaptureScale(width, height, window.devicePixelRatio);
     if (
       width > artifactCaptureMaxDimension
       || height > artifactCaptureMaxDimension
@@ -859,13 +912,14 @@ async function captureArtifactSnapshot(snapshot: {
       : !transparent.has(bodyBackground) ? bodyBackground : "#ffffff";
     const canvas = await html2canvas(root, {
       backgroundColor,
+      x: horizontalBounds.x,
       width,
       height,
       windowWidth: viewportWidth,
       windowHeight: viewportHeight,
       scrollX: 0,
       scrollY: 0,
-      scale: 1,
+      scale,
       useCORS: true,
       allowTaint: false,
       imageTimeout: 15_000,
@@ -2348,7 +2402,7 @@ export function ArtifactPreview({
     }
     const frameContent = htmlEditSessionContentRef.current ?? frameBaseContent;
     const frameAssetBaseUrl = htmlEditSessionContentRef.current !== null ? htmlEditSessionAssetBaseUrlRef.current : assetBaseUrl;
-    const editFrameKey = `${artifact.path}\u0000${frameAssetBaseUrl}\u0000${frameContent}`;
+    const editFrameKey = `capture-v5\u0000${artifact.path}\u0000${frameAssetBaseUrl}\u0000${frameContent}`;
     if (htmlEditFrameRef.current?.key !== editFrameKey || !htmlFrameElementRef.current) {
       const editableContent = iframeHtmlEditorBridge(iframeEditorAssetBase(frameContent, frameAssetBaseUrl), artifact.path);
       const previewContent = iframeHtmlAiSelectionBridge(editableContent, artifact.path, aiEditComments);

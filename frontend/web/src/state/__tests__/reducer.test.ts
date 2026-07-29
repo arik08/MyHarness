@@ -2157,6 +2157,133 @@ describe("appReducer", () => {
     expect(afterReplayDelta.messages.map((message) => message.text)).toEqual(["보고서 작성해줘", "초안 작성 중 최신 문장"]);
   });
 
+  it("restores a cached live session view when the answer completed while another session was open", () => {
+    const completedView = appReducer(
+      {
+        ...initialAppState,
+        sessionId: "live-a",
+        activeHistoryId: "saved-a",
+        chatTitle: "완료된 질문",
+      },
+      {
+        type: "append_message",
+        message: { role: "user", text: "보고서 작성해줘" },
+      },
+    );
+    const completedAnswer = appReducer(completedView, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "보고서를 완성했습니다." },
+      sessionId: "live-a",
+    });
+    const restoringOther = appReducer(completedAnswer, { type: "begin_history_restore", sessionId: "saved-b" });
+    const otherSession = appReducer(restoringOther, {
+      type: "session_started",
+      sessionId: "live-b",
+      clientId: "client-1",
+    });
+    const restoredOther = appReducer(otherSession, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        value: "saved-b",
+        history_events: [
+          { type: "user", text: "다른 질문" },
+          { type: "assistant", text: "다른 답변" },
+        ],
+      },
+      sessionId: "live-b",
+    });
+    const returning = appReducer(restoredOther, { type: "begin_history_restore", sessionId: "saved-a" });
+    const reattached = appReducer(returning, {
+      type: "session_started",
+      sessionId: "live-a",
+      clientId: "client-1",
+      busy: false,
+    });
+
+    expect(reattached.messages.map((message) => message.text)).toEqual(["보고서 작성해줘", "보고서를 완성했습니다."]);
+    expect(reattached.activeHistoryId).toBe("saved-a");
+    expect(reattached.busy).toBe(false);
+  });
+
+  it("keeps a cached live session row when a completed refresh does not include it", () => {
+    const restoring = {
+      ...initialAppState,
+      sessionId: "live-b",
+      activeHistoryId: "saved-b",
+      liveSessionViewsBySessionId: {
+        "live-a": {} as any,
+      },
+      history: [{
+        value: "live-a",
+        label: "진행 중인 채팅",
+        description: "복귀할 답변",
+        live: true,
+        liveSessionId: "live-a",
+        busy: true,
+      }],
+    };
+
+    const refreshed = appReducer(restoring, {
+      type: "set_history",
+      history: [],
+      hasMore: false,
+      nextOffset: 0,
+    });
+
+    expect(refreshed.history).toEqual(restoring.history);
+  });
+
+  it("ignores a stale history refresh while a cached session restore is pending", () => {
+    const restoring = {
+      ...initialAppState,
+      restoringHistory: true,
+      pendingHistoryId: "saved-a",
+      history: [{
+        value: "saved-a",
+        label: "복원 중인 채팅",
+        description: "기존 답변",
+      }],
+    };
+
+    const refreshed = appReducer(restoring, {
+      type: "set_history",
+      history: [],
+      hasMore: false,
+      nextOffset: 0,
+    });
+
+    expect(refreshed.history).toEqual(restoring.history);
+    expect(refreshed.historyLoading).toBe(false);
+  });
+
+  it("accepts later history refreshes after read-only restore has completed", () => {
+    const restored = {
+      ...initialAppState,
+      historyReadOnly: true,
+      restoringHistory: false,
+      pendingHistoryId: null,
+      history: [{
+        value: "saved-a",
+        label: "복원된 채팅",
+        description: "기존 답변",
+      }],
+    };
+
+    const refreshed = appReducer(restored, {
+      type: "set_history",
+      history: [{
+        value: "saved-b",
+        label: "새 채팅",
+        description: "새 답변",
+      }],
+      hasMore: false,
+      nextOffset: 1,
+    });
+
+    expect(refreshed.history.map((item) => item.value)).toEqual(["saved-b"]);
+  });
+
   it("shows replayed streaming text when returning to a busy live session with only the user cached", () => {
     const activeUser = appReducer(
       {

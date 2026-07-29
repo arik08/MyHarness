@@ -3065,7 +3065,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             }, pendingFirstUserText)
           : historyBase;
         const busy = action.busy === true;
-        const restoredLiveView = busy ? liveSessionViewForSession(liveSessionViewsBySessionId, action.sessionId) : null;
+        const restoredLiveView = liveSessionViewForSession(liveSessionViewsBySessionId, action.sessionId);
         return {
         ...state,
         sessionId: action.sessionId,
@@ -3316,7 +3316,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case "set_history": {
-      const history = visibleHistoryRows(state, action.history);
+      if (
+        state.history.length > 0
+        && state.restoringHistory
+        && state.pendingHistoryId
+      ) {
+        return {
+          ...state,
+          historyLoading: false,
+          historyLoadingMore: false,
+        };
+      }
+      const incomingSessionKeys = new Set(
+        action.history.flatMap((item) => [item.value, item.liveSessionId].filter((value): value is string => Boolean(value))),
+      );
+      const cachedLiveRows = state.history.filter((item) => (
+        item.live === true
+        && Boolean(item.liveSessionId)
+        && Boolean(state.liveSessionViewsBySessionId[item.liveSessionId || ""])
+        && !incomingSessionKeys.has(item.value)
+        && !incomingSessionKeys.has(item.liveSessionId || "")
+      ));
+      const history = visibleHistoryRows(state, [...cachedLiveRows, ...action.history]);
       return {
         ...state,
         history,
