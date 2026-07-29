@@ -18,6 +18,7 @@ from myharness.tools.html_source_footnotes import (
 )
 from myharness.tools.path_display import display_tool_path
 from myharness.services.token_estimation import estimate_tokens
+from myharness.skills.refresh import mark_skill_registry_dirty
 from myharness.utils.helpers import replace_filename_whitespace
 
 
@@ -77,6 +78,7 @@ class FileWriteTool(BaseTool):
                 is_error=True,
             )
         path.write_text(content, encoding="utf-8")
+        mark_skill_registry_dirty(context.metadata, path)
         display_path = display_tool_path(path, context.cwd)
         output = f"Wrote {display_path}"
         target_note = _target_length_feedback(content, path, context)

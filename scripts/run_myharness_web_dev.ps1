@@ -22,12 +22,28 @@ function Stop-ProcessTree {
 
 function Stop-ExistingDevLaunchers {
     $escapedScriptPath = [regex]::Escape($script:LauncherScriptPath)
-    $existingLaunchers = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.ProcessId -ne $PID -and
-            $_.Name -match "^(powershell|pwsh)(\.exe)?$" -and
-            $_.CommandLine -match $escapedScriptPath
+    $scanJob = Start-Job -ScriptBlock {
+        param($ScriptPathPattern, $CurrentProcessId)
+
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.ProcessId -ne $CurrentProcessId -and
+                $_.Name -match "^(powershell|pwsh)(\.exe)?$" -and
+                $_.CommandLine -match $ScriptPathPattern
+            }
+    } -ArgumentList $escapedScriptPath, $PID
+
+    try {
+        $completedJob = Wait-Job -Job $scanJob -Timeout 2
+        if ($null -eq $completedJob) {
+            Write-Host "[WARN] Existing launcher scan timed out. Continuing without pre-cleanup."
+            return
         }
+        $existingLaunchers = @(Receive-Job -Job $scanJob)
+    }
+    finally {
+        Remove-Job -Job $scanJob -Force -ErrorAction SilentlyContinue
+    }
 
     foreach ($launcher in $existingLaunchers) {
         Write-Host "[INFO] Existing MyHarness dev launcher found at PID $($launcher.ProcessId). Closing it before starting fresh..."
@@ -64,12 +80,18 @@ function Stop-ListeningPort {
         [Parameter(Mandatory = $true)][string]$Label
     )
 
-    $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $connection) {
+    $ownerPid = netstat -ano -p tcp |
+        ForEach-Object {
+            if ($_ -match ("^\s*TCP\s+\S+:" + $Port + "\s+\S+\s+LISTENING\s+(\d+)\s*$")) {
+                $Matches[1]
+            }
+        } |
+        Select-Object -First 1
+    if (-not $ownerPid) {
         return
     }
 
-    $ownerPid = [int]$connection.OwningProcess
+    $ownerPid = [int]$ownerPid
     if ($ownerPid -eq $PID) {
         return
     }
@@ -78,7 +100,9 @@ function Stop-ListeningPort {
     Stop-ProcessTree -ProcessId $ownerPid
     Start-Sleep -Milliseconds 500
 
-    $stillListening = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    $stillListening = netstat -ano -p tcp |
+        Where-Object { $_ -match ("^\s*TCP\s+\S+:" + $Port + "\s+\S+\s+LISTENING\s+\d+\s*$") } |
+        Select-Object -First 1
     if ($stillListening) {
         throw "Port $Port is still in use after trying to close PID $ownerPid."
     }

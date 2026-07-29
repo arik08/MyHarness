@@ -9,6 +9,17 @@ describe("appReducer", () => {
     expect(initialAppState.appSettings.downloadMode).toBe("browser");
   });
 
+  it("defaults GPT-5.6 context management to cost saver and keeps a full-context choice", () => {
+    expect(initialAppState.appSettings.gpt56ContextMode).toBe("cost-saver");
+
+    const updated = appReducer(initialAppState, {
+      type: "set_app_settings",
+      value: { gpt56ContextMode: "full-context" },
+    });
+
+    expect(updated.appSettings.gpt56ContextMode).toBe("full-context");
+  });
+
   it("keeps all supported file save modes when settings change", () => {
     const browser = appReducer(initialAppState, {
       type: "set_app_settings",
@@ -986,6 +997,37 @@ describe("appReducer", () => {
 
     expect(next.runtimePicker.selectedProvider).toBe("codex");
     expect(next.runtimePicker.models.map((option) => option.value)).toEqual(["gpt-5.5", "gpt-5.4"]);
+  });
+
+  it("caches startup runtime options and opens the picker without a loading gap", () => {
+    const startup = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "state_snapshot",
+        state: {
+          provider: "openai-codex",
+          active_profile: "codex",
+          provider_label: "Codex Subscription",
+          model: "gpt-5.5",
+          runtime_options: {
+            providers: [{ value: "codex", label: "Codex Subscription", active: true }],
+            models_by_provider: {
+              codex: [{ value: "gpt-5.5", label: "gpt-5.5", active: true }],
+            },
+            efforts: [{ value: "medium", label: "Medium", active: true }],
+          },
+        },
+      },
+    });
+
+    expect(startup.runtimePicker.open).toBe(false);
+    expect(startup.runtimePicker.providers).toHaveLength(1);
+
+    const opened = appReducer(startup, { type: "open_runtime_picker" });
+
+    expect(opened.runtimePicker.open).toBe(true);
+    expect(opened.runtimePicker.loading).toBe(false);
+    expect(opened.runtimePicker.models.map((option) => option.value)).toEqual(["gpt-5.5"]);
   });
 
   it("closes stale resume selection modals when the history list changes", () => {

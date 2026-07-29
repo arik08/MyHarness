@@ -82,6 +82,23 @@ test("keeps only the latest status progress message in live replay", () => {
   assert.deepEqual(statuses.map((event) => event.message), ["관련 파일을 읽고 있습니다."]);
 });
 
+test("replays a later MCP state snapshot after the ready event", () => {
+  const state = createSessionReplayState();
+
+  updateSessionReplayState(state, { type: "state_snapshot", state: { phase: "starting" } });
+  updateSessionReplayState(state, { type: "ready", mcp_servers: [] });
+  updateSessionReplayState(state, {
+    type: "state_snapshot",
+    state: { phase: "ready" },
+    mcp_servers: [{ name: "ecos" }, { name: "kosis" }, { name: "eia" }],
+  });
+
+  const replay = replayEventsForState(state);
+
+  assert.deepEqual(replay.map((event) => event.type), ["ready", "state_snapshot"]);
+  assert.deepEqual(replay.at(-1).mcp_servers.map((server) => server.name), ["ecos", "kosis", "eia"]);
+});
+
 test("keeps the user transcript when status messages exceed the stable replay limit", () => {
   const state = createSessionReplayState();
 

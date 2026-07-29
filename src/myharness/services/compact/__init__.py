@@ -74,6 +74,8 @@ AUTOCOMPACT_BUFFER_TOKENS = 13_000
 AUTOCOMPACT_CONTEXT_RATIO = 0.75
 MAX_OUTPUT_TOKENS_FOR_SUMMARY = 4_000
 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
+LONG_CONTEXT_COST_SAVER_THRESHOLD_TOKENS = 250_000
+LONG_CONTEXT_FULL_THRESHOLD_TOKENS = 1_000_000
 COMPACT_TIMEOUT_SECONDS = 25
 MAX_COMPACT_STREAMING_RETRIES = 2
 MAX_PTL_RETRIES = 3
@@ -101,6 +103,9 @@ TOKEN_ESTIMATION_PADDING = 4 / 3
 # Default context windows per model family
 _DEFAULT_CONTEXT_WINDOW = 200_000
 _OPENAI_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("gpt-5.6-luna", 1_050_000),
+    ("gpt-5.6-terra", 1_050_000),
+    ("gpt-5.6-sol", 1_050_000),
     ("gpt-5.5", 1_050_000),
     ("gpt-5.4-mini", 400_000),
     ("gpt-5.4-nano", 400_000),
@@ -1312,6 +1317,21 @@ def get_context_window(model: str, *, context_window_tokens: int | None = None) 
         return 200_000
     # Kimi / other providers — be conservative
     return _DEFAULT_CONTEXT_WINDOW
+
+
+def get_long_context_policy_threshold(model: str, mode: str | None) -> int | None:
+    """Return the selected threshold for GPT models with 272K long-context pricing."""
+    normalized_model = str(model or "").strip().lower()
+    supported_family = any(
+        normalized_model == family or normalized_model.startswith(f"{family}-")
+        for family in ("gpt-5.4", "gpt-5.5", "gpt-5.6")
+    )
+    if not supported_family or normalized_model.startswith(("gpt-5.4-mini", "gpt-5.4-nano")):
+        return None
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode == "full-context":
+        return LONG_CONTEXT_FULL_THRESHOLD_TOKENS
+    return LONG_CONTEXT_COST_SAVER_THRESHOLD_TOKENS
 
 
 def get_autocompact_threshold(

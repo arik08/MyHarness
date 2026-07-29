@@ -123,12 +123,18 @@ function Stop-ProcessTree {
 function Stop-ListeningPort {
     param([Parameter(Mandatory = $true)][int]$Port)
 
-    $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $connection) {
+    $ownerPid = netstat -ano -p tcp |
+        ForEach-Object {
+            if ($_ -match ("^\s*TCP\s+\S+:" + $Port + "\s+\S+\s+LISTENING\s+(\d+)\s*$")) {
+                $Matches[1]
+            }
+        } |
+        Select-Object -First 1
+    if (-not $ownerPid) {
         return
     }
 
-    $ownerPid = [int]$connection.OwningProcess
+    $ownerPid = [int]$ownerPid
     if ($ownerPid -eq $PID) {
         return
     }
@@ -138,7 +144,9 @@ function Stop-ListeningPort {
     Stop-ProcessTree -ProcessId $ownerPid
     Start-Sleep -Milliseconds 500
 
-    $stillListening = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    $stillListening = netstat -ano -p tcp |
+        Where-Object { $_ -match ("^\s*TCP\s+\S+:" + $Port + "\s+\S+\s+LISTENING\s+\d+\s*$") } |
+        Select-Object -First 1
     if ($stillListening) {
         throw "Port $Port is still in use after trying to close PID $ownerPid."
     }

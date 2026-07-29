@@ -13,9 +13,13 @@ class TokenPricing:
     input_usd_per_million: float
     cached_input_usd_per_million: float
     output_usd_per_million: float
+    cache_write_usd_per_million: float | None = None
 
 
 OPENAI_PRICING: dict[str, TokenPricing] = {
+    "gpt-5.6-sol": TokenPricing(5.0, 0.5, 30.0, 6.25),
+    "gpt-5.6-terra": TokenPricing(2.5, 0.25, 15.0, 3.125),
+    "gpt-5.6-luna": TokenPricing(1.0, 0.1, 6.0, 1.25),
     "gpt-5.5": TokenPricing(5.0, 0.5, 30.0),
     "gpt-5.4": TokenPricing(2.5, 0.25, 15.0),
     "gpt-5.4-mini": TokenPricing(0.75, 0.075, 4.5),
@@ -54,6 +58,7 @@ def _usage_payload_fields(usage: UsageSnapshot) -> dict[str, Any]:
     return {
         "input_tokens": usage.input_tokens,
         "cached_input_tokens": usage.cached_input_tokens,
+        "cache_write_tokens": usage.cache_write_tokens,
         "uncached_input_tokens": usage.uncached_input_tokens,
         "output_tokens": usage.output_tokens,
         "total_tokens": usage.total_tokens,
@@ -75,6 +80,7 @@ def estimate_usage_cost(provider: str, model: str, usage: UsageSnapshot) -> dict
         "estimated_cache_savings_usd": None,
         "estimated_uncached_input_cost_usd": None,
         "estimated_cached_input_cost_usd": None,
+        "estimated_cache_write_cost_usd": None,
         "estimated_output_cost_usd": None,
         "cost_supported": False,
         "cost_note": "unsupported_provider",
@@ -85,10 +91,16 @@ def estimate_usage_cost(provider: str, model: str, usage: UsageSnapshot) -> dict
     if pricing is None:
         payload["cost_note"] = "unsupported_model"
         return payload
+    if usage.cache_write_tokens and pricing.cache_write_usd_per_million is None:
+        payload["cost_note"] = "unsupported_cache_write_pricing"
+        return payload
     uncached_input_cost = usage.uncached_input_tokens * pricing.input_usd_per_million / 1_000_000
     cached_input_cost = usage.cached_input_tokens * pricing.cached_input_usd_per_million / 1_000_000
+    cache_write_cost = (
+        usage.cache_write_tokens * float(pricing.cache_write_usd_per_million or 0.0) / 1_000_000
+    )
     output_cost = usage.output_tokens * pricing.output_usd_per_million / 1_000_000
-    cost = uncached_input_cost + cached_input_cost + output_cost
+    cost = uncached_input_cost + cached_input_cost + cache_write_cost + output_cost
     uncached_baseline_cost = (
         usage.input_tokens * pricing.input_usd_per_million
         + usage.output_tokens * pricing.output_usd_per_million
@@ -99,6 +111,7 @@ def estimate_usage_cost(provider: str, model: str, usage: UsageSnapshot) -> dict
             "estimated_cache_savings_usd": max(0.0, uncached_baseline_cost - cost),
             "estimated_uncached_input_cost_usd": uncached_input_cost,
             "estimated_cached_input_cost_usd": cached_input_cost,
+            "estimated_cache_write_cost_usd": cache_write_cost,
             "estimated_output_cost_usd": output_cost,
             "cost_supported": True,
             "cost_note": "openai_pricing_estimate",
@@ -118,10 +131,10 @@ def usage_cost_summary(accounting: dict[str, Any], *, provider: str = "", model:
         entry_provider = str(item.get("provider") or provider or "")
         entry_model = str(item.get("model") or model or "")
         entry_usage = _coerce_usage(item.get("usage"))
-        if entry_usage.total_tokens or entry_usage.cached_input_tokens:
+        if entry_usage.total_tokens or entry_usage.cached_input_tokens or entry_usage.cache_write_tokens:
             breakdown.append(estimate_usage_cost(entry_provider, entry_model, entry_usage))
 
-    if not breakdown and (total_usage.total_tokens or total_usage.cached_input_tokens):
+    if not breakdown and (total_usage.total_tokens or total_usage.cached_input_tokens or total_usage.cache_write_tokens):
         breakdown.append(estimate_usage_cost(provider, model, total_usage))
 
     supported_breakdown = [item for item in breakdown if item.get("cost_supported")]
@@ -146,6 +159,11 @@ def usage_cost_summary(accounting: dict[str, Any], *, provider: str = "", model:
         if all_supported
         else None
     )
+    total_cache_write_cost = (
+        sum(float(item.get("estimated_cache_write_cost_usd") or 0.0) for item in supported_breakdown)
+        if all_supported
+        else None
+    )
     total_output_cost = (
         sum(float(item.get("estimated_output_cost_usd") or 0.0) for item in supported_breakdown)
         if all_supported
@@ -154,12 +172,15 @@ def usage_cost_summary(accounting: dict[str, Any], *, provider: str = "", model:
     note = "openai_pricing_estimate" if all_supported else (
         breakdown[0].get("cost_note") if len(breakdown) == 1 else "mixed_or_unsupported_models"
     )
-    if not breakdown and not (total_usage.total_tokens or total_usage.cached_input_tokens):
+    if not breakdown and not (
+        total_usage.total_tokens or total_usage.cached_input_tokens or total_usage.cache_write_tokens
+    ):
         note = "no_usage"
         total_cost = 0.0
         total_savings = 0.0
         total_uncached_input_cost = 0.0
         total_cached_input_cost = 0.0
+        total_cache_write_cost = 0.0
         total_output_cost = 0.0
         all_supported = True
 
@@ -171,6 +192,7 @@ def usage_cost_summary(accounting: dict[str, Any], *, provider: str = "", model:
         "estimated_cache_savings_usd": total_savings,
         "estimated_uncached_input_cost_usd": total_uncached_input_cost,
         "estimated_cached_input_cost_usd": total_cached_input_cost,
+        "estimated_cache_write_cost_usd": total_cache_write_cost,
         "estimated_output_cost_usd": total_output_cost,
         "cost_supported": all_supported,
         "cost_note": note,

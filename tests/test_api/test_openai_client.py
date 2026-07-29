@@ -246,7 +246,24 @@ class TestUsageParsing:
             "input_tokens": 1500,
             "output_tokens": 250,
             "cached_input_tokens": 1100,
+            "cache_write_tokens": 0,
         }
+
+    def test_capture_usage_extracts_cache_write_tokens_from_raw_sse_payload(self):
+        usage_data: dict[str, int] = {}
+
+        OpenAICompatibleClient._capture_usage(
+            {
+                "usage": {
+                    "input_tokens": 1500,
+                    "output_tokens": 250,
+                    "cache_write_tokens": 400,
+                }
+            },
+            usage_data,
+        )
+
+        assert usage_data["cache_write_tokens"] == 400
 
     def test_capture_usage_supports_input_token_details_shape(self):
         usage_data: dict[str, int] = {}
@@ -463,6 +480,39 @@ def test_prompt_cache_key_is_stable_for_same_model_system_and_tools():
     )
 
     assert _prompt_cache_key_for_request(request_one) == _prompt_cache_key_for_request(request_two)
+
+
+@pytest.mark.asyncio
+async def test_openai_client_prewarms_the_same_static_prefix_with_minimal_output():
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
+    )
+    fake_sdk = _FakeOpenAIClient()
+    client._client = fake_sdk
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("real user message")],
+        system_prompt="stable system",
+        max_tokens=4096,
+        tools=[{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
+        reasoning_effort="low",
+    )
+
+    usage = await client.prewarm_prompt_cache(request)
+
+    params = fake_sdk.chat.completions.last_kwargs
+    assert params is not None
+    assert params["prompt_cache_key"] == _prompt_cache_key_for_request(request)
+    assert params["messages"][0] == {"role": "system", "content": "stable system"}
+    assert params["messages"][1]["role"] == "user"
+    assert params["messages"][1]["content"] != "real user message"
+    assert params["tools"][0]["function"]["name"] == "read_file"
+    assert params["max_completion_tokens"] == 16
+    assert request.messages[0].text == "real user message"
+    assert usage is not None
+    assert usage.input_tokens == 11
 
 
 def test_openai_completion_params_keep_static_tool_prefix_stable_between_new_sessions(monkeypatch):

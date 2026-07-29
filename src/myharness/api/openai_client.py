@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import replace
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 
@@ -387,6 +388,31 @@ class OpenAICompatibleClient:
         if last_error is not None:
             raise self._translate_error(last_error) from last_error
 
+    async def prewarm_prompt_cache(self, request: ApiMessageRequest) -> UsageSnapshot | None:
+        """Populate the reusable static prefix without touching conversation state."""
+        if (
+            not self._enable_prompt_cache_options
+            or "prompt_cache_key" in self._unsupported_cache_option_names
+        ):
+            return None
+
+        warmup_request = replace(
+            request,
+            messages=[
+                ConversationMessage.from_user_text(
+                    "Initialize the reusable prompt context. Reply only with OK."
+                )
+            ],
+            max_tokens=min(request.max_tokens, 16),
+            cache_event=None,
+        )
+        stream_once = self._stream_raw_once if self._raw_stream else self._stream_once
+        usage: UsageSnapshot | None = None
+        async for event in stream_once(warmup_request):
+            if isinstance(event, ApiMessageCompleteEvent):
+                usage = event.usage
+        return usage
+
     def _completion_params(self, request: ApiMessageRequest) -> dict[str, Any]:
         safe_messages = sanitize_conversation_messages(request.messages)
         openai_messages = _convert_messages_to_openai(safe_messages, request.system_prompt)
@@ -445,6 +471,7 @@ class OpenAICompatibleClient:
                         "input_tokens": chunk.usage.prompt_tokens or 0,
                         "output_tokens": chunk.usage.completion_tokens or 0,
                         "cached_input_tokens": self._cached_tokens_from_usage(chunk.usage),
+                        "cache_write_tokens": self._cache_write_tokens_from_usage(chunk.usage),
                     }
                 continue
 
@@ -497,6 +524,7 @@ class OpenAICompatibleClient:
                     "input_tokens": chunk.usage.prompt_tokens or 0,
                     "output_tokens": chunk.usage.completion_tokens or 0,
                     "cached_input_tokens": self._cached_tokens_from_usage(chunk.usage),
+                    "cache_write_tokens": self._cache_write_tokens_from_usage(chunk.usage),
                 }
 
         # Build the final ConversationMessage
@@ -530,6 +558,7 @@ class OpenAICompatibleClient:
             input_tokens=usage_data.get("input_tokens", 0),
             output_tokens=usage_data.get("output_tokens", 0),
             cached_input_tokens=usage_data.get("cached_input_tokens", 0),
+            cache_write_tokens=usage_data.get("cache_write_tokens", 0),
         )
         self._write_cache_diagnostic("message_complete", request, params, usage=usage_snapshot)
         yield ApiMessageCompleteEvent(
@@ -699,6 +728,7 @@ class OpenAICompatibleClient:
             input_tokens=usage_data.get("input_tokens", 0),
             output_tokens=usage_data.get("output_tokens", 0),
             cached_input_tokens=usage_data.get("cached_input_tokens", 0),
+            cache_write_tokens=usage_data.get("cache_write_tokens", 0),
         )
         self._write_cache_diagnostic("message_complete", request, params, usage=usage_snapshot)
         yield ApiMessageCompleteEvent(
@@ -788,6 +818,7 @@ class OpenAICompatibleClient:
                 "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
                 "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
                 "cached_input_tokens": OpenAICompatibleClient._cached_tokens_from_usage(usage),
+                "cache_write_tokens": OpenAICompatibleClient._cache_write_tokens_from_usage(usage),
             }
         )
 
@@ -804,6 +835,31 @@ class OpenAICompatibleClient:
                 cached_tokens = 0
             if cached_tokens > 0:
                 return cached_tokens
+        return 0
+
+    @staticmethod
+    def _cache_write_tokens_from_usage(usage: Any) -> int:
+        names = ("cache_write_tokens", "cache_creation_input_tokens")
+        for name in names:
+            value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, 0)
+            try:
+                tokens = int(value or 0)
+            except (TypeError, ValueError):
+                tokens = 0
+            if tokens > 0:
+                return tokens
+        for details_name in ("prompt_tokens_details", "input_tokens_details"):
+            details = usage.get(details_name) if isinstance(usage, dict) else getattr(usage, details_name, None)
+            if not details:
+                continue
+            for name in names:
+                value = details.get(name) if isinstance(details, dict) else getattr(details, name, 0)
+                try:
+                    tokens = int(value or 0)
+                except (TypeError, ValueError):
+                    tokens = 0
+                if tokens > 0:
+                    return tokens
         return 0
 
     @staticmethod

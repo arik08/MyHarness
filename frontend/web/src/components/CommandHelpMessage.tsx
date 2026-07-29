@@ -26,6 +26,12 @@ type SkillPluginGroup = {
   toneIndex: number | string;
 };
 
+type SkillCategoryGroup = {
+  name: string;
+  items: ToggleEntry[];
+  toneIndex: number | string;
+};
+
 type HelpIntroSection = {
   title: string;
   body: string;
@@ -356,6 +362,11 @@ function pluginNameFromSkillSource(source: string) {
   return match?.[1]?.trim().toLowerCase() || "";
 }
 
+function categoryNameFromSkillSource(source: string) {
+  const match = String(source || "").trim().match(/^skill-category:(.+)$/i);
+  return match?.[1]?.trim() || "";
+}
+
 function isSkillMcpSource(source: string) {
   return /^(skill-mcp(?::|$)|mcp:)/i.test(String(source || "").trim());
 }
@@ -391,9 +402,22 @@ function groupSkillsByPlugin(
 ) {
   const pluginByName = new Map(plugins.map((plugin) => [plugin.name.toLowerCase(), plugin]));
   const standalone: ToggleEntry[] = [];
+  const categoryGroups = new Map<string, SkillCategoryGroup>();
   const groups = new Map<string, SkillPluginGroup>();
 
   for (const item of items) {
+    const categoryName = categoryNameFromSkillSource(item.source);
+    if (categoryName) {
+      const categoryKey = categoryName.toLowerCase();
+      const categoryGroup = categoryGroups.get(categoryKey) || {
+        name: categoryName,
+        items: [],
+        toneIndex: (categoryGroups.size + 1) % SKILL_GROUP_TONE_COUNT,
+      };
+      categoryGroup.items.push(item);
+      categoryGroups.set(categoryKey, categoryGroup);
+      continue;
+    }
     const pluginName = pluginNameFromSkillSource(item.source);
     if (!pluginName) {
       standalone.push(item);
@@ -461,7 +485,16 @@ function groupSkillsByPlugin(
     .filter(([pluginName]) => !listedPluginNames.has(pluginName))
     .map(([, group]) => group);
 
-  return { standalone, groups: [...orderedGroups, ...unlistedGroups] };
+  const orderedCategoryGroups = [...categoryGroups.values()].sort((left, right) => {
+    if (left.name === "General") return -1;
+    if (right.name === "General") return 1;
+    return left.name.localeCompare(right.name);
+  });
+  return {
+    standalone,
+    categoryGroups: orderedCategoryGroups,
+    groups: [...orderedGroups, ...unlistedGroups],
+  };
 }
 
 function mergeSkillState(
@@ -755,6 +788,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
         <SkillCatalog
           label="스킬"
           standaloneItems={groupedSkillItems.standalone}
+          categoryGroups={groupedSkillItems.categoryGroups}
           pluginGroups={groupedSkillItems.groups}
           itemCount={skillItems.length}
           emptyText="사용 가능한 커스텀 스킬이 없습니다"
@@ -812,6 +846,7 @@ function SkillUsageCount({ count }: { count?: number }) {
 function SkillCatalog({
   label,
   standaloneItems,
+  categoryGroups,
   pluginGroups,
   itemCount,
   emptyText,
@@ -820,14 +855,16 @@ function SkillCatalog({
 }: {
   label: string;
   standaloneItems: ToggleEntry[];
+  categoryGroups: SkillCategoryGroup[];
   pluginGroups: SkillPluginGroup[];
   itemCount: number;
   emptyText: string;
   onToggle: (item: ToggleEntry) => void;
   onPluginToggle: (item: ToggleEntry) => void;
 }) {
-  const hasItems = standaloneItems.length > 0 || pluginGroups.length > 0;
+  const hasItems = standaloneItems.length > 0 || categoryGroups.length > 0 || pluginGroups.length > 0;
   const [standaloneCollapsed, setStandaloneCollapsed] = useState(false);
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   return (
     <details className="command-card skill-card">
       <summary>
@@ -862,6 +899,39 @@ function SkillCatalog({
               )}
             </section>
           ) : null}
+          {categoryGroups.map((group) => {
+            const collapsed = collapsedCategories[group.name] === true;
+            return (
+              <section
+                className={`skill-plugin-group${collapsed ? " collapsed" : ""}`}
+                data-skill-group-tone={group.toneIndex}
+                role="group"
+                aria-label={`${group.name} 스킬`}
+                key={`skill-category:${group.name}`}
+              >
+                <button
+                  className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
+                  type="button"
+                  aria-expanded={!collapsed}
+                  aria-label={collapsed ? `${group.name} 스킬 펼치기` : `${group.name} 스킬 접기`}
+                  data-tooltip={`${group.name}\n클릭하면 스킬 목록을 ${collapsed ? "펼칩니다." : "접습니다."}`}
+                  onClick={() => setCollapsedCategories((current) => ({
+                    ...current,
+                    [group.name]: !collapsed,
+                  }))}
+                >
+                  <span>
+                    <strong>{group.name}</strong>
+                    <small>{collapsed ? "접힘" : "열림"}</small>
+                  </span>
+                  <span>{group.items.length}개</span>
+                </button>
+                {collapsed ? null : (
+                  <ToggleGrid label={group.name} items={group.items} onToggle={onToggle} />
+                )}
+              </section>
+            );
+          })}
           {pluginGroups.map((group) => (
             <section
               className={`skill-plugin-group${group.plugin.enabled ? "" : " disabled collapsed"}`}

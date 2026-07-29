@@ -1,10 +1,11 @@
 ﻿import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRequire } from "node:module";
+import html2canvas from "html2canvas";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactPanel, clampArtifactPanelWidth } from "../ArtifactPanel";
-import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactHtmlEditMessage, artifactHtmlEditModeMessage } from "../ArtifactPreview";
+import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactHtmlEditMessage, artifactHtmlEditModeMessage, selectArtifactCaptureViewportWidth } from "../ArtifactPreview";
 import { ModalHost } from "../ModalHost";
 import { TooltipLayer } from "../TooltipLayer";
 import { AppStateProvider, useAppState } from "../../state/app-state";
@@ -42,6 +43,12 @@ vi.mock("mermaid", () => ({
       diagramType: "flowchart",
     })),
   },
+}));
+
+vi.mock("html2canvas", () => ({
+  default: vi.fn(async () => ({
+    toBlob: (callback: (blob: Blob | null) => void) => callback(new Blob(["png"], { type: "image/png" })),
+  })),
 }));
 
 function renderHtmlPreviewSrcdoc(content: string, comments: ArtifactAiEditComment[] = []) {
@@ -593,9 +600,12 @@ describe("ArtifactPanel", () => {
     );
 
     let actions = [...document.querySelectorAll<HTMLButtonElement>(".artifact-panel-actions .artifact-action")];
-    expect(actions).toHaveLength(7);
+    expect(actions).toHaveLength(8);
     expect(actions[0].getAttribute("data-tooltip")).toBe("본문 수정");
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "공유 링크 복사")).toBe(true);
+    expect(actions.some((button) => button.getAttribute("data-tooltip") === "전체 이미지 복사")).toBe(true);
+    const captureButton = screen.getByRole("button", { name: "전체 이미지 복사" });
+    expect(captureButton.nextElementSibling?.getAttribute("aria-label")).toBe("report.html 다운로드");
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "수정사항 반영")).toBe(false);
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "편집 취소")).toBe(false);
     expect(screen.queryByRole("button", { name: "AI 자동편집" })).toBeNull();
@@ -618,6 +628,119 @@ describe("ArtifactPanel", () => {
     expect(actions).toHaveLength(6);
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "공유 링크 복사")).toBe(true);
     expect(actions.some((button) => button.getAttribute("data-tooltip")?.includes("편집"))).toBe(false);
+  });
+
+  it("injects an iframe-local full-document capture bridge", () => {
+    const srcdoc = renderHtmlPreviewSrcdoc("<html><body><main style=\"height:2400px\">Long report</main></body></html>");
+
+    expect(srcdoc).toContain('data-myharness-capture-script="true"');
+    expect(srcdoc).toContain("myharness:artifact-capture-request");
+    expect(srcdoc).toContain("myharness:artifact-capture-snapshot");
+  });
+
+  it("uses the first viewport where the report content stops growing", () => {
+    expect(selectArtifactCaptureViewportWidth([
+      { viewportWidth: 960, contentWidth: 880, hasHorizontalOverflow: false },
+      { viewportWidth: 1120, contentWidth: 1040, hasHorizontalOverflow: false },
+      { viewportWidth: 1280, contentWidth: 1200, hasHorizontalOverflow: false },
+      { viewportWidth: 1440, contentWidth: 1200, hasHorizontalOverflow: false },
+      { viewportWidth: 1600, contentWidth: 1200, hasHorizontalOverflow: false },
+    ])).toBe(1280);
+  });
+
+  it("copies the PNG returned by the active HTML preview frame", async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalClipboardItem = globalThis.ClipboardItem;
+    let copiedBlob: Blob | undefined;
+    class FakeClipboardItem {
+      readonly values: Record<string, Promise<Blob>>;
+
+      constructor(values: Record<string, Promise<Blob>>) {
+        this.values = values;
+      }
+    }
+    const write = vi.fn(async (items: FakeClipboardItem[]) => {
+      copiedBlob = await items[0].values["image/png"];
+    });
+    Object.defineProperty(globalThis, "ClipboardItem", {
+      configurable: true,
+      value: FakeClipboardItem,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { write },
+    });
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+            activeArtifactPayload: { kind: "html", content: "<html><body>Preview</body></html>" },
+          }}
+        >
+          <ArtifactPanel />
+          <ModalHost />
+        </AppStateProvider>,
+      );
+
+      const frame = await screen.findByTitle("report.html") as HTMLIFrameElement;
+      const postMessage = vi.spyOn(frame.contentWindow!, "postMessage");
+      await userEvent.click(screen.getByRole("button", { name: "전체 이미지 복사" }));
+      await waitFor(() => expect(postMessage).toHaveBeenCalled());
+      const request = postMessage.mock.calls.find(([message]) => (
+        (message as { type?: string }).type === "myharness:artifact-capture-request"
+      ))?.[0] as { requestId: string; path: string };
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", {
+          source: frame.contentWindow,
+          data: {
+            type: "myharness:artifact-capture-snapshot",
+            requestId: request.requestId,
+            path: request.path,
+            html: "<!doctype html><html><body><main>Preview</main></body></html>",
+            width: 800,
+            height: 1600,
+            viewportHeight: 600,
+          },
+        }));
+      });
+      const captureFrame = await waitFor(() => {
+        const element = document.querySelector('iframe[sandbox="allow-same-origin"]') as HTMLIFrameElement | null;
+        expect(element).toBeTruthy();
+        return element!;
+      });
+      expect(captureFrame.style.height).toBe("900px");
+      fireEvent.load(captureFrame);
+
+      await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(copiedBlob?.type).toBe("image/png"));
+      expect(vi.mocked(html2canvas)).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          width: 1920,
+          height: 900,
+          windowWidth: 1920,
+          windowHeight: 900,
+        }),
+      );
+      expect(screen.getByRole("button", { name: "전체 이미지 복사됨" })).toBeTruthy();
+    } finally {
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+      if (originalClipboardItem) {
+        Object.defineProperty(globalThis, "ClipboardItem", {
+          configurable: true,
+          value: originalClipboardItem,
+        });
+      } else {
+        Reflect.deleteProperty(globalThis, "ClipboardItem");
+      }
+    }
   });
 
   it("injects direct text editing and AI comments while body edit mode is active", async () => {

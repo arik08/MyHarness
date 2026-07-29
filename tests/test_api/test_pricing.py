@@ -35,6 +35,33 @@ def test_estimate_usage_cost_supports_pgpt_openai_compatible_pricing():
     assert payload["estimated_output_cost_usd"] == pytest.approx(0.000645)
 
 
+@pytest.mark.parametrize(
+    ("model", "expected_cost"),
+    [
+        ("gpt-5.6-sol", 6.325),
+        ("gpt-5.6-terra", 3.1625),
+        ("gpt-5.6-luna", 1.265),
+    ],
+)
+def test_estimate_usage_cost_supports_gpt56_cache_write_pricing(model, expected_cost):
+    usage = UsageSnapshot(
+        input_tokens=1_000_000,
+        cached_input_tokens=400_000,
+        cache_write_tokens=100_000,
+        output_tokens=100_000,
+    )
+
+    payload = estimate_usage_cost("pgpt", model, usage)
+
+    assert payload["cost_supported"] is True
+    assert payload["uncached_input_tokens"] == 500_000
+    assert payload["cache_write_tokens"] == 100_000
+    assert payload["estimated_cost_usd"] == pytest.approx(expected_cost)
+    assert payload["estimated_cache_write_cost_usd"] == pytest.approx(
+        {"gpt-5.6-sol": 0.625, "gpt-5.6-terra": 0.3125, "gpt-5.6-luna": 0.125}[model]
+    )
+
+
 def test_estimate_usage_cost_supports_codex_openai_compatible_pricing():
     usage = UsageSnapshot(input_tokens=16_584, cached_input_tokens=10_752, output_tokens=63)
 

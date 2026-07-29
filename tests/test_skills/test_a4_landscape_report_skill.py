@@ -15,8 +15,8 @@ def test_a4_landscape_report_skill_is_program_local_and_discoverable(tmp_path, m
     skill = registry.get("html-a4-landscape-report")
 
     assert skill is not None
-    assert skill.source == "program"
-    assert skill.path == str(ROOT / ".skills" / "html-a4-landscape-report" / "SKILL.md")
+    assert skill.source == "skill-category:General"
+    assert skill.path == str(ROOT / ".skills" / "General" / "html-a4-landscape-report" / "SKILL.md")
     assert "A4" in skill.description
     assert "landscape" in skill.description
     assert "HTML or PPTX" in skill.description
@@ -27,7 +27,7 @@ def test_a4_landscape_report_skill_is_program_local_and_discoverable(tmp_path, m
 
 
 def test_visual_artifact_routes_a4_landscape_requests_to_specific_skill():
-    skill_text = (ROOT / ".skills" / "visual-artifact" / "SKILL.md").read_text(encoding="utf-8")
+    skill_text = (ROOT / ".skills" / "General" / "visual-artifact" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "html-a4-landscape-report" in skill_text
     assert "A4 landscape" in skill_text or "A4 가로" in skill_text
@@ -37,7 +37,7 @@ def test_visual_artifact_routes_a4_landscape_requests_to_specific_skill():
 
 
 def test_visual_artifact_preserves_general_scrolling_report_design():
-    skill_text = (ROOT / ".skills" / "visual-artifact" / "SKILL.md").read_text(encoding="utf-8")
+    skill_text = (ROOT / ".skills" / "General" / "visual-artifact" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "ordinary report-style HTML should remain a web-native scrolling report" in skill_text
     assert "ordinary vertical HTML reports" in skill_text
@@ -60,7 +60,7 @@ def test_a4_landscape_report_skill_description_is_translated_for_ui():
 
 
 def test_a4_landscape_report_skill_default_prompt_mentions_skill_name():
-    openai_yaml = (ROOT / ".skills" / "html-a4-landscape-report" / "agents" / "openai.yaml").read_text(encoding="utf-8")
+    openai_yaml = (ROOT / ".skills" / "General" / "html-a4-landscape-report" / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
     assert "$html-a4-landscape-report" in openai_yaml
     assert "HTML/PPTX" in openai_yaml
@@ -68,7 +68,7 @@ def test_a4_landscape_report_skill_default_prompt_mentions_skill_name():
 
 
 def test_a4_landscape_report_skill_keeps_repeated_headers_and_avoids_empty_bottoms():
-    skill_text = (ROOT / ".skills" / "html-a4-landscape-report" / "SKILL.md").read_text(encoding="utf-8")
+    skill_text = (ROOT / ".skills" / "General" / "html-a4-landscape-report" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "chapter, title, and subtitle positions consistent" in skill_text
     assert "Do not leave the lower body area visibly empty" in skill_text

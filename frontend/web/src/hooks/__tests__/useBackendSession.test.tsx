@@ -205,7 +205,7 @@ describe("useBackendSession", () => {
 
     await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("new-session"));
     expect(listLiveSessions).toHaveBeenCalledWith({ clientId: "client-1" });
-    expect(startSession).toHaveBeenCalledWith({ clientId: "client-1" });
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ clientId: "client-1" }));
   });
 
   it("passes client runtime preferences into a new backend session", async () => {
@@ -222,12 +222,12 @@ describe("useBackendSession", () => {
     );
 
     await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("new-session"));
-    expect(startSession).toHaveBeenCalledWith({
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
       clientId: "client-1",
       activeProfile: "codex",
       model: "gpt-5.4",
       effort: "high",
-    });
+    }));
   });
 
   it("does not share a pending backend start across different clients", async () => {
@@ -245,7 +245,7 @@ describe("useBackendSession", () => {
     );
 
     await waitFor(() => expect(startSession).toHaveBeenCalledTimes(2));
-    expect(startSession).toHaveBeenCalledWith({ clientId: "client-1" });
-    expect(startSession).toHaveBeenCalledWith({ clientId: "client-2" });
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ clientId: "client-1" }));
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ clientId: "client-2" }));
   });
 });

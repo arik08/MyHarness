@@ -85,6 +85,47 @@ describe("ModalHost download settings", () => {
     expect(screen.queryByText("닦아내기 폭")).toBeNull();
   });
 
+  it("shows cost-saving GPT-5.6 context management as the default", async () => {
+    renderDownloadSettingsModal();
+
+    await userEvent.click(screen.getByRole("button", { name: /GPT-5.4\+ 장문 입력 관리/ }));
+    const costSaver = screen.getByRole("radio", { name: /비용 절약/ }) as HTMLInputElement;
+    const fullContext = screen.getByRole("radio", { name: /전체 컨텍스트/ }) as HTMLInputElement;
+
+    expect(costSaver.checked).toBe(true);
+    expect(fullContext.checked).toBe(false);
+    expect(screen.getByText(/약 250K에서 자동 압축하여 개별 요청을 272K 이하로 관리/)).toBeTruthy();
+  });
+
+  it("restarts the active session with the selected GPT-5.6 context mode", async () => {
+    vi.mocked(restartSession).mockResolvedValue({
+      sessionId: "session-full-context",
+      workspace: { name: "Default", path: "C:/Users/user/Desktop/Documents/Python/MyHarness" },
+    } as never);
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-cost-saver",
+          clientId: "client-1",
+          modal: { kind: "settings" },
+        }}
+      >
+        <ModalHost />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /GPT-5.4\+ 장문 입력 관리/ }));
+    await userEvent.click(screen.getByRole("radio", { name: /전체 컨텍스트/ }));
+    await userEvent.click(screen.getByRole("button", { name: "저장 및 적용" }));
+
+    await waitFor(() => expect(restartSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-cost-saver",
+      clientId: "client-1",
+      gpt56ContextMode: "full-context",
+    })));
+  });
+
   it("keeps admin mode locked when the password is wrong", async () => {
     renderDownloadSettingsModal();
 
@@ -355,6 +396,12 @@ describe("ModalHost workspace deletion", () => {
       sessionId: "session-test1",
       clientId: "client-1",
       cwd: "C:/Users/user/Desktop/Documents/Python/MyHarness",
+      activeProfile: undefined,
+      model: undefined,
+      subagentModel: undefined,
+      subagentEffort: undefined,
+      effort: undefined,
+      gpt56ContextMode: "cost-saver",
     }));
     expect(deleteWorkspace).toHaveBeenCalledWith("TEST1");
     expect(screen.queryByText("TEST1")).toBeNull();

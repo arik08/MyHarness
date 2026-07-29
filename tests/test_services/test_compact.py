@@ -30,6 +30,7 @@ from myharness.services.compact import (
     get_autocompact_threshold,
     get_compact_prompt,
     get_context_window,
+    get_long_context_policy_threshold,
     should_autocompact,
     try_context_collapse,
     microcompact_messages,
@@ -796,6 +797,9 @@ def test_get_autocompact_threshold_caps_large_context_models_at_safe_ratio():
 
 
 def test_get_context_window_uses_current_openai_model_limits():
+    assert get_context_window("gpt-5.6-luna") == 1_050_000
+    assert get_context_window("gpt-5.6-terra") == 1_050_000
+    assert get_context_window("gpt-5.6-sol") == 1_050_000
     assert get_context_window("gpt-5.5") == 1_050_000
     assert get_context_window("gpt-5.5-pro") == 1_050_000
     assert get_context_window("gpt-5.4") == 1_050_000
@@ -805,6 +809,21 @@ def test_get_context_window_uses_current_openai_model_limits():
     assert get_context_window("gpt-5.3-codex-spark") == 128_000
     assert get_context_window("gpt-5.3-codex") == 400_000
     assert get_context_window("gpt-4.1") == 1_047_576
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["gpt-5.4", "gpt-5.4-pro", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+)
+def test_long_context_policy_defaults_to_cost_saver(model: str):
+    assert get_long_context_policy_threshold(model, None) == 250_000
+    assert get_long_context_policy_threshold(model, "cost-saver") == 250_000
+    assert get_long_context_policy_threshold(model, "full-context") == 1_000_000
+
+
+@pytest.mark.parametrize("model", ["gpt-5.3-codex", "gpt-5.4-mini", "gpt-5.4-nano"])
+def test_long_context_policy_does_not_override_other_models(model: str):
+    assert get_long_context_policy_threshold(model, "cost-saver") is None
 
 
 def test_should_autocompact_uses_custom_context_window():

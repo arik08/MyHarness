@@ -168,6 +168,7 @@ async def run_repl(
     restore_usage_accounting: dict[str, object] | None = None,
     permission_mode: str | None = None,
     effort: str | None = None,
+    gpt56_context_mode: str | None = None,
 ) -> None:
     """Run the default MyHarness interactive application (React TUI)."""
     if backend_only:
@@ -184,6 +185,7 @@ async def run_repl(
             api_format=api_format,
             api_client=api_client,
             effort=effort,
+            gpt56_context_mode=gpt56_context_mode,
             restore_messages=restore_messages,
             restore_tool_metadata=restore_tool_metadata,
             restore_usage=restore_usage,

@@ -158,6 +158,7 @@ export type AppState = {
 };
 
 export type AppSettings = {
+  gpt56ContextMode: "cost-saver" | "full-context";
   streamScrollDurationMs: number;
   streamStartBufferMs: number;
   streamFollowLeadPx: number;

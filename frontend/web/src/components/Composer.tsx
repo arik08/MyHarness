@@ -139,7 +139,11 @@ function skillMcpSuggestions(skills: SkillItem[], query: string): Suggestion[] {
 
 function mcpSuggestions(servers: McpServerItem[], skills: SkillItem[], query: string): Suggestion[] {
   const normalized = query.replace(/^\$/, "").replace(/^mcp:/i, "").toLowerCase();
-  const serverNames = new Set(servers.map((server) => server.name.toLowerCase()));
+  const visibleServerNames = new Set(
+    servers
+      .filter((server) => server.state !== "disabled")
+      .map((server) => server.name.toLowerCase()),
+  );
   const serverSuggestions = servers
     .filter((server) => server.state !== "disabled" && server.name.toLowerCase().includes(normalized))
     .map((server) => {
@@ -160,7 +164,7 @@ function mcpSuggestions(servers: McpServerItem[], skills: SkillItem[], query: st
     const skillName = suggestion.value.replace(/^\$mcp:/i, "").toLowerCase();
     const source = skills.find((skill) => skill.name.toLowerCase() === skillName)?.source || "";
     const serverName = String(source).split(":", 2)[1]?.trim().toLowerCase() || skillName;
-    return !serverNames.has(skillName) && !serverNames.has(serverName);
+    return !visibleServerNames.has(skillName) && !visibleServerNames.has(serverName);
   });
   return [...serverSuggestions, ...routedSkillSuggestions];
 }

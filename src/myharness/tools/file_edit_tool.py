@@ -14,6 +14,7 @@ from myharness.tools.mermaid_preflight import (
 )
 from myharness.tools.html_source_footnotes import prepare_source_footnotes_html
 from myharness.tools.path_display import display_tool_path
+from myharness.skills.refresh import mark_skill_registry_dirty
 
 
 class FileReplacement(BaseModel):
@@ -119,6 +120,7 @@ class FileEditTool(BaseTool):
             )
 
         path.write_text(updated, encoding="utf-8")
+        mark_skill_registry_dirty(context.metadata, path)
         return ToolResult(
             output=f"{display_tool_path(path, context.cwd)}을(를) 업데이트했습니다. 치환 {applied_count}건"
         )

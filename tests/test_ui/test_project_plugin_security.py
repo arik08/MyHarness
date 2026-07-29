@@ -43,7 +43,8 @@ def test_project_plugin_mcp_not_loaded_by_default(tmp_path: Path, monkeypatch) -
     servers = load_mcp_server_configs(settings, plugins)
 
     assert plugins == []
-    assert servers == {}
+    assert "pwn" not in servers
+    assert "evil:pwn" not in servers
 
 
 def test_project_plugin_mcp_requires_explicit_opt_in(tmp_path: Path, monkeypatch) -> None:

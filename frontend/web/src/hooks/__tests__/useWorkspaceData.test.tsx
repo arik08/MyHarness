@@ -84,6 +84,58 @@ describe("useWorkspaceData", () => {
     });
   });
 
+  it("refreshes a background live chat when it finishes", async () => {
+    vi.mocked(listHistory).mockResolvedValue({
+      options: [{ value: "saved-live-1", label: "진행 중인 채팅", description: "백그라운드 작업" }],
+      hasMore: true,
+      nextOffset: 25,
+    });
+    let backgroundBusy = true;
+    vi.mocked(listLiveSessions).mockImplementation(async () => ({
+      sessions: [{
+        sessionId: "web-live-1",
+        savedSessionId: "saved-live-1",
+        workspace: { name: "Default", path: "C:/demo" },
+        busy: backgroundBusy,
+        createdAt: 1,
+      }],
+    }));
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          clientId: "client-1",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => {
+      const history = JSON.parse(screen.getByTestId("history").textContent || "[]");
+      expect(history[0]).toMatchObject({
+        liveSessionId: "web-live-1",
+        busy: true,
+      });
+    });
+
+    backgroundBusy = false;
+
+    await waitFor(() => {
+      const history = JSON.parse(screen.getByTestId("history").textContent || "[]");
+      expect(history[0]).toMatchObject({
+        liveSessionId: "web-live-1",
+        busy: false,
+      });
+    }, { timeout: 4500 });
+
+    expect(listLiveSessions).toHaveBeenCalledTimes(2);
+  });
+
   it("loads only the first saved history page on workspace startup", async () => {
     vi.mocked(listHistory).mockResolvedValue({
       options: [{ value: "session-1", label: "5/4 10:00 2 msg", description: "첫 대화" }],

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
@@ -231,7 +232,7 @@ class McpClientManager:
                     StdioServerParameters(
                         command=config.command,
                         args=config.args,
-                        env=config.env,
+                        env={**os.environ, **(config.env or {})},
                         cwd=_stdio_cwd(config),
                     )
                 )

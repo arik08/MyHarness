@@ -5,11 +5,21 @@ from pathlib import Path
 from myharness.learning.service import (
     LearningCandidate,
     analyze_learning_candidate,
+    get_default_learning_skills_dir,
     persist_learning_candidate,
     remember_tool_failure,
     run_auto_skill_learning,
 )
 from myharness.skills import load_skill_registry
+
+
+def test_default_learning_skills_dir_is_posco_category(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "myharness.learning.service.get_program_skills_dirs",
+        lambda: [tmp_path / ".skills"],
+    )
+
+    assert get_default_learning_skills_dir() == tmp_path / ".skills" / "POSCO_Skill"
 
 
 def test_repeated_verified_failure_creates_program_local_skill(tmp_path: Path):
@@ -33,6 +43,7 @@ def test_repeated_verified_failure_creates_program_local_skill(tmp_path: Path):
     learned = metadata.get("recent_learned_skills")
     assert isinstance(learned, list)
     assert learned[-1]["skill"] == result.candidate.skill_name
+    assert metadata["skill_registry_dirty"] is True
 
     registry = load_skill_registry(tmp_path, extra_skill_dirs=[tmp_path / ".skills"])
     assert registry.get(result.candidate.skill_name) is not None
@@ -125,7 +136,7 @@ def test_web_fetch_signature_uses_status_and_domain_not_path():
 def test_youtube_yt_dlp_failures_create_reusable_transcript_skill(tmp_path: Path):
     metadata: dict[str, object] = {
         "recent_verified_work": [
-            "Ran command python .skills/insane-search/scripts/youtube_transcript.py URL --json"
+            "Ran command python .skills/General/insane-search/scripts/youtube_transcript.py URL --json"
         ]
     }
     for video_id in ("uqdwML8VzUY", "I9nDOSGfwZg"):

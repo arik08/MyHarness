@@ -32,7 +32,7 @@ def test_checked_in_project_settings_default_to_pgpt():
     assert settings.provider == "openai"
     assert settings.api_format == "openai"
     assert settings.resolve_profile()[0] == "p-gpt"
-    assert settings.model == "gpt-5.4"
+    assert settings.model == "gpt-5.6-luna"
     assert settings.effort == "low"
 
 
@@ -113,6 +113,9 @@ class TestSettings:
 
     def test_supported_model_output_token_limits(self):
         assert supported_model_output_token_limits() == {
+            "gpt-5.6-luna": 128_000,
+            "gpt-5.6-terra": 128_000,
+            "gpt-5.6-sol": 128_000,
             "gpt-5.5": 128_000,
             "gpt-5.4": 128_000,
             "gpt-5.4-mini": 128_000,
@@ -834,8 +837,16 @@ class TestPgptOpenAICompatibleProvider:
         assert profile.provider == "openai"
         assert profile.api_format == "openai"
         assert profile.auth_source == "pgpt_api_key"
-        assert profile.default_model == "gpt-5.4"
-        assert profile.allowed_models == ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"]
+        assert profile.default_model == "gpt-5.6-luna"
+        assert profile.allowed_models == [
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+            "gpt-5.6-sol",
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+        ]
         assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
 
     def test_codex_subscription_default_profile_includes_lightweight_gpt54_models(self):
@@ -888,7 +899,15 @@ class TestPgptOpenAICompatibleProvider:
 
         profile = settings.merged_profiles()["p-gpt"]
 
-        assert profile.allowed_models == ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"]
+        assert profile.allowed_models == [
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+            "gpt-5.6-sol",
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+        ]
 
     def test_pgpt_saved_last_model_survives_builtin_default_change(self):
         from myharness.config.settings import ProviderProfile
@@ -911,11 +930,11 @@ class TestPgptOpenAICompatibleProvider:
         profile = settings.merged_profiles()["p-gpt"]
         materialized = settings.materialize_active_profile()
 
-        assert profile.default_model == "gpt-5.4"
+        assert profile.default_model == "gpt-5.6-luna"
         assert profile.last_model == "gpt-5.5"
         assert materialized.model == "gpt-5.5"
 
-    def test_pgpt_saved_builtin_default_moves_to_gpt54_when_no_last_model(self):
+    def test_pgpt_saved_builtin_default_moves_to_gpt56_luna_when_no_last_model(self):
         from myharness.config.settings import ProviderProfile
 
         settings = Settings(
@@ -936,9 +955,9 @@ class TestPgptOpenAICompatibleProvider:
         profile = settings.merged_profiles()["p-gpt"]
         materialized = settings.materialize_active_profile()
 
-        assert profile.default_model == "gpt-5.4"
+        assert profile.default_model == "gpt-5.6-luna"
         assert profile.last_model is None
-        assert materialized.model == "gpt-5.4"
+        assert materialized.model == "gpt-5.6-luna"
 
     def test_default_profile_is_pgpt(self):
         materialized = Settings().materialize_active_profile()
@@ -946,7 +965,7 @@ class TestPgptOpenAICompatibleProvider:
         assert materialized.active_profile == "p-gpt"
         assert materialized.provider == "openai"
         assert materialized.api_format == "openai"
-        assert materialized.model == "gpt-5.4"
+        assert materialized.model == "gpt-5.6-luna"
         assert materialized.effort == "low"
 
     def test_auth_source_provider_name_pgpt(self):
@@ -978,7 +997,7 @@ class TestPgptOpenAICompatibleProvider:
         assert resolved.value == "pgpt-file-key"
         assert resolved.source == "file:pgpt"
 
-    def test_resolve_auth_prefers_pgpt_credentials_file_over_env(self, tmp_path, monkeypatch):
+    def test_resolve_auth_prefers_pgpt_env_over_credentials_file(self, tmp_path, monkeypatch):
         from myharness.auth.storage import store_credential
 
         monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path))
@@ -988,5 +1007,5 @@ class TestPgptOpenAICompatibleProvider:
 
         resolved = settings.resolve_auth()
 
-        assert resolved.value == "pgpt-file-key"
-        assert resolved.source == "file:pgpt"
+        assert resolved.value == "pgpt-env-key"
+        assert resolved.source == "env:PGPT_API_KEY"

@@ -24,3 +24,23 @@ export async function copyTextToClipboard(text: string) {
     throw new Error("복사에 실패했습니다.");
   }
 }
+
+export async function copyPngToClipboard(png: Promise<Blob>) {
+  if (window.isSecureContext !== false && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "image/png": png,
+      }),
+    ]);
+    return;
+  }
+  const response = await fetch("/api/clipboard/image", {
+    method: "POST",
+    headers: { "content-type": "image/png" },
+    body: await png,
+  });
+  const result = await response.json().catch(() => ({})) as { error?: string };
+  if (!response.ok) {
+    throw new Error(result.error || "HTTP 이미지 복사에 실패했습니다.");
+  }
+}

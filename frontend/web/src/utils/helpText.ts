@@ -4,6 +4,11 @@ function isSkillMcpSource(source: string) {
   return /^(skill-mcp(?::|$)|mcp:)/i.test(String(source || "").trim());
 }
 
+function mcpServerNameFromSkillSource(source: string) {
+  const normalized = String(source || "").trim();
+  return normalized.includes(":") ? normalized.split(":", 2)[1].trim().toLowerCase() : "";
+}
+
 function skillUsageMeta(count: unknown) {
   const numeric = Math.floor(Number(count));
   return Number.isFinite(numeric) && numeric >= 0 ? ` [count:${numeric}]` : "";
@@ -46,8 +51,15 @@ export function frontendHelpText({
       const status = skill.enabled === false ? "비활성" : "활성";
       return `- ${skill.name} [${status}] (skill-mcp): ${skill.description || "MCP server"}`;
     });
+  const wrappedMcpServerNames = new Set(
+    skills
+      .filter((skill) => isSkillMcpSource(skill.source || ""))
+      .map((skill) => mcpServerNameFromSkillSource(skill.source || ""))
+      .filter(Boolean),
+  );
   const mcpLines = [
     ...mcpServers
+      .filter((server) => !wrappedMcpServerNames.has(server.name.trim().toLowerCase()))
       .slice()
       .sort((left, right) => left.name.localeCompare(right.name))
       .map((server) => {

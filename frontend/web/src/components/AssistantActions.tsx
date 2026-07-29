@@ -46,7 +46,10 @@ const krwFormatter = new Intl.NumberFormat("ko-KR", {
   maximumFractionDigits: 0,
 });
 
-const tokenPricingUsdPerMillion: Record<string, { cachedInput: number; input: number; output: number }> = {
+const tokenPricingUsdPerMillion: Record<string, { cachedInput: number; cacheWrite?: number; input: number; output: number }> = {
+  "gpt-5.6-sol": { cachedInput: 0.5, cacheWrite: 6.25, input: 5.0, output: 30.0 },
+  "gpt-5.6-terra": { cachedInput: 0.25, cacheWrite: 3.125, input: 2.5, output: 15.0 },
+  "gpt-5.6-luna": { cachedInput: 0.1, cacheWrite: 1.25, input: 1.0, output: 6.0 },
   "gpt-5.5": { cachedInput: 0.5, input: 5.0, output: 30.0 },
   "gpt-5.4": { cachedInput: 0.25, input: 2.5, output: 15.0 },
   "gpt-5.4-mini": { cachedInput: 0.075, input: 0.75, output: 4.5 },
@@ -140,6 +143,7 @@ function estimateUsageCostParts(usage?: UsageCostSummary | null) {
   }
   return {
     cachedInput: usage.cached_input_tokens * pricing.cachedInput / 1_000_000,
+    cacheWrite: (usage.cache_write_tokens || 0) * (pricing.cacheWrite || 0) / 1_000_000,
     output: usage.output_tokens * pricing.output / 1_000_000,
     uncachedInput: usage.uncached_input_tokens * pricing.input / 1_000_000,
   };
@@ -148,10 +152,11 @@ function estimateUsageCostParts(usage?: UsageCostSummary | null) {
 function usageCostParts(usage?: UsageCostSummary | null) {
   const direct = {
     cachedInput: finiteOptionalNumber(usage?.estimated_cached_input_cost_usd),
+    cacheWrite: finiteOptionalNumber(usage?.estimated_cache_write_cost_usd),
     output: finiteOptionalNumber(usage?.estimated_output_cost_usd),
     uncachedInput: finiteOptionalNumber(usage?.estimated_uncached_input_cost_usd),
   };
-  const directTotal = sumOptionalNumbers(direct.cachedInput, direct.output, direct.uncachedInput);
+  const directTotal = sumOptionalNumbers(direct.cachedInput, direct.cacheWrite, direct.output, direct.uncachedInput);
   const estimatedTotal = finiteOptionalNumber(usage?.estimated_cost_usd);
   if (directTotal !== null && directTotal > 0) {
     return direct;
@@ -159,7 +164,7 @@ function usageCostParts(usage?: UsageCostSummary | null) {
   if (!estimatedTotal || estimatedTotal <= 0) {
     return direct;
   }
-  return estimateUsageCostParts(usage) || { cachedInput: null, output: null, uncachedInput: null };
+  return estimateUsageCostParts(usage) || { cachedInput: null, cacheWrite: null, output: null, uncachedInput: null };
 }
 
 function formatCacheHitRatio(usage?: UsageCostSummary | null) {
@@ -177,12 +182,13 @@ function usageModelLabel(usage?: UsageCostSummary | null) {
 }
 
 function usageHasData(usage?: UsageCostSummary | null) {
-  return Boolean(usage && (usage.input_tokens || usage.output_tokens || usage.cached_input_tokens));
+  return Boolean(usage && (usage.input_tokens || usage.output_tokens || usage.cached_input_tokens || usage.cache_write_tokens));
 }
 
 const usageDuplicateKeys = [
   "input_tokens",
   "cached_input_tokens",
+  "cache_write_tokens",
   "uncached_input_tokens",
   "output_tokens",
   "total_tokens",
@@ -190,6 +196,7 @@ const usageDuplicateKeys = [
   "estimated_cache_savings_usd",
   "estimated_uncached_input_cost_usd",
   "estimated_cached_input_cost_usd",
+  "estimated_cache_write_cost_usd",
   "estimated_output_cost_usd",
   "cache_hit_ratio",
 ] as const;
@@ -228,8 +235,8 @@ type UsageMetric = {
 
 function usageMetrics(usage: UsageCostSummary | null | undefined, exchangeRate: ExchangeRateState): UsageMetric[] {
   const costParts = usageCostParts(usage);
-  const inputCostUsd = sumOptionalNumbers(costParts.uncachedInput, costParts.cachedInput);
-  return [
+  const inputCostUsd = sumOptionalNumbers(costParts.uncachedInput, costParts.cachedInput, costParts.cacheWrite);
+  const metrics: UsageMetric[] = [
     { cost: formatOptionalUsageCost(inputCostUsd, exchangeRate), id: "input", label: "Input", level: "parent", value: formatTokenCount(usage?.input_tokens) },
     {
       cost: formatOptionalUsageCost(costParts.cachedInput, exchangeRate),
@@ -238,11 +245,19 @@ function usageMetrics(usage: UsageCostSummary | null | undefined, exchangeRate: 
       level: "child",
       value: formatTokenCount(usage?.cached_input_tokens),
     },
+    {
+      cost: formatOptionalUsageCost(costParts.cacheWrite, exchangeRate),
+      id: "cache-write",
+      label: "Cache write",
+      level: "child",
+      value: formatTokenCount(usage?.cache_write_tokens),
+    },
     { cost: formatOptionalUsageCost(costParts.uncachedInput, exchangeRate), id: "uncached", label: "Uncached", level: "child", value: formatTokenCount(usage?.uncached_input_tokens) },
     { cost: "-", id: "cache-rate", label: "Cache rate", level: "child", value: formatCacheHitRatio(usage) },
     { cost: formatOptionalUsageCost(costParts.output, exchangeRate), id: "output", label: "Output", level: "parent", value: formatTokenCount(usage?.output_tokens) },
     { cost: usageHasSupportedCost(usage) ? formatUsageCost(usage, exchangeRate) : "", id: "total", label: "Total", level: "parent", value: formatTokenCount(usage?.total_tokens) },
   ];
+  return metrics.filter((metric) => metric.id !== "cache-write" || Boolean(usage?.cache_write_tokens));
 }
 
 function UsageMetricValue({ metric }: { metric: UsageMetric }) {

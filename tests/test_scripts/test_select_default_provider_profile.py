@@ -15,7 +15,7 @@ def _jwt_with_exp(exp: int) -> str:
     return f"header.{encoded}.signature"
 
 
-def test_selects_codex_when_codex_oauth_access_token_is_present(tmp_path: Path):
+def test_selects_pgpt_when_codex_oauth_access_token_is_present(tmp_path: Path):
     codex_home = tmp_path / ".codex"
     codex_home.mkdir()
     (codex_home / "auth.json").write_text(
@@ -24,7 +24,7 @@ def test_selects_codex_when_codex_oauth_access_token_is_present(tmp_path: Path):
     )
 
     assert codex_oauth_usable(codex_home=codex_home, now=1_800_000_000)
-    assert select_default_profile(codex_home=codex_home, now=1_800_000_000) == "codex"
+    assert select_default_profile(codex_home=codex_home, now=1_800_000_000) == "p-gpt"
 
 
 def test_selects_pgpt_when_codex_oauth_is_missing_or_expired(tmp_path: Path):

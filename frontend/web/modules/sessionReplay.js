@@ -42,9 +42,8 @@ function pushStableEvent(state, event) {
 }
 
 function rememberLatestEvent(state, key, event) {
-  const current = state.latestEvents.get(key);
   state.latestEvents.set(key, {
-    order: current?.order ?? nextOrder(state),
+    order: nextOrder(state),
     event: cloneEvent(event),
   });
 }

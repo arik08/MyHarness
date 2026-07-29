@@ -8,6 +8,7 @@ export type RuntimePreferences = {
   subagentModel?: string;
   subagentEffort?: string;
   effort?: string;
+  gpt56ContextMode?: "cost-saver" | "full-context";
 };
 
 function clean(value: unknown) {
@@ -29,12 +30,16 @@ function normalizeActiveProfile(value: unknown) {
 export function loadRuntimePreferences(): RuntimePreferences {
   try {
     const value = JSON.parse(localStorage.getItem(runtimePreferenceKey) || "{}") as RuntimePreferences;
+    const appSettings = JSON.parse(localStorage.getItem("myharness:appSettings") || "{}") as {
+      gpt56ContextMode?: string;
+    };
     return {
       activeProfile: normalizeActiveProfile(value.activeProfile) || undefined,
       model: clean(value.model) || undefined,
       subagentModel: clean(value.subagentModel) || undefined,
       subagentEffort: clean(value.subagentEffort) || undefined,
       effort: clean(value.effort) || undefined,
+      gpt56ContextMode: appSettings.gpt56ContextMode === "full-context" ? "full-context" : "cost-saver",
     };
   } catch {
     return {};
@@ -48,6 +53,7 @@ function saveRuntimePreferences(preferences: RuntimePreferences) {
     subagentModel: clean(preferences.subagentModel) || undefined,
     subagentEffort: clean(preferences.subagentEffort) || undefined,
     effort: clean(preferences.effort) || undefined,
+    gpt56ContextMode: preferences.gpt56ContextMode === "full-context" ? "full-context" : "cost-saver",
   };
   try {
     localStorage.setItem(runtimePreferenceKey, JSON.stringify(normalized));
@@ -56,13 +62,14 @@ function saveRuntimePreferences(preferences: RuntimePreferences) {
   }
 }
 
-export function runtimePreferencesFromState(state: Pick<AppState, "provider" | "activeProfile" | "model" | "subagentModel" | "subagentEffort" | "effort">): RuntimePreferences {
+export function runtimePreferencesFromState(state: Pick<AppState, "provider" | "activeProfile" | "model" | "subagentModel" | "subagentEffort" | "effort" | "appSettings">): RuntimePreferences {
   return {
     activeProfile: normalizeActiveProfile(state.activeProfile) || normalizeActiveProfile(state.provider) || undefined,
     model: clean(state.model) || undefined,
     subagentModel: clean(state.subagentModel) || undefined,
     subagentEffort: clean(state.subagentEffort) || undefined,
     effort: clean(state.effort) || undefined,
+    gpt56ContextMode: state.appSettings.gpt56ContextMode,
   };
 }
 

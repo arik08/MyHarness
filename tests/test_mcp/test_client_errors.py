@@ -128,6 +128,42 @@ async def test_connect_all_connects_servers_concurrently(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_connect_stdio_merges_parent_environment(monkeypatch):
+    captured = {}
+
+    class _StdioContext:
+        async def __aenter__(self):
+            return object(), object()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    def _stdio_client(parameters):
+        captured["parameters"] = parameters
+        return _StdioContext()
+
+    manager = McpClientManager({})
+    manager._register_connected_session = AsyncMock()
+    monkeypatch.setattr("myharness.mcp.client.stdio_client", _stdio_client)
+    monkeypatch.setenv("NODE_EXTRA_CA_CERTS", "company-ca.pem")
+    monkeypatch.setenv("HTTPS_PROXY", "http://company-proxy")
+
+    await manager._connect_stdio(
+        "assembly",
+        McpStdioServerConfig(
+            command="node",
+            args=["dist/index.js"],
+            env={"HTTPS_PROXY": "http://server-specific-proxy", "MCP_PROFILE": "full"},
+        ),
+    )
+
+    child_env = captured["parameters"].env
+    assert child_env["NODE_EXTRA_CA_CERTS"] == "company-ca.pem"
+    assert child_env["HTTPS_PROXY"] == "http://server-specific-proxy"
+    assert child_env["MCP_PROFILE"] == "full"
+
+
+@pytest.mark.asyncio
 async def test_close_suppresses_known_runtime_error_from_stdio_cleanup():
     manager = McpClientManager({})
     stack = MagicMock()

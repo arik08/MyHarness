@@ -22,8 +22,9 @@ from myharness.engine.stream_events import (
 )
 from myharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
 from myharness.mcp.types import McpConnectionStatus, McpStdioServerConfig, McpToolInfo
-from myharness.project_preferences import load_project_preferences
+from myharness.project_preferences import ProjectPreferences, load_project_preferences, save_project_preferences
 from myharness.skills.state import increment_skill_usage_count
+from myharness.skills.refresh import SKILL_REGISTRY_DIRTY_KEY
 from myharness.services.long_report_progress import write_long_report_progress_state
 from myharness.skills.types import SkillDefinition
 from myharness.state.app_state import AppState
@@ -202,6 +203,12 @@ def test_initial_runtime_state_snapshot_resolves_provider_before_full_startup(tm
     assert snapshot["provider_label"] == "Codex Subscription"
     assert snapshot["model"] == "gpt-5.4"
     assert snapshot["cwd"] == str(tmp_path)
+    runtime_options = snapshot["runtime_options"]
+    assert any(option["value"] == "codex" for option in runtime_options["providers"])
+    assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == [
+        "gpt-5.5",
+        "gpt-5.4",
+    ]
 
 
 def test_backend_host_detects_explicit_mcp_need_before_first_turn():
@@ -257,6 +264,39 @@ def test_skill_snapshot_reads_global_usage_count(tmp_path, monkeypatch):
 
     snapshot = next(item for item in snapshots if item.name == "counted-skill")
     assert snapshot.usage_count == 2
+
+
+@pytest.mark.asyncio
+async def test_dirty_skill_refresh_updates_catalog_without_resetting_conversation(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_project_preferences(tmp_path, ProjectPreferences(disabled_skills=[]))
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"), cwd=tmp_path)
+    original_messages = [ConversationMessage.from_user_text("기존 대화")]
+    host._bundle.engine.load_messages(original_messages)
+    skill_dir = tmp_path / ".skills" / "quiet-refresh"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: quiet-refresh\ndescription: Quiet refresh skill.\n---\n",
+        encoding="utf-8",
+    )
+    host._bundle.engine.tool_metadata[SKILL_REGISTRY_DIRTY_KEY] = True
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    try:
+        await host._refresh_skill_runtime_if_dirty()
+    finally:
+        await close_runtime(host._bundle)
+
+    skills_event = next(event for event in events if event.type == "skills_snapshot")
+    refreshed_skill = next(skill for skill in skills_event.skills or [] if skill.name == "quiet-refresh")
+    assert refreshed_skill.enabled is True
+    assert host._bundle.engine.messages == original_messages
+    assert SKILL_REGISTRY_DIRTY_KEY not in host._bundle.engine.tool_metadata
 
 
 @pytest.mark.asyncio
@@ -848,6 +888,46 @@ async def test_read_requests_resolves_permission_response_without_queueing(monke
     assert fut.result() is True
     queued = await host._request_queue.get()
     assert queued.type == "shutdown"
+    assert host._request_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_read_requests_decodes_utf8_json_from_binary_stdin(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    payload = (
+        json.dumps(
+            {"type": "submit_line", "line": "안녕", "suppress_user_transcript": True},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+    class _FakeBuffer:
+        def __init__(self):
+            self._reads = 0
+
+        def readline(self):
+            self._reads += 1
+            if self._reads == 1:
+                return payload
+            return b""
+
+    class _FailingTextStdin:
+        buffer = _FakeBuffer()
+
+        def readline(self):
+            raise AssertionError("binary stdin buffer must be preferred")
+
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", _FailingTextStdin())
+
+    await host._read_requests()
+
+    request = await host._request_queue.get()
+    assert request.type == "submit_line"
+    assert request.line == "안녕"
+    assert request.suppress_user_transcript is True
+    shutdown = await host._request_queue.get()
+    assert shutdown.type == "shutdown"
     assert host._request_queue.empty()
 
 
@@ -3203,8 +3283,12 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     runtime_options = event.modal["runtime_options"]
     active_provider = next(option["value"] for option in runtime_options["providers"] if option.get("active"))
     assert runtime_options["models_by_provider"][active_provider]
-    assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:2] == ["gpt-5.4", "gpt-5.4-mini"]
-    assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Balanced default model"
+    assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:3] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+    ]
+    assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Fast and affordable GPT-5.6"
     assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == ["gpt-5.5", "gpt-5.4"]
     assert "gpt-5.4-mini" in [option["value"] for option in runtime_options["models_by_provider"]["codex"]]
     assert any(option["value"] == "gemini" for option in runtime_options["providers"])

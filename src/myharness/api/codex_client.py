@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+from dataclasses import replace
 from typing import Any, AsyncIterator
 
 import httpx
@@ -220,6 +221,12 @@ def _usage_from_response(response: dict[str, Any]) -> UsageSnapshot:
         input_tokens=int(usage.get("input_tokens") or 0),
         output_tokens=int(usage.get("output_tokens") or 0),
         cached_input_tokens=int(input_details.get("cached_tokens") or 0),
+        cache_write_tokens=int(
+            usage.get("cache_write_tokens")
+            or input_details.get("cache_write_tokens")
+            or input_details.get("cache_creation_input_tokens")
+            or 0
+        ),
     )
 
 
@@ -332,6 +339,27 @@ class CodexApiClient:
         if last_error is not None:
             raise self._translate_error(last_error) from last_error
 
+    async def prewarm_prompt_cache(self, request: ApiMessageRequest) -> UsageSnapshot | None:
+        """Populate the reusable static prefix without touching conversation state."""
+        if "prompt_cache_key" in self._unsupported_cache_option_names:
+            return None
+
+        warmup_request = replace(
+            request,
+            messages=[
+                ConversationMessage.from_user_text(
+                    "Initialize the reusable prompt context. Reply only with OK."
+                )
+            ],
+            max_tokens=min(request.max_tokens, 16),
+            cache_event=None,
+        )
+        usage: UsageSnapshot | None = None
+        async for event in self._stream_once(warmup_request, max_output_tokens=16):
+            if isinstance(event, ApiMessageCompleteEvent):
+                usage = event.usage
+        return usage
+
     def _request_body(self, request: ApiMessageRequest, safe_messages: list[ConversationMessage]) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": request.model,
@@ -362,9 +390,16 @@ class CodexApiClient:
         )
         return body
 
-    async def _stream_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
+    async def _stream_once(
+        self,
+        request: ApiMessageRequest,
+        *,
+        max_output_tokens: int | None = None,
+    ) -> AsyncIterator[ApiStreamEvent]:
         safe_messages = sanitize_conversation_messages(request.messages)
         body = self._request_body(request, safe_messages)
+        if max_output_tokens is not None:
+            body["max_output_tokens"] = max_output_tokens
 
         content: list[TextBlock | ToolUseBlock] = []
         current_text_parts: list[str] = []
@@ -390,6 +425,8 @@ class CodexApiClient:
                         message = _format_error_message(response.status_code, payload.decode("utf-8", "replace"))
                         if option_attempt == 0 and self._disable_unsupported_cache_options(message, body):
                             body = self._request_body(request, safe_messages)
+                            if max_output_tokens is not None:
+                                body["max_output_tokens"] = max_output_tokens
                             continue
                         raise httpx.HTTPStatusError(message, request=response.request, response=response)
 

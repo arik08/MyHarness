@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import myharness.auth.storage as auth_storage
 from myharness.auth.external import (
     CLAUDE_PROVIDER,
     CODEX_PROVIDER,
@@ -31,6 +32,16 @@ def _b64url(data: dict[str, object]) -> str:
 
 def _fake_jwt(payload: dict[str, object]) -> str:
     return f"{_b64url({'alg': 'none', 'typ': 'JWT'})}.{_b64url(payload)}.sig"
+
+
+def test_keyring_probe_can_be_disabled_by_environment(monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DISABLE_KEYRING", "1")
+    monkeypatch.setattr(auth_storage, "_keyring_checked", False)
+    monkeypatch.setattr(auth_storage, "_keyring_usable", True)
+
+    assert auth_storage._keyring_available() is False
+    assert auth_storage._keyring_checked is True
+    assert auth_storage._keyring_usable is False
 
 
 def test_load_codex_external_credential(monkeypatch, tmp_path: Path):

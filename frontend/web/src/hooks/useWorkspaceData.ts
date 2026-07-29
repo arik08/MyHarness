@@ -6,15 +6,26 @@ import { listWorkspaces } from "../api/workspaces";
 import { useAppState } from "../state/app-state";
 import type { HistoryItem, LiveSessionItem } from "../types/backend";
 
+const backgroundLiveSessionPollMs = 3000;
+
 function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], currentSessionId: string | null): HistoryItem[] {
-  const historyByValue = new Map<string, HistoryItem>();
-  for (const item of history) {
-    if (item.value) {
-      historyByValue.set(item.value, item);
+  const liveSessionIds = new Set(sessions.map((session) => session.sessionId));
+  const mergedHistory = history.flatMap<HistoryItem>((item) => {
+    if (
+      item.live !== true
+      || !item.liveSessionId
+      || item.liveSessionId === currentSessionId
+      || liveSessionIds.has(item.liveSessionId)
+    ) {
+      return [{ ...item }];
     }
-  }
-  const mergedHistory = history.map((item) => ({ ...item }));
-  const seen = new Set(historyByValue.keys());
+    if (item.value === item.liveSessionId) {
+      return [];
+    }
+    const { live: _live, liveSessionId: _liveSessionId, busy: _busy, ...savedItem } = item;
+    return [savedItem];
+  });
+  const seen = new Set(mergedHistory.map((item) => item.value).filter(Boolean));
   const liveItems: HistoryItem[] = [];
   for (const session of sessions) {
     if (session.sessionId === currentSessionId) {
@@ -24,13 +35,14 @@ function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], 
     if (!value) {
       continue;
     }
-    const savedItemIndex = session.savedSessionId
-      ? mergedHistory.findIndex((item) => item.value === session.savedSessionId)
-      : -1;
-    if (savedItemIndex >= 0) {
-      mergedHistory[savedItemIndex] = {
-        ...mergedHistory[savedItemIndex],
-        workspace: mergedHistory[savedItemIndex].workspace || session.workspace || null,
+    const liveItemIndex = mergedHistory.findIndex((item) => (
+      item.liveSessionId === session.sessionId
+      || (session.savedSessionId && item.value === session.savedSessionId)
+    ));
+    if (liveItemIndex >= 0) {
+      mergedHistory[liveItemIndex] = {
+        ...mergedHistory[liveItemIndex],
+        workspace: mergedHistory[liveItemIndex].workspace || session.workspace || null,
         live: true,
         liveSessionId: session.sessionId,
         busy: session.busy,
@@ -60,6 +72,16 @@ function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], 
 
 export function useWorkspaceData() {
   const { state, dispatch } = useAppState();
+  const backgroundBusySessionIds = state.history
+    .filter((item) => (
+      item.live === true
+      && item.busy === true
+      && item.liveSessionId
+      && item.liveSessionId !== state.sessionId
+    ))
+    .map((item) => item.liveSessionId)
+    .sort()
+    .join("|");
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +163,62 @@ export function useWorkspaceData() {
     state.restoringHistory,
     state.sessionId,
     state.workspaceName,
+    state.workspacePath,
+  ]);
+
+  useEffect(() => {
+    if (
+      !backgroundBusySessionIds
+      || !state.clientId
+      || state.historyReadOnly
+      || (state.restoringHistory && state.pendingHistoryId)
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshBackgroundSessions() {
+      try {
+        const data = await listLiveSessions({
+          clientId: state.clientId,
+          workspacePath: state.workspacePath || undefined,
+        });
+        if (cancelled) return;
+        dispatch({
+          type: "set_history",
+          history: mergeLiveSessions(
+            state.history,
+            Array.isArray(data.sessions) ? data.sessions : [],
+            state.sessionId,
+          ),
+          hasMore: state.historyHasMore,
+          nextOffset: state.historyNextOffset,
+        });
+      } catch {
+        // The active chat event stream remains authoritative. Retry background status later.
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshBackgroundSessions();
+    }, backgroundLiveSessionPollMs);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    backgroundBusySessionIds,
+    dispatch,
+    state.clientId,
+    state.history,
+    state.historyHasMore,
+    state.historyNextOffset,
+    state.historyReadOnly,
+    state.pendingHistoryId,
+    state.restoringHistory,
+    state.sessionId,
     state.workspacePath,
   ]);
 

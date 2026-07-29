@@ -2142,6 +2142,12 @@ def main(
         help="Effort level for the session (auto, low, medium, high, xhigh, max)",
         rich_help_panel="Model & Effort",
     ),
+    gpt56_context_mode: str | None = typer.Option(
+        None,
+        "--gpt56-context-mode",
+        help="GPT-5.6 context policy: cost-saver or full-context",
+        rich_help_panel="System & Context",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -2417,6 +2423,7 @@ def main(
                 permission_mode=permission_mode,
                 api_format=api_format,
                 effort=effort,
+                gpt56_context_mode=gpt56_context_mode,
             )
         )
         return
@@ -2482,5 +2489,6 @@ def main(
             api_format=api_format,
             permission_mode=permission_mode,
             effort=effort,
+            gpt56_context_mode=gpt56_context_mode,
         )
     )

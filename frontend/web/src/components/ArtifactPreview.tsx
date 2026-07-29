@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
+import html2canvas from "html2canvas";
 import type { ArtifactSummary } from "../types/backend";
 import type { ArtifactAiEditComment, ArtifactPayload } from "../types/ui";
 import { artifactDisplayName, isSourceCodeArtifact, sourceLanguageForArtifact } from "../utils/artifacts";
@@ -12,8 +13,21 @@ export const artifactAiSelectionMessage = "myharness:artifact-ai-selection";
 export const artifactAiCommentsMessage = "myharness:artifact-ai-comments";
 export const artifactFrameScrollMessage = "myharness:artifact-frame-scroll";
 export const artifactHtmlEditModeMessage = "myharness:artifact-html-edit-mode";
+export const artifactCaptureRequestMessage = "myharness:artifact-capture-request";
+export const artifactCaptureSnapshotMessage = "myharness:artifact-capture-snapshot";
+
+export type ArtifactCaptureResult = {
+  requestId: string;
+  path: string;
+  blob?: Blob;
+  error?: string;
+};
 
 const htmlMermaidCodeSelector = "pre > code.language-mermaid, pre > code.lang-mermaid";
+const artifactCaptureDesktopWidths = [960, 1120, 1280, 1440, 1600, 1920];
+const artifactCaptureDesktopHeight = 900;
+const artifactCaptureMaxDimension = 32767;
+const artifactCaptureMaxPixels = 50_000_000;
 
 function hasRawHtmlMermaid(content: string) {
   const value = String(content || "");
@@ -628,6 +642,241 @@ function iframeBackBridge(content: string) {
     return content.replace(/<\/body\s*>/i, `${bridge}</body>`);
   }
   return `${content}${bridge}`;
+}
+
+function iframeCaptureBridge(content: string, artifactPath: string) {
+  const bridge = `
+<script data-myharness-capture-script="true">
+(() => {
+  const requestType = ${JSON.stringify(artifactCaptureRequestMessage)};
+  const snapshotType = ${JSON.stringify(artifactCaptureSnapshotMessage)};
+  const artifactPath = ${JSON.stringify(artifactPath)};
+  let activeRequestId = "";
+
+  window.addEventListener("message", async (event) => {
+    if (event.data?.type !== requestType || event.data.path !== artifactPath) return;
+    const requestId = String(event.data.requestId || "");
+    if (!requestId || requestId === activeRequestId) return;
+    activeRequestId = requestId;
+    try {
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const root = document.documentElement;
+      const body = document.body;
+      const width = Math.max(root?.scrollWidth || 0, body?.scrollWidth || 0, window.innerWidth || 0);
+      const height = Math.max(root?.scrollHeight || 0, body?.scrollHeight || 0, window.innerHeight || 0);
+      if (!width || !height) throw new Error("캡처할 보고서 크기를 확인할 수 없습니다.");
+      const snapshot = root.cloneNode(true);
+      snapshot.querySelectorAll("script").forEach((element) => element.remove());
+      const sourceCanvases = Array.from(document.querySelectorAll("canvas"));
+      const snapshotCanvases = Array.from(snapshot.querySelectorAll("canvas"));
+      sourceCanvases.forEach((canvas, index) => {
+        const target = snapshotCanvases[index];
+        if (!target) return;
+        try {
+          const image = document.createElement("img");
+          image.src = canvas.toDataURL("image/png");
+          image.alt = canvas.getAttribute("aria-label") || "";
+          image.width = canvas.width;
+          image.height = canvas.height;
+          image.setAttribute("style", canvas.getAttribute("style") || "");
+          target.replaceWith(image);
+        } catch {
+          // Cross-origin canvas pixels cannot be serialized; keep the canvas element.
+        }
+      });
+      const doctype = document.doctype ? \`<!DOCTYPE \${document.doctype.name}>\` : "<!doctype html>";
+      parent.postMessage({
+        type: snapshotType,
+        requestId,
+        path: artifactPath,
+        html: \`\${doctype}\\n\${snapshot.outerHTML}\`,
+        width,
+        height,
+        viewportHeight: window.innerHeight,
+      }, "*");
+    } catch (error) {
+      parent.postMessage({
+        type: snapshotType,
+        requestId,
+        path: artifactPath,
+        error: error instanceof Error ? error.message : String(error),
+      }, "*");
+    } finally {
+      activeRequestId = "";
+    }
+  });
+})();
+</script>`;
+  if (/<\/body\s*>/i.test(content)) {
+    return content.replace(/<\/body\s*>/i, `${bridge}</body>`);
+  }
+  return `${content}${bridge}`;
+}
+
+function waitForCaptureLayout() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+}
+
+function renderedReportContentWidth(document: Document) {
+  const view = document.defaultView;
+  if (!view) return 0;
+  let left = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  const visualTags = new Set(["IMG", "SVG", "CANVAS", "TABLE", "PRE", "VIDEO", "HR"]);
+  for (const element of document.body?.querySelectorAll<HTMLElement>("*") || []) {
+    const hasDirectText = Array.from(element.childNodes).some(
+      (node) => node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim()),
+    );
+    const style = view.getComputedStyle(element);
+    const hasBoundedWidth = style.maxWidth !== "none" && style.maxWidth !== "0px";
+    const isReportContainer = element.tagName === "MAIN"
+      || element.tagName === "ARTICLE"
+      || element.getAttribute("role") === "main";
+    const leftMargin = Number.parseFloat(style.marginLeft);
+    const rightMargin = Number.parseFloat(style.marginRight);
+    const isCenteredContainer = leftMargin > 0 && Math.abs(leftMargin - rightMargin) < 1;
+    if (
+      !hasDirectText
+      && !visualTags.has(element.tagName)
+      && !hasBoundedWidth
+      && !isReportContainer
+      && !isCenteredContainer
+    ) {
+      continue;
+    }
+    if (style.display === "none" || style.visibility === "hidden") continue;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    left = Math.min(left, rect.left);
+    right = Math.max(right, rect.right);
+  }
+  return Number.isFinite(left) && Number.isFinite(right) ? Math.ceil(right - left) : 0;
+}
+
+async function optimalArtifactCaptureWidth(
+  frame: HTMLIFrameElement,
+  document: Document,
+  originalWidth: number,
+) {
+  const widths = [...new Set([
+    ...artifactCaptureDesktopWidths,
+    ...(originalWidth > artifactCaptureDesktopWidths.at(-1)! ? [Math.ceil(originalWidth)] : []),
+  ])].sort((a, b) => a - b);
+  const measurements: Array<{
+    viewportWidth: number;
+    contentWidth: number;
+    hasHorizontalOverflow: boolean;
+  }> = [];
+  for (const viewportWidth of widths) {
+    frame.style.width = `${viewportWidth}px`;
+    await waitForCaptureLayout();
+    const root = document.documentElement;
+    const body = document.body;
+    const scrollWidth = Math.max(root.scrollWidth, body?.scrollWidth || 0);
+    const contentWidth = renderedReportContentWidth(document) || scrollWidth || viewportWidth;
+    const hasHorizontalOverflow = scrollWidth > viewportWidth + 1;
+    measurements.push({ viewportWidth, contentWidth, hasHorizontalOverflow });
+    const selectedWidth = selectArtifactCaptureViewportWidth(measurements);
+    if (selectedWidth !== viewportWidth) {
+      return selectedWidth;
+    }
+  }
+  return selectArtifactCaptureViewportWidth(measurements);
+}
+
+export function selectArtifactCaptureViewportWidth(measurements: Array<{
+  viewportWidth: number;
+  contentWidth: number;
+  hasHorizontalOverflow: boolean;
+}>) {
+  for (let index = 1; index < measurements.length; index += 1) {
+    const previous = measurements[index - 1];
+    const current = measurements[index];
+    if (current.hasHorizontalOverflow) continue;
+    const growth = current.contentWidth - previous.contentWidth;
+    const plateauThreshold = Math.max(16, Math.round(previous.contentWidth * 0.015));
+    if (growth <= plateauThreshold) {
+      return previous.viewportWidth;
+    }
+  }
+  return measurements.at(-1)?.viewportWidth || artifactCaptureDesktopWidths[0];
+}
+
+async function captureArtifactSnapshot(snapshot: {
+  html: string;
+  width: number;
+  height: number;
+  viewportHeight: number;
+}) {
+  const viewportHeight = Math.max(artifactCaptureDesktopHeight, Math.ceil(snapshot.viewportHeight));
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "allow-same-origin");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.left = "-100000px";
+  frame.style.top = "0";
+  frame.style.width = `${artifactCaptureDesktopWidths[0]}px`;
+  frame.style.height = `${viewportHeight}px`;
+  frame.style.opacity = "0";
+  frame.style.pointerEvents = "none";
+  frame.srcdoc = snapshot.html;
+  document.body.append(frame);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => reject(new Error("캡처 문서 준비 시간이 초과되었습니다.")), 15_000);
+      frame.addEventListener("load", () => {
+        window.clearTimeout(timeoutId);
+        resolve();
+      }, { once: true });
+    });
+    const captureDocument = frame.contentDocument;
+    if (!captureDocument?.documentElement) {
+      throw new Error("캡처 문서를 열지 못했습니다.");
+    }
+    if (captureDocument.fonts?.ready) {
+      await captureDocument.fonts.ready;
+    }
+    const viewportWidth = await optimalArtifactCaptureWidth(frame, captureDocument, snapshot.width);
+    frame.style.width = `${viewportWidth}px`;
+    await waitForCaptureLayout();
+    const root = captureDocument.documentElement;
+    const body = captureDocument.body;
+    const width = Math.max(viewportWidth, renderedReportContentWidth(captureDocument));
+    const height = Math.max(viewportHeight, root.scrollHeight, body?.scrollHeight || 0);
+    if (
+      width > artifactCaptureMaxDimension
+      || height > artifactCaptureMaxDimension
+      || width * height > artifactCaptureMaxPixels
+    ) {
+      throw new Error(`보고서가 너무 커서 한 장의 이미지로 만들 수 없습니다. (${width}×${height}px)`);
+    }
+    const transparent = new Set(["", "transparent", "rgba(0, 0, 0, 0)"]);
+    const rootBackground = getComputedStyle(root).backgroundColor;
+    const bodyBackground = body ? getComputedStyle(body).backgroundColor : "";
+    const backgroundColor = !transparent.has(rootBackground)
+      ? rootBackground
+      : !transparent.has(bodyBackground) ? bodyBackground : "#ffffff";
+    const canvas = await html2canvas(root, {
+      backgroundColor,
+      width,
+      height,
+      windowWidth: viewportWidth,
+      windowHeight: viewportHeight,
+      scrollX: 0,
+      scrollY: 0,
+      scale: 1,
+      useCORS: true,
+      allowTaint: false,
+      imageTimeout: 15_000,
+      logging: false,
+    });
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((value) => value ? resolve(value) : reject(new Error("PNG 이미지 생성에 실패했습니다.")), "image/png");
+    });
+  } finally {
+    frame.remove();
+  }
 }
 
 function escapeAttribute(value: string) {
@@ -1913,6 +2162,8 @@ export function ArtifactPreview({
   htmlEditMode,
   aiSelectionEnabled,
   aiEditComments = [],
+  captureRequestId,
+  onCaptureResult,
   onDraftContentChange,
 }: {
   artifact: ArtifactSummary;
@@ -1925,6 +2176,8 @@ export function ArtifactPreview({
   htmlEditMode?: boolean;
   aiSelectionEnabled?: boolean;
   aiEditComments?: ArtifactAiEditComment[];
+  captureRequestId?: string;
+  onCaptureResult?: (result: ArtifactCaptureResult) => void;
   onDraftContentChange: (value: string) => void;
 }) {
   const kind = String(payload.kind || artifact.kind || "");
@@ -2001,6 +2254,66 @@ export function ArtifactPreview({
     }, "*");
   }, [aiEditComments, artifact.path, kind, sourceMode]);
   useEffect(() => {
+    if (kind !== "html" || sourceMode || !captureRequestId) return undefined;
+    const frame = htmlFrameElementRef.current;
+    if (!frame) return undefined;
+    const requestCapture = () => {
+      frame.contentWindow?.postMessage({
+        type: artifactCaptureRequestMessage,
+        requestId: captureRequestId,
+        path: artifact.path,
+      }, "*");
+    };
+    requestCapture();
+    frame.addEventListener("load", requestCapture);
+    return () => frame.removeEventListener("load", requestCapture);
+  }, [artifact.path, captureRequestId, kind, sourceMode]);
+  useEffect(() => {
+    if (!onCaptureResult) return undefined;
+    const handleCaptureResult = (event: MessageEvent) => {
+      const frame = htmlFrameElementRef.current;
+      if (
+        !frame
+        || event.source !== frame.contentWindow
+        || event.data?.type !== artifactCaptureSnapshotMessage
+        || event.data.path !== artifact.path
+        || typeof event.data.requestId !== "string"
+      ) {
+        return;
+      }
+      const requestId = event.data.requestId;
+      const path = event.data.path;
+      if (typeof event.data.error === "string") {
+        onCaptureResult({ requestId, path, error: event.data.error });
+        return;
+      }
+      if (
+        typeof event.data.html !== "string"
+        || typeof event.data.width !== "number"
+        || typeof event.data.height !== "number"
+        || typeof event.data.viewportHeight !== "number"
+      ) {
+        onCaptureResult({ requestId, path, error: "캡처 문서 정보가 올바르지 않습니다." });
+        return;
+      }
+      void captureArtifactSnapshot({
+        html: event.data.html,
+        width: event.data.width,
+        height: event.data.height,
+        viewportHeight: event.data.viewportHeight,
+      }).then(
+        (blob) => onCaptureResult({ requestId, path, blob }),
+        (error) => onCaptureResult({
+          requestId,
+          path,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    };
+    window.addEventListener("message", handleCaptureResult);
+    return () => window.removeEventListener("message", handleCaptureResult);
+  }, [artifact.path, onCaptureResult]);
+  useEffect(() => {
     htmlEditWasDraftDirtyRef.current = Boolean(draftDirty);
   }, [draftDirty]);
   if (sourceMode && payloadHasContent && (kind === "html" || isSourceCodeArtifact(artifact))) {
@@ -2043,7 +2356,7 @@ export function ArtifactPreview({
       const restoredScroll = htmlScrollPositionsRef.current.get(artifact.path);
       htmlEditFrameRef.current = {
         key: editFrameKey,
-        srcDoc: iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(sourcedContent), artifact.path, restoredScroll)),
+        srcDoc: iframeCaptureBridge(iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(sourcedContent), artifact.path, restoredScroll)), artifact.path),
       };
     }
     return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts allow-popups" srcDoc={htmlEditFrameRef.current.srcDoc} />;

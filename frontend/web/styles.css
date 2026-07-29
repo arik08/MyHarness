@@ -10943,6 +10943,51 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   line-height: 1.35;
 }
 
+.context-mode-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.context-mode-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.context-mode-option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.context-mode-option span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.context-mode-option strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.context-mode-option small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .setting-field input,
 .setting-field select {
   width: min(520px, 100%);

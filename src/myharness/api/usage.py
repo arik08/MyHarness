@@ -11,11 +11,12 @@ class UsageSnapshot(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
 
     @property
     def uncached_input_tokens(self) -> int:
-        """Return input tokens that were not served from the provider cache."""
-        return max(0, self.input_tokens - self.cached_input_tokens)
+        """Return ordinary input tokens, excluding cache reads and cache writes."""
+        return max(0, self.input_tokens - self.cached_input_tokens - self.cache_write_tokens)
 
     @property
     def total_tokens(self) -> int:
@@ -29,6 +30,7 @@ def add_usage_snapshots(left: UsageSnapshot, right: UsageSnapshot) -> UsageSnaps
         input_tokens=left.input_tokens + right.input_tokens,
         output_tokens=left.output_tokens + right.output_tokens,
         cached_input_tokens=left.cached_input_tokens + right.cached_input_tokens,
+        cache_write_tokens=left.cache_write_tokens + right.cache_write_tokens,
     )
 
 
@@ -38,4 +40,5 @@ def subtract_usage_snapshots(left: UsageSnapshot, right: UsageSnapshot) -> Usage
         input_tokens=max(0, left.input_tokens - right.input_tokens),
         output_tokens=max(0, left.output_tokens - right.output_tokens),
         cached_input_tokens=max(0, left.cached_input_tokens - right.cached_input_tokens),
+        cache_write_tokens=max(0, left.cache_write_tokens - right.cache_write_tokens),
     )

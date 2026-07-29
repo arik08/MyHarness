@@ -174,10 +174,17 @@ function isNoisyBackendLogMessage(message: ChatMessage) {
   if (message.role !== "log" || message.isError || message.terminal || isCommandCatalog(message.text)) {
     return false;
   }
-  const text = message.text.trim();
+  const text = message.text
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\r/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (/\b(?:WARN(?:ING)?|ERROR|CRITICAL)\b/.test(text)) {
+    return false;
+  }
   return (
-    /\bINFO\b\s+Processing request of type\b/.test(text)
-    || /^[A-Za-z]+Request$/.test(text)
+    /\bProcessing request of type\b/.test(text)
+    || /^(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py:\d+)(?:\s+(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py:\d+))*$/.test(text)
   );
 }
 

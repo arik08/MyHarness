@@ -171,6 +171,7 @@ async def test_run_print_mode_waits_for_coordinator_async_agents(monkeypatch):
                 cache_creation_input_tokens=0,
                 cache_read_input_tokens=0,
             )
+            self.usage_accounting = {}
             self.model = "claude-test"
             self.max_turns = 200
 

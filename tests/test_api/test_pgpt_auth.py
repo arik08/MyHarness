@@ -35,7 +35,7 @@ def test_pgpt_employee_and_company_codes_fall_back_to_credentials_file(tmp_path,
     assert resolve_pgpt_company_code() == "31"
 
 
-def test_pgpt_employee_and_company_codes_prefer_credentials_file(tmp_path, monkeypatch):
+def test_pgpt_employee_and_company_codes_prefer_environment(tmp_path, monkeypatch):
     from myharness.auth.storage import store_credential
 
     monkeypatch.setenv("PGPT_EMPLOYEE_NO", "env-employee")
@@ -44,5 +44,5 @@ def test_pgpt_employee_and_company_codes_prefer_credentials_file(tmp_path, monke
     store_credential("pgpt", "employee_no", "file-employee", use_keyring=False)
     store_credential("pgpt", "company_code", "31", use_keyring=False)
 
-    assert resolve_pgpt_employee_no() == "file-employee"
-    assert resolve_pgpt_company_code() == "31"
+    assert resolve_pgpt_employee_no() == "env-employee"
+    assert resolve_pgpt_company_code() == "99"

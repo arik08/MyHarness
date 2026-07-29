@@ -40,7 +40,7 @@ def test_load_skill_registry_includes_program_dot_skills(tmp_path: Path, monkeyp
     package_skills_dir = program_root / "src" / "myharness" / "skills"
     package_skills_dir.mkdir(parents=True)
     (program_root / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
-    program_skill_dir = program_root / ".skills" / "program-guide"
+    program_skill_dir = program_root / ".skills" / "General" / "program-guide"
     program_skill_dir.mkdir(parents=True)
     (program_skill_dir / "SKILL.md").write_text(
         "---\nname: program-guide\n"
@@ -54,8 +54,8 @@ def test_load_skill_registry_includes_program_dot_skills(tmp_path: Path, monkeyp
     program_guide = registry.get("program-guide")
 
     assert program_guide is not None
-    assert program_guide.source == "program"
-    assert str(program_root / ".skills" / "program-guide" / "SKILL.md") == program_guide.path
+    assert program_guide.source == "skill-category:General"
+    assert str(program_root / ".skills" / "General" / "program-guide" / "SKILL.md") == program_guide.path
 
 
 def test_program_dot_skills_take_priority_over_other_skill_dirs(tmp_path: Path, monkeypatch):
@@ -90,7 +90,7 @@ def test_program_dot_skills_take_priority_over_other_skill_dirs(tmp_path: Path, 
         "# Extra Skill Creator\nUse the extra folder.\n",
         encoding="utf-8",
     )
-    program_skill_dir = program_root / ".skills" / "skill-creator"
+    program_skill_dir = program_root / ".skills" / "General" / "skill-creator"
     program_skill_dir.mkdir(parents=True)
     (program_skill_dir / "SKILL.md").write_text(
         "---\nname: skill-creator\n"
@@ -103,9 +103,31 @@ def test_program_dot_skills_take_priority_over_other_skill_dirs(tmp_path: Path, 
     skill_creator = registry.get("skill-creator")
 
     assert skill_creator is not None
-    assert skill_creator.source == "program"
-    assert str(program_root / ".skills" / "skill-creator" / "SKILL.md") == skill_creator.path
+    assert skill_creator.source == "skill-category:General"
+    assert str(program_root / ".skills" / "General" / "skill-creator" / "SKILL.md") == skill_creator.path
     assert "MyHarness program-local .skills" in skill_creator.content
+
+
+def test_program_dot_skills_preserve_top_level_category(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    program_root = tmp_path / "program"
+    package_skills_dir = program_root / "src" / "myharness" / "skills"
+    package_skills_dir.mkdir(parents=True)
+    (program_root / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
+    posco_skill_dir = program_root / ".skills" / "POSCO_Skill" / "design-md"
+    posco_skill_dir.mkdir(parents=True)
+    (posco_skill_dir / "SKILL.md").write_text(
+        "---\nname: design-md\ndescription: POSCO design router\n---\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(skill_loader, "__file__", str(package_skills_dir / "loader.py"))
+
+    registry = load_skill_registry(tmp_path / "workspace")
+    design_skill = registry.get("design-md")
+
+    assert design_skill is not None
+    assert design_skill.source == "skill-category:POSCO_Skill"
+    assert design_skill.path == str(posco_skill_dir / "SKILL.md")
 
 
 def test_load_skill_registry_includes_project_dot_skills(tmp_path: Path, monkeypatch):

@@ -1,9 +1,7 @@
 """Select the launcher default provider profile.
 
-The Windows web launchers call this before starting the backend so machines
-with a usable Codex OAuth login default to the Codex subscription profile. If
-Codex credentials are absent or clearly expired, the launcher falls back to the
-P-GPT profile.
+The Windows web launchers use P-GPT as the shared runtime default. Other
+profiles remain available from the provider picker after startup.
 """
 
 from __future__ import annotations
@@ -59,7 +57,8 @@ def codex_oauth_usable(*, codex_home: Path | None = None, now: int | None = None
 
 
 def select_default_profile(*, codex_home: Path | None = None, now: int | None = None) -> str:
-    return "codex" if codex_oauth_usable(codex_home=codex_home, now=now) else "p-gpt"
+    del codex_home, now
+    return "p-gpt"
 
 
 def update_settings_active_profile(settings_path: Path, active_profile: str) -> dict[str, Any]:

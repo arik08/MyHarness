@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import asyncio
+import contextlib
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +53,8 @@ SystemPrinter = Callable[[str], Awaitable[None]]
 StreamRenderer = Callable[[StreamEvent], Awaitable[None]]
 ClearHandler = Callable[[], Awaitable[None]]
 
+log = logging.getLogger(__name__)
+
 
 class MissingAuthClient:
     """Runtime placeholder that lets the UI start before credentials are configured."""
@@ -84,6 +88,7 @@ class RuntimeBundle:
     extra_skill_dirs: tuple[str, ...] = ()
     extra_plugin_roots: tuple[str, ...] = ()
     task_worker: bool = False
+    prefix_cache_warmup_task: asyncio.Task[None] | None = None
 
     def current_settings(self):
         """Return the effective settings for this session.
@@ -269,6 +274,7 @@ async def build_runtime(
     extra_plugin_roots: Iterable[str | Path] | None = None,
     task_worker: bool = False,
     connect_mcp: bool = True,
+    gpt56_context_mode: str | None = None,
 ) -> RuntimeBundle:
     """Build the shared runtime for an MyHarness session."""
     settings_overrides: dict[str, Any] = {
@@ -392,6 +398,9 @@ async def build_runtime(
         restored_metadata["session_kind"] = "task_worker"
         restored_metadata["session_visibility"] = "hidden"
 
+    from myharness.services.compact import get_long_context_policy_threshold
+
+    policy_threshold = get_long_context_policy_threshold(settings.model, gpt56_context_mode)
     engine = QueryEngine(
         api_client=resolved_api_client,
         tool_registry=tool_registry,
@@ -402,7 +411,7 @@ async def build_runtime(
         max_tokens=settings.effective_max_tokens(),
         reasoning_effort=settings.effort,
         context_window_tokens=settings.context_window_tokens or settings.memory.context_window_tokens,
-        auto_compact_threshold_tokens=(
+        auto_compact_threshold_tokens=policy_threshold or (
             settings.auto_compact_threshold_tokens
             or settings.memory.auto_compact_threshold_tokens
         ),
@@ -475,16 +484,65 @@ async def build_runtime(
 
 async def start_runtime(bundle: RuntimeBundle) -> None:
     """Run session start hooks."""
+    if (
+        not bundle.task_worker
+        and bundle.prefix_cache_warmup_task is None
+        and callable(getattr(bundle.api_client, "prewarm_prompt_cache", None))
+    ):
+        bundle.prefix_cache_warmup_task = asyncio.create_task(
+            _prewarm_runtime_prefix_cache(bundle),
+            name=f"prefix-cache-warmup-{bundle.session_id}",
+        )
     await bundle.hook_executor.execute(
         HookEvent.SESSION_START,
         {"cwd": bundle.cwd, "event": HookEvent.SESSION_START.value},
     )
 
 
+async def _prewarm_runtime_prefix_cache(bundle: RuntimeBundle) -> None:
+    """Best-effort cache fill using the same static prefix as the first real turn."""
+    prewarm = getattr(bundle.api_client, "prewarm_prompt_cache", None)
+    if not callable(prewarm):
+        return
+    request = ApiMessageRequest(
+        model=bundle.engine.model,
+        messages=[],
+        system_prompt=bundle.engine.system_prompt,
+        max_tokens=bundle.engine.max_tokens,
+        tools=sorted(
+            bundle.tool_registry.to_api_schema(),
+            key=lambda schema: str(schema.get("name") or ""),
+        ),
+        reasoning_effort=getattr(bundle.engine, "_reasoning_effort", None),
+    )
+    try:
+        usage = await prewarm(request)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log.info(
+            "Prefix cache warmup skipped; normal requests remain available: %s",
+            exc,
+        )
+        return
+
+    if usage is not None:
+        log.info(
+            "Prefix cache warmup completed (input=%d, cached=%d, written=%d).",
+            usage.input_tokens,
+            usage.cached_input_tokens,
+            usage.cache_write_tokens,
+        )
+
+
 async def close_runtime(bundle: RuntimeBundle) -> None:
     """Close runtime-owned resources."""
     from myharness.sandbox.session import stop_docker_sandbox
 
+    if bundle.prefix_cache_warmup_task is not None and not bundle.prefix_cache_warmup_task.done():
+        bundle.prefix_cache_warmup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await bundle.prefix_cache_warmup_task
     await stop_docker_sandbox()
     # Extract local environment rules from session before closing
     try:

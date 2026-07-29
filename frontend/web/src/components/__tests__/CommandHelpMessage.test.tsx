@@ -1165,4 +1165,58 @@ describe("CommandHelpMessage", () => {
     expect(standaloneGroup.className).not.toContain("collapsed");
     expect(standaloneGroup.textContent).toContain("review");
   });
+
+  it("groups program skills by their .skills category", async () => {
+    const user = userEvent.setup();
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- brainstorming [skill-category:General] [활성]: 아이디어를 구체화합니다.",
+      "- design-md [skill-category:POSCO_Skill] [활성]: POSCO 디자인을 적용합니다.",
+      "",
+      "플러그인:",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          skills: [
+            {
+              name: "brainstorming",
+              description: "아이디어를 구체화합니다.",
+              source: "skill-category:General",
+              enabled: true,
+            },
+            {
+              name: "design-md",
+              description: "POSCO 디자인을 적용합니다.",
+              source: "skill-category:POSCO_Skill",
+              enabled: true,
+            },
+          ],
+        }}
+      >
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "스킬");
+
+    const generalGroup = screen.getByRole("group", { name: "General 스킬" });
+    expect(generalGroup.textContent).toContain("brainstorming");
+    expect(generalGroup.textContent).not.toContain("design-md");
+
+    const poscoGroup = screen.getByRole("group", { name: "POSCO_Skill 스킬" });
+    expect(poscoGroup.textContent).toContain("design-md");
+    expect(poscoGroup.textContent).not.toContain("brainstorming");
+
+    await user.click(screen.getByRole("button", { name: "POSCO_Skill 스킬 접기" }));
+    expect(poscoGroup.textContent).not.toContain("design-md");
+    await user.click(screen.getByRole("button", { name: "POSCO_Skill 스킬 펼치기" }));
+    expect(poscoGroup.textContent).toContain("design-md");
+  });
 });

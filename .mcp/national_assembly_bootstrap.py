@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO_URL = "https://github.com/hollobit/assembly-api-mcp.git"
 DEFAULT_CACHE_DIR = Path(".myharness") / "mcp-cache" / "assembly-api-mcp"
+COMPATIBILITY_PATCH = Path(__file__).with_name("patches") / "assembly-api-mcp-network-retry.patch"
 
 
 def _log(message: str) -> None:
@@ -49,6 +50,32 @@ def _run(args: list[str], cwd: Path) -> None:
     subprocess.run(_resolve_command(args), cwd=str(cwd), check=True, stdout=sys.stderr, stderr=sys.stderr)
 
 
+def _patch_can_apply(server_dir: Path, *, reverse: bool = False) -> bool:
+    args = ["git", "apply"]
+    if reverse:
+        args.append("--reverse")
+    args.extend(["--check", "--ignore-space-change", str(COMPATIBILITY_PATCH)])
+    result = subprocess.run(
+        _resolve_command(args),
+        cwd=str(server_dir),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def _apply_compatibility_patch(server_dir: Path) -> bool:
+    if _patch_can_apply(server_dir):
+        _run(["git", "apply", str(COMPATIBILITY_PATCH)], server_dir)
+        return True
+    if _patch_can_apply(server_dir, reverse=True):
+        return False
+    raise RuntimeError(
+        "The assembly-api-mcp compatibility patch does not match this checkout. "
+        "Update the patch or set NATIONAL_ASSEMBLY_MCP_DIR to a compatible checkout."
+    )
+
+
 def _server_dir() -> Path:
     override = os.environ.get("NATIONAL_ASSEMBLY_MCP_DIR", "").strip()
     if override:
@@ -59,8 +86,6 @@ def _server_dir() -> Path:
 def _ensure_server_built(server_dir: Path) -> Path:
     index_js = server_dir / "dist" / "index.js"
     package_json = server_dir / "package.json"
-    if index_js.exists():
-        return index_js
 
     if not server_dir.exists():
         server_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +95,10 @@ def _ensure_server_built(server_dir: Path) -> Path:
             f"{server_dir} exists but does not look like assembly-api-mcp. "
             "Remove it or set NATIONAL_ASSEMBLY_MCP_DIR to a valid checkout."
         )
+
+    patch_applied = _apply_compatibility_patch(server_dir)
+    if index_js.exists() and not patch_applied:
+        return index_js
 
     _run(["npm", "install"], server_dir)
     _run(["npm", "run", "build"], server_dir)

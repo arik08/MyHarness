@@ -48,10 +48,12 @@ def test_dev_launcher_closes_existing_dev_launcher_tree_before_ports() -> None:
     stop_existing = _function_body(script, "Stop-ExistingDevLaunchers")
 
     assert "[System.IO.Path]::GetFullPath($PSCommandPath)" in script
-    assert "$_.ProcessId -ne $PID" in stop_existing
+    assert "$_.ProcessId -ne $CurrentProcessId" in stop_existing
     assert "$_.Name -match" in stop_existing
-    assert "$_.CommandLine -match $escapedScriptPath" in stop_existing
+    assert "$_.CommandLine -match $ScriptPathPattern" in stop_existing
     assert "Stop-ProcessTree -ProcessId ([int]$launcher.ProcessId)" in stop_existing
+    assert "Wait-Job -Job $scanJob -Timeout 2" in stop_existing
+    assert "Existing launcher scan timed out. Continuing without pre-cleanup." in stop_existing
     assert script.index("Stop-ExistingDevLaunchers") < script.index('Stop-ListeningPort -Port $backendPort -Label "backend"')
 
 
@@ -154,28 +156,63 @@ def test_dev_launcher_defaults_react_dev_ui_to_4173() -> None:
     assert "xfwd: true" in vite_config
 
 
-def test_web_launchers_load_folder_local_env_before_defaults() -> None:
+def test_web_launchers_prefer_folder_local_env_before_environment_fallbacks() -> None:
     backend_batch = (ROOT / "run_myharness_web.bat").read_text(encoding="utf-8")
     dev_batch = (ROOT / "run_myharness_web_dev.bat").read_text(encoding="utf-8")
 
     for batch in (backend_batch, dev_batch):
+        assert "MYHARNESS_DOTENV" not in batch
         assert 'set "MYHARNESS_LOCAL_ENV=%CD%\\myharness.local.env"' in batch
         assert 'if exist "%MYHARNESS_LOCAL_ENV%" call :load_local_env "%MYHARNESS_LOCAL_ENV%"' in batch
         assert batch.index("call :load_local_env") < batch.index('if "%PORT%"=="" set "PORT=4273"')
+        assert 'if not "%%~A"=="" if not "%%~B"=="" set "%%~A=%%~B"' in batch
+        assert 'if not "%%~B"=="" if not defined %%~A set "%%~A=%%~B"' in batch
 
 
 def test_launchers_close_busy_backend_ports_by_default() -> None:
-    backend_batch = (ROOT / "run_myharness_web.bat").read_text(encoding="utf-8")
-    dev_batch = (ROOT / "run_myharness_web_dev.bat").read_text(encoding="utf-8")
     dev_script = _read_launcher("run_myharness_web_dev.ps1")
     server_script = _read_launcher("run_myharness_web_server.ps1")
 
-    assert 'if /i "%MYHARNESS_CLOSE_PORT_PROCESS%"=="1"' not in backend_batch
-    assert 'if /i "%MYHARNESS_CLOSE_PORT_PROCESS%"=="1"' not in dev_batch
-    assert "Closing the existing process and starting MyHarness fresh" in backend_batch
-    assert "Closing the existing process and starting MyHarness fresh" in dev_batch
     assert "Closing the existing process and starting fresh" in dev_script
     assert "Closing the existing process and starting fresh" in server_script
+
+
+def test_windows_launchers_avoid_hanging_tcp_connection_cmdlet() -> None:
+    batch_launchers = (
+        (ROOT / "run_myharness_web.bat").read_text(encoding="utf-8"),
+        (ROOT / "run_myharness_web_dev.bat").read_text(encoding="utf-8"),
+    )
+    powershell_launchers = (
+        _read_launcher("run_myharness_web_dev.ps1"),
+        _read_launcher("run_myharness_web_server.ps1"),
+    )
+
+    for launcher in (*batch_launchers, *powershell_launchers):
+        assert "Get-NetTCPConnection" not in launcher
+
+    for launcher in powershell_launchers:
+        assert "netstat -ano -p tcp" in launcher
+
+
+def test_batch_launchers_delegate_port_reclamation_to_powershell_supervisors() -> None:
+    backend_batch = (ROOT / "run_myharness_web.bat").read_text(encoding="utf-8")
+    dev_batch = (ROOT / "run_myharness_web_dev.bat").read_text(encoding="utf-8")
+    server_script = _read_launcher("run_myharness_web_server.ps1")
+    dev_script = _read_launcher("run_myharness_web_dev.ps1")
+
+    for batch in (backend_batch, dev_batch):
+        assert "MYHARNESS_PORT_PID" not in batch
+        assert "taskkill /PID" not in batch
+
+    assert "Stop-ListeningPort -Port $serverPort" in server_script
+    assert 'Stop-ListeningPort -Port $backendPort -Label "backend"' in dev_script
+
+
+def test_web_launchers_disable_keyring_probing() -> None:
+    for name in ("run_myharness_web.bat", "run_myharness_web_dev.bat"):
+        launcher = (ROOT / name).read_text(encoding="utf-8")
+
+        assert 'set "MYHARNESS_DISABLE_KEYRING=1"' in launcher
 
 
 def test_dev_vite_port_falls_forward_without_killing_preferred_port() -> None:

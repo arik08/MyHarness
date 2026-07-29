@@ -171,6 +171,39 @@ class ModelOutputProfile:
 
 _MODEL_OUTPUT_PROFILES: tuple[tuple[str, ModelOutputProfile], ...] = (
     (
+        "gpt-5.6-luna",
+        ModelOutputProfile(
+            context_window_tokens=1_050_000,
+            model_max_output_tokens=128_000,
+            interactive_max_tokens=42_000,
+            report_outline_max_tokens=8_000,
+            report_section_max_tokens=18_000,
+            report_review_max_tokens=8_000,
+        ),
+    ),
+    (
+        "gpt-5.6-terra",
+        ModelOutputProfile(
+            context_window_tokens=1_050_000,
+            model_max_output_tokens=128_000,
+            interactive_max_tokens=42_000,
+            report_outline_max_tokens=8_000,
+            report_section_max_tokens=18_000,
+            report_review_max_tokens=8_000,
+        ),
+    ),
+    (
+        "gpt-5.6-sol",
+        ModelOutputProfile(
+            context_window_tokens=1_050_000,
+            model_max_output_tokens=128_000,
+            interactive_max_tokens=42_000,
+            report_outline_max_tokens=8_000,
+            report_section_max_tokens=18_000,
+            report_review_max_tokens=8_000,
+        ),
+    ),
+    (
         "gpt-5.5",
         ModelOutputProfile(
             context_window_tokens=1_050_000,
@@ -205,7 +238,14 @@ _MODEL_OUTPUT_PROFILES: tuple[tuple[str, ModelOutputProfile], ...] = (
     ),
 )
 
-_CONFIGURABLE_OUTPUT_TOKEN_MODELS = ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini")
+_CONFIGURABLE_OUTPUT_TOKEN_MODELS = (
+    "gpt-5.6-luna",
+    "gpt-5.6-terra",
+    "gpt-5.6-sol",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+)
 
 _GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 _GEMINI_ALLOWED_MODELS = [
@@ -318,9 +358,17 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             provider="openai",
             api_format="openai",
             auth_source="pgpt_api_key",
-            default_model="gpt-5.4",
+            default_model="gpt-5.6-luna",
             base_url="http://pgpt.posco.com/s0la01-gpt/v1",
-            allowed_models=["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"],
+            allowed_models=[
+                "gpt-5.6-luna",
+                "gpt-5.6-terra",
+                "gpt-5.6-sol",
+                "gpt-5.5",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.4-nano",
+            ],
         ),
         "codex": ProviderProfile(
             label="Codex Subscription",
@@ -896,16 +944,6 @@ class Settings(BaseModel):
             "minimax_api_key": "MINIMAX_API_KEY",
             "pgpt_api_key": "PGPT_API_KEY",
         }.get(auth_source)
-        if auth_source == "pgpt_api_key":
-            stored = load_credential(storage_provider, "api_key")
-            if stored:
-                return ResolvedAuth(
-                    provider=provider or auth_source_provider_name(auth_source),
-                    auth_kind="api_key",
-                    value=stored,
-                    source=f"file:{storage_provider}",
-                    state="configured",
-                )
         if env_var:
             env_value = os.environ.get(env_var, "")
             if env_value:
@@ -917,7 +955,7 @@ class Settings(BaseModel):
                     state="configured",
                 )
 
-        stored = None if auth_source == "pgpt_api_key" else load_credential(storage_provider, "api_key")
+        stored = load_credential(storage_provider, "api_key")
         if stored:
             return ResolvedAuth(
                 provider=provider or auth_source_provider_name(auth_source),

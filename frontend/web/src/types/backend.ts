@@ -28,6 +28,7 @@ export type BackendStateSnapshot = {
   cwd?: string;
   workspace?: Workspace;
   session_usage?: UsageCostSummary | null;
+  runtime_options?: Record<string, unknown>;
 };
 
 export type UsageCostSummary = {
@@ -35,6 +36,7 @@ export type UsageCostSummary = {
   model?: string;
   input_tokens: number;
   cached_input_tokens: number;
+  cache_write_tokens?: number;
   uncached_input_tokens: number;
   output_tokens: number;
   total_tokens: number;
@@ -43,6 +45,7 @@ export type UsageCostSummary = {
   estimated_cache_savings_usd?: number | null;
   estimated_uncached_input_cost_usd?: number | null;
   estimated_cached_input_cost_usd?: number | null;
+  estimated_cache_write_cost_usd?: number | null;
   estimated_output_cost_usd?: number | null;
   cost_supported?: boolean;
   cost_note?: string;

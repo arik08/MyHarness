@@ -2994,7 +2994,7 @@ describe("MessageList", () => {
     expect(firstBufferedStep.length).toBeLessThan(completeContent.length);
 
     act(() => {
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(2000);
     });
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe(completeContent);
   });
@@ -3039,7 +3039,7 @@ describe("MessageList", () => {
     expect(firstBufferedStep.length).toBeLessThan(completeContent.length);
 
     act(() => {
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(2000);
     });
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe(completeContent);
     expect(screen.getByText("++ <h1>New</h1><p>Fast</p>").className).toContain("added");
@@ -4045,6 +4045,14 @@ describe("MessageList", () => {
             { id: "log-1", role: "log", text: "[05/23/26 03:59:12] INFO Processing request of type server.py:720" },
             { id: "log-2", role: "log", text: "ListToolsRequest" },
             { id: "log-3", role: "log", text: "INFO Processing request of type server.py:720" },
+            {
+              id: "log-ansi-1",
+              role: "log",
+              text: "\u001b[2;36m[07/29/26 21:25:41]\u001b[0m \u001b[2;36mINFO\u001b[0m Processing request of type server.py:625",
+            },
+            { id: "log-ansi-2", role: "log", text: "\u001b[2;36mListResourcesRequest\u001b[0m" },
+            { id: "log-interleaved-1", role: "log", text: "ListResourcesRequest INFO" },
+            { id: "log-interleaved-2", role: "log", text: "Processing request of type server.py:625" },
             { id: "log-4", role: "log", text: "real backend warning" },
           ],
         }}

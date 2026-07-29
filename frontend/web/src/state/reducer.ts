@@ -10,6 +10,7 @@ const adminModeStorageKey = "myharness:adminMode";
 const hiddenHistoryKeysStorageKey = "myharness:hiddenHistoryKeys";
 
 const defaultAppSettings: AppSettings = {
+  gpt56ContextMode: "cost-saver",
   streamScrollDurationMs: 2000,
   streamStartBufferMs: 180,
   streamFollowLeadPx: 140,
@@ -134,6 +135,7 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
 
 function normalizeAppSettings(value: Partial<AppSettings> = {}): AppSettings {
   return {
+    gpt56ContextMode: value.gpt56ContextMode === "full-context" ? "full-context" : "cost-saver",
     streamScrollDurationMs: clampNumber(value.streamScrollDurationMs, defaultAppSettings.streamScrollDurationMs, 0, 5000),
     streamStartBufferMs: clampNumber(value.streamStartBufferMs, defaultAppSettings.streamStartBufferMs, 0, 2000),
     streamFollowLeadPx: clampNumber(value.streamFollowLeadPx, defaultAppSettings.streamFollowLeadPx, 0, 360),
@@ -406,6 +408,7 @@ function normalizeUsageCostSummary(value: unknown): UsageCostSummary | undefined
   const raw = value as Record<string, unknown>;
   const inputTokens = finiteUsageNumber(raw.input_tokens);
   const cachedInputTokens = finiteUsageNumber(raw.cached_input_tokens);
+  const cacheWriteTokens = finiteUsageNumber(raw.cache_write_tokens);
   const outputTokens = finiteUsageNumber(raw.output_tokens);
   const totalTokens = finiteUsageNumber(raw.total_tokens) || inputTokens + outputTokens;
   const estimated = raw.estimated_cost_usd === null || raw.estimated_cost_usd === undefined
@@ -420,6 +423,9 @@ function normalizeUsageCostSummary(value: unknown): UsageCostSummary | undefined
   const estimatedCachedInputCost = raw.estimated_cached_input_cost_usd === null || raw.estimated_cached_input_cost_usd === undefined
     ? null
     : Number(raw.estimated_cached_input_cost_usd);
+  const estimatedCacheWriteCost = raw.estimated_cache_write_cost_usd === null || raw.estimated_cache_write_cost_usd === undefined
+    ? null
+    : Number(raw.estimated_cache_write_cost_usd);
   const estimatedOutputCost = raw.estimated_output_cost_usd === null || raw.estimated_output_cost_usd === undefined
     ? null
     : Number(raw.estimated_output_cost_usd);
@@ -433,7 +439,8 @@ function normalizeUsageCostSummary(value: unknown): UsageCostSummary | undefined
     model: typeof raw.model === "string" ? raw.model : undefined,
     input_tokens: inputTokens,
     cached_input_tokens: cachedInputTokens,
-    uncached_input_tokens: finiteUsageNumber(raw.uncached_input_tokens) || Math.max(0, inputTokens - cachedInputTokens),
+    cache_write_tokens: cacheWriteTokens,
+    uncached_input_tokens: finiteUsageNumber(raw.uncached_input_tokens) || Math.max(0, inputTokens - cachedInputTokens - cacheWriteTokens),
     output_tokens: outputTokens,
     total_tokens: totalTokens,
     cache_hit_ratio: Math.max(0, Math.min(1, finiteUsageNumber(raw.cache_hit_ratio))),
@@ -441,6 +448,7 @@ function normalizeUsageCostSummary(value: unknown): UsageCostSummary | undefined
     estimated_cache_savings_usd: estimatedSavings !== null && Number.isFinite(estimatedSavings) ? estimatedSavings : null,
     estimated_uncached_input_cost_usd: estimatedUncachedInputCost !== null && Number.isFinite(estimatedUncachedInputCost) ? estimatedUncachedInputCost : null,
     estimated_cached_input_cost_usd: estimatedCachedInputCost !== null && Number.isFinite(estimatedCachedInputCost) ? estimatedCachedInputCost : null,
+    estimated_cache_write_cost_usd: estimatedCacheWriteCost !== null && Number.isFinite(estimatedCacheWriteCost) ? estimatedCacheWriteCost : null,
     estimated_output_cost_usd: estimatedOutputCost !== null && Number.isFinite(estimatedOutputCost) ? estimatedOutputCost : null,
     cost_supported: raw.cost_supported === true,
     cost_note: typeof raw.cost_note === "string" ? raw.cost_note : undefined,
@@ -1872,6 +1880,9 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
   const activeProfile = String(snapshot.active_profile || state.activeProfile || provider);
   const providerLabel = String(snapshot.provider_label || state.providerLabel || provider);
   const sessionUsage = normalizeUsageCostSummary(event.session_usage) || normalizeUsageCostSummary(snapshot.session_usage);
+  const runtimePicker = snapshot.runtime_options
+    ? runtimePickerFromOptions(state, snapshot.runtime_options, state.runtimePicker.open)
+    : state.runtimePicker;
   return {
     ...state,
     ready: event.type === "ready" ? true : state.ready,
@@ -1889,6 +1900,7 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
     workspacePath: String(snapshot.workspace?.path || state.workspacePath),
     workspaceScope: snapshot.workspace?.scope || state.workspaceScope,
     sessionUsage: sessionUsage || state.sessionUsage,
+    runtimePicker,
   };
 }
 
@@ -1920,7 +1932,7 @@ function runtimeEffortValueForScope(state: AppState, scope = state.runtimePicker
   return scope === "sub" ? state.subagentEffort : state.effort;
 }
 
-function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string, unknown>) {
+function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string, unknown>, open = true) {
   const subagentModel = String(runtimeOptions.subagent_model || state.subagentModel || "").trim() || state.subagentModel;
   const subagentEffort = String(runtimeOptions.subagent_effort || state.subagentEffort || "").trim() || state.subagentEffort;
   const activeProviderProfile = String(state.activeProfile || state.provider || "").trim();
@@ -1956,7 +1968,7 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
   );
   return {
     ...state.runtimePicker,
-    open: true,
+    open,
     loading: false,
     error: "",
     providers,
@@ -3506,12 +3518,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         backendModalsBySessionId: forgetCurrentBackendModal(state),
       };
 
-    case "open_runtime_picker":
+    case "open_runtime_picker": {
+      const hasCachedRuntimeOptions = state.runtimePicker.providers.length > 0;
       return {
         ...state,
         modal: state.modal?.kind === "modelSettings" ? null : state.modal,
-        runtimePicker: { ...state.runtimePicker, open: true, loading: true, error: "" },
+        runtimePicker: { ...state.runtimePicker, open: true, loading: !hasCachedRuntimeOptions, error: "" },
       };
+    }
 
     case "close_runtime_picker":
       return { ...state, runtimePicker: { ...state.runtimePicker, open: false, loading: false, error: "" } };

@@ -13,9 +13,9 @@ import {
   isRootProjectFileCandidatePath,
   normalizeProjectFilePath,
 } from "../utils/artifacts";
-import { copyTextToClipboard } from "../utils/clipboard";
+import { copyPngToClipboard, copyTextToClipboard } from "../utils/clipboard";
 import { Icon, type IconName } from "./ArtifactIcons";
-import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload } from "./ArtifactPreview";
+import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload, type ArtifactCaptureResult } from "./ArtifactPreview";
 import { showTooltipNowEvent } from "./TooltipLayer";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { sidebarAutoCollapseChatWidthPx, sidebarCollapsedTrackWidthPx, sidebarDefaultWidthPx } from "../layout/sidebarLayout";
@@ -26,6 +26,10 @@ export const artifactPanelListMaxWidth = 500;
 const shareCopyLabel = "공유 링크 복사";
 const shareCopiedLabel = "공유 링크 복사됨";
 const shareCopiedFeedbackMs = 1400;
+const captureCopyLabel = "전체 이미지 복사";
+const captureCopyingLabel = "전체 이미지 생성 중";
+const captureCopiedLabel = "전체 이미지 복사됨";
+const captureTimeoutMs = 30_000;
 const projectFileCategories = [
   ["all", "전체"],
   ["web", "웹페이지"],
@@ -39,6 +43,13 @@ const projectFileCategoryValues = new Set(projectFileCategories.map(([value]) =>
 const projectFilePinnedKeyPrefix = "myharness:projectFilePins";
 const aiEditProgressBottomFollowPx = 180;
 type ArtifactPanelHistoryView = "list" | "detail" | "fullscreen";
+
+type PendingArtifactCapture = {
+  requestId: string;
+  resolve: (blob: Blob) => void;
+  reject: (error: Error) => void;
+  timeoutId: number;
+};
 
 function isArtifactHistoryState(value: unknown) {
   return Boolean(value && typeof value === "object" && (value as Record<string, unknown>)[artifactHistoryMarker] === true);
@@ -389,6 +400,8 @@ export function ArtifactPanel() {
   const [draftUserEdited, setDraftUserEdited] = useState(false);
   const [copyLabel, setCopyLabel] = useState("복사");
   const [shareLabel, setShareLabel] = useState(shareCopyLabel);
+  const [captureLabel, setCaptureLabel] = useState(captureCopyLabel);
+  const [captureRequestId, setCaptureRequestId] = useState("");
   const [sourceMode, setSourceMode] = useState(false);
   const [htmlEditMode, setHtmlEditMode] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -421,6 +434,8 @@ export function ArtifactPanel() {
   const aiEditProgressUserUpIntentRef = useRef(false);
   const aiEditProgressScrollTopsRef = useRef<WeakMap<HTMLElement, number>>(new WeakMap());
   const shareResetTimerRef = useRef<number | null>(null);
+  const captureResetTimerRef = useRef<number | null>(null);
+  const pendingCaptureRef = useRef<PendingArtifactCapture | null>(null);
   const shareBaseUrlRef = useRef("");
   const projectFilePinnedStorage = useMemo(
     () => projectFilePinnedStorageKey(state.workspacePath, state.workspaceName),
@@ -449,6 +464,21 @@ export function ArtifactPanel() {
       window.clearTimeout(shareResetTimerRef.current);
       shareResetTimerRef.current = null;
     }
+  }
+
+  function clearCaptureResetTimer() {
+    if (captureResetTimerRef.current !== null) {
+      window.clearTimeout(captureResetTimerRef.current);
+      captureResetTimerRef.current = null;
+    }
+  }
+
+  function clearPendingCapture() {
+    const pending = pendingCaptureRef.current;
+    if (!pending) return;
+    window.clearTimeout(pending.timeoutId);
+    pendingCaptureRef.current = null;
+    setCaptureRequestId("");
   }
 
   function requestHistoryBack() {
@@ -648,11 +678,18 @@ export function ArtifactPanel() {
     setCopyLabel("복사");
     clearShareResetTimer();
     setShareLabel(shareCopyLabel);
+    clearCaptureResetTimer();
+    clearPendingCapture();
+    setCaptureLabel(captureCopyLabel);
     setSourceMode(false);
   }, [state.activeArtifact?.path, state.activeArtifactPayload]);
 
   useEffect(() => {
-    return () => clearShareResetTimer();
+    return () => {
+      clearShareResetTimer();
+      clearCaptureResetTimer();
+      clearPendingCapture();
+    };
   }, []);
 
   useEffect(() => {
@@ -1045,6 +1082,57 @@ export function ArtifactPanel() {
     }
   }
 
+  function handleArtifactCaptureResult(result: ArtifactCaptureResult) {
+    const pending = pendingCaptureRef.current;
+    if (!pending || result.requestId !== pending.requestId || result.path !== active?.path) return;
+    window.clearTimeout(pending.timeoutId);
+    if (result.error) {
+      pending.reject(new Error(result.error));
+      return;
+    }
+    if (!result.blob || result.blob.type !== "image/png") {
+      pending.reject(new Error("보고서 PNG 이미지가 생성되지 않았습니다."));
+      return;
+    }
+    pending.resolve(result.blob);
+  }
+
+  async function copyActiveArtifactImage() {
+    if (!active || !payload || !canEditHtmlPreview || sourceMode || htmlEditMode || draftDirty || pendingCaptureRef.current) return;
+    clearCaptureResetTimer();
+    const requestId = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `artifact-capture-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const png = new Promise<Blob>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        if (pendingCaptureRef.current?.requestId !== requestId) return;
+        reject(new Error("전체 이미지 생성 시간이 초과되었습니다."));
+      }, captureTimeoutMs);
+      pendingCaptureRef.current = { requestId, resolve, reject, timeoutId };
+    });
+    setCaptureLabel(captureCopyingLabel);
+    setCaptureRequestId(requestId);
+    try {
+      await copyPngToClipboard(png);
+      setCaptureLabel(captureCopiedLabel);
+      captureResetTimerRef.current = window.setTimeout(() => {
+        captureResetTimerRef.current = null;
+        setCaptureLabel(captureCopyLabel);
+      }, 1400);
+    } catch (error) {
+      setCaptureLabel(captureCopyLabel);
+      dispatch({
+        type: "open_modal",
+        modal: {
+          kind: "error",
+          message: `전체 이미지 복사 실패: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      });
+    } finally {
+      clearPendingCapture();
+    }
+  }
+
   async function saveHtmlDraft() {
     if (!active || !payload || !canEditHtmlPreview || !draftDirty) return;
     setSavingDraft(true);
@@ -1428,6 +1516,21 @@ export function ArtifactPanel() {
               active={shareLabel === shareCopiedLabel}
             />
           ) : null}
+          {active && canEditHtmlPreview ? (
+            <ArtifactAction
+              label={
+                sourceMode
+                  ? "미리보기에서 전체 이미지 복사"
+                  : htmlEditMode || draftDirty
+                    ? "수정사항 반영 후 전체 이미지 복사"
+                    : captureLabel
+              }
+              icon="screenshot"
+              onClick={() => void copyActiveArtifactImage()}
+              disabled={sourceMode || htmlEditMode || draftDirty || captureLabel === captureCopyingLabel}
+              active={captureLabel === captureCopiedLabel}
+            />
+          ) : null}
           {active ? <ArtifactDownloadAction artifact={active} url={downloadUrl(active, state)} /> : null}
           <ArtifactAction label="닫기" icon="close" onClick={closePanel} />
         </div>
@@ -1589,6 +1692,8 @@ export function ArtifactPanel() {
             htmlEditMode={htmlEditMode}
             aiSelectionEnabled={canEditHtmlPreview && htmlEditMode}
             aiEditComments={aiEditComments}
+            captureRequestId={captureRequestId}
+            onCaptureResult={handleArtifactCaptureResult}
             onDraftContentChange={(value) => {
               setDraftContent(value);
               setDraftPath(active.path);

@@ -11,11 +11,13 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from myharness.skills.loader import get_program_skills_dirs
+from myharness.skills.refresh import mark_skill_registry_dirty
 
 MAX_TRACKED_FAILURES = 20
 MAX_TRACKED_LEARNED_SKILLS = 12
 MAX_EVIDENCE_BLOCKS_PER_SKILL = 8
 YOUTUBE_TRANSCRIPT_SIGNATURE = "youtube-transcript-yt-dlp"
+DEFAULT_LEARNING_SKILL_CATEGORY = "POSCO_Skill"
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+"),
@@ -48,16 +50,16 @@ class LearningResult:
 
 
 def get_default_learning_skills_dir() -> Path:
-    """Return the program-local ``.skills`` directory used for learned skills."""
+    """Return the program-local POSCO category used for learned skills."""
 
     program_dirs = get_program_skills_dirs()
     if program_dirs:
-        return program_dirs[0]
+        return program_dirs[0] / DEFAULT_LEARNING_SKILL_CATEGORY
     package_dir = Path(__file__).resolve().parents[1]
     for ancestor in package_dir.parents:
         if (ancestor / "pyproject.toml").exists() and (ancestor / "src" / "myharness").exists():
-            return ancestor / ".skills"
-    return package_dir.parent / ".skills"
+            return ancestor / ".skills" / DEFAULT_LEARNING_SKILL_CATEGORY
+    return package_dir.parent / ".skills" / DEFAULT_LEARNING_SKILL_CATEGORY
 
 
 def remember_tool_failure(
@@ -198,6 +200,8 @@ def persist_learning_candidate(
 
 
 def _remember_learning_result(metadata: dict[str, object], result: LearningResult) -> None:
+    if result.action in {"created", "updated"}:
+        mark_skill_registry_dirty(metadata, result.skill_path)
     learned = metadata.setdefault("recent_learned_skills", [])
     if not isinstance(learned, list):
         learned = []
@@ -424,7 +428,7 @@ def _specialized_candidate(
         ),
         do_next_time=(
             "Run the reusable helper first: "
-            'python .skills/insane-search/scripts/youtube_transcript.py "URL" --json. '
+            'python .skills/General/insane-search/scripts/youtube_transcript.py "URL" --json. '
             f"Verified path: {verified_summary}"
         ),
         avoid_next_time=(

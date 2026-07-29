@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { initialAppState } from "../../state/reducer";
 import { loadRuntimePreferences, runtimePreferencesFromState } from "../runtimePreferences";
 
 describe("runtime preference utilities", () => {
@@ -14,9 +15,11 @@ describe("runtime preference utilities", () => {
       subagentModel: "gpt-5.4-mini",
       subagentEffort: "medium",
       effort: "low",
+      appSettings: initialAppState.appSettings,
     });
 
     expect(preferences.activeProfile).toBe("codex");
+    expect(preferences.gpt56ContextMode).toBe("cost-saver");
   });
 
   it("normalizes stale detected provider names stored as active profiles", () => {
@@ -26,5 +29,13 @@ describe("runtime preference utilities", () => {
     }));
 
     expect(loadRuntimePreferences().activeProfile).toBe("codex");
+  });
+
+  it("loads the per-browser GPT-5.6 full-context preference", () => {
+    localStorage.setItem("myharness:appSettings", JSON.stringify({
+      gpt56ContextMode: "full-context",
+    }));
+
+    expect(loadRuntimePreferences().gpt56ContextMode).toBe("full-context");
   });
 });

@@ -82,11 +82,11 @@ http://localhost:4273/
 .myharness/settings.json
 ```
 
-`run_myharness_web.bat`는 기본적으로 이 프로젝트-local `.myharness/` 폴더를 사용합니다. P-GPT 인증값은 프로젝트-local `.myharness/credentials.json`에 저장해서 우선 읽고, 파일 값이 없으면 `PGPT_*` 환경변수를 후순위로 사용합니다. 런처 프롬프트에서 입력한 값은 다른 설치본에서도 재사용할 수 있도록 Windows 사용자 환경변수에도 함께 저장합니다.
+`run_myharness_web.bat`는 기본적으로 이 프로젝트-local `.myharness/` 폴더를 사용합니다. API 설정은 `myharness.local.env`의 비어 있지 않은 값을 가장 먼저 사용하고, 없으면 기존 환경변수를 확인합니다. P-GPT 인증값은 두 환경 소스에 모두 없을 때 프로젝트-local `.myharness/credentials.json`에서 읽습니다. 런처 프롬프트에서 입력한 값은 다른 설치본에서도 재사용할 수 있도록 Windows 사용자 환경변수에도 함께 저장합니다.
 
 - `.myharness/settings.json`: 기본 provider profile을 고릅니다. 배포 기본값은 OpenAI-compatible 방식의 `p-gpt`입니다.
 - P-GPT endpoint는 built-in `p-gpt` profile에 `http://pgpt.posco.com/s0la01-gpt/v1`로 정의되어 있습니다.
-- P-GPT는 `.myharness/credentials.json`의 `pgpt.api_key`, `pgpt.employee_no` 값을 우선 사용하고, 없으면 `PGPT_API_KEY`, `PGPT_EMPLOYEE_NO` 환경변수를 사용합니다. `run_myharness_web.bat` 실행 시 둘 다 없으면 입력받아 `.myharness/credentials.json`과 Windows 사용자 환경변수에 함께 저장합니다.
+- P-GPT는 `myharness.local.env`의 `PGPT_API_KEY`, `PGPT_EMPLOYEE_NO` 값을 우선 사용하고, 없으면 기존 환경변수, `.myharness/credentials.json` 순으로 사용합니다. `run_myharness_web.bat` 실행 시 모두 없으면 입력받아 `.myharness/credentials.json`과 Windows 사용자 환경변수에 함께 저장합니다.
 - 앱이 원하는 provider로 열리지 않으면 채팅창에서 `/provider` 명령을 사용하거나 `.myharness/settings.json`의 `active_profile`을 조정하세요.
 
 ## 워크스페이스 모델

@@ -94,6 +94,42 @@ def test_build_runtime_system_prompt_combines_sections(tmp_path: Path, monkeypat
     assert "Memory" in prompt
 
 
+def test_build_runtime_system_prompt_keeps_mcp_wrappers_out_of_skill_prefix(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    regular = repo / ".skills" / "regular"
+    routed = repo / ".skills" / "routed"
+    regular.mkdir(parents=True)
+    routed.mkdir(parents=True)
+    (regular / "SKILL.md").write_text(
+        "---\n"
+        "name: prefix-regular-skill\n"
+        "description: regular metadata remains visible\n"
+        "---\n\n"
+        "REGULAR_BODY_MUST_STAY_LAZY\n",
+        encoding="utf-8",
+    )
+    (routed / "SKILL.md").write_text(
+        "---\n"
+        "name: prefix-routed-mcp\n"
+        "description: routed metadata must stay out of the skill prefix\n"
+        "source: skill-mcp:sample-server\n"
+        "---\n\n"
+        "ROUTED_BODY_MUST_STAY_LAZY\n",
+        encoding="utf-8",
+    )
+
+    prompt = build_runtime_system_prompt(Settings(), cwd=repo, latest_user_prompt="hello")
+
+    assert "prefix-regular-skill" in prompt
+    assert "regular metadata remains visible" in prompt
+    assert "REGULAR_BODY_MUST_STAY_LAZY" not in prompt
+    assert "prefix-routed-mcp" not in prompt
+    assert "routed metadata must stay out of the skill prefix" not in prompt
+    assert "ROUTED_BODY_MUST_STAY_LAZY" not in prompt
+
+
 def test_build_runtime_system_prompt_guides_item_level_source_links(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)

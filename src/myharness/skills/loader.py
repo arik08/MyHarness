@@ -97,8 +97,19 @@ def get_program_skills_dirs() -> list[Path]:
 
 
 def load_program_skills() -> list[SkillDefinition]:
-    """Load skills shipped next to the MyHarness program."""
-    return load_skills_from_dirs(get_program_skills_dirs(), source="program")
+    """Load program skills grouped by their first directory below ``.skills``."""
+    skills: list[SkillDefinition] = []
+    for root in get_program_skills_dirs():
+        for category_dir in sorted(root.iterdir()):
+            if not category_dir.is_dir():
+                continue
+            skills.extend(
+                load_skills_from_dirs(
+                    [category_dir],
+                    source=f"skill-category:{category_dir.name}",
+                )
+            )
+    return skills
 
 
 def get_project_skills_dir(cwd: str | Path) -> Path:

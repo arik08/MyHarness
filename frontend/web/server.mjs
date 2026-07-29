@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 import { countTokens } from "gpt-tokenizer";
 import { compareHistoryItems, historyOrderTimestamp, lastAssistantActivityTimestamp } from "./modules/historyOrder.js";
+import { isNoisyBackendLogLine } from "./modules/backendLogNoise.js";
 import {
   artifactCategoryForPath,
   isDefaultProjectFileCandidate,
@@ -71,6 +72,7 @@ const recentDevRedirectVisits = new Map();
 let server = null;
 const workspaceMutationQueues = new Map();
 const aiEditHeartbeatIntervalMs = 15_000;
+const clipboardImageMaxBytes = 64 * 1024 * 1024;
 const reservedWorkspaceNames = new Set([
   "CON",
   "PRN",
@@ -203,6 +205,9 @@ const clientResponseLimitMessage = "현재 브라우저에서 여러 작업이 �
 const serverResponseLimitMessage = "여러 명이 동시에 작업 중이라 서버가 바쁩니다. 다른 응답이 끝난 뒤 다시 시도하세요.";
 const activeSessionLimitMessage = "여러 명이 동시에 사용 중이라 열려 있는 작업 세션이 많습니다. 사용하지 않는 채팅을 닫고 다시 시도하세요.";
 const modelOutputTokenCaps = Object.freeze({
+  "gpt-5.6-luna": 128_000,
+  "gpt-5.6-terra": 128_000,
+  "gpt-5.6-sol": 128_000,
   "gpt-5.5": 128_000,
   "gpt-5.4": 128_000,
   "gpt-5.4-mini": 128_000,
@@ -307,6 +312,31 @@ function normalizeClientAddress(value) {
 function isLoopbackAddress(value) {
   const address = normalizeClientAddress(value).toLowerCase();
   return address === "localhost" || address === "::1" || address === "0:0:0:0:0:0:0:1" || address.startsWith("127.");
+}
+
+function isLocalMachineAddress(value) {
+  const address = normalizeClientAddress(value).toLowerCase();
+  if (isLoopbackAddress(address)) {
+    return true;
+  }
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const entry of addresses || []) {
+      if (normalizeClientAddress(entry.address).toLowerCase() === address) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function requireLocalMachineRequest(request, message) {
+  const peerAddress = normalizeClientAddress(request.socket?.remoteAddress || "");
+  const forwardedAddress = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  if (!isLocalMachineAddress(peerAddress) || (forwardedAddress && !isLocalMachineAddress(forwardedAddress))) {
+    const error = new Error(message);
+    error.status = 403;
+    throw error;
+  }
 }
 
 function hasAdminModeAccess(request) {
@@ -502,6 +532,80 @@ async function readRequestBuffer(request, maxBytes) {
     chunks.push(buffer);
   }
   return Buffer.concat(chunks, total);
+}
+
+async function writeWindowsClipboardImage(png) {
+  if (process.platform !== "win32") {
+    const error = new Error("HTTP 이미지 복사는 Windows에서만 지원됩니다.");
+    error.status = 501;
+    throw error;
+  }
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (png.length < pngSignature.length || !png.subarray(0, pngSignature.length).equals(pngSignature)) {
+    const error = new Error("올바른 PNG 이미지가 아닙니다.");
+    error.status = 415;
+    throw error;
+  }
+  const powershell = resolveWindowsPowerShell();
+  if (!powershell) {
+    throw new Error("Windows 이미지 클립보드를 실행할 PowerShell을 찾지 못했습니다.");
+  }
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -AssemblyName System.Drawing",
+    "$inputStream = [Console]::OpenStandardInput()",
+    "$memory = New-Object System.IO.MemoryStream",
+    "$inputStream.CopyTo($memory)",
+    "$memory.Position = 0",
+    "$image = [System.Drawing.Image]::FromStream($memory)",
+    "try {",
+    "  $bitmap = New-Object System.Drawing.Bitmap($image)",
+    "  try {",
+    "    [System.Windows.Forms.Clipboard]::SetImage($bitmap)",
+    "    if (-not [System.Windows.Forms.Clipboard]::ContainsImage()) { throw 'Windows clipboard did not retain the image.' }",
+    "  } finally { $bitmap.Dispose() }",
+    "} finally { $image.Dispose(); $memory.Dispose() }",
+  ].join("; ");
+  await new Promise((resolve, reject) => {
+    const child = spawn(powershell, [
+      "-STA",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      script,
+    ], {
+      stdio: ["pipe", "ignore", "pipe"],
+      windowsHide: true,
+    });
+    let stderr = "";
+    const timeoutId = setTimeout(() => {
+      child.kill();
+      reject(new Error("Windows 이미지 클립보드 응답 시간이 초과되었습니다."));
+    }, 15_000);
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeoutId);
+      reject(error);
+    });
+    child.stdin.on("error", (error) => {
+      clearTimeout(timeoutId);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeoutId);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(stderr.trim() || `Windows 이미지 클립보드가 종료 코드 ${code}로 실패했습니다.`));
+      }
+    });
+    child.stdin.end(png);
+  });
 }
 
 function multipartBoundary(contentType) {
@@ -2719,7 +2823,7 @@ function shouldUsePgptDefaultRuntimePreferences(preferences, pgptAvailable) {
 function applyPgptDefaultRuntimePreferences(options) {
   options.activeProfile = "p-gpt";
   delete options.active_profile;
-  options.model = "gpt-5.4";
+  options.model = "gpt-5.6-luna";
   options.effort = "low";
   return options;
 }
@@ -4849,14 +4953,6 @@ function emit(session, event) {
   }
 }
 
-function isNoisyBackendLogLine(line) {
-  const text = String(line || "").trim();
-  return (
-    /\bINFO\b\s+Processing request of type\b/.test(text)
-    || /^[A-Za-z]+Request$/.test(text)
-  );
-}
-
 function shouldReplayEvent(event) {
   return shouldReplayRawEvent(event);
 }
@@ -4996,6 +5092,8 @@ async function createBackendSession(options = {}) {
   if (effort) {
     args.push("--effort", effort);
   }
+  const gpt56ContextMode = String(options.gpt56ContextMode || options.gpt56_context_mode || "cost-saver").trim();
+  args.push("--gpt56-context-mode", gpt56ContextMode === "full-context" ? "full-context" : "cost-saver");
   if (options.systemPrompt) {
     args.push("--system-prompt", String(options.systemPrompt));
   }
@@ -5023,6 +5121,7 @@ async function createBackendSession(options = {}) {
       activeProfile: cleanRuntimePreference(options.activeProfile || options.active_profile),
       model: cleanRuntimePreference(options.model),
       effort: normalizeRuntimeEffortValue(options.effort),
+      gpt56ContextMode: gpt56ContextMode === "full-context" ? "full-context" : "cost-saver",
     },
     pendingSharedRuntimeChoices: [],
     savedSessionId: "",
@@ -5285,6 +5384,26 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
+  if (request.method === "POST" && pathname === "/api/clipboard/image") {
+    try {
+      requireLocalMachineRequest(
+        request,
+        "HTTP 전체 이미지 복사는 MyHarness를 실행 중인 같은 Windows PC에서만 사용할 수 있습니다.",
+      );
+      if (String(request.headers["content-type"] || "").split(";")[0].trim().toLowerCase() !== "image/png") {
+        const error = new Error("PNG 이미지만 클립보드에 복사할 수 있습니다.");
+        error.status = 415;
+        throw error;
+      }
+      const png = await readRequestBuffer(request, clipboardImageMaxBytes);
+      await writeWindowsClipboardImage(png);
+      json(response, 200, { ok: true });
+    } catch (error) {
+      json(response, error.status || 500, { error: error.message || "Windows 이미지 클립보드에 복사하지 못했습니다." });
+    }
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/html-preview") {
     try {
       const body = await readJson(request);
@@ -5469,6 +5588,10 @@ async function handleApi(request, response, pathname) {
         subagentModel: body.subagentModel || body.subagent_model,
         subagentEffort: body.subagentEffort || body.subagent_effort,
         effort: body.effort,
+        gpt56ContextMode: body.gpt56ContextMode
+          || body.gpt56_context_mode
+          || oldSession?.runtimePreferences?.gpt56ContextMode
+          || "cost-saver",
         systemPrompt: body.systemPrompt,
         workspaceScope,
       };

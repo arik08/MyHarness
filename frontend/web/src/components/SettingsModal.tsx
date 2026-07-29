@@ -39,7 +39,7 @@ function handleBackdropClick(event: MouseEvent<HTMLDivElement>, onDismiss: () =>
   }
 }
 
-type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt" | "admin";
+type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "gpt56-context" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt" | "admin";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [view, setView] = useState<SettingsView>("home");
@@ -104,7 +104,11 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("output-tokens")}>
           <strong>모델별 출력 토큰</strong>
-          <small>GPT-5.5 / 5.4 / 5.4 mini</small>
+          <small>GPT-5.6 Luna / Terra / Sol 외</small>
+        </button>
+        <button type="button" className="settings-row" onClick={() => onSelect("gpt56-context")}>
+          <strong>GPT-5.4+ 장문 입력 관리</strong>
+          <small>{state.appSettings.gpt56ContextMode === "full-context" ? "전체 컨텍스트 사용" : "비용 절약 · 272K 이하 관리"}</small>
         </button>
         <button type="button" className="settings-row" onClick={() => onSelect("download")}>
           <strong>파일 저장경로</strong>
@@ -157,6 +161,7 @@ function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack:
   if (view === "prompt") return <PromptSettings onBack={onBack} />;
   if (view === "behavior") return <BehaviorSettings onBack={onBack} />;
   if (view === "output-tokens") return <OutputTokenSettingsForm onBack={onBack} />;
+  if (view === "gpt56-context") return <Gpt56ContextSettings onBack={onBack} onClose={onClose} />;
   if (view === "download") return <DownloadSettings onBack={onBack} />;
   if (view === "shell") return <ShellSettings onBack={onBack} />;
   if (view === "yolo") return <YoloSettings onBack={onBack} />;
@@ -389,6 +394,77 @@ function OutputTokenSettingsForm({ onBack }: { onBack: () => void }) {
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
         <button type="button" className="primary" onClick={() => void save()} disabled={!settings}>저장</button>
+      </div>
+      <p className="workspace-error">{error}</p>
+    </>
+  );
+}
+
+function Gpt56ContextSettings({ onBack, onClose }: { onBack: () => void; onClose: () => void }) {
+  const { state, dispatch } = useAppState();
+  const [mode, setMode] = useState<AppSettings["gpt56ContextMode"]>(state.appSettings.gpt56ContextMode);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    dispatch({ type: "set_app_settings", value: { gpt56ContextMode: mode } });
+    try {
+      if (state.sessionId) {
+        const session = await restartSession({
+          sessionId: state.sessionId,
+          clientId: state.clientId,
+          cwd: state.workspacePath,
+          ...runtimePreferencesFromState(state),
+          gpt56ContextMode: mode,
+          systemPrompt: state.systemPrompt.trim() || undefined,
+        });
+        dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace });
+        onClose();
+        return;
+      }
+      onBack();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <SettingsHeader title="GPT-5.4+ 장문 입력 관리">GPT-5.4, 5.5, 5.6에서 비용 우선 또는 최대 컨텍스트 우선 정책을 선택합니다.</SettingsHeader>
+      <div className="context-mode-options">
+        <label className="context-mode-option">
+          <input
+            type="radio"
+            name="gpt56-context-mode"
+            checked={mode === "cost-saver"}
+            onChange={() => setMode("cost-saver")}
+          />
+          <span>
+            <strong>비용 절약</strong>
+            <small>기본값입니다. 약 250K에서 자동 압축하여 개별 요청을 272K 이하로 관리합니다.</small>
+          </span>
+        </label>
+        <label className="context-mode-option">
+          <input
+            type="radio"
+            name="gpt56-context-mode"
+            checked={mode === "full-context"}
+            onChange={() => setMode("full-context")}
+          />
+          <span>
+            <strong>전체 컨텍스트 사용</strong>
+            <small>약 1M까지 사용한 뒤 안전 여유를 남기고 자동 압축합니다. 272K 초과 장문 요율이 적용될 수 있습니다.</small>
+          </span>
+        </label>
+      </div>
+      <div className="modal-actions">
+        <button type="button" onClick={onBack} disabled={saving}>뒤로</button>
+        <button type="button" className="primary" onClick={() => void save()} disabled={saving}>
+          {saving ? "적용 중..." : "저장 및 적용"}
+        </button>
       </div>
       <p className="workspace-error">{error}</p>
     </>

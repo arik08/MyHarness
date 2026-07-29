@@ -59,6 +59,7 @@ from myharness.services.session_storage import (
 from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
+from myharness.skills.refresh import consume_skill_registry_dirty
 from myharness.skills.routing import is_mcp_routed_skill_source, mcp_server_name_from_skill_source
 from myharness.skills.state import apply_skill_enabled_state, get_skill_usage_counts
 from myharness.skills.types import SkillDefinition
@@ -1056,6 +1057,9 @@ def _model_select_options(current_model: str, provider: str, allowed_models: lis
     if provider_name == "pgpt":
         families.extend(
             [
+                ("gpt-5.6-luna", _model_option_description(provider_name, "gpt-5.6-luna")),
+                ("gpt-5.6-terra", _model_option_description(provider_name, "gpt-5.6-terra")),
+                ("gpt-5.6-sol", _model_option_description(provider_name, "gpt-5.6-sol")),
                 ("gpt-5.5", _model_option_description(provider_name, "gpt-5.5")),
                 ("gpt-5.4", _model_option_description(provider_name, "gpt-5.4")),
                 ("gpt-5.4-mini", _model_option_description(provider_name, "gpt-5.4-mini")),
@@ -1124,6 +1128,12 @@ def _model_select_options(current_model: str, provider: str, allowed_models: lis
 
 def _model_option_description(provider_name: str, model: str) -> str:
     normalized = model.strip().lower()
+    if normalized == "gpt-5.6-luna":
+        return "Fast and affordable GPT-5.6"
+    if normalized == "gpt-5.6-terra":
+        return "Balanced GPT-5.6"
+    if normalized == "gpt-5.6-sol":
+        return "Frontier GPT-5.6"
     if normalized == "gpt-5.5":
         return "Strongest coding and reasoning"
     if normalized == "gpt-5.4":
@@ -1144,6 +1154,27 @@ def _model_option_description(provider_name: str, model: str) -> str:
     return "Available model"
 
 
+def _runtime_picker_options(settings: Settings) -> dict[str, object]:
+    """Build the provider/model choices shared by startup and live refreshes."""
+    provider_options = _provider_select_options(settings)
+    profiles = AuthManager(settings).list_profiles()
+    return {
+        "providers": provider_options,
+        "models_by_provider": {
+            str(option["value"]): _model_select_options(
+                settings.model,
+                profiles[str(option["value"])].provider,
+                profiles[str(option["value"])].allowed_models,
+            )
+            for option in provider_options
+            if str(option["value"]) in profiles
+        },
+        "subagent_model": settings.subagent_model,
+        "subagent_effort": settings.subagent_effort,
+        "efforts": _effort_select_options(settings),
+    }
+
+
 @dataclass(frozen=True)
 class BackendHostConfig:
     """Configuration for one backend host session."""
@@ -1158,6 +1189,7 @@ class BackendHostConfig:
     api_format: str | None = None
     active_profile: str | None = None
     effort: str | None = None
+    gpt56_context_mode: str | None = None
     api_client: SupportsStreamingMessages | None = None
     cwd: str | None = None
     restore_messages: list[dict] | None = None
@@ -1208,6 +1240,7 @@ def _initial_runtime_state_snapshot(config: BackendHostConfig) -> dict[str, obje
         "effort": settings.effort,
         "passes": settings.passes,
         "output_style": settings.output_style,
+        "runtime_options": _runtime_picker_options(settings),
     }
 
 
@@ -1270,6 +1303,7 @@ class ReactBackendHost:
             extra_skill_dirs=self._config.extra_skill_dirs,
             extra_plugin_roots=self._config.extra_plugin_roots,
             connect_mcp=False,
+            gpt56_context_mode=self._config.gpt56_context_mode,
         )
         await start_runtime(self._bundle)
         ready_event = BackendEvent.ready(
@@ -1336,7 +1370,7 @@ class ReactBackendHost:
                 if request.type == "refresh_skills":
                     self._sync_learning_mode()
                     await self._refresh_mcp_configs()
-                    await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
+                    await self._refresh_skill_runtime()
                     await self._emit(self._status_snapshot())
                     continue
                 if request.type == "set_skill_enabled":
@@ -2248,6 +2282,7 @@ class ReactBackendHost:
                 await self._emit(BackendEvent(type="swarm_status", swarm_teammates=self._swarm_teammate_snapshots(), swarm_notifications=[]))
                 self._ensure_swarm_status_monitor()
                 await self._emit(self._status_snapshot())
+                await self._refresh_skill_runtime_if_dirty()
                 # Emit todo_update when TodoWrite tool runs
                 if event.tool_name in ("TodoWrite", "todo_write"):
                     tool_input = self._last_tool_inputs.get(event.tool_name, {})
@@ -2370,6 +2405,7 @@ class ReactBackendHost:
                         self._bundle.engine.tool_metadata["conversation_state"] = original_conversation_state
                 raise
             await _flush_buffered_assistant_delta()
+            await self._refresh_skill_runtime_if_dirty()
             if original_messages is not None:
                 isolated_messages = self._bundle.engine.messages
                 visible_messages = []
@@ -2689,6 +2725,29 @@ class ReactBackendHost:
             if skill.source not in _BUILT_IN_SKILL_SOURCES
             if not hide_learned or not is_learned_skill(skill)
         ]
+
+    async def _refresh_skill_runtime(self) -> None:
+        """Refresh skill discovery without resetting or visibly loading the session."""
+        assert self._bundle is not None
+        consume_skill_registry_dirty(self._bundle.engine.tool_metadata)
+        settings = self._bundle.current_settings()
+        self._bundle.engine.set_system_prompt(
+            build_runtime_system_prompt(
+                settings,
+                cwd=self._bundle.cwd,
+                latest_user_prompt=None,
+                extra_skill_dirs=self._bundle.extra_skill_dirs,
+                extra_plugin_roots=self._bundle.extra_plugin_roots,
+                task_worker=getattr(self._bundle, "task_worker", False),
+            )
+        )
+        await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
+
+    async def _refresh_skill_runtime_if_dirty(self) -> None:
+        """Apply a pending save-triggered refresh exactly once."""
+        assert self._bundle is not None
+        if consume_skill_registry_dirty(self._bundle.engine.tool_metadata):
+            await self._refresh_skill_runtime()
 
     def _sync_learning_mode(self) -> None:
         assert self._bundle is not None
@@ -3510,17 +3569,6 @@ class ReactBackendHost:
         current_model = settings.model
 
         if command == "runtime-picker":
-            provider_options = self._provider_select_options(settings)
-            profiles = AuthManager(settings).list_profiles()
-            model_options_by_provider = {
-                str(option["value"]): self._model_select_options(
-                    current_model,
-                    profiles[str(option["value"])].provider,
-                    profiles[str(option["value"])].allowed_models,
-                )
-                for option in provider_options
-                if str(option["value"]) in profiles
-            }
             await self._emit(
                 BackendEvent(
                     type="select_request",
@@ -3528,13 +3576,7 @@ class ReactBackendHost:
                         "kind": "select",
                         "title": "Runtime Picker",
                         "command": "runtime-picker",
-                        "runtime_options": {
-                            "providers": provider_options,
-                            "models_by_provider": model_options_by_provider,
-                            "subagent_model": settings.subagent_model,
-                            "subagent_effort": settings.subagent_effort,
-                            "efforts": self._effort_select_options(settings),
-                        },
+                        "runtime_options": _runtime_picker_options(settings),
                     },
                     select_options=[],
                 )
@@ -3916,6 +3958,7 @@ async def run_backend_host(
     api_format: str | None = None,
     active_profile: str | None = None,
     effort: str | None = None,
+    gpt56_context_mode: str | None = None,
     cwd: str | None = None,
     api_client: SupportsStreamingMessages | None = None,
     restore_messages: list[dict] | None = None,
@@ -3943,6 +3986,7 @@ async def run_backend_host(
             api_format=api_format,
             active_profile=active_profile,
             effort=effort,
+            gpt56_context_mode=gpt56_context_mode,
             api_client=api_client,
             cwd=cwd,
             restore_messages=restore_messages,

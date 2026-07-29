@@ -320,6 +320,42 @@ async def test_codex_client_streams_text(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_codex_client_prewarms_the_same_static_prefix_with_minimal_output(monkeypatch):
+    sink: dict[str, Any] = {}
+    response = _FakeStreamResponse(
+        lines=[
+            'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":120,"output_tokens":1,"input_tokens_details":{"cached_tokens":96}}}}',
+            "",
+        ]
+    )
+    monkeypatch.setattr(
+        "myharness.api.codex_client.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(response, sink),
+    )
+    client = CodexApiClient(_fake_codex_token())
+    request = ApiMessageRequest(
+        model="gpt-5.5",
+        messages=[ConversationMessage.from_user_text("real user message")],
+        system_prompt="stable system",
+        max_tokens=4096,
+        tools=[{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
+        reasoning_effort="low",
+    )
+
+    usage = await client.prewarm_prompt_cache(request)
+
+    assert sink["json"]["prompt_cache_key"] == _prompt_cache_key_for_request(request)
+    assert sink["json"]["input"][0]["role"] == "developer"
+    assert sink["json"]["input"][1]["role"] == "user"
+    assert sink["json"]["input"][1]["content"][0]["text"] != "real user message"
+    assert sink["json"]["tools"][0]["name"] == "read_file"
+    assert sink["json"]["max_output_tokens"] == 16
+    assert request.messages[0].text == "real user message"
+    assert usage is not None
+    assert usage.cached_input_tokens == 96
+
+
+@pytest.mark.asyncio
 async def test_codex_client_drops_dangling_tool_call_before_provider_request(monkeypatch):
     sink: dict[str, Any] = {}
     response = _FakeStreamResponse(

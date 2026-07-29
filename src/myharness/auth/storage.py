@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -91,6 +92,10 @@ def _keyring_available() -> bool:
     warning is emitted at most once per process.
     """
     global _keyring_checked, _keyring_usable  # noqa: PLW0603
+    if os.environ.get("MYHARNESS_DISABLE_KEYRING", "").strip().lower() in {"1", "true", "yes", "on"}:
+        _keyring_checked = True
+        _keyring_usable = False
+        return False
     if _keyring_checked:
         return _keyring_usable
     _keyring_checked = True

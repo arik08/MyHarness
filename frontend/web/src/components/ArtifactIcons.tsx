@@ -1,4 +1,4 @@
-export type IconName = "source" | "preview" | "copy" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star" | "chevron-up" | "chevron-down" | "keyboard" | "sparkles" | "network" | "plug" | "terminal";
+export type IconName = "source" | "preview" | "copy" | "screenshot" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star" | "chevron-up" | "chevron-down" | "keyboard" | "sparkles" | "network" | "plug" | "terminal";
 
 export function Icon({ name }: { name: IconName }) {
   if (name === "source") {
@@ -22,6 +22,15 @@ export function Icon({ name }: { name: IconName }) {
       <svg aria-hidden="true" viewBox="0 0 24 24">
         <rect x="9" y="9" width="11" height="11" rx="2" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </svg>
+    );
+  }
+  if (name === "screenshot") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <rect x="3" y="5" width="18" height="15" rx="2" />
+        <path d="m8 5 1.5-2h5L16 5" />
+        <circle cx="12" cy="12.5" r="3.5" />
       </svg>
     );
   }

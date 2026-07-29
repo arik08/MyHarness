@@ -371,7 +371,7 @@ test("defaults shared runtime sessions to pgpt when pgpt credentials are availab
   );
 
   assert.equal(ready.state.active_profile, "p-gpt");
-  assert.equal(ready.state.model, "gpt-5.4");
+  assert.equal(ready.state.model, "gpt-5.6-luna");
   assert.equal(ready.state.effort, "low");
 });
 
@@ -1645,6 +1645,9 @@ test("output token settings expose official model caps and save valid values", a
 
   assert.equal(initialResponse.status, 200);
   assert.deepEqual(initial.values, {
+    "gpt-5.6-luna": 42000,
+    "gpt-5.6-terra": 42000,
+    "gpt-5.6-sol": 42000,
     "gpt-5.5": 42000,
     "gpt-5.4": 42000,
     "gpt-5.4-mini": 42000,
@@ -1652,6 +1655,9 @@ test("output token settings expose official model caps and save valid values", a
   assert.deepEqual(
     initial.models.map((model) => [model.id, model.officialMax]),
     [
+      ["gpt-5.6-luna", 128000],
+      ["gpt-5.6-terra", 128000],
+      ["gpt-5.6-sol", 128000],
       ["gpt-5.5", 128000],
       ["gpt-5.4", 128000],
       ["gpt-5.4-mini", 128000],
@@ -1661,7 +1667,16 @@ test("output token settings expose official model caps and save valid values", a
   const saveResponse = await fetch(`${app.baseUrl}/api/settings/output-tokens`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ values: { "gpt-5.5": 64000, "gpt-5.4": 42000, "gpt-5.4-mini": 32000 } }),
+    body: JSON.stringify({
+      values: {
+        "gpt-5.6-luna": 42000,
+        "gpt-5.6-terra": 42000,
+        "gpt-5.6-sol": 42000,
+        "gpt-5.5": 64000,
+        "gpt-5.4": 42000,
+        "gpt-5.4-mini": 32000,
+      },
+    }),
   });
   const saved = await saveResponse.json();
   const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
@@ -1724,6 +1739,39 @@ test("rejects global settings writes from forwarded remote clients", async (t) =
 
   assert.equal(response.status, 403);
   assert.match(payload.error, /local/i);
+});
+
+test("rejects HTTP image clipboard writes from remote clients", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const response = await fetch(`${app.baseUrl}/api/clipboard/image`, {
+    method: "POST",
+    headers: {
+      "content-type": "image/png",
+      "x-forwarded-for": "203.0.113.10",
+    },
+    body: Buffer.from("not-a-png"),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 403);
+  assert.match(payload.error, /같은 Windows PC/);
+});
+
+test("rejects non-PNG clipboard payloads before invoking the Windows clipboard", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const response = await fetch(`${app.baseUrl}/api/clipboard/image`, {
+    method: "POST",
+    headers: { "content-type": "image/png" },
+    body: Buffer.from("not-a-png"),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 415);
+  assert.match(payload.error, /올바른 PNG/);
 });
 
 test("allows global settings writes from forwarded admin-mode clients", async (t) => {

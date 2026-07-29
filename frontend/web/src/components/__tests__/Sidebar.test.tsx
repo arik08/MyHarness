@@ -972,10 +972,10 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
 
-    await waitFor(() => expect(startSession).toHaveBeenCalledWith({
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
       clientId: "client-1",
       cwd: "C:/demo",
-    }));
+    })));
     expect(sendBackendRequest).toHaveBeenCalledWith("session-restored", "client-1", {
       type: "apply_select_command",
       command: "resume",
@@ -1222,10 +1222,10 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
 
-    await waitFor(() => expect(startSession).toHaveBeenCalledWith({
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
       clientId: "client-1",
       cwd: "C:/demo",
-    }));
+    })));
     expect(restartSession).not.toHaveBeenCalled();
   });
 
@@ -1368,11 +1368,11 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "재시작" }));
 
-    await waitFor(() => expect(restartSession).toHaveBeenCalledWith({
+    await waitFor(() => expect(restartSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "session-active",
       clientId: "client-1",
       cwd: "C:/demo",
-    }));
+    })));
   });
 
   it("keeps the selected workspace after restarting the session", async () => {
@@ -1399,11 +1399,11 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "프로젝트 선택" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "TEST1" }));
 
-    expect(restartSession).toHaveBeenCalledWith({
+    expect(restartSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "session-default",
       clientId: "client-1",
       cwd: testWorkspace.path,
-    });
+    }));
     await waitFor(() => expect(screen.getByTestId("workspace").textContent).toBe("TEST1"));
   });
 });

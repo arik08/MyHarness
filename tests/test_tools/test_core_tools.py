@@ -82,6 +82,40 @@ async def test_file_write_read_and_edit(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_skill_file_save_marks_registry_dirty(tmp_path: Path):
+    context = ToolExecutionContext(cwd=tmp_path)
+    await FileWriteTool().execute(
+        FileWriteToolInput(path="notes.md", content="# Notes\n"),
+        context,
+    )
+    assert "skill_registry_dirty" not in context.metadata
+
+    write_result = await FileWriteTool().execute(
+        FileWriteToolInput(
+            path=".skills/POSCO_Skill/demo/SKILL.md",
+            content="---\nname: demo\ndescription: Demo skill.\n---\n",
+        ),
+        context,
+    )
+
+    assert write_result.is_error is False
+    assert context.metadata["skill_registry_dirty"] is True
+
+    context.metadata.pop("skill_registry_dirty")
+    edit_result = await FileEditTool().execute(
+        FileEditToolInput(
+            path=".skills/POSCO_Skill/demo/SKILL.md",
+            old_str="Demo skill.",
+            new_str="Updated demo skill.",
+        ),
+        context,
+    )
+
+    assert edit_result.is_error is False
+    assert context.metadata["skill_registry_dirty"] is True
+
+
+@pytest.mark.asyncio
 async def test_file_write_result_hides_local_path_before_playground(tmp_path: Path):
     workspace = tmp_path / "repo" / "Playground" / "shared" / "Default"
     context = ToolExecutionContext(cwd=workspace)

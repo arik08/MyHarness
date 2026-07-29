@@ -1,9 +1,12 @@
 {
-  "model": "gpt-5.4",
+  "model": "gpt-5.6-luna",
   "subagent_model": "gpt-5.4-mini",
   "subagent_effort": "medium",
   "max_tokens": 42000,
   "model_output_token_limits": {
+    "gpt-5.6-luna": 42000,
+    "gpt-5.6-terra": 42000,
+    "gpt-5.6-sol": 42000,
     "gpt-5.5": 42000,
     "gpt-5.4": 42000,
     "gpt-5.4-mini": 42000
@@ -21,15 +24,18 @@
       "provider": "openai",
       "api_format": "openai",
       "auth_source": "pgpt_api_key",
-      "default_model": "gpt-5.4",
+      "default_model": "gpt-5.6-luna",
       "base_url": "http://pgpt.posco.com/s0la01-gpt/v1",
-      "last_model": "gpt-5.4",
+      "last_model": "gpt-5.6-luna",
       "credential_slot": null,
       "allowed_models": [
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+        "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
-        "gpt-5.4-nano",
-        "gpt-5.5"
+        "gpt-5.4-nano"
       ],
       "context_window_tokens": null,
       "auto_compact_threshold_tokens": null
@@ -204,7 +210,6 @@
   "web_shared_runtime_preferences": {
     "version": 1,
     "active_profile": "codex",
-    "model": "gpt-5.5",
     "effort": "low",
     "pgpt_available": true
   }

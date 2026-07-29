@@ -18,6 +18,7 @@ from myharness.personalization.rules import load_local_rules
 from myharness.prompts.project_instructions import load_project_instructions_prompt
 from myharness.prompts.system_prompt import build_system_prompt
 from myharness.skills.loader import load_skill_registry
+from myharness.skills.routing import is_mcp_routed_skill
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 
 
@@ -35,7 +36,7 @@ def _build_skills_section(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    skills = registry.list_skills()
+    skills = [skill for skill in registry.list_skills() if not is_mcp_routed_skill(skill)]
     if not skills:
         return None
     lines = [

@@ -354,7 +354,7 @@ def test_build_dry_run_preview_sets_blocked_when_model_prompt_lacks_auth(monkeyp
 
 
 def test_build_dry_run_preview_recommends_matching_skills_and_tools(monkeypatch, tmp_path: Path):
-    settings = Settings(api_key="sk-test")
+    settings = Settings(api_key="sk-test", model="claude-sonnet-4-20250514")
 
     class _FakeSkillRegistry:
         def list_skills(self):
@@ -395,6 +395,7 @@ def test_build_dry_run_preview_recommends_matching_skills_and_tools(monkeypatch,
     )
     monkeypatch.setattr("myharness.api.provider.auth_status", lambda settings: "configured")
     monkeypatch.setattr("myharness.plugins.load_plugins", lambda settings, cwd: [])
+    monkeypatch.setattr("myharness.mcp.config.load_mcp_server_configs", lambda settings, plugins: {})
     monkeypatch.setattr("myharness.skills.load_skill_registry", lambda cwd, settings=None: _FakeSkillRegistry())
     monkeypatch.setattr("myharness.tools.create_default_tool_registry", lambda: _FakeToolRegistry())
     monkeypatch.setattr("myharness.prompts.context.build_runtime_system_prompt", lambda *args, **kwargs: "preview prompt")

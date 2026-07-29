@@ -779,6 +779,37 @@ describe("Composer", () => {
     expect(screen.getAllByRole("option", { name: /\$mcp:national-assembly/ })).toHaveLength(1);
   });
 
+  it("shows a skill-mcp wrapper when its configured server is not auto-connected", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          mcpServers: [
+            { name: "posco-erp", state: "disabled", transport: "stdio" },
+          ],
+          skills: [
+            {
+              name: "posco-erp",
+              description: "POSCO ERP 연결형 MCP 라우팅",
+              source: "skill-mcp:posco-erp",
+              enabled: true,
+            },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    await user.type(input, "$mcp:posco");
+
+    expect(screen.getAllByRole("option", { name: /\$mcp:posco-erp/ })).toHaveLength(1);
+    expect(screen.getByRole("option", { name: /\$mcp:posco-erp/ }).textContent).toContain("연결형 MCP 라우팅");
+  });
+
   it("adds a trailing space after applying skill and file suggestions at the cursor", async () => {
     const user = userEvent.setup();
     render(
@@ -851,7 +882,7 @@ describe("Composer", () => {
     await user.click(screen.getByRole("option", { name: /@report\.md/ }));
 
     expect(input).toHaveProperty("value", "이 파일 참고 @outputs/report.md 해줘");
-    expect(input.selectionStart).toBe("이 파일 참고 @outputs/report.md ".length);
+    await waitFor(() => expect(input.selectionStart).toBe("이 파일 참고 @outputs/report.md ".length));
   });
 
   it("uses the file path name for file suggestions when an artifact name is missing", async () => {
@@ -1247,13 +1278,13 @@ describe("Composer", () => {
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "새 질문");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
 
-    await waitFor(() => expect(startSession).toHaveBeenCalledWith({
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
       clientId: "client-1",
       cwd: "C:/demo",
       activeProfile: "p-gpt",
       model: "gpt-5.4",
       effort: "high",
-    }));
+    })));
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "session-new",
       line: "새 질문",

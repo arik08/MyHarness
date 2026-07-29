@@ -27,6 +27,7 @@ if "%MYHARNESS_DATA_DIR%"=="" set "MYHARNESS_DATA_DIR=%MYHARNESS_CONFIG_DIR%\dat
 if "%MYHARNESS_LOGS_DIR%"=="" set "MYHARNESS_LOGS_DIR=%MYHARNESS_CONFIG_DIR%\logs"
 set "MYHARNESS_HOME=%MYHARNESS_CONFIG_DIR%"
 set "MYHARNESS_SETTINGS=%MYHARNESS_CONFIG_DIR%\settings.json"
+set "MYHARNESS_DISABLE_KEYRING=1"
 
 call :configure_posco_cert
 
@@ -146,9 +147,6 @@ if not exist "frontend\web\node_modules\.package-lock.json" (
   echo [INFO] Web dependencies are already available.
 )
 
-call :free_port "%PORT%" "backend"
-if errorlevel 1 exit /b 1
-
 echo [INFO] Starting development servers...
 echo.
 
@@ -162,30 +160,9 @@ echo [INFO] Dev servers stopped with exit code %EXIT_CODE%.
 pause
 exit /b %EXIT_CODE%
 
-:free_port
-set "CHECK_PORT=%~1"
-set "PORT_LABEL=%~2"
-set "MYHARNESS_PORT_PID="
-for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort ([int]'%CHECK_PORT%') -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($conn) { Write-Output $conn.OwningProcess }"`) do (
-  set "MYHARNESS_PORT_PID=%%A"
-)
-if "%MYHARNESS_PORT_PID%"=="" exit /b 0
-echo [INFO] Port %CHECK_PORT% for %PORT_LABEL% is already in use by PID %MYHARNESS_PORT_PID%.
-echo [INFO] Closing the existing process and starting MyHarness fresh...
-taskkill /PID %MYHARNESS_PORT_PID% /T /F >nul 2>nul
-timeout /t 1 /nobreak >nul
-powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-NetTCPConnection -LocalPort ([int]'%CHECK_PORT%') -State Listen -ErrorAction SilentlyContinue) { exit 0 } exit 1" >nul 2>nul
-if not errorlevel 1 (
-  echo.
-  echo [ERROR] Port %CHECK_PORT% is still in use after trying to close PID %MYHARNESS_PORT_PID%.
-  pause
-  exit /b 1
-)
-exit /b 0
-
 :load_local_env
 for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%~1") do (
-  if not "%%~A"=="" if not "%%~B"=="" if not defined %%~A set "%%~A=%%~B"
+  if not "%%~A"=="" if not "%%~B"=="" set "%%~A=%%~B"
 )
 exit /b 0
 
@@ -269,7 +246,7 @@ exit /b 0
 :ensure_pgpt_env
 if exist "%MYHARNESS_CONFIG_DIR%\credentials.json" (
   for /f "usebackq tokens=1,* delims==" %%A in (`"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -c "import json, os; from pathlib import Path; p=Path(os.environ.get('MYHARNESS_CONFIG_DIR') or '.myharness')/'credentials.json'; data=json.loads(p.read_text(encoding='utf-8')); pgpt=data.get('pgpt') if isinstance(data.get('pgpt'), dict) else {}; print('PGPT_API_KEY=' + str(pgpt.get('api_key') or '')); print('PGPT_EMPLOYEE_NO=' + str(pgpt.get('employee_no') or pgpt.get('system_code') or '')); print('PGPT_COMPANY_CODE=' + str(pgpt.get('company_code') or ''))" 2^>nul`) do (
-    if not "%%~B"=="" set "%%~A=%%~B"
+    if not "%%~B"=="" if not defined %%~A set "%%~A=%%~B"
   )
 )
 set "PGPT_ENV_MISSING="

@@ -249,7 +249,7 @@ def test_build_system_prompt_guides_high_fidelity_3d_html_artifacts():
 def test_visual_artifact_rejects_yellowed_report_palettes():
     env = _make_env()
     prompt = build_system_prompt(env=env)
-    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "General" / "visual-artifact" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -264,7 +264,7 @@ def test_visual_artifact_rejects_yellowed_report_palettes():
 def test_visual_artifact_includes_default_report_chart_palette():
     env = _make_env()
     prompt = build_system_prompt(env=env)
-    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "General" / "visual-artifact" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -277,7 +277,7 @@ def test_visual_artifact_includes_default_report_chart_palette():
 def test_visual_artifact_contains_report_design_rules_and_routes_a4_to_a4_skill():
     env = _make_env()
     prompt = build_system_prompt(env=env)
-    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "General" / "visual-artifact" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -297,7 +297,7 @@ def test_visual_artifact_contains_report_design_rules_and_routes_a4_to_a4_skill(
 def test_visual_artifact_cites_important_external_sources():
     env = _make_env()
     prompt = build_system_prompt(env=env)
-    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "General" / "visual-artifact" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -320,7 +320,7 @@ def test_visual_artifact_cites_important_external_sources():
 def test_visual_artifact_flags_empty_report_panels_as_layout_defects():
     env = _make_env()
     prompt = build_system_prompt(env=env)
-    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "visual-artifact" / "SKILL.md").read_text(
+    skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "General" / "visual-artifact" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -361,7 +361,10 @@ def test_build_system_prompt_prefers_existing_files_and_batched_edits():
     assert "English snake/kebab-style names are fine" in prompt
     assert "keep files that reference each other in the same subfolder" in prompt
     assert "If both editing and creating are plausible" in prompt
-    assert "create, install, persist, or update a MyHarness skill" in prompt
+    assert "create, install, or persist a new MyHarness skill" in prompt
+    assert r".skills\POSCO_Skill" in prompt
+    assert r".skills\General" in prompt
+    assert "developer-managed" in prompt
     assert "(program location)\\MyHarness\\.skills" in prompt
     assert "Use a workspace `.skills`, user-level skill directory, or another location only" in prompt
     assert "batch them into one `edit_file` call with the `edits` array" in prompt
