@@ -26,6 +26,7 @@ from myharness.api.openai_client import (
     _strip_think_blocks,
     _token_limit_param_for_model,
 )
+from myharness.api.usage import UsageSnapshot
 from myharness.engine.messages import (
     ConversationMessage,
     ImageBlock,
@@ -82,6 +83,26 @@ class TestConvertMessagesToOpenai:
         assert len(result) == 1
         assert result[0]["role"] == "system"
         assert result[0]["content"] == "You are helpful."
+
+    def test_system_prompt_with_explicit_cache_breakpoint(self):
+        result = _convert_messages_to_openai(
+            [],
+            "You are helpful.",
+            explicit_system_cache_breakpoint=True,
+        )
+
+        assert result == [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "You are helpful.",
+                        "prompt_cache_breakpoint": {"mode": "explicit"},
+                    }
+                ],
+            }
+        ]
 
     def test_no_system_prompt(self):
         messages = [ConversationMessage.from_user_text("hi")]
@@ -331,6 +352,9 @@ class _FakeOpenAIClient:
     def __init__(self) -> None:
         self.chat = _FakeChat()
 
+    async def close(self) -> None:
+        return None
+
 
 class _FakeRawStreamResponse:
     def __init__(self, lines: list[str], *, status_code: int = 200) -> None:
@@ -369,6 +393,9 @@ class _FakeRawAsyncClient:
         self._sink["headers"] = headers
         self._sink["json"] = json
         return self._response
+
+    async def aclose(self) -> None:
+        self._sink["closed"] = self._sink.get("closed", 0) + 1
 
 
 @pytest.mark.asyncio
@@ -455,6 +482,41 @@ def test_openai_completion_params_place_static_tools_before_messages_for_cache_p
     assert params["stream_options"] == {"include_usage": True}
     assert params["prompt_cache_key"].startswith("myharness:")
     assert params["prompt_cache_retention"] == "24h"
+
+
+def test_openai_completion_params_use_explicit_cache_policy_for_gpt56(monkeypatch):
+    monkeypatch.delenv("MYHARNESS_PROMPT_CACHE_RETENTION", raising=False)
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
+    )
+
+    params = client._completion_params(
+        ApiMessageRequest(
+            model="gpt-5.6-sol",
+            messages=[ConversationMessage.from_user_text("variable user text")],
+            system_prompt="stable system prompt",
+        )
+    )
+
+    assert params["prompt_cache_options"] == {"mode": "explicit", "ttl": "30m"}
+    assert "prompt_cache_retention" not in params
+    assert params["messages"][0] == {
+        "role": "system",
+        "content": [
+            {
+                "type": "text",
+                "text": "stable system prompt",
+                "prompt_cache_breakpoint": {"mode": "explicit"},
+            }
+        ],
+    }
+    sdk_params = client._sdk_completion_params(params)
+    assert "prompt_cache_options" not in sdk_params
+    assert sdk_params["extra_body"] == {
+        "prompt_cache_options": {"mode": "explicit", "ttl": "30m"}
+    }
 
 
 def test_prompt_cache_key_is_stable_for_same_model_system_and_tools():
@@ -574,6 +636,65 @@ def test_openai_cache_diagnostic_recognizes_context_ccr_rewrite_event():
     assert snapshot["prefix_change_reason"] == "context_ccr_rewrite"
 
 
+def test_openai_cache_diagnostic_separates_reads_writes_and_uncached_tokens(monkeypatch, tmp_path):
+    monkeypatch.setenv("MYHARNESS_LOGS_DIR", str(tmp_path))
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+    )
+    request = ApiMessageRequest(
+        model="gpt-5.6-sol",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("hi")],
+    )
+    params = client._completion_params(request)
+
+    client._write_cache_diagnostic(
+        "message_complete",
+        request,
+        params,
+        usage=UsageSnapshot(
+            input_tokens=1_000,
+            cached_input_tokens=600,
+            cache_write_tokens=250,
+            output_tokens=100,
+        ),
+    )
+
+    payload = json.loads(
+        (tmp_path / "prompt-cache-diagnostics.jsonl").read_text(encoding="utf-8")
+    )
+    assert payload["cached_input_tokens"] == 600
+    assert payload["cache_write_tokens"] == 250
+    assert payload["uncached_input_tokens"] == 150
+    assert payload["cache_hit_ratio"] == pytest.approx(0.6)
+    assert payload["cache_write_ratio"] == pytest.approx(0.25)
+
+
+def test_openai_cache_diagnostics_rotate_at_bounded_size(monkeypatch, tmp_path):
+    monkeypatch.setenv("MYHARNESS_LOGS_DIR", str(tmp_path))
+    monkeypatch.setattr(openai_client_module, "_DIAGNOSTIC_LOG_MAX_BYTES", 300)
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+    )
+    request = ApiMessageRequest(
+        model="gpt-5.6-sol",
+        system_prompt="stable system",
+        messages=[ConversationMessage.from_user_text("hi")],
+    )
+    params = client._completion_params(request)
+
+    for _ in range(4):
+        client._write_cache_diagnostic("request_start", request, params)
+
+    path = tmp_path / "prompt-cache-diagnostics.jsonl"
+    assert path.exists()
+    assert (tmp_path / "prompt-cache-diagnostics.jsonl.1").exists()
+    assert (tmp_path / "prompt-cache-diagnostics.jsonl.2").exists()
+    assert not (tmp_path / "prompt-cache-diagnostics.jsonl.3").exists()
+
+
 def test_openai_client_retries_sdk_timeout_errors():
     class APITimeoutError(Exception):
         pass
@@ -638,6 +759,37 @@ async def test_openai_client_falls_back_when_prompt_cache_retention_is_unsupport
 
 
 @pytest.mark.asyncio
+async def test_openai_client_removes_gpt56_breakpoint_when_cache_options_are_unsupported():
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_prompt_cache_options=True,
+        include_usage_with_tools=True,
+    )
+    fake_sdk = _FakeOpenAIClient()
+    fake_sdk.chat.completions.fail_first_with = ValueError(
+        "Unknown parameter: prompt_cache_options"
+    )
+    client._client = fake_sdk
+    request = ApiMessageRequest(
+        model="gpt-5.6-terra",
+        messages=[ConversationMessage.from_user_text("hi")],
+        system_prompt="stable system",
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert events
+    first, second = fake_sdk.chat.completions.calls
+    assert first["extra_body"]["prompt_cache_options"]["mode"] == "explicit"
+    assert first["messages"][0]["content"][0]["prompt_cache_breakpoint"] == {
+        "mode": "explicit"
+    }
+    assert "extra_body" not in second
+    assert second["messages"][0] == {"role": "system", "content": "stable system"}
+    assert "prompt_cache_key" in second
+
+
+@pytest.mark.asyncio
 async def test_pgpt_raw_stream_emits_tool_argument_deltas_and_diagnostics(monkeypatch, tmp_path):
     sink: dict[str, Any] = {}
     response = _FakeRawStreamResponse(
@@ -693,6 +845,45 @@ async def test_pgpt_raw_stream_emits_tool_argument_deltas_and_diagnostics(monkey
     assert "tool_delta" in diagnostics
     assert "arguments_length" in diagnostics
     assert "hello" not in diagnostics
+
+
+@pytest.mark.asyncio
+async def test_pgpt_raw_stream_reuses_and_closes_http_connection_pool(monkeypatch):
+    sink: dict[str, Any] = {}
+    created = 0
+    response = _FakeRawStreamResponse(
+        [
+            'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}',
+            "",
+            "data: [DONE]",
+            "",
+        ]
+    )
+
+    def _fake_async_client(*args, **kwargs):
+        nonlocal created
+        created += 1
+        return _FakeRawAsyncClient(response, sink)
+
+    monkeypatch.setattr(openai_client_module.httpx, "AsyncClient", _fake_async_client)
+    client = OpenAICompatibleClient(
+        api_key="pgpt-token",
+        base_url="http://pgpt.posco.com/s0la01-gpt/v1",
+        raw_stream=True,
+    )
+    client._client = _FakeOpenAIClient()
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("hi")],
+    )
+
+    for _ in range(2):
+        assert [event async for event in client.stream_message(request)]
+    await client.aclose()
+
+    assert created == 1
+    assert sink["closed"] == 1
+    assert client._raw_http_client is None
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -85,7 +86,7 @@ class FileEditTool(BaseTool):
         if version_guard:
             return ToolResult(output=version_guard, is_error=True)
 
-        original = path.read_text(encoding="utf-8")
+        original = await asyncio.to_thread(path.read_text, encoding="utf-8")
         replacements = arguments.edits
         if replacements is None:
             replacements = [
@@ -119,7 +120,7 @@ class FileEditTool(BaseTool):
                 is_error=True,
             )
 
-        path.write_text(updated, encoding="utf-8")
+        await asyncio.to_thread(path.write_text, updated, encoding="utf-8")
         mark_skill_registry_dirty(context.metadata, path)
         return ToolResult(
             output=f"{display_tool_path(path, context.cwd)}을(를) 업데이트했습니다. 치환 {applied_count}건"

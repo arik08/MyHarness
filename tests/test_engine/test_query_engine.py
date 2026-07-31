@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from myharness.api.client import ApiMessageCompleteEvent, ApiRetryEvent, ApiTextDeltaEvent
+from myharness.api.client import (
+    ApiMessageCompleteEvent,
+    ApiMessageRequest,
+    ApiRetryEvent,
+    ApiTextDeltaEvent,
+)
 from myharness.api.errors import RequestFailure
 from myharness.api.usage import UsageSnapshot
 from myharness.config.settings import PermissionSettings, Settings
@@ -36,7 +41,13 @@ from myharness.engine.messages import ToolResultBlock
 from myharness.hooks import HookExecutionContext, HookExecutor, HookEvent
 from myharness.hooks.loader import HookRegistry
 from myharness.hooks.schemas import PromptHookDefinition
-from myharness.engine.query import QueryContext, _execute_tool_call, format_internal_steering_update
+from myharness.engine.query import (
+    PROVIDER_STREAM_QUEUE_MAXSIZE,
+    QueryContext,
+    _execute_tool_call,
+    _stream_provider_events_with_idle_status,
+    format_internal_steering_update,
+)
 
 
 def _command_tool_name() -> str:
@@ -104,6 +115,18 @@ class SlowFirstEventApiClient:
             usage=UsageSnapshot(input_tokens=1, output_tokens=1),
             stop_reason=None,
         )
+
+
+class FastStreamingApiClient:
+    def __init__(self, event_count: int) -> None:
+        self.event_count = event_count
+        self.produced = 0
+
+    async def stream_message(self, request):
+        del request
+        for _ in range(self.event_count):
+            self.produced += 1
+            yield ApiTextDeltaEvent(text="x")
 
 
 class PromptTooLongThenSuccessApiClient:
@@ -297,6 +320,29 @@ async def test_query_engine_provider_idle_status_uses_user_facing_label(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_provider_stream_queue_applies_backpressure_to_fast_producer():
+    client = FastStreamingApiClient(PROVIDER_STREAM_QUEUE_MAXSIZE * 4)
+    context = QueryContext(
+        api_client=client,
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=Path.cwd(),
+        model="gpt-5.6-sol",
+        system_prompt="system",
+        max_tokens=4096,
+    )
+    request = ApiMessageRequest(model="gpt-5.6-sol", messages=[])
+    stream = _stream_provider_events_with_idle_status(context, request)
+
+    first = await anext(stream)
+    await asyncio.sleep(0.02)
+
+    assert isinstance(first, ApiTextDeltaEvent)
+    assert client.produced <= PROVIDER_STREAM_QUEUE_MAXSIZE + 2
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
 async def test_query_engine_auto_continues_truncated_final_answer(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     client = TruncatedThenContinuedApiClient()
@@ -452,6 +498,15 @@ async def test_query_engine_keeps_system_and_tool_prefix_stable_for_short_follow
 
     registry = ToolRegistry()
     registry.register(_CacheProbeTool())
+    schema_calls = 0
+    original_to_api_schema = registry.to_api_schema
+
+    def _counted_to_api_schema():
+        nonlocal schema_calls
+        schema_calls += 1
+        return original_to_api_schema()
+
+    registry.to_api_schema = _counted_to_api_schema
     api_client = FakeApiClient(
         [
             _FakeResponse(
@@ -488,6 +543,7 @@ async def test_query_engine_keeps_system_and_tool_prefix_stable_for_short_follow
     ]
     tool_names = [[tool["name"] for tool in request.tools] for request in api_client.requests]
     assert tool_names == [["cache_probe"], ["cache_probe"], ["cache_probe"]]
+    assert schema_calls == 3
 
 
 @pytest.mark.asyncio
@@ -1890,6 +1946,29 @@ class _SlowTool(BaseTool):
         return ToolResult(output="slow")
 
 
+class _ConcurrencyTrackingTool(BaseTool):
+    name = "tracked_tool"
+    description = "Tracks concurrent execution."
+    input_model = _OkInput
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        return True
+
+    async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+        del arguments, context
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await asyncio.sleep(0.02)
+            return ToolResult(output="tracked")
+        finally:
+            self.active -= 1
+
+
 class _DisplayTool(BaseTool):
     name = "display_tool"
     description = "Returns compact model output and separate display output."
@@ -2319,6 +2398,47 @@ async def test_query_engine_streams_parallel_tool_completion_as_each_finishes(tm
     ]
     result_blocks = [block for block in user_tool_messages[0].content if isinstance(block, ToolResultBlock)]
     assert [block.tool_use_id for block in result_blocks] == ["toolu_slow", "toolu_ok"]
+
+
+@pytest.mark.asyncio
+async def test_query_engine_limits_parallel_tool_resource_usage(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_MAX_PARALLEL_TOOLS", "2")
+    tool = _ConcurrencyTrackingTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(id=f"toolu_{index}", name="tracked_tool", input={})
+                            for index in range(6)
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="done")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="gpt-5.6-sol",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("run all")]
+
+    assert tool.max_active == 2
+    assert len([event for event in events if isinstance(event, ToolExecutionCompleted)]) == 6
 
 
 @pytest.mark.asyncio

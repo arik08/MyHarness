@@ -76,6 +76,9 @@ class _FakeAsyncClient:
         self._sink["json"] = json
         return self._response
 
+    async def aclose(self) -> None:
+        self._sink["closed"] = self._sink.get("closed", 0) + 1
+
 
 class _SequenceAsyncClient:
     def __init__(self, responses: list[_FakeStreamResponse], sink: dict[str, Any]) -> None:
@@ -96,6 +99,9 @@ class _SequenceAsyncClient:
         self._sink["json"] = json
         self._sink.setdefault("calls", []).append(json)
         return self._responses.pop(0)
+
+    async def aclose(self) -> None:
+        self._sink["closed"] = self._sink.get("closed", 0) + 1
 
 
 def _b64url(data: dict[str, object]) -> str:
@@ -476,6 +482,38 @@ async def test_codex_client_uses_configurable_timeout(monkeypatch):
     assert timeout.connect == 30.0
     assert timeout.write == 60.0
     assert captured["follow_redirects"] is True
+
+
+@pytest.mark.asyncio
+async def test_codex_client_reuses_and_closes_http_connection_pool(monkeypatch):
+    sink: dict[str, Any] = {}
+    created = 0
+    response = _FakeStreamResponse(
+        lines=[
+            'data: {"type":"response.completed","response":{"status":"completed"}}',
+            "",
+        ]
+    )
+
+    def _fake_async_client(*args, **kwargs):
+        nonlocal created
+        created += 1
+        return _FakeAsyncClient(response, sink)
+
+    monkeypatch.setattr("myharness.api.codex_client.httpx.AsyncClient", _fake_async_client)
+    client = CodexApiClient(_fake_codex_token())
+    request = ApiMessageRequest(
+        model="gpt-5.5",
+        messages=[ConversationMessage.from_user_text("hi")],
+    )
+
+    for _ in range(2):
+        assert [event async for event in client.stream_message(request)]
+    await client.aclose()
+
+    assert created == 1
+    assert sink["closed"] == 1
+    assert client._http_client is None
 
 
 @pytest.mark.asyncio

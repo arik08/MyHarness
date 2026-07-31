@@ -97,6 +97,7 @@ def test_conversation_message_serializes_image_block_for_anthropic():
 
 def test_anthropic_client_refreshes_claude_token_on_request(monkeypatch):
     captured_tokens: list[str] = []
+    clients = []
 
     class _FakeStream:
         async def __aenter__(self):
@@ -140,6 +141,11 @@ def test_anthropic_client_refreshes_claude_token_on_request(monkeypatch):
             captured_tokens.append(kwargs["auth_token"])
             self.beta = _FakeBeta()
             self.messages = _FakeMessages()
+            self.closed = False
+            clients.append(self)
+
+        async def close(self):
+            self.closed = True
 
     monkeypatch.setattr("myharness.api.client.AsyncAnthropic", _FakeAsyncAnthropic)
     monkeypatch.setattr(
@@ -183,6 +189,8 @@ def test_anthropic_client_refreshes_claude_token_on_request(monkeypatch):
     events = asyncio.run(_run())
 
     assert captured_tokens == ["initial-token", "refreshed-token"]
+    assert clients[0].closed is True
+    assert clients[1].closed is False
     assert events
     assert client._client.beta.messages.last_params["metadata"] == {
         "user_id": '{"device_id":"myharness","session_id":"session-123","account_uuid":""}'

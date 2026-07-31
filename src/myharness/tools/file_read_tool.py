@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.tools.path_display import display_tool_path
+
+FILE_READ_MAX_OUTPUT_CHARS = 1024 * 1024
+FILE_READ_TRUNCATION_NOTICE = "\n... (read_file output truncated at 1 MiB)"
 
 
 class FileReadToolInput(BaseModel):
@@ -50,16 +54,18 @@ class FileReadTool(BaseTool):
         if path.is_dir():
             return ToolResult(output=f"디렉터리는 읽을 수 없습니다: {display_tool_path(path, context.cwd)}", is_error=True)
 
-        raw = path.read_bytes()
-        if b"\x00" in raw:
+        is_binary, selected = await asyncio.to_thread(
+            _read_selected_lines,
+            path,
+            arguments.offset,
+            arguments.limit,
+        )
+        if is_binary:
             return ToolResult(
                 output=f"바이너리 파일은 텍스트로 읽을 수 없습니다: {display_tool_path(path, context.cwd)}",
                 is_error=True,
             )
 
-        text = raw.decode("utf-8", errors="replace")
-        lines = text.splitlines()
-        selected = lines[arguments.offset : arguments.offset + arguments.limit]
         numbered = [
             f"{arguments.offset + index + 1:>6}\t{line}"
             for index, line in enumerate(selected)
@@ -68,7 +74,10 @@ class FileReadTool(BaseTool):
             return ToolResult(
                 output=f"(선택한 범위에 내용이 없습니다: {display_tool_path(path, context.cwd)})"
             )
-        return ToolResult(output="\n".join(numbered))
+        output = "\n".join(numbered)
+        if len(output) > FILE_READ_MAX_OUTPUT_CHARS:
+            output = output[:FILE_READ_MAX_OUTPUT_CHARS] + FILE_READ_TRUNCATION_NOTICE
+        return ToolResult(output=output)
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:
@@ -76,3 +85,15 @@ def _resolve_path(base: Path, candidate: str) -> Path:
     if not path.is_absolute():
         path = base / path
     return path.resolve()
+
+
+def _read_selected_lines(path: Path, offset: int, limit: int) -> tuple[bool, list[str]]:
+    selected: list[str] = []
+    end = offset + limit
+    with path.open("r", encoding="utf-8", errors="replace", newline=None) as handle:
+        for index, line in enumerate(handle):
+            if "\x00" in line:
+                return True, []
+            if offset <= index < end:
+                selected.append(line.rstrip("\r\n"))
+    return False, selected

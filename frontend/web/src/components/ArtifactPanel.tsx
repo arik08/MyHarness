@@ -13,7 +13,7 @@ import {
   isRootProjectFileCandidatePath,
   normalizeProjectFilePath,
 } from "../utils/artifacts";
-import { copyPngToClipboard, copyTextToClipboard } from "../utils/clipboard";
+import { canCopyPngToClipboard, copyPngToClipboard, copyTextToClipboard } from "../utils/clipboard";
 import { Icon, type IconName } from "./ArtifactIcons";
 import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload, type ArtifactCaptureResult } from "./ArtifactPreview";
 import { showTooltipNowEvent } from "./TooltipLayer";
@@ -27,8 +27,10 @@ const shareCopyLabel = "공유 링크 복사";
 const shareCopiedLabel = "공유 링크 복사됨";
 const shareCopiedFeedbackMs = 1400;
 const captureCopyLabel = "전체 이미지 복사";
+const captureDownloadLabel = "전체 이미지 다운로드";
 const captureCopyingLabel = "전체 이미지 생성 중";
 const captureCopiedLabel = "전체 이미지 복사됨";
+const captureDownloadedLabel = "전체 이미지 다운로드됨";
 const captureTimeoutMs = 30_000;
 const projectFileCategories = [
   ["all", "전체"],
@@ -400,7 +402,8 @@ export function ArtifactPanel() {
   const [draftUserEdited, setDraftUserEdited] = useState(false);
   const [copyLabel, setCopyLabel] = useState("복사");
   const [shareLabel, setShareLabel] = useState(shareCopyLabel);
-  const [captureLabel, setCaptureLabel] = useState(captureCopyLabel);
+  const captureIdleLabel = canCopyPngToClipboard() ? captureCopyLabel : captureDownloadLabel;
+  const [captureLabel, setCaptureLabel] = useState(captureIdleLabel);
   const [captureRequestId, setCaptureRequestId] = useState("");
   const [sourceMode, setSourceMode] = useState(false);
   const [htmlEditMode, setHtmlEditMode] = useState(false);
@@ -680,7 +683,7 @@ export function ArtifactPanel() {
     setShareLabel(shareCopyLabel);
     clearCaptureResetTimer();
     clearPendingCapture();
-    setCaptureLabel(captureCopyLabel);
+    setCaptureLabel(captureIdleLabel);
     setSourceMode(false);
   }, [state.activeArtifact?.path, state.activeArtifactPayload]);
 
@@ -1113,19 +1116,19 @@ export function ArtifactPanel() {
     setCaptureLabel(captureCopyingLabel);
     setCaptureRequestId(requestId);
     try {
-      await copyPngToClipboard(png);
-      setCaptureLabel(captureCopiedLabel);
+      const result = await copyPngToClipboard(png, artifactDisplayName(active).replace(/\.[^.]+$/, "") + ".png");
+      setCaptureLabel(result === "copied" ? captureCopiedLabel : captureDownloadedLabel);
       captureResetTimerRef.current = window.setTimeout(() => {
         captureResetTimerRef.current = null;
-        setCaptureLabel(captureCopyLabel);
+        setCaptureLabel(captureIdleLabel);
       }, 1400);
     } catch (error) {
-      setCaptureLabel(captureCopyLabel);
+      setCaptureLabel(captureIdleLabel);
       dispatch({
         type: "open_modal",
         modal: {
           kind: "error",
-          message: `전체 이미지 복사 실패: ${error instanceof Error ? error.message : String(error)}`,
+          message: `전체 이미지 ${canCopyPngToClipboard() ? "복사" : "다운로드"} 실패: ${error instanceof Error ? error.message : String(error)}`,
         },
       });
     } finally {
@@ -1520,15 +1523,15 @@ export function ArtifactPanel() {
             <ArtifactAction
               label={
                 sourceMode
-                  ? "미리보기에서 전체 이미지 복사"
+                  ? `미리보기에서 ${captureIdleLabel}`
                   : htmlEditMode || draftDirty
-                    ? "수정사항 반영 후 전체 이미지 복사"
+                    ? `수정사항 반영 후 ${captureIdleLabel}`
                     : captureLabel
               }
               icon="screenshot"
               onClick={() => void copyActiveArtifactImage()}
               disabled={sourceMode || htmlEditMode || draftDirty || captureLabel === captureCopyingLabel}
-              active={captureLabel === captureCopiedLabel}
+              active={captureLabel === captureCopiedLabel || captureLabel === captureDownloadedLabel}
             />
           ) : null}
           {active ? <ArtifactDownloadAction artifact={active} url={downloadUrl(active, state)} /> : null}

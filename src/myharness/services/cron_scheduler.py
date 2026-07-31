@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
@@ -28,13 +29,22 @@ from myharness.services.cron import (
     validate_cron_expression,
 )
 from myharness.sandbox import SandboxUnavailableError
+from myharness.utils.bounded_jsonl import append_rotating_line, iter_rotating_lines_reverse
 from myharness.utils.shell import create_shell_subprocess
+from myharness.utils.subprocess_output import communicate_bounded
 from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 
 TICK_INTERVAL_SECONDS = 30
 """How often the scheduler checks for due jobs."""
+
+CRON_HISTORY_MAX_BYTES = 5 * 1024 * 1024
+CRON_OUTPUT_READ_CHUNK_BYTES = 64 * 1024
+CRON_OUTPUT_TAIL_BYTES = 16 * 1024
+CRON_LOG_MAX_BYTES = 5 * 1024 * 1024
+CRON_LOG_BACKUP_COUNT = 2
+CRON_MAX_CONCURRENT_JOBS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +59,7 @@ def get_history_path() -> Path:
 def append_history(entry: dict[str, Any]) -> None:
     """Append one execution record to the history log."""
     path = get_history_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry) + "\n")
+    append_rotating_line(path, json.dumps(entry), max_bytes=CRON_HISTORY_MAX_BYTES)
 
 
 def load_history(*, limit: int = 50, job_name: str | None = None) -> list[dict[str, Any]]:
@@ -59,11 +67,9 @@ def load_history(*, limit: int = 50, job_name: str | None = None) -> list[dict[s
     if limit <= 0:
         return []
     path = get_history_path()
-    if not path.exists():
-        return []
     entries: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for raw_line in iter_rotating_lines_reverse(path):
+        line = raw_line.decode("utf-8", errors="replace").strip()
         if not line:
             continue
         try:
@@ -75,7 +81,10 @@ def load_history(*, limit: int = 50, job_name: str | None = None) -> list[dict[s
         if job_name and entry.get("name") != job_name:
             continue
         entries.append(entry)
-    return entries[-limit:]
+        if len(entries) >= limit:
+            break
+    entries.reverse()
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -217,16 +226,13 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
+        stdout, stderr = await communicate_bounded(
+            process,
             timeout=300,
+            tail_bytes=CRON_OUTPUT_TAIL_BYTES,
+            read_chunk_bytes=CRON_OUTPUT_READ_CHUNK_BYTES,
         )
     except asyncio.TimeoutError:
-        try:
-            process.kill()
-            await process.wait()
-        except Exception:
-            pass
         entry = _job_history_entry(
             name=name,
             command=command,
@@ -322,10 +328,7 @@ async def run_scheduler_loop(*, once: bool = False) -> None:
 
             if due:
                 logger.info("Tick: %d job(s) due", len(due))
-                # Execute due jobs concurrently
-                results = await asyncio.gather(
-                    *(execute_job(job) for job in due), return_exceptions=True
-                )
+                results = await _execute_due_jobs(due)
                 for result in results:
                     if isinstance(result, BaseException):
                         logger.error("Unexpected error executing cron job: %s", result)
@@ -342,6 +345,16 @@ async def run_scheduler_loop(*, once: bool = False) -> None:
         logger.info("Cron scheduler stopped")
 
 
+async def _execute_due_jobs(jobs: list[dict[str, Any]]) -> list[Any]:
+    semaphore = asyncio.Semaphore(CRON_MAX_CONCURRENT_JOBS)
+
+    async def _run(job: dict[str, Any]) -> dict[str, Any]:
+        async with semaphore:
+            return await execute_job(job)
+
+    return await asyncio.gather(*(_run(job) for job in jobs), return_exceptions=True)
+
+
 # ---------------------------------------------------------------------------
 # Daemon entry point (spawned by ``oh cron start``)
 # ---------------------------------------------------------------------------
@@ -350,10 +363,18 @@ def _run_daemon() -> None:
     """Entry point for the scheduler subprocess."""
     log_file = get_logs_dir() / "cron_scheduler.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(
+        log_file,
+        maxBytes=CRON_LOG_MAX_BYTES,
+        backupCount=CRON_LOG_BACKUP_COUNT,
+        encoding="utf-8",
+        delay=True,
+    )
     logging.basicConfig(
-        filename=str(log_file),
+        handlers=[handler],
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
     )
     asyncio.run(run_scheduler_loop())
 

@@ -27,6 +27,9 @@ from myharness.hooks.schemas import (
 from myharness.hooks.types import AggregatedHookResult, HookResult
 from myharness.sandbox import SandboxUnavailableError
 from myharness.utils.shell import create_shell_subprocess
+from myharness.utils.subprocess_output import communicate_bounded
+
+HOOK_OUTPUT_TAIL_BYTES = 64 * 1024
 
 
 @dataclass
@@ -105,13 +108,11 @@ class HookExecutor:
             )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
+            stdout, stderr = await communicate_bounded(
+                process,
                 timeout=hook.timeout_seconds,
             )
         except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
             return HookResult(
                 hook_type=hook.type,
                 success=False,
@@ -143,20 +144,32 @@ class HookExecutor:
     ) -> HookResult:
         try:
             async with httpx.AsyncClient(timeout=hook.timeout_seconds) as client:
-                response = await client.post(
+                async with client.stream(
+                    "POST",
                     hook.url,
                     json={"event": event.value, "payload": payload},
                     headers=hook.headers,
-                )
-            success = response.is_success
-            output = response.text
+                ) as response:
+                    body = b""
+                    async for chunk in response.aiter_bytes():
+                        if len(chunk) >= HOOK_OUTPUT_TAIL_BYTES:
+                            body = chunk[-HOOK_OUTPUT_TAIL_BYTES:]
+                        else:
+                            body = (body + chunk)[-HOOK_OUTPUT_TAIL_BYTES:]
+                    success = response.is_success
+                    status_code = response.status_code
+                    encoding = response.encoding or "utf-8"
+            try:
+                output = body.decode(encoding, errors="replace")
+            except LookupError:
+                output = body.decode("utf-8", errors="replace")
             return HookResult(
                 hook_type=hook.type,
                 success=success,
                 output=output,
                 blocked=hook.block_on_failure and not success,
-                reason=output or f"http hook returned {response.status_code}",
-                metadata={"status_code": response.status_code},
+                reason=output or f"http hook returned {status_code}",
+                metadata={"status_code": status_code},
             )
         except Exception as exc:
             return HookResult(

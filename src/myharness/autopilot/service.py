@@ -38,8 +38,11 @@ from myharness.config.paths import (
 )
 from myharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete, ErrorEvent
 from myharness.swarm.worktree import WorktreeManager
+from myharness.utils.bounded_jsonl import append_rotating_line, iter_rotating_lines_reverse
 from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 from myharness.utils.fs import atomic_write_text
+
+AUTOPILOT_JOURNAL_MAX_BYTES = 5 * 1024 * 1024
 
 _SOURCE_BASE_SCORES: dict[RepoTaskSource, int] = {
     "manual_idea": 80,
@@ -366,18 +369,21 @@ class RepoAutopilotStore:
         return card
 
     def load_journal(self, *, limit: int = 12) -> list[RepoJournalEntry]:
-        if not self._journal_path.exists():
+        if limit <= 0:
             return []
         entries: list[RepoJournalEntry] = []
-        for line in self._journal_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
+        for raw_line in iter_rotating_lines_reverse(self._journal_path):
+            line = raw_line.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
             try:
                 entries.append(RepoJournalEntry.model_validate(json.loads(line)))
             except (json.JSONDecodeError, ValueError):
                 continue
-        return entries[-limit:]
+            if len(entries) >= limit:
+                break
+        entries.reverse()
+        return entries
 
     def append_journal(
         self,
@@ -394,8 +400,11 @@ class RepoAutopilotStore:
             task_id=task_id,
             metadata=metadata or {},
         )
-        with self._journal_path.open("a", encoding="utf-8") as handle:
-            handle.write(entry.model_dump_json() + "\n")
+        append_rotating_line(
+            self._journal_path,
+            entry.model_dump_json(),
+            max_bytes=AUTOPILOT_JOURNAL_MAX_BYTES,
+        )
         return entry
 
     def load_active_context(self) -> str:

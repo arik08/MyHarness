@@ -484,18 +484,35 @@ async def build_runtime(
 
 async def start_runtime(bundle: RuntimeBundle) -> None:
     """Run session start hooks."""
-    if (
-        not bundle.task_worker
-        and bundle.prefix_cache_warmup_task is None
-        and callable(getattr(bundle.api_client, "prewarm_prompt_cache", None))
-    ):
-        bundle.prefix_cache_warmup_task = asyncio.create_task(
-            _prewarm_runtime_prefix_cache(bundle),
-            name=f"prefix-cache-warmup-{bundle.session_id}",
-        )
+    await schedule_runtime_prefix_cache_warmup(bundle)
     await bundle.hook_executor.execute(
         HookEvent.SESSION_START,
         {"cwd": bundle.cwd, "event": HookEvent.SESSION_START.value},
+    )
+
+
+async def schedule_runtime_prefix_cache_warmup(
+    bundle: RuntimeBundle,
+    *,
+    force: bool = False,
+) -> None:
+    """Start one cache warmup after the runtime tool prefix is stable."""
+    if (
+        bundle.task_worker
+        or any(status.state == "pending" for status in bundle.mcp_manager.list_statuses())
+        or not callable(getattr(bundle.api_client, "prewarm_prompt_cache", None))
+    ):
+        return
+    previous = bundle.prefix_cache_warmup_task
+    if previous is not None and not force:
+        return
+    if previous is not None and not previous.done():
+        previous.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await previous
+    bundle.prefix_cache_warmup_task = asyncio.create_task(
+        _prewarm_runtime_prefix_cache(bundle),
+        name=f"prefix-cache-warmup-{bundle.session_id}",
     )
 
 
@@ -543,7 +560,10 @@ async def close_runtime(bundle: RuntimeBundle) -> None:
         bundle.prefix_cache_warmup_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await bundle.prefix_cache_warmup_task
-    await stop_docker_sandbox()
+    try:
+        await stop_docker_sandbox()
+    except Exception:
+        log.warning("Failed to stop Docker sandbox cleanly", exc_info=True)
     # Extract local environment rules from session before closing
     try:
         from myharness.personalization.session_hook import update_rules_from_session
@@ -551,11 +571,29 @@ async def close_runtime(bundle: RuntimeBundle) -> None:
     except Exception:
         pass  # personalization is best-effort, never block session end
 
-    await bundle.mcp_manager.close()
-    await bundle.hook_executor.execute(
-        HookEvent.SESSION_END,
-        {"cwd": bundle.cwd, "event": HookEvent.SESSION_END.value},
-    )
+    try:
+        await bundle.mcp_manager.close()
+    except Exception:
+        log.warning("Failed to close MCP connections cleanly", exc_info=True)
+    try:
+        await bundle.hook_executor.execute(
+            HookEvent.SESSION_END,
+            {"cwd": bundle.cwd, "event": HookEvent.SESSION_END.value},
+        )
+    except Exception:
+        log.warning("Failed to run session-end hooks cleanly", exc_info=True)
+    finally:
+        if not bundle.external_api_client:
+            await _close_api_client(bundle.api_client)
+
+
+async def _close_api_client(client: SupportsStreamingMessages) -> None:
+    close = getattr(client, "aclose", None)
+    if callable(close):
+        try:
+            await close()
+        except Exception:
+            log.warning("Failed to close API client cleanly", exc_info=True)
 
 
 def _last_user_text(messages: list[ConversationMessage]) -> str:
@@ -689,19 +727,22 @@ def _active_runtime_permission_mode(bundle: RuntimeBundle, settings: Settings) -
     return settings.permission.mode.value
 
 
-def refresh_runtime_client(bundle: RuntimeBundle) -> None:
+async def refresh_runtime_client(bundle: RuntimeBundle) -> None:
     """Refresh the active runtime client after provider/auth/profile changes."""
     settings = bundle.current_settings()
     if not bundle.external_api_client:
         try:
-            bundle.api_client = _resolve_api_client_from_settings(settings)
+            next_client = _resolve_api_client_from_settings(settings)
         except ValueError as exc:
-            bundle.api_client = MissingAuthClient(str(exc))
+            next_client = MissingAuthClient(str(exc))
+        previous_client = bundle.api_client
+        bundle.api_client = next_client
         bundle.engine.set_api_client(bundle.api_client)
         bundle.hook_executor.update_context(
             api_client=bundle.api_client,
             default_model=settings.model,
         )
+        await _close_api_client(previous_client)
     bundle.engine.set_model(settings.model)
     bundle.engine.set_max_tokens(settings.effective_max_tokens())
     bundle.engine.tool_metadata["force_full_prompt_next"] = True
@@ -717,6 +758,7 @@ async def handle_line(
     render_event: StreamRenderer,
     clear_output: ClearHandler,
     steering_provider: SteeringProvider | None = None,
+    persist_session: bool = True,
 ) -> bool:
     """Handle one submitted line for either headless or TUI rendering."""
     if not bundle.external_api_client:
@@ -755,7 +797,7 @@ async def handle_line(
             ),
         )
         if result.refresh_runtime:
-            refresh_runtime_client(bundle)
+            await refresh_runtime_client(bundle)
         await _render_command_result(result, print_system, clear_output, render_event)
         if result.submit_prompt is not None:
             original_model = bundle.engine.model
@@ -779,16 +821,17 @@ async def handle_line(
             finally:
                 if result.submit_model:
                     bundle.engine.set_model(original_model)
-            bundle.session_backend.save_snapshot(
-                cwd=bundle.cwd,
-                model=bundle.engine.model,
-                system_prompt=system_prompt,
-                messages=bundle.engine.messages,
-                usage=bundle.engine.total_usage,
-                session_id=bundle.session_id,
-                tool_metadata=bundle.engine.tool_metadata,
-                usage_accounting=bundle.engine.usage_accounting,
-            )
+            if persist_session:
+                bundle.session_backend.save_snapshot(
+                    cwd=bundle.cwd,
+                    model=bundle.engine.model,
+                    system_prompt=system_prompt,
+                    messages=bundle.engine.messages,
+                    usage=bundle.engine.total_usage,
+                    session_id=bundle.session_id,
+                    tool_metadata=bundle.engine.tool_metadata,
+                    usage_accounting=bundle.engine.usage_accounting,
+                )
         if result.continue_pending:
             settings = bundle.current_settings()
             if bundle.enforce_max_turns:
@@ -807,16 +850,17 @@ async def handle_line(
                 pending = _format_pending_tool_results(bundle.engine.messages)
                 if pending:
                     await print_system(pending)
-            bundle.session_backend.save_snapshot(
-                cwd=bundle.cwd,
-                model=settings.model,
-                system_prompt=system_prompt,
-                messages=bundle.engine.messages,
-                usage=bundle.engine.total_usage,
-                session_id=bundle.session_id,
-                tool_metadata=bundle.engine.tool_metadata,
-                usage_accounting=bundle.engine.usage_accounting,
-            )
+            if persist_session:
+                bundle.session_backend.save_snapshot(
+                    cwd=bundle.cwd,
+                    model=settings.model,
+                    system_prompt=system_prompt,
+                    messages=bundle.engine.messages,
+                    usage=bundle.engine.total_usage,
+                    session_id=bundle.session_id,
+                    tool_metadata=bundle.engine.tool_metadata,
+                    usage_accounting=bundle.engine.usage_accounting,
+                )
         sync_app_state(bundle)
         return not result.should_exit
 
@@ -836,6 +880,20 @@ async def handle_line(
         pending = _format_pending_tool_results(bundle.engine.messages)
         if pending:
             await print_system(pending)
+        if persist_session:
+            bundle.session_backend.save_snapshot(
+                cwd=bundle.cwd,
+                model=settings.model,
+                system_prompt=system_prompt,
+                messages=bundle.engine.messages,
+                usage=bundle.engine.total_usage,
+                session_id=bundle.session_id,
+                tool_metadata=bundle.engine.tool_metadata,
+                usage_accounting=bundle.engine.usage_accounting,
+            )
+        sync_app_state(bundle)
+        return True
+    if persist_session:
         bundle.session_backend.save_snapshot(
             cwd=bundle.cwd,
             model=settings.model,
@@ -846,18 +904,6 @@ async def handle_line(
             tool_metadata=bundle.engine.tool_metadata,
             usage_accounting=bundle.engine.usage_accounting,
         )
-        sync_app_state(bundle)
-        return True
-    bundle.session_backend.save_snapshot(
-        cwd=bundle.cwd,
-        model=settings.model,
-        system_prompt=system_prompt,
-        messages=bundle.engine.messages,
-        usage=bundle.engine.total_usage,
-        session_id=bundle.session_id,
-        tool_metadata=bundle.engine.tool_metadata,
-        usage_accounting=bundle.engine.usage_accounting,
-    )
     sync_app_state(bundle)
     return True
 

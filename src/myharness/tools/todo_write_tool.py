@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
@@ -75,13 +76,21 @@ class TodoWriteTool(BaseTool):
             if not arguments.persist:
                 return ToolResult(output=markdown)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"# TODO\n{markdown}\n", encoding="utf-8")
+            await asyncio.to_thread(
+                path.write_text,
+                f"# TODO\n{markdown}\n",
+                encoding="utf-8",
+            )
             return ToolResult(output=f"Updated {path}\n{markdown}")
 
         if not arguments.item or not arguments.item.strip():
             return ToolResult(output="")
         item = arguments.item.strip()
-        existing = path.read_text(encoding="utf-8") if path.exists() else "# TODO\n"
+        existing = (
+            await asyncio.to_thread(path.read_text, encoding="utf-8")
+            if path.exists()
+            else "# TODO\n"
+        )
 
         unchecked_line = f"- [ ] {item}"
         checked_line = f"- [x] {item}"
@@ -100,5 +109,5 @@ class TodoWriteTool(BaseTool):
         if not arguments.persist:
             return ToolResult(output=target_line)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(updated, encoding="utf-8")
+        await asyncio.to_thread(path.write_text, updated, encoding="utf-8")
         return ToolResult(output=f"Updated {path}")

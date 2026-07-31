@@ -22,7 +22,12 @@ from myharness.tools.exit_plan_mode_tool import ExitPlanModeTool, ExitPlanModeTo
 from myharness.tools.enter_worktree_tool import EnterWorktreeTool, EnterWorktreeToolInput
 from myharness.tools.exit_worktree_tool import ExitWorktreeTool, ExitWorktreeToolInput
 from myharness.tools.file_edit_tool import FileEditTool, FileEditToolInput
-from myharness.tools.file_read_tool import FileReadTool, FileReadToolInput
+from myharness.tools.file_read_tool import (
+    FILE_READ_MAX_OUTPUT_CHARS,
+    FILE_READ_TRUNCATION_NOTICE,
+    FileReadTool,
+    FileReadToolInput,
+)
 from myharness.tools.file_write_tool import FileWriteTool, FileWriteToolInput
 from myharness.tools.html_source_footnotes import SOURCE_FOOTNOTE_CSS_MARKER
 from myharness.tools.source_evidence import SOURCE_EVIDENCE_METADATA_KEY
@@ -79,6 +84,20 @@ async def test_file_write_read_and_edit(tmp_path: Path):
     )
     assert edit_result.is_error is False
     assert "TWO" in (tmp_path / "notes.txt").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_file_read_caps_single_line_output(tmp_path: Path) -> None:
+    path = tmp_path / "minified.json"
+    path.write_text("x" * (FILE_READ_MAX_OUTPUT_CHARS + 100), encoding="utf-8")
+
+    result = await FileReadTool().execute(
+        FileReadToolInput(path=str(path), limit=1),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.output.endswith(FILE_READ_TRUNCATION_NOTICE)
+    assert len(result.output) == FILE_READ_MAX_OUTPUT_CHARS + len(FILE_READ_TRUNCATION_NOTICE)
 
 
 @pytest.mark.asyncio

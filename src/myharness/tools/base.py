@@ -66,10 +66,12 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, BaseTool] = {}
+        self._api_schema_cache: tuple[dict[str, Any], ...] | None = None
 
     def register(self, tool: BaseTool) -> None:
         """Register a tool instance."""
         self._tools[tool.name] = tool
+        self._api_schema_cache = None
 
     def get(self, name: str) -> BaseTool | None:
         """Return a registered tool by name."""
@@ -81,4 +83,6 @@ class ToolRegistry:
 
     def to_api_schema(self) -> list[dict[str, Any]]:
         """Return all tool schemas in API format."""
-        return [tool.to_api_schema() for tool in self._tools.values()]
+        if self._api_schema_cache is None:
+            self._api_schema_cache = tuple(tool.to_api_schema() for tool in self._tools.values())
+        return list(self._api_schema_cache)

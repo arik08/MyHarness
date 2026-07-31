@@ -20,6 +20,9 @@ from myharness.utils.shell import create_shell_subprocess
 
 log = logging.getLogger(__name__)
 TASK_PROGRESS_EVENT_PREFIX = "__MYHARNESS_TASK_UPDATE__"
+TASK_OUTPUT_READ_CHUNK_BYTES = 64 * 1024
+TASK_OUTPUT_MAX_BYTES = 16 * 1024 * 1024
+TASK_OUTPUT_NOTIFY_INTERVAL_SECONDS = 0.25
 
 CompletionListener = Callable[[TaskRecord], Awaitable[None] | None]
 UpdateListener = Callable[[TaskRecord], Awaitable[None] | None]
@@ -36,6 +39,7 @@ class BackgroundTaskManager:
         self._input_locks: dict[str, asyncio.Lock] = {}
         self._control_buffers: dict[str, str] = {}
         self._generations: dict[str, int] = {}
+        self._last_output_notifications: dict[str, float] = {}
         self._completion_listeners: dict[str, CompletionListener] = {}
         self._update_listeners: dict[str, UpdateListener] = {}
 
@@ -63,7 +67,7 @@ class BackgroundTaskManager:
             created_at=time.time(),
             started_at=time.time(),
         )
-        output_path.write_text("", encoding="utf-8")
+        await asyncio.to_thread(output_path.write_text, "", encoding="utf-8")
         self._tasks[task_id] = record
         self._output_locks[task_id] = asyncio.Lock()
         self._input_locks[task_id] = asyncio.Lock()
@@ -201,19 +205,22 @@ class BackgroundTaskManager:
         task = self._require_task(task_id)
         if max_bytes <= 0:
             return ""
-        try:
-            content = task.output_file.read_text(encoding="utf-8", errors="replace")
-        except FileNotFoundError:
-            return ""
-        if len(content) > max_bytes:
-            return content[-max_bytes:]
-        return content
+        current = _read_file_tail(task.output_file, max_bytes)
+        remaining = max_bytes - len(current)
+        if remaining > 0:
+            previous = _read_file_tail(_task_output_backup_path(task.output_file), remaining)
+            current = previous + current
+        return current.decode("utf-8", errors="replace")
 
     async def _mark_start_failed(self, task: TaskRecord, exc: OSError) -> None:
         task.status = "failed"
         task.ended_at = time.time()
         task.metadata["start_error"] = str(exc)
-        task.output_file.write_text(f"Failed to start task: {exc}\n", encoding="utf-8")
+        await asyncio.to_thread(
+            task.output_file.write_text,
+            f"Failed to start task: {exc}\n",
+            encoding="utf-8",
+        )
         await self._notify_completion_listeners(task)
 
     def register_completion_listener(self, listener: CompletionListener) -> Callable[[], None]:
@@ -260,27 +267,38 @@ class BackgroundTaskManager:
         await self._notify_completion_listeners(task)
         self._processes.pop(task_id, None)
         self._waiters.pop(task_id, None)
+        self._last_output_notifications.pop(task_id, None)
 
     async def _copy_output(self, task_id: str, process: asyncio.subprocess.Process) -> None:
         if process.stdout is None:
             return
         while True:
-            chunk = await process.stdout.read(4096)
+            chunk = await process.stdout.read(TASK_OUTPUT_READ_CHUNK_BYTES)
             if not chunk:
                 trailing = self._pop_control_buffer(task_id)
                 if trailing:
                     async with self._output_locks[task_id]:
-                        with self._tasks[task_id].output_file.open("ab") as handle:
-                            handle.write(trailing.encode("utf-8"))
+                        await asyncio.to_thread(
+                            _append_task_output,
+                            self._tasks[task_id].output_file,
+                            trailing.encode("utf-8"),
+                        )
                 return
             visible_chunk = self._filter_control_output(task_id, chunk)
             if not visible_chunk:
                 continue
             async with self._output_locks[task_id]:
-                with self._tasks[task_id].output_file.open("ab") as handle:
-                    handle.write(visible_chunk)
+                await asyncio.to_thread(
+                    _append_task_output,
+                    self._tasks[task_id].output_file,
+                    visible_chunk,
+                )
             self._tasks[task_id].metadata["last_output_at"] = str(time.time())
-            await self._notify_update_listeners(self._tasks[task_id])
+            now = time.monotonic()
+            last_notification = self._last_output_notifications.get(task_id, 0.0)
+            if now - last_notification >= TASK_OUTPUT_NOTIFY_INTERVAL_SECONDS:
+                self._last_output_notifications[task_id] = now
+                await self._notify_update_listeners(self._tasks[task_id])
 
     def _filter_control_output(self, task_id: str, chunk: bytes) -> bytes:
         text = self._control_buffers.get(task_id, "") + chunk.decode("utf-8", errors="replace")
@@ -432,6 +450,7 @@ class BackgroundTaskManager:
                 except (ProcessLookupError, RuntimeError):
                     pass
         self._processes.clear()
+        self._last_output_notifications.clear()
 
     async def aclose(self) -> None:
         """Asynchronously shut down tracked subprocesses and waiters."""
@@ -458,6 +477,7 @@ class BackgroundTaskManager:
 
         self._processes.clear()
         self._waiters.clear()
+        self._last_output_notifications.clear()
 
 
 _DEFAULT_MANAGER: BackgroundTaskManager | None = None
@@ -502,6 +522,56 @@ def _task_id(task_type: TaskType) -> str:
         "in_process_teammate": "t",
     }
     return f"{prefixes[task_type]}{uuid4().hex[:8]}"
+
+
+def _append_task_output(path: Path, chunk: bytes) -> None:
+    if not chunk:
+        return
+    backup_path = _task_output_backup_path(path)
+    try:
+        current_size = path.stat().st_size
+    except FileNotFoundError:
+        current_size = 0
+    if current_size + len(chunk) > TASK_OUTPUT_MAX_BYTES:
+        backup_path.unlink(missing_ok=True)
+        if path.exists():
+            path.replace(backup_path)
+            _trim_file_to_tail(backup_path, TASK_OUTPUT_MAX_BYTES)
+        if len(chunk) > TASK_OUTPUT_MAX_BYTES:
+            chunk = chunk[-TASK_OUTPUT_MAX_BYTES:]
+    with path.open("ab") as handle:
+        handle.write(chunk)
+
+
+def _task_output_backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.1")
+
+
+def _read_file_tail(path: Path, max_bytes: int) -> bytes:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes), os.SEEK_SET)
+            return handle.read(max_bytes)
+    except FileNotFoundError:
+        return b""
+
+
+def _trim_file_to_tail(path: Path, max_bytes: int) -> None:
+    try:
+        with path.open("r+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            if size <= max_bytes:
+                return
+            handle.seek(size - max_bytes, os.SEEK_SET)
+            tail = handle.read(max_bytes)
+            handle.seek(0)
+            handle.write(tail)
+            handle.truncate()
+    except FileNotFoundError:
+        return
 
 
 def _shell_command_from_argv(argv: list[str]) -> str:

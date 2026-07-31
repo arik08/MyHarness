@@ -22,6 +22,7 @@ from myharness.api.client import (
 )
 from myharness.api.errors import AuthenticationFailure, MyHarnessApiError, RateLimitFailure, RequestFailure
 from myharness.api.usage import UsageSnapshot
+from myharness.api.retry import calculate_retry_delay
 from myharness.engine.messages import (
     ConversationMessage,
     ImageBlock,
@@ -314,6 +315,13 @@ class CodexApiClient:
         retention = prompt_cache_retention if prompt_cache_retention is not None else _prompt_cache_retention_from_env()
         self._prompt_cache_retention = retention if retention in _PROMPT_CACHE_RETENTION_VALUES else None
         self._unsupported_cache_option_names: set[str] = set()
+        self._http_client: httpx.AsyncClient | None = None
+
+    async def aclose(self) -> None:
+        """Close the shared Codex HTTP connection pool."""
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         last_error: Exception | None = None
@@ -326,7 +334,12 @@ class CodexApiClient:
                 last_error = exc
                 if attempt >= MAX_RETRIES or not self._is_retryable(exc):
                     raise self._translate_error(exc) from exc
-                delay = min(BASE_DELAY_SECONDS * (2 ** attempt), MAX_DELAY_SECONDS)
+                delay = calculate_retry_delay(
+                    attempt,
+                    exc,
+                    base_delay=BASE_DELAY_SECONDS,
+                    max_delay=MAX_DELAY_SECONDS,
+                )
                 import asyncio
 
                 yield ApiRetryEvent(
@@ -411,110 +424,104 @@ class CodexApiClient:
             self._auth_token,
             prompt_cache_key=body.get("prompt_cache_key") if isinstance(body.get("prompt_cache_key"), str) else None,
         )
-        timeout = httpx.Timeout(
-            self._timeout,
-            connect=min(self._timeout, 30.0),
-            write=min(self._timeout, 60.0),
-            pool=30.0,
-        )
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            for option_attempt in range(2):
-                async with client.stream("POST", self._url, headers=headers, json=body) as response:
-                    if response.status_code >= 400:
-                        payload = await response.aread()
-                        message = _format_error_message(response.status_code, payload.decode("utf-8", "replace"))
-                        if option_attempt == 0 and self._disable_unsupported_cache_options(message, body):
-                            body = self._request_body(request, safe_messages)
-                            if max_output_tokens is not None:
-                                body["max_output_tokens"] = max_output_tokens
-                            continue
-                        raise httpx.HTTPStatusError(message, request=response.request, response=response)
+        client = self._stream_client()
+        for option_attempt in range(2):
+            async with client.stream("POST", self._url, headers=headers, json=body) as response:
+                if response.status_code >= 400:
+                    payload = await response.aread()
+                    message = _format_error_message(response.status_code, payload.decode("utf-8", "replace"))
+                    if option_attempt == 0 and self._disable_unsupported_cache_options(message, body):
+                        body = self._request_body(request, safe_messages)
+                        if max_output_tokens is not None:
+                            body["max_output_tokens"] = max_output_tokens
+                        continue
+                    raise httpx.HTTPStatusError(message, request=response.request, response=response)
 
-                    async for event in self._iter_sse_events(response):
-                        event_type = event.get("type")
-                        if event_type == "response.output_text.delta":
-                            delta = event.get("delta")
-                            if isinstance(delta, str) and delta:
-                                current_text_parts.append(delta)
-                                yield ApiTextDeltaEvent(text=delta)
-                        elif event_type == "response.output_item.added":
-                            item = event.get("item")
-                            if not isinstance(item, dict) or item.get("type") != "function_call":
-                                continue
-                            name = item.get("name")
-                            item_id = item.get("id")
-                            if isinstance(name, str) and name:
-                                current_tool_name = name
-                                if isinstance(item_id, str) and item_id:
-                                    tool_names_by_item_id[item_id] = name
-                        elif event_type == "response.function_call_arguments.delta":
-                            delta = event.get("delta")
-                            if isinstance(delta, str) and delta:
-                                item_id = event.get("item_id")
-                                name = (
-                                    tool_names_by_item_id.get(item_id)
-                                    if isinstance(item_id, str)
-                                    else current_tool_name
-                                )
-                                index = event.get("output_index")
-                                yield ApiToolCallDeltaEvent(
-                                    index=index if isinstance(index, int) else 0,
-                                    name=name,
-                                    arguments_delta=delta,
-                                )
-                        elif event_type == "response.output_item.done":
-                            item = event.get("item")
-                            if not isinstance(item, dict):
-                                continue
-                            item_type = item.get("type")
-                            if item_type == "message":
-                                text = ""
-                                raw_content = item.get("content")
-                                if isinstance(raw_content, list):
-                                    parts = []
-                                    for block in raw_content:
-                                        if isinstance(block, dict):
-                                            if block.get("type") == "output_text":
-                                                parts.append(str(block.get("text", "")))
-                                            elif block.get("type") == "refusal":
-                                                parts.append(str(block.get("refusal", "")))
-                                    text = "".join(parts)
-                                if text:
-                                    content.append(TextBlock(text=text))
-                            elif item_type == "function_call":
-                                arguments = item.get("arguments")
-                                parsed_arguments: dict[str, Any]
-                                if isinstance(arguments, str) and arguments:
-                                    try:
-                                        loaded = json.loads(arguments)
-                                    except json.JSONDecodeError:
-                                        loaded = {}
-                                else:
-                                    loaded = {}
-                                parsed_arguments = loaded if isinstance(loaded, dict) else {}
-                                call_id = item.get("call_id")
-                                name = item.get("name")
-                                if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
-                                    content.append(ToolUseBlock(id=call_id, name=name, input=parsed_arguments))
-                        elif event_type == "response.completed":
-                            response_payload = event.get("response")
-                            if isinstance(response_payload, dict):
-                                completed_response = response_payload
-                        elif event_type == "response.failed":
-                            response_payload = event.get("response")
-                            if isinstance(response_payload, dict):
-                                raise RequestFailure(
-                                    _format_codex_stream_error(
-                                        response_payload,
-                                        fallback="Codex response failed",
-                                    )
-                                )
-                            raise RequestFailure("Codex response failed")
-                        elif event_type == "error":
-                            raise RequestFailure(
-                                _format_codex_stream_error(event, fallback="Codex error")
+                async for event in self._iter_sse_events(response):
+                    event_type = event.get("type")
+                    if event_type == "response.output_text.delta":
+                        delta = event.get("delta")
+                        if isinstance(delta, str) and delta:
+                            current_text_parts.append(delta)
+                            yield ApiTextDeltaEvent(text=delta)
+                    elif event_type == "response.output_item.added":
+                        item = event.get("item")
+                        if not isinstance(item, dict) or item.get("type") != "function_call":
+                            continue
+                        name = item.get("name")
+                        item_id = item.get("id")
+                        if isinstance(name, str) and name:
+                            current_tool_name = name
+                            if isinstance(item_id, str) and item_id:
+                                tool_names_by_item_id[item_id] = name
+                    elif event_type == "response.function_call_arguments.delta":
+                        delta = event.get("delta")
+                        if isinstance(delta, str) and delta:
+                            item_id = event.get("item_id")
+                            name = (
+                                tool_names_by_item_id.get(item_id)
+                                if isinstance(item_id, str)
+                                else current_tool_name
                             )
-                    break
+                            index = event.get("output_index")
+                            yield ApiToolCallDeltaEvent(
+                                index=index if isinstance(index, int) else 0,
+                                name=name,
+                                arguments_delta=delta,
+                            )
+                    elif event_type == "response.output_item.done":
+                        item = event.get("item")
+                        if not isinstance(item, dict):
+                            continue
+                        item_type = item.get("type")
+                        if item_type == "message":
+                            text = ""
+                            raw_content = item.get("content")
+                            if isinstance(raw_content, list):
+                                parts = []
+                                for block in raw_content:
+                                    if isinstance(block, dict):
+                                        if block.get("type") == "output_text":
+                                            parts.append(str(block.get("text", "")))
+                                        elif block.get("type") == "refusal":
+                                            parts.append(str(block.get("refusal", "")))
+                                text = "".join(parts)
+                            if text:
+                                content.append(TextBlock(text=text))
+                        elif item_type == "function_call":
+                            arguments = item.get("arguments")
+                            parsed_arguments: dict[str, Any]
+                            if isinstance(arguments, str) and arguments:
+                                try:
+                                    loaded = json.loads(arguments)
+                                except json.JSONDecodeError:
+                                    loaded = {}
+                            else:
+                                loaded = {}
+                            parsed_arguments = loaded if isinstance(loaded, dict) else {}
+                            call_id = item.get("call_id")
+                            name = item.get("name")
+                            if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
+                                content.append(ToolUseBlock(id=call_id, name=name, input=parsed_arguments))
+                    elif event_type == "response.completed":
+                        response_payload = event.get("response")
+                        if isinstance(response_payload, dict):
+                            completed_response = response_payload
+                    elif event_type == "response.failed":
+                        response_payload = event.get("response")
+                        if isinstance(response_payload, dict):
+                            raise RequestFailure(
+                                _format_codex_stream_error(
+                                    response_payload,
+                                    fallback="Codex response failed",
+                                )
+                            )
+                        raise RequestFailure("Codex response failed")
+                    elif event_type == "error":
+                        raise RequestFailure(
+                            _format_codex_stream_error(event, fallback="Codex error")
+                        )
+                break
 
         if current_text_parts and not any(isinstance(block, TextBlock) for block in content):
             content.insert(0, TextBlock(text="".join(current_text_parts)))
@@ -530,6 +537,17 @@ class CodexApiClient:
             usage=usage,
             stop_reason=stop_reason,
         )
+
+    def _stream_client(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            timeout = httpx.Timeout(
+                self._timeout,
+                connect=min(self._timeout, 30.0),
+                write=min(self._timeout, 60.0),
+                pool=30.0,
+            )
+            self._http_client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+        return self._http_client
 
     async def _iter_sse_events(self, response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
         data_lines: list[str] = []

@@ -1492,6 +1492,41 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_persists_each_model_turn_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    saved: list[dict] = []
+
+    class CountingSessionBackend:
+        def save_snapshot(self, **kwargs):
+            saved.append(kwargs)
+            return tmp_path / "snapshot.json"
+
+    client = StaticApiClient("single save")
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(
+        api_client=client,
+        cwd=tmp_path,
+        session_backend=CountingSessionBackend(),
+    )
+
+    async def _emit(_event):
+        return None
+
+    async def _skip_title_refresh():
+        return None
+
+    host._emit = _emit  # type: ignore[method-assign]
+    host._maybe_update_session_title = _skip_title_refresh  # type: ignore[method-assign]
+    try:
+        await host._process_line("save once")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert len(saved) == 1
+
+
+@pytest.mark.asyncio
 async def test_backend_host_batches_streaming_text_deltas(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))

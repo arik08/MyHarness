@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from pydantic import BaseModel, Field
 
 from myharness.tasks.manager import get_task_manager
@@ -29,7 +31,11 @@ class TaskOutputTool(BaseTool):
     async def execute(self, arguments: TaskOutputToolInput, context: ToolExecutionContext) -> ToolResult:
         del context
         try:
-            output = get_task_manager().read_task_output(arguments.task_id, max_bytes=arguments.max_bytes)
+            output = await asyncio.to_thread(
+                get_task_manager().read_task_output,
+                arguments.task_id,
+                max_bytes=arguments.max_bytes,
+            )
         except ValueError as exc:
             return ToolResult(output=str(exc), is_error=True)
         return ToolResult(output=output or "(no output)")

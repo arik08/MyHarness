@@ -68,6 +68,10 @@ MAX_AUTO_CONTINUATIONS = 4
 PROVIDER_STREAM_IDLE_FIRST_SECONDS = 7.0
 PROVIDER_STREAM_IDLE_REPEAT_SECONDS = 10.0
 PROVIDER_STREAM_IDLE_MAX_SECONDS = 600.0
+PROVIDER_STREAM_QUEUE_MAXSIZE = 128
+COMPACTION_PROGRESS_QUEUE_MAXSIZE = 64
+DEFAULT_MAX_PARALLEL_TOOL_EXECUTIONS = 8
+MAX_PARALLEL_TOOL_EXECUTIONS = 32
 ASYNC_AGENT_FINALIZATION_BLOCK_MESSAGE = (
     "아직 pending worker가 있습니다. 최종 산출물을 만들기 전에 `task_output`/`task_get`으로 worker 결과를 먼저 확인하거나, "
     "필요하면 worker를 중단, 교체, relay, 또는 승계하세요."
@@ -110,10 +114,9 @@ def _tool_schema_by_name(context: "QueryContext") -> dict[str, dict[str, Any]]:
 
 
 def _stable_tool_schemas(
-    context: "QueryContext",
+    schemas: dict[str, dict[str, Any]],
     names: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    schemas = _tool_schema_by_name(context)
     if names is None:
         selected = schemas.values()
     else:
@@ -121,12 +124,10 @@ def _stable_tool_schemas(
     return sorted(selected, key=lambda schema: str(schema.get("name") or ""))
 
 
-def _all_tool_schema_names(context: "QueryContext") -> set[str]:
-    return set(_tool_schema_by_name(context))
-
-
-def _store_full_tool_schema_preset(metadata: dict[str, object], context: "QueryContext") -> set[str]:
-    available = _all_tool_schema_names(context)
+def _store_full_tool_schema_preset(
+    metadata: dict[str, object],
+    available: set[str],
+) -> set[str]:
     selected = set(available)
     metadata["active_tool_schema_preset"] = "full"
     metadata["active_tool_schema_names"] = sorted(selected)
@@ -145,7 +146,9 @@ def _select_tool_schemas(
     if context.tool_metadata is None:
         context.tool_metadata = metadata
     metadata.pop("force_full_tool_schema_next", None)
-    return _stable_tool_schemas(context, _store_full_tool_schema_preset(metadata, context))
+    schemas = _tool_schema_by_name(context)
+    selected = _store_full_tool_schema_preset(metadata, set(schemas))
+    return _stable_tool_schemas(schemas, selected)
 
 
 def _is_network_error_message(message: str) -> bool:
@@ -402,20 +405,32 @@ def _provider_stream_idle_message(context: QueryContext) -> str:
     return "AI 응답을 기다리고 있습니다."
 
 
+def _parallel_tool_execution_limit() -> int:
+    raw = os.environ.get("MYHARNESS_MAX_PARALLEL_TOOLS", "").strip()
+    try:
+        configured = int(raw) if raw else DEFAULT_MAX_PARALLEL_TOOL_EXECUTIONS
+    except ValueError:
+        configured = DEFAULT_MAX_PARALLEL_TOOL_EXECUTIONS
+    return max(1, min(configured, MAX_PARALLEL_TOOL_EXECUTIONS))
+
+
 async def _stream_provider_events_with_idle_status(
     context: QueryContext,
     request: ApiMessageRequest,
 ) -> AsyncIterator[ApiStreamEvent | StatusEvent]:
-    queue: asyncio.Queue[ApiStreamEvent | BaseException | None] = asyncio.Queue()
+    queue: asyncio.Queue[ApiStreamEvent | BaseException | None] = asyncio.Queue(
+        maxsize=PROVIDER_STREAM_QUEUE_MAXSIZE
+    )
 
     async def _produce() -> None:
         try:
             async for event in context.api_client.stream_message(request):
                 await queue.put(event)
+        except asyncio.CancelledError:
+            raise
         except BaseException as exc:
             await queue.put(exc)
-        finally:
-            await queue.put(None)
+        await queue.put(None)
 
     task = asyncio.create_task(_produce())
     timeout = max(0.0, PROVIDER_STREAM_IDLE_FIRST_SECONDS)
@@ -869,7 +884,9 @@ async def run_query(
         force: bool = False,
     ) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
         nonlocal last_compaction_result
-        progress_queue: asyncio.Queue[CompactProgressEvent] = asyncio.Queue()
+        progress_queue: asyncio.Queue[CompactProgressEvent] = asyncio.Queue(
+            maxsize=COMPACTION_PROGRESS_QUEUE_MAXSIZE
+        )
 
         async def _progress(event: CompactProgressEvent) -> None:
             await progress_queue.put(event)
@@ -1098,9 +1115,12 @@ async def run_query(
                     index=index,
                 ), None
 
+            execution_slots = asyncio.Semaphore(_parallel_tool_execution_limit())
+
             async def _run(index, tc):
                 try:
-                    result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
+                    async with execution_slots:
+                        result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
                 except Exception as exc:
                     log.exception(
                         "tool execution raised: name=%s id=%s",

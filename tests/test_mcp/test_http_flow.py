@@ -33,7 +33,7 @@ async def test_http_mcp_manager_connects_and_executes_in_process_server(monkeypa
 
     app = server.streamable_http_app()
     transport = httpx.ASGITransport(app=app)
-    original_async_client = client_module.httpx.AsyncClient
+    original_async_client = httpx.AsyncClient
     seen_headers: list[dict[str, str] | None] = []
 
     def _async_client_factory(*args, **kwargs):
@@ -45,7 +45,7 @@ async def test_http_mcp_manager_connects_and_executes_in_process_server(monkeypa
             **kwargs,
         )
 
-    monkeypatch.setattr(client_module.httpx, "AsyncClient", _async_client_factory)
+    monkeypatch.setattr(client_module, "_create_http_client", _async_client_factory)
 
     manager = McpClientManager(
         {

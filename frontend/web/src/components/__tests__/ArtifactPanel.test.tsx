@@ -603,8 +603,10 @@ describe("ArtifactPanel", () => {
     expect(actions).toHaveLength(8);
     expect(actions[0].getAttribute("data-tooltip")).toBe("본문 수정");
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "공유 링크 복사")).toBe(true);
-    expect(actions.some((button) => button.getAttribute("data-tooltip") === "전체 이미지 복사")).toBe(true);
-    const captureButton = screen.getByRole("button", { name: "전체 이미지 복사" });
+    const captureActionLabel = actions.some((button) => button.getAttribute("data-tooltip") === "전체 이미지 복사")
+      ? "전체 이미지 복사"
+      : "전체 이미지 다운로드";
+    const captureButton = screen.getByRole("button", { name: captureActionLabel });
     expect(captureButton.nextElementSibling?.getAttribute("aria-label")).toBe("report.html 다운로드");
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "수정사항 반영")).toBe(false);
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "편집 취소")).toBe(false);
@@ -628,6 +630,31 @@ describe("ArtifactPanel", () => {
     expect(actions).toHaveLength(6);
     expect(actions.some((button) => button.getAttribute("data-tooltip") === "공유 링크 복사")).toBe(true);
     expect(actions.some((button) => button.getAttribute("data-tooltip")?.includes("편집"))).toBe(false);
+  });
+
+  it("labels full capture as a PNG download on HTTP", () => {
+    const originalIsSecureContext = Object.getOwnPropertyDescriptor(window, "isSecureContext");
+    Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
+    try {
+      render(
+        <AppStateProvider
+          initialState={{
+            ...initialAppState,
+            artifactPanelOpen: true,
+            activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+            activeArtifactPayload: { kind: "html", content: "<html><body>Preview</body></html>" },
+          }}
+        >
+          <ArtifactPanel />
+        </AppStateProvider>,
+      );
+
+      expect(screen.getByRole("button", { name: "전체 이미지 다운로드" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "전체 이미지 복사" })).toBeNull();
+    } finally {
+      if (originalIsSecureContext) Object.defineProperty(window, "isSecureContext", originalIsSecureContext);
+      else Reflect.deleteProperty(window, "isSecureContext");
+    }
   });
 
   it("injects an iframe-local full-document capture bridge", () => {

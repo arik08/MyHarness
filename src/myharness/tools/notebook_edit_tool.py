@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Literal
@@ -35,7 +36,11 @@ class NotebookEditTool(BaseTool):
         context: ToolExecutionContext,
     ) -> ToolResult:
         path = _resolve_path(context.cwd, arguments.path)
-        notebook = _load_notebook(path, create_if_missing=arguments.create_if_missing)
+        notebook = await asyncio.to_thread(
+            _load_notebook,
+            path,
+            create_if_missing=arguments.create_if_missing,
+        )
         if notebook is None:
             return ToolResult(output=f"노트북을 찾을 수 없습니다: {path}", is_error=True)
 
@@ -55,7 +60,11 @@ class NotebookEditTool(BaseTool):
         cell["source"] = updated
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(notebook, indent=2) + "\n", encoding="utf-8")
+        await asyncio.to_thread(
+            path.write_text,
+            json.dumps(notebook, indent=2) + "\n",
+            encoding="utf-8",
+        )
         return ToolResult(output=f"노트북 셀 {arguments.cell_index}을(를) 업데이트했습니다: {path}")
 
 

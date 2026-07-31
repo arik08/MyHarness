@@ -22,6 +22,18 @@ from myharness.skills.routing import is_mcp_routed_skill
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 
 
+_SKILL_ROUTING_DESCRIPTION_MAX_CHARS = 320
+
+
+def _skill_routing_description(description: str) -> str:
+    """Keep the always-on skill catalog concise; full instructions load on use."""
+    normalized = " ".join(description.split())
+    if len(normalized) <= _SKILL_ROUTING_DESCRIPTION_MAX_CHARS:
+        return normalized
+    shortened = normalized[: _SKILL_ROUTING_DESCRIPTION_MAX_CHARS - 3].rsplit(" ", 1)[0]
+    return shortened.rstrip(" ,;:.") + "..."
+
+
 def _build_skills_section(
     cwd: str | Path,
     *,
@@ -48,7 +60,7 @@ def _build_skills_section(
         "",
     ]
     for skill in skills:
-        lines.append(f"- **{skill.name}**: {skill.description}")
+        lines.append(f"- **{skill.name}**: {_skill_routing_description(skill.description)}")
     return "\n".join(lines)
 
 

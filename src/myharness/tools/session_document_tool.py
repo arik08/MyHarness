@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -131,53 +132,15 @@ class SessionDocumentSearchTool(BaseTool):
         path = _document_path(context, arguments.document_id)
         if path is None:
             return ToolResult(output=f"No session document found for id: {arguments.document_id}", is_error=True)
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         index_path = _document_index_path(context, arguments.document_id)
-        indexed_chunks = _load_indexed_chunks(index_path, arguments.document_id, len(lines)) if index_path else []
-        if indexed_chunks:
-            matches: list[tuple[int, int, int, int, str, str]] = []
-            for chunk in indexed_chunks:
-                start = int(chunk["start_line"])
-                end = int(chunk["end_line"])
-                heading = str(chunk.get("heading") or "")
-                chunk_lines = lines[start - 1 : end]
-                chunk_text = "\n".join(chunk_lines)
-                score = _score(f"{heading}\n{chunk_text}", arguments.query)
-                if score <= 0:
-                    continue
-                snippet = _snippet_for_chunk(chunk_lines, arguments.query)
-                matches.append((score, start, end, int(chunk["chunk_index"]), heading, snippet))
-            if not matches:
-                return ToolResult(output="(no matches)")
-            matches.sort(key=lambda item: (-item[0], item[1], item[3]))
-            output_lines = []
-            for score, start, end, chunk_index, heading, snippet in matches[: arguments.limit]:
-                heading_part = f' heading "{heading}"' if heading else ""
-                output_lines.append(
-                    f"- {arguments.document_id} chunk {chunk_index} lines {start}-{end}{heading_part} score {score}: {snippet}"
-                )
-            return ToolResult(output="\n".join(output_lines))
-
-        window_size = 80
-        overlap = 20
-        step = max(1, window_size - overlap)
-        matches: list[tuple[int, int, int, str]] = []
-        for start in range(0, len(lines), step):
-            end = min(len(lines), start + window_size)
-            chunk = "\n".join(lines[start:end])
-            score = _score(chunk, arguments.query)
-            if score <= 0:
-                continue
-            snippet = _trim_snippet(chunk)
-            matches.append((score, start + 1, end, snippet))
-        if not matches:
-            return ToolResult(output="(no matches)")
-        matches.sort(key=lambda item: (-item[0], item[1]))
-        output_lines = [
-            f"- {arguments.document_id} lines {start}-{end} score {score}: {snippet}"
-            for score, start, end, snippet in matches[: arguments.limit]
-        ]
-        return ToolResult(output="\n".join(output_lines))
+        return await asyncio.to_thread(
+            _search_document,
+            path,
+            index_path,
+            arguments.document_id,
+            arguments.query,
+            arguments.limit,
+        )
 
 
 class SessionDocumentReadTool(BaseTool):
@@ -199,7 +162,7 @@ class SessionDocumentReadTool(BaseTool):
         path = _document_path(context, arguments.document_id)
         if path is None:
             return ToolResult(output=f"No session document found for id: {arguments.document_id}", is_error=True)
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = await asyncio.to_thread(_read_document_lines, path)
         start_index = arguments.start_line - 1
         if start_index >= len(lines):
             return ToolResult(output=f"(선택한 범위에 내용이 없습니다: {arguments.document_id})")
@@ -209,4 +172,63 @@ class SessionDocumentReadTool(BaseTool):
             for index, line in enumerate(selected)
         ]
         return ToolResult(output="\n".join(numbered))
+
+
+def _read_document_lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+
+def _search_document(
+    path: Path,
+    index_path: Path | None,
+    document_id: str,
+    query: str,
+    limit: int,
+) -> ToolResult:
+    lines = _read_document_lines(path)
+    indexed_chunks = _load_indexed_chunks(index_path, document_id, len(lines)) if index_path else []
+    if indexed_chunks:
+        matches: list[tuple[int, int, int, int, str, str]] = []
+        for chunk in indexed_chunks:
+            start = int(chunk["start_line"])
+            end = int(chunk["end_line"])
+            heading = str(chunk.get("heading") or "")
+            chunk_lines = lines[start - 1 : end]
+            chunk_text = "\n".join(chunk_lines)
+            score = _score(f"{heading}\n{chunk_text}", query)
+            if score <= 0:
+                continue
+            snippet = _snippet_for_chunk(chunk_lines, query)
+            matches.append((score, start, end, int(chunk["chunk_index"]), heading, snippet))
+        if not matches:
+            return ToolResult(output="(no matches)")
+        matches.sort(key=lambda item: (-item[0], item[1], item[3]))
+        output_lines = []
+        for score, start, end, chunk_index, heading, snippet in matches[:limit]:
+            heading_part = f' heading "{heading}"' if heading else ""
+            output_lines.append(
+                f"- {document_id} chunk {chunk_index} lines {start}-{end}{heading_part} score {score}: {snippet}"
+            )
+        return ToolResult(output="\n".join(output_lines))
+
+    window_size = 80
+    overlap = 20
+    step = max(1, window_size - overlap)
+    matches_fallback: list[tuple[int, int, int, str]] = []
+    for start in range(0, len(lines), step):
+        end = min(len(lines), start + window_size)
+        chunk = "\n".join(lines[start:end])
+        score = _score(chunk, query)
+        if score <= 0:
+            continue
+        snippet = _trim_snippet(chunk)
+        matches_fallback.append((score, start + 1, end, snippet))
+    if not matches_fallback:
+        return ToolResult(output="(no matches)")
+    matches_fallback.sort(key=lambda item: (-item[0], item[1]))
+    output_lines = [
+        f"- {document_id} lines {start}-{end} score {score}: {snippet}"
+        for score, start, end, snippet in matches_fallback[:limit]
+    ]
+    return ToolResult(output="\n".join(output_lines))
 

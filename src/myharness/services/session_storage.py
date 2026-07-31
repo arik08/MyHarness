@@ -460,9 +460,11 @@ def save_session_snapshot(
     client_latest_name = _client_latest_file_name(tool_metadata)
     latest_path = session_dir / (client_latest_name or "latest.json")
     atomic_write_text(latest_path, data)
+    _write_snapshot_summary(latest_path, payload)
 
     # Save by session ID
     atomic_write_text(session_path, data)
+    _write_snapshot_summary(session_path, payload)
 
     return latest_path
 
@@ -631,6 +633,38 @@ def _snapshot_list_item(
     }
 
 
+def _snapshot_summary_path(snapshot_path: Path) -> Path:
+    """Return the compact list metadata path for one full snapshot."""
+    return snapshot_path.with_suffix(".meta")
+
+
+def _write_snapshot_summary(snapshot_path: Path, data: dict[str, Any]) -> None:
+    """Persist the fields needed by the session picker without full history."""
+    session_id = str(data.get("session_id") or snapshot_path.stem.replace("session-", ""))
+    summary = _snapshot_list_item(data, session_id=session_id, path=snapshot_path)
+    summary["hidden"] = _is_hidden_worker_snapshot(data)
+    atomic_write_text(
+        _snapshot_summary_path(snapshot_path),
+        json.dumps(summary, ensure_ascii=False, separators=(",", ":")) + "\n",
+    )
+
+
+def _load_snapshot_summary(snapshot_path: Path) -> dict[str, Any] | None:
+    """Load a fresh compact summary, falling back when absent or stale."""
+    summary_path = _snapshot_summary_path(snapshot_path)
+    try:
+        if summary_path.stat().st_mtime_ns < snapshot_path.stat().st_mtime_ns:
+            return None
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(summary, dict):
+        return None
+    if not str(summary.get("session_id") or "").strip():
+        return None
+    return summary
+
+
 def _is_hidden_worker_snapshot(data: dict[str, Any]) -> bool:
     metadata = data.get("tool_metadata")
     if isinstance(metadata, dict):
@@ -661,30 +695,44 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[di
         reverse=True,
     )
     for path in session_paths:
-        data = _load_snapshot_file(path)
-        if data is None:
-            continue
-        if _is_hidden_worker_snapshot(data):
-            continue
-        sid = str(data.get("session_id", path.stem.replace("session-", "")))
+        summary = _load_snapshot_summary(path)
+        if summary is not None:
+            if bool(summary.get("hidden")):
+                continue
+            sid = str(summary["session_id"])
+            item = {key: value for key, value in summary.items() if key != "hidden"}
+        else:
+            data = _load_snapshot_file(path)
+            if data is None:
+                continue
+            if _is_hidden_worker_snapshot(data):
+                continue
+            sid = str(data.get("session_id", path.stem.replace("session-", "")))
+            item = _snapshot_list_item(data, session_id=sid, path=path)
         seen_ids.add(sid)
-        sessions.append(_snapshot_list_item(data, session_id=sid, path=path))
+        sessions.append(item)
 
     # Also include latest.json if it has no corresponding session file
     latest_path = session_dir / "latest.json"
     if latest_path.exists():
-        data = _load_snapshot_file(latest_path)
-        if data is not None:
-            sid = str(data.get("session_id", "latest"))
-            if sid not in seen_ids and not _is_hidden_worker_snapshot(data):
-                sessions.append(
-                    _snapshot_list_item(
-                        data,
-                        session_id=sid,
-                        path=latest_path,
-                        summary_default="(latest session)",
+        summary = _load_snapshot_summary(latest_path)
+        if summary is not None:
+            sid = str(summary["session_id"])
+            if sid not in seen_ids and not bool(summary.get("hidden")):
+                sessions.append({key: value for key, value in summary.items() if key != "hidden"})
+        else:
+            data = _load_snapshot_file(latest_path)
+            if data is not None:
+                sid = str(data.get("session_id", "latest"))
+                if sid not in seen_ids and not _is_hidden_worker_snapshot(data):
+                    sessions.append(
+                        _snapshot_list_item(
+                            data,
+                            session_id=sid,
+                            path=latest_path,
+                            summary_default="(latest session)",
+                        )
                     )
-                )
 
     sessions.sort(
         key=lambda s: (
@@ -726,6 +774,7 @@ def delete_session_by_id(cwd: str | Path, session_id: str) -> bool:
     session_path = session_dir / f"session-{session_id}.json"
     if session_path.exists():
         session_path.unlink()
+        _snapshot_summary_path(session_path).unlink(missing_ok=True)
         deleted = True
 
     for latest_path in [session_dir / "latest.json", *session_dir.glob("latest-*.json")]:
@@ -733,6 +782,7 @@ def delete_session_by_id(cwd: str | Path, session_id: str) -> bool:
             data = _load_snapshot_file(latest_path)
             if data is not None and data.get("session_id") == session_id:
                 latest_path.unlink()
+                _snapshot_summary_path(latest_path).unlink(missing_ok=True)
                 deleted = True
 
     documents_dir = session_document_dir_for_delete(cwd, session_id)

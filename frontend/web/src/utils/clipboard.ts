@@ -25,22 +25,29 @@ export async function copyTextToClipboard(text: string) {
   }
 }
 
-export async function copyPngToClipboard(png: Promise<Blob>) {
-  if (window.isSecureContext !== false && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
-    await navigator.clipboard.write([
+export function canCopyPngToClipboard() {
+  return window.isSecureContext !== false && Boolean(navigator.clipboard?.write) && typeof ClipboardItem !== "undefined";
+}
+
+export async function copyPngToClipboard(png: Promise<Blob>, downloadName = "report.png"): Promise<"copied" | "downloaded"> {
+  if (canCopyPngToClipboard()) {
+    await navigator.clipboard.write!([
       new ClipboardItem({
         "image/png": png,
       }),
     ]);
-    return;
+    return "copied";
   }
-  const response = await fetch("/api/clipboard/image", {
-    method: "POST",
-    headers: { "content-type": "image/png" },
-    body: await png,
-  });
-  const result = await response.json().catch(() => ({})) as { error?: string };
-  if (!response.ok) {
-    throw new Error(result.error || "HTTP 이미지 복사에 실패했습니다.");
+  const url = URL.createObjectURL(await png);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = downloadName;
+  document.body.append(anchor);
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    URL.revokeObjectURL(url);
   }
+  return "downloaded";
 }

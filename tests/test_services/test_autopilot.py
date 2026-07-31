@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
+import pytest
+
+import myharness.autopilot.service as autopilot_service
 from myharness.autopilot import RepoAutopilotStore, RepoVerificationStep
 from myharness.autopilot.service import _DEFAULT_VERIFICATION_POLICY
 from myharness.config.paths import (
@@ -68,6 +71,24 @@ def test_autopilot_loads_legacy_ohmo_source_as_manual_idea(tmp_path: Path) -> No
 
     assert card is not None
     assert card.source_kind == "manual_idea"
+
+
+def test_autopilot_journal_rotates_and_loads_latest_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(autopilot_service, "AUTOPILOT_JOURNAL_MAX_BYTES", 400)
+    store = RepoAutopilotStore(repo)
+
+    for i in range(30):
+        store.append_journal(kind="test", summary=f"entry {i}", metadata={"seq": i})
+
+    backup = store.journal_path.with_name(f"{store.journal_path.name}.1")
+    assert store.journal_path.stat().st_size <= 400
+    assert backup.stat().st_size <= 400
+    assert [entry.metadata["seq"] for entry in store.load_journal(limit=3)] == [27, 28, 29]
+    assert store.load_journal(limit=0) == []
 
 
 def test_autopilot_pick_next_prefers_highest_score(tmp_path: Path) -> None:

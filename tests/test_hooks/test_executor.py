@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 
+import myharness.hooks.executor as hook_executor_module
 from myharness.api.client import ApiMessageCompleteEvent
 from myharness.api.usage import UsageSnapshot
 from myharness.engine.messages import ConversationMessage, TextBlock
 from myharness.hooks import HookEvent, HookExecutionContext, HookExecutor
 from myharness.hooks.executor import _inject_arguments
 from myharness.hooks.loader import HookRegistry
-from myharness.hooks.schemas import CommandHookDefinition, PromptHookDefinition
+from myharness.hooks.schemas import CommandHookDefinition, HttpHookDefinition, PromptHookDefinition
 
 
 class FakeApiClient:
@@ -71,6 +73,39 @@ async def test_prompt_hook_can_block(tmp_path: Path):
 
     assert result.blocked is True
     assert result.reason == "blocked by policy"
+
+
+@pytest.mark.asyncio
+async def test_http_hook_streams_bounded_response_tail(tmp_path: Path, monkeypatch):
+    registry = HookRegistry()
+    registry.register(
+        HookEvent.SESSION_START,
+        HttpHookDefinition(url="https://example.test/hook"),
+    )
+    executor = HookExecutor(
+        registry,
+        HookExecutionContext(
+            cwd=tmp_path,
+            api_client=FakeApiClient('{"ok": true}'),
+            default_model="claude-test",
+        ),
+    )
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=b"A" * 100_000 + b"final", request=request)
+    )
+    client = httpx.AsyncClient(transport=transport)
+    monkeypatch.setattr(
+        hook_executor_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: client,
+    )
+
+    result = await executor.execute(HookEvent.SESSION_START, {"event": "session_start"})
+
+    output = result.results[0].output
+    assert len(output.encode("utf-8")) == hook_executor_module.HOOK_OUTPUT_TAIL_BYTES
+    assert output.endswith("final")
 
 
 # ---------------------------------------------------------------------------

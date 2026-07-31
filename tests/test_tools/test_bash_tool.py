@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from myharness.tools.base import ToolExecutionContext
-from myharness.tools.bash_tool import BashTool, BashToolInput, _format_output
+from myharness.tools.bash_tool import (
+    BashTool,
+    BashToolInput,
+    _collect_output,
+    _format_output,
+    _MAX_CAPTURE_BYTES,
+)
 
 
 class _FakeStdout:
@@ -149,6 +155,23 @@ async def test_bash_tool_drains_large_output_while_process_runs(tmp_path: Path):
     assert result.output.startswith("x")
     assert "...[잘림]..." in result.output
     assert result.metadata["returncode"] == 0
+
+
+@pytest.mark.asyncio
+async def test_bash_output_collection_drains_stream_with_bounded_memory():
+    stream = _FakeStdout(
+        [
+            b"a" * _MAX_CAPTURE_BYTES,
+            b"b" * _MAX_CAPTURE_BYTES,
+            b"",
+        ]
+    )
+
+    captured = await _collect_output(stream)
+
+    assert len(captured) == _MAX_CAPTURE_BYTES
+    assert captured == b"a" * _MAX_CAPTURE_BYTES
+    assert stream._chunks == []
 
 
 @pytest.mark.asyncio

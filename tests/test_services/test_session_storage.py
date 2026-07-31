@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import myharness.services.session_storage as session_storage
 from myharness.api.usage import UsageSnapshot
 from myharness.engine.messages import ConversationMessage, TextBlock
 from myharness.services.session_storage import (
@@ -70,6 +71,62 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
     assert snapshot["tool_metadata"]["task_focus_state"]["goal"] == "Fix compact carry-over"
     assert snapshot["tool_metadata"]["recent_verified_work"] == ["Focused session storage test passed"]
     assert snapshot["tool_metadata"]["user_input_archive"][0]["text"] == "중요한 과거 사용자 입력"
+
+
+def test_saved_session_list_uses_compact_metadata_without_loading_full_history(
+    tmp_path: Path, monkeypatch
+):
+    project = tmp_path / "repo"
+    project.mkdir()
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="큰 세션 목록 테스트")])],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=2),
+        session_id="compact123",
+    )
+    session_dir = get_project_session_dir(project)
+    assert (session_dir / "session-compact123.meta").exists()
+    assert (session_dir / "latest.meta").exists()
+
+    full_loads: list[Path] = []
+    original_load = session_storage._load_snapshot_file
+
+    def record_full_load(path: Path):
+        full_loads.append(path)
+        return original_load(path)
+
+    monkeypatch.setattr(session_storage, "_load_snapshot_file", record_full_load)
+
+    sessions = list_session_snapshots(project)
+
+    assert [item["session_id"] for item in sessions] == ["compact123"]
+    assert sessions[0]["summary"] == "큰 세션 목록 테스트"
+    assert full_loads == []
+
+    assert delete_session_by_id(project, "compact123") is True
+    assert not (session_dir / "session-compact123.meta").exists()
+    assert not (session_dir / "latest.meta").exists()
+
+
+def test_session_list_falls_back_when_compact_metadata_is_corrupt(tmp_path: Path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage(role="user", content=[TextBlock(text="fallback session")])],
+        usage=UsageSnapshot(),
+        session_id="fallback123",
+    )
+    session_dir = get_project_session_dir(project)
+    (session_dir / "session-fallback123.meta").write_text("{broken", encoding="utf-8")
+
+    sessions = list_session_snapshots(project)
+
+    assert [item["session_id"] for item in sessions] == ["fallback123"]
 
 
 def test_worker_snapshots_are_hidden_from_history(tmp_path: Path, monkeypatch):

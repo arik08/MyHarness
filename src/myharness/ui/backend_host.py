@@ -73,7 +73,15 @@ from myharness.ui.async_agents import (
     wait_for_completed_async_agent_entries,
 )
 from myharness.ui.protocol import BackendEvent, FrontendRequest, PluginSnapshot, SkillSnapshot, TranscriptItem
-from myharness.ui.runtime import build_runtime, close_runtime, handle_line, refresh_runtime_client, start_runtime, sync_app_state
+from myharness.ui.runtime import (
+    build_runtime,
+    close_runtime,
+    handle_line,
+    refresh_runtime_client,
+    schedule_runtime_prefix_cache_warmup,
+    start_runtime,
+    sync_app_state,
+)
 from myharness.services.session_backend import SessionBackend
 
 log = logging.getLogger(__name__)
@@ -1570,6 +1578,8 @@ class ReactBackendHost:
         except Exception:
             log.exception("background MCP connection failed")
             await self._emit(self._status_snapshot())
+        if not self._busy:
+            await schedule_runtime_prefix_cache_warmup(self._bundle, force=True)
 
     def _ensure_async_agent_monitor(self) -> None:
         if self._bundle is None:
@@ -2380,8 +2390,11 @@ class ReactBackendHost:
                 "render_event": _render_event,
                 "clear_output": _clear_output,
             }
-            if "steering_provider" in inspect.signature(handle_line).parameters:
+            handle_line_parameters = inspect.signature(handle_line).parameters
+            if "steering_provider" in handle_line_parameters:
                 handle_line_kwargs["steering_provider"] = self._drain_steering_lines
+            if "persist_session" in handle_line_parameters:
+                handle_line_kwargs["persist_session"] = False
             if original_messages is not None:
                 self._bundle.engine.clear()
             try:
@@ -2423,13 +2436,13 @@ class ReactBackendHost:
             self._bundle.engine.tool_metadata["workflow_duration_seconds"] = workflow_duration_seconds
             self._record_history_event(BackendEvent(type="line_complete", compact_metadata=workflow_duration_metadata))
             if first_token != "/clear" and not quiet:
-                self._save_current_session_snapshot()
+                await self._save_current_session_snapshot()
             await self._emit(self._status_snapshot())
             await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
             self._ensure_swarm_status_monitor()
             if first_token == "/clear":
                 session_id = self._start_new_saved_session()
-                self._save_empty_session_snapshot("새 채팅")
+                await self._save_empty_session_snapshot("새 채팅")
                 await self._emit(BackendEvent(type="active_session", value=session_id))
                 await self._handle_list_sessions()
             elif first_token == "/resume":
@@ -2492,7 +2505,7 @@ class ReactBackendHost:
             ),
         )
         if result.refresh_runtime:
-            refresh_runtime_client(self._bundle)
+            await refresh_runtime_client(self._bundle)
         await self._emit(
             BackendEvent(
                 type="modal_request",
@@ -2552,7 +2565,8 @@ class ReactBackendHost:
             metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
         if title != current_title:
             await self._emit(BackendEvent(type="session_title", message=title))
-        self._bundle.session_backend.save_snapshot(
+        await asyncio.to_thread(
+            self._bundle.session_backend.save_snapshot,
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,
             system_prompt=self._bundle.engine.system_prompt,
@@ -2650,7 +2664,7 @@ class ReactBackendHost:
         assert self._bundle is not None
         self._bundle.engine.clear()
         new_session_id = self._start_new_saved_session(session_id)
-        self._save_empty_session_snapshot("새 대화")
+        await self._save_empty_session_snapshot("새 대화")
         await self._emit(BackendEvent(type="clear_transcript"))
         await self._emit(BackendEvent(type="active_session", value=new_session_id))
         await self._emit(BackendEvent(type="session_title", message="새 대화"))
@@ -2667,13 +2681,14 @@ class ReactBackendHost:
         if isinstance(snapshot_metadata, dict):
             metadata.update(snapshot_metadata)
 
-    def _save_empty_session_snapshot(self, title: str) -> None:
+    async def _save_empty_session_snapshot(self, title: str) -> None:
         assert self._bundle is not None
         metadata = dict(self._bundle.engine.tool_metadata)
         metadata["session_title"] = title
         if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
             metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
-        self._bundle.session_backend.save_snapshot(
+        await asyncio.to_thread(
+            self._bundle.session_backend.save_snapshot,
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,
             system_prompt=self._bundle.engine.system_prompt,
@@ -2685,12 +2700,13 @@ class ReactBackendHost:
             usage_accounting=self._bundle.engine.usage_accounting,
         )
 
-    def _save_current_session_snapshot(self) -> None:
+    async def _save_current_session_snapshot(self) -> None:
         assert self._bundle is not None
         metadata = dict(self._bundle.engine.tool_metadata)
         if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
             metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
-        self._bundle.session_backend.save_snapshot(
+        await asyncio.to_thread(
+            self._bundle.session_backend.save_snapshot,
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,
             system_prompt=self._bundle.engine.system_prompt,
@@ -2803,7 +2819,19 @@ class ReactBackendHost:
             return
         for tool_info in self._bundle.mcp_manager.list_tools():
             self._bundle.tool_registry.register(McpToolAdapter(self._bundle.mcp_manager, tool_info))
+        self._bundle.engine.set_system_prompt(
+            build_runtime_system_prompt(
+                self._bundle.current_settings(),
+                cwd=self._bundle.cwd,
+                latest_user_prompt=None,
+                extra_skill_dirs=self._bundle.extra_skill_dirs,
+                extra_plugin_roots=self._bundle.extra_plugin_roots,
+                task_worker=self._bundle.task_worker,
+            )
+        )
         sync_app_state(self._bundle)
+        if not self._busy:
+            await schedule_runtime_prefix_cache_warmup(self._bundle, force=True)
 
     async def _ensure_forced_mcp_available(self, server_name: str) -> bool:
         """Connect an explicitly selected MCP server without enabling it globally."""
@@ -3145,7 +3173,7 @@ class ReactBackendHost:
             message = f"{target_label}를 {stored_value}(으)로 설정했습니다."
 
         if refresh_client:
-            refresh_runtime_client(self._bundle)
+            await refresh_runtime_client(self._bundle)
         updated = self._bundle.current_settings()
         self._bundle.engine.tool_metadata["active_profile"] = updated.active_profile
         self._bundle.engine.tool_metadata["provider"] = updated.provider
@@ -3179,7 +3207,11 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="error", message="세션 ID가 없습니다."))
             await self._emit(BackendEvent(type="line_complete"))
             return
-        snapshot = self._bundle.session_backend.load_by_id(self._bundle.cwd, selected)
+        snapshot = await asyncio.to_thread(
+            self._bundle.session_backend.load_by_id,
+            self._bundle.cwd,
+            selected,
+        )
         if snapshot is None:
             await self._emit(BackendEvent(type="error", message=f"세션을 찾을 수 없습니다: {selected}"))
             await self._emit(BackendEvent(type="line_complete"))
@@ -3468,7 +3500,11 @@ class ReactBackendHost:
         import time as _time
 
         assert self._bundle is not None
-        sessions = self._bundle.session_backend.list_snapshots(self._bundle.cwd, limit=None)
+        sessions = await asyncio.to_thread(
+            self._bundle.session_backend.list_snapshots,
+            self._bundle.cwd,
+            limit=None,
+        )
         options = []
         for s in sessions:
             ts = _time.strftime("%m/%d %H:%M", _time.localtime(s["created_at"]))
@@ -3491,7 +3527,11 @@ class ReactBackendHost:
         if not session_id:
             await self._emit(BackendEvent(type="error", message="세션 ID가 없습니다."))
             return
-        deleted = self._bundle.session_backend.delete_by_id(self._bundle.cwd, session_id)
+        deleted = await asyncio.to_thread(
+            self._bundle.session_backend.delete_by_id,
+            self._bundle.cwd,
+            session_id,
+        )
         if self._bundle.session_id == session_id:
             self._bundle.engine.clear()
             new_session_id = self._start_new_saved_session()
@@ -3544,7 +3584,8 @@ class ReactBackendHost:
         metadata["session_title_user_edited"] = True
         if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
             metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
-        self._bundle.session_backend.save_snapshot(
+        await asyncio.to_thread(
+            self._bundle.session_backend.save_snapshot,
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,
             system_prompt=self._bundle.engine.system_prompt,

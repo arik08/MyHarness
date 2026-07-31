@@ -7,6 +7,7 @@ import contextlib
 import inspect
 import os
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,14 @@ from myharness.mcp.types import (
     McpStdioServerConfig,
     McpToolInfo,
 )
+
+
+MCP_REQUEST_TIMEOUT_SECONDS = 120.0
+
+
+def _create_http_client(**kwargs: Any) -> httpx.AsyncClient:
+    """Create an MCP HTTP client without mutating httpx's global class binding."""
+    return httpx.AsyncClient(**kwargs)
 
 
 class McpServerNotConnectedError(Exception):
@@ -112,8 +121,11 @@ class McpClientManager:
         """Add or refresh one server config and connect it if needed."""
         existing = self._server_configs.get(name)
         status = self._statuses.get(name)
-        if existing == config and status is not None and status.state != "pending":
-            return False
+        if existing == config and status is not None:
+            if status.state == "connected":
+                return False
+            if status.state == "failed" and not force_connect:
+                return False
         if name in self._stacks:
             with contextlib.suppress(RuntimeError, asyncio.CancelledError):
                 await self._stacks.pop(name).aclose()
@@ -149,7 +161,7 @@ class McpClientManager:
 
     async def close(self) -> None:
         """Close all active MCP sessions."""
-        for stack in list(self._stacks.values()):
+        for stack in reversed(list(self._stacks.values())):
             with contextlib.suppress(RuntimeError, asyncio.CancelledError):
                 await stack.aclose()
         self._stacks.clear()
@@ -260,14 +272,14 @@ class McpClientManager:
         try:
             if "http_client" in inspect.signature(streamable_http_client).parameters:
                 http_client = await stack.enter_async_context(
-                    httpx.AsyncClient(headers=config.headers or None)
+                    _create_http_client(headers=config.headers or None)
                 )
                 read_stream, write_stream, _get_session_id = await stack.enter_async_context(
                     streamable_http_client(config.url, http_client=http_client)
                 )
             else:
                 def _httpx_client_factory(**kwargs: Any) -> httpx.AsyncClient:
-                    return httpx.AsyncClient(**kwargs)
+                    return _create_http_client(**kwargs)
 
                 read_stream, write_stream, _get_session_id = await stack.enter_async_context(
                     streamable_http_client(
@@ -304,7 +316,13 @@ class McpClientManager:
         write_stream: Any,
         auth_configured: bool,
     ) -> None:
-        session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+        session = await stack.enter_async_context(
+            ClientSession(
+                read_stream,
+                write_stream,
+                read_timeout_seconds=timedelta(seconds=MCP_REQUEST_TIMEOUT_SECONDS),
+            )
+        )
         await session.initialize()
         tool_result = await session.list_tools()
         resource_result = None

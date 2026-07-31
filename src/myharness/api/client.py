@@ -24,6 +24,7 @@ from myharness.auth.external import (
     get_claude_code_session_id,
 )
 from myharness.api.usage import UsageSnapshot
+from myharness.api.retry import calculate_retry_delay
 from myharness.engine.messages import ConversationMessage, assistant_message_from_api
 
 log = logging.getLogger(__name__)
@@ -107,22 +108,12 @@ def _is_retryable(exc: Exception) -> bool:
 
 def _get_retry_delay(attempt: int, exc: Exception | None = None) -> float:
     """Calculate delay with exponential backoff and jitter."""
-    import random
-
-    # Check for Retry-After header
-    if isinstance(exc, APIStatusError):
-        retry_after = getattr(exc, "headers", {})
-        if hasattr(retry_after, "get"):
-            val = retry_after.get("retry-after")
-            if val:
-                try:
-                    return min(float(val), MAX_DELAY)
-                except (ValueError, TypeError):
-                    pass
-
-    delay = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
-    jitter = random.uniform(0, delay * 0.25)
-    return delay + jitter
+    return calculate_retry_delay(
+        attempt,
+        exc,
+        base_delay=BASE_DELAY,
+        max_delay=MAX_DELAY,
+    )
 
 
 class AnthropicApiClient:
@@ -160,13 +151,27 @@ class AnthropicApiClient:
             kwargs["base_url"] = self._base_url
         return AsyncAnthropic(**kwargs)
 
-    def _refresh_client_auth(self) -> None:
+    async def aclose(self) -> None:
+        """Close the Anthropic SDK connection pool."""
+        await self._client.close()
+
+    async def _refresh_client_auth(self) -> None:
         if not self._claude_oauth or self._auth_token_resolver is None:
             return
         next_token = self._auth_token_resolver()
         if next_token and next_token != self._auth_token:
+            previous_token = self._auth_token
+            previous_client = self._client
             self._auth_token = next_token
-            self._client = self._create_client()
+            try:
+                self._client = self._create_client()
+            except Exception:
+                self._auth_token = previous_token
+                raise
+            try:
+                await previous_client.close()
+            except Exception:
+                log.warning("Failed to close replaced Anthropic client", exc_info=True)
 
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Yield text deltas and the final assistant message with retry on transient errors."""
@@ -174,7 +179,7 @@ class AnthropicApiClient:
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                self._refresh_client_auth()
+                await self._refresh_client_auth()
                 async for event in self._stream_once(request):
                     yield event
                 return  # Success

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from myharness.prompts.environment import EnvironmentInfo
+from myharness.prompts.context import _skill_routing_description
 from myharness.prompts.system_prompt import build_system_prompt
 
 
@@ -70,6 +71,17 @@ def test_build_system_prompt_default_includes_base():
     assert "You are MyHarness" in prompt
     assert "You are OpenHarness" not in prompt
     assert "MyHarness" in prompt
+
+
+def test_skill_routing_description_is_compact_and_preserves_trigger_prefix():
+    trigger = "Use when the user asks for blocked web research. "
+    description = trigger + "Detailed implementation guidance " * 40
+
+    compact = _skill_routing_description(description)
+
+    assert compact.startswith(trigger)
+    assert compact.endswith("...")
+    assert len(compact) <= 320
 
 
 def test_build_system_prompt_encourages_parallel_research_tools():

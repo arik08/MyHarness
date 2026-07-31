@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -77,7 +78,7 @@ class FileWriteTool(BaseTool):
                 output=format_mermaid_preflight_errors(path, mermaid_errors, action="written"),
                 is_error=True,
             )
-        path.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
         mark_skill_registry_dirty(context.metadata, path)
         display_path = display_tool_path(path, context.cwd)
         output = f"Wrote {display_path}"

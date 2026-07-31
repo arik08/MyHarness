@@ -9,7 +9,14 @@ import pytest
 from myharness.api.client import ApiMessageRequest
 from myharness.api.errors import AuthenticationFailure
 from myharness.api.openai_client import OpenAICompatibleClient
-from myharness.ui.runtime import MissingAuthClient, _next_prompt_profile, _runtime_system_prompt, build_runtime
+from myharness.ui.runtime import (
+    MissingAuthClient,
+    _next_prompt_profile,
+    _runtime_system_prompt,
+    build_runtime,
+    close_runtime,
+    refresh_runtime_client,
+)
 
 
 @pytest.mark.asyncio
@@ -84,6 +91,85 @@ async def test_build_runtime_enables_openai_prompt_cache_options(monkeypatch):
     assert getattr(bundle.api_client, "_enable_prompt_cache_options") is True
     assert getattr(bundle.api_client, "_include_usage_with_tools") is True
     assert getattr(bundle.api_client, "_prompt_cache_retention") == "24h"
+
+
+@pytest.mark.asyncio
+async def test_refresh_runtime_client_closes_replaced_owned_client(monkeypatch):
+    class _ClosableClient:
+        def __init__(self):
+            self.closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    previous = _ClosableClient()
+    replacement = _ClosableClient()
+    settings = SimpleNamespace(model="gpt-5.6-sol", effective_max_tokens=lambda: 32_000)
+    engine = SimpleNamespace(
+        tool_metadata={},
+        set_api_client=lambda client: None,
+        set_model=lambda model: None,
+        set_max_tokens=lambda max_tokens: None,
+    )
+    hook_executor = SimpleNamespace(update_context=lambda **kwargs: None)
+    bundle = SimpleNamespace(
+        current_settings=lambda: settings,
+        external_api_client=False,
+        api_client=previous,
+        engine=engine,
+        hook_executor=hook_executor,
+    )
+    monkeypatch.setattr(
+        "myharness.ui.runtime._resolve_api_client_from_settings",
+        lambda current: replacement,
+    )
+    monkeypatch.setattr("myharness.ui.runtime.sync_app_state", lambda current: None)
+
+    await refresh_runtime_client(bundle)
+
+    assert bundle.api_client is replacement
+    assert previous.closed is True
+    assert replacement.closed is False
+
+
+@pytest.mark.asyncio
+async def test_close_runtime_closes_api_client_after_other_cleanup_failure(monkeypatch):
+    events: list[str] = []
+
+    class _ClosableClient:
+        async def aclose(self):
+            events.append("api")
+
+    class _FailingMcpManager:
+        async def close(self):
+            events.append("mcp")
+            raise RuntimeError("mcp close failed")
+
+    class _HookExecutor:
+        async def execute(self, event, payload):
+            events.append("hook")
+
+    async def _stop_sandbox():
+        events.append("sandbox")
+
+    monkeypatch.setattr("myharness.sandbox.session.stop_docker_sandbox", _stop_sandbox)
+    monkeypatch.setattr(
+        "myharness.personalization.session_hook.update_rules_from_session",
+        lambda messages: None,
+    )
+    bundle = SimpleNamespace(
+        prefix_cache_warmup_task=None,
+        engine=SimpleNamespace(messages=[]),
+        mcp_manager=_FailingMcpManager(),
+        hook_executor=_HookExecutor(),
+        cwd=".",
+        external_api_client=False,
+        api_client=_ClosableClient(),
+    )
+
+    await close_runtime(bundle)
+
+    assert events == ["sandbox", "mcp", "hook", "api"]
 
 
 def test_next_prompt_profile_keeps_codex_full_for_cache_stability():

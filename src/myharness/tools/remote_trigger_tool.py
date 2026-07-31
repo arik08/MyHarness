@@ -11,6 +11,7 @@ from myharness.services.cron import get_cron_job
 from myharness.sandbox import SandboxUnavailableError
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.utils.shell import create_shell_subprocess
+from myharness.utils.subprocess_output import communicate_bounded
 
 
 class RemoteTriggerToolInput(BaseModel):
@@ -47,13 +48,11 @@ class RemoteTriggerTool(BaseTool):
         except SandboxUnavailableError as exc:
             return ToolResult(output=str(exc), is_error=True)
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
+            stdout, stderr = await communicate_bounded(
+                process,
                 timeout=arguments.timeout_seconds,
             )
         except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
             return ToolResult(
                 output=f"원격 트리거가 {arguments.timeout_seconds}초 후 시간 초과됐습니다.",
                 is_error=True,

@@ -18,6 +18,8 @@ from myharness.skills.loader import get_program_skills_dirs, get_user_skills_dir
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.utils.shell import create_shell_subprocess
 
+_MAX_CAPTURE_BYTES = 1024 * 1024
+
 
 class BashToolInput(BaseModel):
     """Arguments for a command shell tool."""
@@ -128,7 +130,9 @@ async def _collect_output(stream: asyncio.StreamReader | None) -> bytearray:
         chunk = await stream.read(65536)
         if not chunk:
             return output_buffer
-        output_buffer.extend(chunk)
+        remaining = _MAX_CAPTURE_BYTES - len(output_buffer)
+        if remaining > 0:
+            output_buffer.extend(chunk[:remaining])
 
 
 async def _finish_output_collection(output_task: asyncio.Task[bytearray]) -> bytearray:

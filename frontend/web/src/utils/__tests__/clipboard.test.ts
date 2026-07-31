@@ -3,6 +3,8 @@ import { copyPngToClipboard } from "../clipboard";
 
 describe("copyPngToClipboard", () => {
   const originalSecureContext = Object.getOwnPropertyDescriptor(window, "isSecureContext");
+  const originalCreateObjectUrl = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  const originalRevokeObjectUrl = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
 
   afterEach(() => {
     if (originalSecureContext) {
@@ -10,40 +12,54 @@ describe("copyPngToClipboard", () => {
     } else {
       Reflect.deleteProperty(window, "isSecureContext");
     }
+    if (originalCreateObjectUrl) Object.defineProperty(URL, "createObjectURL", originalCreateObjectUrl);
+    else Reflect.deleteProperty(URL, "createObjectURL");
+    if (originalRevokeObjectUrl) Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectUrl);
+    else Reflect.deleteProperty(URL, "revokeObjectURL");
     vi.restoreAllMocks();
   });
 
-  it("sends the PNG to the local Windows clipboard bridge on HTTP", async () => {
+  it("downloads the PNG on HTTP instead of writing to the server clipboard", async () => {
     Object.defineProperty(window, "isSecureContext", {
       configurable: true,
       value: false,
     });
     const png = new Blob(["png"], { type: "image/png" });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(
-      JSON.stringify({ ok: true }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    ));
+    const createObjectUrl = vi.fn(() => "blob:report");
+    const revokeObjectUrl = vi.fn(() => undefined);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectUrl });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
-    await copyPngToClipboard(Promise.resolve(png));
+    await expect(copyPngToClipboard(Promise.resolve(png), "report.png")).resolves.toBe("downloaded");
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/clipboard/image", {
-      method: "POST",
-      headers: { "content-type": "image/png" },
-      body: png,
-    });
+    expect(createObjectUrl).toHaveBeenCalledWith(png);
+    expect(click).toHaveBeenCalledOnce();
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:report");
   });
 
-  it("reports the local clipboard bridge error instead of claiming success", async () => {
+  it("copies the PNG directly in a secure context", async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalClipboardItem = globalThis.ClipboardItem;
     Object.defineProperty(window, "isSecureContext", {
       configurable: true,
-      value: false,
+      value: true,
     });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(
-      JSON.stringify({ error: "같은 Windows PC에서만 사용할 수 있습니다." }),
-      { status: 403, headers: { "content-type": "application/json" } },
-    ));
+    const write = vi.fn(async () => undefined);
+    class FakeClipboardItem {
+      constructor(readonly values: Record<string, Promise<Blob>>) {}
+    }
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { write } });
+    Object.defineProperty(globalThis, "ClipboardItem", { configurable: true, value: FakeClipboardItem });
 
-    await expect(copyPngToClipboard(Promise.resolve(new Blob(["png"], { type: "image/png" }))))
-      .rejects.toThrow("같은 Windows PC에서만 사용할 수 있습니다.");
+    try {
+      await expect(copyPngToClipboard(Promise.resolve(new Blob(["png"], { type: "image/png" })))).resolves.toBe("copied");
+      expect(write).toHaveBeenCalledOnce();
+    } finally {
+      if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+      if (originalClipboardItem) Object.defineProperty(globalThis, "ClipboardItem", { configurable: true, value: originalClipboardItem });
+      else Reflect.deleteProperty(globalThis, "ClipboardItem");
+    }
   });
 });

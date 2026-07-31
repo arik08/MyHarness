@@ -6,11 +6,14 @@ import asyncio
 import shlex
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import myharness.tasks.manager as task_manager_module
 from myharness.tasks.manager import TASK_PROGRESS_EVENT_PREFIX
 from myharness.tasks.manager import BackgroundTaskManager
+from myharness.tasks.types import TaskRecord
 
 
 def _python_stdout_command(text: str) -> str:
@@ -204,6 +207,92 @@ async def test_read_task_output_returns_empty_string_for_non_positive_max_bytes(
 
     assert manager.read_task_output(task.id, max_bytes=0) == ""
     assert manager.read_task_output(task.id, max_bytes=-1) == ""
+
+
+@pytest.mark.asyncio
+async def test_read_task_output_reads_only_requested_file_tail(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    manager = BackgroundTaskManager()
+    task = await manager.create_shell_task(
+        command=_python_stdout_command("seed"),
+        description="large output tail",
+        cwd=tmp_path,
+    )
+    await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
+    task.output_file.write_bytes(b"x" * (2 * 1024 * 1024) + b"final-tail")
+
+    output = manager.read_task_output(task.id, max_bytes=64)
+
+    assert output.endswith("final-tail")
+    assert len(output.encode("utf-8")) <= 64
+
+
+@pytest.mark.asyncio
+async def test_task_output_rotation_bounds_disk_and_reads_across_latest_files(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(task_manager_module, "TASK_OUTPUT_MAX_BYTES", 64)
+    manager = BackgroundTaskManager()
+    task = await manager.create_shell_task(
+        command=_python_stdout_command("seed"),
+        description="bounded output",
+        cwd=tmp_path,
+    )
+    await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
+
+    task.output_file.write_bytes(b"A" * 40)
+    task_manager_module._append_task_output(task.output_file, b"B" * 40)
+    task_manager_module._append_task_output(task.output_file, b"C" * 40)
+
+    backup = task.output_file.with_name(f"{task.output_file.name}.1")
+    assert task.output_file.stat().st_size <= 64
+    assert backup.stat().st_size <= 64
+    assert manager.read_task_output(task.id, max_bytes=64) == "B" * 24 + "C" * 40
+
+
+@pytest.mark.asyncio
+async def test_copy_output_coalesces_fast_listener_updates(tmp_path: Path, monkeypatch) -> None:
+    class _ChunkReader:
+        def __init__(self, count: int) -> None:
+            self.remaining = count
+
+        async def read(self, size: int) -> bytes:
+            if self.remaining <= 0:
+                return b""
+            self.remaining -= 1
+            return b"x" * (size - 1) + b"\n"
+
+    monkeypatch.setattr(task_manager_module, "TASK_OUTPUT_NOTIFY_INTERVAL_SECONDS", 3600)
+    manager = BackgroundTaskManager()
+    notifications = 0
+
+    def _listener(task: TaskRecord) -> None:
+        nonlocal notifications
+        del task
+        notifications += 1
+
+    manager.register_update_listener(_listener)
+    output_path = tmp_path / "coalesced.log"
+    output_path.write_bytes(b"")
+    record = TaskRecord(
+        id="coalesced",
+        type="local_bash",
+        status="running",
+        description="coalesced output",
+        cwd=str(tmp_path),
+        output_file=output_path,
+    )
+    manager._tasks[record.id] = record  # type: ignore[attr-defined]
+    manager._output_locks[record.id] = asyncio.Lock()  # type: ignore[attr-defined]
+
+    await manager._copy_output(  # type: ignore[attr-defined]
+        record.id,
+        SimpleNamespace(stdout=_ChunkReader(100)),
+    )
+
+    assert output_path.stat().st_size == 100 * task_manager_module.TASK_OUTPUT_READ_CHUNK_BYTES
+    assert notifications == 1
 
 
 @pytest.mark.asyncio

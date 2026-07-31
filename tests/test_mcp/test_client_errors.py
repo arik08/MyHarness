@@ -128,6 +128,25 @@ async def test_connect_all_connects_servers_concurrently(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_force_connect_retries_an_unchanged_failed_server(monkeypatch):
+    config = McpStdioServerConfig(command="python", args=[])
+    manager = McpClientManager({"retry": config})
+    manager._statuses["retry"] = McpConnectionStatus(
+        name="retry",
+        state="failed",
+        transport="stdio",
+        detail="temporary startup failure",
+    )
+    connect = AsyncMock()
+    monkeypatch.setattr(manager, "_connect_stdio", connect)
+
+    changed = await manager.ensure_server_config("retry", config, force_connect=True)
+
+    assert changed is True
+    connect.assert_awaited_once_with("retry", config)
+
+
+@pytest.mark.asyncio
 async def test_connect_stdio_merges_parent_environment(monkeypatch):
     captured = {}
 
@@ -189,6 +208,27 @@ async def test_close_suppresses_cancelled_error_from_stdio_cleanup():
 
     assert manager._stacks == {}
     assert manager._sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_close_unwinds_mcp_stacks_in_reverse_connection_order():
+    manager = McpClientManager({})
+    closed: list[str] = []
+
+    def stack(name: str):
+        value = MagicMock()
+
+        async def close() -> None:
+            closed.append(name)
+
+        value.aclose = close
+        return value
+
+    manager._stacks = {"first": stack("first"), "second": stack("second")}
+
+    await manager.close()
+
+    assert closed == ["second", "first"]
 
 
 # --- McpToolAdapter catches error and returns ToolResult(is_error=True) ---
