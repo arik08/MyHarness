@@ -602,12 +602,18 @@ class FakeSessionBackend:
 @pytest.mark.asyncio
 async def test_run_backend_host_accepts_permission_mode(monkeypatch):
     captured: dict[str, str | None] = {}
+    shutdown_called = False
 
     async def _fake_run(self):
         captured["permission_mode"] = self._config.permission_mode
         return 0
 
+    async def _fake_shutdown_task_manager():
+        nonlocal shutdown_called
+        shutdown_called = True
+
     monkeypatch.setattr("myharness.ui.backend_host.ReactBackendHost.run", _fake_run)
+    monkeypatch.setattr("myharness.ui.backend_host.shutdown_task_manager", _fake_shutdown_task_manager)
 
     result = await run_backend_host(
         api_client=StaticApiClient("unused"),
@@ -616,6 +622,7 @@ async def test_run_backend_host_accepts_permission_mode(monkeypatch):
 
     assert result == 0
     assert captured["permission_mode"] == "full_auto"
+    assert shutdown_called is True
 
 
 def test_backend_host_records_history_events_for_snapshot_replay():

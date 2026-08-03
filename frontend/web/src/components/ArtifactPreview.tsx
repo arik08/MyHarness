@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
-import html2canvas from "html2canvas";
 import type { ArtifactSummary } from "../types/backend";
 import type { ArtifactAiEditComment, ArtifactPayload } from "../types/ui";
 import { artifactDisplayName, isSourceCodeArtifact, sourceLanguageForArtifact } from "../utils/artifacts";
@@ -860,6 +859,7 @@ async function captureArtifactSnapshot(snapshot: {
   height: number;
   viewportHeight: number;
 }) {
+  const html2canvasPromise = import("html2canvas");
   const viewportHeight = Math.max(artifactCaptureDesktopHeight, Math.ceil(snapshot.viewportHeight));
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-same-origin");
@@ -910,6 +910,7 @@ async function captureArtifactSnapshot(snapshot: {
     const backgroundColor = !transparent.has(rootBackground)
       ? rootBackground
       : !transparent.has(bodyBackground) ? bodyBackground : "#ffffff";
+    const { default: html2canvas } = await html2canvasPromise;
     const canvas = await html2canvas(root, {
       backgroundColor,
       x: horizontalBounds.x,

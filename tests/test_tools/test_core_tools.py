@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,8 @@ from myharness.tools.config_tool import ConfigTool, ConfigToolInput
 from myharness.tools.exit_plan_mode_tool import ExitPlanModeTool, ExitPlanModeToolInput
 from myharness.tools.enter_worktree_tool import EnterWorktreeTool, EnterWorktreeToolInput
 from myharness.tools.exit_worktree_tool import ExitWorktreeTool, ExitWorktreeToolInput
+from myharness.tools import enter_worktree_tool as enter_worktree_module
+from myharness.tools import exit_worktree_tool as exit_worktree_module
 from myharness.tools.file_edit_tool import FileEditTool, FileEditToolInput
 from myharness.tools.file_read_tool import (
     FILE_READ_MAX_OUTPUT_CHARS,
@@ -916,6 +920,32 @@ async def test_worktree_tools(tmp_path: Path):
     )
     assert exit_result.is_error is False
     assert not worktree_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_worktree_tools_keep_event_loop_responsive(tmp_path: Path, monkeypatch):
+    def _slow_git(args, **kwargs):
+        time.sleep(0.05)
+        stdout = str(tmp_path) if args[1:3] == ["rev-parse", "--show-toplevel"] else "ok"
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(enter_worktree_module.subprocess, "run", _slow_git)
+    monkeypatch.setattr(exit_worktree_module.subprocess, "run", _slow_git)
+    context = ToolExecutionContext(cwd=tmp_path)
+
+    enter_task = asyncio.create_task(
+        EnterWorktreeTool().execute(EnterWorktreeToolInput(branch="feature/non-blocking"), context)
+    )
+    await asyncio.sleep(0.01)
+    assert enter_task.done() is False
+    assert (await enter_task).is_error is False
+
+    exit_task = asyncio.create_task(
+        ExitWorktreeTool().execute(ExitWorktreeToolInput(path="worktree"), context)
+    )
+    await asyncio.sleep(0.01)
+    assert exit_task.done() is False
+    assert (await exit_task).is_error is False
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -575,6 +576,60 @@ async def test_openai_client_prewarms_the_same_static_prefix_with_minimal_output
     assert request.messages[0].text == "real user message"
     assert usage is not None
     assert usage.input_tokens == 11
+
+
+@pytest.mark.asyncio
+async def test_openai_client_closes_sdk_stream_when_consumer_stops_early(monkeypatch):
+    closed = False
+
+    class _ClosableStream:
+        def __init__(self) -> None:
+            self._yielded = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._yielded:
+                await asyncio.Event().wait()
+            self._yielded = True
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content="partial",
+                            reasoning_content=None,
+                            tool_calls=None,
+                        ),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            )
+
+        async def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    client = OpenAICompatibleClient(api_key="test-key")
+
+    async def _create_sdk_stream(_request, _params):
+        return _ClosableStream()
+
+    monkeypatch.setattr(client, "_create_sdk_stream", _create_sdk_stream)
+    stream = client.stream_message(
+        ApiMessageRequest(
+            model="gpt-5.6-sol",
+            messages=[ConversationMessage.from_user_text("hello")],
+        )
+    )
+
+    event = await anext(stream)
+    assert isinstance(event, ApiTextDeltaEvent)
+
+    await stream.aclose()
+
+    assert closed is True
 
 
 def test_openai_completion_params_keep_static_tool_prefix_stable_between_new_sessions(monkeypatch):

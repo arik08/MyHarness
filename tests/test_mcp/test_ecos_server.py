@@ -8,7 +8,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-import httpx
 import pytest
 
 from myharness.mcp.config import load_mcp_configs_from_dirs

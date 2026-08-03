@@ -16,6 +16,7 @@ _DEFAULT_PORTS = {
     "http": 80,
     "https": 443,
 }
+DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
@@ -59,6 +60,7 @@ async def fetch_public_http_response(
     params: dict[str, str] | None = None,
     timeout: float = 15.0,
     max_redirects: int = 5,
+    max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
 ) -> httpx.Response:
     """Fetch one HTTP resource while validating every redirect hop."""
     current_url = url
@@ -72,24 +74,54 @@ async def fetch_public_http_response(
     ) as client:
         for redirect_count in range(max_redirects + 1):
             await ensure_public_http_url(current_url)
-            response = await client.get(
+            async with client.stream(
+                "GET",
                 current_url,
                 params=current_params,
                 headers=headers,
-            )
-            if not response.has_redirect_location:
-                return response
+            ) as response:
+                if response.has_redirect_location:
+                    location = response.headers.get("location")
+                    if not location:
+                        return _copy_response(response, b"")
+                    if redirect_count >= max_redirects:
+                        raise NetworkGuardError(f"too many redirects (>{max_redirects})")
+                    current_url = urljoin(str(response.url), location)
+                    current_params = None
+                    continue
 
-            location = response.headers.get("location")
-            if not location:
-                return response
-            if redirect_count >= max_redirects:
-                raise NetworkGuardError(f"too many redirects (>{max_redirects})")
-
-            current_url = urljoin(str(response.url), location)
-            current_params = None
+                content = await _read_bounded_response_body(response, max_response_bytes)
+                return _copy_response(response, content)
 
     raise NetworkGuardError("request failed before receiving a response")
+
+
+async def _read_bounded_response_body(response: httpx.Response, max_bytes: int) -> bytes:
+    declared = response.headers.get("content-length")
+    if declared:
+        try:
+            declared_bytes = int(declared)
+        except ValueError:
+            declared_bytes = 0
+        if declared_bytes > max_bytes:
+            raise NetworkGuardError(f"response body exceeds {max_bytes} bytes")
+
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise NetworkGuardError(f"response body exceeds {max_bytes} bytes")
+    return bytes(body)
+
+
+def _copy_response(response: httpx.Response, content: bytes) -> httpx.Response:
+    return httpx.Response(
+        status_code=response.status_code,
+        headers=response.headers,
+        content=content,
+        request=response.request,
+        extensions=response.extensions,
+    )
 
 
 async def _resolve_host_addresses(host: str, port: int) -> set[_IPAddress]:

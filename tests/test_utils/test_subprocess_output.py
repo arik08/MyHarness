@@ -30,6 +30,21 @@ class _Process:
         return 0
 
 
+class _Writer:
+    def __init__(self) -> None:
+        self.data = b""
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        self.data += data
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+
 async def test_communicate_bounded_drains_both_streams_and_keeps_tails() -> None:
     process = _Process()
 
@@ -39,6 +54,16 @@ async def test_communicate_bounded_drains_both_streams_and_keeps_tails() -> None
     assert process.stderr.bytes_read == 100
     assert stdout == b"B" * 24 + b"C" * 40
     assert stderr == b"D" * 14 + b"E" * 50
+
+
+async def test_communicate_bounded_writes_and_closes_stdin() -> None:
+    process = _Process()
+    process.stdin = _Writer()
+
+    await communicate_bounded(process, timeout=1, input=b"payload")
+
+    assert process.stdin.data == b"payload"
+    assert process.stdin.closed is True
 
 
 async def test_communicate_bounded_kills_process_when_cancelled() -> None:
@@ -70,5 +95,35 @@ async def test_communicate_bounded_kills_process_when_cancelled() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await task
+
+    assert process.killed is True
+
+
+async def test_communicate_bounded_times_out_when_inherited_pipe_stays_open() -> None:
+    class _BlockingReader:
+        async def read(self, size: int) -> bytes:
+            del size
+            await asyncio.Event().wait()
+            return b""
+
+    class _ExitedProcess:
+        def __init__(self) -> None:
+            self.stdout = _BlockingReader()
+            self.stderr = _BlockingReader()
+            self.killed = False
+
+        async def wait(self) -> int:
+            return 0
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = _ExitedProcess()
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            communicate_bounded(process, timeout=0.01),
+            timeout=0.2,
+        )
 
     assert process.killed is True

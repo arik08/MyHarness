@@ -969,6 +969,45 @@ async def test_query_engine_emits_compact_progress_before_reply(tmp_path: Path, 
 
 
 @pytest.mark.asyncio
+async def test_query_engine_cancels_compaction_when_stream_closes(tmp_path: Path, monkeypatch):
+    compaction_cancelled = asyncio.Event()
+
+    async def _blocking_compaction(*_args, progress_callback, **_kwargs):
+        try:
+            await progress_callback(
+                CompactProgressEvent(
+                    phase="compact_start",
+                    trigger="auto",
+                    message="Compacting conversation memory.",
+                )
+            )
+            await asyncio.Event().wait()
+        finally:
+            compaction_cancelled.set()
+
+    monkeypatch.setattr(
+        "myharness.services.compact.auto_compact_if_needed",
+        _blocking_compaction,
+    )
+    engine = QueryEngine(
+        api_client=StaticApiClient("unused"),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    stream = engine.submit_message("hello")
+    event = await anext(stream)
+    assert isinstance(event, CompactProgressEvent)
+
+    await stream.aclose()
+
+    await asyncio.wait_for(compaction_cancelled.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_query_engine_reactive_compacts_after_prompt_too_long(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("myharness.services.compact.try_session_memory_compaction", lambda *args, **kwargs: None)
     monkeypatch.setattr("myharness.services.compact.should_autocompact", lambda *args, **kwargs: False)

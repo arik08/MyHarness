@@ -67,12 +67,14 @@ let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
 let webUsageStatsWriteQueue = Promise.resolve();
+const jsonFileMutationQueues = new Map();
 const recentDevRedirectVisitTtlMs = 15_000;
 const recentDevRedirectVisits = new Map();
 let server = null;
 const workspaceMutationQueues = new Map();
 const aiEditHeartbeatIntervalMs = 15_000;
 const clipboardImageMaxBytes = 64 * 1024 * 1024;
+const jsonRequestMaxBytes = 12 * 1024 * 1024;
 const entryPassword = process.env.MYHARNESS_ENTRY_PASSWORD === undefined
   ? "1212"
   : String(process.env.MYHARNESS_ENTRY_PASSWORD);
@@ -199,7 +201,10 @@ const projectFileListSkipPrefixes = [
   "docs/autopilot/",
 ];
 const shellCommandTimeoutMs = 60_000;
-const shellOutputMaxChars = 24_000;
+const configuredShellOutputMaxChars = Number(process.env.MYHARNESS_SHELL_OUTPUT_MAX_CHARS || 24_000);
+const shellOutputMaxChars = Number.isFinite(configuredShellOutputMaxChars)
+  ? Math.max(1, configuredShellOutputMaxChars)
+  : 24_000;
 const tokenCountMaxChars = 200_000;
 const modelOutputTokenDefault = 42_000;
 const composeTargetOutputTokenMax = 40_000;
@@ -433,6 +438,11 @@ function defaultWorkspaceScope() {
   return { mode: "shared", name: sharedWorkspaceScopeName, root: scopeRoot };
 }
 
+function pathStaysWithin(rootPath, targetPath) {
+  const rel = relative(rootPath, targetPath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
 function resolvePath(url) {
   const pathname = decodeURIComponent(new URL(url, `http://localhost:${port}`).pathname);
   const relativePath = pathname.replace(/^\/+/, "");
@@ -456,13 +466,7 @@ function resolvePath(url) {
         : join(root, relativePath);
   const normalized = normalize(filePath);
 
-  if (
-    normalized !== webRoot &&
-    !normalized.startsWith(webRoot) &&
-    normalized !== webDistRoot &&
-    !normalized.startsWith(webDistRoot) &&
-    !normalized.startsWith(vendorRoot)
-  ) {
+  if (![webRoot, webDistRoot, vendorRoot].some((allowedRoot) => pathStaysWithin(allowedRoot, normalized))) {
     return null;
   }
 
@@ -512,25 +516,28 @@ function publicBaseUrlForRequest(request) {
   }
 }
 
-async function readJson(request) {
-  const chunks = [];
-  for await (const chunk of request) {
-    chunks.push(chunk);
-  }
-  if (chunks.length === 0) {
+async function readJson(request, maxBytes = jsonRequestMaxBytes) {
+  const body = await readRequestBuffer(request, maxBytes);
+  if (body.length === 0) {
     return {};
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return JSON.parse(body.toString("utf8"));
 }
 
 async function readRequestBuffer(request, maxBytes) {
+  const declaredBytes = Number(request.headers["content-length"] || 0);
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    const error = new Error("Request body is too large");
+    error.status = 413;
+    throw error;
+  }
   const chunks = [];
   let total = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.length;
     if (total > maxBytes) {
-      const error = new Error("Uploaded files are too large");
+      const error = new Error("Request body is too large");
       error.status = 413;
       throw error;
     }
@@ -2779,16 +2786,36 @@ async function readJsonFileIfExists(path) {
   }
 }
 
-async function writeJsonFile(path, payload) {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-}
-
 async function writeJsonFileAtomic(path, payload) {
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = `${path}.${process.pid}.${Date.now()}-${crypto.randomUUID()}.tmp`;
   await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   await rename(tmpPath, path);
+}
+
+async function mutateJsonFile(path, mutator) {
+  const previous = jsonFileMutationQueues.get(path) || Promise.resolve();
+  const mutation = previous.catch(() => {}).then(async () => {
+    const payload = await readJsonFileIfExists(path) || {};
+    const result = await mutator(payload);
+    await writeJsonFileAtomic(path, payload);
+    return result;
+  });
+  jsonFileMutationQueues.set(path, mutation);
+  try {
+    return await mutation;
+  } finally {
+    if (jsonFileMutationQueues.get(path) === mutation) {
+      jsonFileMutationQueues.delete(path);
+    }
+  }
+}
+
+function replaceJsonObject(target, replacement) {
+  for (const key of Object.keys(target)) {
+    delete target[key];
+  }
+  Object.assign(target, replacement);
 }
 
 function cleanRuntimePreference(value) {
@@ -2944,40 +2971,40 @@ function sharedRuntimeChoiceFromPayload(payload) {
 
 async function saveSharedRuntimeChoice(session, choice) {
   const settingsPath = join(globalConfigDir(), "settings.json");
-  const settings = await readJsonFileIfExists(settingsPath) || {};
-  const previous = normalizeSharedRuntimePreferences(settings.web_shared_runtime_preferences);
-  const sessionRuntime = runtimePreferencesFromSession(session);
-  const next = normalizeSharedRuntimePreferences(previous);
+  return mutateJsonFile(settingsPath, async (settings) => {
+    const previous = normalizeSharedRuntimePreferences(settings.web_shared_runtime_preferences);
+    const sessionRuntime = runtimePreferencesFromSession(session);
+    const next = normalizeSharedRuntimePreferences(previous);
 
-  if (choice.command === "provider") {
-    next.active_profile = choice.value;
-    delete next.model;
-  } else if (choice.command === "model") {
-    if (sessionRuntime.active_profile && (!next.active_profile || next.active_profile === sessionRuntime.active_profile)) {
-      next.active_profile = sessionRuntime.active_profile;
-    }
-    if (choice.value.toLowerCase() === "default") {
+    if (choice.command === "provider") {
+      next.active_profile = choice.value;
       delete next.model;
-    } else {
-      next.model = choice.value;
+    } else if (choice.command === "model") {
+      if (sessionRuntime.active_profile && (!next.active_profile || next.active_profile === sessionRuntime.active_profile)) {
+        next.active_profile = sessionRuntime.active_profile;
+      }
+      if (choice.value.toLowerCase() === "default") {
+        delete next.model;
+      } else {
+        next.model = choice.value;
+      }
+    } else if (choice.command === "effort") {
+      if (!next.active_profile && sessionRuntime.active_profile) {
+        next.active_profile = sessionRuntime.active_profile;
+      }
+      const sessionRuntimeMatchesProfile = !sessionRuntime.active_profile
+        || !next.active_profile
+        || sessionRuntime.active_profile === next.active_profile;
+      if (!next.model && sessionRuntime.model && sessionRuntimeMatchesProfile) {
+        next.model = sessionRuntime.model;
+      }
+      next.effort = normalizeRuntimeEffortValue(choice.value);
     }
-  } else if (choice.command === "effort") {
-    if (!next.active_profile && sessionRuntime.active_profile) {
-      next.active_profile = sessionRuntime.active_profile;
-    }
-    const sessionRuntimeMatchesProfile = !sessionRuntime.active_profile
-      || !next.active_profile
-      || sessionRuntime.active_profile === next.active_profile;
-    if (!next.model && sessionRuntime.model && sessionRuntimeMatchesProfile) {
-      next.model = sessionRuntime.model;
-    }
-    next.effort = normalizeRuntimeEffortValue(choice.value);
-  }
 
-  next.pgpt_available = await isPgptRuntimeAvailable();
-  settings.web_shared_runtime_preferences = normalizeSharedRuntimePreferences(next);
-  await writeJsonFile(settingsPath, settings);
-  return settings.web_shared_runtime_preferences;
+    next.pgpt_available = await isPgptRuntimeAvailable();
+    settings.web_shared_runtime_preferences = normalizeSharedRuntimePreferences(next);
+    return settings.web_shared_runtime_preferences;
+  });
 }
 
 function conflictError(message = "파일이 다른 사용자 또는 세션에서 변경되었습니다. 새로고침 후 다시 시도하세요.") {
@@ -3108,11 +3135,11 @@ async function readWorkspaceScopeSettings(request = null) {
 
 async function saveWorkspaceScopeSettings(body = {}, request = null) {
   const mode = normalizeWorkspaceScopeMode(body.mode);
-  workspaceScopeMode = mode;
   const settingsPath = join(globalConfigDir(), "settings.json");
-  const settings = await readJsonFileIfExists(settingsPath) || {};
-  settings.web_workspace_scope = mode;
-  await writeJsonFile(settingsPath, settings);
+  await mutateJsonFile(settingsPath, (settings) => {
+    settings.web_workspace_scope = mode;
+  });
+  workspaceScopeMode = mode;
   return readWorkspaceScopeSettings(request);
 }
 
@@ -3145,14 +3172,14 @@ async function readLearnedSkillsSettings() {
 async function saveLearnedSkillsSettings(body = {}) {
   const mode = normalizeLearnedSkillsMode(body.mode, "hide");
   const settingsPath = join(globalConfigDir(), "settings.json");
-  const settings = await readJsonFileIfExists(settingsPath) || {};
-  const learning = settings.learning && typeof settings.learning === "object" ? settings.learning : {};
-  settings.learning = {
-    ...learning,
-    enabled: mode !== "off",
-    mode,
-  };
-  await writeJsonFile(settingsPath, settings);
+  await mutateJsonFile(settingsPath, (settings) => {
+    const learning = settings.learning && typeof settings.learning === "object" ? settings.learning : {};
+    settings.learning = {
+      ...learning,
+      enabled: mode !== "off",
+      mode,
+    };
+  });
   return readLearnedSkillsSettings();
 }
 
@@ -3168,11 +3195,11 @@ async function readShellSettings() {
 
 async function saveShellSettings(body = {}) {
   const preference = normalizeShellPreference(body.shell);
-  shellPreference = preference;
   const settingsPath = join(globalConfigDir(), "settings.json");
-  const settings = await readJsonFileIfExists(settingsPath) || {};
-  settings.shell = preference;
-  await writeJsonFile(settingsPath, settings);
+  await mutateJsonFile(settingsPath, (settings) => {
+    settings.shell = preference;
+  });
+  shellPreference = preference;
   return readShellSettings();
 }
 
@@ -3187,9 +3214,9 @@ async function readYoloModeSettings() {
 async function saveYoloModeSettings(body = {}) {
   const enabled = body.enabled !== false;
   const settingsPath = join(globalConfigDir(), "settings.json");
-  const settings = await readJsonFileIfExists(settingsPath) || {};
-  settings.yolo_mode_enabled = enabled;
-  await writeJsonFile(settingsPath, settings);
+  await mutateJsonFile(settingsPath, (settings) => {
+    settings.yolo_mode_enabled = enabled;
+  });
   return readYoloModeSettings();
 }
 
@@ -3243,28 +3270,28 @@ async function readOutputTokenSettings() {
 async function saveOutputTokenSettings(body = {}) {
   const incoming = body.values && typeof body.values === "object" ? body.values : {};
   const settingsPath = join(globalConfigDir(), "settings.json");
-  const settings = await readJsonFileIfExists(settingsPath) || {};
-  const previous = outputTokenValuesFromSettings(settings);
-  const values = { ...previous };
-  for (const model of configurableOutputTokenModels) {
-    if (!Object.prototype.hasOwnProperty.call(incoming, model)) {
-      continue;
+  await mutateJsonFile(settingsPath, (settings) => {
+    const previous = outputTokenValuesFromSettings(settings);
+    const values = { ...previous };
+    for (const model of configurableOutputTokenModels) {
+      if (!Object.prototype.hasOwnProperty.call(incoming, model)) {
+        continue;
+      }
+      const parsed = Number(incoming[model]);
+      if (!Number.isFinite(parsed) || parsed < 1 || Math.trunc(parsed) !== parsed) {
+        throw new Error(`${model} 출력 토큰은 1 이상의 정수여야 합니다.`);
+      }
+      if (parsed > modelOutputTokenCaps[model]) {
+        throw new Error(`${model} 출력 토큰은 공식 최대값 ${modelOutputTokenCaps[model].toLocaleString("en-US")}을 넘을 수 없습니다.`);
+      }
+      values[model] = parsed;
     }
-    const parsed = Number(incoming[model]);
-    if (!Number.isFinite(parsed) || parsed < 1 || Math.trunc(parsed) !== parsed) {
-      throw new Error(`${model} 출력 토큰은 1 이상의 정수여야 합니다.`);
+    settings.model_output_token_limits = values;
+    const activeModel = normalizeModelFamily(settings.model);
+    if (activeModel && Object.prototype.hasOwnProperty.call(values, activeModel)) {
+      settings.max_tokens = values[activeModel];
     }
-    if (parsed > modelOutputTokenCaps[model]) {
-      throw new Error(`${model} 출력 토큰은 공식 최대값 ${modelOutputTokenCaps[model].toLocaleString("en-US")}을 넘을 수 없습니다.`);
-    }
-    values[model] = parsed;
-  }
-  settings.model_output_token_limits = values;
-  const activeModel = normalizeModelFamily(settings.model);
-  if (activeModel && Object.prototype.hasOwnProperty.call(values, activeModel)) {
-    settings.max_tokens = values[activeModel];
-  }
-  await writeJsonFile(settingsPath, settings);
+  });
   return readOutputTokenSettings();
 }
 
@@ -3311,28 +3338,28 @@ async function readPgptSettings() {
 
 async function savePgptSettings(body = {}) {
   const credentialsPath = join(globalConfigDir(), "credentials.json");
-  const credentials = await readJsonFileIfExists(credentialsPath) || {};
-  const current = credentials.pgpt && typeof credentials.pgpt === "object" ? credentials.pgpt : {};
-  const next = { ...current };
-  if (Object.prototype.hasOwnProperty.call(body, "apiKey")) {
-    const value = String(body.apiKey || "").trim();
-    if (value) {
-      next.api_key = value;
-      process.env.PGPT_API_KEY = value;
+  await mutateJsonFile(credentialsPath, (credentials) => {
+    const current = credentials.pgpt && typeof credentials.pgpt === "object" ? credentials.pgpt : {};
+    const next = { ...current };
+    if (Object.prototype.hasOwnProperty.call(body, "apiKey")) {
+      const value = String(body.apiKey || "").trim();
+      if (value) {
+        next.api_key = value;
+        process.env.PGPT_API_KEY = value;
+      }
     }
-  }
-  if (Object.prototype.hasOwnProperty.call(body, "employeeNo")) {
-    next.employee_no = String(body.employeeNo || "").trim();
-    if (next.employee_no) {
-      process.env.PGPT_EMPLOYEE_NO = next.employee_no;
+    if (Object.prototype.hasOwnProperty.call(body, "employeeNo")) {
+      next.employee_no = String(body.employeeNo || "").trim();
+      if (next.employee_no) {
+        process.env.PGPT_EMPLOYEE_NO = next.employee_no;
+      }
     }
-  }
-  if (Object.prototype.hasOwnProperty.call(body, "companyCode")) {
-    next.company_code = String(body.companyCode || "").trim() || "30";
-    process.env.PGPT_COMPANY_CODE = next.company_code;
-  }
-  credentials.pgpt = next;
-  await writeJsonFile(credentialsPath, credentials);
+    if (Object.prototype.hasOwnProperty.call(body, "companyCode")) {
+      next.company_code = String(body.companyCode || "").trim() || "30";
+      process.env.PGPT_COMPANY_CODE = next.company_code;
+    }
+    credentials.pgpt = next;
+  });
   return readPgptSettings();
 }
 
@@ -3387,16 +3414,20 @@ async function updatePluginPreferenceFiles(name, enabled, session = null) {
   const normalizedEnabled = enabled !== false;
 
   const appPath = appPreferencesPath();
-  const appPreferences = normalizeProjectPreferences(await readJsonFileIfExists(appPath) || {});
-  appPreferences.enabled_plugins[cleanName] = normalizedEnabled;
-  await writeJsonFileAtomic(appPath, normalizeProjectPreferences(appPreferences));
+  await mutateJsonFile(appPath, (raw) => {
+    const preferences = normalizeProjectPreferences(raw);
+    preferences.enabled_plugins[cleanName] = normalizedEnabled;
+    replaceJsonObject(raw, normalizeProjectPreferences(preferences));
+  });
 
   const workspace = session?.workspace;
   if (workspace?.path) {
     const workspacePath = projectPreferencesPath(workspace);
-    const workspacePreferences = normalizeProjectPreferences(await readJsonFileIfExists(workspacePath) || {});
-    workspacePreferences.enabled_plugins[cleanName] = normalizedEnabled;
-    await writeJsonFileAtomic(workspacePath, workspacePreferences);
+    await mutateJsonFile(workspacePath, (raw) => {
+      const preferences = normalizeProjectPreferences(raw);
+      preferences.enabled_plugins[cleanName] = normalizedEnabled;
+      replaceJsonObject(raw, normalizeProjectPreferences(preferences));
+    });
   }
 
   const scopes = [];
@@ -3412,9 +3443,11 @@ async function updatePluginPreferenceFiles(name, enabled, session = null) {
     const path = join(playgroundRoot, scopeName, defaultWorkspaceName, projectPreferencesRel);
     const raw = await readJsonFileIfExists(path);
     if (!raw) return;
-    const preferences = normalizeProjectPreferences(raw);
-    preferences.enabled_plugins[cleanName] = normalizedEnabled;
-    await writeJsonFileAtomic(path, preferences);
+    await mutateJsonFile(path, (current) => {
+      const preferences = normalizeProjectPreferences(current);
+      preferences.enabled_plugins[cleanName] = normalizedEnabled;
+      replaceJsonObject(current, normalizeProjectPreferences(preferences));
+    });
   }));
 }
 
@@ -3425,15 +3458,17 @@ async function updateMcpPreferenceFiles(name, enabled, session = null) {
   const workspace = session?.workspace;
   if (!workspace?.path) return;
   const workspacePath = projectPreferencesPath(workspace);
-  const workspacePreferences = normalizeProjectPreferences(await readJsonFileIfExists(workspacePath) || {});
-  const disabled = new Set(workspacePreferences.disabled_mcp_servers);
-  if (enabled !== false) {
-    disabled.delete(cleanName);
-  } else {
-    disabled.add(cleanName);
-  }
-  workspacePreferences.disabled_mcp_servers = [...disabled].sort();
-  await writeJsonFileAtomic(workspacePath, normalizeProjectPreferences(workspacePreferences));
+  await mutateJsonFile(workspacePath, (raw) => {
+    const preferences = normalizeProjectPreferences(raw);
+    const disabled = new Set(preferences.disabled_mcp_servers);
+    if (enabled !== false) {
+      disabled.delete(cleanName);
+    } else {
+      disabled.add(cleanName);
+    }
+    preferences.disabled_mcp_servers = [...disabled].sort();
+    replaceJsonObject(raw, normalizeProjectPreferences(preferences));
+  });
 }
 
 async function ensureDefaultPreferences(scope = defaultWorkspaceScope()) {
@@ -3446,8 +3481,7 @@ async function ensureDefaultPreferences(scope = defaultWorkspaceScope()) {
     if (error?.code !== "ENOENT") {
       throw error;
     }
-    await mkdir(dirname(preferencesPath), { recursive: true });
-    await writeFile(preferencesPath, `${JSON.stringify(await globalPreferencesSnapshot(), null, 2)}\n`, "utf8");
+    await writeJsonFileAtomic(preferencesPath, await globalPreferencesSnapshot());
   }
   return preferencesPath;
 }
@@ -3468,8 +3502,7 @@ async function copyDefaultPreferencesToWorkspace(workspace, scope = defaultWorks
     }
   }
   const raw = await readJsonFileIfExists(source);
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, `${JSON.stringify(normalizeProjectPreferences(raw), null, 2)}\n`, "utf8");
+  await writeJsonFileAtomic(target, normalizeProjectPreferences(raw));
 }
 
 function legacyWorkspacePath(name) {
@@ -3684,8 +3717,7 @@ async function readHiddenHistoryIds(workspace) {
 
 async function writeHiddenHistoryIds(workspace, sessionIds) {
   const target = hiddenHistoryPathForWorkspace(workspace);
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, `${JSON.stringify({ sessionIds: normalizeHiddenHistoryIds(sessionIds) }, null, 2)}\n`);
+  await writeJsonFileAtomic(target, { sessionIds: normalizeHiddenHistoryIds(sessionIds) });
 }
 
 async function hideWorkspaceHistoryItem(workspace, sessionId) {
@@ -3920,15 +3952,22 @@ function countMessageStats(messages) {
       stats.assistantMessageCount += 1;
     }
     if (Array.isArray(message.content)) {
-      stats.toolUseCount += message.content.filter((block) => block?.type === "tool_use").length;
+      for (const block of message.content) {
+        if (block?.type === "tool_use") {
+          stats.toolUseCount += 1;
+        }
+      }
     }
   }
   return stats;
 }
 
 async function readSessionStatsItem(path) {
-  const data = JSON.parse(await readFile(path, "utf8"));
-  const info = await stat(path);
+  const [text, info] = await Promise.all([
+    readFile(path, "utf8"),
+    stat(path),
+  ]);
+  const data = JSON.parse(text);
   const createdAt = historyOrderTimestamp(data, info);
   return {
     ...countMessageStats(data.messages),
@@ -3956,6 +3995,14 @@ function appendWebUsageStats(stats, webUsage, clientAddress = "") {
   const today = localDateKey();
   const dailyMap = new Map();
   const dailyIpMap = new Map();
+  const activeSessionsByIp = new Map();
+  for (const session of sessions.values()) {
+    if (session.shuttingDown || !session.clientAddress) continue;
+    activeSessionsByIp.set(
+      session.clientAddress,
+      (activeSessionsByIp.get(session.clientAddress) || 0) + 1,
+    );
+  }
   const ipItems = Object.values(webUsage.byIp || {}).map((entry) => {
     const daily = entry?.daily && typeof entry.daily === "object" ? entry.daily : {};
     const todayStats = daily[today] && typeof daily[today] === "object" ? daily[today] : {};
@@ -3983,17 +4030,13 @@ function appendWebUsageStats(stats, webUsage, clientAddress = "") {
       todayVisitCount: Number(todayStats.visits || 0),
       firstSeenAt: Number(entry?.firstSeenAt || 0) || null,
       lastSeenAt: Number(entry?.lastSeenAt || 0) || null,
-      activeSessionCount: [...sessions.values()].filter((session) =>
-        !session.shuttingDown && session.clientAddress === entry?.ip
-      ).length,
+      activeSessionCount: activeSessionsByIp.get(String(entry?.ip || "")) || 0,
     };
   }).filter((entry) => entry.ip);
 
   stats.totalVisitCount = Number(webUsage.totalVisits || 0);
-  stats.todayVisitCount = [...dailyMap.values()]
-    .find((entry) => entry.date === today)?.visitCount || 0;
-  stats.dailyActiveIpCount = [...dailyMap.values()]
-    .find((entry) => entry.date === today)?.activeIpCount || 0;
+  stats.todayVisitCount = dailyMap.get(today)?.visitCount || 0;
+  stats.dailyActiveIpCount = dailyMap.get(today)?.activeIpCount || 0;
   stats.ipBreakdown = ipItems.sort((left, right) => {
     const byLastSeen = Number(right.lastSeenAt || 0) - Number(left.lastSeenAt || 0);
     return byLastSeen || right.visitCount - left.visitCount || left.ip.localeCompare(right.ip);
@@ -4316,6 +4359,14 @@ function trimShellOutput(value) {
     text: `${text.slice(0, shellOutputMaxChars)}\n\n[output truncated]`,
     truncated: true,
   };
+}
+
+function appendBoundedShellOutput(current, chunk) {
+  const remaining = shellOutputMaxChars + 1 - current.length;
+  if (remaining <= 0) {
+    return current;
+  }
+  return current + chunk.toString("utf8").slice(0, remaining);
 }
 
 async function shellCommandForPlatform(command) {
@@ -4702,10 +4753,10 @@ async function runShellCommand(options = {}) {
     timer.unref?.();
 
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
+      stdout = appendBoundedShellOutput(stdout, chunk);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
+      stderr = appendBoundedShellOutput(stderr, chunk);
     });
     child.on("error", (error) => {
       clearTimeout(timer);
@@ -6244,7 +6295,7 @@ async function handleApi(request, response, pathname) {
   return false;
 }
 
-server = createServer(async (request, response) => {
+async function handleRequest(request, response) {
   const pathname = new URL(request.url || "/", `http://localhost:${port}`).pathname;
   if (request.method === "GET" && isPageVisitPath(pathname)) {
     try {
@@ -6300,6 +6351,26 @@ server = createServer(async (request, response) => {
     response.writeHead(404);
     response.end("Not found");
   }
+}
+
+server = createServer((request, response) => {
+  void handleRequest(request, response).catch((error) => {
+    writeRuntimeLog("web_request_failed", {
+      method: request.method || "",
+      url: request.url || "",
+      error: errorPayload(error),
+    });
+    if (response.headersSent) {
+      response.destroy();
+      return;
+    }
+    const status = Number.isInteger(error?.status)
+      ? error.status
+      : error instanceof SyntaxError
+        ? 400
+        : 500;
+    json(response, status, { error: error?.message || "Request failed" });
+  });
 });
 
 function stopServer(signal = "shutdown") {

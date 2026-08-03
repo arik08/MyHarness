@@ -45,6 +45,7 @@ CLAUDE_OAUTH_ONLY_BETAS = (
 )
 CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
 _KEYCHAIN_BINDING_PREFIX = "keychain:"
+_KEYCHAIN_COMMAND_TIMEOUT_SECONDS = 10
 
 _claude_code_version_cache: str | None = None
 _claude_code_session_id: str | None = None
@@ -261,13 +262,15 @@ def _read_claude_credentials_from_keychain(
         raw_payload = subprocess.check_output(
             ["security", "find-generic-password", "-w", "-s", service],
             text=True,
+            timeout=_KEYCHAIN_COMMAND_TIMEOUT_SECONDS,
         )
         metadata = subprocess.check_output(
             ["security", "find-generic-password", "-s", service],
             text=True,
+            timeout=_KEYCHAIN_COMMAND_TIMEOUT_SECONDS,
         )
-    except subprocess.CalledProcessError as exc:
-        raise ValueError(f"Claude Keychain credential not found for service: {service}") from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"Claude Keychain credential unavailable for service: {service}") from exc
 
     try:
         payload = json.loads(raw_payload)
@@ -520,22 +523,26 @@ def _write_claude_credentials_to_keychain(
         refresh_token=refresh_token,
         expires_at_ms=expires_at_ms,
     )
-    subprocess.run(
-        [
-            "security",
-            "add-generic-password",
-            "-U",
-            "-s",
-            service,
-            "-a",
-            account,
-            "-w",
-            json.dumps(next_payload, separators=(",", ":")),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        subprocess.run(
+            [
+                "security",
+                "add-generic-password",
+                "-U",
+                "-s",
+                service,
+                "-a",
+                account,
+                "-w",
+                json.dumps(next_payload, separators=(",", ":")),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=_KEYCHAIN_COMMAND_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"Could not update Claude Keychain credential for service: {service}") from exc
 
 
 def _merge_claude_oauth_payload(

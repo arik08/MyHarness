@@ -703,6 +703,10 @@ async def _destroy_worktree(worktree_path: str) -> None:
 
     Tries ``git worktree remove --force`` first; falls back to ``shutil.rmtree``.
     """
+    await asyncio.to_thread(_sync_destroy_worktree, worktree_path)
+
+
+def _sync_destroy_worktree(worktree_path: str) -> None:
     wt = Path(worktree_path)
     git_file = wt / ".git"
     main_repo_path: str | None = None

@@ -19,6 +19,7 @@ from myharness.tools import long_report_tool as long_report_module
 from myharness.tools.long_report_tool import (
     LongReportTool,
     LongReportToolInput,
+    _LongReportIntermediateArtifacts,
     _continuation_prompt,
     _report_design_brief,
     _review_prompt,
@@ -125,6 +126,36 @@ class OutlineStreamingReportClient:
         )
 
 
+class BurstStreamingReportClient:
+    def __init__(self, delta_count: int = 1_000) -> None:
+        self.delta_count = delta_count
+        self.requests: list[ApiMessageRequest] = []
+
+    async def stream_message(self, request: ApiMessageRequest):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="- 본문")]),
+                usage=UsageSnapshot(),
+                stop_reason=None,
+            )
+            return
+        if len(self.requests) == 2:
+            for _ in range(self.delta_count):
+                yield ApiTextDeltaEvent(text="성능 문장입니다. ")
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="")]),
+                usage=UsageSnapshot(),
+                stop_reason=None,
+            )
+            return
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="검토 완료")]),
+            usage=UsageSnapshot(),
+            stop_reason=None,
+        )
+
+
 class SlowOutlineReportClient:
     def __init__(self) -> None:
         self.requests: list[ApiMessageRequest] = []
@@ -141,6 +172,85 @@ class SlowOutlineReportClient:
             usage=UsageSnapshot(input_tokens=10, output_tokens=20),
             stop_reason=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_request_text_closes_stream_after_reaching_local_token_budget():
+    closed = False
+
+    class _BudgetStream:
+        def __init__(self) -> None:
+            self._yielded = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._yielded:
+                await asyncio.Event().wait()
+            self._yielded = True
+            return ApiTextDeltaEvent(text="one two three four")
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    class _BudgetClient:
+        def stream_message(self, _request):
+            return _BudgetStream()
+
+    text, stop_reason, _usage = await long_report_module._request_text(
+        _BudgetClient(),
+        model="gpt-5.6-sol",
+        system_prompt="system",
+        reasoning_effort=None,
+        prompt="write",
+        max_tokens=100,
+        max_collected_tokens=1,
+    )
+
+    assert text
+    assert stop_reason == "local_token_budget"
+    assert closed is True
+
+
+@pytest.mark.asyncio
+async def test_request_text_estimates_each_streamed_candidate_once(monkeypatch):
+    calls = 0
+    original_estimate_tokens = estimate_tokens
+
+    def _counted_estimate_tokens(text, *, model=None):
+        nonlocal calls
+        calls += 1
+        return original_estimate_tokens(text, model=model)
+
+    class _StreamingClient:
+        async def stream_message(self, _request):
+            yield ApiTextDeltaEvent(text="one two ")
+            yield ApiTextDeltaEvent(text="three four")
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="one two three four")],
+                ),
+                usage=UsageSnapshot(),
+                stop_reason=None,
+            )
+
+    monkeypatch.setattr(long_report_module, "estimate_tokens", _counted_estimate_tokens)
+    text, stop_reason, _usage = await long_report_module._request_text(
+        _StreamingClient(),
+        model="gpt-5.6-sol",
+        system_prompt="system",
+        reasoning_effort=None,
+        prompt="write",
+        max_tokens=100,
+        max_collected_tokens=100,
+    )
+
+    assert text == "one two three four"
+    assert stop_reason is None
+    assert calls == 2
 
 
 @pytest.mark.asyncio
@@ -441,6 +551,44 @@ async def test_long_report_flushes_partial_file_while_section_streams(tmp_path: 
         estimate_tokens(text, model="gpt-5.5")
         for text in ("첫 문단이 ", "스트리밍됩니다.", "검토 요약")
     )
+
+
+@pytest.mark.asyncio
+async def test_long_report_coalesces_burst_progress_writes(tmp_path: Path, monkeypatch):
+    write_count = 0
+    original_write = long_report_module.write_long_report_progress_state
+
+    def _counted_write(*args, **kwargs):
+        nonlocal write_count
+        write_count += 1
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(long_report_module, "write_long_report_progress_state", _counted_write)
+    result = await LongReportTool().execute(
+        LongReportToolInput(title="성능", brief="진행 상태 병합", output_path="outputs/burst.md"),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={"api_client": BurstStreamingReportClient(), "model": "gpt-5.5"},
+        ),
+    )
+
+    assert result.is_error is False
+    assert write_count < 30
+
+
+def test_long_report_progress_files_reuse_write_metadata(tmp_path: Path, monkeypatch):
+    writer = _LongReportIntermediateArtifacts(output_path=tmp_path / "report.md", title="성능")
+    writer.write_section(1, "본문", "첫 줄\n둘째 줄", force=True)
+
+    def _unexpected_read(*args, **kwargs):
+        raise AssertionError("progress_files must not reread intermediate contents")
+
+    monkeypatch.setattr(Path, "read_text", _unexpected_read)
+    files = writer.progress_files(tmp_path)
+
+    section = next(item for item in files if item["label"] == "section-01-draft")
+    assert section["line_count"] == 5
+    assert section["size_bytes"] > 0
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 
 import pytest
@@ -122,7 +123,7 @@ class _CompactApiClient:
         response = self._responses.pop(0)
         if isinstance(response, Exception):
             raise response
-        if asyncio.iscoroutinefunction(response):
+        if inspect.iscoroutinefunction(response):
             await response()
             return
         yield ApiMessageCompleteEvent(

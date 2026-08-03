@@ -40,6 +40,7 @@ def test_repeated_verified_failure_creates_program_local_skill(tmp_path: Path):
     assert "repeated, verified MyHarness failure pattern" in result.skill_path.read_text(encoding="utf-8")
     patterns = result.skill_path.parent / "references" / "learned-patterns.md"
     assert result.candidate.evidence_hash in patterns.read_text(encoding="utf-8")
+    assert (result.skill_path.parent / ".learning.lock").exists()
     learned = metadata.get("recent_learned_skills")
     assert isinstance(learned, list)
     assert learned[-1]["skill"] == result.candidate.skill_name

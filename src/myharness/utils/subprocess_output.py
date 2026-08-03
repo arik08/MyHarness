@@ -13,6 +13,7 @@ async def communicate_bounded(
     process: asyncio.subprocess.Process,
     *,
     timeout: float,
+    input: bytes | None = None,
     tail_bytes: int = DEFAULT_TAIL_BYTES,
     read_chunk_bytes: int = DEFAULT_READ_CHUNK_BYTES,
 ) -> tuple[bytes, bytes]:
@@ -33,13 +34,26 @@ async def communicate_bounded(
             )
         ),
     )
+
+    async def _communicate() -> tuple[bytes, bytes]:
+        if input is not None:
+            if process.stdin is None:
+                raise ValueError("stdin is not available")
+            process.stdin.write(input)
+            await process.stdin.drain()
+            process.stdin.close()
+        await process.wait()
+        return await asyncio.gather(*readers)
+
     try:
-        await asyncio.wait_for(process.wait(), timeout=timeout)
+        return await asyncio.wait_for(_communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             process.kill()
         with contextlib.suppress(ProcessLookupError):
             await process.wait()
+        for reader in readers:
+            reader.cancel()
         await asyncio.gather(*readers, return_exceptions=True)
         raise
     except BaseException:
@@ -51,8 +65,6 @@ async def communicate_bounded(
             reader.cancel()
         await asyncio.gather(*readers, return_exceptions=True)
         raise
-    stdout, stderr = await asyncio.gather(*readers)
-    return stdout, stderr
 
 
 async def _read_stream_tail(

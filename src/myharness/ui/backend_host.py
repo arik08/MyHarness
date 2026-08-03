@@ -65,6 +65,7 @@ from myharness.skills.state import apply_skill_enabled_state, get_skill_usage_co
 from myharness.skills.types import SkillDefinition
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 from myharness.tasks import get_task_manager
+from myharness.tasks.manager import shutdown_task_manager
 from myharness.tools import ToolRegistry
 from myharness.tools.mcp_tool import McpToolAdapter, _sanitize_tool_segment
 from myharness.ui.async_agents import (
@@ -3127,7 +3128,6 @@ class ReactBackendHost:
 
         settings = self._bundle.current_settings()
         active_profile_name, active_profile = settings.resolve_profile()
-        message = ""
         refresh_client = False
 
         if command == "provider":
@@ -3138,8 +3138,6 @@ class ReactBackendHost:
                 return
             self._bundle.settings_overrides["active_profile"] = selected
             self._bundle.settings_overrides.pop("model", None)
-            profile = profiles[selected]
-            message = f"제공자 프로필을 {selected}({profile.label})(으)로 전환했습니다."
             refresh_client = True
         elif command in {"model", "subagent_model"}:
             if active_profile.allowed_models and selected.lower() != "default" and selected not in active_profile.allowed_models:
@@ -3153,13 +3151,10 @@ class ReactBackendHost:
                 await self._emit(BackendEvent(type="line_complete"))
                 return
             target_key = "model" if command == "model" else "subagent_model"
-            target_label = "모델" if command == "model" else "서브에이전트 모델"
             if selected.lower() == "default":
                 self._bundle.settings_overrides.pop(target_key, None)
-                message = f"{target_label}을(를) 기본값으로 되돌렸습니다."
             else:
                 self._bundle.settings_overrides[target_key] = selected
-                message = f"{target_label}을(를) {selected}(으)로 설정했습니다."
             refresh_client = command == "model"
         else:
             if selected not in {"auto", "none", "low", "medium", "high", "xhigh", "max"}:
@@ -3168,9 +3163,7 @@ class ReactBackendHost:
                 return
             stored_value = "none" if selected == "auto" else selected
             target_key = "effort" if command == "effort" else "subagent_effort"
-            target_label = "추론 강도" if command == "effort" else "서브에이전트 추론 강도"
             self._bundle.settings_overrides[target_key] = stored_value
-            message = f"{target_label}를 {stored_value}(으)로 설정했습니다."
 
         if refresh_client:
             await refresh_runtime_client(self._bundle)
@@ -4042,7 +4035,13 @@ async def run_backend_host(
             extra_plugin_roots=tuple(str(Path(path).expanduser().resolve()) for path in extra_plugin_roots),
         )
     )
-    return await host.run()
+    try:
+        return await host.run()
+    finally:
+        try:
+            await shutdown_task_manager()
+        except Exception:
+            log.warning("Failed to stop background tasks during backend shutdown", exc_info=True)
 
 
 __all__ = ["run_backend_host", "ReactBackendHost", "BackendHostConfig"]

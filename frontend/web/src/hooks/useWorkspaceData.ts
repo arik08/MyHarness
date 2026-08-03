@@ -200,13 +200,16 @@ export function useWorkspaceData() {
       }
     }
 
-    const timer = window.setInterval(() => {
-      void refreshBackgroundSessions();
+    let timer = window.setTimeout(async function poll() {
+      await refreshBackgroundSessions();
+      if (!cancelled) {
+        timer = window.setTimeout(poll, backgroundLiveSessionPollMs);
+      }
     }, backgroundLiveSessionPollMs);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [
     backgroundBusySessionIds,

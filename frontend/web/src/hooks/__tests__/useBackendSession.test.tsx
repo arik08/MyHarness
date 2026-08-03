@@ -196,6 +196,39 @@ describe("useBackendSession", () => {
     expect(listLiveSessions).toHaveBeenCalledWith({ clientId: "client-1", workspacePath: "C:/demo" });
   });
 
+  it("does not overlap busy-state polls when a request is still pending", async () => {
+    vi.useFakeTimers();
+    let resolvePoll: ((value: { sessions: [] }) => void) | undefined;
+    vi.mocked(listLiveSessions).mockImplementation(() => new Promise((resolve) => {
+      resolvePoll = resolve;
+    }));
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          clientId: "client-1",
+          sessionId: "session-a",
+          busy: true,
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(listLiveSessions).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePoll?.({ sessions: [] });
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(listLiveSessions).toHaveBeenCalledTimes(2);
+  });
+
   it("starts a new backend session when no live session is available", async () => {
     render(
       <AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}>

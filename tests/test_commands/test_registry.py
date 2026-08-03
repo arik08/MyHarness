@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -68,6 +70,39 @@ def _make_context(tmp_path: Path) -> CommandContext:
             )
         ),
     )
+
+
+def test_scan_project_entries_is_bounded_sorted_and_prunes_internal_dirs(tmp_path: Path):
+    for relative in ("z.txt", "a.txt", "nested/m.txt", ".git/hidden.txt", ".venv/hidden.txt"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative, encoding="utf-8")
+
+    files, total = registry_module._scan_project_entries(
+        tmp_path,
+        directories=False,
+        max_items=2,
+    )
+
+    assert files == ["a.txt", "nested/m.txt"]
+    assert total == 3
+
+
+@pytest.mark.asyncio
+async def test_files_command_keeps_event_loop_responsive(tmp_path: Path, monkeypatch):
+    def _slow_scan(*args, **kwargs):
+        time.sleep(0.05)
+        return ["a.txt"], 1
+
+    monkeypatch.setattr(registry_module, "_scan_project_entries", _slow_scan)
+    command, args = create_default_command_registry().lookup("/files")
+    assert command is not None
+
+    task = asyncio.create_task(command.handler(args, _make_context(tmp_path)))
+    await asyncio.sleep(0.01)
+
+    assert task.done() is False
+    assert (await task).message == "a.txt"
 
 
 @pytest.mark.asyncio

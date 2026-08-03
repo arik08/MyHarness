@@ -126,6 +126,8 @@ def test_project_toggle_writes_portable_json(tmp_path: Path, monkeypatch):
             "global-plugin": False,
         },
     }
+    assert get_project_preferences_path(workspace).with_suffix(".json.lock").exists()
+    assert get_app_preferences_path().with_suffix(".json.lock").exists()
 
 
 def test_plugin_toggle_can_reset_owned_skill_overrides(tmp_path: Path, monkeypatch):

@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import time
+from contextlib import aclosing
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
@@ -26,6 +27,7 @@ from myharness.services.long_report_progress import write_long_report_progress_s
 from myharness.services.token_estimation import estimate_tokens
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.tools.path_display import display_tool_path
+from myharness.utils.fs import atomic_write_text
 from myharness.utils.helpers import replace_filename_whitespace
 
 
@@ -36,6 +38,7 @@ IMPLIED_EXTRA_LONG_REPORT_TARGET_TOKENS = REPORT_TOKEN_HARD_CAP
 SOURCE_NOTES_MAX_CHARS = 80_000
 OUTLINE_REQUEST_MAX_TOKENS = 1_200
 OUTLINE_TIMEOUT_SECONDS = 30
+STREAM_SNAPSHOT_INTERVAL_SECONDS = 0.2
 STYLE_CONSISTENCY_CONTRACT = (
     "문체·용어·구조 일관성 계약:\n"
     "- 전체 보고서는 존댓말이 아닌 공식 비즈니스 보고서체로 통일하세요.\n"
@@ -110,7 +113,7 @@ class LongReportTool(BaseTool):
         target_tokens = _resolve_target_tokens(arguments)
         report_token_budget = target_tokens or DEFAULT_REPORT_TOKEN_CAP
         allow_section_overrun = target_tokens > IMPLIED_LONG_REPORT_TARGET_TOKENS
-        source_text = _source_material_for_report(context.cwd, arguments)
+        source_text = await asyncio.to_thread(_source_material_for_report, context.cwd, arguments)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         intermediate_writer = _LongReportIntermediateArtifacts(
             output_path=output_path,
@@ -139,9 +142,12 @@ class LongReportTool(BaseTool):
             phase_label="보고서 뼈대 생성 중",
         )
         outline_parts: list[str] = []
+        outline_snapshot_gate = _StreamingSnapshotGate()
 
         async def _on_outline_delta(delta: str) -> None:
             outline_parts.append(delta)
+            if not outline_snapshot_gate.should_flush():
+                return
             current_outline = "".join(outline_parts)
             intermediate_writer.write_outline_draft(current_outline)
             preview_writer.write_progress_state(
@@ -222,6 +228,7 @@ class LongReportTool(BaseTool):
         section_summaries: list[str] = []
         for index, section_title in enumerate(sections, start=1):
             section_parts: list[str] = []
+            section_snapshot_gate = _StreamingSnapshotGate()
             section_summary = _outline_section_summary(outline_sections[index - 1] if index - 1 < len(outline_sections) else {})
             preview_writer.write_progress_state(
                 generation_usage,
@@ -238,6 +245,8 @@ class LongReportTool(BaseTool):
             async def _on_section_delta(delta: str, *, _section_title: str = section_title) -> None:
                 section_parts.append(delta)
                 written_token_counter.add(delta)
+                if not section_snapshot_gate.should_flush():
+                    return
                 current_body = "".join(section_parts)
                 intermediate_writer.write_section(index, _section_title, current_body)
                 preview_writer.write_progress_state(
@@ -306,10 +315,13 @@ class LongReportTool(BaseTool):
                 if remaining_budget is not None and remaining_budget <= 0:
                     break
                 continuation_parts: list[str] = []
+                continuation_snapshot_gate = _StreamingSnapshotGate()
 
                 async def _on_continuation_delta(delta: str, *, _section_title: str = section_title) -> None:
                     continuation_parts.append(delta)
                     written_token_counter.add(delta)
+                    if not continuation_snapshot_gate.should_flush():
+                        return
                     current = _append_continuation(body, "".join(continuation_parts))
                     intermediate_writer.write_section(index, _section_title, current)
                     preview_writer.write_progress_state(
@@ -380,9 +392,12 @@ class LongReportTool(BaseTool):
                 section_total=len(sections),
             )
             style_audit_parts: list[str] = []
+            style_audit_snapshot_gate = _StreamingSnapshotGate()
 
             async def _on_style_audit_delta(delta: str) -> None:
                 style_audit_parts.append(delta)
+                if not style_audit_snapshot_gate.should_flush():
+                    return
                 current_audit = "".join(style_audit_parts)
                 preview_writer.write_progress_state(
                     generation_usage,
@@ -427,9 +442,12 @@ class LongReportTool(BaseTool):
                         ),
                     )
                     revision_parts: list[str] = []
+                    revision_snapshot_gate = _StreamingSnapshotGate()
 
                     async def _on_revision_delta(delta: str, *, _section_index: int = section_index, _section_title: str = section_title) -> None:
                         revision_parts.append(delta)
+                        if not revision_snapshot_gate.should_flush():
+                            return
                         current_revision = "".join(revision_parts)
                         preview_writer.write_progress_state(
                             generation_usage,
@@ -496,9 +514,12 @@ class LongReportTool(BaseTool):
             section_total=len(sections),
         )
         review_parts: list[str] = []
+        review_snapshot_gate = _StreamingSnapshotGate()
 
         async def _on_review_delta(delta: str) -> None:
             review_parts.append(delta)
+            if not review_snapshot_gate.should_flush():
+                return
             current_review = "".join(review_parts)
             preview_writer.write_progress_state(
                 generation_usage,
@@ -534,7 +555,8 @@ class LongReportTool(BaseTool):
             section_total=len(sections),
         )
 
-        report_text = _render_report(
+        report_text = await asyncio.to_thread(
+            _render_report,
             arguments.title,
             section_bodies,
             review_text,
@@ -543,11 +565,8 @@ class LongReportTool(BaseTool):
             model=model,
             source_references=_source_reference_candidates(arguments),
         )
-        intermediate_writer.write_assembled_report(report_text, output_format=output_format)
-        output_path.write_text(
-            report_text,
-            encoding="utf-8",
-        )
+        await asyncio.to_thread(intermediate_writer.write_assembled_report, report_text, output_format=output_format)
+        await asyncio.to_thread(output_path.write_text, report_text, encoding="utf-8")
         preview_writer.write_progress_state(
             generation_usage,
             document_written_tokens=written_token_counter.total_tokens,
@@ -556,7 +575,8 @@ class LongReportTool(BaseTool):
             outline_sections=outline_sections,
             section_total=len(sections),
         )
-        ledger = _build_report_ledger(
+        ledger = await asyncio.to_thread(
+            _build_report_ledger,
             arguments,
             output_path=output_path,
             output_format=output_format,
@@ -568,10 +588,10 @@ class LongReportTool(BaseTool):
             revised_section_ids=revised_section_ids,
             model=model,
         )
-        ledger_path = _write_report_ledger(output_path, ledger)
+        ledger_path = await asyncio.to_thread(_write_report_ledger, output_path, ledger)
         display_path = display_tool_path(output_path, context.cwd)
         display_ledger_path = display_tool_path(ledger_path, context.cwd)
-        estimated_tokens = estimate_tokens(report_text, model=model)
+        estimated_tokens = await asyncio.to_thread(estimate_tokens, report_text, model=model)
         written_tokens = written_token_counter.total_tokens
         token_note = (
             f", 문서 약 {estimated_tokens:,} tokens"
@@ -610,6 +630,19 @@ class LongReportTool(BaseTool):
                 "quality_warnings": ledger.get("quality", {}).get("warnings", []),
             },
         )
+
+
+class _StreamingSnapshotGate:
+    def __init__(self, interval_seconds: float = STREAM_SNAPSHOT_INTERVAL_SECONDS) -> None:
+        self.interval_seconds = interval_seconds
+        self._last_flush_at = 0.0
+
+    def should_flush(self) -> bool:
+        now = time.monotonic()
+        if self._last_flush_at and now - self._last_flush_at < self.interval_seconds:
+            return False
+        self._last_flush_at = now
+        return True
 
 
 class _ReportPreviewWriter:
@@ -677,32 +710,30 @@ class _ReportPreviewWriter:
         if not force and now - self._last_write_at < 0.5:
             return
         self._last_write_at = 0.0 if force else now
-        self.output_path.write_text(
-            _render_report(
-                self.title,
-                section_bodies,
-                review_text,
-                output_format=self.output_format,
-                target_tokens=self.target_tokens,
-                model=self.model,
-            ),
-            encoding="utf-8",
+        report_text = await asyncio.to_thread(
+            _render_report,
+            self.title,
+            section_bodies,
+            review_text,
+            output_format=self.output_format,
+            target_tokens=self.target_tokens,
+            model=self.model,
         )
+        await asyncio.to_thread(self.output_path.write_text, report_text, encoding="utf-8")
 
     async def write_stage_text(self, stage_title: str, text: str, *, force: bool = False) -> None:
         now = time.monotonic()
         if not force and now - self._last_write_at < 0.5:
             return
         self._last_write_at = 0.0 if force else now
-        self.output_path.write_text(
-            _render_stage_preview(
-                self.title,
-                stage_title,
-                text,
-                output_format=self.output_format,
-            ),
-            encoding="utf-8",
+        preview_text = await asyncio.to_thread(
+            _render_stage_preview,
+            self.title,
+            stage_title,
+            text,
+            output_format=self.output_format,
         )
+        await asyncio.to_thread(self.output_path.write_text, preview_text, encoding="utf-8")
 
 
 class _LongReportIntermediateArtifacts:
@@ -714,6 +745,7 @@ class _LongReportIntermediateArtifacts:
         self.manifest_path = self.root_dir / "manifest.json"
         self._last_section_write_at: dict[str, float] = {}
         self._files: dict[str, str] = {}
+        self._file_metadata: dict[str, dict[str, object]] = {}
         self.sections_dir.mkdir(parents=True, exist_ok=True)
         self._write_manifest()
 
@@ -800,10 +832,8 @@ class _LongReportIntermediateArtifacts:
         files: list[dict[str, object]] = []
         for label, raw_path in self._files.items():
             path = Path(raw_path)
-            try:
-                stat = path.stat()
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
+            metadata = self._file_metadata.get(label)
+            if metadata is None:
                 continue
             try:
                 display_path = path.resolve().relative_to(cwd.resolve()).as_posix()
@@ -813,17 +843,20 @@ class _LongReportIntermediateArtifacts:
                 {
                     "label": label,
                     "path": display_path,
-                    "size_bytes": stat.st_size,
-                    "line_count": text.count("\n") + (1 if text else 0),
-                    "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                    **metadata,
                 }
             )
         return sorted(files, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
     def _write_file(self, label: str, path: Path, content: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content)
         self._files[label] = str(path)
+        stat = path.stat()
+        self._file_metadata[label] = {
+            "size_bytes": stat.st_size,
+            "line_count": content.count("\n") + (1 if content else 0),
+            "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        }
         self._write_manifest()
 
     def _write_manifest(self) -> None:
@@ -834,7 +867,7 @@ class _LongReportIntermediateArtifacts:
             "files": self._files,
         }
         self.root_dir.mkdir(parents=True, exist_ok=True)
-        self.manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_text(self.manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
 
 
 class _CumulativeTokenCounter:
@@ -1034,7 +1067,7 @@ def _report_ledger_path(output_path: Path) -> Path:
 
 def _write_report_ledger(output_path: Path, ledger: dict[str, object]) -> Path:
     ledger_path = _report_ledger_path(output_path)
-    ledger_path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_text(ledger_path, json.dumps(ledger, ensure_ascii=False, indent=2))
     return ledger_path
 
 
@@ -1505,7 +1538,7 @@ async def _request_text(
     local_budget = None if max_collected_tokens is None else max(0, int(max_collected_tokens))
     if local_budget == 0:
         return "", "local_token_budget", usage
-    async for event in api_client.stream_message(
+    stream = api_client.stream_message(
         ApiMessageRequest(
             model=model,
             messages=[ConversationMessage.from_user_text(prompt)],
@@ -1513,38 +1546,47 @@ async def _request_text(
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         )
-    ):
-        if isinstance(event, ApiTextDeltaEvent):
-            if local_budget is not None:
-                candidate = collected + event.text
-                trimmed = _trim_text_to_token_budget(candidate, local_budget, model=model)
-                delta = trimmed[len(collected) :] if trimmed.startswith(collected) else ""
-                if delta and on_delta is not None:
-                    await on_delta(delta)
-                collected = trimmed
-                if trimmed != candidate or estimate_tokens(collected, model=model) >= local_budget:
-                    stop_reason = "local_token_budget"
-                    break
-                continue
-            collected += event.text
-            if on_delta is not None:
-                await on_delta(event.text)
-        elif isinstance(event, ApiMessageCompleteEvent):
-            final_text = event.message.text
-            usage = event.usage
-            stop_reason = event.stop_reason
+    )
+    async with aclosing(stream) as events:
+        async for event in events:
+            if isinstance(event, ApiTextDeltaEvent):
+                if local_budget is not None:
+                    candidate = collected + event.text
+                    trimmed, budget_reached = _fit_text_to_token_budget(candidate, local_budget, model=model)
+                    delta = trimmed[len(collected) :] if trimmed.startswith(collected) else ""
+                    if delta and on_delta is not None:
+                        await on_delta(delta)
+                    collected = trimmed
+                    if budget_reached:
+                        stop_reason = "local_token_budget"
+                        break
+                    continue
+                collected += event.text
+                if on_delta is not None:
+                    await on_delta(event.text)
+            elif isinstance(event, ApiMessageCompleteEvent):
+                final_text = event.message.text
+                usage = event.usage
+                stop_reason = event.stop_reason
     text = collected or final_text
-    if local_budget is not None:
+    if local_budget is not None and not collected:
         text = _trim_text_to_token_budget(text, local_budget, model=model)
     return text.strip(), stop_reason, usage
 
 
 def _trim_text_to_token_budget(text: str, token_budget: int, *, model: str) -> str:
+    return _fit_text_to_token_budget(text, token_budget, model=model)[0]
+
+
+def _fit_text_to_token_budget(text: str, token_budget: int, *, model: str) -> tuple[str, bool]:
     if token_budget <= 0:
-        return ""
+        return "", True
     value = str(text or "")
-    if not value or estimate_tokens(value, model=model) <= token_budget:
-        return value
+    if not value:
+        return value, False
+    token_count = estimate_tokens(value, model=model)
+    if token_count <= token_budget:
+        return value, token_count == token_budget
     low = 0
     high = len(value)
     best = ""
@@ -1556,7 +1598,7 @@ def _trim_text_to_token_budget(text: str, token_budget: int, *, model: str) -> s
             low = mid + 1
         else:
             high = mid - 1
-    return _trim_to_complete_boundary(best).rstrip()
+    return _trim_to_complete_boundary(best).rstrip(), True
 
 
 def _trim_to_complete_boundary(text: str) -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -10,7 +11,11 @@ from pydantic import BaseModel, Field
 from myharness.config.paths import get_config_dir, get_project_config_dir
 from myharness.config.settings import Settings
 from myharness.skills.state import get_disabled_skill_names
+from myharness.utils.file_lock import exclusive_file_lock
 from myharness.utils.fs import atomic_write_text
+
+
+_PREFERENCES_LOCK = threading.RLock()
 
 
 class ProjectPreferences(BaseModel):
@@ -98,8 +103,13 @@ def apply_project_preferences_to_settings(settings: Settings, cwd: str | Path | 
 
 def save_project_preferences(cwd: str | Path, preferences: ProjectPreferences) -> ProjectPreferences:
     """Persist normalized project preferences."""
-    normalized = normalize_project_preferences(preferences)
     path = get_project_preferences_path(cwd)
+    with _PREFERENCES_LOCK, exclusive_file_lock(_preferences_lock_path(path)):
+        return _save_preferences(path, preferences)
+
+
+def _save_preferences(path: Path, preferences: ProjectPreferences) -> ProjectPreferences:
+    normalized = normalize_project_preferences(preferences)
     payload = normalized.model_dump_json(indent=2) + "\n"
     atomic_write_text(path, payload)
     return normalized
@@ -107,11 +117,13 @@ def save_project_preferences(cwd: str | Path, preferences: ProjectPreferences) -
 
 def save_app_preferences(preferences: ProjectPreferences) -> ProjectPreferences:
     """Persist normalized app-wide preferences."""
-    normalized = normalize_project_preferences(preferences)
     path = get_app_preferences_path()
-    payload = normalized.model_dump_json(indent=2) + "\n"
-    atomic_write_text(path, payload)
-    return normalized
+    with _PREFERENCES_LOCK, exclusive_file_lock(_preferences_lock_path(path)):
+        return _save_preferences(path, preferences)
+
+
+def _preferences_lock_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".lock")
 
 
 def _load_legacy_default_workspace_preferences() -> ProjectPreferences | None:
@@ -135,28 +147,32 @@ def _load_legacy_default_workspace_preferences() -> ProjectPreferences | None:
 
 def set_project_skill_enabled(cwd: str | Path, name: str, enabled: bool, settings: Settings) -> ProjectPreferences:
     """Persist one skill enablement value in project preferences."""
-    normalized_name = _normalize_name(name)
-    preferences = effective_project_preferences(cwd, settings)
-    disabled = {_normalize_name(item) for item in preferences.disabled_skills if _normalize_name(item)}
-    if enabled:
-        disabled.discard(normalized_name)
-    elif normalized_name:
-        disabled.add(normalized_name)
-    preferences.disabled_skills = sorted(disabled)
-    return save_project_preferences(cwd, preferences)
+    path = get_project_preferences_path(cwd)
+    with _PREFERENCES_LOCK, exclusive_file_lock(_preferences_lock_path(path)):
+        normalized_name = _normalize_name(name)
+        preferences = effective_project_preferences(cwd, settings)
+        disabled = {_normalize_name(item) for item in preferences.disabled_skills if _normalize_name(item)}
+        if enabled:
+            disabled.discard(normalized_name)
+        elif normalized_name:
+            disabled.add(normalized_name)
+        preferences.disabled_skills = sorted(disabled)
+        return _save_preferences(path, preferences)
 
 
 def set_project_mcp_enabled(cwd: str | Path, name: str, enabled: bool, settings: Settings) -> ProjectPreferences:
     """Persist one MCP enablement value in project preferences."""
-    preferences = effective_project_preferences(cwd, settings)
-    disabled = {str(item).strip() for item in preferences.disabled_mcp_servers if str(item).strip()}
-    clean_name = str(name or "").strip()
-    if enabled:
-        disabled.discard(clean_name)
-    elif clean_name:
-        disabled.add(clean_name)
-    preferences.disabled_mcp_servers = sorted(disabled)
-    return save_project_preferences(cwd, preferences)
+    path = get_project_preferences_path(cwd)
+    with _PREFERENCES_LOCK, exclusive_file_lock(_preferences_lock_path(path)):
+        preferences = effective_project_preferences(cwd, settings)
+        disabled = {str(item).strip() for item in preferences.disabled_mcp_servers if str(item).strip()}
+        clean_name = str(name or "").strip()
+        if enabled:
+            disabled.discard(clean_name)
+        elif clean_name:
+            disabled.add(clean_name)
+        preferences.disabled_mcp_servers = sorted(disabled)
+        return _save_preferences(path, preferences)
 
 
 def set_project_plugin_enabled(
@@ -168,22 +184,30 @@ def set_project_plugin_enabled(
     reset_skill_names: Iterable[str] | None = None,
 ) -> ProjectPreferences:
     """Persist one plugin enablement value in project preferences."""
-    preferences = effective_project_preferences(cwd, settings)
     clean_name = str(name or "").strip()
-    if clean_name:
-        preferences.enabled_plugins[clean_name] = bool(enabled)
-    reset_names = {_normalize_name(skill_name) for skill_name in reset_skill_names or () if _normalize_name(skill_name)}
-    if reset_names:
-        preferences.disabled_skills = [
-            skill_name
-            for skill_name in preferences.disabled_skills
-            if _normalize_name(skill_name) not in reset_names
-        ]
-    saved = save_project_preferences(cwd, preferences)
-    app_preferences = load_app_preferences() or ProjectPreferences()
-    if clean_name:
-        app_preferences.enabled_plugins[clean_name] = bool(enabled)
-    save_app_preferences(app_preferences)
+    project_path = get_project_preferences_path(cwd)
+    with _PREFERENCES_LOCK, exclusive_file_lock(_preferences_lock_path(project_path)):
+        preferences = effective_project_preferences(cwd, settings)
+        if clean_name:
+            preferences.enabled_plugins[clean_name] = bool(enabled)
+        reset_names = {
+            _normalize_name(skill_name)
+            for skill_name in reset_skill_names or ()
+            if _normalize_name(skill_name)
+        }
+        if reset_names:
+            preferences.disabled_skills = [
+                skill_name
+                for skill_name in preferences.disabled_skills
+                if _normalize_name(skill_name) not in reset_names
+            ]
+        saved = _save_preferences(project_path, preferences)
+    app_path = get_app_preferences_path()
+    with _PREFERENCES_LOCK, exclusive_file_lock(_preferences_lock_path(app_path)):
+        app_preferences = load_app_preferences() or ProjectPreferences()
+        if clean_name:
+            app_preferences.enabled_plugins[clean_name] = bool(enabled)
+        _save_preferences(app_path, app_preferences)
     return saved
 
 

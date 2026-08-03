@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from myharness.utils.subprocess_output import communicate_bounded
 from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 # ---------------------------------------------------------------------------
@@ -18,6 +19,7 @@ from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 _VALID_SEGMENT = re.compile(r"^[a-zA-Z0-9._-]+$")
 _MAX_SLUG_LENGTH = 64
 _COMMON_SYMLINK_DIRS = ("node_modules", ".venv", "__pycache__", ".tox")
+_GIT_COMMAND_TIMEOUT_SECONDS = 120
 
 
 def validate_worktree_slug(slug: str) -> str:
@@ -97,7 +99,13 @@ async def _run_git(*args: str, cwd: Path) -> tuple[int, str, str]:
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": ""},
         **hidden_subprocess_kwargs(),
     )
-    stdout_bytes, stderr_bytes = await proc.communicate()
+    try:
+        stdout_bytes, stderr_bytes = await communicate_bounded(
+            proc,
+            timeout=_GIT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        return 124, "", f"git command timed out after {_GIT_COMMAND_TIMEOUT_SECONDS} seconds"
     return (
         proc.returncode or 0,
         stdout_bytes.decode(errors="replace").strip(),

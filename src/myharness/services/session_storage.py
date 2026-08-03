@@ -40,6 +40,8 @@ _PERSISTED_TOOL_METADATA_KEYS = (
     "web_client_id",
 )
 
+_SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
 _TITLE_STOPWORDS = {
     "about",
     "and",
@@ -396,6 +398,8 @@ def save_session_snapshot(
     """Persist a session snapshot. Saves both by ID and as latest."""
     session_dir = get_project_session_dir(cwd)
     sid = session_id or uuid4().hex[:12]
+    if not _SAFE_SESSION_ID_RE.fullmatch(sid):
+        raise ValueError(f"Invalid session id: {sid!r}")
     session_path = session_dir / f"session-{sid}.json"
     existing_pinned = False
     existing_created_at: float | None = None
@@ -747,6 +751,8 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[di
 
 def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | None:
     """Load a specific session by ID."""
+    if not _SAFE_SESSION_ID_RE.fullmatch(session_id):
+        return None
     session_dir = get_project_session_dir(cwd)
     # Try named session first
     path = session_dir / f"session-{session_id}.json"
@@ -768,6 +774,8 @@ def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | Non
 
 def delete_session_by_id(cwd: str | Path, session_id: str) -> bool:
     """Delete a saved session snapshot by ID."""
+    if not _SAFE_SESSION_ID_RE.fullmatch(session_id):
+        return False
     session_dir = get_project_session_dir(cwd)
     deleted = False
 

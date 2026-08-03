@@ -12,9 +12,12 @@ from pathlib import Path
 from myharness.config import Settings
 from myharness.platforms import get_platform, get_platform_capabilities
 from myharness.sandbox.adapter import SandboxAvailability, SandboxUnavailableError
+from myharness.utils.subprocess_output import communicate_bounded
 from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
+DOCKER_START_TIMEOUT_SECONDS = 60
+DOCKER_STOP_TIMEOUT_SECONDS = 15
 
 
 def get_docker_availability(settings: Settings) -> SandboxAvailability:
@@ -152,7 +155,13 @@ class DockerSandboxSession:
             stderr=asyncio.subprocess.PIPE,
             **hidden_subprocess_kwargs(),
         )
-        stdout, stderr = await process.communicate()
+        try:
+            _, stderr = await communicate_bounded(
+                process,
+                timeout=DOCKER_START_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise SandboxUnavailableError("Timed out starting Docker sandbox") from exc
         if process.returncode != 0:
             msg = stderr.decode("utf-8", errors="replace").strip()
             raise SandboxUnavailableError(f"Failed to start Docker sandbox: {msg}")
@@ -176,7 +185,7 @@ class DockerSandboxSession:
                 stderr=asyncio.subprocess.PIPE,
                 **hidden_subprocess_kwargs(),
             )
-            await asyncio.wait_for(process.communicate(), timeout=15)
+            await communicate_bounded(process, timeout=DOCKER_STOP_TIMEOUT_SECONDS)
         except (asyncio.TimeoutError, OSError) as exc:
             logger.warning("Error stopping Docker sandbox: %s", exc)
         finally:

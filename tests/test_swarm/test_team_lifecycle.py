@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 
 import pytest
 
+from myharness.swarm import team_lifecycle as team_lifecycle_module
 from myharness.swarm.team_lifecycle import (
     TeamFile,
     TeamLifecycleManager,
     TeamMember,
+    _destroy_worktree,
 )
+
+
+@pytest.mark.asyncio
+async def test_destroy_worktree_keeps_event_loop_responsive(monkeypatch):
+    def _slow_destroy(_path):
+        time.sleep(0.05)
+
+    monkeypatch.setattr(team_lifecycle_module, "_sync_destroy_worktree", _slow_destroy)
+    task = asyncio.create_task(_destroy_worktree("worktree"))
+
+    await asyncio.sleep(0.01)
+
+    assert task.done() is False
+    await task
 
 
 # ---------------------------------------------------------------------------

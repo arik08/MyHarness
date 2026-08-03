@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+from contextlib import aclosing
 from dataclasses import replace
 from typing import Any, AsyncIterator
 
@@ -327,8 +328,9 @@ class CodexApiClient:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES + 1):
             try:
-                async for event in self._stream_once(request):
-                    yield event
+                async with aclosing(self._stream_once(request)) as stream:
+                    async for event in stream:
+                        yield event
                 return
             except Exception as exc:
                 last_error = exc

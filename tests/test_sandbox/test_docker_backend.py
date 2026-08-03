@@ -281,6 +281,9 @@ async def test_stop_calls_docker_stop(monkeypatch):
         captured.extend(args)
         mock_proc = MagicMock()
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.wait = AsyncMock(return_value=0)
+        mock_proc.stdout = None
+        mock_proc.stderr = None
         mock_proc.returncode = 0
         return mock_proc
 

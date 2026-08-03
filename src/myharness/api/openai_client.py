@@ -10,6 +10,7 @@ import os
 import re
 import threading
 import time
+from contextlib import aclosing
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -364,6 +365,13 @@ def _normalize_openai_base_url(base_url: str | None) -> str | None:
     return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
+async def _close_sdk_stream(stream: Any) -> None:
+    """Promptly release an SDK stream's HTTP response."""
+    close = getattr(stream, "close", None) or getattr(stream, "aclose", None)
+    if close is not None:
+        await close()
+
+
 class OpenAICompatibleClient:
     """Client for OpenAI-compatible APIs (DashScope, GitHub Models, etc.).
 
@@ -416,8 +424,9 @@ class OpenAICompatibleClient:
         for attempt in range(MAX_RETRIES + 1):
             try:
                 stream_once = self._stream_raw_once if self._raw_stream else self._stream_once
-                async for event in stream_once(request):
-                    yield event
+                async with aclosing(stream_once(request)) as stream:
+                    async for event in stream:
+                        yield event
                 return
             except MyHarnessApiError:
                 raise
@@ -533,9 +542,63 @@ class OpenAICompatibleClient:
         _think_buf = ""
 
         stream = await self._create_sdk_stream(request, params)
-        async for chunk in stream:
-            if not chunk.choices:
-                # Usage-only chunk (some providers send this at the end)
+        try:
+            async for chunk in stream:
+                if not chunk.choices:
+                    # Usage-only chunk (some providers send this at the end)
+                    if chunk.usage:
+                        usage_data = {
+                            "input_tokens": chunk.usage.prompt_tokens or 0,
+                            "output_tokens": chunk.usage.completion_tokens or 0,
+                            "cached_input_tokens": self._cached_tokens_from_usage(chunk.usage),
+                            "cache_write_tokens": self._cache_write_tokens_from_usage(chunk.usage),
+                        }
+                    continue
+
+                delta = chunk.choices[0].delta
+                chunk_finish = chunk.choices[0].finish_reason
+
+                if chunk_finish:
+                    finish_reason = chunk_finish
+
+                # Accumulate reasoning_content from thinking models (not shown to user)
+                reasoning_piece = getattr(delta, "reasoning_content", None) or ""
+                if reasoning_piece:
+                    collected_reasoning += reasoning_piece
+
+                # Stream text content to user, stripping inline <think> blocks
+                if delta.content:
+                    _think_buf += delta.content
+                    visible, _think_buf = _strip_think_blocks(_think_buf)
+                    if visible:
+                        collected_content += visible
+                        yield ApiTextDeltaEvent(text=visible)
+
+                # Accumulate tool calls
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in collected_tool_calls:
+                            collected_tool_calls[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        entry = collected_tool_calls[idx]
+                        if tc_delta.id:
+                            entry["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                entry["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                entry["arguments"] += tc_delta.function.arguments
+                                yield ApiToolCallDeltaEvent(
+                                    index=idx,
+                                    name=entry["name"] or None,
+                                    arguments_delta=tc_delta.function.arguments,
+                                )
+
+                # Usage in chunk (if provider sends it)
                 if chunk.usage:
                     usage_data = {
                         "input_tokens": chunk.usage.prompt_tokens or 0,
@@ -543,59 +606,8 @@ class OpenAICompatibleClient:
                         "cached_input_tokens": self._cached_tokens_from_usage(chunk.usage),
                         "cache_write_tokens": self._cache_write_tokens_from_usage(chunk.usage),
                     }
-                continue
-
-            delta = chunk.choices[0].delta
-            chunk_finish = chunk.choices[0].finish_reason
-
-            if chunk_finish:
-                finish_reason = chunk_finish
-
-            # Accumulate reasoning_content from thinking models (not shown to user)
-            reasoning_piece = getattr(delta, "reasoning_content", None) or ""
-            if reasoning_piece:
-                collected_reasoning += reasoning_piece
-
-            # Stream text content to user, stripping inline <think> blocks
-            if delta.content:
-                _think_buf += delta.content
-                visible, _think_buf = _strip_think_blocks(_think_buf)
-                if visible:
-                    collected_content += visible
-                    yield ApiTextDeltaEvent(text=visible)
-
-            # Accumulate tool calls
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in collected_tool_calls:
-                        collected_tool_calls[idx] = {
-                            "id": tc_delta.id or "",
-                            "name": "",
-                            "arguments": "",
-                        }
-                    entry = collected_tool_calls[idx]
-                    if tc_delta.id:
-                        entry["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            entry["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            entry["arguments"] += tc_delta.function.arguments
-                            yield ApiToolCallDeltaEvent(
-                                index=idx,
-                                name=entry["name"] or None,
-                                arguments_delta=tc_delta.function.arguments,
-                            )
-
-            # Usage in chunk (if provider sends it)
-            if chunk.usage:
-                usage_data = {
-                    "input_tokens": chunk.usage.prompt_tokens or 0,
-                    "output_tokens": chunk.usage.completion_tokens or 0,
-                    "cached_input_tokens": self._cached_tokens_from_usage(chunk.usage),
-                    "cache_write_tokens": self._cache_write_tokens_from_usage(chunk.usage),
-                }
+        finally:
+            await _close_sdk_stream(stream)
 
         # Build the final ConversationMessage
         content: list[ContentBlock] = []

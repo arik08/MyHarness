@@ -82,8 +82,8 @@ jobs:
       - name: TypeScript check
         run: npx tsc --noEmit
 
-  web-syntax:
-    name: Web UI syntax
+  web-checks:
+    name: Web UI checks
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -104,3 +104,9 @@ jobs:
 
       - name: Check JavaScript syntax
         run: node --check server.mjs && find . -maxdepth 2 -name '*.js' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Run web tests
+        run: npm test

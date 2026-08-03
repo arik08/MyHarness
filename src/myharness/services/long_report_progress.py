@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from myharness.api.usage import UsageSnapshot
+from myharness.utils.fs import atomic_write_text
 
 
 _NUMERIC_PROGRESS_KEYS = (
@@ -100,9 +101,9 @@ def write_long_report_progress_state(
         normalized_files = _normalize_intermediate_files(intermediate_files)
         if normalized_files:
             state["intermediate_files"] = normalized_files
-    state_path.write_text(
+    atomic_write_text(
+        state_path,
         json.dumps(state, ensure_ascii=False),
-        encoding="utf-8",
     )
 
 
@@ -159,7 +160,14 @@ def _normalize_intermediate_files(value: list[dict[str, object]]) -> list[dict[s
 
 def _clean_key_points(value: object) -> list[str]:
     if isinstance(value, list):
-        return [_clean_progress_text(item, limit=140) for item in value if _clean_progress_text(item, limit=140)][:5]
+        points: list[str] = []
+        for item in value:
+            text = _clean_progress_text(item, limit=140)
+            if text:
+                points.append(text)
+            if len(points) == 5:
+                break
+        return points
     text = _clean_progress_text(value, limit=260)
     return [text] if text else []
 

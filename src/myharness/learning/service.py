@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 from myharness.skills.loader import get_program_skills_dirs
 from myharness.skills.refresh import mark_skill_registry_dirty
+from myharness.utils.file_lock import exclusive_file_lock
+from myharness.utils.fs import atomic_write_text
 
 MAX_TRACKED_FAILURES = 20
 MAX_TRACKED_LEARNED_SKILLS = 12
@@ -178,25 +180,24 @@ def persist_learning_candidate(
     skill_dir = _select_learning_skill_dir(root, candidate)
     skill_file = skill_dir / "SKILL.md"
     patterns_file = skill_dir / "references" / "learned-patterns.md"
-    existing_patterns = patterns_file.read_text(encoding="utf-8") if patterns_file.exists() else ""
-    if candidate.evidence_hash in existing_patterns or _has_duplicate_pattern(
-        existing_patterns, candidate
-    ):
-        return LearningResult(candidate=candidate, skill_path=skill_file, action="unchanged")
+    with exclusive_file_lock(skill_dir / ".learning.lock"):
+        existing_patterns = patterns_file.read_text(encoding="utf-8") if patterns_file.exists() else ""
+        if candidate.evidence_hash in existing_patterns or _has_duplicate_pattern(
+            existing_patterns, candidate
+        ):
+            return LearningResult(candidate=candidate, skill_path=skill_file, action="unchanged")
 
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    patterns_file.parent.mkdir(parents=True, exist_ok=True)
-    if not skill_file.exists():
-        skill_file.write_text(_render_skill(candidate), encoding="utf-8")
-        action = "created"
-    else:
-        action = "updated"
-    patterns_file.write_text(
-        _prune_evidence_blocks(existing_patterns + _render_pattern(candidate)),
-        encoding="utf-8",
-        newline="\n",
-    )
-    return LearningResult(candidate=candidate, skill_path=skill_file, action=action)
+        patterns_file.parent.mkdir(parents=True, exist_ok=True)
+        if not skill_file.exists():
+            atomic_write_text(skill_file, _render_skill(candidate))
+            action = "created"
+        else:
+            action = "updated"
+        atomic_write_text(
+            patterns_file,
+            _prune_evidence_blocks(existing_patterns + _render_pattern(candidate)),
+        )
+        return LearningResult(candidate=candidate, skill_path=skill_file, action=action)
 
 
 def _remember_learning_result(metadata: dict[str, object], result: LearningResult) -> None:

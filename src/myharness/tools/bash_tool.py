@@ -310,9 +310,11 @@ def _module_package_exists(root: Path, module: str) -> bool:
 
 def _format_timeout_output(output_buffer: bytearray, *, command: str, timeout_seconds: int) -> str:
     parts = [f"Command timed out after {timeout_seconds} seconds."]
-    text = _format_output(output_buffer)
-    if text != "(no output)":
+    if output_buffer:
+        text = _format_output(output_buffer)
         parts.extend(["", "Partial output:", text])
+    else:
+        text = ""
     hint = _interactive_command_hint(command=command, output=text)
     if hint:
         parts.extend(["", hint])

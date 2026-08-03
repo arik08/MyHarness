@@ -6,13 +6,11 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from myharness.utils.fs import atomic_write_text
+
 _RULES_DIR = Path("~/.myharness/local_rules").expanduser()
 _RULES_FILE = _RULES_DIR / "rules.md"
 _FACTS_FILE = _RULES_DIR / "facts.json"
-
-
-def _ensure_dir() -> None:
-    _RULES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_local_rules() -> str:
@@ -24,8 +22,7 @@ def load_local_rules() -> str:
 
 def save_local_rules(content: str) -> Path:
     """Write local rules markdown."""
-    _ensure_dir()
-    _RULES_FILE.write_text(content.strip() + "\n", encoding="utf-8")
+    atomic_write_text(_RULES_FILE, content.strip() + "\n")
     return _RULES_FILE
 
 
@@ -38,11 +35,10 @@ def load_facts() -> dict:
 
 def save_facts(facts: dict) -> None:
     """Persist extracted facts."""
-    _ensure_dir()
     facts["last_updated"] = datetime.now(timezone.utc).isoformat()
-    _FACTS_FILE.write_text(
+    atomic_write_text(
+        _FACTS_FILE,
         json.dumps(facts, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
     )
 
 

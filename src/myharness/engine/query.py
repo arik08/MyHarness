@@ -908,17 +908,22 @@ async def run_query(
                 auto_compact_threshold_tokens=context.auto_compact_threshold_tokens,
             )
         )
-        while True:
-            try:
-                event = await asyncio.wait_for(progress_queue.get(), timeout=0.05)
-                yield event, None
-            except asyncio.TimeoutError:
-                if task.done():
-                    break
-                continue
-        while not progress_queue.empty():
-            yield progress_queue.get_nowait(), None
-        last_compaction_result = await task
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(progress_queue.get(), timeout=0.05)
+                    yield event, None
+                except asyncio.TimeoutError:
+                    if task.done():
+                        break
+                    continue
+            while not progress_queue.empty():
+                yield progress_queue.get_nowait(), None
+            last_compaction_result = await task
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         return
 
     def _adopt_compaction_result() -> bool:

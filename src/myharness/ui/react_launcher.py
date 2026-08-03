@@ -9,6 +9,11 @@ import shutil
 import sys
 from pathlib import Path
 
+from myharness.utils.subprocess_output import communicate_bounded
+
+
+NPM_INSTALL_TIMEOUT_SECONDS = 600
+
 
 def _resolve_theme() -> str:
     """Read the theme name from settings, defaulting to 'default'."""
@@ -150,7 +155,11 @@ async def launch_react_tui(
             "--no-audit",
             cwd=str(frontend_dir),
         )
-        if await install.wait() != 0:
+        try:
+            await communicate_bounded(install, timeout=NPM_INSTALL_TIMEOUT_SECONDS, tail_bytes=0)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("Timed out installing React terminal frontend dependencies") from exc
+        if install.returncode != 0:
             raise RuntimeError("Failed to install React terminal frontend dependencies")
 
     env = os.environ.copy()

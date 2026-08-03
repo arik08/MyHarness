@@ -617,12 +617,19 @@ function commandFromToolInput(input?: Record<string, unknown> | null) {
   return "";
 }
 
+function lastMatchingIndex<T>(items: readonly T[], predicate: (item: T) => boolean) {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index])) return index;
+  }
+  return -1;
+}
+
 function updateLatestTerminalMessage(
   messages: ChatMessage[],
   command: string,
   patch: NonNullable<ChatMessage["terminal"]>,
 ) {
-  const index = [...messages].reverse().findIndex((message) => {
+  const index = lastMatchingIndex(messages, (message) => {
     if (!message.terminal) return false;
     if (message.terminal.status !== "running") return false;
     return !command || message.terminal.command === command;
@@ -630,9 +637,8 @@ function updateLatestTerminalMessage(
   if (index < 0) {
     return null;
   }
-  const realIndex = messages.length - 1 - index;
   return messages.map((message, currentIndex) => (
-    currentIndex === realIndex
+    currentIndex === index
       ? {
           ...message,
           text: patch.output ?? message.text,
@@ -1214,10 +1220,9 @@ function appendWorkflowEvent(events: WorkflowEvent[], event: Omit<WorkflowEvent,
 }
 
 function isDefaultPlanningDetail(detail: string) {
-  return new Set([
-    "필요한 맥락과 진행 방향을 정리합니다.",
-    "진행 방향을 정했습니다.",
-  ]).has(compactWorkflowDetail(detail));
+  const cleanDetail = compactWorkflowDetail(detail);
+  return cleanDetail === "필요한 맥락과 진행 방향을 정리합니다."
+    || cleanDetail === "진행 방향을 정했습니다.";
 }
 
 function completePlanning(events: WorkflowEvent[]) {
@@ -1298,10 +1303,9 @@ function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
     return events;
   }
   if (providerIdleLabel(cleanDetail)) {
-    const activityIndex = events
-      .map((event, index) => ({ event, index }))
-      .reverse()
-      .find(({ event }) => event.role === "activity" && event.status === "running" && event.level !== "child")?.index ?? -1;
+    const activityIndex = lastMatchingIndex(events, (event) => (
+      event.role === "activity" && event.status === "running" && event.level !== "child"
+    ));
     if (activityIndex === -1) {
       return events;
     }
@@ -1311,9 +1315,10 @@ function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
     }
     return events.map((event, index) => index === activityIndex ? mergeWorkflowEventPatch(event, { detail: targetDetail }) : event);
   }
-  const runningChild = [...events].reverse().find((event) => (
+  const runningChildIndex = lastMatchingIndex(events, (event) => (
     event.level === "child" && event.status === "running" && Boolean(event.groupId)
   ));
+  const runningChild = events[runningChildIndex];
   if (runningChild?.groupId) {
     const purposeIndex = events.findIndex((event) => event.role === "purpose" && event.groupId === runningChild.groupId);
     if (purposeIndex !== -1) {
@@ -1324,10 +1329,9 @@ function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
     }
   }
   const targetRoles = new Set(["purpose", "activity", "planning", "final"]);
-  const targetIndex = events
-    .map((event, index) => ({ event, index }))
-    .reverse()
-    .find(({ event }) => Boolean(event.role) && targetRoles.has(event.role!) && event.level !== "child")?.index ?? -1;
+  const targetIndex = lastMatchingIndex(events, (event) => (
+    Boolean(event.role) && targetRoles.has(event.role!) && event.level !== "child"
+  ));
   if (targetIndex === -1) {
     return events;
   }
@@ -1381,7 +1385,7 @@ function workflowCompletionStatus(toolName: string, isError: boolean): WorkflowE
 
 function ensurePurposeEvent(events: WorkflowEvent[], toolName: string): { events: WorkflowEvent[]; groupId: string } {
   const purpose = purposeForTool(toolName);
-  const latestPurpose = [...events].reverse().find((event) => event.role === "purpose");
+  const latestPurpose = events[lastMatchingIndex(events, (event) => event.role === "purpose")];
   if (latestPurpose?.purpose === purpose && latestPurpose.groupId) {
     const copy = purposeCopy(purpose);
     return {
@@ -1407,9 +1411,19 @@ function ensurePurposeEvent(events: WorkflowEvent[], toolName: string): { events
 }
 
 function refreshPurposeEvents(events: WorkflowEvent[]) {
+  const childrenByGroup = new Map<string, WorkflowEvent[]>();
+  for (const event of events) {
+    if (!event.groupId || event.role === "purpose") continue;
+    const children = childrenByGroup.get(event.groupId);
+    if (children) {
+      children.push(event);
+    } else {
+      childrenByGroup.set(event.groupId, [event]);
+    }
+  }
   return events.map((event) => {
     if (event.role !== "purpose" || !event.groupId) return event;
-    const children = events.filter((item) => item.groupId === event.groupId && item.role !== "purpose");
+    const children = childrenByGroup.get(event.groupId) || [];
     if (!children.length) return event;
     const hasRunning = children.some((item) => item.status === "running");
     const hasError = children.some((item) => item.status === "error");
@@ -1433,10 +1447,7 @@ function startActivityStep(events: WorkflowEvent[], copy = {
   if (events.some((event) => event.level === "child" && event.status === "running")) {
     return events;
   }
-  const existingActivityIndex = events
-    .map((event, index) => ({ event, index }))
-    .reverse()
-    .find(({ event }) => event.role === "activity")?.index ?? -1;
+  const existingActivityIndex = lastMatchingIndex(events, (event) => event.role === "activity");
   if (existingActivityIndex !== -1) {
     return events.map((event, index) => index === existingActivityIndex
       ? mergeWorkflowEventPatch(event, {
@@ -1565,29 +1576,30 @@ function updateLatestWorkflowEvent(
   const callId = identity.toolCallId || null;
   const callIndex = identity.toolCallIndex ?? null;
   const patchPath = workflowOutputInputPath(patch.toolInput);
-  const reversed = [...events].reverse();
   let index = callId
-    ? reversed.findIndex((event) => event.toolCallId === callId && event.status === "running")
+    ? lastMatchingIndex(events, (event) => event.toolCallId === callId && event.status === "running")
     : -1;
   if (index === -1 && callIndex !== null) {
-    index = reversed.findIndex(
+    index = lastMatchingIndex(
+      events,
       (event) => event.toolName === toolName && event.toolCallIndex === callIndex && event.status === "running",
     );
   }
   if (index === -1 && callIndex !== null && isWorkflowOutputTool(toolName)) {
-    index = reversed.findIndex(
+    index = lastMatchingIndex(
+      events,
       (event) => event.toolCallIndex === callIndex && event.status === "running" && isWorkflowOutputTool(event.toolName),
     );
   }
   if (index === -1 && patchPath && isWorkflowOutputTool(toolName)) {
-    index = reversed.findIndex((event) => (
+    index = lastMatchingIndex(events, (event) => (
       event.toolName === toolName
       && event.status === "running"
       && workflowOutputInputPath(event.toolInput) === patchPath
     ));
   }
   if (index === -1) {
-    index = reversed.findIndex((event) => (
+    index = lastMatchingIndex(events, (event) => (
       event.toolName === toolName
       && event.status === "running"
       && !event.toolCallId
@@ -1595,8 +1607,7 @@ function updateLatestWorkflowEvent(
     ));
   }
   if (index === -1) return null;
-  const realIndex = events.length - 1 - index;
-  return events.map((event, currentIndex) => (currentIndex === realIndex ? mergeWorkflowEventPatch(event, patch) : event));
+  return events.map((event, currentIndex) => (currentIndex === index ? mergeWorkflowEventPatch(event, patch) : event));
 }
 
 function mergeWorkflowEventPatch(event: WorkflowEvent, patch: Partial<Omit<WorkflowEvent, "id" | "toolName">>) {

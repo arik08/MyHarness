@@ -182,12 +182,15 @@ export function useBackendSession() {
       }
     }
 
-    const timer = window.setInterval(() => {
-      void reconcileBusyState();
+    let timer = window.setTimeout(async function poll() {
+      await reconcileBusyState();
+      if (!cancelled) {
+        timer = window.setTimeout(poll, busySessionPollMs);
+      }
     }, busySessionPollMs);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [dispatch, state.busy, state.clientId, state.sessionId, state.workspacePath]);
 }

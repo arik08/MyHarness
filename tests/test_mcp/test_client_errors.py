@@ -183,6 +183,44 @@ async def test_connect_stdio_merges_parent_environment(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_connect_stdio_closes_transport_when_cancelled(monkeypatch):
+    transport_closed = asyncio.Event()
+    registration_started = asyncio.Event()
+
+    class _StdioContext:
+        async def __aenter__(self):
+            return object(), object()
+
+        async def __aexit__(self, *_args):
+            transport_closed.set()
+
+    async def _register_connected_session(**_kwargs):
+        registration_started.set()
+        await asyncio.Event().wait()
+
+    manager = McpClientManager({})
+    manager._register_connected_session = _register_connected_session
+    monkeypatch.setattr(
+        "myharness.mcp.client.stdio_client",
+        lambda _parameters: _StdioContext(),
+    )
+
+    connect_task = asyncio.create_task(
+        manager._connect_stdio(
+            "cancelled",
+            McpStdioServerConfig(command="python", args=[]),
+        )
+    )
+    await asyncio.wait_for(registration_started.wait(), timeout=1)
+    connect_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await connect_task
+
+    assert transport_closed.is_set()
+
+
+@pytest.mark.asyncio
 async def test_close_suppresses_known_runtime_error_from_stdio_cleanup():
     manager = McpClientManager({})
     stack = MagicMock()

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import myharness.services.session_storage as session_storage
+import pytest
 from myharness.api.usage import UsageSnapshot
 from myharness.engine.messages import ConversationMessage, TextBlock
 from myharness.services.session_storage import (
@@ -451,6 +452,30 @@ def test_load_session_by_id_returns_none_for_corrupt_json(tmp_path: Path, monkey
     (target_dir / "session-broken.json").write_text("{not valid json", encoding="utf-8")
 
     assert load_session_by_id(project, "broken") is None
+
+
+def test_session_storage_rejects_ids_with_path_separators(tmp_path: Path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    invalid_id = "../../../outside"
+
+    with pytest.raises(ValueError, match="Invalid session id"):
+        save_session_snapshot(
+            cwd=project,
+            model="claude-test",
+            system_prompt="system",
+            messages=[ConversationMessage.from_user_text("hello")],
+            usage=UsageSnapshot(),
+            session_id=invalid_id,
+        )
+
+    sentinel = project / ".myharness" / "outside.json"
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("keep", encoding="utf-8")
+
+    assert load_session_by_id(project, invalid_id) is None
+    assert delete_session_by_id(project, invalid_id) is False
+    assert sentinel.read_text(encoding="utf-8") == "keep"
 
 
 def test_list_session_snapshots_skips_invalid_message_payload(tmp_path: Path, monkeypatch):

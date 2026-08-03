@@ -423,6 +423,25 @@ async def write_permission_request(
     return await loop.run_in_executor(None, _sync_write_permission_request, request)
 
 
+def _sync_read_pending_permissions(team: str) -> list[SwarmPermissionRequest]:
+    pending_dir = _get_pending_dir(team)
+    if not pending_dir.exists():
+        return []
+
+    requests: list[SwarmPermissionRequest] = []
+    for path in sorted(pending_dir.glob("*.json")):
+        if path.name == ".lock":
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            requests.append(SwarmPermissionRequest.from_dict(data))
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+    requests.sort(key=lambda r: r.created_at)
+    return requests
+
+
 async def read_pending_permissions(
     team_name: str | None = None,
 ) -> list[SwarmPermissionRequest]:
@@ -440,23 +459,19 @@ async def read_pending_permissions(
     team = team_name or _get_team_name()
     if not team:
         return []
+    return await asyncio.to_thread(_sync_read_pending_permissions, team)
 
-    pending_dir = _get_pending_dir(team)
-    if not pending_dir.exists():
-        return []
 
-    requests: list[SwarmPermissionRequest] = []
-    for path in sorted(pending_dir.glob("*.json")):
-        if path.name == ".lock":
-            continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            requests.append(SwarmPermissionRequest.from_dict(data))
-        except (json.JSONDecodeError, KeyError):
-            continue
+def _sync_read_resolved_permission(team: str, request_id: str) -> SwarmPermissionRequest | None:
+    resolved_path = _resolved_request_path(team, request_id)
+    if not resolved_path.exists():
+        return None
 
-    requests.sort(key=lambda r: r.created_at)
-    return requests
+    try:
+        data = json.loads(resolved_path.read_text(encoding="utf-8"))
+        return SwarmPermissionRequest.from_dict(data)
+    except (json.JSONDecodeError, KeyError, OSError):
+        return None
 
 
 async def read_resolved_permission(
@@ -479,15 +494,7 @@ async def read_resolved_permission(
     if not team:
         return None
 
-    resolved_path = _resolved_request_path(team, request_id)
-    if not resolved_path.exists():
-        return None
-
-    try:
-        data = json.loads(resolved_path.read_text(encoding="utf-8"))
-        return SwarmPermissionRequest.from_dict(data)
-    except (json.JSONDecodeError, KeyError, OSError):
-        return None
+    return await asyncio.to_thread(_sync_read_resolved_permission, team, request_id)
 
 
 def _sync_resolve_permission(
@@ -635,6 +642,10 @@ async def delete_resolved_permission(
     if not team:
         return False
 
+    return await asyncio.to_thread(_sync_delete_resolved_permission, team, request_id)
+
+
+def _sync_delete_resolved_permission(team: str, request_id: str) -> bool:
     resolved_path = _resolved_request_path(team, request_id)
     try:
         resolved_path.unlink()

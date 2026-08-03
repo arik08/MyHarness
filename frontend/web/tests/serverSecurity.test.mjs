@@ -233,6 +233,52 @@ test("requires a server-issued entry cookie before protected API access", async 
   assert.equal(allowed.status, 200);
 });
 
+test("malformed JSON returns 400 without terminating the web server", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const malformed = await fetch(`${app.baseUrl}/api/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{",
+  });
+  assert.equal(malformed.status, 400);
+
+  const health = await fetch(`${app.baseUrl}/api/auth/status`);
+  assert.equal(health.status, 200);
+});
+
+test("static files cannot escape into a sibling directory with the same prefix", async (t) => {
+  const fixtureDir = new URL("../../web-security-fixture/", import.meta.url);
+  await mkdir(fixtureDir, { recursive: true });
+  await writeFile(new URL("secret.txt", fixtureDir), "must-not-be-served", "utf8");
+  t.after(() => rm(fixtureDir, { recursive: true, force: true }));
+
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const response = await fetch(
+    `${app.baseUrl}/%2e%2e%2fweb-security-fixture%2fsecret.txt`,
+  );
+  const body = await response.text();
+
+  assert.notEqual(response.status, 200);
+  assert.doesNotMatch(body, /must-not-be-served/);
+});
+
+test("oversized JSON returns 413 without reading the full request", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const response = await fetch(`${app.baseUrl}/api/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ value: "x".repeat(12 * 1024 * 1024) }),
+  });
+
+  assert.equal(response.status, 413);
+});
+
 test("rejects shell command requests without an owned active session", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "ip" },
@@ -248,6 +294,40 @@ test("rejects shell command requests without an owned active session", async (t)
 
   assert.equal(response.status, 403);
   assert.match(payload.error, /active session/i);
+});
+
+test("bounds captured shell output before the command exits", async (t) => {
+  const app = await startWebServer({
+    env: {
+      MYHARNESS_WORKSPACE_SCOPE: "shared",
+      MYHARNESS_SHELL_OUTPUT_MAX_CHARS: "128",
+    },
+  });
+  t.after(() => app.stop());
+
+  const clientId = "bounded-shell-output";
+  const sessionResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId }),
+  });
+  const session = await sessionResponse.json();
+  assert.equal(sessionResponse.status, 200);
+
+  const response = await fetch(`${app.baseUrl}/api/shell`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: session.sessionId,
+      clientId,
+      command: "python -c \"import sys; sys.stdout.write('x' * 4096)\"",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.truncated, true);
+  assert.match(payload.stdout, /^x{128}\n\n\[output truncated\]$/);
 });
 
 test("explains session limits as multi-user busy state", async (t) => {
@@ -1575,6 +1655,62 @@ test("user stats include clickable daily IP visit breakdown", async (t) => {
   ]);
 });
 
+test("user stats count session messages and tool uses while ignoring corrupt snapshots", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `StatsTest${Date.now().toString(36)}` }),
+  });
+  const workspace = (await workspaceResponse.json()).workspace;
+  workspacePath = workspace?.path || "";
+  assert.equal(workspaceResponse.status, 200);
+  assert.ok(workspacePath);
+
+  const sessionDir = join(workspacePath, ".myharness", "sessions");
+  await mkdir(sessionDir, { recursive: true });
+  await Promise.all([
+    writeFile(join(sessionDir, "session-one.json"), JSON.stringify({
+      session_id: "one",
+      created_at: 100,
+      messages: [
+        { role: "user", content: "질문" },
+        { role: "assistant", content: [{ type: "text", text: "답변" }, { type: "tool_use", name: "read" }] },
+      ],
+    })),
+    writeFile(join(sessionDir, "session-two.json"), JSON.stringify({
+      session_id: "two",
+      created_at: 200,
+      messages: [
+        { role: "assistant", content: [{ type: "tool_use", name: "write" }] },
+        { role: "system", content: "상태" },
+      ],
+    })),
+    writeFile(join(sessionDir, "session-corrupt.json"), "{not-json", "utf8"),
+  ]);
+
+  const params = new URLSearchParams({ workspacePath, clientId: "stats-session-client" });
+  const response = await fetch(`${app.baseUrl}/api/user-stats?${params}`);
+  const payload = await response.json();
+  const workspaceStats = payload.workspaceBreakdown?.find((item) => item.path === workspacePath);
+
+  assert.equal(response.status, 200);
+  assert.equal(workspaceStats?.conversationCount, 2);
+  assert.equal(workspaceStats?.messageCount, 4);
+  assert.ok(payload.userMessageCount >= 1);
+  assert.ok(payload.assistantMessageCount >= 2);
+  assert.ok(payload.toolUseCount >= 2);
+  assert.equal(payload.currentWorkspaceConversationCount, 2);
+});
+
 test("user stats preserve concurrent page visits in JSON storage", async (t) => {
   const app = await startWebServer();
   t.after(() => app.stop());
@@ -1726,6 +1862,32 @@ test("output token settings expose official model caps and save valid values", a
   assert.equal(saveResponse.status, 200);
   assert.equal(saved.values["gpt-5.5"], 64000);
   assert.equal(settings.model_output_token_limits["gpt-5.4-mini"], 32000);
+});
+
+test("concurrent global settings writes remain valid and preserve every update", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  await writeFile(join(app.configDir, "settings.json"), `${JSON.stringify({ sentinel: "keep" })}\n`, "utf8");
+
+  const writes = [
+    ["/api/settings/shell", { shell: "powershell" }],
+    ["/api/settings/yolo-mode", { enabled: false }],
+    ["/api/settings/learned-skills", { mode: "use" }],
+    ["/api/settings/workspace-scope", { mode: "ip" }],
+  ];
+  const responses = await Promise.all(writes.map(([path, body]) => fetch(`${app.baseUrl}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })));
+  assert.deepEqual(responses.map((response) => response.status), [200, 200, 200, 200]);
+
+  const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+  assert.equal(settings.sentinel, "keep");
+  assert.equal(settings.shell, "powershell");
+  assert.equal(settings.yolo_mode_enabled, false);
+  assert.equal(settings.learning.mode, "use");
+  assert.equal(settings.web_workspace_scope, "ip");
 });
 
 test("output token settings can be saved from forwarded remote clients", async (t) => {

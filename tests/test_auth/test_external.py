@@ -184,7 +184,8 @@ def test_default_claude_binding_prefers_config_dir_on_macos(monkeypatch, tmp_pat
 def test_load_claude_external_credential_from_keychain(monkeypatch, tmp_path: Path):
     login_keychain = tmp_path / "login.keychain-db"
 
-    def _fake_check_output(args, text=True):
+    def _fake_check_output(args, text=True, timeout=None):
+        assert timeout == 10
         if args == ["security", "find-generic-password", "-w", "-s", "Claude Code-credentials"]:
             return json.dumps(
                 {
@@ -426,7 +427,8 @@ def test_load_claude_external_credential_refreshes_expired_keychain(monkeypatch,
     login_keychain = tmp_path / "login.keychain-db"
     writes: list[list[str]] = []
 
-    def _fake_check_output(args, text=True):
+    def _fake_check_output(args, text=True, timeout=None):
+        assert timeout == 10
         if args == ["security", "find-generic-password", "-w", "-s", "Claude Code-credentials"]:
             return json.dumps(
                 {
@@ -447,7 +449,8 @@ def test_load_claude_external_credential_refreshes_expired_keychain(monkeypatch,
             )
         raise AssertionError(args)
 
-    def _fake_run(args, check=True, capture_output=True, text=True):
+    def _fake_run(args, check=True, capture_output=True, text=True, timeout=None):
+        assert timeout == 10
         writes.append(args)
         return None
 
@@ -595,7 +598,8 @@ def test_describe_external_binding_reports_configured_claude_keychain(
 ):
     login_keychain = tmp_path / "login.keychain-db"
 
-    def _fake_check_output(args, text=True):
+    def _fake_check_output(args, text=True, timeout=None):
+        assert timeout == 10
         if args == ["security", "find-generic-password", "-w", "-s", "Claude Code-credentials"]:
             return json.dumps(
                 {

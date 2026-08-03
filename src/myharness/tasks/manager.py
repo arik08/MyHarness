@@ -42,6 +42,7 @@ class BackgroundTaskManager:
         self._last_output_notifications: dict[str, float] = {}
         self._completion_listeners: dict[str, CompletionListener] = {}
         self._update_listeners: dict[str, UpdateListener] = {}
+        self._notification_tasks: set[asyncio.Task[None]] = set()
 
     async def create_shell_task(
         self,
@@ -172,6 +173,8 @@ class BackgroundTaskManager:
                 return task
             raise ValueError(f"Task {task_id} is not running")
 
+        task.status = "killed"
+        task.ended_at = time.time()
         process.terminate()
         try:
             await asyncio.wait_for(process.wait(), timeout=3)
@@ -180,8 +183,6 @@ class BackgroundTaskManager:
             await process.wait()
         await _close_process_stdin(process)
 
-        task.status = "killed"
-        task.ended_at = time.time()
         await self._notify_update_listeners(task)
         return task
 
@@ -250,24 +251,40 @@ class BackgroundTaskManager:
         generation: int,
     ) -> None:
         reader = asyncio.create_task(self._copy_output(task_id, process))
-        return_code = await process.wait()
-        await reader
-        await _close_process_stdin(process)
+        try:
+            return_code = await process.wait()
+            output_error: Exception | None = None
+            try:
+                await reader
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                output_error = exc
+                log.exception("Failed to capture output for task %s", task_id)
+            await _close_process_stdin(process)
 
-        current_generation = self._generations.get(task_id)
-        if current_generation != generation:
-            return
+            if self._generations.get(task_id) != generation:
+                return
 
-        task = self._tasks[task_id]
-        task.return_code = return_code
-        if task.status != "killed":
-            task.status = "completed" if return_code == 0 else "failed"
-        task.ended_at = time.time()
-        await self._notify_update_listeners(task)
-        await self._notify_completion_listeners(task)
-        self._processes.pop(task_id, None)
-        self._waiters.pop(task_id, None)
-        self._last_output_notifications.pop(task_id, None)
+            task = self._tasks[task_id]
+            task.return_code = return_code
+            if task.status != "killed":
+                if output_error is not None:
+                    task.status = "failed"
+                    task.metadata["output_error"] = str(output_error)
+                else:
+                    task.status = "completed" if return_code == 0 else "failed"
+            task.ended_at = time.time()
+            await self._notify_update_listeners(task)
+            await self._notify_completion_listeners(task)
+        finally:
+            if not reader.done():
+                reader.cancel()
+                await asyncio.gather(reader, return_exceptions=True)
+            if self._generations.get(task_id) == generation:
+                self._processes.pop(task_id, None)
+                self._waiters.pop(task_id, None)
+                self._last_output_notifications.pop(task_id, None)
 
     async def _copy_output(self, task_id: str, process: asyncio.subprocess.Process) -> None:
         if process.stdout is None:
@@ -429,13 +446,19 @@ class BackgroundTaskManager:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self._notify_update_listeners(task))
+        notification = loop.create_task(self._notify_update_listeners(task))
+        self._notification_tasks.add(notification)
+        notification.add_done_callback(self._notification_tasks.discard)
 
     def close(self) -> None:
         """Best-effort cleanup for any tracked subprocesses and watcher tasks."""
         for waiter in list(self._waiters.values()):
             waiter.cancel()
         self._waiters.clear()
+
+        for notification in list(self._notification_tasks):
+            notification.cancel()
+        self._notification_tasks.clear()
 
         for process in list(self._processes.values()):
             stdin = process.stdin
@@ -456,6 +479,7 @@ class BackgroundTaskManager:
         """Asynchronously shut down tracked subprocesses and waiters."""
         processes = list(self._processes.values())
         waiters = list(self._waiters.values())
+        notifications = list(self._notification_tasks)
 
         for process in processes:
             if process.returncode is None:
@@ -474,9 +498,14 @@ class BackgroundTaskManager:
 
         if waiters:
             await asyncio.gather(*waiters, return_exceptions=True)
+        for notification in notifications:
+            notification.cancel()
+        if notifications:
+            await asyncio.gather(*notifications, return_exceptions=True)
 
         self._processes.clear()
         self._waiters.clear()
+        self._notification_tasks.clear()
         self._last_output_notifications.clear()
 
 

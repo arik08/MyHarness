@@ -12,6 +12,7 @@ import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 import { frontendHelpText } from "../utils/helpText";
 import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
 import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/runtimePreferences";
+import { writeLocalStorage } from "../utils/storage";
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
   { id: "light", label: "Light" },
@@ -141,7 +142,7 @@ export function Sidebar() {
     const workspace = state.workspaces.find((item) => item.path === path);
     if (!workspace) return;
     dispatch({ type: "set_workspace", workspace });
-    localStorage.setItem("myharness:workspaceName", workspace.name);
+    writeLocalStorage("myharness:workspaceName", workspace.name);
     setWorkspaceDropdownOpen(false);
     await startFreshChat(workspace);
   }

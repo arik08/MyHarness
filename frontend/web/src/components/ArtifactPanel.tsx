@@ -14,6 +14,7 @@ import {
   normalizeProjectFilePath,
 } from "../utils/artifacts";
 import { canCopyPngToClipboard, copyPngToClipboard, copyTextToClipboard } from "../utils/clipboard";
+import { readLocalStorage, writeLocalStorage } from "../utils/storage";
 import { Icon, type IconName } from "./ArtifactIcons";
 import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload, type ArtifactCaptureResult } from "./ArtifactPreview";
 import { showTooltipNowEvent } from "./TooltipLayer";
@@ -394,8 +395,8 @@ export function ArtifactPanel() {
   const { state, dispatch } = useAppState();
   const [loadingPath, setLoadingPath] = useState("");
   const [fileScope, setFileScope] = useState<"default" | "all">("default");
-  const [fileFilter, setFileFilter] = useState(() => localStorage.getItem("myharness:projectFileFilter") || "all");
-  const [fileSort, setFileSort] = useState(() => localStorage.getItem("myharness:projectFileSortMode") || "recent");
+  const [fileFilter, setFileFilter] = useState(() => readLocalStorage("myharness:projectFileFilter", "all"));
+  const [fileSort, setFileSort] = useState(() => readLocalStorage("myharness:projectFileSortMode", "recent"));
   const [fullscreen, setFullscreen] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [draftPath, setDraftPath] = useState("");
@@ -980,14 +981,14 @@ export function ArtifactPanel() {
   function changeFilter(value: string) {
     setFileFilter(value);
     setPendingDeletePath("");
-    localStorage.setItem("myharness:projectFileFilter", value);
+    writeLocalStorage("myharness:projectFileFilter", value);
   }
 
   function changeSort(value: string) {
     const next = value === "path" ? "path" : "recent";
     setFileSort(next);
     setPendingDeletePath("");
-    localStorage.setItem("myharness:projectFileSortMode", next);
+    writeLocalStorage("myharness:projectFileSortMode", next);
   }
 
   function beginResize(event: ReactPointerEvent<HTMLButtonElement>) {

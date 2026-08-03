@@ -386,3 +386,72 @@ async def test_completion_listener_sees_killed_status_for_stopped_task(
     await asyncio.wait_for(done.wait(), timeout=5)
 
     assert seen == [(task.id, "killed")]
+
+
+@pytest.mark.asyncio
+async def test_output_capture_failure_marks_task_failed_and_releases_process(tmp_path: Path):
+    manager = BackgroundTaskManager()
+    output_path = tmp_path / "capture-failure.log"
+    output_path.write_text("", encoding="utf-8")
+    record = TaskRecord(
+        id="capture-failure",
+        type="local_bash",
+        status="running",
+        description="capture failure",
+        cwd=str(tmp_path),
+        output_file=output_path,
+    )
+
+    class _FakeProcess:
+        stdin = None
+
+        async def wait(self) -> int:
+            return 0
+
+    async def _fail_copy_output(task_id, process) -> None:
+        del task_id, process
+        raise OSError("disk full")
+
+    process = _FakeProcess()
+    manager._tasks[record.id] = record  # type: ignore[attr-defined]
+    manager._generations[record.id] = 1  # type: ignore[attr-defined]
+    manager._processes[record.id] = process  # type: ignore[attr-defined]
+    manager._copy_output = _fail_copy_output  # type: ignore[method-assign]
+
+    await manager._watch_process(record.id, process, 1)  # type: ignore[arg-type,attr-defined]
+
+    assert record.status == "failed"
+    assert record.metadata["output_error"] == "disk full"
+    assert record.ended_at is not None
+    assert record.id not in manager._processes  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_nowait_update_listener_task_is_retained_until_completion(tmp_path: Path):
+    manager = BackgroundTaskManager()
+    release = asyncio.Event()
+    started = asyncio.Event()
+    record = TaskRecord(
+        id="listener-retention",
+        type="local_bash",
+        status="running",
+        description="listener retention",
+        cwd=str(tmp_path),
+        output_file=tmp_path / "listener-retention.log",
+    )
+    manager._tasks[record.id] = record  # type: ignore[attr-defined]
+
+    async def _listener(task: TaskRecord) -> None:
+        del task
+        started.set()
+        await release.wait()
+
+    manager.register_update_listener(_listener)
+    manager.notify_task_updated(record.id)
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert len(manager._notification_tasks) == 1  # type: ignore[attr-defined]
+    release.set()
+    await asyncio.gather(*manager._notification_tasks)  # type: ignore[attr-defined]
+    await asyncio.sleep(0)
+    assert not manager._notification_tasks  # type: ignore[attr-defined]

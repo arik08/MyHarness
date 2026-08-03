@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.metadata
 import json
 import os
 import re
 import shutil
 import subprocess
+from bisect import insort
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -326,6 +328,32 @@ def _run_git_command(cwd: str, *args: str) -> tuple[bool, str]:
     if completed.returncode != 0:
         return False, output or f"git {' '.join(args)} failed"
     return True, output
+
+
+def _scan_project_entries(
+    root: Path,
+    *,
+    directories: bool,
+    max_items: int,
+    needle: str = "",
+) -> tuple[list[str], int]:
+    selected: list[str] = []
+    total = 0
+    ignored_directories = {".git", ".venv"}
+    for current_root, directory_names, file_names in os.walk(root):
+        directory_names[:] = sorted(name for name in directory_names if name not in ignored_directories)
+        names = directory_names if directories else sorted(file_names)
+        current_path = Path(current_root)
+        for name in names:
+            relative = (current_path / name).relative_to(root).as_posix()
+            if needle and needle not in relative.lower():
+                continue
+            total += 1
+            if len(selected) < max_items or relative < selected[-1]:
+                insort(selected, relative)
+                if len(selected) > max_items:
+                    selected.pop()
+    return selected, total
 
 
 def _copy_to_clipboard(text: str) -> tuple[bool, str]:
@@ -1030,29 +1058,28 @@ def create_default_command_registry(
         max_items = 30
         tokens = raw.split(maxsplit=1)
         if tokens and tokens[0] == "dirs":
-            dirs = [
-                path
-                for path in sorted(root.rglob("*"))
-                if path.is_dir() and ".git" not in path.parts and ".venv" not in path.parts
-            ]
-            lines = [path.relative_to(root).as_posix() for path in dirs[:max_items]]
-            if len(dirs) > max_items:
-                lines.append(f"... {len(dirs) - max_items} more")
+            lines, total = await asyncio.to_thread(
+                _scan_project_entries,
+                root,
+                directories=True,
+                max_items=max_items,
+            )
+            if total > max_items:
+                lines.append(f"... {total - max_items} more")
             return CommandResult(message="\n".join(lines) if lines else "(no directories)")
         if tokens and tokens[0].isdigit():
             max_items = max(1, min(int(tokens[0]), 200))
             raw = tokens[1] if len(tokens) == 2 else ""
         needle = raw.lower()
-        files = [
-            path
-            for path in sorted(root.rglob("*"))
-            if path.is_file() and ".git" not in path.parts and ".venv" not in path.parts
-        ]
-        if needle:
-            files = [path for path in files if needle in path.relative_to(root).as_posix().lower()]
-        lines = [path.relative_to(root).as_posix() for path in files[:max_items]]
-        if len(files) > max_items:
-            lines.append(f"... {len(files) - max_items} more")
+        lines, total = await asyncio.to_thread(
+            _scan_project_entries,
+            root,
+            directories=False,
+            max_items=max_items,
+            needle=needle,
+        )
+        if total > max_items:
+            lines.append(f"... {total - max_items} more")
         return CommandResult(
             message="\n".join(lines) if lines else "(no matching files)"
         )

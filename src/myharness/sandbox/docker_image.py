@@ -7,11 +7,14 @@ import logging
 import shutil
 from pathlib import Path
 
+from myharness.utils.subprocess_output import communicate_bounded
 from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_IMAGE = "myharness-sandbox:latest"
+DOCKER_INSPECT_TIMEOUT_SECONDS = 30
+DOCKER_BUILD_TIMEOUT_SECONDS = 15 * 60
 
 _DOCKERFILE_CONTENT = """\
 FROM python:3.11-slim
@@ -40,7 +43,11 @@ async def _image_exists(image: str) -> bool:
         stderr=asyncio.subprocess.PIPE,
         **hidden_subprocess_kwargs(),
     )
-    await process.communicate()
+    try:
+        await communicate_bounded(process, timeout=DOCKER_INSPECT_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning("Timed out inspecting Docker image %r", image)
+        return False
     return process.returncode == 0
 
 
@@ -60,6 +67,7 @@ async def build_default_image(image: str = _DEFAULT_IMAGE) -> bool:
 
     logger.info("Building Docker sandbox image %r ...", image)
 
+    stdin_payload: bytes | None = None
     if dockerfile_path.exists():
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -75,14 +83,17 @@ async def build_default_image(image: str = _DEFAULT_IMAGE) -> bool:
             stderr=asyncio.subprocess.PIPE,
             **hidden_subprocess_kwargs(),
         )
-        await process.communicate(input=_DOCKERFILE_CONTENT.encode("utf-8"))
-        if process.returncode == 0:
-            logger.info("Docker sandbox image %r built successfully", image)
-            return True
-        logger.warning("Failed to build Docker sandbox image %r", image)
-        return False
+        stdin_payload = _DOCKERFILE_CONTENT.encode("utf-8")
 
-    _, stderr_bytes = await process.communicate()
+    try:
+        _, stderr_bytes = await communicate_bounded(
+            process,
+            timeout=DOCKER_BUILD_TIMEOUT_SECONDS,
+            input=stdin_payload,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Timed out building Docker sandbox image %r", image)
+        return False
     if process.returncode == 0:
         logger.info("Docker sandbox image %r built successfully", image)
         return True

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from types import SimpleNamespace
 
 from myharness.ui.app import run_print_mode, run_repl, run_task_worker
 from myharness.engine.stream_events import AssistantTurnComplete
 from myharness.engine.messages import ConversationMessage, TextBlock
-from myharness.ui.react_launcher import build_backend_command
+from myharness.ui.react_launcher import build_backend_command, launch_react_tui
 
 
 class _AsyncIterator:
@@ -38,6 +40,32 @@ def test_build_backend_command_includes_flags():
     assert "--base-url" in command
     assert "--system-prompt" in command
     assert "--api-key" in command
+
+
+@pytest.mark.asyncio
+async def test_launch_react_tui_times_out_stalled_dependency_install(tmp_path, monkeypatch):
+    frontend_dir = tmp_path / "terminal"
+    frontend_dir.mkdir()
+    (frontend_dir / "package.json").write_text("{}", encoding="utf-8")
+    process = SimpleNamespace(returncode=None)
+    seen: dict[str, object] = {}
+
+    async def _create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    async def _communicate_bounded(candidate, **kwargs):
+        seen.update({"process": candidate, **kwargs})
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr("myharness.ui.react_launcher.get_frontend_dir", lambda: frontend_dir)
+    monkeypatch.setattr("myharness.ui.react_launcher._resolve_npm", lambda: "npm")
+    monkeypatch.setattr("myharness.ui.react_launcher.asyncio.create_subprocess_exec", _create_subprocess_exec)
+    monkeypatch.setattr("myharness.ui.react_launcher.communicate_bounded", _communicate_bounded)
+
+    with pytest.raises(RuntimeError, match="Timed out installing"):
+        await launch_react_tui()
+
+    assert seen == {"process": process, "timeout": 600, "tail_bytes": 0}
 
 
 @pytest.mark.asyncio

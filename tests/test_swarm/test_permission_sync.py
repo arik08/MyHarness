@@ -2,20 +2,39 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from myharness.swarm import permission_sync as permission_sync_module
 from myharness.swarm.permission_sync import (
     SwarmPermissionResponse,
     _is_read_only,
     create_permission_request,
     handle_permission_request,
     poll_permission_response,
+    read_pending_permissions,
     send_permission_request,
     send_permission_response,
 )
+
+
+@pytest.mark.asyncio
+async def test_pending_permission_reads_keep_event_loop_responsive(monkeypatch):
+    def _slow_read(_team_name):
+        time.sleep(0.05)
+        return []
+
+    monkeypatch.setattr(permission_sync_module, "_sync_read_pending_permissions", _slow_read)
+    task = asyncio.create_task(read_pending_permissions("team"))
+
+    await asyncio.sleep(0.01)
+
+    assert task.done() is False
+    assert await task == []
 
 
 # ---------------------------------------------------------------------------

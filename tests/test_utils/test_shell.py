@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from myharness.utils import shell as shell_module
 from myharness.config.settings import Settings
 from myharness.platforms import get_platform
 from myharness.utils.shell import (
@@ -213,6 +214,45 @@ async def test_create_shell_subprocess_hides_console_windows_on_windows(monkeypa
     )
 
     assert captured["kwargs"]["creationflags"] == 0x08000000
+
+
+@pytest.mark.asyncio
+async def test_create_shell_subprocess_retains_sandbox_cleanup_task(monkeypatch, tmp_path: Path):
+    cleanup_path = tmp_path / "sandbox-command.sh"
+    cleanup_path.write_text("echo hi", encoding="utf-8")
+    release = asyncio.Event()
+
+    class _FakeProcess:
+        returncode = None
+
+        async def wait(self) -> int:
+            await release.wait()
+            self.returncode = 0
+            return 0
+
+    process = _FakeProcess()
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        del args, kwargs
+        return process
+
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(
+        shell_module,
+        "wrap_command_for_sandbox",
+        lambda argv, settings=None: (argv, cleanup_path),
+    )
+
+    await create_shell_subprocess("echo hi", cwd=tmp_path, settings=Settings())
+    await asyncio.sleep(0)
+
+    assert len(shell_module._CLEANUP_TASKS) == 1
+    assert cleanup_path.exists()
+    release.set()
+    await asyncio.gather(*shell_module._CLEANUP_TASKS)
+    await asyncio.sleep(0)
+    assert not shell_module._CLEANUP_TASKS
+    assert not cleanup_path.exists()
 
 
 def test_windows_simple_printf_is_translated_without_shell():

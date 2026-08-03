@@ -10,9 +10,11 @@ from typing import Iterable
 
 from myharness.config.paths import get_config_dir
 from myharness.skills.types import SkillDefinition
+from myharness.utils.file_lock import exclusive_file_lock
 from myharness.utils.fs import atomic_write_text
 
 
+_STATE_LOCK = threading.RLock()
 _USAGE_LOCK = threading.RLock()
 
 
@@ -56,19 +58,32 @@ def set_skill_enabled(name: str, enabled: bool) -> bool:
     normalized = _normalize_name(name)
     if not normalized:
         return True
-    disabled = get_disabled_skill_names()
-    if enabled:
-        disabled.discard(normalized)
-    else:
-        disabled.add(normalized)
-    _write_disabled_skill_names(disabled)
+    path = get_skill_state_path()
+    with _STATE_LOCK, exclusive_file_lock(_skill_state_lock_path(path)):
+        disabled = get_disabled_skill_names()
+        if enabled:
+            disabled.discard(normalized)
+        else:
+            disabled.add(normalized)
+        _write_disabled_skill_names(path, disabled)
     return enabled
 
 
 def toggle_skill_enabled(name: str) -> bool:
     """Toggle a skill enabled state. Returns the new enabled value."""
-    enabled = not is_skill_enabled(name)
-    return set_skill_enabled(name, enabled)
+    normalized = _normalize_name(name)
+    if not normalized:
+        return True
+    path = get_skill_state_path()
+    with _STATE_LOCK, exclusive_file_lock(_skill_state_lock_path(path)):
+        disabled = get_disabled_skill_names()
+        enabled = normalized in disabled
+        if enabled:
+            disabled.discard(normalized)
+        else:
+            disabled.add(normalized)
+        _write_disabled_skill_names(path, disabled)
+        return enabled
 
 
 def apply_skill_enabled_state(
@@ -129,10 +144,13 @@ def increment_skill_usage_count(name: str) -> int:
         return counts[normalized]
 
 
-def _write_disabled_skill_names(disabled: set[str]) -> None:
-    path = get_skill_state_path()
+def _skill_state_lock_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".lock")
+
+
+def _write_disabled_skill_names(path: Path, disabled: set[str]) -> None:
     payload = {"disabled_skills": sorted(name for name in disabled if name)}
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
 
 
 def _write_skill_usage_counts(counts: dict[str, int]) -> None:

@@ -21,7 +21,6 @@ from myharness.coordinator.agent_definitions import (
     MEMORY_SCOPES,
     PERMISSION_MODES,
     AgentDefinition,
-    _parse_agent_frontmatter,
     _parse_positive_int,
     _parse_str_list,
 )

@@ -12,6 +12,7 @@ is required.
 from __future__ import annotations
 
 import logging
+from contextlib import aclosing
 from typing import AsyncIterator
 
 from openai import AsyncOpenAI
@@ -128,8 +129,9 @@ class CopilotClient:
             reasoning_effort=request.reasoning_effort,
             cache_event=request.cache_event,
         )
-        async for event in self._inner.stream_message(patched):
-            yield event
+        async with aclosing(self._inner.stream_message(patched)) as stream:
+            async for event in stream:
+                yield event
 
     async def aclose(self) -> None:
         """Close the wrapped OpenAI connection pool."""

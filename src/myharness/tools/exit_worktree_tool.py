@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from pathlib import Path
 
@@ -32,7 +33,8 @@ class ExitWorktreeTool(BaseTool):
         path = Path(arguments.path).expanduser()
         if not path.is_absolute():
             path = (context.cwd / path).resolve()
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "worktree", "remove", "--force", str(path)],
             cwd=context.cwd,
             capture_output=True,

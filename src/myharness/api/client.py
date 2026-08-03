@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Protocol
 
@@ -180,8 +181,9 @@ class AnthropicApiClient:
         for attempt in range(MAX_RETRIES + 1):
             try:
                 await self._refresh_client_auth()
-                async for event in self._stream_once(request):
-                    yield event
+                async with aclosing(self._stream_once(request)) as stream:
+                    async for event in stream:
+                        yield event
                 return  # Success
             except MyHarnessApiError:
                 raise  # Auth errors are not retried

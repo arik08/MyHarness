@@ -29,6 +29,9 @@ async def test_image_exists_returns_true_on_success(monkeypatch):
     async def fake_exec(*args, **kwargs):
         mock = MagicMock()
         mock.communicate = AsyncMock(return_value=(b"", b""))
+        mock.wait = AsyncMock(return_value=0)
+        mock.stdout = None
+        mock.stderr = None
         mock.returncode = 0
         return mock
 
@@ -47,6 +50,9 @@ async def test_image_exists_returns_false_on_failure(monkeypatch):
     async def fake_exec(*args, **kwargs):
         mock = MagicMock()
         mock.communicate = AsyncMock(return_value=(b"", b"Error"))
+        mock.wait = AsyncMock(return_value=1)
+        mock.stdout = None
+        mock.stderr = None
         mock.returncode = 1
         return mock
 
@@ -65,6 +71,9 @@ async def test_ensure_image_skips_build_when_exists(monkeypatch):
     async def fake_exec(*args, **kwargs):
         mock = MagicMock()
         mock.communicate = AsyncMock(return_value=(b"", b""))
+        mock.wait = AsyncMock(return_value=0)
+        mock.stdout = None
+        mock.stderr = None
         mock.returncode = 0
         return mock
 
@@ -83,6 +92,9 @@ async def test_ensure_image_returns_false_without_auto_build(monkeypatch):
     async def fake_exec(*args, **kwargs):
         mock = MagicMock()
         mock.communicate = AsyncMock(return_value=(b"", b""))
+        mock.wait = AsyncMock(return_value=1)
+        mock.stdout = None
+        mock.stderr = None
         mock.returncode = 1  # image not found
         return mock
 

@@ -257,6 +257,9 @@ class McpClientManager:
                 write_stream=write_stream,
                 auth_configured=bool(config.env),
             )
+        except asyncio.CancelledError:
+            await stack.aclose()
+            raise
         except Exception as exc:
             await stack.aclose()
             self._statuses[name] = McpConnectionStatus(
@@ -296,6 +299,9 @@ class McpClientManager:
                 write_stream=write_stream,
                 auth_configured=bool(config.headers),
             )
+        except asyncio.CancelledError:
+            await stack.aclose()
+            raise
         except Exception as exc:
             await stack.aclose()
             self._statuses[name] = McpConnectionStatus(

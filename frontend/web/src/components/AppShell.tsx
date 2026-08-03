@@ -11,6 +11,7 @@ import {
   sidebarAutoCollapseChatWidthPx,
   sidebarCollapsedTrackWidthPx,
 } from "../layout/sidebarLayout";
+import { writeLocalStorage } from "../utils/storage";
 
 const sidebarTransitionMs = 220;
 
@@ -104,19 +105,19 @@ export function AppShell() {
     } else {
       document.documentElement.dataset.theme = state.themeId;
     }
-    localStorage.setItem("myharness:theme", state.themeId);
+    writeLocalStorage("myharness:theme", state.themeId);
   }, [state.themeId]);
 
   useEffect(() => {
     if (state.sidebarCollapseReason === "auto") {
       return;
     }
-    localStorage.setItem("myharness:sidebarCollapsed", state.sidebarCollapsed ? "1" : "0");
+    writeLocalStorage("myharness:sidebarCollapsed", state.sidebarCollapsed ? "1" : "0");
   }, [state.sidebarCollapsed, state.sidebarCollapseReason]);
 
   useEffect(() => {
     if (!state.sidebarCollapsed && state.sidebarWidth) {
-      localStorage.setItem("myharness:sidebarWidth", String(state.sidebarWidth));
+      writeLocalStorage("myharness:sidebarWidth", String(state.sidebarWidth));
     }
   }, [state.sidebarCollapsed, state.sidebarWidth]);
 
@@ -125,9 +126,9 @@ export function AppShell() {
       return;
     }
     if (state.activeArtifact) {
-      localStorage.setItem("myharness:artifactPanelPreviewWidth", String(state.artifactPanelWidth));
+      writeLocalStorage("myharness:artifactPanelPreviewWidth", String(state.artifactPanelWidth));
     } else {
-      localStorage.setItem("myharness:artifactPanelListWidth", String(state.artifactPanelWidth));
+      writeLocalStorage("myharness:artifactPanelListWidth", String(state.artifactPanelWidth));
     }
   }, [state.activeArtifact, state.artifactPanelWidth]);
 

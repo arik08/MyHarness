@@ -10,6 +10,7 @@ from myharness.tools.bash_tool import (
     BashToolInput,
     _collect_output,
     _format_output,
+    _format_timeout_output,
     _MAX_CAPTURE_BYTES,
 )
 
@@ -139,6 +140,16 @@ async def test_bash_tool_timeout_returns_partial_output_for_real_command(tmp_pat
     assert "Would you like to use Turbopack?" in result.output
     assert "This command appears to require interactive input." in result.output
     assert result.metadata["timed_out"] is True
+
+
+def test_bash_tool_timeout_omits_empty_partial_output_block():
+    output = _format_timeout_output(
+        bytearray(),
+        command="python -c \"import time; time.sleep(5)\"",
+        timeout_seconds=1,
+    )
+
+    assert output == "Command timed out after 1 seconds."
 
 
 @pytest.mark.asyncio
