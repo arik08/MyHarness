@@ -115,9 +115,12 @@ async def _read_bounded_response_body(response: httpx.Response, max_bytes: int) 
 
 
 def _copy_response(response: httpx.Response, content: bytes) -> httpx.Response:
+    headers = response.headers.copy()
+    headers.pop("content-encoding", None)
+    headers.pop("content-length", None)
     return httpx.Response(
         status_code=response.status_code,
-        headers=response.headers,
+        headers=headers,
         content=content,
         request=response.request,
         extensions=response.extensions,
