@@ -99,8 +99,15 @@ class ToolResultBlock(BaseModel):
     transcript_content: str | None = None
 
 
+class ResponsesStateBlock(BaseModel):
+    """Opaque Responses API state that must be replayed on later turns."""
+
+    type: Literal["responses_state"] = "responses_state"
+    item: dict[str, Any]
+
+
 ContentBlock = Annotated[
-    TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock,
+    TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock | ResponsesStateBlock,
     Field(discriminator="type"),
 ]
 
@@ -145,7 +152,11 @@ class ConversationMessage(BaseModel):
         """Convert the message into Anthropic SDK message params."""
         return {
             "role": self.role,
-            "content": [serialize_content_block(block) for block in self.content],
+            "content": [
+                serialize_content_block(block)
+                for block in self.content
+                if not isinstance(block, ResponsesStateBlock)
+            ],
         }
 
     def is_effectively_empty(self) -> bool:
@@ -154,7 +165,7 @@ class ConversationMessage(BaseModel):
             for block in self.content:
                 if isinstance(block, TextBlock) and block.text.strip():
                     return False
-                if isinstance(block, (ImageBlock, ToolUseBlock, ToolResultBlock)):
+                if isinstance(block, (ImageBlock, ToolUseBlock, ToolResultBlock, ResponsesStateBlock)):
                     return False
         return True
 
@@ -236,6 +247,9 @@ def serialize_content_block(block: ContentBlock) -> dict[str, Any]:
             "name": block.name,
             "input": block.input,
         }
+
+    if isinstance(block, ResponsesStateBlock):
+        raise ValueError("Responses API state cannot be serialized for Anthropic")
 
     return {
         "type": "tool_result",

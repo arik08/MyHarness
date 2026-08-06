@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { Dispatch } from "react";
 import type { AppAction } from "../state/reducer";
+import { isResponseVisiblyBusy } from "../state/selectors";
 import type { AppState, ChatMessage } from "../types/ui";
 
 const nearBottomPx = 140;
@@ -78,7 +79,7 @@ export function useMessageAutoFollow({
   const streamScrollDurationMsRef = useRef(state.appSettings.streamScrollDurationMs);
   const streamFollowLeadPxRef = useRef(0);
   const isLastAssistantStreaming = state.busy && lastMessage?.role === "assistant" && !lastMessage.isComplete;
-  const isActiveWorkflowGrowing = state.busy && Boolean(state.workflowAnchorMessageId && state.workflowEvents.length);
+  const isActiveWorkflowGrowing = isResponseVisiblyBusy(state) && Boolean(state.workflowAnchorMessageId && state.workflowEvents.length);
   const shouldFollowGrowingTail = isLastAssistantStreaming || isActiveWorkflowGrowing;
   const scrollSessionId = state.activeHistoryId || state.sessionId;
   const configuredStreamFollowLeadPx = Math.max(0, Math.min(maxStreamFollowLeadPx, state.appSettings.streamFollowLeadPx));

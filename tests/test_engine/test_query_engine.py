@@ -106,6 +106,14 @@ class RetryThenSuccessApiClient:
         )
 
 
+class DnsFailingApiClient:
+    async def stream_message(self, request):
+        del request
+        if False:
+            yield None
+        raise OSError(11001, "getaddrinfo failed")
+
+
 class SlowFirstEventApiClient:
     async def stream_message(self, request):
         del request
@@ -913,6 +921,26 @@ async def test_query_engine_surfaces_retry_status_events(tmp_path: Path):
     retry_events = [event for event in events if isinstance(event, StatusEvent)]
     assert any("연결이 잠시 끊겨 재시도합니다" in event.message for event in retry_events)
     assert isinstance(events[-1], AssistantTurnComplete)
+
+
+@pytest.mark.asyncio
+async def test_query_engine_explains_pgpt_dns_failure(tmp_path: Path):
+    engine = QueryEngine(
+        api_client=DnsFailingApiClient(),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="gpt-test",
+        system_prompt="system",
+        tool_metadata={"active_profile": "p-gpt"},
+    )
+
+    events = [event async for event in engine.submit_message("hello")]
+
+    error = next(event for event in events if isinstance(event, ErrorEvent))
+    assert "P-GPT" in error.message
+    assert "회사 네트워크 또는 VPN" in error.message
+    assert "getaddrinfo failed" in error.message
 
 
 @pytest.mark.asyncio
@@ -1858,7 +1886,7 @@ async def test_query_engine_applies_path_rules_to_write_file_targets_in_full_aut
 
 
 @pytest.mark.asyncio
-async def test_query_engine_finishes_after_successful_html_write_without_extra_model_round(tmp_path: Path):
+async def test_query_engine_requests_final_model_round_after_successful_html_write(tmp_path: Path):
     client = FakeApiClient(
         [
             _FakeResponse(
@@ -1876,7 +1904,22 @@ async def test_query_engine_finishes_after_successful_html_write_without_extra_m
                     ],
                 ),
                 usage=UsageSnapshot(input_tokens=1, output_tokens=1),
-            )
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        TextBlock(
+                            text=(
+                                "작성과 검증을 완료했습니다.\n"
+                                '<myharness-artifacts>{"artifacts":[{"path":"outputs/report.html"}]}'
+                                "</myharness-artifacts>"
+                            )
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
         ]
     )
     engine = QueryEngine(
@@ -1890,15 +1933,86 @@ async def test_query_engine_finishes_after_successful_html_write_without_extra_m
 
     events = [event async for event in engine.submit_message("HTML 보고서를 작성해줘")]
 
-    assert len(client.requests) == 1
+    assert len(client.requests) == 2
     assert (tmp_path / "outputs" / "report.html").exists()
     tool_results = [event for event in events if isinstance(event, ToolExecutionCompleted)]
     assert len(tool_results) == 1
     assert tool_results[0].output == "Wrote outputs/report.html"
     assert isinstance(events[-1], AssistantTurnComplete)
+    assert "작성과 검증을 완료했습니다." in events[-1].message.text
     assert "<myharness-artifacts>" in events[-1].message.text
     assert "outputs/report.html" in events[-1].message.text
     assert len(engine.messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_query_engine_retries_after_truncated_standalone_html_write(tmp_path: Path):
+    complete_html = "<!doctype html><html><body><main>AI game</main></body></html>"
+    client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_truncated_html",
+                            name="write_file",
+                            input={
+                                "path": "outputs/ai_game.html",
+                                "content": '<!doctype html>\n<html lang="ko">\n<head>\n<meta charset="utf-8',
+                            },
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_complete_html",
+                            name="write_file",
+                            input={"path": "outputs/ai_game.html", "content": complete_html},
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        TextBlock(
+                            text=(
+                                "완전한 HTML을 작성했습니다.\n"
+                                '<myharness-artifacts>{"artifacts":[{"path":"outputs/ai_game.html"}]}'
+                                "</myharness-artifacts>"
+                            )
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("AI 게임 HTML을 작성해줘")]
+
+    tool_results = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert [result.is_error for result in tool_results] == [True, False]
+    assert "Incomplete standalone HTML" in tool_results[0].output
+    assert len(client.requests) == 3
+    assert (tmp_path / "outputs" / "ai_game.html").read_text(encoding="utf-8") == complete_html
+    assert "<myharness-artifacts>" in events[-1].message.text
 
 
 @pytest.mark.asyncio

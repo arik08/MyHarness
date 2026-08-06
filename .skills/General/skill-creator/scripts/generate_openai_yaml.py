@@ -153,10 +153,10 @@ def parse_interface_overrides(raw_overrides):
     return overrides, optional_order
 
 
-def write_openai_yaml(skill_dir, skill_name, raw_overrides):
+def resolve_interface_values(skill_name, raw_overrides):
     overrides, optional_order = parse_interface_overrides(raw_overrides)
     if overrides is None:
-        return None
+        return None, None, None, None
 
     display_name = overrides.get("display_name") or format_display_name(skill_name)
     short_description = overrides.get("short_description") or generate_short_description(display_name)
@@ -166,6 +166,26 @@ def write_openai_yaml(skill_dir, skill_name, raw_overrides):
             "[ERROR] short_description must be 25-64 characters "
             f"(got {len(short_description)})."
         )
+        return None, None, None, None
+
+    default_prompt = overrides.get("default_prompt")
+    skill_reference = f"${skill_name}"
+    if default_prompt is not None and skill_reference not in default_prompt:
+        print(
+            "[ERROR] default_prompt must explicitly mention the skill "
+            f"as '{skill_reference}'."
+        )
+        return None, None, None, None
+
+    return overrides, optional_order, display_name, short_description
+
+
+def write_openai_yaml(skill_dir, skill_name, raw_overrides):
+    overrides, optional_order, display_name, short_description = resolve_interface_values(
+        skill_name,
+        raw_overrides,
+    )
+    if overrides is None:
         return None
 
     interface_lines = [
@@ -182,8 +202,8 @@ def write_openai_yaml(skill_dir, skill_name, raw_overrides):
     agents_dir = Path(skill_dir) / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     output_path = agents_dir / "openai.yaml"
-    output_path.write_text("\n".join(interface_lines) + "\n")
-    print(f"[OK] Created agents/openai.yaml")
+    output_path.write_text("\n".join(interface_lines) + "\n", encoding="utf-8")
+    print("[OK] Created agents/openai.yaml")
     return output_path
 
 

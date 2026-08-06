@@ -35,6 +35,29 @@ function renderStatusPill() {
 }
 
 describe("StatusPill", () => {
+  it("shows a settled status after the final answer even while backend cleanup is still busy", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          status: "processing",
+          statusText: "AI 후속 응답 대기 중",
+          messages: [
+            { id: "user", role: "user", text: "보고서를 작성해줘" },
+            { id: "assistant", role: "assistant", text: "보고서를 완성했습니다.", isComplete: true },
+          ],
+        }}
+      >
+        <StatusPill />
+      </AppStateProvider>,
+    );
+
+    const pill = document.querySelector("#readyPill");
+    expect(pill?.textContent).toBe("답변 완료");
+    expect(pill?.classList.contains("busy")).toBe(false);
+  });
+
   it("hides history restore loading text when restore finishes within 500ms", () => {
     vi.useFakeTimers();
     try {

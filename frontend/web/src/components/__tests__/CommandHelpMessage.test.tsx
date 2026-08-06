@@ -349,7 +349,8 @@ describe("CommandHelpMessage", () => {
 
     await openHelpSection(user, "스킬");
     const tooltip = screen.getByRole("button", { name: /frontend-design/ }).getAttribute("data-tooltip") || "";
-    expect(tooltip).toContain("고품질 프론트엔드 인터페이스");
+    expect(tooltip).toContain("홈페이지, 랜딩 페이지");
+    expect(tooltip).toContain("스타일 선택 질문 없이 바로 구현");
     expect(tooltip).not.toContain("Create distinctive");
 
     const pptxTooltip = screen.getByRole("button", { name: /pptx-writer/ }).getAttribute("data-tooltip") || "";

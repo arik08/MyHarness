@@ -754,6 +754,26 @@ async def test_auto_compact_records_richer_checkpoint_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_auto_compact_defers_to_gpt56_server_compaction():
+    class _ServerCompactionClient:
+        @staticmethod
+        def supports_server_compaction(model: str) -> bool:
+            return model.startswith("gpt-5.6")
+
+    messages = [ConversationMessage.from_user_text("alpha " * 50000)]
+
+    result, was_compacted = await auto_compact_if_needed(
+        messages,
+        api_client=_ServerCompactionClient(),
+        model="gpt-5.6",
+        state=AutoCompactState(),
+    )
+
+    assert result is messages
+    assert was_compacted is False
+
+
+@pytest.mark.asyncio
 async def test_auto_compact_if_needed_returns_original_messages_after_timeout(monkeypatch):
     async def _stall():
         await asyncio.sleep(0.05)

@@ -47,7 +47,7 @@ def test_setup_flow_selects_profile_and_model(tmp_path: Path, monkeypatch):
         logged_in.append(provider)
 
     monkeypatch.setattr("myharness.cli._select_setup_workflow", fake_select)
-    monkeypatch.setattr("myharness.cli._prompt_model_for_profile", lambda profile: "gpt-5.5")
+    monkeypatch.setattr("myharness.cli._prompt_model_for_profile", lambda profile: "gpt-5.6-terra")
     monkeypatch.setattr("myharness.cli._login_provider", fake_login)
 
     result = runner.invoke(app, ["setup"])
@@ -57,7 +57,7 @@ def test_setup_flow_selects_profile_and_model(tmp_path: Path, monkeypatch):
 
     settings = load_settings()
     assert settings.active_profile == "codex"
-    assert settings.resolve_profile()[1].last_model == "gpt-5.5"
+    assert settings.resolve_profile()[1].last_model == "gpt-5.6-terra"
 
 
 def test_select_from_menu_uses_questionary_when_tty(monkeypatch):

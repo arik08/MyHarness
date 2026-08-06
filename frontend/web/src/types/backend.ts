@@ -108,6 +108,7 @@ export type BackendEvent =
   | { type: "state_snapshot"; state?: BackendStateSnapshot; plugins?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null }
   | { type: "skills_snapshot"; skills?: unknown[] }
   | { type: "transcript_item"; item?: TranscriptItem }
+  | { type: "reasoning_summary"; message?: string | null }
   | { type: "assistant_delta"; message?: string | null; value?: string | null }
   | { type: "assistant_complete"; message?: string | null; has_tool_uses?: boolean | null; artifacts?: ArtifactSummary[] | null; usage?: UsageCostSummary | null; session_usage?: UsageCostSummary | null }
   | { type: "compact_progress"; compact_phase?: CompactProgressPhase | string | null; compact_trigger?: CompactProgressTrigger | string | null; attempt?: number | null; compact_checkpoint?: string | null; compact_metadata?: Record<string, unknown> | null; message?: string | null }

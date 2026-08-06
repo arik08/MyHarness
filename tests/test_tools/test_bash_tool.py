@@ -120,6 +120,35 @@ async def test_bash_tool_preflights_interactive_scaffold_commands(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_bash_tool_rejects_completion_message_as_command(tmp_path: Path):
+    result = await BashTool().execute(
+        BashToolInput(command="작성 완료했습니다."),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is True
+    assert result.metadata["non_command_message"] is True
+    assert "not an executable shell command" in result.output
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_allows_korean_text_inside_real_command(monkeypatch, tmp_path: Path):
+    process = _FakeProcess(stdout=_FakeStdout([b"ok\n", b""]), returncode=0)
+
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        return process
+
+    monkeypatch.setitem(BashTool.execute.__globals__, "create_shell_subprocess", fake_create_shell_subprocess)
+    result = await BashTool().execute(
+        BashToolInput(command='python tool.py --interface "short_description=간단한 인사 응답 테스트 스킬 설명"'),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is False
+    assert result.output == "ok"
+
+
+@pytest.mark.asyncio
 async def test_bash_tool_timeout_returns_partial_output_for_real_command(tmp_path: Path):
     result = await BashTool().execute(
         BashToolInput(

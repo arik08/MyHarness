@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
+from watchfiles import awatch
+
 from myharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, SupportsStreamingMessages
 from myharness.api.provider import detect_provider
 from myharness.auth.manager import AuthManager
@@ -37,7 +39,14 @@ from myharness.engine.stream_events import (
     ToolExecutionStarted,
     ToolInputDelta,
 )
-from myharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, sanitize_conversation_messages
+from myharness.engine.messages import (
+    ConversationMessage,
+    ImageBlock,
+    ResponsesStateBlock,
+    TextBlock,
+    ToolResultBlock,
+    sanitize_conversation_messages,
+)
 from myharness.engine.query import format_internal_steering_update
 from myharness.engine.cost_tracker import usage_accounting_delta
 from myharness.output_styles import load_output_styles
@@ -59,7 +68,11 @@ from myharness.services.session_storage import (
 from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
-from myharness.skills.refresh import consume_skill_registry_dirty
+from myharness.skills.refresh import (
+    consume_skill_registry_dirty,
+    get_skill_watch_roots,
+    is_skill_catalog_change,
+)
 from myharness.skills.routing import is_mcp_routed_skill_source, mcp_server_name_from_skill_source
 from myharness.skills.state import apply_skill_enabled_state, get_skill_usage_counts
 from myharness.skills.types import SkillDefinition
@@ -1163,6 +1176,27 @@ def _model_option_description(provider_name: str, model: str) -> str:
     return "Available model"
 
 
+def _reasoning_summary_text(message: ConversationMessage) -> str:
+    """Return visible summary text from opaque Responses reasoning state."""
+    parts: list[str] = []
+    for block in message.content:
+        if not isinstance(block, ResponsesStateBlock):
+            continue
+        item = block.item
+        if item.get("type") != "reasoning":
+            continue
+        summaries = item.get("summary")
+        if not isinstance(summaries, list):
+            continue
+        for summary in summaries:
+            if not isinstance(summary, dict) or summary.get("type") != "summary_text":
+                continue
+            text = summary.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+    return "\n\n".join(parts)
+
+
 def _runtime_picker_options(settings: Settings) -> dict[str, object]:
     """Build the provider/model choices shared by startup and live refreshes."""
     provider_options = _provider_select_options(settings)
@@ -1263,11 +1297,13 @@ class ReactBackendHost:
         self._request_queue: asyncio.Queue[FrontendRequest] = asyncio.Queue()
         self._steering_queue: asyncio.Queue[str] = asyncio.Queue()
         self._queued_line_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._follow_up_line_queue: asyncio.Queue[str] = asyncio.Queue()
         self._permission_requests: dict[str, asyncio.Future[bool]] = {}
         self._question_requests: dict[str, asyncio.Future[str]] = {}
         self._question_request_details: dict[str, dict[str, object]] = {}
         self._permission_lock = asyncio.Lock()
         self._busy = False
+        self._final_answer_emitted = False
         self._active_request_task: asyncio.Task[bool] | None = None
         self._running = True
         # Track last tool input per name for rich event emission
@@ -1277,6 +1313,8 @@ class ReactBackendHost:
         self._swarm_status_monitor_task: asyncio.Task[None] | None = None
         self._swarm_emit_task: asyncio.Task[None] | None = None
         self._mcp_connect_task: asyncio.Task[None] | None = None
+        self._skill_file_monitor_task: asyncio.Task[None] | None = None
+        self._skill_refresh_lock = asyncio.Lock()
         self._task_update_unregister: Callable[[], None] | None = None
         self._swarm_straggler_alerted_task_ids: set[str] = set()
         self._swarm_no_progress_alerted_task_ids: set[str] = set()
@@ -1335,6 +1373,7 @@ class ReactBackendHost:
         self._register_task_update_listener()
         self._ensure_async_agent_monitor()
         self._ensure_swarm_status_monitor()
+        self._ensure_skill_file_monitor()
 
         reader = asyncio.create_task(self._read_requests())
         try:
@@ -1350,7 +1389,10 @@ class ReactBackendHost:
                     continue
                 if request.type == "steer_line":
                     if self._busy:
-                        await self._queue_steering_line(request.line or "")
+                        if self._final_answer_emitted:
+                            await self._queue_follow_up_line(request.line or "")
+                        else:
+                            await self._queue_steering_line(request.line or "")
                     else:
                         await self._request_queue.put(FrontendRequest(type="submit_line", line=request.line or ""))
                     continue
@@ -1507,6 +1549,10 @@ class ReactBackendHost:
                 self._mcp_connect_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._mcp_connect_task
+            if self._skill_file_monitor_task is not None:
+                self._skill_file_monitor_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._skill_file_monitor_task
             if self._task_update_unregister is not None:
                 self._task_update_unregister()
                 self._task_update_unregister = None
@@ -1554,6 +1600,39 @@ class ReactBackendHost:
         if not any(status.state == "pending" for status in self._bundle.mcp_manager.list_statuses()):
             return
         self._mcp_connect_task = asyncio.create_task(self._connect_mcp_after_ready())
+
+    def _ensure_skill_file_monitor(self) -> None:
+        if self._bundle is None or not self._running:
+            return
+        if self._skill_file_monitor_task is not None and not self._skill_file_monitor_task.done():
+            return
+        self._skill_file_monitor_task = asyncio.create_task(self._monitor_skill_files())
+
+    async def _monitor_skill_files(self) -> None:
+        assert self._bundle is not None
+        roots = get_skill_watch_roots(
+            self._bundle.cwd,
+            extra_skill_dirs=self._bundle.extra_skill_dirs,
+            extra_plugin_roots=self._bundle.extra_plugin_roots,
+        )
+        if not roots:
+            return
+        try:
+            async for changes in awatch(*roots, debounce=300, step=50):
+                if not self._running:
+                    return
+                if not any(is_skill_catalog_change(path) for _change, path in changes):
+                    continue
+                try:
+                    await self._refresh_skill_runtime()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("automatic skill catalog refresh failed")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("skill file monitor stopped unexpectedly")
 
     async def _connect_mcp_after_ready(self) -> None:
         assert self._bundle is not None
@@ -1844,15 +1923,26 @@ class ReactBackendHost:
         )
         await self._emit(BackendEvent(type="status", message="다음 질문을 대기열에 추가했습니다."))
 
+    async def _queue_follow_up_line(self, line: str) -> None:
+        text = line.strip()
+        if text:
+            await self._follow_up_line_queue.put(text)
+
     async def _promote_next_queued_line(self) -> None:
-        if self._queued_line_queue.empty():
-            if self._steering_queue.empty():
-                return
+        if not self._queued_line_queue.empty():
+            line = self._queued_line_queue.get_nowait()
+            await self._emit(BackendEvent(type="status", message="대기열 질문을 전송합니다."))
+        elif not self._follow_up_line_queue.empty():
+            line = self._follow_up_line_queue.get_nowait()
+            await self._emit(
+                BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=line))
+            )
+            await self._emit(BackendEvent(type="status", message="후속 질문을 전송합니다."))
+        elif not self._steering_queue.empty():
             line = self._steering_queue.get_nowait()
             await self._emit(BackendEvent(type="status", message="스티어링 요청을 후속 질문으로 전송합니다."))
         else:
-            line = self._queued_line_queue.get_nowait()
-            await self._emit(BackendEvent(type="status", message="대기열 질문을 전송합니다."))
+            return
         await self._request_queue.put(
             FrontendRequest(type="submit_line", line=line, suppress_user_transcript=True)
         )
@@ -1911,7 +2001,10 @@ class ReactBackendHost:
                 continue
             if request.type == "steer_line":
                 if self._busy:
-                    await self._queue_steering_line(request.line or "")
+                    if self._final_answer_emitted:
+                        await self._queue_follow_up_line(request.line or "")
+                    else:
+                        await self._queue_steering_line(request.line or "")
                 else:
                     await self._request_queue.put(FrontendRequest(type="submit_line", line=request.line or ""))
                 continue
@@ -1944,6 +2037,7 @@ class ReactBackendHost:
         isolated_context: bool = False,
     ) -> bool:
         assert self._bundle is not None
+        self._final_answer_emitted = False
         attachments = attachments or []
         attachment_refs = attachment_refs or []
         image_blocks: list[ImageBlock] = []
@@ -2227,6 +2321,14 @@ class ReactBackendHost:
                     await _cancel_assistant_delta_flush_task()
                     assistant_delta_buffer.clear()
                 is_final_answer = not bool(event.message.tool_uses)
+                reasoning_summary = _reasoning_summary_text(event.message)
+                if reasoning_summary:
+                    await self._emit(
+                        BackendEvent(
+                            type="reasoning_summary",
+                            message=reasoning_summary,
+                        )
+                    )
                 usage_payload = None
                 session_usage_payload = None
                 if is_final_answer:
@@ -2236,6 +2338,7 @@ class ReactBackendHost:
                     )
                     usage_payload = self._bundle.engine.usage_cost_summary(turn_accounting)
                     session_usage_payload = self._bundle.engine.usage_cost_summary()
+                    self._final_answer_emitted = True
                 await self._emit(
                     BackendEvent(
                         type="assistant_complete",
@@ -2315,13 +2418,6 @@ class ReactBackendHost:
             if isinstance(event, ErrorEvent):
                 await _flush_buffered_assistant_delta()
                 await self._emit(BackendEvent(type="error", message=event.message))
-                if not quiet:
-                    await self._emit(
-                        BackendEvent(
-                            type="transcript_item",
-                            item=TranscriptItem(role="system", text=event.message),
-                        )
-                    )
                 return
             if isinstance(event, StatusEvent):
                 await _flush_buffered_assistant_delta()
@@ -2747,19 +2843,20 @@ class ReactBackendHost:
     async def _refresh_skill_runtime(self) -> None:
         """Refresh skill discovery without resetting or visibly loading the session."""
         assert self._bundle is not None
-        consume_skill_registry_dirty(self._bundle.engine.tool_metadata)
-        settings = self._bundle.current_settings()
-        self._bundle.engine.set_system_prompt(
-            build_runtime_system_prompt(
-                settings,
-                cwd=self._bundle.cwd,
-                latest_user_prompt=None,
-                extra_skill_dirs=self._bundle.extra_skill_dirs,
-                extra_plugin_roots=self._bundle.extra_plugin_roots,
-                task_worker=getattr(self._bundle, "task_worker", False),
+        async with self._skill_refresh_lock:
+            consume_skill_registry_dirty(self._bundle.engine.tool_metadata)
+            settings = self._bundle.current_settings()
+            self._bundle.engine.set_system_prompt(
+                build_runtime_system_prompt(
+                    settings,
+                    cwd=self._bundle.cwd,
+                    latest_user_prompt=None,
+                    extra_skill_dirs=self._bundle.extra_skill_dirs,
+                    extra_plugin_roots=self._bundle.extra_plugin_roots,
+                    task_worker=getattr(self._bundle, "task_worker", False),
+                )
             )
-        )
-        await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
+            await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
 
     async def _refresh_skill_runtime_if_dirty(self) -> None:
         """Apply a pending save-triggered refresh exactly once."""
@@ -3140,12 +3237,13 @@ class ReactBackendHost:
             self._bundle.settings_overrides.pop("model", None)
             refresh_client = True
         elif command in {"model", "subagent_model"}:
-            if active_profile.allowed_models and selected.lower() != "default" and selected not in active_profile.allowed_models:
-                allowed = ", ".join(active_profile.allowed_models)
+            try:
+                active_profile.require_model(selected, profile_name=active_profile_name)
+            except ValueError as exc:
                 await self._emit(
                     BackendEvent(
                         type="error",
-                        message=f"Model '{selected}' is not allowed for profile '{active_profile_name}'. Allowed models: {allowed}",
+                        message=str(exc),
                     )
                 )
                 await self._emit(BackendEvent(type="line_complete"))
@@ -3869,6 +3967,12 @@ class ReactBackendHost:
             self._history_events = self._history_events[-1000:]
 
     def _record_history_event(self, event: BackendEvent) -> None:
+        if event.type == "reasoning_summary":
+            text = (event.message or "").strip()
+            if text:
+                self._append_history_event({"type": "reasoning_summary", "message": text})
+            return
+
         if event.type == "transcript_item" and event.item is not None:
             item = event.item
             text = item.text.strip()

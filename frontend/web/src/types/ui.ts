@@ -62,7 +62,7 @@ export type WorkflowEvent = {
   detailLog?: string[];
   status: WorkflowEventStatus;
   level?: "parent" | "child";
-  role?: "planning" | "purpose" | "activity" | "final" | "waiting";
+  role?: "planning" | "reasoning" | "purpose" | "activity" | "final" | "waiting";
   purpose?: "info" | "action" | "verification";
   groupId?: string;
   toolCallId?: string | null;

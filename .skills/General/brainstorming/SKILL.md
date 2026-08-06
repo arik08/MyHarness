@@ -1,69 +1,72 @@
 ---
 name: brainstorming
-description: "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
+description: "Use when the user explicitly asks to brainstorm, explore or compare approaches, or when a broad product request is genuinely too ambiguous to implement safely. Do not use for direct build or change requests whose requirements are already sufficient."
 ---
 
 # Brainstorming Ideas Into Designs
 
-Help turn ideas into fully formed designs and specs through natural collaborative dialogue.
+Help turn early or ambiguous ideas into fully formed designs and specs through focused collaborative dialogue.
 
-Start by understanding the current project context, then ask questions one at a time to refine the idea. Once you understand what you're building, present the design and get user approval.
+Use this workflow only when the user wants ideation/design work or when a consequential product decision is truly missing. A request such as "make this HTML game" or "build this component" with concrete behavior and constraints is an implementation request, not a brainstorming request.
 
 <HARD-GATE>
-Do NOT invoke any implementation skill, write any code, scaffold any project, or take any implementation action until you have presented a design and the user has approved it. This applies to EVERY project regardless of perceived simplicity.
+Apply the design approval gate only when the user explicitly requested brainstorming, a design/spec, or planning-only work. Do not apply it to direct implementation requests. If this skill was selected for a request that is already specific enough to build, stop the brainstorming workflow and immediately continue the original implementation task.
 </HARD-GATE>
 
-## Anti-Pattern: "This Is Too Simple To Need A Design"
+## Direct-Build Fast Path
 
-Every project goes through this process. A todo list, a single-function utility, a config change — all of them. "Simple" projects are where unexamined assumptions cause the most wasted work. The design can be short (a few sentences for truly simple projects), but you MUST present it and get approval.
+When the user asks to create, build, implement, fix, or modify something and has supplied enough constraints:
+
+- Do not offer a visual companion or ask the user to choose a style unless that choice is essential.
+- Do not present several approaches merely because alternatives exist.
+- Do not ask "should I proceed?" or request approval after restating the request.
+- Do not create a design document instead of the requested artifact.
+- Choose reasonable defaults, implement in the same run, and verify the result.
+- After the user answers a necessary clarification or chooses an option, resume the original implementation immediately without another approval round.
 
 ## Checklist
 
-You MUST create a task for each of these items and complete them in order:
+For an actual brainstorming or design-only request, use the smallest useful subset of these steps:
 
 1. **Explore project context** — check files, docs, recent commits
-2. **Offer visual companion** (if topic will involve visual questions) — this is its own message, not combined with a clarifying question. See the Visual Companion section below.
-3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
-4. **Propose 2-3 approaches** — with trade-offs and your recommendation
-5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** — save to `docs/brainstorming/specs/YYYY-MM-DD-<topic>-design.md`
-7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
-8. **User reviews written spec** — ask user to review the spec file before proceeding
-9. **Transition to implementation** — create an implementation plan in the current workflow
+2. **Ask necessary clarifying questions** — batch related decisions and avoid serial approval loops
+3. **Propose 2-3 approaches** — with trade-offs and your recommendation
+4. **Present design** — scaled to complexity, with one approval point for the complete design
+5. **Write design doc when requested** — use `docs/brainstorming/specs/YYYY-MM-DD-<topic>-design.md` by default
+6. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
+7. **Transition as requested** — stop after the design for planning-only requests, or implement when the user asked for both design and implementation
 
 ## Process Flow
 
 ```dot
 digraph brainstorming {
     "Explore project context" [shape=box];
-    "Visual questions ahead?" [shape=diamond];
-    "Offer Visual Companion\n(own message, no other content)" [shape=box];
-    "Ask clarifying questions" [shape=box];
+    "Missing consequential decisions?" [shape=diamond];
+    "Ask batched clarifying questions" [shape=box];
     "Propose 2-3 approaches" [shape=box];
-    "Present design sections" [shape=box];
+    "Present complete design" [shape=box];
     "User approves design?" [shape=diamond];
+    "Design doc requested?" [shape=diamond];
     "Write design doc" [shape=box];
     "Spec self-review\n(fix inline)" [shape=box];
-    "User reviews spec?" [shape=diamond];
-    "Create implementation plan" [shape=doublecircle];
+    "Return design or continue requested implementation" [shape=doublecircle];
 
-    "Explore project context" -> "Visual questions ahead?";
-    "Visual questions ahead?" -> "Offer Visual Companion\n(own message, no other content)" [label="yes"];
-    "Visual questions ahead?" -> "Ask clarifying questions" [label="no"];
-    "Offer Visual Companion\n(own message, no other content)" -> "Ask clarifying questions";
-    "Ask clarifying questions" -> "Propose 2-3 approaches";
-    "Propose 2-3 approaches" -> "Present design sections";
-    "Present design sections" -> "User approves design?";
-    "User approves design?" -> "Present design sections" [label="no, revise"];
-    "User approves design?" -> "Write design doc" [label="yes"];
+    "Explore project context" -> "Missing consequential decisions?";
+    "Missing consequential decisions?" -> "Ask batched clarifying questions" [label="yes"];
+    "Missing consequential decisions?" -> "Propose 2-3 approaches" [label="no"];
+    "Ask batched clarifying questions" -> "Propose 2-3 approaches";
+    "Propose 2-3 approaches" -> "Present complete design";
+    "Present complete design" -> "User approves design?";
+    "User approves design?" -> "Present complete design" [label="no, revise"];
+    "User approves design?" -> "Design doc requested?" [label="yes"];
+    "Design doc requested?" -> "Write design doc" [label="yes"];
+    "Design doc requested?" -> "Return design or continue requested implementation" [label="no"];
     "Write design doc" -> "Spec self-review\n(fix inline)";
-    "Spec self-review\n(fix inline)" -> "User reviews spec?";
-    "User reviews spec?" -> "Write design doc" [label="changes requested"];
-    "User reviews spec?" -> "Create implementation plan" [label="approved"];
+    "Spec self-review\n(fix inline)" -> "Return design or continue requested implementation";
 }
 ```
 
-**The terminal state is a reviewed design that is ready for implementation planning.** Do not start implementation until the user has approved the design or written spec.
+**For brainstorming-only work, the terminal state is a reviewed design.** For a direct implementation request, this workflow does not apply.
 
 ## The Process
 
@@ -72,7 +75,7 @@ digraph brainstorming {
 - Check out the current project state first (files, docs, recent commits)
 - Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
 - If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
-- For appropriately-scoped projects, ask questions one at a time to refine the idea
+- For appropriately-scoped projects, batch related questions and stay within the active system clarification budget
 - Prefer multiple choice questions when possible, but open-ended is fine too
 - Only one question per message - if a topic needs more exploration, break it into multiple questions
 - Focus on understanding: purpose, constraints, success criteria
@@ -87,7 +90,7 @@ digraph brainstorming {
 
 - Once you believe you understand what you're building, present the design
 - Scale each section to its complexity: a few sentences if straightforward, up to 200-300 words if nuanced
-- Ask after each section whether it looks right so far
+- Ask for approval once after the complete design, not after every section
 - Cover: architecture, components, data flow, error handling, testing
 - Be ready to go back and clarify if something doesn't make sense
 
@@ -123,11 +126,11 @@ After writing the spec document, look at it with fresh eyes:
 Fix any issues inline. No need to re-review — just fix and move on.
 
 **User Review Gate:**
-After the spec review loop passes, ask the user to review the written spec before proceeding:
+When the user explicitly requested a reviewable spec before implementation, ask them to review it:
 
 > "Spec written to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
 
-Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
+Wait only when the user requested planning/design-only work or explicitly asked for a review gate. Otherwise continue the implementation requested in the original task.
 
 **Implementation:**
 
@@ -136,7 +139,7 @@ Wait for the user's response. If they request changes, make them and re-run the 
 
 ## Key Principles
 
-- **One question at a time** - Don't overwhelm with multiple questions
+- **Batch necessary questions** - Avoid serial clarification and approval loops
 - **Multiple choice preferred** - Easier to answer than open-ended when possible
 - **YAGNI ruthlessly** - Remove unnecessary features from all designs
 - **Explore alternatives** - Always propose 2-3 approaches before settling
@@ -147,10 +150,10 @@ Wait for the user's response. If they request changes, make them and re-run the 
 
 A browser-based companion for showing mockups, diagrams, and visual options during brainstorming. Available as a tool — not a mode. Accepting the companion means it's available for questions that benefit from visual treatment; it does NOT mean every question goes through the browser.
 
-**Offering the companion:** When you anticipate that upcoming questions will involve visual content (mockups, layouts, diagrams), offer it once for consent:
+**Offering the companion:** Offer it only during an explicit brainstorming/design workflow when seeing alternatives is materially useful. Never offer it as a detour from a concrete build request:
 > "Some of what we're working on might be easier to explain if I can show it to you in a web browser. I can put together mockups, diagrams, comparisons, and other visuals as we go. This feature is still new and can be token-intensive. Want to try it? (Requires opening a local URL)"
 
-**This offer MUST be its own message.** Do not combine it with clarifying questions, context summaries, or any other content. The message should contain ONLY the offer above and nothing else. Wait for the user's response before continuing. If they decline, proceed with text-only brainstorming.
+Keep the offer brief and combine it with the first necessary design question so it does not create a separate approval turn. If they decline, proceed with text-only brainstorming.
 
 **Per-question decision:** Even after the user accepts, decide FOR EACH QUESTION whether to use the browser or the terminal. The test: **would the user understand this better by seeing it than reading it?**
 

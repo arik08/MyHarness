@@ -405,13 +405,13 @@ async def test_model_command_rejects_disallowed_profile_model(tmp_path: Path, mo
 async def test_model_command_accepts_direct_value(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
-    command, args = registry.lookup("/model gpt-5.5")
+    command, args = registry.lookup("/model gpt-5.6-terra")
     assert command is not None
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "gpt-5.5" in result.message
-    assert load_settings().model == "gpt-5.5"
+    assert "gpt-5.6-terra" in result.message
+    assert load_settings().model == "gpt-5.6-terra"
 
 
 @pytest.mark.asyncio

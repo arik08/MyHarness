@@ -145,6 +145,27 @@ class ProviderProfile(BaseModel):
             default_model=self.default_model,
         )
 
+    def allows_model(self, model: str) -> bool:
+        """Return whether a model selection is permitted by this profile."""
+        configured = model.strip()
+        return (
+            not self.allowed_models
+            or not configured
+            or configured.lower() == "default"
+            or configured in self.allowed_models
+        )
+
+    def require_model(self, model: str, *, profile_name: str | None = None) -> None:
+        """Raise when a model selection is outside this profile's policy."""
+        if self.allows_model(model):
+            return
+        profile_label = profile_name or self.label
+        allowed = ", ".join(self.allowed_models)
+        raise ValueError(
+            f"Model '{model}' is not allowed for profile '{profile_label}'. "
+            f"Allowed models: {allowed}"
+        )
+
 
 @dataclass(frozen=True)
 class ResolvedAuth:
@@ -155,6 +176,36 @@ class ResolvedAuth:
     value: str
     source: str
     state: str = "configured"
+
+
+@dataclass(frozen=True)
+class ModelPolicy:
+    """Editable model catalog for a restricted built-in provider profile."""
+
+    default_model: str
+    allowed_models: tuple[str, ...]
+
+
+# Change built-in model availability here. Saved built-in profiles are
+# normalized to these policies when settings are loaded.
+BUILTIN_MODEL_POLICIES: dict[str, ModelPolicy] = {
+    "p-gpt": ModelPolicy(
+        default_model="gpt-5.6-luna",
+        allowed_models=(
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+            "gpt-5.6-sol",
+        ),
+    ),
+    "codex": ModelPolicy(
+        default_model="gpt-5.6-luna",
+        allowed_models=(
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+            "gpt-5.6-sol",
+        ),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -352,31 +403,25 @@ def normalize_anthropic_model_name(model: str) -> str:
 
 def default_provider_profiles() -> dict[str, ProviderProfile]:
     """Return the built-in provider workflow catalog."""
+    pgpt_models = BUILTIN_MODEL_POLICIES["p-gpt"]
+    codex_models = BUILTIN_MODEL_POLICIES["codex"]
     return {
         "p-gpt": ProviderProfile(
             label="P-GPT",
             provider="openai",
             api_format="openai",
             auth_source="pgpt_api_key",
-            default_model="gpt-5.6-luna",
+            default_model=pgpt_models.default_model,
             base_url="http://pgpt.posco.com/s0la01-gpt/v1",
-            allowed_models=[
-                "gpt-5.6-luna",
-                "gpt-5.6-terra",
-                "gpt-5.6-sol",
-                "gpt-5.5",
-                "gpt-5.4",
-                "gpt-5.4-mini",
-                "gpt-5.4-nano",
-            ],
+            allowed_models=list(pgpt_models.allowed_models),
         ),
         "codex": ProviderProfile(
             label="Codex Subscription",
             provider="openai_codex",
             api_format="openai",
             auth_source="codex_subscription",
-            default_model="gpt-5.5",
-            allowed_models=["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
+            default_model=codex_models.default_model,
+            allowed_models=list(codex_models.allowed_models),
         ),
         "openai-compatible": ProviderProfile(
             label="OpenAI-Compatible API",
@@ -437,17 +482,6 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
 def builtin_provider_profile_names() -> set[str]:
     """Return the names of built-in provider profiles."""
     return set(default_provider_profiles())
-
-
-def _merge_allowed_models(defaults: list[str], saved: list[str]) -> list[str]:
-    """Keep new built-in models while preserving any saved extras."""
-    merged: list[str] = []
-    seen: set[str] = set()
-    for model in [*defaults, *saved]:
-        if model not in seen:
-            merged.append(model)
-            seen.add(model)
-    return merged
 
 
 def _matches_builtin_profile(profile: ProviderProfile, builtin: ProviderProfile) -> bool:
@@ -657,7 +691,7 @@ class Settings(BaseModel):
     # API configuration
     api_key: str = ""
     model: str = "claude-sonnet-4-6"
-    subagent_model: str = "gpt-5.4-mini"
+    subagent_model: str = "gpt-5.6-luna"
     subagent_effort: str = "medium"
     max_tokens: int = 42000
     model_output_token_limits: dict[str, int] = Field(default_factory=dict)
@@ -726,16 +760,14 @@ class Settings(BaseModel):
                     and profile.auth_source == builtin.auth_source
                 )
             ):
-                allowed_models = (
-                    list(builtin.allowed_models)
-                    if name == "gemini"
-                    else _merge_allowed_models(builtin.allowed_models, profile.allowed_models)
-                )
+                allowed_models = list(builtin.allowed_models)
                 profile_updates: dict[str, object] = {}
                 if allowed_models != profile.allowed_models:
                     profile_updates["allowed_models"] = allowed_models
                 if profile.default_model != builtin.default_model:
                     profile_updates["default_model"] = builtin.default_model
+                if profile.last_model and not builtin.allows_model(profile.last_model):
+                    profile_updates["last_model"] = None
                 if profile_updates:
                     profile = profile.model_copy(update=profile_updates)
             merged[name] = profile
@@ -755,6 +787,9 @@ class Settings(BaseModel):
         """Project the active profile back onto legacy flat settings fields."""
         profile_name, profile = self.resolve_profile()
         configured_model = (profile.last_model or "").strip() or profile.default_model
+        configured_subagent_model = (
+            self.subagent_model if profile.allows_model(self.subagent_model) else profile.default_model
+        )
         return self.model_copy(
             update={
                 "active_profile": profile_name,
@@ -770,6 +805,7 @@ class Settings(BaseModel):
                     default_model=profile.default_model,
                     permission_mode=self.permission.mode.value,
                 ),
+                "subagent_model": configured_subagent_model,
             }
         )
 
@@ -996,6 +1032,15 @@ class Settings(BaseModel):
         # Strip ANSI escape sequences from model name if present
         if "model" in updates and isinstance(updates["model"], str):
             updates["model"] = strip_ansi_escape_sequences(updates["model"])
+        if "subagent_model" in updates and isinstance(updates["subagent_model"], str):
+            updates["subagent_model"] = strip_ansi_escape_sequences(updates["subagent_model"])
+        if not ({"provider", "api_format", "base_url"} & set(updates)):
+            candidate_profile_name = str(updates.get("active_profile") or self.active_profile or "").strip()
+            candidate_profile_name, candidate_profile = self.resolve_profile(candidate_profile_name)
+            for model_key in ("model", "subagent_model"):
+                model_value = updates.get(model_key)
+                if isinstance(model_value, str):
+                    candidate_profile.require_model(model_value, profile_name=candidate_profile_name)
         profile_model_override = False
         if "active_profile" in updates and "model" in updates:
             profile_name = str(updates["active_profile"] or "").strip()
@@ -1003,6 +1048,7 @@ class Settings(BaseModel):
             profiles = self.merged_profiles()
             profile = profiles.get(profile_name)
             if profile is not None and model_name:
+                profile.require_model(model_name, profile_name=profile_name)
                 profiles[profile_name] = profile.model_copy(update={"last_model": model_name})
                 updates["profiles"] = profiles
                 updates.pop("model", None)
@@ -1073,7 +1119,7 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     myharness_model = os.environ.get("MYHARNESS_MODEL")
     if myharness_model:
         updates["model"] = strip_ansi_escape_sequences(myharness_model)
-    elif not profile_has_explicit_model:
+    elif not profile_has_explicit_model and is_claude_family_provider(active_profile.provider):
         anthropic_model = os.environ.get("ANTHROPIC_MODEL")
         if anthropic_model:
             updates["model"] = strip_ansi_escape_sequences(anthropic_model)
@@ -1144,6 +1190,10 @@ def _apply_env_overrides(settings: Settings) -> Settings:
 
     if not updates:
         return settings
+    model_override = updates.get("model")
+    if isinstance(model_override, str):
+        profile_name, profile = settings.resolve_profile()
+        profile.require_model(model_override, profile_name=profile_name)
     return settings.model_copy(update=updates)
 
 

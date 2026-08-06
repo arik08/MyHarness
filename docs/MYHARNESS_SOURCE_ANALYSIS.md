@@ -47,7 +47,7 @@ MyHarness는 OpenHarness 계열의 Python agent runtime을 기반으로, 사내 
 
 루트의 `Installer.bat`, `run_myharness_web.bat`, `run_myharness_web_dev.bat`와 `scripts/run_myharness_web_server.ps1`, `scripts/run_myharness_web_dev.ps1`이 Windows 배포/실행을 담당합니다.
 
-현재 README 기준으로 일반 실행은 `http://localhost:4273`, 개발 UI는 `http://127.0.0.1:4173`을 사용합니다. 런처는 프로젝트-local `.myharness/` 폴더를 기본 설정/데이터 위치로 사용하므로, 사용자 홈 설정과 섞이지 않는 휴대형 배포 모델에 가깝습니다.
+현재 README 기준으로 일반 실행은 `http://localhost:4174`, 개발 UI는 `http://127.0.0.1:4274`를 사용합니다. 개발 UI 포트는 백엔드 `PORT + 100`으로 자동 계산됩니다. 런처는 프로젝트-local `.myharness/` 폴더를 기본 설정/데이터 위치로 사용하므로, 사용자 홈 설정과 섞이지 않는 휴대형 배포 모델에 가깝습니다.
 
 ### 3.3 Node web server
 

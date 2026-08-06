@@ -169,6 +169,27 @@ async def test_file_write_replaces_spaces_in_generated_filename(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_file_write_rejects_truncated_standalone_html_without_overwriting(tmp_path: Path):
+    target = tmp_path / "outputs" / "ai_game.html"
+    target.parent.mkdir(parents=True)
+    target.write_text("original", encoding="utf-8")
+
+    result = await FileWriteTool().execute(
+        FileWriteToolInput(
+            path="outputs/ai_game.html",
+            content='<!doctype html>\n<html lang="ko">\n<head>\n<meta charset="utf-8',
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is True
+    assert "Incomplete standalone HTML" in result.output
+    assert "</body>" in result.output
+    assert "</html>" in result.output
+    assert target.read_text(encoding="utf-8") == "original"
+
+
+@pytest.mark.asyncio
 async def test_file_write_warns_model_when_target_artifact_is_too_short(tmp_path: Path):
     context = ToolExecutionContext(
         cwd=tmp_path,

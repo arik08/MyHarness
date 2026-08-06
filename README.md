@@ -39,39 +39,34 @@ run_myharness_web_dev.bat
 개발용 런처를 쓸 때는 브라우저에서 아래 주소를 엽니다.
 
 ```text
-http://127.0.0.1:4173
+http://127.0.0.1:4274
 ```
 
 브라우저에서 아래 주소를 엽니다.
 
 ```text
-http://localhost:4273
+http://localhost:4174
 ```
 
 설치기와 런처는 모두 프로젝트 안의 `.myharness/` 폴더를 사용합니다. 그래서 폴더를 다른 PC로 옮겨도 사용자 홈 디렉터리 설정과 섞이지 않습니다.
 
 런처는 Python 가상환경, Python 패키지, web 의존성, 기본 provider 설정을 확인합니다. 설치기를 먼저 실행하지 않았더라도 가능한 범위에서 자동으로 보정한 뒤 MyHarness web server를 시작합니다.
 
-다른 포트를 쓰고 싶으면 다음처럼 실행하세요.
+다른 포트를 쓰고 싶으면 `myharness.local.env`의 `PORT` 한 줄만 바꾸고 다시 실행하세요. 일반 실행, 개발 실행, Node/PowerShell 직접 실행이 모두 같은 값을 사용합니다.
 
-```bat
-set PORT=4274
-run_myharness_web.bat
-```
-
-폴더를 여러 개 복사해서 동시에 실행할 때는 각 폴더에 `myharness.local.env`를 두고 포트를 다르게 지정하는 방식이 가장 편합니다. 예시는 `myharness.local.env.example`을 복사해서 만드세요.
+폴더를 여러 개 복사해서 동시에 실행할 때도 각 폴더의 `myharness.local.env`에서 포트만 다르게 지정하면 됩니다. 예시는 `myharness.local.env.example`을 참고하세요.
 
 ```text
 PORT=4274
-MYHARNESS_DEV_PORT=4174
+MYHARNESS_DEV_PORT=auto
 ```
 
-`PORT`는 일반 실행/백엔드 진입 포트이고, `MYHARNESS_DEV_PORT`는 `run_myharness_web_dev.bat`에서만 쓰는 React/Vite 개발 UI 포트입니다. 이제 기본 런처는 이미 사용 중인 포트의 프로세스를 자동 종료하지 않습니다. 충돌이 나면 `myharness.local.env`의 포트만 바꿔 다시 실행하면 됩니다. 정말로 해당 포트의 기존 프로세스를 닫고 재시작하려면 `MYHARNESS_CLOSE_PORT_PROCESS=1`을 명시하세요.
+`PORT`는 일반 실행/백엔드 진입 포트입니다. `MYHARNESS_DEV_PORT=auto`이면 개발 UI는 자동으로 `PORT + 100`을 사용합니다. 예를 들어 현버전이 `PORT=4174`이면 개발 UI는 4274이므로, 4173/4273을 쓰는 구버전과 동시에 실행할 수 있습니다. 이제 기본 런처는 이미 사용 중인 포트의 프로세스를 자동 종료하지 않습니다. 충돌이 나면 `myharness.local.env`의 `PORT`만 바꿔 다시 실행하면 됩니다. 정말로 해당 포트의 기존 프로세스를 닫고 재시작하려면 `MYHARNESS_CLOSE_PORT_PROCESS=1`을 명시하세요.
 
 React/Vite/TypeScript 기반 Web UI가 기본 루트 화면입니다.
 
 ```text
-http://localhost:4273/
+http://localhost:4174/
 ```
 
 ## Provider 설정

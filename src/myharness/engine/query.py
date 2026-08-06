@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -170,6 +169,21 @@ def _is_network_error_message(message: str) -> bool:
     )
 
 
+def _network_error_message(context: "QueryContext", error_msg: str) -> str:
+    metadata = context.tool_metadata or {}
+    active_profile = str(metadata.get("active_profile") or "").strip().lower()
+    normalized_error = error_msg.lower()
+    is_pgpt = "pgpt" in active_profile or "p-gpt" in active_profile
+    is_dns_failure = "getaddrinfo" in normalized_error or "errno 11001" in normalized_error
+    if is_pgpt and is_dns_failure:
+        return (
+            "P-GPT 네트워크 연결 오류: P-GPT 서버 주소를 찾지 못했습니다. "
+            "회사 네트워크 또는 VPN 연결을 확인한 뒤 다시 시도해주세요. "
+            f"({error_msg})"
+        )
+    return f"Network error: {error_msg}. Check your internet connection and try again."
+
+
 def _is_output_truncated_stop_reason(stop_reason: str | None) -> bool:
     normalized = str(stop_reason or "").strip().lower()
     return normalized in {"length", "max_tokens", "max_completion_tokens", "incomplete"}
@@ -209,8 +223,6 @@ _ASYNC_AGENT_FINALIZATION_ALLOWED_TOOLS = {
 
 _ASYNC_AGENT_ALWAYS_FINALIZING_TOOLS = {"write_file", "write_long_report"}
 _HUMAN_FACING_OUTPUT_EXTENSIONS = {".html", ".htm", ".md", ".docx", ".pptx", ".xlsx", ".pdf"}
-_AUTO_FINAL_WRITE_EXTENSIONS = {".html", ".htm", ".md", ".markdown", ".txt"}
-_TARGET_LENGTH_CHECK_MARKER = "[Target length check]"
 _HUMAN_FACING_OUTPUT_HINTS = (
     "outputs/",
     "outputs\\",
@@ -260,38 +272,6 @@ def _looks_like_finalizing_shell_command(command: str) -> bool:
     )
     has_write_action = any(hint in normalized for hint in _SHELL_WRITE_HINTS)
     return has_output_target and has_write_action
-
-
-def _autofinal_artifact_items(
-    tool_calls: list[ToolUseBlock],
-    tool_results: list[ToolResultBlock],
-) -> list[dict[str, str]]:
-    if len(tool_calls) != len(tool_results) or not tool_calls:
-        return []
-    artifacts: list[dict[str, str]] = []
-    for tool_call, result in zip(tool_calls, tool_results, strict=True):
-        if result.is_error:
-            return []
-        if _TARGET_LENGTH_CHECK_MARKER in result.content:
-            return []
-        if tool_call.name.strip().lower() != "write_file":
-            return []
-        path_values = _tool_input_path_values(tool_call.input)
-        if not path_values:
-            return []
-        path = path_values[0].replace("\\", "/").strip()
-        if Path(path).suffix.lower() not in _AUTO_FINAL_WRITE_EXTENSIONS:
-            return []
-        artifacts.append({"path": path})
-    return artifacts
-
-
-def _artifact_marker_message(artifacts: list[dict[str, str]]) -> ConversationMessage:
-    payload = json.dumps({"artifacts": artifacts}, ensure_ascii=False, separators=(",", ":"))
-    return ConversationMessage(
-        role="assistant",
-        content=[TextBlock(text=f"<myharness-artifacts>{payload}</myharness-artifacts>")],
-    )
 
 
 def _should_block_async_agent_finalization_tool(
@@ -967,6 +947,7 @@ async def run_query(
                 max_tokens=context.max_tokens,
                 tools=_select_tool_schemas(context, messages, was_compacted=was_compacted),
                 reasoning_effort=context.reasoning_effort,
+                compact_threshold_tokens=context.auto_compact_threshold_tokens,
                 cache_event=(
                     str(context.tool_metadata.pop("cache_prefix_event", "") or "")
                     if isinstance(context.tool_metadata, dict)
@@ -1011,7 +992,7 @@ async def run_query(
                 if _adopt_compaction_result():
                     continue
             if _is_network_error_message(error_msg):
-                yield ErrorEvent(message=f"Network error: {error_msg}. Check your internet connection and try again."), None
+                yield ErrorEvent(message=_network_error_message(context, error_msg)), None
             else:
                 yield ErrorEvent(message=f"API error: {error_msg}"), None
             return
@@ -1168,25 +1149,6 @@ async def run_query(
             tool_results = [result for result in tool_results if result is not None]
 
         messages.append(ConversationMessage(role="user", content=tool_results))
-        autofinal_artifacts = _autofinal_artifact_items(tool_calls, tool_results)
-        if autofinal_artifacts:
-            synthetic_message = _artifact_marker_message(autofinal_artifacts)
-            synthetic_usage = UsageSnapshot()
-            messages.append(synthetic_message)
-            yield AssistantTurnComplete(message=synthetic_message, usage=synthetic_usage), synthetic_usage
-            if context.hook_executor is not None:
-                await context.hook_executor.execute(
-                    HookEvent.STOP,
-                    {
-                        "event": HookEvent.STOP.value,
-                        "stop_reason": "artifact_write_complete",
-                    },
-                )
-            run_auto_skill_learning(
-                context.tool_metadata,
-                enabled=context.auto_skill_learning_enabled,
-            )
-            return
         steering_count = await _drain_steering_messages(context, messages)
         if steering_count:
             yield StatusEvent(

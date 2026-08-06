@@ -3,6 +3,9 @@ $script:StopRequested = $false
 $script:BackendProcess = $null
 $script:ViteProcess = $null
 $script:LauncherScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+$script:BackendLauncherScriptPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "run_myharness_web_server.ps1"))
+$script:FrontendWebDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\frontend\web"))
+. (Join-Path $PSScriptRoot "local_env.ps1")
 
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
@@ -22,16 +25,17 @@ function Stop-ProcessTree {
 
 function Stop-ExistingDevLaunchers {
     $escapedScriptPath = [regex]::Escape($script:LauncherScriptPath)
+    $escapedBackendLauncherPath = [regex]::Escape($script:BackendLauncherScriptPath)
     $scanJob = Start-Job -ScriptBlock {
-        param($ScriptPathPattern, $CurrentProcessId)
+        param($ScriptPathPattern, $BackendLauncherPathPattern, $CurrentProcessId)
 
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.ProcessId -ne $CurrentProcessId -and
                 $_.Name -match "^(powershell|pwsh)(\.exe)?$" -and
-                $_.CommandLine -match $ScriptPathPattern
+                ($_.CommandLine -match $ScriptPathPattern -or $_.CommandLine -match $BackendLauncherPathPattern)
             }
-    } -ArgumentList $escapedScriptPath, $PID
+    } -ArgumentList $escapedScriptPath, $escapedBackendLauncherPath, $PID
 
     try {
         $completedJob = Wait-Job -Job $scanJob -Timeout 2
@@ -108,7 +112,9 @@ function Stop-ListeningPort {
     }
 }
 
-$backendPort = if ($env:PORT) { [int]$env:PORT } else { 4273 }
+$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$backendPort = Get-MyHarnessConfiguredPort -RepoRoot $repoRoot
+$env:PORT = [string]$backendPort
 Stop-ExistingDevLaunchers
 
 function Test-CanListenOnPort {
@@ -132,7 +138,13 @@ function Test-CanListenOnPort {
 }
 
 function Get-RequestedVitePort {
-    $rawPort = if ($env:MYHARNESS_DEV_PORT) {
+    param([Parameter(Mandatory = $true)][int]$BackendPort)
+
+    $localPort = Get-MyHarnessLocalEnvValue -RepoRoot $repoRoot -Name "MYHARNESS_DEV_PORT"
+    $rawPort = if ($localPort) {
+        $localPort
+    }
+    elseif ($env:MYHARNESS_DEV_PORT) {
         $env:MYHARNESS_DEV_PORT
     }
     elseif ($env:MYHARNESS_WEB_PORT) {
@@ -142,18 +154,26 @@ function Get-RequestedVitePort {
         $env:VITE_PORT
     }
     else {
-        "4173"
+        "auto"
+    }
+
+    if ([string]$rawPort -ieq "auto") {
+        $rawPort = [string]($BackendPort + 100)
     }
 
     try {
         $port = [int]$rawPort
     }
     catch {
-        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_DEV_PORT to a number from 1 to 65535."
+        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_DEV_PORT to 'auto' or a number from 1 to 65535."
     }
 
     if ($port -lt 1 -or $port -gt 65535) {
-        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_DEV_PORT to a number from 1 to 65535."
+        throw "Invalid Vite dev port '$rawPort'. Set MYHARNESS_DEV_PORT to 'auto' or a number from 1 to 65535."
+    }
+
+    if ($port -eq $BackendPort) {
+        throw "Vite dev port $port must be different from backend port $BackendPort."
     }
 
     return $port
@@ -253,7 +273,7 @@ function Start-BackendLauncher {
             "Bypass",
             "-File",
             (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) "scripts\run_myharness_web_server.ps1")
-        ) -NoNewWindow -PassThru
+        ) -WorkingDirectory $script:FrontendWebDirectory -NoNewWindow -PassThru
     }
     finally {
         if ($null -eq $previousKeyHandling) {
@@ -283,7 +303,7 @@ function Start-ViteServer {
     $previousCi = $env:CI
     try {
         $env:CI = "true"
-        return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "0.0.0.0", "--port", ([string]$script:VitePort), "--strictPort") -NoNewWindow -PassThru
+        return Start-Process -FilePath "node.exe" -ArgumentList @("node_modules/vite/bin/vite.js", "--host", "0.0.0.0", "--port", ([string]$script:VitePort), "--strictPort") -WorkingDirectory $script:FrontendWebDirectory -NoNewWindow -PassThru
     }
     finally {
         if ($null -eq $previousCi) {
@@ -314,7 +334,7 @@ function Restart-All {
     Stop-All
 })
 
-$preferredVitePort = Get-RequestedVitePort
+$preferredVitePort = Get-RequestedVitePort -BackendPort $backendPort
 Stop-ListeningPort -Port $backendPort -Label "backend"
 $script:VitePort = Resolve-VitePort -PreferredPort $preferredVitePort
 $env:MYHARNESS_DEV_PORT = [string]$script:VitePort

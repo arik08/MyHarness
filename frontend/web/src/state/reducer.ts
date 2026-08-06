@@ -525,10 +525,18 @@ const localizedBrainstormingBrowserPrompt =
 
 function normalizeVisibleText(message: string) {
   const text = String(message || "");
-  if (text.trim() === "Unknown session") {
+  if (isUnknownSessionMessage(text)) {
     return staleSessionMessage;
   }
   return text.replace(brainstormingBrowserPrompt, localizedBrainstormingBrowserPrompt);
+}
+
+function isUnknownSessionMessage(message: string) {
+  return String(message || "").trim() === "Unknown session";
+}
+
+function errorStatusText(message: string) {
+  return /network error|네트워크 연결 오류/i.test(message) ? "연결 오류" : message;
 }
 
 function assistantCompletionText(streamedText: string, completedText: string) {
@@ -555,23 +563,25 @@ function assistantStreamingText(currentText: string, nextChunkOrSnapshot: string
 }
 
 function completePendingAssistantMessage(messages: ChatMessage[], completedText = "", suppressActions = false, artifacts: ArtifactSummary[] = []): ChatMessage[] {
-  const last = messages[messages.length - 1];
-  if (last?.role === "assistant" && last.isComplete !== true) {
-    const text = assistantCompletionText(last.text, completedText);
+  const pendingIndex = lastMatchingIndex(messages, (message) => message.role === "assistant" && message.isComplete !== true);
+  const pending = messages[pendingIndex];
+  if (pending) {
+    const text = assistantCompletionText(pending.text, completedText);
     if (!text.trim()) {
-      return messages.slice(0, -1);
+      return messages.filter((_, index) => index !== pendingIndex);
     }
-    return [
-      ...messages.slice(0, -1),
-      {
-        ...last,
-        text,
-        isComplete: true,
-        suppressActions: suppressActions || last.suppressActions,
-        createdAt: Date.now(),
-        artifacts: mergeAssistantArtifacts(last.artifacts, artifacts),
-      },
-    ];
+    return messages.map((message, index) => (
+      index === pendingIndex
+        ? {
+            ...pending,
+            text,
+            isComplete: true,
+            suppressActions: suppressActions || pending.suppressActions,
+            createdAt: Date.now(),
+            artifacts: mergeAssistantArtifacts(pending.artifacts, artifacts),
+          }
+        : message
+    ));
   }
   return messages;
 }
@@ -774,6 +784,7 @@ function initialWorkflowEvents(requestText = ""): WorkflowEvent[] {
 function hasRestorableWorkflowEvents(events: WorkflowEvent[]) {
   return events.some((event) => (
     Boolean(event.toolName)
+    || event.role === "reasoning"
     || event.role === "purpose"
     || event.role === "activity"
     || event.role === "final"
@@ -784,6 +795,7 @@ function workflowTitle(toolName: string) {
   const lower = toolName.toLowerCase();
   if (!toolName) return "도구 실행";
   if (isTodoTool(toolName)) return "작업 목록 정리";
+  if (lower === "save_skill") return "스킬 작성";
   if (lower === "cmd" || lower.includes("shell") || lower.includes("bash") || lower.includes("powershell")) return "명령 실행";
   if (lower.includes("apply_patch")) return "파일 수정";
   if (lower.includes("read") || lower.includes("open")) return "파일 확인";
@@ -798,6 +810,7 @@ function isTodoTool(toolName: string) {
 function compactToolStatus(toolName: string, fallback = "처리 중") {
   const lower = toolName.toLowerCase();
   if (lower === "skill") return "스킬 확인 중";
+  if (lower === "save_skill") return "스킬 파일 작성 중";
   if (isTodoTool(toolName)) return "작업 목록 정리 중";
   if (lower.includes("bash") || lower.includes("shell") || lower === "cmd") return "명령 실행 중";
   if (lower.includes("web_fetch")) return "웹 페이지 확인 중";
@@ -1063,7 +1076,21 @@ function firstPartialJsonStringField(source: string, keys: string[]) {
 
 function isWorkflowOutputTool(toolName: string) {
   const lower = toolName.toLowerCase();
-  return lower.includes("write") || lower.includes("edit") || lower.includes("patch");
+  return lower === "save_skill" || lower.includes("write") || lower.includes("edit") || lower.includes("patch");
+}
+
+function workflowSkillMarkdown(name: string, description: string, instructions: string) {
+  const yamlValue = (value: string) => (
+    value.trim() === value && value && !/[\n\r:#]/.test(value) ? value : JSON.stringify(value)
+  );
+  return [
+    "---",
+    `name: ${yamlValue(name)}`,
+    `description: ${yamlValue(description)}`,
+    "---",
+    "",
+    instructions,
+  ].join("\n");
 }
 
 function workflowStringInput(input: Record<string, unknown> | null | undefined, keys: string[]) {
@@ -1121,6 +1148,27 @@ function workflowDraftFromBuffer(toolName: string, buffer: string): { toolName: 
   }
   if (!isWorkflowOutputTool(inferredToolName)) {
     return null;
+  }
+  if (inferredToolName.toLowerCase() === "save_skill") {
+    const name = firstPartialJsonStringField(buffer, ["name"]);
+    const description = firstPartialJsonStringField(buffer, ["description"]);
+    const instructions = firstPartialJsonStringField(buffer, ["instructions"]);
+    const mode = firstPartialJsonStringField(buffer, ["mode"]);
+    if (!instructions.found) {
+      return null;
+    }
+    const skillName = name.value.trim();
+    return {
+      toolName: inferredToolName,
+      toolInput: {
+        name: name.value,
+        description: description.value,
+        instructions: instructions.value,
+        mode: mode.value || "create",
+        path: skillName ? `.skills/POSCO_Skill/${skillName}/SKILL.md` : "SKILL.md",
+        content: workflowSkillMarkdown(name.value, description.value, instructions.value),
+      },
+    };
   }
   const path = firstPartialJsonStringField(buffer, ["file_path", "path", "output_path"]);
   const input: Record<string, unknown> = {};
@@ -1385,8 +1433,12 @@ function workflowCompletionStatus(toolName: string, isError: boolean): WorkflowE
 
 function ensurePurposeEvent(events: WorkflowEvent[], toolName: string): { events: WorkflowEvent[]; groupId: string } {
   const purpose = purposeForTool(toolName);
-  const latestPurpose = events[lastMatchingIndex(events, (event) => event.role === "purpose")];
-  if (latestPurpose?.purpose === purpose && latestPurpose.groupId) {
+  const latestPurposeIndex = lastMatchingIndex(events, (event) => event.role === "purpose");
+  const latestPurpose = events[latestPurposeIndex];
+  const hasLaterReasoningSummary = latestPurposeIndex !== -1 && events
+    .slice(latestPurposeIndex + 1)
+    .some((event) => event.role === "reasoning");
+  if (latestPurpose?.purpose === purpose && latestPurpose.groupId && !hasLaterReasoningSummary) {
     const copy = purposeCopy(purpose);
     return {
       events: events.map((event) => event.id === latestPurpose.id ? { ...event, status: "running", detail: copy.running } : event),
@@ -2202,6 +2254,23 @@ function reduceHistoryRestoreEvent(
       }
       continue;
     }
+    if (type === "reasoning_summary") {
+      const detail = String(record.message || "").trim();
+      if (detail) {
+        workflowEvents = appendWorkflowEvent(
+          completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()),
+          {
+            toolName: "",
+            title: "진행 메모",
+            detail,
+            status: "done",
+            level: "parent",
+            role: "reasoning",
+          },
+        );
+      }
+      continue;
+    }
     if (type === "compact_progress") {
       workflowEvents = applyCompactProgressEvent(
         workflowEvents.length ? workflowEvents : initialWorkflowEvents(),
@@ -2695,6 +2764,30 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     };
   }
 
+  if (event.type === "reasoning_summary") {
+    const detail = String(event.message || "").trim();
+    if (!detail) {
+      return state;
+    }
+    return {
+      ...state,
+      busy: true,
+      status: "processing",
+      statusText: "진행 메모 확인 중",
+      workflowEvents: appendWorkflowEvent(
+        completePlanning(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents()),
+        {
+          toolName: "",
+          title: "진행 메모",
+          detail,
+          status: "done",
+          level: "parent",
+          role: "reasoning",
+        },
+      ),
+    };
+  }
+
   if (event.type === "compact_progress") {
     return {
       ...state,
@@ -2746,6 +2839,28 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       }
     }
     if (item.role === "user" && !isSupplementalUserTranscriptKind(item.kind)) {
+      const promotedSteeringIndex = !item.kind
+        ? lastMatchingIndex(state.messages, (message) => (
+            message.role === "user"
+            && message.kind === "steering"
+            && canonicalUserTranscriptText(message.text) === canonicalUserTranscriptText(text)
+          ))
+        : -1;
+      if (promotedSteeringIndex >= 0) {
+        const message = state.messages[promotedSteeringIndex];
+        return {
+          ...state,
+          messages: state.messages.map((candidate, index) => (
+            index === promotedSteeringIndex ? { ...candidate, kind: undefined } : candidate
+          )),
+          workflowAnchorMessageId: message.id,
+          workflowEventsByMessageId: workflowSnapshotMap(state),
+          workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
+          workflowEvents: initialWorkflowEvents(text),
+          workflowDurationSeconds: null,
+          workflowStartedAtMs: Date.now(),
+        };
+      }
       if (isDuplicateActiveUserTranscript(state, text)) {
         return state;
       }
@@ -2844,24 +2959,19 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     }
     const shouldCompleteTodo = isFinalAnswer && artifacts.length > 0 && Boolean(state.todoMarkdown.trim());
     const todoMarkdown = shouldCompleteTodo ? completeTodoMarkdown(state.todoMarkdown) : state.todoMarkdown;
+    const pendingAssistantIndex = lastMatchingIndex(
+      state.messages,
+      (message) => message.role === "assistant" && message.isComplete !== true,
+    );
     const messages = isFinalAnswer
-      ? value
-        ? last?.role === "assistant" && last.isComplete !== true
-          ? [
-              ...state.messages.slice(0, -1),
-              {
-                ...last,
-                text: assistantCompletionText(last.text, value),
-                isComplete: true,
-                createdAt: Date.now(),
-                artifacts: mergeAssistantArtifacts(last.artifacts, artifacts),
-                usage: usage || last.usage,
-                sessionUsage: nextSessionUsage,
-              },
-            ]
-          : appendMessage(state.messages, { role: "assistant", text: value, isComplete: true, createdAt: Date.now(), artifacts, usage, sessionUsage: nextSessionUsage })
-        : last?.role === "assistant"
-          ? [...state.messages.slice(0, -1), { ...last, isComplete: true, createdAt: Date.now(), artifacts: mergeAssistantArtifacts(last.artifacts, artifacts), usage: usage || last.usage, sessionUsage: nextSessionUsage }]
+      ? pendingAssistantIndex >= 0
+        ? completePendingAssistantMessage(state.messages, value, false, artifacts).map((message, index) => (
+            index === pendingAssistantIndex
+              ? { ...message, usage: usage || message.usage, sessionUsage: nextSessionUsage }
+              : message
+          ))
+        : value
+          ? appendMessage(state.messages, { role: "assistant", text: value, isComplete: true, createdAt: Date.now(), artifacts, usage, sessionUsage: nextSessionUsage })
           : state.messages
       : completePendingAssistantMessage(state.messages, value, true, artifacts);
     return {
@@ -2976,6 +3086,11 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
   }
 
   if (event.type === "line_complete") {
+    const messages = state.messages.map((message) => (
+      message.role === "assistant" && message.isComplete !== true
+        ? { ...message, isComplete: true }
+        : message
+    ));
     const hasRestorableWorkflow = hasRestorableWorkflowEvents(state.workflowEvents);
     const workflowAnchorMessageId = hasRestorableWorkflow ? state.workflowAnchorMessageId : null;
     const workflowEvents = hasRestorableWorkflow
@@ -2993,6 +3108,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     return {
       ...state,
       busy: false,
+      messages,
       status: state.status === "error" ? "error" : "ready",
       statusText: state.status === "error" ? state.statusText : "준비됨",
       artifactRefreshKey: event.type === "line_complete" ? state.artifactRefreshKey + 1 : state.artifactRefreshKey,
@@ -3048,7 +3164,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       workflowEventsByMessageId: rememberWorkflowEventsForAnchor(state, workflowEvents),
       busy: false,
       status: "error",
-      statusText: message,
+      statusText: errorStatusText(message),
       workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
       workflowStartedAtMs: null,
     };
@@ -3566,6 +3682,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, swarmPopupOpen: action.value };
 
     case "set_runtime_picker_error":
+      if (isUnknownSessionMessage(action.message)) {
+        return {
+          ...state,
+          sessionId: null,
+          ready: false,
+          busy: false,
+          status: "connecting",
+          statusText: "세션을 다시 연결 중입니다.",
+          runtimePicker: { ...state.runtimePicker, open: false, loading: false, error: "" },
+        };
+      }
       return { ...state, runtimePicker: { ...state.runtimePicker, open: true, loading: false, error: action.message } };
 
     case "select_runtime_provider": {

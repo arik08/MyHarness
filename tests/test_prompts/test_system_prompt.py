@@ -73,6 +73,24 @@ def test_build_system_prompt_default_includes_base():
     assert "MyHarness" in prompt
 
 
+def test_build_system_prompt_keeps_user_facing_prose_out_of_shell_commands():
+    prompt = build_system_prompt(env=_make_env())
+
+    assert "only executable command text" in prompt
+    assert 'completion phrases such as "작성 완료했습니다."' in prompt
+    assert "never shell input" in prompt
+    assert "retrying the same invalid arguments unchanged" in prompt
+
+
+def test_build_system_prompt_uses_atomic_save_skill_tool_instead_of_python_scripts():
+    prompt = build_system_prompt(env=_make_env())
+
+    assert "When the `save_skill` tool is available" in prompt
+    assert "Submit the final name, trigger description, complete Markdown instructions" in prompt
+    assert "Do not run `init_skill.py`, `generate_openai_yaml.py`, or `quick_validate.py`" in prompt
+    assert "do not read or patch the generated template afterward" in prompt
+
+
 def test_skill_routing_description_is_compact_and_preserves_trigger_prefix():
     trigger = "Use when the user asks for blocked web research. "
     description = trigger + "Detailed implementation guidance " * 40
@@ -183,6 +201,26 @@ def test_build_system_prompt_discourages_repeated_clarification_rounds():
     assert "Do not ask another clarification immediately after the user answers" in prompt
     assert "batch them into one question" in prompt
     assert "(1/N)" in prompt
+
+
+def test_build_system_prompt_requires_direct_build_requests_to_produce_the_artifact():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+
+    assert 'direct creation verbs such as "create", "build", "implement", "make"' in prompt
+    assert '"만들어줘", "구현해줘", and "작성해줘"' in prompt
+    assert "produce the requested working result in the current run" in prompt
+    assert "Do not replace the requested artifact with a design proposal" in prompt
+    assert "A skill must not add an approval gate that contradicts this rule" in prompt
+    assert "resume implementation immediately without another confirmation round" in prompt
+
+
+def test_build_system_prompt_requires_atomic_complete_file_writes():
+    prompt = build_system_prompt(env=_make_env())
+
+    assert "one atomic complete-content operation" in prompt
+    assert "never submit only an opening fragment" in prompt
+    assert "closing `</body>` and `</html>` tags" in prompt
 
 
 def test_build_system_prompt_guides_chat_html_rendering_without_visual_report_rules():
@@ -350,14 +388,20 @@ def test_visual_artifact_flags_empty_report_panels_as_layout_defects():
     assert "`align-items: stretch` only when both sides are content-filled" in skill_text
 
 
-def test_build_system_prompt_prefers_existing_files_and_batched_edits():
+def test_build_system_prompt_creates_new_standalone_artifacts_without_overwriting_prior_sessions():
     env = _make_env()
     prompt = build_system_prompt(env=env)
 
-    assert "Use repository context and senior engineering judgment" in prompt
-    assert 'Do not treat words like "write an html"' in prompt
-    assert "Treat requests such as" in prompt
-    assert "Search for and read the likely existing file" in prompt
+    assert "distinguish work on an existing project from creation of a standalone artifact" in prompt
+    assert "a creation request means create a new file by default" in prompt
+    assert "Finding a similar filename or same-purpose artifact" in prompt
+    assert "is not permission to modify or overwrite it" in prompt
+    assert "references it with an `@file` link or exact path" in prompt
+    assert "continues work on an artifact created or selected earlier in the same conversation" in prompt
+    assert "A new session has no inherited artifact-edit authorization" in prompt
+    assert "choose a collision-free meaningful filename" in prompt
+    assert "the next `_vN` version" in prompt
+    assert "do not read an unrelated prior artifact merely to reuse it" in prompt
     assert "small tweak, bug fix, style change, text change, or behavior change" in prompt
     assert "standalone preview, demo, script, or sample" in prompt
     assert "standalone preview, demo, script, report, or sample" not in prompt

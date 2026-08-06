@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
+import { isResponseVisiblyBusy } from "../state/selectors";
 import type { ArtifactSummary } from "../types/backend";
 import type { WorkflowEvent } from "../types/ui";
 import {
@@ -12,6 +13,7 @@ import {
   normalizeArtifactPath,
 } from "../utils/artifacts";
 import { Icon } from "./ArtifactIcons";
+import { InlineMarkdown } from "./MarkdownMessage";
 
 function statusLabel(status: string) {
   if (status === "running") return "진행 중";
@@ -294,9 +296,43 @@ function workflowPatchPath(patch: string) {
   return match?.[1]?.trim() || "";
 }
 
+function isSaveSkillTool(toolName: string) {
+  return toolName.toLowerCase() === "save_skill";
+}
+
+function workflowSkillPreview(input: Record<string, unknown>) {
+  const name = workflowInputValue(input, ["name"]).value;
+  const description = workflowInputValue(input, ["description"]).value;
+  const instructions = workflowInputValue(input, ["instructions"]).value;
+  const existingContent = workflowInputValue(input, ["content"]);
+  if (!instructions && !existingContent.found) {
+    return null;
+  }
+  const yamlValue = (value: string) => (
+    value.trim() === value && value && !/[\n\r:#]/.test(value) ? value : JSON.stringify(value)
+  );
+  return {
+    path: name ? `.skills/POSCO_Skill/${name}/SKILL.md` : "SKILL.md",
+    content: instructions ? [
+      "---",
+      `name: ${yamlValue(name)}`,
+      `description: ${yamlValue(description)}`,
+      "---",
+      "",
+      instructions,
+    ].join("\n") : existingContent.value,
+  };
+}
+
 function workflowPreviewSource(event: WorkflowEvent) {
   const lower = event.toolName.toLowerCase();
   const input = event.toolInput || {};
+  if (isSaveSkillTool(event.toolName)) {
+    const preview = workflowSkillPreview(input);
+    if (preview) {
+      return { ...preview, kind: "content" as const };
+    }
+  }
   const patch = workflowPatchPreview(input);
   const path = workflowInputValue(input, ["file_path", "path", "output_path"]).value
     || workflowPatchPath(patch)
@@ -846,7 +882,7 @@ function workflowVisiblePreviewContent(event: WorkflowEvent, content: string) {
 
 function isWorkflowOutputTool(toolName: string) {
   const lower = toolName.toLowerCase();
-  return lower !== "todo_write" && lower !== "todowrite" && (lower.includes("write") || lower.includes("edit") || lower.includes("patch"));
+  return lower !== "todo_write" && lower !== "todowrite" && (lower === "save_skill" || lower.includes("write") || lower.includes("edit") || lower.includes("patch"));
 }
 
 function isTodoWorkflowTool(toolName: string, title = "") {
@@ -886,6 +922,9 @@ function workflowStepTitle(event: WorkflowEvent) {
   }
   const lowerToolName = event.toolName.toLowerCase();
   const lowerTitle = event.title.toLowerCase();
+  if (lowerToolName === "save_skill") {
+    return event.toolInput?.mode === "update" ? "스킬 파일 수정" : "스킬 파일 작성";
+  }
   if (event.title && lowerTitle !== lowerToolName) {
     return event.title;
   }
@@ -1499,7 +1538,7 @@ function WorkflowStep({
         <strong>{title}</strong>
         {shouldShowStatusDetail ? (
           <small className={showToolDetailLine ? "workflow-tool-detail" : "workflow-status-detail"}>
-            {statusDetailText}
+            {event.role === "reasoning" ? <InlineMarkdown text={statusDetailText} /> : statusDetailText}
           </small>
         ) : null}
       </span>
@@ -1818,7 +1857,8 @@ export function WorkflowPanel({
   const rawEvents = eventOverride || state.workflowEvents;
   const events = useMemo(() => dedupeWorkflowOutputEvents(rawEvents), [rawEvents]);
   const isActiveWorkflow = !eventOverride || eventOverride === state.workflowEvents;
-  const animateActiveWorkflow = state.busy && !state.restoringHistory && isActiveWorkflow;
+  const responseVisiblyBusy = isResponseVisiblyBusy(state);
+  const animateActiveWorkflow = responseVisiblyBusy && !state.restoringHistory && isActiveWorkflow;
   const visibleEvents = useStaggeredWorkflowEvents(events, animateActiveWorkflow);
   const totalDurationSeconds = durationSeconds ?? (!eventOverride ? state.workflowDurationSeconds : null);
   const [now, setNow] = useState(() => Date.now());
@@ -1953,7 +1993,7 @@ export function WorkflowPanel({
     >
       {compactProgressEvent ? <ContextCompactionDivider event={compactProgressEvent} /> : null}
       {showWorkflowCard || hasOutputPreview || hasLongReportOutline ? (
-        <details className="workflow-card" open={!eventOverride && state.busy || cardRunningCount > 0 || hasOutputPreview || hasLongReportOutline}>
+        <details className="workflow-card" open={!eventOverride && responseVisiblyBusy || cardRunningCount > 0 || hasOutputPreview || hasLongReportOutline}>
           <summary>
             <span className="workflow-title">작업 진행</span>
             <span className="workflow-count">

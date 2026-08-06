@@ -1,6 +1,7 @@
 import type { AppState, RuntimePickerOption } from "../types/ui";
 
 const runtimePreferenceKey = "myharness:runtimePreferences";
+const runtimePreferenceVersion = 2;
 
 export type RuntimePreferences = {
   activeProfile?: string;
@@ -29,18 +30,27 @@ function normalizeActiveProfile(value: unknown) {
 
 export function loadRuntimePreferences(): RuntimePreferences {
   try {
-    const value = JSON.parse(localStorage.getItem(runtimePreferenceKey) || "{}") as RuntimePreferences;
+    const value = JSON.parse(localStorage.getItem(runtimePreferenceKey) || "{}") as RuntimePreferences & {
+      version?: number;
+    };
     const appSettings = JSON.parse(localStorage.getItem("myharness:appSettings") || "{}") as {
       gpt56ContextMode?: string;
     };
-    return {
-      activeProfile: normalizeActiveProfile(value.activeProfile) || undefined,
-      model: clean(value.model) || undefined,
-      subagentModel: clean(value.subagentModel) || undefined,
+    const activeProfile = normalizeActiveProfile(value.activeProfile) || undefined;
+    const resetBuiltInModel = value.version !== runtimePreferenceVersion
+      && (activeProfile === "codex" || activeProfile === "p-gpt");
+    const preferences: RuntimePreferences = {
+      activeProfile,
+      model: resetBuiltInModel ? undefined : clean(value.model) || undefined,
+      subagentModel: resetBuiltInModel ? undefined : clean(value.subagentModel) || undefined,
       subagentEffort: clean(value.subagentEffort) || undefined,
       effort: clean(value.effort) || undefined,
       gpt56ContextMode: appSettings.gpt56ContextMode === "full-context" ? "full-context" : "cost-saver",
     };
+    if (value.version !== runtimePreferenceVersion) {
+      saveRuntimePreferences(preferences);
+    }
+    return preferences;
   } catch {
     return {};
   }
@@ -56,7 +66,10 @@ function saveRuntimePreferences(preferences: RuntimePreferences) {
     gpt56ContextMode: preferences.gpt56ContextMode === "full-context" ? "full-context" : "cost-saver",
   };
   try {
-    localStorage.setItem(runtimePreferenceKey, JSON.stringify(normalized));
+    localStorage.setItem(runtimePreferenceKey, JSON.stringify({
+      version: runtimePreferenceVersion,
+      ...normalized,
+    }));
   } catch {
     // Embedded/private contexts may block localStorage.
   }

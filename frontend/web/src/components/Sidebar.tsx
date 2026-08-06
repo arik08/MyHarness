@@ -4,7 +4,7 @@ import { useAppState } from "../state/app-state";
 import { deleteHistory, hideHistory, historyPageSize, listHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
 import { sendBackendRequest, sendMessage } from "../api/messages";
-import { currentConversationHistoryTitle, currentConversationTitle } from "../state/selectors";
+import { currentConversationHistoryTitle, currentConversationTitle, isConversationResponseVisiblyBusy, isResponseVisiblyBusy } from "../state/selectors";
 import type { HistoryItem, Workspace } from "../types/backend";
 import type { RuntimePickerOption } from "../types/ui";
 import type { ThemeId } from "../types/ui";
@@ -697,6 +697,7 @@ export function Sidebar() {
   const conversationTitle = currentConversationTitle(state);
   const activeHistoryDescription = currentConversationHistoryTitle(state);
   const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
+  const responseVisiblyBusy = isResponseVisiblyBusy(state);
   const shouldRenderActiveHistory = Boolean(
     state.pendingFreshChat
     || state.busy
@@ -912,8 +913,16 @@ export function Sidebar() {
               const displayLabel = formatHistoryTitle(label);
               const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
               const isPendingRestore = state.pendingHistoryId === item.value && visiblePendingHistoryId === item.value;
-              const isActiveBusy = isActive && state.busy && (!state.pendingHistoryId || isPendingRestore);
-              const isBusy = isActiveBusy || isPendingRestore || (item.live === true && item.busy === true);
+              const cachedLiveMessages = item.liveSessionId
+                ? state.liveSessionViewsBySessionId[item.liveSessionId]?.messages
+                : undefined;
+              const liveResponseVisiblyBusy = item.busy === true && (
+                cachedLiveMessages
+                  ? isConversationResponseVisiblyBusy(true, cachedLiveMessages)
+                  : true
+              );
+              const isActiveBusy = isActive && responseVisiblyBusy && (!state.pendingHistoryId || isPendingRestore);
+              const isBusy = isActiveBusy || isPendingRestore || (item.live === true && liveResponseVisiblyBusy && !isActive);
               const isDeleting = deletingHistoryId === item.value;
               const actionsExpanded = expandedHistoryActionId === item.value;
               const canPin = !item.pending && !isLiveOnlyHistoryItem(item);

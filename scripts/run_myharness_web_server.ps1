@@ -5,6 +5,8 @@ $script:RestartCount = 0
 $script:KeyHandlingEnabled = $env:MYHARNESS_SERVER_KEY_HANDLING -ne "0"
 $script:LogDirectory = if ($env:MYHARNESS_LOGS_DIR) { $env:MYHARNESS_LOGS_DIR } else { Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) ".myharness\logs" }
 $script:LauncherLog = Join-Path $script:LogDirectory "myharness-web-launcher.log"
+$script:FrontendWebDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\frontend\web"))
+. (Join-Path $PSScriptRoot "local_env.ps1")
 
 function Write-LauncherLog {
     param(
@@ -104,6 +106,28 @@ function Test-LauncherKey {
     return $false
 }
 
+function Open-LauncherLock {
+    param([Parameter(Mandatory = $true)][int]$Port)
+
+    if (-not (Test-Path -LiteralPath $script:LogDirectory)) {
+        New-Item -ItemType Directory -Path $script:LogDirectory -Force | Out-Null
+    }
+    $lockPath = Join-Path $script:LogDirectory "server-$Port.lock"
+    try {
+        return [System.IO.File]::Open(
+            $lockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+    }
+    catch [System.IO.IOException] {
+        Write-Host "[INFO] Another MyHarness backend supervisor already owns port $serverPort. Exiting this duplicate launcher."
+        Write-LauncherLog "duplicate_server_supervisor" @{ port = $serverPort }
+        exit 0
+    }
+}
+
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
 
@@ -185,12 +209,16 @@ function Stop-ServerProcess {
     }
 })
 
+$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$serverPort = Get-MyHarnessConfiguredPort -RepoRoot $repoRoot
+$env:PORT = [string]$serverPort
+$script:LauncherLock = Open-LauncherLock -Port $serverPort
+
 while (-not $script:StopRequested) {
-    $serverPort = if ($env:PORT) { [int]$env:PORT } else { 4273 }
     Stop-ListeningPort -Port $serverPort
     Write-Host "[INFO] Starting node server.mjs..."
     Write-LauncherLog "server_starting" @{ restart_count = $script:RestartCount }
-    $process = Start-Process -FilePath "node.exe" -ArgumentList @("server.mjs") -NoNewWindow -PassThru
+    $process = Start-Process -FilePath "node.exe" -ArgumentList @("server.mjs") -WorkingDirectory $script:FrontendWebDirectory -NoNewWindow -PassThru
     $script:CurrentServerProcess = $process
     Write-LauncherLog "server_started" @{ child_pid = $process.Id; restart_count = $script:RestartCount }
     $hardResetRequested = $false

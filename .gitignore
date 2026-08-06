@@ -58,3 +58,6 @@ myharness-*.png
 Thumbs.db
 uv.lock
 .gstack/
+
+# Runtime-only skill learning locks
+.learning.lock

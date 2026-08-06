@@ -23,7 +23,7 @@ The user provides frontend requirements: a component, page, application, or inte
 
 ## Design Thinking
 
-Before coding, understand the context and commit to a BOLD aesthetic direction:
+Before coding, understand the context and commit internally to a BOLD aesthetic direction. If the user gave enough constraints to build, choose reasonable visual defaults and implement immediately; do not turn the request into a style survey, approach comparison, approval loop, or design-document-only deliverable:
 - **Purpose**: What problem does this interface solve? Who uses it?
 - **Tone**: Pick an extreme: brutally minimal, maximalist chaos, retro-futuristic, organic/natural, luxury/refined, playful/toy-like, editorial/magazine, brutalist/raw, art deco/geometric, soft/pastel, industrial/utilitarian, etc. There are so many flavors to choose from. Use these for inspiration but design one that is true to the aesthetic direction.
 - **Constraints**: Technical requirements (framework, performance, accessibility).

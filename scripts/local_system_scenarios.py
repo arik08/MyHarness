@@ -60,19 +60,27 @@ def _make_command_context(cwd: Path) -> CommandContext:
         cwd=str(cwd),
         tool_registry=tool_registry,
         app_state=AppStateStore(
-            AppState(model="claude-test", permission_mode="default", theme="default", keybindings={})
+            AppState(
+                model="claude-test",
+                subagent_model="claude-test",
+                subagent_effort="medium",
+                permission_mode="default",
+                theme="default",
+                keybindings={},
+            )
         ),
     )
 
 
 def _write_plugin(source_root: Path) -> Path:
     plugin_dir = source_root / "fixture-plugin"
-    (plugin_dir / "skills").mkdir(parents=True)
+    fixture_skill_dir = plugin_dir / "skills" / "fixture"
+    fixture_skill_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps({"name": "fixture-plugin", "version": "1.0.0", "description": "Fixture plugin"}),
         encoding="utf-8",
     )
-    (plugin_dir / "skills" / "fixture.md").write_text(
+    (fixture_skill_dir / "SKILL.md").write_text(
         "# FixtureSkill\nFixture skill content for local scenario.\n",
         encoding="utf-8",
     )
@@ -203,12 +211,12 @@ async def _run_command_flow(temp_root: Path) -> None:
 
     for raw, expected in [
         ("/files demo.py", "src/demo.py"),
-        ("/session", "Session directory:"),
+        ("/session", "세션 디렉터리:"),
         ("/session tag local-smoke", "local-smoke.json"),
-        ("/bridge show", "Bridge summary:"),
+        ("/bridge show", "브리지 요약:"),
         ("/privacy-settings", "Privacy settings:"),
-        ("/rate-limit-options", "Rate limit options:"),
-        ("/release-notes", "Release Notes"),
+        ("/rate-limit-options", "레이트 리밋 대응 옵션:"),
+        ("/release-notes", "릴리스 노트"),
         ("/upgrade", "Upgrade instructions:"),
     ]:
         command, args = registry.lookup(raw)

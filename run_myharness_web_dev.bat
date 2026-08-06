@@ -8,11 +8,11 @@ cd /d "%~dp0"
 set "MYHARNESS_LOCAL_ENV=%CD%\myharness.local.env"
 if exist "%MYHARNESS_LOCAL_ENV%" call :load_local_env "%MYHARNESS_LOCAL_ENV%"
 
-if "%PORT%"=="" set "PORT=4273"
+if "%PORT%"=="" set "PORT=4174"
 if "%MYHARNESS_DEV_PORT%"=="" (
   if "%MYHARNESS_WEB_PORT%"=="" (
     if "%VITE_PORT%"=="" (
-      set "MYHARNESS_DEV_PORT=4173"
+      set "MYHARNESS_DEV_PORT=auto"
     ) else (
       set "MYHARNESS_DEV_PORT=%VITE_PORT%"
     )
@@ -20,6 +20,7 @@ if "%MYHARNESS_DEV_PORT%"=="" (
     set "MYHARNESS_DEV_PORT=%MYHARNESS_WEB_PORT%"
   )
 )
+if /I "%MYHARNESS_DEV_PORT%"=="auto" set /A MYHARNESS_DEV_PORT=PORT+100
 set "MYHARNESS_WEB_PORT=%MYHARNESS_DEV_PORT%"
 if "%HOST%"=="" set "HOST=0.0.0.0"
 if "%MYHARNESS_CONFIG_DIR%"=="" set "MYHARNESS_CONFIG_DIR=%CD%\.myharness"

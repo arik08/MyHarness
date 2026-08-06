@@ -27,6 +27,7 @@ from myharness.api.client import (
     ApiTextDeltaEvent,
     ApiToolCallDeltaEvent,
 )
+from myharness.api.codex_client import OpenAIResponsesClient
 from myharness.api.errors import (
     AuthenticationFailure,
     MyHarnessApiError,
@@ -390,6 +391,7 @@ class OpenAICompatibleClient:
         enable_prompt_cache_options: bool = False,
         include_usage_with_tools: bool = False,
         prompt_cache_retention: str | None = None,
+        enable_gpt56_responses: bool = False,
     ) -> None:
         self._api_key = api_key
         self._base_url = _normalize_openai_base_url(base_url)
@@ -398,6 +400,8 @@ class OpenAICompatibleClient:
         self._diagnostics_label = diagnostics_label or ""
         self._enable_prompt_cache_options = enable_prompt_cache_options
         self._include_usage_with_tools = include_usage_with_tools
+        self._enable_gpt56_responses = enable_gpt56_responses
+        self._responses_api_unavailable = False
         retention = prompt_cache_retention if prompt_cache_retention is not None else _prompt_cache_retention_from_env()
         self._prompt_cache_retention = retention if retention in _PROMPT_CACHE_RETENTION_VALUES else None
         self._unsupported_cache_option_names: set[str] = set()
@@ -409,16 +413,42 @@ class OpenAICompatibleClient:
         if timeout is not None:
             kwargs["timeout"] = timeout
         self._client = AsyncOpenAI(**kwargs)
+        self._responses_client = (
+            OpenAIResponsesClient(
+                api_key,
+                base_url=self._base_url,
+                timeout=timeout,
+                prompt_cache_retention=prompt_cache_retention,
+            )
+            if enable_gpt56_responses
+            else None
+        )
 
     async def aclose(self) -> None:
         """Close provider connection pools owned by this client."""
         if self._raw_http_client is not None:
             await self._raw_http_client.aclose()
             self._raw_http_client = None
+        if self._responses_client is not None:
+            await self._responses_client.aclose()
         await self._client.close()
 
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Yield text deltas and the final message, matching the Anthropic client interface."""
+        if self.supports_server_compaction(request.model) and self._responses_client is not None:
+            try:
+                async for event in self._responses_client.stream_message(request):
+                    yield event
+                return
+            except RequestFailure as exc:
+                if not self._responses_endpoint_is_unavailable(exc):
+                    raise
+                self._responses_api_unavailable = True
+                log.warning(
+                    "Responses API endpoint unavailable for %s; falling back to Chat Completions",
+                    request.model,
+                )
+
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES + 1):
@@ -455,6 +485,21 @@ class OpenAICompatibleClient:
 
         if last_error is not None:
             raise self._translate_error(last_error) from last_error
+
+    def supports_server_compaction(self, model: str) -> bool:
+        return (
+            self._enable_gpt56_responses
+            and not self._responses_api_unavailable
+            and _uses_gpt56_prompt_cache_policy(model)
+        )
+
+    @staticmethod
+    def _responses_endpoint_is_unavailable(exc: RequestFailure) -> bool:
+        message = str(exc).lower()
+        return any(
+            marker in message
+            for marker in ("request failed (404)", "request failed (405)", "not found")
+        )
 
     async def prewarm_prompt_cache(self, request: ApiMessageRequest) -> UsageSnapshot | None:
         """Populate the reusable static prefix without touching conversation state."""

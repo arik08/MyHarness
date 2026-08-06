@@ -499,6 +499,31 @@ describe("appReducer", () => {
     expect(finished.busy).toBe(false);
   });
 
+  it("completes the streamed answer in place when an immediate follow-up is already visible", () => {
+    const withInitialUser = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "안녕?" },
+    });
+    const streaming = appReducer(withInitialUser, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "안녕하세요! 무엇을 도와드릴까요?" },
+    });
+    const withImmediateFollowUp = appReducer(streaming, {
+      type: "append_message",
+      message: { role: "user", text: "넌 누구니", kind: "steering" },
+    });
+    const completed = appReducer(withImmediateFollowUp, {
+      type: "backend_event",
+      event: { type: "assistant_complete", message: "안녕하세요! 무엇을 도와드릴까요?" },
+    });
+
+    expect(completed.messages.map((message) => [message.role, message.text, message.isComplete])).toEqual([
+      ["user", "안녕?", undefined],
+      ["assistant", "안녕하세요! 무엇을 도와드릴까요?", true],
+      ["user", "넌 누구니", undefined],
+    ]);
+  });
+
   it("shows assistant completion even when no delta streamed first", () => {
     const completed = appReducer(initialAppState, {
       type: "backend_event",
@@ -1060,7 +1085,7 @@ describe("appReducer", () => {
     expect(next.messages[0].kind).toBe("steering");
   });
 
-  it("ignores a regular replay transcript for an optimistic steering message", () => {
+  it("promotes an optimistic steering message when the backend starts it as a regular follow-up", () => {
     const withOptimisticSteering = appReducer({ ...initialAppState, busy: true }, {
       type: "append_message",
       message: { role: "user", text: "너는 누구니", kind: "steering" },
@@ -1071,7 +1096,8 @@ describe("appReducer", () => {
     });
 
     expect(next.messages).toHaveLength(1);
-    expect(next.messages[0]).toMatchObject({ text: "너는 누구니", kind: "steering" });
+    expect(next.messages[0]).toMatchObject({ text: "너는 누구니", kind: undefined });
+    expect(next.workflowAnchorMessageId).toBe(next.messages[0].id);
   });
 
   it("ignores a delayed steering replay transcript for the same active user text", () => {
@@ -1276,6 +1302,25 @@ describe("appReducer", () => {
     expect(next.busy).toBe(false);
     expect(next.artifactRefreshKey).toBe(busy.artifactRefreshKey + 1);
     expect(next.historyRefreshKey).toBe(busy.historyRefreshKey + 1);
+  });
+
+  it("finalizes a partial assistant message when line completion repairs a missed event", () => {
+    const streaming = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "스킬을 만들고 검증했어요. 이제 `$nyaong-ending" },
+    });
+
+    const repaired = appReducer(streaming, {
+      type: "backend_event",
+      event: { type: "line_complete" },
+    });
+
+    expect(repaired.busy).toBe(false);
+    expect(repaired.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      text: "스킬을 만들고 검증했어요. 이제 `$nyaong-ending",
+      isComplete: true,
+    });
   });
 
   it("clears initial-only workflow progress when a turn completes without work events", () => {
@@ -1515,6 +1560,7 @@ describe("appReducer", () => {
     expect(completed.messages[1].role).toBe("system");
     expect(completed.messages[1].isError).toBe(true);
     expect(completed.messages[1].text).toContain("Network error");
+    expect(completed.statusText).toBe("연결 오류");
   });
 
   it("drops a dead backend session so the UI can reconnect instead of reusing it", () => {
@@ -1615,6 +1661,23 @@ describe("appReducer", () => {
 
     expect(errored.messages[0].text).toBe("세션 연결이 끊겼습니다. 페이지를 새로고침하거나 새 세션을 시작한 뒤 다시 시도해주세요.");
     expect(errored.statusText).toBe("세션 연결이 끊겼습니다. 페이지를 새로고침하거나 새 세션을 시작한 뒤 다시 시도해주세요.");
+  });
+
+  it("silently drops a stale runtime-picker session so the UI can reconnect", () => {
+    const opened = appReducer({
+      ...initialAppState,
+      sessionId: "dead-session",
+      ready: true,
+      runtimePicker: { ...initialAppState.runtimePicker, open: true, loading: true },
+    }, {
+      type: "set_runtime_picker_error",
+      message: "Unknown session",
+    });
+
+    expect(opened.sessionId).toBeNull();
+    expect(opened.ready).toBe(false);
+    expect(opened.status).toBe("connecting");
+    expect(opened.runtimePicker).toMatchObject({ open: false, loading: false, error: "" });
   });
 
   it("localizes the known brainstorming browser prompt before display", () => {
@@ -2692,6 +2755,46 @@ describe("appReducer", () => {
     expect(secondCompleted.workflowEvents.filter((event) => event.role === "activity")).toHaveLength(1);
   });
 
+  it("keeps reasoning summaries and tool groups in chronological order", () => {
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "공식 자료를 조사해줘" },
+    });
+    const firstReasoning = appReducer(active, {
+      type: "backend_event",
+      event: { type: "reasoning_summary", message: "공식 페이지 검색을 계획합니다." },
+    });
+    const searchStarted = appReducer(firstReasoning, {
+      type: "backend_event",
+      event: { type: "tool_started", tool_name: "web_search", tool_input: { query: "공식 자료" } },
+    });
+    const searchCompleted = appReducer(searchStarted, {
+      type: "backend_event",
+      event: { type: "tool_completed", tool_name: "web_search", output: "검색 결과" },
+    });
+    const secondReasoning = appReducer(searchCompleted, {
+      type: "backend_event",
+      event: { type: "reasoning_summary", message: "검색 결과에서 공식 페이지를 확인합니다." },
+    });
+    const fetchStarted = appReducer(secondReasoning, {
+      type: "backend_event",
+      event: { type: "tool_started", tool_name: "web_fetch", tool_input: { url: "https://example.com" } },
+    });
+
+    const firstReasoningIndex = fetchStarted.workflowEvents.findIndex((event) => event.detail === "공식 페이지 검색을 계획합니다.");
+    const searchIndex = fetchStarted.workflowEvents.findIndex((event) => event.toolName === "web_search");
+    const secondReasoningIndex = fetchStarted.workflowEvents.findIndex((event) => event.detail === "검색 결과에서 공식 페이지를 확인합니다.");
+    const fetchIndex = fetchStarted.workflowEvents.findIndex((event) => event.toolName === "web_fetch");
+    const infoGroups = fetchStarted.workflowEvents.filter((event) => event.role === "purpose" && event.purpose === "info");
+
+    expect(firstReasoningIndex).toBeLessThan(searchIndex);
+    expect(searchIndex).toBeLessThan(secondReasoningIndex);
+    expect(secondReasoningIndex).toBeLessThan(fetchIndex);
+    expect(infoGroups).toHaveLength(2);
+    expect(fetchStarted.workflowEvents[firstReasoningIndex]?.title).toBe("진행 메모");
+    expect(fetchStarted.workflowEvents[firstReasoningIndex]?.role).toBe("reasoning");
+  });
+
   it("anchors workflow progress to the actual user request and status notes", () => {
     const active = appReducer(initialAppState, {
       type: "append_message",
@@ -3131,6 +3234,25 @@ describe("appReducer", () => {
     expect(activity?.detail).toContain("AI 응답 대기 중입니다.");
     expect(activity?.detail).toContain("파일 작성은 완료됐고");
     expect(waiting.statusText).toBe("AI 후속 응답 대기 중");
+  });
+
+  it("streams save_skill instructions as a visible SKILL.md preview before tool start", () => {
+    const next = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "tool_input_delta",
+        tool_name: "save_skill",
+        tool_call_index: 0,
+        arguments_delta: "{\"name\":\"hai-prefix\",\"description\":\"응답 시작에 하이!를 붙입니다.\",\"instructions\":\"# 하이 접두사\\n\\n모든 응답을 하이!로 시작하세요.\"}",
+      },
+    });
+
+    const skillEvent = next.workflowEvents.find((event) => event.toolName === "save_skill");
+    expect(skillEvent?.status).toBe("running");
+    expect(skillEvent?.title).toBe("스킬 작성");
+    expect(skillEvent?.toolInput?.path).toBe(".skills/POSCO_Skill/hai-prefix/SKILL.md");
+    expect(skillEvent?.toolInput?.content).toContain("name: hai-prefix");
+    expect(skillEvent?.toolInput?.content).toContain("모든 응답을 하이!로 시작하세요.");
   });
 
   it("does not replace an active child step detail with a provider idle status", () => {

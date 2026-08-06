@@ -1466,7 +1466,7 @@ describe("ArtifactPanel", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       expect(String(input)).toBe("/api/share/base-url");
-      return new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+      return new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4174" }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -1500,7 +1500,7 @@ describe("ArtifactPanel", () => {
       await userEvent.click(screen.getByRole("button", { name: "공유 링크 복사" }));
 
       await waitFor(() => expect(writeText).toHaveBeenCalledWith(
-        "http://10.0.0.5:4273/share/artifact?path=outputs/포스코홀딩스_해외경쟁사_이슈분석_v1.html&workspace=repo",
+        "http://10.0.0.5:4174/share/artifact?path=outputs/포스코홀딩스_해외경쟁사_이슈분석_v1.html&workspace=repo",
       ));
       expect(screen.getByRole("button", { name: "공유 링크 복사됨" })).toBeTruthy();
     } finally {
@@ -1562,7 +1562,7 @@ describe("ArtifactPanel", () => {
       expect(writeText).toHaveBeenCalledWith(
         `${window.location.origin}/share/artifact?path=outputs/report.html&workspace=Default`,
       );
-      resolveFetch(new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+      resolveFetch(new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4174" }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }));
@@ -1584,7 +1584,7 @@ describe("ArtifactPanel", () => {
     let clickActivationActive = false;
     const execCommand = vi.fn(() => clickActivationActive);
     const writeText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
-    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4174" }), {
       status: 200,
       headers: { "content-type": "application/json" },
     })) as typeof fetch;
@@ -1659,7 +1659,7 @@ describe("ArtifactPanel", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const originalSetTimeout = window.setTimeout;
     let shareResetScheduled = false;
-    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4174" }), {
       status: 200,
       headers: { "content-type": "application/json" },
     })) as typeof fetch;
@@ -1716,7 +1716,7 @@ describe("ArtifactPanel", () => {
     const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
     const originalFetch = globalThis.fetch;
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
-    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4273" }), {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ baseUrl: "http://10.0.0.5:4174" }), {
       status: 200,
       headers: { "content-type": "application/json" },
     })) as typeof fetch;

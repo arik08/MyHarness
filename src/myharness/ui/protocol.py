@@ -159,6 +159,7 @@ class BackendEvent(BaseModel):
         "tasks_snapshot",
         "skills_snapshot",
         "transcript_item",
+        "reasoning_summary",
         "compact_progress",
         "assistant_delta",
         "tool_input_delta",

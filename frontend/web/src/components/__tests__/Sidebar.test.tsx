@@ -403,6 +403,28 @@ describe("Sidebar", () => {
     expect(actionButton).toBeNull();
   });
 
+  it("removes the active history spinner once the final answer is complete", () => {
+    const { container } = render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          busy: true,
+          messages: [
+            { id: "user", role: "user", text: "보고서를 작성해줘" },
+            { id: "assistant", role: "assistant", text: "보고서를 완성했습니다.", isComplete: true },
+          ],
+          history: [{ value: "session-active", label: "5/3 10:00 2 msg", description: "완료된 대화" }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    expect(container.querySelector(".history-item")?.classList.contains("busy")).toBe(false);
+    expect(screen.getByRole("button", { name: "완료된 대화 작업 더보기" })).toBeTruthy();
+  });
+
   it("adds a busy live history row when the active saved session is not in the loaded history yet", () => {
     const { container } = render(
       <AppStateProvider

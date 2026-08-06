@@ -11,6 +11,7 @@ import readline from "node:readline";
 import { countTokens } from "gpt-tokenizer";
 import { compareHistoryItems, historyOrderTimestamp, lastAssistantActivityTimestamp } from "./modules/historyOrder.js";
 import { isNoisyBackendLogLine } from "./modules/backendLogNoise.js";
+import { configuredPort } from "./modules/localEnv.js";
 import {
   artifactCategoryForPath,
   isDefaultProjectFileCandidate,
@@ -55,7 +56,7 @@ const defaultWorkspaceName = "Default";
 const projectPreferencesRel = join(".myharness", "preferences.json");
 const appPreferencesRel = "preferences.json";
 const artifactAliasesRel = join(".myharness", "artifact-aliases.json");
-const port = Number(process.env.PORT || 4273);
+const port = configuredPort(repoRoot);
 const host = process.env.HOST || "0.0.0.0";
 let effectiveHost = host;
 const devUiRedirectEnabled = normalizeBooleanEnv(process.env.MYHARNESS_DEV_UI_REDIRECT);
@@ -79,7 +80,7 @@ const entryPassword = process.env.MYHARNESS_ENTRY_PASSWORD === undefined
   ? "1212"
   : String(process.env.MYHARNESS_ENTRY_PASSWORD);
 const entryCookieName = "myharness_entry";
-const entrySessionToken = crypto.randomBytes(32).toString("base64url");
+const entryAccessMaxAgeSeconds = 24 * 60 * 60;
 const reservedWorkspaceNames = new Set([
   "CON",
   "PRN",
@@ -574,8 +575,25 @@ function requestCookies(request) {
   );
 }
 
+function entryAccessToken(issuedAt) {
+  const signature = crypto
+    .createHmac("sha256", entryPassword)
+    .update(`${entryCookieName}:${issuedAt}`)
+    .digest("base64url");
+  return `${issuedAt}.${signature}`;
+}
+
 function hasEntryAccess(request) {
-  return !entryPassword || secureEqual(requestCookies(request)[entryCookieName] || "", entrySessionToken);
+  if (!entryPassword) return true;
+  const token = requestCookies(request)[entryCookieName] || "";
+  const separator = token.indexOf(".");
+  const issuedAt = Number(token.slice(0, separator));
+  const ageSeconds = Math.floor(Date.now() / 1000) - issuedAt;
+  return separator > 0
+    && Number.isInteger(issuedAt)
+    && ageSeconds >= 0
+    && ageSeconds <= entryAccessMaxAgeSeconds
+    && secureEqual(token, entryAccessToken(issuedAt));
 }
 
 async function handleEntryAuth(request, response, pathname) {
@@ -587,10 +605,11 @@ async function handleEntryAuth(request, response, pathname) {
     try {
       const body = await readJson(request);
       if (!entryPassword || secureEqual(body.password || "", entryPassword)) {
+        const token = entryAccessToken(Math.floor(Date.now() / 1000));
         response.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
-          "Set-Cookie": `${entryCookieName}=${encodeURIComponent(entrySessionToken)}; HttpOnly; SameSite=Strict; Path=/`,
+          "Set-Cookie": `${entryCookieName}=${encodeURIComponent(token)}; Max-Age=${entryAccessMaxAgeSeconds}; HttpOnly; SameSite=Strict; Path=/`,
         });
         response.end(JSON.stringify({ ok: true }));
       } else {
@@ -2827,186 +2846,6 @@ function normalizeRuntimeEffortValue(value) {
   return clean === "auto" ? "none" : clean;
 }
 
-function normalizeBooleanMarker(value) {
-  if (value === true || value === false) {
-    return value;
-  }
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (["1", "true", "yes", "on"].includes(normalized)) {
-      return true;
-    }
-    if (["0", "false", "no", "off"].includes(normalized)) {
-      return false;
-    }
-  }
-  return undefined;
-}
-
-function normalizeSharedRuntimePreferences(raw = {}) {
-  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const next = { version: 1 };
-  const activeProfile = cleanRuntimePreference(source.active_profile || source.activeProfile);
-  if (activeProfile) {
-    next.active_profile = activeProfile;
-  }
-  const hasModel = (
-    Object.prototype.hasOwnProperty.call(source, "model")
-    || Object.prototype.hasOwnProperty.call(source, "runtime_model")
-    || Object.prototype.hasOwnProperty.call(source, "runtimeModel")
-  );
-  const model = cleanRuntimePreference(source.model || source.runtime_model || source.runtimeModel);
-  if (hasModel && model && model.toLowerCase() !== "default") {
-    next.model = model;
-  }
-  const effort = normalizeRuntimeEffortValue(source.effort || source.reasoning_effort || source.reasoningEffort);
-  if (effort) {
-    next.effort = effort;
-  }
-  const pgptAvailable = normalizeBooleanMarker(source.pgpt_available ?? source.pgptAvailable);
-  if (pgptAvailable !== undefined) {
-    next.pgpt_available = pgptAvailable;
-  }
-  return next;
-}
-
-function hasSharedRuntimePreferences(preferences) {
-  return Boolean(preferences?.active_profile || preferences?.model || preferences?.effort);
-}
-
-function isSharedWorkspaceScope(scope) {
-  return workspaceScopeOrDefault(scope).mode === "shared";
-}
-
-async function readSharedRuntimePreferences() {
-  const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
-  return normalizeSharedRuntimePreferences(settings.web_shared_runtime_preferences);
-}
-
-async function isPgptRuntimeAvailable() {
-  const envApiKey = cleanRuntimePreference(process.env.PGPT_API_KEY);
-  const envEmployeeNo = cleanRuntimePreference(
-    process.env.PGPT_EMPLOYEE_NO || process.env.PGPT_SYSTEM_CODE || process.env.POSCO_EMP_NO,
-  );
-  if (envApiKey && envEmployeeNo) {
-    return true;
-  }
-
-  const credentials = await readJsonFileIfExists(join(globalConfigDir(), "credentials.json")) || {};
-  const entry = credentials.pgpt && typeof credentials.pgpt === "object" ? credentials.pgpt : {};
-  return Boolean(cleanRuntimePreference(entry.api_key) && cleanRuntimePreference(entry.employee_no || entry.system_code));
-}
-
-function shouldUsePgptDefaultRuntimePreferences(preferences, pgptAvailable) {
-  if (!pgptAvailable) {
-    return false;
-  }
-  if (!hasSharedRuntimePreferences(preferences)) {
-    return true;
-  }
-  if (preferences.pgpt_available === true || preferences.active_profile === "p-gpt") {
-    return false;
-  }
-  return true;
-}
-
-function applyPgptDefaultRuntimePreferences(options) {
-  options.activeProfile = "p-gpt";
-  delete options.active_profile;
-  options.model = "gpt-5.6-luna";
-  options.effort = "low";
-  return options;
-}
-
-async function applySharedRuntimePreferencesToSessionOptions(options, workspaceScope) {
-  if (!isSharedWorkspaceScope(workspaceScope)) {
-    return options;
-  }
-  const preferences = await readSharedRuntimePreferences();
-  const pgptAvailable = await isPgptRuntimeAvailable();
-  if (shouldUsePgptDefaultRuntimePreferences(preferences, pgptAvailable)) {
-    return applyPgptDefaultRuntimePreferences(options);
-  }
-  if (!hasSharedRuntimePreferences(preferences)) {
-    return options;
-  }
-  if (preferences.active_profile) {
-    options.activeProfile = preferences.active_profile;
-    delete options.active_profile;
-  }
-  if (preferences.model) {
-    options.model = preferences.model;
-  } else {
-    delete options.model;
-  }
-  if (preferences.effort) {
-    options.effort = preferences.effort;
-  }
-  return options;
-}
-
-function runtimePreferencesFromSession(session) {
-  const preferences = session?.runtimePreferences || {};
-  return normalizeSharedRuntimePreferences({
-    active_profile: preferences.activeProfile || preferences.active_profile,
-    model: preferences.model,
-    effort: preferences.effort,
-  });
-}
-
-function sharedRuntimeChoiceFromPayload(payload) {
-  if (!payload || payload.type !== "apply_select_command") {
-    return null;
-  }
-  const command = cleanRuntimePreference(payload.command);
-  if (!["provider", "model", "effort"].includes(command)) {
-    return null;
-  }
-  const value = cleanRuntimePreference(payload.value);
-  if (!value) {
-    return null;
-  }
-  return { type: "apply_select_command", command, value };
-}
-
-async function saveSharedRuntimeChoice(session, choice) {
-  const settingsPath = join(globalConfigDir(), "settings.json");
-  return mutateJsonFile(settingsPath, async (settings) => {
-    const previous = normalizeSharedRuntimePreferences(settings.web_shared_runtime_preferences);
-    const sessionRuntime = runtimePreferencesFromSession(session);
-    const next = normalizeSharedRuntimePreferences(previous);
-
-    if (choice.command === "provider") {
-      next.active_profile = choice.value;
-      delete next.model;
-    } else if (choice.command === "model") {
-      if (sessionRuntime.active_profile && (!next.active_profile || next.active_profile === sessionRuntime.active_profile)) {
-        next.active_profile = sessionRuntime.active_profile;
-      }
-      if (choice.value.toLowerCase() === "default") {
-        delete next.model;
-      } else {
-        next.model = choice.value;
-      }
-    } else if (choice.command === "effort") {
-      if (!next.active_profile && sessionRuntime.active_profile) {
-        next.active_profile = sessionRuntime.active_profile;
-      }
-      const sessionRuntimeMatchesProfile = !sessionRuntime.active_profile
-        || !next.active_profile
-        || sessionRuntime.active_profile === next.active_profile;
-      if (!next.model && sessionRuntime.model && sessionRuntimeMatchesProfile) {
-        next.model = sessionRuntime.model;
-      }
-      next.effort = normalizeRuntimeEffortValue(choice.value);
-    }
-
-    next.pgpt_available = await isPgptRuntimeAvailable();
-    settings.web_shared_runtime_preferences = normalizeSharedRuntimePreferences(next);
-    return settings.web_shared_runtime_preferences;
-  });
-}
-
 function conflictError(message = "파일이 다른 사용자 또는 세션에서 변경되었습니다. 새로고침 후 다시 시도하세요.") {
   const error = new Error(message);
   error.status = 409;
@@ -4281,75 +4120,6 @@ function sendBackend(session, payload) {
   return true;
 }
 
-function isSharedWorkspaceSession(session) {
-  return isSharedWorkspaceScope(session?.workspace?.scope);
-}
-
-function queueSharedRuntimeChoice(session, choice) {
-  if (!session || !choice) {
-    return;
-  }
-  const pending = Array.isArray(session.pendingSharedRuntimeChoices)
-    ? session.pendingSharedRuntimeChoices
-    : [];
-  const withoutReplaced = pending.filter((item) => {
-    if (choice.command === "provider") {
-      return item.command !== "provider" && item.command !== "model";
-    }
-    return item.command !== choice.command;
-  });
-  session.pendingSharedRuntimeChoices = [...withoutReplaced, choice];
-}
-
-function flushPendingSharedRuntimeChoices(session) {
-  if (
-    !session
-    || session.shuttingDown
-    || session.busy
-    || !session.ready
-    || !Array.isArray(session.pendingSharedRuntimeChoices)
-    || !session.pendingSharedRuntimeChoices.length
-  ) {
-    return;
-  }
-  const choices = session.pendingSharedRuntimeChoices;
-  session.pendingSharedRuntimeChoices = [];
-  for (let index = 0; index < choices.length; index += 1) {
-    const choice = choices[index];
-    const ok = sendBackend(session, choice);
-    if (!ok) {
-      session.pendingSharedRuntimeChoices = [choice, ...choices.slice(index + 1), ...session.pendingSharedRuntimeChoices];
-      return;
-    }
-  }
-}
-
-function sendOrQueueSharedRuntimeChoice(session, choice) {
-  if (!session || !choice || session.shuttingDown) {
-    return;
-  }
-  if (!session.ready || session.busy) {
-    queueSharedRuntimeChoice(session, choice);
-    return;
-  }
-  const ok = sendBackend(session, choice);
-  if (!ok) {
-    queueSharedRuntimeChoice(session, choice);
-  }
-}
-
-function broadcastSharedRuntimeChoice(sourceSession, choice) {
-  if (!sourceSession || !choice) {
-    return;
-  }
-  for (const session of sessions.values()) {
-    if (session.id === sourceSession.id || !isSharedWorkspaceSession(session)) {
-      continue;
-    }
-    sendOrQueueSharedRuntimeChoice(session, choice);
-  }
-}
-
 function trimShellOutput(value) {
   const text = String(value || "");
   if (text.length <= shellOutputMaxChars) {
@@ -5237,7 +5007,6 @@ async function createBackendSession(options = {}) {
       effort: normalizeRuntimeEffortValue(options.effort),
       gpt56ContextMode: gpt56ContextMode === "full-context" ? "full-context" : "cost-saver",
     },
-    pendingSharedRuntimeChoices: [],
     savedSessionId: "",
     title: "",
     shuttingDown: false,
@@ -5372,7 +5141,6 @@ function updateSessionStateFromBackendEvent(session, event) {
     session.busy = false;
     scheduleIdleClientClose(session);
   }
-  flushPendingSharedRuntimeChoices(session);
 }
 
 function liveSessionPayload(session) {
@@ -5678,7 +5446,6 @@ async function handleApi(request, response, pathname) {
       const options = await readJson(request);
       options.workspaceScope = workspaceScope;
       options.clientAddress = clientAddress;
-      await applySharedRuntimePreferencesToSessionOptions(options, workspaceScope);
       const session = await createBackendSession(options);
       json(response, 200, { sessionId: session.id, workspace: session.workspace });
     } catch (error) {
@@ -5709,7 +5476,6 @@ async function handleApi(request, response, pathname) {
         systemPrompt: body.systemPrompt,
         workspaceScope,
       };
-      await applySharedRuntimePreferencesToSessionOptions(options, workspaceScope);
       writeRuntimeLog("backend_session_restart_requested", {
         old_session_id: oldSessionId,
         old_child_pid: oldSession?.process?.pid || null,
@@ -6247,14 +6013,7 @@ async function handleApi(request, response, pathname) {
       if (payload?.type === "set_mcp_enabled") {
         await updateMcpPreferenceFiles(payload.value, payload.enabled, session);
       }
-      const sharedRuntimeChoice = isSharedWorkspaceScope(workspaceScope)
-        ? sharedRuntimeChoiceFromPayload(payload)
-        : null;
       const ok = sendBackend(session, payload);
-      if (ok && sharedRuntimeChoice) {
-        await saveSharedRuntimeChoice(session, sharedRuntimeChoice);
-        broadcastSharedRuntimeChoice(session, sharedRuntimeChoice);
-      }
       json(response, ok ? 200 : 409, { ok });
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not respond to session" });

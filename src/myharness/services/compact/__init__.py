@@ -1976,6 +1976,15 @@ async def auto_compact_if_needed(
     Returns:
         (messages, was_compacted) — if compacted, messages is the new list.
     """
+    supports_server_compaction = getattr(api_client, "supports_server_compaction", None)
+    if (
+        not force
+        and trigger == "auto"
+        and callable(supports_server_compaction)
+        and supports_server_compaction(model)
+    ):
+        return messages, False
+
     session_document_result = try_session_document_compaction(
         messages,
         cwd=cwd,

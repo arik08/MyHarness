@@ -1651,7 +1651,7 @@ def _maybe_update_default_model_for_provider(provider: str) -> None:
     model = profile.resolved_model.lower()
     target_model = None
     if provider == "openai_codex" and not model.startswith(("gpt-", "o1", "o3", "o4")):
-        target_model = "gpt-5.5"
+        target_model = profile.default_model
     elif provider == "anthropic_claude" and not model.startswith("claude-"):
         target_model = "sonnet"
     if not target_model:

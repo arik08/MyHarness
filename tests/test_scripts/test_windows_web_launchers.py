@@ -51,10 +51,29 @@ def test_dev_launcher_closes_existing_dev_launcher_tree_before_ports() -> None:
     assert "$_.ProcessId -ne $CurrentProcessId" in stop_existing
     assert "$_.Name -match" in stop_existing
     assert "$_.CommandLine -match $ScriptPathPattern" in stop_existing
+    assert "$_.CommandLine -match $BackendLauncherPathPattern" in stop_existing
     assert "Stop-ProcessTree -ProcessId ([int]$launcher.ProcessId)" in stop_existing
     assert "Wait-Job -Job $scanJob -Timeout 2" in stop_existing
     assert "Existing launcher scan timed out. Continuing without pre-cleanup." in stop_existing
     assert script.index("Stop-ExistingDevLaunchers") < script.index('Stop-ListeningPort -Port $backendPort -Label "backend"')
+
+
+def test_web_server_supervisor_uses_exclusive_per_port_lock() -> None:
+    script = _read_launcher("run_myharness_web_server.ps1")
+
+    assert '"server-$Port.lock"' in script
+    assert "[System.IO.FileShare]::None" in script
+    assert "Another MyHarness backend supervisor already owns port $serverPort" in script
+
+
+def test_windows_launchers_pin_child_processes_to_frontend_web_directory() -> None:
+    dev_script = _read_launcher("run_myharness_web_dev.ps1")
+    server_script = _read_launcher("run_myharness_web_server.ps1")
+
+    assert '$script:FrontendWebDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\\frontend\\web"))' in dev_script
+    assert dev_script.count("-WorkingDirectory $script:FrontendWebDirectory") >= 2
+    assert '$script:FrontendWebDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\\frontend\\web"))' in server_script
+    assert 'Start-Process -FilePath "node.exe" -ArgumentList @("server.mjs") -WorkingDirectory $script:FrontendWebDirectory' in server_script
 
 
 def test_dev_launcher_restart_has_no_fixed_multi_second_pause() -> None:
@@ -144,15 +163,18 @@ def test_dev_launcher_exposes_vite_and_enables_backend_entry_redirect() -> None:
     assert "MYHARNESS_DEV_UI_PORT" in start_backend
 
 
-def test_dev_launcher_defaults_react_dev_ui_to_4173() -> None:
+def test_dev_launcher_derives_react_dev_ui_from_backend_port() -> None:
     batch = (ROOT / "run_myharness_web_dev.bat").read_text(encoding="utf-8")
     script = _read_launcher("run_myharness_web_dev.ps1")
     vite_config = (ROOT / "frontend" / "web" / "vite.config.ts").read_text(encoding="utf-8")
 
-    assert 'set "MYHARNESS_DEV_PORT=4173"' in batch
+    assert 'set "MYHARNESS_DEV_PORT=auto"' in batch
+    assert 'if /I "%MYHARNESS_DEV_PORT%"=="auto" set /A MYHARNESS_DEV_PORT=PORT+100' in batch
     assert 'set "MYHARNESS_WEB_PORT=%MYHARNESS_DEV_PORT%"' in batch
-    assert '"4173"' in _function_body(script, "Get-RequestedVitePort")
-    assert "process.env.MYHARNESS_DEV_PORT || process.env.MYHARNESS_WEB_PORT || process.env.VITE_PORT || 4173" in vite_config
+    requested_port = _function_body(script, "Get-RequestedVitePort")
+    assert '[string]($BackendPort + 100)' in requested_port
+    assert 'Vite dev port $port must be different from backend port $BackendPort.' in requested_port
+    assert "configuredDevPort(repoRoot, backendPort)" in vite_config
     assert "xfwd: true" in vite_config
 
 
@@ -164,9 +186,19 @@ def test_web_launchers_prefer_folder_local_env_before_environment_fallbacks() ->
         assert "MYHARNESS_DOTENV" not in batch
         assert 'set "MYHARNESS_LOCAL_ENV=%CD%\\myharness.local.env"' in batch
         assert 'if exist "%MYHARNESS_LOCAL_ENV%" call :load_local_env "%MYHARNESS_LOCAL_ENV%"' in batch
-        assert batch.index("call :load_local_env") < batch.index('if "%PORT%"=="" set "PORT=4273"')
+        assert batch.index("call :load_local_env") < batch.index('if "%PORT%"=="" set "PORT=4174"')
         assert 'if not "%%~A"=="" if not "%%~B"=="" set "%%~A=%%~B"' in batch
         assert 'if not "%%~B"=="" if not defined %%~A set "%%~A=%%~B"' in batch
+
+
+def test_direct_launchers_read_backend_port_from_folder_local_env() -> None:
+    dev_script = _read_launcher("run_myharness_web_dev.ps1")
+    server_script = _read_launcher("run_myharness_web_server.ps1")
+
+    for script in (dev_script, server_script):
+        assert '. (Join-Path $PSScriptRoot "local_env.ps1")' in script
+        assert "Get-MyHarnessConfiguredPort -RepoRoot $repoRoot" in script
+        assert "$env:PORT = [string]" in script
 
 
 def test_launchers_close_busy_backend_ports_by_default() -> None:

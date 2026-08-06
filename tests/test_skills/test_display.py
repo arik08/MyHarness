@@ -30,12 +30,20 @@ def test_program_skill_description_is_translated_by_name():
     assert translate_skill_description("commit", description) == "작업 내용을 깔끔하고 구조화된 git 커밋으로 정리해야 할 때 사용합니다."
 
 
+def test_brainstorming_display_excludes_concrete_build_requests():
+    translated = translate_skill_description("brainstorming", "Explore ideas before implementation.")
+
+    assert "명세·설계 우선" in translated
+    assert "요구가 충분한 직접 구현 요청에는 사용하지 않습니다" in translated
+
+
 def test_frontend_design_display_scope_prioritizes_homepages_not_reports():
     translated = translate_skill_description("frontend-design", "Create distinctive frontend interfaces.")
 
     assert "홈페이지" in translated
     assert "랜딩 페이지" in translated
     assert "앱 UI" in translated
+    assert "스타일 선택 질문 없이 바로 구현" in translated
     assert "HTML 보고서" in translated
     assert "`visual-artifact`" in translated
     assert "`html-a4-landscape-report`" in translated

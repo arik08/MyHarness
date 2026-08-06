@@ -26,9 +26,36 @@ describe("runtime preference utilities", () => {
     localStorage.setItem("myharness:runtimePreferences", JSON.stringify({
       activeProfile: "openai-codex",
       model: "gpt-5.5",
+      subagentModel: "gpt-5.4-mini",
+      effort: "high",
     }));
 
-    expect(loadRuntimePreferences().activeProfile).toBe("codex");
+    expect(loadRuntimePreferences()).toMatchObject({
+      activeProfile: "codex",
+      model: undefined,
+      subagentModel: undefined,
+      effort: "high",
+    });
+    expect(JSON.parse(localStorage.getItem("myharness:runtimePreferences") || "{}")).toMatchObject({
+      version: 2,
+      activeProfile: "codex",
+      effort: "high",
+    });
+  });
+
+  it("preserves current-version model choices", () => {
+    localStorage.setItem("myharness:runtimePreferences", JSON.stringify({
+      version: 2,
+      activeProfile: "codex",
+      model: "gpt-5.6-sol",
+      subagentModel: "gpt-5.6-luna",
+    }));
+
+    expect(loadRuntimePreferences()).toMatchObject({
+      activeProfile: "codex",
+      model: "gpt-5.6-sol",
+      subagentModel: "gpt-5.6-luna",
+    });
   });
 
   it("loads the per-browser GPT-5.6 full-context preference", () => {

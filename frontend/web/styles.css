@@ -5938,6 +5938,12 @@ a:focus-visible {
   line-clamp: 2;
 }
 
+.workflow-step[data-workflow-role="reasoning"] .workflow-status-detail strong {
+  color: inherit;
+  font-size: inherit;
+  font-weight: 600;
+}
+
 .workflow-copy small.workflow-tool-detail {
   display: block;
   max-height: none;

@@ -140,9 +140,9 @@ def _validate_task_flow(cwd: Path, final_text: str, tool_names: list[str], start
 
 
 def _setup_skill_flow(_: Path, config_dir: Path) -> None:
-    skills_dir = config_dir / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
-    (skills_dir / "pytest.md").write_text(
+    skill_dir = config_dir / "skills" / "pytest"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
         "# Pytest\nPytest fixtures help share setup across tests.\n",
         encoding="utf-8",
     )
@@ -169,12 +169,13 @@ def _setup_context_flow(cwd: Path, _: Path) -> None:
 
 def _setup_plugin_combo_flow(cwd: Path, _: Path) -> None:
     plugin_dir = cwd / ".myharness" / "plugins" / "fixture-plugin"
-    (plugin_dir / "skills").mkdir(parents=True, exist_ok=True)
+    fixture_skill_dir = plugin_dir / "skills" / "fixture"
+    fixture_skill_dir.mkdir(parents=True, exist_ok=True)
     (plugin_dir / "plugin.json").write_text(
         '{"name":"fixture-plugin","version":"1.0.0","description":"Fixture project plugin"}\n',
         encoding="utf-8",
     )
-    (plugin_dir / "skills" / "fixture.md").write_text(
+    (fixture_skill_dir / "SKILL.md").write_text(
         "# FixtureSkill\nThis plugin skill says COMBO_SKILL_OK.\n",
         encoding="utf-8",
     )

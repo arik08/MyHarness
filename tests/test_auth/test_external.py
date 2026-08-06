@@ -521,7 +521,7 @@ def test_cli_provider_use_activates_codex_profile(monkeypatch, tmp_path: Path):
     assert settings.provider == CODEX_PROVIDER
     assert settings.api_format == "openai"
     assert settings.base_url is None
-    assert settings.model == "gpt-5.5"
+    assert settings.model == "gpt-5.6-luna"
 
 
 def test_settings_resolve_auth_rejects_third_party_base_url_for_claude_subscription(

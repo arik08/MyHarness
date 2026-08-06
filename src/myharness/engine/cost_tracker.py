@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from myharness.api.pricing import uses_long_context_pricing
 from myharness.api.usage import UsageSnapshot, add_usage_snapshots, subtract_usage_snapshots
 
 
@@ -22,12 +23,24 @@ def _account_key(provider: str, model: str) -> str:
     return f"{provider.strip().lower()}\n{model.strip().lower()}"
 
 
-def _account_entry(provider: str, model: str, usage: UsageSnapshot) -> dict[str, Any]:
-    return {
+def _account_entry(
+    provider: str,
+    model: str,
+    usage: UsageSnapshot,
+    long_context_usage: UsageSnapshot | None = None,
+) -> dict[str, Any]:
+    entry = {
         "provider": provider,
         "model": model,
         "usage": usage.model_dump(mode="json"),
     }
+    if long_context_usage and (
+        long_context_usage.total_tokens
+        or long_context_usage.cached_input_tokens
+        or long_context_usage.cache_write_tokens
+    ):
+        entry["long_context_usage"] = long_context_usage.model_dump(mode="json")
+    return entry
 
 
 def usage_accounting_delta(later: dict[str, Any], earlier: dict[str, Any]) -> dict[str, Any]:
@@ -35,12 +48,14 @@ def usage_accounting_delta(later: dict[str, Any], earlier: dict[str, Any]) -> di
     later_total = _coerce_usage(later.get("total") if isinstance(later, dict) else None)
     earlier_total = _coerce_usage(earlier.get("total") if isinstance(earlier, dict) else None)
     earlier_by_key = {}
+    earlier_long_by_key = {}
     for item in earlier.get("by_model", []) if isinstance(earlier, dict) else []:
         if not isinstance(item, dict):
             continue
         provider = str(item.get("provider") or "")
         model = str(item.get("model") or "")
         earlier_by_key[_account_key(provider, model)] = _coerce_usage(item.get("usage"))
+        earlier_long_by_key[_account_key(provider, model)] = _coerce_usage(item.get("long_context_usage"))
 
     entries: list[dict[str, Any]] = []
     for item in later.get("by_model", []) if isinstance(later, dict) else []:
@@ -52,8 +67,12 @@ def usage_accounting_delta(later: dict[str, Any], earlier: dict[str, Any]) -> di
             _coerce_usage(item.get("usage")),
             earlier_by_key.get(_account_key(provider, model), UsageSnapshot()),
         )
+        long_context_usage = subtract_usage_snapshots(
+            _coerce_usage(item.get("long_context_usage")),
+            earlier_long_by_key.get(_account_key(provider, model), UsageSnapshot()),
+        )
         if usage.total_tokens or usage.cached_input_tokens:
-            entries.append(_account_entry(provider, model, usage))
+            entries.append(_account_entry(provider, model, usage, long_context_usage))
 
     return {
         "total": subtract_usage_snapshots(later_total, earlier_total).model_dump(mode="json"),
@@ -66,7 +85,7 @@ class CostTracker:
 
     def __init__(self) -> None:
         self._usage = UsageSnapshot()
-        self._usage_by_model: dict[str, tuple[str, str, UsageSnapshot]] = {}
+        self._usage_by_model: dict[str, tuple[str, str, UsageSnapshot, UsageSnapshot]] = {}
 
     def add(self, usage: UsageSnapshot, *, provider: str = "", model: str = "") -> None:
         """Add a usage snapshot to the running total."""
@@ -76,8 +95,17 @@ class CostTracker:
         provider_name = str(provider or "").strip()
         model_name = str(model or "").strip()
         key = _account_key(provider_name, model_name)
-        _, _, existing = self._usage_by_model.get(key, (provider_name, model_name, UsageSnapshot()))
-        self._usage_by_model[key] = (provider_name, model_name, add_usage_snapshots(existing, usage))
+        _, _, existing, existing_long = self._usage_by_model.get(
+            key,
+            (provider_name, model_name, UsageSnapshot(), UsageSnapshot()),
+        )
+        long_context_usage = usage if uses_long_context_pricing(model_name, usage.input_tokens) else UsageSnapshot()
+        self._usage_by_model[key] = (
+            provider_name,
+            model_name,
+            add_usage_snapshots(existing, usage),
+            add_usage_snapshots(existing_long, long_context_usage),
+        )
 
     def load(
         self,
@@ -98,11 +126,13 @@ class CostTracker:
                 item_provider = str(item.get("provider") or provider or "")
                 item_model = str(item.get("model") or model or "")
                 item_usage = _coerce_usage(item.get("usage"))
+                item_long_context_usage = _coerce_usage(item.get("long_context_usage"))
                 if item_usage.total_tokens or item_usage.cached_input_tokens:
                     self._usage_by_model[_account_key(item_provider, item_model)] = (
                         item_provider,
                         item_model,
                         item_usage,
+                        item_long_context_usage,
                     )
         if not (self._usage.total_tokens or self._usage.cached_input_tokens):
             self._usage = _coerce_usage(usage)
@@ -113,6 +143,7 @@ class CostTracker:
                 provider_name,
                 model_name,
                 self._usage,
+                UsageSnapshot(),
             )
 
     @property
@@ -126,7 +157,7 @@ class CostTracker:
         return {
             "total": self._usage.model_dump(mode="json"),
             "by_model": [
-                _account_entry(provider, model, usage)
-                for provider, model, usage in self._usage_by_model.values()
+                _account_entry(provider, model, usage, long_context_usage)
+                for provider, model, usage, long_context_usage in self._usage_by_model.values()
             ],
         }

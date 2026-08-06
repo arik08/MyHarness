@@ -85,6 +85,8 @@ Every SKILL.md consists of:
 - Read references/openai_yaml.md before generating values and follow its descriptions and constraints
 - Create: human-facing `display_name`, `short_description`, and `default_prompt` by reading the skill
 - Generate deterministically by passing the values as `--interface key=value` to `scripts/generate_openai_yaml.py` or `scripts/init_skill.py`
+- Before calling either script, count `short_description` as Python characters and keep it within 25–64 characters; do not retry an invalid value unchanged. Make `default_prompt` explicitly mention the skill as `$skill-name`.
+- Pass each complete `key=value` pair as one quoted shell argument when its value contains spaces, for example `--interface 'short_description=Concise description with enough detail'`.
 - On updates: validate `agents/openai.yaml` still matches SKILL.md; regenerate if stale
 - Only include other optional interface fields (icons, brand color) if explicitly provided
 - See references/openai_yaml.md for field definitions and examples
@@ -291,7 +293,9 @@ Skip this step only if the skill being developed already exists. In this case, c
 
 Before running `init_skill.py`, ask where the user wants the skill created. In MyHarness, if they do not specify a location, default to the program-local `.skills/POSCO_Skill/` category at the MyHarness root so the skill is bundled and auto-discovered with the app. Never create a new skill in `.skills/General/`; developers populate that category only by manually copying skill folders. For Codex-only usage outside MyHarness, default to `$CODEX_HOME/skills`; when `CODEX_HOME` is unset, fall back to `~/.codex/skills`.
 
-When creating a new skill from scratch, always run the `init_skill.py` script. The script conveniently generates a new template skill directory that automatically includes everything a skill requires, making the skill creation process much more efficient and reliable.
+When the MyHarness `save_skill` tool is available, use it as the primary creation and update path. Submit the final `name`, trigger `description`, complete Markdown `instructions`, and UI metadata in one call. Do not run Python initialization scripts, read the generated template, or attempt partial `edit_file` replacements afterward. `save_skill` writes and validates both `SKILL.md` and `agents/openai.yaml`, selects the program-local POSCO category for new skills, preserves the existing location for updates, and requests a live catalog refresh.
+
+Use `init_skill.py` only as a fallback outside a MyHarness runtime where `save_skill` is unavailable.
 
 Usage:
 
@@ -323,6 +327,8 @@ Generate `display_name`, `short_description`, and `default_prompt` by reading th
 ```bash
 scripts/generate_openai_yaml.py <path/to/skill-folder> --interface key=value
 ```
+
+Treat progress and completion phrases as assistant text, never as shell commands. After every script call, read its result before continuing; if it failed, correct the reported input and do not claim the skill is complete.
 
 Only include other optional interface fields when the user explicitly provides them. For full field descriptions and examples, see references/openai_yaml.md.
 
@@ -367,6 +373,8 @@ Once development of the skill is complete, validate the skill folder to catch ba
 ```bash
 scripts/quick_validate.py <path/to/skill-folder>
 ```
+
+If `save_skill` completed successfully, do not run `quick_validate.py` again unless you are debugging the validator itself; the tool already validates the generated structure and metadata.
 
 The validation script checks YAML frontmatter format, required fields, and naming rules. If validation fails, fix the reported issues and run the command again.
 

@@ -456,7 +456,7 @@ async def test_config_settings():
     print(f"  Default memory enabled: {s.memory.enabled}")
 
     # Merge overrides
-    s2 = s.merge_cli_overrides(model="kimi-k2.5", verbose=True)
+    s2 = s.merge_cli_overrides(model="gpt-5.6-terra", verbose=True)
     print(f"  After override: model={s2.model}, verbose={s2.verbose}")
 
     # With custom settings file
@@ -480,7 +480,7 @@ async def test_config_settings():
 
     return (
         s.model != ""
-        and s2.model == "kimi-k2.5"
+        and s2.model == "gpt-5.6-terra"
         and s2.verbose is True
         and loaded.model == "custom-model"
         and loaded.memory.enabled is False

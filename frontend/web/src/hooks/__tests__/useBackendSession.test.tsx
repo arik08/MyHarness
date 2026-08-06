@@ -194,6 +194,32 @@ describe("useBackendSession", () => {
 
     expect(screen.getByTestId("busy").textContent).toBe("false");
     expect(listLiveSessions).toHaveBeenCalledWith({ clientId: "client-1", workspacePath: "C:/demo" });
+    expect(openBackendEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it("repairs a stale busy state when the backend session has already disappeared", async () => {
+    vi.useFakeTimers();
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [] });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          clientId: "client-1",
+          sessionId: "session-a",
+          workspacePath: "C:/demo",
+          busy: true,
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(screen.getByTestId("busy").textContent).toBe("false");
   });
 
   it("does not overlap busy-state polls when a request is still pending", async () => {
@@ -243,8 +269,9 @@ describe("useBackendSession", () => {
 
   it("passes client runtime preferences into a new backend session", async () => {
     localStorage.setItem("myharness:runtimePreferences", JSON.stringify({
+      version: 2,
       activeProfile: "codex",
-      model: "gpt-5.4",
+      model: "gpt-5.6-sol",
       effort: "high",
     }));
 
@@ -258,7 +285,31 @@ describe("useBackendSession", () => {
     expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
       clientId: "client-1",
       activeProfile: "codex",
-      model: "gpt-5.4",
+      model: "gpt-5.6-sol",
+      effort: "high",
+    }));
+  });
+
+  it("drops stale built-in model preferences before starting a backend session", async () => {
+    localStorage.setItem("myharness:runtimePreferences", JSON.stringify({
+      activeProfile: "codex",
+      model: "gpt-5.5",
+      subagentModel: "gpt-5.4-mini",
+      effort: "high",
+    }));
+
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}>
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("new-session"));
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: "client-1",
+      activeProfile: "codex",
+      model: undefined,
+      subagentModel: undefined,
       effort: "high",
     }));
   });

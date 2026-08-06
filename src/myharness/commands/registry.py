@@ -1948,7 +1948,9 @@ def create_default_command_registry(
         else:
             model_name = None
         if model_name:
-            if profile.allowed_models and model_name.lower() != "default" and model_name not in profile.allowed_models:
+            try:
+                profile.require_model(model_name, profile_name=active_profile)
+            except ValueError:
                 allowed = ", ".join(profile.allowed_models)
                 return CommandResult(message=f"모델 '{model_name}'은 프로필 '{active_profile}'에서 사용할 수 없습니다. 허용 모델: {allowed}")
             if model_name.lower() == "default":

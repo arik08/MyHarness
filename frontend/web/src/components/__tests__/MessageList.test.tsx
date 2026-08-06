@@ -3287,7 +3287,7 @@ describe("MessageList", () => {
       expect(String(input)).toBe("/api/share/base-url");
       return {
         ok: true,
-        json: async () => ({ baseUrl: "http://10.0.0.5:4273" }),
+        json: async () => ({ baseUrl: "http://10.0.0.5:4174" }),
       } as Response;
     });
 
@@ -3310,7 +3310,7 @@ describe("MessageList", () => {
     await userEvent.click(screen.getByLabelText("채팅 링크 공유"));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(
-      "http://10.0.0.5:4273/?chat=saved-chat&message=assistant-1&workspace=Default",
+      "http://10.0.0.5:4174/?chat=saved-chat&message=assistant-1&workspace=Default",
     ));
     expect(await screen.findByText("공유 링크를 복사했습니다.")).toBeTruthy();
   });

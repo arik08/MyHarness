@@ -143,7 +143,7 @@ class TestSettings:
             s.resolve_api_key()
 
     def test_merge_cli_overrides(self):
-        s = Settings()
+        s = Settings(active_profile="claude-api")
         updated = s.merge_cli_overrides(model="claude-opus-4-20250514", verbose=True, api_key=None)
         assert updated.model == "claude-opus-4-20250514"
         assert updated.verbose is True
@@ -151,21 +151,21 @@ class TestSettings:
         assert updated.api_key == ""
 
     def test_merge_cli_overrides_returns_new_instance(self):
-        s = Settings()
+        s = Settings(active_profile="claude-api")
         updated = s.merge_cli_overrides(model="claude-opus-4-20250514")
         assert s.model != updated.model
         assert s is not updated
 
     def test_merge_cli_overrides_keeps_selected_profile_provider_with_model(self):
         s = Settings()
-        updated = s.merge_cli_overrides(active_profile="codex", model="gpt-5.4")
+        updated = s.merge_cli_overrides(active_profile="codex", model="gpt-5.6-sol")
 
         profile_name, profile = updated.resolve_profile()
         assert profile_name == "codex"
         assert profile.provider == "openai_codex"
         assert updated.provider == "openai_codex"
-        assert updated.model == "gpt-5.4"
-        assert profile.last_model == "gpt-5.4"
+        assert updated.model == "gpt-5.6-sol"
+        assert profile.last_model == "gpt-5.6-sol"
 
     def test_resolve_auth_prefers_env_over_flat_api_key_for_openai(self, monkeypatch):
         """When api_format=openai, resolve_auth() should use OPENAI_API_KEY
@@ -301,7 +301,7 @@ class TestLoadSaveSettings:
                     api_format="openai",
                     auth_source="codex_subscription",
                     default_model="gpt-5.5",
-                    last_model="gpt-5",
+                    last_model="gpt-5.6-sol",
                 )
             },
         )
@@ -310,7 +310,7 @@ class TestLoadSaveSettings:
 
         assert materialized.provider == "openai_codex"
         assert materialized.api_format == "openai"
-        assert materialized.model == "gpt-5"
+        assert materialized.model == "gpt-5.6-sol"
 
     def test_materialize_active_profile_projects_compact_threshold_settings(self):
         settings = Settings(
@@ -367,7 +367,7 @@ class TestLoadSaveSettings:
         assert profile_name == "codex"
         assert updated.provider == "openai_codex"
         assert updated.base_url is None
-        assert updated.model == "gpt-5.5"
+        assert updated.model == "gpt-5.6-luna"
         assert profile.provider == "openai_codex"
         assert profile.auth_source == "codex_subscription"
 
@@ -616,20 +616,26 @@ class TestAnsiEscapeSequences:
     def test_env_override_strips_ansi_from_model(self, monkeypatch):
         """Test that ANSI escape sequences are stripped from ANTHROPIC_MODEL env var."""
         monkeypatch.setenv("ANTHROPIC_MODEL", "\x1b[1mclaude-opus-4-6\x1b[0m")
-        s = Settings()
+        s = Settings(active_profile="claude-api")
         updated = _apply_env_overrides(s)
         assert updated.model == "claude-opus-4-6"
 
     def test_env_override_strips_ansi_from_myharness_model(self, monkeypatch):
         """Test that ANSI escape sequences are stripped from MYHARNESS_MODEL env var."""
         monkeypatch.setenv("MYHARNESS_MODEL", "\x1b[32mclaude-sonnet-4-6\x1b[0m")
-        s = Settings()
+        s = Settings(active_profile="claude-api")
         updated = _apply_env_overrides(s)
         assert updated.model == "claude-sonnet-4-6"
 
+    def test_env_override_rejects_model_outside_profile_policy(self, monkeypatch):
+        monkeypatch.setenv("MYHARNESS_MODEL", "gpt-4o")
+
+        with pytest.raises(ValueError, match="not allowed for profile 'codex'"):
+            _apply_env_overrides(Settings(active_profile="codex"))
+
     def test_merge_cli_overrides_strips_ansi_from_model(self):
         """Test that ANSI escape sequences are stripped from CLI model override."""
-        s = Settings()
+        s = Settings(active_profile="claude-api")
         updated = s.merge_cli_overrides(model="\x1b[1mclaude-opus-4-6\x1b[0m")
         assert updated.model == "claude-opus-4-6"
 
@@ -842,21 +848,68 @@ class TestPgptOpenAICompatibleProvider:
             "gpt-5.6-luna",
             "gpt-5.6-terra",
             "gpt-5.6-sol",
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.4-nano",
         ]
         assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
 
-    def test_codex_subscription_default_profile_includes_lightweight_gpt54_models(self):
+    def test_codex_subscription_default_profile_includes_gpt56_family(self):
         from myharness.config.settings import default_provider_profiles
 
         profile = default_provider_profiles()["codex"]
 
         assert profile.label == "Codex Subscription"
         assert profile.provider == "openai_codex"
-        assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+        assert profile.default_model == "gpt-5.6-luna"
+        assert profile.allowed_models == [
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+            "gpt-5.6-sol",
+        ]
+
+    def test_builtin_model_policy_prunes_removed_saved_models(self, monkeypatch):
+        from myharness.config.settings import BUILTIN_MODEL_POLICIES, ModelPolicy, ProviderProfile
+
+        monkeypatch.setitem(
+            BUILTIN_MODEL_POLICIES,
+            "codex",
+            ModelPolicy(default_model="gpt-5.6-luna", allowed_models=("gpt-5.6-luna",)),
+        )
+        settings = Settings(
+            active_profile="codex",
+            subagent_model="gpt-5.4-mini",
+            profiles={
+                "codex": ProviderProfile(
+                    label="Codex Subscription",
+                    provider="openai_codex",
+                    api_format="openai",
+                    auth_source="codex_subscription",
+                    default_model="gpt-5.5",
+                    last_model="gpt-5.5",
+                    allowed_models=["gpt-5.5", "gpt-5.4"],
+                )
+            },
+        )
+
+        profile = settings.merged_profiles()["codex"]
+        materialized = settings.materialize_active_profile()
+
+        assert profile.default_model == "gpt-5.6-luna"
+        assert profile.allowed_models == ["gpt-5.6-luna"]
+        assert profile.last_model is None
+        assert materialized.model == "gpt-5.6-luna"
+        assert materialized.subagent_model == "gpt-5.6-luna"
+
+    def test_cli_model_override_rejects_model_outside_profile_policy(self):
+        with pytest.raises(ValueError, match="not allowed for profile 'codex'"):
+            Settings(active_profile="codex").merge_cli_overrides(model="gpt-4o")
+
+    def test_cli_subagent_model_override_rejects_model_outside_profile_policy(self):
+        with pytest.raises(ValueError, match="not allowed for profile 'codex'"):
+            Settings(active_profile="codex").merge_cli_overrides(subagent_model="gpt-4o")
+
+    @pytest.mark.parametrize("profile_name", ["p-gpt", "codex"])
+    def test_gpt55_is_rejected_by_gpt56_only_profiles(self, profile_name):
+        with pytest.raises(ValueError, match=f"not allowed for profile '{profile_name}'"):
+            Settings(active_profile=profile_name).merge_cli_overrides(model="gpt-5.5")
 
     def test_codex_saved_builtin_profile_receives_new_allowed_models(self):
         from myharness.config.settings import ProviderProfile
@@ -877,7 +930,12 @@ class TestPgptOpenAICompatibleProvider:
 
         profile = settings.merged_profiles()["codex"]
 
-        assert profile.allowed_models == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+        assert profile.allowed_models == [
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+            "gpt-5.6-sol",
+        ]
+        assert profile.last_model is None
 
     def test_pgpt_saved_builtin_profile_receives_new_allowed_models(self):
         from myharness.config.settings import ProviderProfile
@@ -903,13 +961,10 @@ class TestPgptOpenAICompatibleProvider:
             "gpt-5.6-luna",
             "gpt-5.6-terra",
             "gpt-5.6-sol",
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.4-nano",
         ]
+        assert profile.last_model is None
 
-    def test_pgpt_saved_last_model_survives_builtin_default_change(self):
+    def test_pgpt_saved_removed_model_falls_back_to_builtin_default(self):
         from myharness.config.settings import ProviderProfile
 
         settings = Settings(
@@ -931,8 +986,8 @@ class TestPgptOpenAICompatibleProvider:
         materialized = settings.materialize_active_profile()
 
         assert profile.default_model == "gpt-5.6-luna"
-        assert profile.last_model == "gpt-5.5"
-        assert materialized.model == "gpt-5.5"
+        assert profile.last_model is None
+        assert materialized.model == "gpt-5.6-luna"
 
     def test_pgpt_saved_builtin_default_moves_to_gpt56_luna_when_no_last_model(self):
         from myharness.config.settings import ProviderProfile

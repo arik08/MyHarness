@@ -20,7 +20,7 @@ from myharness.engine.stream_events import (
     ToolExecutionStarted,
     ToolInputDelta,
 )
-from myharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
+from myharness.engine.messages import ConversationMessage, ResponsesStateBlock, TextBlock, ToolUseBlock
 from myharness.mcp.types import McpConnectionStatus, McpStdioServerConfig, McpToolInfo
 from myharness.project_preferences import ProjectPreferences, load_project_preferences, save_project_preferences
 from myharness.skills.state import increment_skill_usage_count
@@ -43,6 +43,7 @@ from myharness.ui.backend_host import (
     _long_report_progress_usage_input,
     _progress_preview_content,
     _read_progress_preview_content,
+    _reasoning_summary_text,
     _tool_progress_delays,
     _tool_progress_message,
     run_backend_host,
@@ -64,6 +65,27 @@ class StaticApiClient:
             usage=UsageSnapshot(input_tokens=2, output_tokens=3),
             stop_reason=None,
         )
+
+
+def test_reasoning_summary_text_extracts_visible_summary_items():
+    message = ConversationMessage(
+        role="assistant",
+        content=[
+            ResponsesStateBlock(
+                item={
+                    "type": "reasoning",
+                    "summary": [
+                        {"type": "summary_text", "text": "First check."},
+                        {"type": "other", "text": "hidden"},
+                        {"type": "summary_text", "text": "Second check."},
+                    ],
+                }
+            ),
+            TextBlock(text="Done."),
+        ],
+    )
+
+    assert _reasoning_summary_text(message) == "First check.\n\nSecond check."
 
 
 class SequencedApiClient:
@@ -195,19 +217,20 @@ def test_initial_runtime_state_snapshot_resolves_provider_before_full_startup(tm
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     snapshot = _initial_runtime_state_snapshot(
-        BackendHostConfig(cwd=str(tmp_path), active_profile="codex", model="gpt-5.4")
+        BackendHostConfig(cwd=str(tmp_path), active_profile="codex", model="gpt-5.6-sol")
     )
 
     assert snapshot["provider"] == "openai-codex"
     assert snapshot["active_profile"] == "codex"
     assert snapshot["provider_label"] == "Codex Subscription"
-    assert snapshot["model"] == "gpt-5.4"
+    assert snapshot["model"] == "gpt-5.6-sol"
     assert snapshot["cwd"] == str(tmp_path)
     runtime_options = snapshot["runtime_options"]
     assert any(option["value"] == "codex" for option in runtime_options["providers"])
-    assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == [
-        "gpt-5.5",
-        "gpt-5.4",
+    assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:3] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
     ]
 
 
@@ -321,6 +344,78 @@ async def test_dirty_skill_refresh_updates_catalog_without_resetting_conversatio
     assert refreshed_skill.enabled is True
     assert host._bundle.engine.messages == original_messages
     assert SKILL_REGISTRY_DIRTY_KEY not in host._bundle.engine.tool_metadata
+
+
+@pytest.mark.asyncio
+async def test_skill_file_monitor_refreshes_after_external_skill_update(tmp_path, monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = SimpleNamespace(  # type: ignore[assignment]
+        cwd=tmp_path,
+        extra_skill_dirs=[],
+        extra_plugin_roots=[],
+    )
+    skill_path = tmp_path / ".skills" / "POSCO_Skill" / "greeting-test" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    refresh_count = 0
+
+    async def _fake_awatch(*roots, **kwargs):
+        assert tmp_path.resolve() / ".skills" in roots
+        assert kwargs == {"debounce": 300, "step": 50}
+        yield {(1, str(tmp_path / ".skills" / "unrelated.tmp"))}
+        yield {(2, str(skill_path))}
+
+    async def _refresh() -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        host._running = False
+
+    monkeypatch.setitem(ReactBackendHost._monitor_skill_files.__globals__, "awatch", _fake_awatch)
+    monkeypatch.setattr(host, "_refresh_skill_runtime", _refresh)
+
+    await host._monitor_skill_files()
+
+    assert refresh_count == 1
+
+
+@pytest.mark.asyncio
+async def test_real_skill_file_monitor_emits_new_skill_without_restart(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    extra_skills = tmp_path / "external-skills"
+    extra_skills.mkdir()
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(
+        api_client=StaticApiClient("unused"),
+        cwd=tmp_path,
+        extra_skill_dirs=[str(extra_skills)],
+    )
+    refreshed = asyncio.Event()
+
+    async def _emit(event: BackendEvent) -> None:
+        if event.type == "skills_snapshot" and any(
+            skill.name == "live-skill" for skill in (event.skills or [])
+        ):
+            refreshed.set()
+
+    host._emit = _emit  # type: ignore[method-assign]
+    host._ensure_skill_file_monitor()
+    await asyncio.sleep(0.2)
+    skill_dir = extra_skills / "live-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: live-skill\ndescription: Appears without restart.\n---\n",
+        encoding="utf-8",
+    )
+    try:
+        await asyncio.wait_for(refreshed.wait(), timeout=5)
+    finally:
+        host._running = False
+        if host._skill_file_monitor_task is not None:
+            host._skill_file_monitor_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await host._skill_file_monitor_task
+        await close_runtime(host._bundle)
+
+    assert refreshed.is_set()
 
 
 @pytest.mark.asyncio
@@ -1054,6 +1149,44 @@ async def test_read_requests_queues_steering_line_while_busy(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_read_requests_queues_late_steering_as_follow_up_after_final_answer(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._busy = True
+    host._final_answer_emitted = True
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    payload = b'{"type":"steer_line","line":"who are you"}\n'
+
+    class _FakeBuffer:
+        def __init__(self):
+            self._reads = 0
+
+        def readline(self):
+            self._reads += 1
+            if self._reads == 1:
+                return payload
+            return b""
+
+    class _FakeStdin:
+        buffer = _FakeBuffer()
+
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", _FakeStdin())
+
+    await host._read_requests()
+
+    assert await host._follow_up_line_queue.get() == "who are you"
+    assert host._steering_queue.empty()
+    assert not any(event.type == "transcript_item" for event in events)
+    queued = await host._request_queue.get()
+    assert queued.type == "shutdown"
+    assert host._request_queue.empty()
+
+
+@pytest.mark.asyncio
 async def test_read_requests_queues_line_after_busy_turn(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._busy = True
@@ -1396,6 +1529,30 @@ async def test_promote_next_queued_line_submits_late_steering_after_current_turn
     assert queued.type == "submit_line"
     assert queued.line == "late follow up"
     assert queued.suppress_user_transcript is True
+    assert any(event.type == "status" and "후속 질문" in (event.message or "") for event in events)
+
+
+@pytest.mark.asyncio
+async def test_promote_late_follow_up_starts_a_regular_user_turn():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await host._follow_up_line_queue.put("who are you")
+
+    await host._promote_next_queued_line()
+
+    queued = await host._request_queue.get()
+    assert queued.type == "submit_line"
+    assert queued.line == "who are you"
+    assert queued.suppress_user_transcript is True
+    transcript = next(event.item for event in events if event.type == "transcript_item" and event.item)
+    assert transcript.role == "user"
+    assert transcript.text == "who are you"
+    assert transcript.kind is None
     assert any(event.type == "status" and "후속 질문" in (event.message or "") for event in events)
 
 
@@ -3069,11 +3226,8 @@ async def test_backend_host_surfaces_query_errors(tmp_path, monkeypatch):
 
     assert should_continue is True
     assert any(event.type == "error" and "rate limit" in event.message for event in events)
-    assert any(
-        event.type == "transcript_item"
-        and event.item
-        and event.item.role == "system"
-        and "rate limit" in event.item.text
+    assert not any(
+        event.type == "transcript_item" and event.item and "rate limit" in event.item.text
         for event in events
     )
 
@@ -3125,7 +3279,7 @@ async def test_backend_host_uses_effective_model_from_env_override(tmp_path, mon
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("MYHARNESS_MODEL", "minimax-m1")
+    monkeypatch.setenv("MYHARNESS_MODEL", "gpt-5.6-sol")
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -3137,11 +3291,11 @@ async def test_backend_host_uses_effective_model_from_env_override(tmp_path, mon
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
-        assert host._bundle.app_state.get().model == "minimax-m1"
+        assert host._bundle.app_state.get().model == "gpt-5.6-sol"
 
         # Exercise sync_app_state through a slash command refresh path.
         await host._process_line("/fast show")
-        assert host._bundle.app_state.get().model == "minimax-m1"
+        assert host._bundle.app_state.get().model == "gpt-5.6-sol"
     finally:
         await close_runtime(host._bundle)
 
@@ -3349,14 +3503,22 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     runtime_options = event.modal["runtime_options"]
     active_provider = next(option["value"] for option in runtime_options["providers"] if option.get("active"))
     assert runtime_options["models_by_provider"][active_provider]
-    assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]][:3] == [
+    assert [option["value"] for option in runtime_options["models_by_provider"]["p-gpt"]] == [
         "gpt-5.6-luna",
         "gpt-5.6-terra",
         "gpt-5.6-sol",
     ]
     assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Fast and affordable GPT-5.6"
-    assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:2] == ["gpt-5.5", "gpt-5.4"]
-    assert "gpt-5.4-mini" in [option["value"] for option in runtime_options["models_by_provider"]["codex"]]
+    assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:3] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+    ]
+    assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+    ]
     assert any(option["value"] == "gemini" for option in runtime_options["providers"])
     gemini_models = [option["value"] for option in runtime_options["models_by_provider"]["gemini"]]
     assert gemini_models == [
@@ -3367,7 +3529,7 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     ]
     assert all(option["value"] != "gemini-compatible" for option in runtime_options["providers"])
     assert "gemini-compatible" not in runtime_options["models_by_provider"]
-    assert runtime_options["subagent_model"] == "gpt-5.4-mini"
+    assert runtime_options["subagent_model"] == "gpt-5.6-luna"
     assert runtime_options["subagent_effort"] == "medium"
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
     none_option = next(option for option in runtime_options["efforts"] if option["value"] == "none")
@@ -3443,13 +3605,13 @@ async def test_backend_host_apply_model_select_command_updates_runtime_without_t
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
-        should_continue = await host._apply_select_command("model", "gpt-5.4-mini")
+        should_continue = await host._apply_select_command("model", "gpt-5.6-terra")
         metadata_model = host._bundle.engine.tool_metadata["runtime_model"]
     finally:
         await close_runtime(host._bundle)
 
     assert should_continue is True
-    assert metadata_model == "gpt-5.4-mini"
+    assert metadata_model == "gpt-5.6-terra"
     assert not any(item.type == "transcript_item" for item in events)
 
 
@@ -3469,15 +3631,15 @@ async def test_backend_host_apply_subagent_model_select_command_updates_tool_met
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
-        should_continue = await host._apply_select_command("subagent_model", "gpt-5.4-nano")
+        should_continue = await host._apply_select_command("subagent_model", "gpt-5.6-sol")
         state = host._bundle.app_state.get()
         metadata_model = host._bundle.engine.tool_metadata["subagent_model"]
     finally:
         await close_runtime(host._bundle)
 
     assert should_continue is True
-    assert state.subagent_model == "gpt-5.4-nano"
-    assert metadata_model == "gpt-5.4-nano"
+    assert state.subagent_model == "gpt-5.6-sol"
+    assert metadata_model == "gpt-5.6-sol"
     assert not any(item.type == "transcript_item" for item in events)
 
 

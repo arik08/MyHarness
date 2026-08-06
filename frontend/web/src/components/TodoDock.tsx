@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useAppState } from "../state/app-state";
+import { isResponseVisiblyBusy } from "../state/selectors";
 import type { AppState, WorkflowEvent } from "../types/ui";
 
 type TodoItem = {
@@ -192,8 +193,8 @@ function isFollowupWaitingWorkflowEvent(event: WorkflowEvent) {
   );
 }
 
-function todoActivityLines(state: AppState) {
-  if (!state.busy) {
+function todoActivityLines(state: AppState, responseVisiblyBusy: boolean) {
+  if (!responseVisiblyBusy) {
     return [];
   }
   const lines: string[] = [];
@@ -216,9 +217,10 @@ const longReportActivityUiEnabled = false;
 
 export function TodoDock({ variant = "dock" }: TodoDockProps) {
   const { state, dispatch } = useAppState();
+  const responseVisiblyBusy = isResponseVisiblyBusy(state);
   const activeTodoSessionId = state.activeHistoryId || state.sessionId || null;
   const items = useMemo(() => parseTodoMarkdown(state.todoMarkdown), [state.todoMarkdown]);
-  const activityLines = useMemo(() => todoActivityLines(state), [state]);
+  const activityLines = useMemo(() => todoActivityLines(state, responseVisiblyBusy), [responseVisiblyBusy, state]);
 
   if (state.todoSessionId && state.todoSessionId !== activeTodoSessionId) {
     return null;
@@ -229,7 +231,7 @@ export function TodoDock({ variant = "dock" }: TodoDockProps) {
   }
 
   const doneCount = items.filter((item) => item.done).length;
-  const runningIndex = state.busy ? items.findIndex((item) => !item.done) : -1;
+  const runningIndex = responseVisiblyBusy ? items.findIndex((item) => !item.done) : -1;
   const listId = "todoChecklistItems";
   const toggleCollapsed = () => dispatch({ type: "toggle_todo_collapsed" });
 

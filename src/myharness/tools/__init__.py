@@ -31,6 +31,7 @@ from myharness.tools.notebook_edit_tool import NotebookEditTool
 from myharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
 from myharness.tools.remote_trigger_tool import RemoteTriggerTool
 from myharness.tools.send_message_tool import SendMessageTool
+from myharness.tools.save_skill_tool import SaveSkillTool
 from myharness.tools.session_document_tool import SessionDocumentReadTool, SessionDocumentSearchTool
 from myharness.tools.skill_tool import SkillTool
 from myharness.tools.sleep_tool import SleepTool
@@ -87,6 +88,7 @@ def create_default_tool_registry(mcp_manager=None, *, task_worker: bool = False)
         GrepTool(),
         ImageGenerationTool(),
         SkillTool(),
+        SaveSkillTool(),
         ToolSearchTool(),
         WebFetchTool(),
         WebSearchTool(),

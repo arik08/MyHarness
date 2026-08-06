@@ -37,6 +37,8 @@ class FileWriteTool(BaseTool):
     name = "write_file"
     description = (
         "Create or intentionally overwrite a complete text file in the local repository. "
+        "The content argument is one atomic complete-file write, not a prefix or streaming draft. "
+        "For standalone HTML, include the complete document through closing </body> and </html> tags in the same call; incomplete standalone HTML is rejected without touching the target. "
         "For changes to an existing file, prefer read_file followed by edit_file unless a full rewrite is clearly intended. "
         "Use `write_file` for direct coherent report artifacts, including explicit 24k, 32k, or 40k targets while the long-report section-merge flow is disabled. "
         "For report artifacts, surface research, analysis, outline, data, chart, or synthesis progress before this tool call; once this tool starts, the UI can already stream the file content preview. "
@@ -72,6 +74,9 @@ class FileWriteTool(BaseTool):
         if version_guard:
             return ToolResult(output=version_guard, is_error=True)
         content = prepare_source_footnotes_html(arguments.content, path.suffix, context.metadata)
+        html_integrity_error = _standalone_html_integrity_error(path, content)
+        if html_integrity_error:
+            return ToolResult(output=html_integrity_error, is_error=True)
         mermaid_errors = mermaid_preflight_errors(path, content)
         if mermaid_errors:
             return ToolResult(
@@ -155,5 +160,38 @@ def _target_length_feedback(content: str, path: Path, context: ToolExecutionCont
         f"Expand the same artifact by calling `write_file` again on the same path with the complete revised file content. "
         f"Add roughly {missing_tokens:,} tokens of substantive analysis, explanations, tables, chart-support notes, source notes, and interpretation. "
         "Do not send the final answer yet unless the source material is genuinely too thin; if it is too thin, state that clearly in the final answer."
+    )
+
+
+def _standalone_html_integrity_error(path: Path, content: str) -> str:
+    if path.suffix.lower() not in {".html", ".htm"}:
+        return ""
+    normalized = content.lstrip().lower()
+    if not (normalized.startswith("<!doctype html") or re.match(r"<html(?:\s|>)", normalized)):
+        return ""
+
+    missing: list[str] = []
+    if not re.search(r"<html(?:\s|>)", normalized):
+        missing.append("<html>")
+    if "<body" not in normalized:
+        missing.append("<body>")
+    if "</body>" not in normalized:
+        missing.append("</body>")
+    if "</html>" not in normalized:
+        missing.append("</html>")
+    if "<head" in normalized and "</head>" not in normalized:
+        missing.append("</head>")
+    if normalized.count("<script") != normalized.count("</script>"):
+        missing.append("</script>")
+    if normalized.count("<style") != normalized.count("</style>"):
+        missing.append("</style>")
+    if not missing:
+        return ""
+
+    missing_tags = ", ".join(dict.fromkeys(missing))
+    return (
+        f"Incomplete standalone HTML: missing {missing_tags}. "
+        "The target file was not written. Reissue `write_file` with the entire final HTML document "
+        "in one call; do not submit only a header, prefix, or streaming draft."
     )
 

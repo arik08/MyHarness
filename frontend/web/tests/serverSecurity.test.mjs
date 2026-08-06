@@ -133,6 +133,7 @@ async function startWebServer({ host = "127.0.0.1", env = {} } = {}) {
     MYHARNESS_LOGS_DIR: join(configDir, "logs"),
     MYHARNESS_HOME: configDir,
     MYHARNESS_ENTRY_PASSWORD: "",
+    MYHARNESS_IGNORE_LOCAL_ENV: "1",
     ...env,
   };
 
@@ -219,6 +220,7 @@ test("requires a server-issued entry cookie before protected API access", async 
   assert.equal(login.status, 200);
   const cookie = login.headers.get("set-cookie");
   assert.match(cookie || "", /^myharness_entry=/);
+  assert.match(cookie || "", /Max-Age=86400/i);
   assert.match(cookie || "", /HttpOnly/i);
   assert.match(cookie || "", /SameSite=Strict/i);
 
@@ -231,6 +233,31 @@ test("requires a server-issued entry cookie before protected API access", async 
     headers: { cookie },
   });
   assert.equal(allowed.status, 200);
+});
+
+test("keeps entry access after a same-day server restart", async () => {
+  const firstApp = await startWebServer({
+    env: { MYHARNESS_ENTRY_PASSWORD: "1212" },
+  });
+  const login = await fetch(`${firstApp.baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password: "1212" }),
+  });
+  const cookie = login.headers.get("set-cookie");
+  await firstApp.stop();
+
+  const restartedApp = await startWebServer({
+    env: { MYHARNESS_ENTRY_PASSWORD: "1212" },
+  });
+  try {
+    const status = await fetch(`${restartedApp.baseUrl}/api/auth/status`, {
+      headers: { cookie },
+    });
+    assert.deepEqual(await status.json(), { authenticated: true });
+  } finally {
+    await restartedApp.stop();
+  }
 });
 
 test("malformed JSON returns 400 without terminating the web server", async (t) => {
@@ -354,9 +381,13 @@ test("explains session limits as multi-user busy state", async (t) => {
   assert.match(secondPayload.error, /여러 명이 동시에 사용 중/);
 });
 
-test("shares main runtime choices across shared workspace sessions", async (t) => {
+test("keeps runtime choices client-scoped across shared workspace sessions", async (t) => {
   const app = await startWebServer({
-    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+    env: {
+      MYHARNESS_WORKSPACE_SCOPE: "shared",
+      PGPT_API_KEY: "pgpt-test-key",
+      PGPT_EMPLOYEE_NO: "612345",
+    },
   });
   t.after(() => app.stop());
 
@@ -367,7 +398,7 @@ test("shares main runtime choices across shared workspace sessions", async (t) =
       body: JSON.stringify({
         clientId,
         activeProfile: "p-gpt",
-        model: "gpt-5.5",
+        model: "gpt-5.6-luna",
         effort: "low",
         ...overrides,
       }),
@@ -384,76 +415,77 @@ test("shares main runtime choices across shared workspace sessions", async (t) =
   }
 
   const admin = await createRuntimeSession("runtime-admin");
-  const peer = await createRuntimeSession("runtime-peer");
+  const peer = await createRuntimeSession("runtime-peer", { model: "gpt-5.6-sol", effort: "high" });
+  assert.equal(admin.ready.state.model, "gpt-5.6-luna");
+  assert.equal(admin.ready.state.effort, "low");
+  assert.equal(peer.ready.state.model, "gpt-5.6-sol");
+  assert.equal(peer.ready.state.effort, "high");
 
-  const peerProviderUpdate = waitForSseEvent(
-    `${app.baseUrl}/api/events?session=${peer.sessionId}&clientId=runtime-peer`,
-    (event) => event.type === "state_snapshot" && event.state?.active_profile === "openai-compatible",
-    { timeoutMs: 10_000 },
-  );
-  const providerResponse = await fetch(`${app.baseUrl}/api/respond`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      sessionId: admin.sessionId,
-      clientId: "runtime-admin",
-      payload: { type: "apply_select_command", command: "provider", value: "openai-compatible" },
-    }),
-  });
-  assert.equal(providerResponse.status, 200);
-  await peerProviderUpdate;
-
-  const peerModelUpdate = waitForSseEvent(
-    `${app.baseUrl}/api/events?session=${peer.sessionId}&clientId=runtime-peer`,
-    (event) => event.type === "state_snapshot" && event.state?.model === "gpt-5.4-mini",
-    { timeoutMs: 10_000 },
-  );
   const modelResponse = await fetch(`${app.baseUrl}/api/respond`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       sessionId: admin.sessionId,
       clientId: "runtime-admin",
-      payload: { type: "apply_select_command", command: "model", value: "gpt-5.4-mini" },
+      payload: { type: "apply_select_command", command: "model", value: "gpt-5.6-terra" },
     }),
   });
   assert.equal(modelResponse.status, 200);
-  await peerModelUpdate;
-
-  const peerEffortUpdate = waitForSseEvent(
-    `${app.baseUrl}/api/events?session=${peer.sessionId}&clientId=runtime-peer`,
-    (event) => event.type === "state_snapshot" && event.state?.effort === "high",
-    { timeoutMs: 10_000 },
-  );
   const effortResponse = await fetch(`${app.baseUrl}/api/respond`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       sessionId: admin.sessionId,
       clientId: "runtime-admin",
-      payload: { type: "apply_select_command", command: "effort", value: "high" },
+      payload: { type: "apply_select_command", command: "effort", value: "xhigh" },
     }),
   });
   assert.equal(effortResponse.status, 200);
-  await peerEffortUpdate;
 
-  const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
-  assert.equal(settings.web_shared_runtime_preferences.version, 1);
-  assert.equal(settings.web_shared_runtime_preferences.active_profile, "openai-compatible");
-  assert.equal(settings.web_shared_runtime_preferences.model, "gpt-5.4-mini");
-  assert.equal(settings.web_shared_runtime_preferences.effort, "high");
-  assert.equal(typeof settings.web_shared_runtime_preferences.pgpt_available, "boolean");
+  async function requestRuntimePicker(clientId, sessionId) {
+    const pickerEvent = waitForSseEvent(
+      `${app.baseUrl}/api/events?session=${sessionId}&clientId=${encodeURIComponent(clientId)}`,
+      (event) => event.type === "select_request" && event.modal?.command === "runtime-picker",
+      { timeoutMs: 10_000 },
+    );
+    const response = await fetch(`${app.baseUrl}/api/respond`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        clientId,
+        payload: { type: "select_command", command: "runtime-picker" },
+      }),
+    });
+    assert.equal(response.status, 200);
+    return await pickerEvent;
+  }
+
+  const adminPicker = await requestRuntimePicker("runtime-admin", admin.sessionId);
+  const peerPicker = await requestRuntimePicker("runtime-peer", peer.sessionId);
+  const activeModel = (event) => event.modal.runtime_options.models_by_provider["p-gpt"]
+    .find((option) => option.active)?.value;
+  const activeEffort = (event) => event.modal.runtime_options.efforts
+    .find((option) => option.active)?.value;
+
+  assert.equal(activeModel(adminPicker), "gpt-5.6-terra");
+  assert.equal(activeEffort(adminPicker), "xhigh");
+  assert.equal(activeModel(peerPicker), "gpt-5.6-sol");
+  assert.equal(activeEffort(peerPicker), "high");
+
+  const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8").catch(() => "{}"));
+  assert.equal(settings.web_shared_runtime_preferences, undefined);
 
   const newcomer = await createRuntimeSession("runtime-newcomer", {
-    model: "gpt-5.5",
-    effort: "low",
+    model: "gpt-5.6-terra",
+    effort: "xhigh",
   });
-  assert.equal(newcomer.ready.state.active_profile, "openai-compatible");
-  assert.equal(newcomer.ready.state.model, "gpt-5.4-mini");
-  assert.equal(newcomer.ready.state.effort, "high");
+  assert.equal(newcomer.ready.state.active_profile, "p-gpt");
+  assert.equal(newcomer.ready.state.model, "gpt-5.6-terra");
+  assert.equal(newcomer.ready.state.effort, "xhigh");
 });
 
-test("defaults shared runtime sessions to pgpt when pgpt credentials are available", async (t) => {
+test("honors explicit client runtime choices when pgpt credentials are available", async (t) => {
   const app = await startWebServer({
     env: {
       MYHARNESS_WORKSPACE_SCOPE: "shared",
@@ -477,8 +509,8 @@ test("defaults shared runtime sessions to pgpt when pgpt credentials are availab
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       clientId: "pgpt-default",
-      activeProfile: "codex",
-      model: "gpt-5.5",
+      activeProfile: "p-gpt",
+      model: "gpt-5.6-sol",
       effort: "high",
     }),
   });
@@ -493,11 +525,11 @@ test("defaults shared runtime sessions to pgpt when pgpt credentials are availab
   );
 
   assert.equal(ready.state.active_profile, "p-gpt");
-  assert.equal(ready.state.model, "gpt-5.6-luna");
-  assert.equal(ready.state.effort, "low");
+  assert.equal(ready.state.model, "gpt-5.6-sol");
+  assert.equal(ready.state.effort, "high");
 });
 
-test("honors shared runtime choices made while pgpt is available", async (t) => {
+test("ignores legacy shared runtime choices for new clients", async (t) => {
   const app = await startWebServer({
     env: {
       MYHARNESS_WORKSPACE_SCOPE: "shared",
@@ -520,7 +552,12 @@ test("honors shared runtime choices made while pgpt is available", async (t) => 
   const response = await fetch(`${app.baseUrl}/api/session`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ clientId: "pgpt-saved-choice" }),
+    body: JSON.stringify({
+      clientId: "pgpt-saved-choice",
+      activeProfile: "p-gpt",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    }),
   });
   const payload = await response.json();
   assert.equal(response.status, 200);
@@ -532,9 +569,9 @@ test("honors shared runtime choices made while pgpt is available", async (t) => 
     { timeoutMs: 20_000 },
   );
 
-  assert.equal(ready.state.active_profile, "codex");
-  assert.equal(ready.state.model, "gpt-5.5");
-  assert.equal(ready.state.effort, "high");
+  assert.equal(ready.state.active_profile, "p-gpt");
+  assert.equal(ready.state.model, "gpt-5.6-luna");
+  assert.equal(ready.state.effort, "low");
 });
 
 test("keeps main runtime choices client-scoped for ip workspace sessions", async (t) => {

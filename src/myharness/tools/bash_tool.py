@@ -24,7 +24,12 @@ _MAX_CAPTURE_BYTES = 1024 * 1024
 class BashToolInput(BaseModel):
     """Arguments for a command shell tool."""
 
-    command: str = Field(description="Shell command to execute")
+    command: str = Field(
+        description=(
+            "Executable shell command only. Never pass a progress note, completion message, "
+            "explanation, or other user-facing prose."
+        )
+    )
     cwd: str | None = Field(default=None, description="Working directory override")
     timeout_seconds: int = Field(default=600, ge=1, le=600)
 
@@ -42,6 +47,13 @@ class BashTool(BaseTool):
 
     async def execute(self, arguments: BashToolInput, context: ToolExecutionContext) -> ToolResult:
         cwd = Path(arguments.cwd).expanduser() if arguments.cwd else context.cwd
+        message_error = _preflight_user_facing_message(arguments.command)
+        if message_error is not None:
+            return ToolResult(
+                output=message_error,
+                is_error=True,
+                metadata={"non_command_message": True},
+            )
         preflight_error = _preflight_interactive_command(arguments.command)
         if preflight_error is not None:
             return ToolResult(
@@ -341,6 +353,24 @@ def _preflight_interactive_command(command: str) -> str | None:
         "The command tool is non-interactive, so it cannot answer installer/scaffold prompts live. "
         "Prefer non-interactive flags (for example --yes, -y, --skip-install, --defaults, --non-interactive), "
         "or run the scaffolding step once in an external terminal before asking the agent to continue."
+    )
+
+
+def _preflight_user_facing_message(command: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", command.strip()).casefold()
+    completion_messages = {
+        "작성 완료했습니다.",
+        "작업 완료했습니다.",
+        "완료했습니다.",
+        "done.",
+        "completed.",
+        "work completed.",
+    }
+    if normalized not in completion_messages:
+        return None
+    return (
+        "This input is a user-facing completion message, not an executable shell command. "
+        "Send it as assistant text only after the preceding command succeeds."
     )
 
 

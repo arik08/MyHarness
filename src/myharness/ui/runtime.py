@@ -210,6 +210,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
                 enable_prompt_cache_options=True,
                 include_usage_with_tools=True,
                 prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
+                enable_gpt56_responses=True,
             )
         return OpenAICompatibleClient(
             api_key=api_key,
@@ -218,6 +219,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             enable_prompt_cache_options=settings.provider == "openai",
             include_usage_with_tools=settings.provider == "openai",
             prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
+            enable_gpt56_responses=settings.provider == "openai",
         )
     auth = _safe_resolve_auth()
     return AnthropicApiClient(

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openBackendEvents } from "../api/events";
 import { listLiveSessions, startSession } from "../api/session";
 import { useAppState } from "../state/app-state";
@@ -43,6 +43,7 @@ function saveActiveBackendSessionId(sessionId: string) {
 export function useBackendSession() {
   const { state, dispatch } = useAppState();
   const sourceRef = useRef<EventSource | null>(null);
+  const [eventStreamGeneration, setEventStreamGeneration] = useState(0);
 
   useEffect(() => {
     if (state.sessionId) {
@@ -150,7 +151,7 @@ export function useBackendSession() {
       sourceRef.current?.close();
       sourceRef.current = null;
     };
-  }, [dispatch, state.clientId, state.sessionId]);
+  }, [dispatch, eventStreamGeneration, state.clientId, state.sessionId]);
 
   useEffect(() => {
     if (!state.busy || !state.sessionId || !state.clientId) {
@@ -170,12 +171,15 @@ export function useBackendSession() {
           return;
         }
         const liveSession = liveSessions.sessions.find((item) => item.sessionId === sessionId);
-        if (liveSession && liveSession.busy === false) {
+        if (!liveSession || liveSession.busy === false) {
           dispatch({
             type: "backend_event",
             sessionId,
             event: { type: "line_complete" },
           });
+          if (liveSession) {
+            setEventStreamGeneration((value) => value + 1);
+          }
         }
       } catch {
         // The EventSource path remains authoritative; this poll only repairs missed completion events.

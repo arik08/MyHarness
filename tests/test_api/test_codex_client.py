@@ -21,7 +21,14 @@ from myharness.api.codex_client import (
     _prompt_cache_key_for_request,
     _resolve_codex_url,
 )
-from myharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from myharness.engine.messages import (
+    ResponsesStateBlock,
+    ConversationMessage,
+    ImageBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 
 
 class _FakeStreamResponse:
@@ -241,7 +248,8 @@ def test_codex_request_body_keeps_active_tool_prefix_stable_between_new_sessions
     assert body_one["prompt_cache_key"] == body_two["prompt_cache_key"]
     assert "prompt_cache_retention" not in body_one
     assert "prompt_cache_retention" not in body_two
-    assert body_one["instructions"] == body_two["instructions"] == "You are MyHarness."
+    assert body_one["instructions"] == body_two["instructions"]
+    assert "write reasoning summaries in Korean" in body_one["instructions"]
     assert body_one["tools"] == body_two["tools"]
     assert body_one["input"][0] == body_two["input"][0] == {
         "role": "developer",
@@ -310,7 +318,7 @@ async def test_codex_client_streams_text(monkeypatch):
     assert complete.usage.input_tokens == 12
     assert complete.usage.output_tokens == 3
     assert sink["url"].endswith("/codex/responses")
-    assert sink["json"]["instructions"] == "You are MyHarness."
+    assert "write reasoning summaries in Korean" in sink["json"]["instructions"]
     assert sink["json"]["input"][0] == {
         "role": "developer",
         "content": [{"type": "input_text", "text": "Be helpful."}],
@@ -323,6 +331,96 @@ async def test_codex_client_streams_text(monkeypatch):
     assert sink["json"]["parallel_tool_calls"] is True
     assert sink["headers"]["OpenAI-Beta"] == "responses=experimental"
     assert sink["headers"]["session_id"] == _codex_cache_session_id(_prompt_cache_key_for_request(request))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
+async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypatch, model):
+    sink: dict[str, Any] = {}
+    response = _FakeStreamResponse(
+        lines=[
+            'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"opaque-reasoning","summary":[{"type":"summary_text","text":"Checked the constraints."}]}}',
+            "",
+            'data: {"type":"response.output_item.done","item":{"id":"cmp_1","type":"compaction","encrypted_content":"opaque-compaction"}}',
+            "",
+            'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"output_text","text":"done","annotations":[]}]}}',
+            "",
+            'data: {"type":"response.completed","response":{"status":"completed"}}',
+            "",
+        ]
+    )
+    monkeypatch.setattr(
+        "myharness.api.codex_client.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(response, sink),
+    )
+
+    client = CodexApiClient(_fake_codex_token())
+    request = ApiMessageRequest(
+        model=model,
+        messages=[ConversationMessage.from_user_text("continue")],
+        reasoning_effort="high",
+        compact_threshold_tokens=900_000,
+    )
+    events = [event async for event in client.stream_message(request)]
+
+    assert sink["json"]["reasoning"] == {
+        "effort": "high",
+        "context": "all_turns",
+        "summary": "auto",
+    }
+    assert sink["json"]["context_management"] == [
+        {"type": "compaction", "compact_threshold": 900_000}
+    ]
+    complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
+    state_items = [
+        block.item
+        for block in complete.message.content
+        if isinstance(block, ResponsesStateBlock)
+    ]
+    assert [item["type"] for item in state_items] == ["reasoning", "compaction"]
+    assert state_items[0]["summary"] == [
+        {"type": "summary_text", "text": "Checked the constraints."}
+    ]
+    assert complete.message.text == "done"
+
+
+def test_codex_input_replays_latest_compaction_and_prunes_older_items():
+    messages = [
+        ConversationMessage.from_user_text("old request"),
+        ConversationMessage(
+            role="assistant",
+            content=[
+                ResponsesStateBlock(
+                    item={"id": "rs_old", "type": "reasoning", "encrypted_content": "old"}
+                ),
+                TextBlock(text="old answer"),
+            ],
+        ),
+        ConversationMessage.from_user_text("next request"),
+        ConversationMessage(
+            role="assistant",
+            content=[
+                ResponsesStateBlock(
+                    item={"id": "cmp_1", "type": "compaction", "encrypted_content": "compact"}
+                ),
+                TextBlock(text="answer after compaction"),
+            ],
+        ),
+        ConversationMessage.from_user_text("new request"),
+    ]
+
+    converted = _convert_messages_to_codex(messages, developer_instructions="Be helpful.")
+
+    assert converted[0]["role"] == "developer"
+    assert converted[1] == {
+        "id": "cmp_1",
+        "type": "compaction",
+        "encrypted_content": "compact",
+    }
+    assert all(item.get("id") != "rs_old" for item in converted)
+    assert all("old request" not in str(item) for item in converted)
+    assert "answer after compaction" in str(converted)
+    assert "new request" in str(converted)
 
 
 @pytest.mark.asyncio
@@ -392,7 +490,7 @@ async def test_codex_client_drops_dangling_tool_call_before_provider_request(mon
     events = [event async for event in client.stream_message(request)]
 
     assert events
-    assert sink["json"]["instructions"] == "You are MyHarness."
+    assert "write reasoning summaries in Korean" in sink["json"]["instructions"]
     assert sink["json"]["input"] == [
         {"role": "developer", "content": [{"type": "input_text", "text": "You are MyHarness."}]},
         {"role": "user", "content": [{"type": "input_text", "text": "Run a tool"}]},

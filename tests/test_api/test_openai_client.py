@@ -18,6 +18,7 @@ from myharness.api.client import (
     ApiTextDeltaEvent,
     ApiToolCallDeltaEvent,
 )
+from myharness.api.errors import RequestFailure
 from myharness.api.openai_client import (
     OpenAICompatibleClient,
     _convert_messages_to_openai,
@@ -1139,3 +1140,64 @@ class TestStripThinkBlocks:
         visible, buf = _strip_think_blocks(buf)
         assert visible == "answer"
         assert buf == ""
+@pytest.mark.asyncio
+async def test_openai_compatible_uses_responses_api_for_gpt56():
+    class _FakeResponsesClient:
+        def __init__(self) -> None:
+            self.requests: list[ApiMessageRequest] = []
+
+        async def stream_message(self, request: ApiMessageRequest):
+            self.requests.append(request)
+            yield ApiTextDeltaEvent(text="responses")
+
+        async def aclose(self) -> None:
+            return None
+
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_gpt56_responses=True,
+    )
+    responses_client = _FakeResponsesClient()
+    client._responses_client = responses_client
+    request = ApiMessageRequest(
+        model="gpt-5.6-luna",
+        messages=[ConversationMessage.from_user_text("hi")],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert [event.text for event in events if isinstance(event, ApiTextDeltaEvent)] == ["responses"]
+    assert responses_client.requests == [request]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_falls_back_only_when_responses_endpoint_is_missing():
+    class _MissingResponsesClient:
+        async def stream_message(self, request: ApiMessageRequest):
+            del request
+            if False:
+                yield ApiTextDeltaEvent(text="")
+            raise RequestFailure("Responses request failed (404): not found")
+
+        async def aclose(self) -> None:
+            return None
+
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        enable_gpt56_responses=True,
+    )
+    client._responses_client = _MissingResponsesClient()
+    fake_sdk = _FakeOpenAIClient()
+    client._client = fake_sdk
+    request = ApiMessageRequest(
+        model="gpt-5.6-luna",
+        messages=[ConversationMessage.from_user_text("hi")],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert events
+    assert client.supports_server_compaction(request.model) is False
+    assert fake_sdk.chat.completions.calls
+    await client.aclose()

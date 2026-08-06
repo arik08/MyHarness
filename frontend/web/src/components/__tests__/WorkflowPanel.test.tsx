@@ -69,6 +69,30 @@ describe("WorkflowPanel", () => {
     expect(screen.queryByText("도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.")).toBeNull();
   });
 
+  it("renders markdown emphasis in reasoning summaries", () => {
+    render(
+      <AppStateProvider>
+        <WorkflowPanel
+          events={[
+            {
+              id: "reasoning",
+              toolName: "",
+              title: "진행 메모",
+              detail: "**Locating insertion point with grep**",
+              status: "done",
+              level: "parent",
+              role: "reasoning",
+            },
+          ]}
+        />
+      </AppStateProvider>,
+    );
+
+    const emphasized = screen.getByText("Locating insertion point with grep");
+    expect(emphasized.tagName).toBe("STRONG");
+    expect(document.querySelector(".workflow-status-detail")?.textContent).toBe("완료 · Locating insertion point with grep");
+  });
+
   it("pins activity status below accumulating workflow records", () => {
     render(
       <AppStateProvider>
@@ -141,6 +165,36 @@ describe("WorkflowPanel", () => {
 
     expect(document.querySelector(".workflow-activity-status")).toBeNull();
     expect(screen.getByText("작성 중인 결과물 - report.html")).toBeTruthy();
+  });
+
+  it("shows the generated SKILL.md content for save_skill", () => {
+    render(
+      <AppStateProvider>
+        <WorkflowPanel
+          events={[
+            {
+              id: "save-skill",
+              toolName: "save_skill",
+              title: "save_skill",
+              detail: "hai-prefix",
+              status: "running",
+              level: "child",
+              toolInput: {
+                name: "hai-prefix",
+                description: "응답 시작에 하이!를 붙입니다.",
+                instructions: "# 하이 접두사\n\n모든 응답을 하이!로 시작하세요.",
+                mode: "create",
+              },
+            },
+          ]}
+        />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByText("스킬 파일 작성")).toBeTruthy();
+    expect(screen.getByText("작성 중인 결과물 - SKILL.md")).toBeTruthy();
+    expect(document.querySelector(".workflow-output-body")?.textContent).toContain("name: hai-prefix");
+    expect(document.querySelector(".workflow-output-body")?.textContent).toContain("모든 응답을 하이!로 시작하세요.");
   });
 
   it("does not keep a stale running activity status active after later concrete work starts", () => {

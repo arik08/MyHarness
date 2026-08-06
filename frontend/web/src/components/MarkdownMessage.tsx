@@ -85,6 +85,14 @@ function inlineSourceLabel(value: string) {
 export type SourceEvidenceByUrl = Record<string, string>;
 export type SourceNumberByKey = Record<string, number>;
 
+export function InlineMarkdown({ text }: { text: string }) {
+  const html = useMemo(
+    () => sanitizeRenderedHtml(chatMarkdown.parseInline(text || "", { async: false }) as string),
+    [text],
+  );
+  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 function normalizedSourceUrlKey(value: string) {
   try {
     const parsed = new URL(value);

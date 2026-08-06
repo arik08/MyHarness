@@ -48,8 +48,8 @@ const krwFormatter = new Intl.NumberFormat("ko-KR", {
 
 const tokenPricingUsdPerMillion: Record<string, { cachedInput: number; cacheWrite?: number; input: number; output: number }> = {
   "gpt-5.6-sol": { cachedInput: 0.5, cacheWrite: 6.25, input: 5.0, output: 30.0 },
-  "gpt-5.6-terra": { cachedInput: 0.25, cacheWrite: 3.125, input: 2.5, output: 15.0 },
-  "gpt-5.6-luna": { cachedInput: 0.1, cacheWrite: 1.25, input: 1.0, output: 6.0 },
+  "gpt-5.6-terra": { cachedInput: 0.2, cacheWrite: 2.5, input: 2.0, output: 12.0 },
+  "gpt-5.6-luna": { cachedInput: 0.02, cacheWrite: 0.25, input: 0.2, output: 1.2 },
   "gpt-5.5": { cachedInput: 0.5, input: 5.0, output: 30.0 },
   "gpt-5.4": { cachedInput: 0.25, input: 2.5, output: 15.0 },
   "gpt-5.4-mini": { cachedInput: 0.075, input: 0.75, output: 4.5 },

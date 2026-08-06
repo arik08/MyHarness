@@ -25,6 +25,7 @@ from myharness.api.errors import AuthenticationFailure, MyHarnessApiError, RateL
 from myharness.api.usage import UsageSnapshot
 from myharness.api.retry import calculate_retry_delay
 from myharness.engine.messages import (
+    ResponsesStateBlock,
     ConversationMessage,
     ImageBlock,
     TextBlock,
@@ -51,6 +52,17 @@ _UNSUPPORTED_OPTION_TERMS = (
     "extra inputs",
     "not permitted",
 )
+DEFAULT_GPT56_COMPACT_THRESHOLD_TOKENS = 250_000
+DEFAULT_GPT56_REASONING_SUMMARY = "auto"
+CODEX_INSTRUCTIONS = (
+    "You are MyHarness. When the conversation is in Korean, "
+    "write reasoning summaries in Korean."
+)
+
+
+def _is_gpt_56_model(model: str) -> bool:
+    normalized = str(model or "").strip().lower()
+    return normalized == "gpt-5.6" or normalized.startswith("gpt-5.6-")
 
 
 def _normalize_reasoning_effort(effort: str | None) -> str | None:
@@ -140,6 +152,7 @@ def _convert_messages_to_codex(
             "role": "developer",
             "content": [{"type": "input_text", "text": developer_instructions.strip()}],
         })
+    developer_items = list(result)
     for msg in messages:
         if msg.role == "user":
             user_content: list[dict[str, Any]] = []
@@ -161,6 +174,15 @@ def _convert_messages_to_codex(
                         "output": block.content,
                     })
             continue
+
+        for block in msg.content:
+            if not isinstance(block, ResponsesStateBlock):
+                continue
+            item = dict(block.item)
+            if item.get("type") == "compaction":
+                result = [*developer_items, item]
+            else:
+                result.append(item)
 
         assistant_text = "".join(block.text for block in msg.content if isinstance(block, TextBlock))
         if assistant_text:
@@ -380,7 +402,7 @@ class CodexApiClient:
             "model": request.model,
             "store": False,
             "stream": True,
-            "instructions": "You are MyHarness.",
+            "instructions": CODEX_INSTRUCTIONS,
             "text": {"verbosity": "medium"},
             "include": ["reasoning.encrypted_content"],
         }
@@ -393,8 +415,19 @@ class CodexApiClient:
         ):
             body["prompt_cache_retention"] = self._prompt_cache_retention
         reasoning_effort = _normalize_reasoning_effort(request.reasoning_effort)
-        if reasoning_effort:
-            body["reasoning"] = {"effort": reasoning_effort}
+        if reasoning_effort or _is_gpt_56_model(request.model):
+            reasoning: dict[str, Any] = {}
+            if reasoning_effort:
+                reasoning["effort"] = reasoning_effort
+            if _is_gpt_56_model(request.model):
+                reasoning["context"] = "all_turns"
+                reasoning["summary"] = DEFAULT_GPT56_REASONING_SUMMARY
+            body["reasoning"] = reasoning
+        if _is_gpt_56_model(request.model):
+            threshold = request.compact_threshold_tokens or DEFAULT_GPT56_COMPACT_THRESHOLD_TOKENS
+            body["context_management"] = [
+                {"type": "compaction", "compact_threshold": int(threshold)}
+            ]
         if request.tools:
             body["tools"] = _convert_tools_to_codex(request.tools)
             body["tool_choice"] = "auto"
@@ -416,16 +449,13 @@ class CodexApiClient:
         if max_output_tokens is not None:
             body["max_output_tokens"] = max_output_tokens
 
-        content: list[TextBlock | ToolUseBlock] = []
+        content: list[TextBlock | ToolUseBlock | ResponsesStateBlock] = []
         current_text_parts: list[str] = []
         completed_response: dict[str, Any] | None = None
         tool_names_by_item_id: dict[str, str] = {}
         current_tool_name: str | None = None
 
-        headers = _build_codex_headers(
-            self._auth_token,
-            prompt_cache_key=body.get("prompt_cache_key") if isinstance(body.get("prompt_cache_key"), str) else None,
-        )
+        headers = self._build_headers(body)
         client = self._stream_client()
         for option_attempt in range(2):
             async with client.stream("POST", self._url, headers=headers, json=body) as response:
@@ -476,7 +506,9 @@ class CodexApiClient:
                         if not isinstance(item, dict):
                             continue
                         item_type = item.get("type")
-                        if item_type == "message":
+                        if item_type in {"reasoning", "compaction"}:
+                            content.append(ResponsesStateBlock(item=item))
+                        elif item_type == "message":
                             text = ""
                             raw_content = item.get("content")
                             if isinstance(raw_content, list):
@@ -540,6 +572,20 @@ class CodexApiClient:
             stop_reason=stop_reason,
         )
 
+    def supports_server_compaction(self, model: str) -> bool:
+        """Return whether this client can preserve GPT-5.6 server compaction state."""
+        return _is_gpt_56_model(model)
+
+    def _build_headers(self, body: dict[str, Any]) -> dict[str, str]:
+        return _build_codex_headers(
+            self._auth_token,
+            prompt_cache_key=(
+                body.get("prompt_cache_key")
+                if isinstance(body.get("prompt_cache_key"), str)
+                else None
+            ),
+        )
+
     def _stream_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
             timeout = httpx.Timeout(
@@ -550,7 +596,6 @@ class CodexApiClient:
             )
             self._http_client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
         return self._http_client
-
     async def _iter_sse_events(self, response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
         data_lines: list[str] = []
         async for line in response.aiter_lines():
@@ -616,3 +661,35 @@ class CodexApiClient:
         if isinstance(exc, httpx.HTTPError):
             return RequestFailure(str(exc))
         return RequestFailure(str(exc))
+
+
+class OpenAIResponsesClient(CodexApiClient):
+    """Responses API transport for API-key based OpenAI-compatible providers."""
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+        prompt_cache_retention: str | None = None,
+    ) -> None:
+        super().__init__(
+            auth_token=api_key,
+            timeout=timeout,
+            prompt_cache_retention=prompt_cache_retention,
+        )
+        normalized_base = (base_url or "https://api.openai.com/v1").rstrip("/")
+        self._url = (
+            normalized_base
+            if normalized_base.endswith("/responses")
+            else f"{normalized_base}/responses"
+        )
+
+    def _build_headers(self, body: dict[str, Any]) -> dict[str, str]:
+        del body
+        return {
+            "Authorization": f"Bearer {self._auth_token}",
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+        }

@@ -10,6 +10,8 @@ from myharness.config.paths import (
     get_logs_dir,
 )
 from myharness.config.settings import (
+    BUILTIN_MODEL_POLICIES,
+    ModelPolicy,
     ProviderProfile,
     Settings,
     auth_source_provider_name,
@@ -20,6 +22,8 @@ from myharness.config.settings import (
 )
 
 __all__ = [
+    "BUILTIN_MODEL_POLICIES",
+    "ModelPolicy",
     "ProviderProfile",
     "Settings",
     "auth_source_provider_name",

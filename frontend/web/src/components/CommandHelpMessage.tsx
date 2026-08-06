@@ -44,7 +44,7 @@ const virtualSkillPluginNames = new Set<string>();
 const introSectionTitles = new Set(["입력 단축키", "알아두면 좋은 기능"]);
 
 const koSkillDescriptionsByName: Record<string, string> = {
-  "brainstorming": "창의적 작업, 기능 생성, 컴포넌트 구축, 기능 추가, 동작 수정처럼 구현 전에 의도와 요구사항, 설계를 먼저 탐색해야 할 때 사용합니다.",
+  "brainstorming": "아이디어 발산, 접근법 비교, 명세·설계 우선 작업이나 핵심 제품 결정이 빠진 광범위한 요청에 사용합니다. 요구가 충분한 직접 구현 요청에는 사용하지 않습니다.",
   "commit": "작업 내용을 깔끔하고 구조화된 git 커밋으로 정리해야 할 때 사용합니다.",
   "debug": "버그를 체계적으로 진단하고 수정할 때 사용합니다.",
   "design-md": "특정 회사나 제품의 스타일, 콘셉트, 시각 언어, 브랜드 느낌을 반영한 보고서, HTML 산출물, 대시보드, 페이지, UI, 시각 문서를 요청받았을 때 사용합니다.",
@@ -53,7 +53,7 @@ const koSkillDescriptionsByName: Record<string, string> = {
   "dot-skill": "인물이나 자료에 대한 원문을 재사용 가능한 AI 스킬로 바꾸기 위한 영어 우선 메타 스킬입니다.",
   "executing-plans": "검토 체크포인트가 포함된 작성된 구현 계획을 별도 세션에서 실행할 때 사용합니다.",
   "finishing-a-development-branch": "구현이 완료되고 모든 테스트가 통과한 뒤, 병합·PR·정리 등 개발 브랜치 통합 방식을 결정해야 할 때 사용합니다.",
-  "frontend-design": "고품질 프론트엔드 인터페이스를 만들어야 할 때 사용합니다. 웹 컴포넌트, 페이지, 산출물, 포스터, 애플리케이션, 랜딩 페이지, 대시보드, React 컴포넌트, HTML/CSS 레이아웃, 웹 UI 스타일링과 시각 개선 작업에 사용합니다.",
+  "frontend-design": "홈페이지, 랜딩 페이지, 마케팅·제품 사이트, 앱 UI, 프로토타입, 데모, 게임 UI처럼 화면의 아트디렉션과 상호작용이 핵심일 때 사용합니다. 요구가 충분하면 스타일 선택 질문 없이 바로 구현하며, 보고서형 HTML에는 visual-artifact를 사용합니다.",
   "insane-search": "일반 웹 도구나 OpenWeb로 해결되지 않는 차단·희소 웹 소스를 우회하기 위해 가능한 방법을 순차적으로 시도합니다.",
   "openweb": "OpenWeb 지원 플랫폼의 URL, 핸들, 프로필, 저장소·패키지, 논문, 플랫폼 한정 검색을 구조화된 read/search operation으로 처리합니다.",
   "plan": "코딩 전에 구현 계획을 설계해야 할 때 사용합니다.",

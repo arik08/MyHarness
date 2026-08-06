@@ -48,6 +48,7 @@ class ApiMessageRequest:
     max_tokens: int = 4096
     tools: list[dict[str, Any]] = field(default_factory=list)
     reasoning_effort: str | None = None
+    compact_threshold_tokens: int | None = None
     cache_event: str | None = None
 
 

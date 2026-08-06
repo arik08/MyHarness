@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../state/app-state";
+import { isResponseVisiblyBusy } from "../state/selectors";
 import type { StatusKind } from "../types/ui";
 
 const restoreLoadingText = "대화 불러오는 중";
@@ -28,8 +29,12 @@ export function StatusPill() {
   const previousStableDisplayRef = useRef<DisplayStatus>(display);
   const latestDisplayRef = useRef<DisplayStatus>(display);
   const nextDisplay = useMemo(
-    () => ({ busy: state.busy, status: state.status, statusText: state.statusText }),
-    [state.busy, state.status, state.statusText],
+    () => isResponseVisiblyBusy(state)
+      ? { busy: true, status: state.status, statusText: state.statusText }
+      : state.busy
+        ? { busy: false, status: "ready" as const, statusText: "답변 완료" }
+        : { busy: false, status: state.status, statusText: state.statusText },
+    [state.busy, state.messages, state.status, state.statusText],
   );
   latestDisplayRef.current = nextDisplay;
 
