@@ -324,6 +324,27 @@ function workflowSkillPreview(input: Record<string, unknown>) {
   };
 }
 
+function workflowSkillSupportingPreviews(input: Record<string, unknown>) {
+  const name = workflowInputValue(input, ["name"]).value;
+  const files = Array.isArray(input.supporting_files) ? input.supporting_files : [];
+  return files.flatMap((file) => {
+    if (!file || typeof file !== "object") {
+      return [];
+    }
+    const record = file as Record<string, unknown>;
+    const path = workflowInputValue(record, ["path"]).value.trim().replace(/\\/g, "/");
+    const content = workflowInputValue(record, ["content"]);
+    if (!path || !content.found) {
+      return [];
+    }
+    return [{
+      path: name ? `.skills/POSCO_Skill/${name}/${path}` : path,
+      kind: "content" as const,
+      content: content.value,
+    }];
+  });
+}
+
 function workflowPreviewSource(event: WorkflowEvent) {
   const lower = event.toolName.toLowerCase();
   const input = event.toolInput || {};
@@ -364,6 +385,17 @@ function workflowPreviewSource(event: WorkflowEvent) {
   return null;
 }
 
+function workflowPreviewSources(event: WorkflowEvent) {
+  const primary = workflowPreviewSource(event);
+  if (!isSaveSkillTool(event.toolName)) {
+    return primary ? [primary] : [];
+  }
+  return [
+    ...(primary ? [primary] : []),
+    ...workflowSkillSupportingPreviews(event.toolInput || {}),
+  ];
+}
+
 function workflowDetailPathCandidates(event: WorkflowEvent) {
   const input = event.toolInput || {};
   const patch = workflowPatchPreview(input);
@@ -371,7 +403,7 @@ function workflowDetailPathCandidates(event: WorkflowEvent) {
     workflowInputValue(input, ["file_path", "path", "output_path", "file"]).value,
     workflowPatchPath(patch),
     isLongReportWorkflowTool(event.toolName) ? workflowLongReportOutputPath(input) : "",
-    workflowPreviewSource(event)?.path || "",
+    ...workflowPreviewSources(event).map((source) => source.path),
   ].filter((path, index, paths) => path && paths.indexOf(path) === index);
 }
 
@@ -1913,8 +1945,11 @@ export function WorkflowPanel({
   const outputPreviewEvents = useMemo(
     () => dedupeWorkflowOutputPreviews(
       events
-        .map((event) => ({ event, source: isWorkflowOutputTool(event.toolName) ? workflowPreviewSource(event) : null }))
-        .filter((item): item is WorkflowPreviewEvent => Boolean(item.source)),
+        .flatMap((event) => (
+          isWorkflowOutputTool(event.toolName)
+            ? workflowPreviewSources(event).map((source) => ({ event, source }))
+            : []
+        )),
     ),
     [events],
   );
@@ -2060,7 +2095,7 @@ export function WorkflowPanel({
                     event={event}
                     source={source}
                     revealDurationMs={state.appSettings.streamRevealDurationMs}
-                    key={event.id}
+                    key={`${event.id}:${source.path}`}
                   />
                 ))}
               </div>

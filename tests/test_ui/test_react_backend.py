@@ -3230,6 +3230,7 @@ async def test_backend_host_surfaces_query_errors(tmp_path, monkeypatch):
         event.type == "transcript_item" and event.item and "rate limit" in event.item.text
         for event in events
     )
+    assert any(event.type == "line_complete" for event in events)
 
 
 @pytest.mark.asyncio

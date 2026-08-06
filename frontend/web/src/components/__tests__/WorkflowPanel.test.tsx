@@ -182,7 +182,13 @@ describe("WorkflowPanel", () => {
               toolInput: {
                 name: "hai-prefix",
                 description: "응답 시작에 하이!를 붙입니다.",
-                instructions: "# 하이 접두사\n\n모든 응답을 하이!로 시작하세요.",
+                instructions: "# 하이 접두사\n\n`scripts/prefix.py`를 실행해 접두사를 만드세요.",
+                supporting_files: [
+                  {
+                    path: "scripts/prefix.py",
+                    content: "print('하이!')\n",
+                  },
+                ],
                 mode: "create",
               },
             },
@@ -193,8 +199,11 @@ describe("WorkflowPanel", () => {
 
     expect(screen.getByText("스킬 파일 작성")).toBeTruthy();
     expect(screen.getByText("작성 중인 결과물 - SKILL.md")).toBeTruthy();
-    expect(document.querySelector(".workflow-output-body")?.textContent).toContain("name: hai-prefix");
-    expect(document.querySelector(".workflow-output-body")?.textContent).toContain("모든 응답을 하이!로 시작하세요.");
+    expect(screen.getByText("작성 중인 결과물 - prefix.py")).toBeTruthy();
+    const previews = [...document.querySelectorAll(".workflow-output-body")].map((element) => element.textContent);
+    expect(previews[0]).toContain("name: hai-prefix");
+    expect(previews[0]).toContain("scripts/prefix.py");
+    expect(previews[1]).toContain("print('하이!')");
   });
 
   it("does not keep a stale running activity status active after later concrete work starts", () => {

@@ -67,6 +67,7 @@ MAX_AUTO_CONTINUATIONS = 4
 PROVIDER_STREAM_IDLE_FIRST_SECONDS = 7.0
 PROVIDER_STREAM_IDLE_REPEAT_SECONDS = 10.0
 PROVIDER_STREAM_IDLE_MAX_SECONDS = 600.0
+PROVIDER_STREAM_POST_EVENT_IDLE_MAX_SECONDS = 60.0
 PROVIDER_STREAM_QUEUE_MAXSIZE = 128
 COMPACTION_PROGRESS_QUEUE_MAXSIZE = 64
 DEFAULT_MAX_PARALLEL_TOOL_EXECUTIONS = 8
@@ -416,7 +417,15 @@ async def _stream_provider_events_with_idle_status(
     timeout = max(0.0, PROVIDER_STREAM_IDLE_FIRST_SECONDS)
     repeat = max(0.0, PROVIDER_STREAM_IDLE_REPEAT_SECONDS)
     max_idle = max(0.0, float(os.environ.get("MYHARNESS_PROVIDER_STREAM_IDLE_MAX_SECONDS") or PROVIDER_STREAM_IDLE_MAX_SECONDS))
+    post_event_max_idle = max(
+        0.0,
+        float(
+            os.environ.get("MYHARNESS_PROVIDER_STREAM_POST_EVENT_IDLE_MAX_SECONDS")
+            or PROVIDER_STREAM_POST_EVENT_IDLE_MAX_SECONDS
+        ),
+    )
     idle_started_at: float | None = None
+    response_started = False
     try:
         while True:
             try:
@@ -424,9 +433,10 @@ async def _stream_provider_events_with_idle_status(
             except asyncio.TimeoutError:
                 now = time.monotonic()
                 idle_started_at = idle_started_at or now
-                if max_idle and now - idle_started_at >= max_idle:
+                idle_limit = post_event_max_idle if response_started else max_idle
+                if idle_limit and now - idle_started_at >= idle_limit:
                     raise TimeoutError(
-                        f"Provider stream produced no events for {max_idle:.0f} seconds."
+                        f"Provider stream produced no events for {idle_limit:.0f} seconds."
                     )
                 yield StatusEvent(message=_provider_stream_idle_message(context))
                 timeout = repeat
@@ -437,6 +447,8 @@ async def _stream_provider_events_with_idle_status(
                 raise item
             timeout = repeat
             idle_started_at = None
+            if isinstance(item, (ApiTextDeltaEvent, ApiToolCallDeltaEvent)):
+                response_started = True
             yield item
     finally:
         if not task.done():
@@ -601,7 +613,10 @@ def _remember_skill_invocation(
     tool_metadata: dict[str, object] | None,
     *,
     skill_name: str,
+    mode: str = "use",
 ) -> None:
+    if mode != "use":
+        return
     bucket = _tool_metadata_bucket(tool_metadata, "invoked_skills")
     normalized = skill_name.strip()
     if not normalized:
@@ -743,6 +758,7 @@ def _record_tool_carryover(
         _remember_skill_invocation(
             context.tool_metadata,
             skill_name=str(tool_input.get("name") or ""),
+            mode=str(tool_input.get("mode") or "use"),
         )
         skill_name = str(tool_input.get("name") or "").strip()
         if skill_name:

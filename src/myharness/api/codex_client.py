@@ -541,6 +541,12 @@ class CodexApiClient:
                         response_payload = event.get("response")
                         if isinstance(response_payload, dict):
                             completed_response = response_payload
+                            break
+                    elif event_type == "response.incomplete":
+                        response_payload = event.get("response")
+                        if isinstance(response_payload, dict):
+                            completed_response = response_payload
+                            break
                     elif event_type == "response.failed":
                         response_payload = event.get("response")
                         if isinstance(response_payload, dict):

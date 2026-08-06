@@ -86,6 +86,9 @@ def test_build_system_prompt_uses_atomic_save_skill_tool_instead_of_python_scrip
     prompt = build_system_prompt(env=_make_env())
 
     assert "When the `save_skill` tool is available" in prompt
+    assert 'first invoke `skill(name="skill-creator", mode="use")` in the current conversation session' in prompt
+    assert "does not need to be loaded again" in prompt
+    assert "rejects calls that skip this prerequisite" in prompt
     assert "Submit the final name, trigger description, complete Markdown instructions" in prompt
     assert "Do not run `init_skill.py`, `generate_openai_yaml.py`, or `quick_validate.py`" in prompt
     assert "do not read or patch the generated template afterward" in prompt

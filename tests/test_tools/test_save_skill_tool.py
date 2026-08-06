@@ -7,11 +7,14 @@ from myharness.tools.save_skill_tool import SaveSkillTool, SaveSkillToolInput
 
 
 @pytest.mark.asyncio
-async def test_save_skill_creates_complete_skill_without_python_or_template_edits(tmp_path, monkeypatch):
+async def test_save_skill_creates_complete_skill_with_supporting_script(tmp_path, monkeypatch):
     target_root = tmp_path / "program" / ".skills" / "POSCO_Skill"
     monkeypatch.setattr(save_skill_module, "get_default_learning_skills_dir", lambda: target_root)
     monkeypatch.setattr(save_skill_module, "load_skill_registry", lambda *args, **kwargs: {})
-    context = ToolExecutionContext(cwd=tmp_path)
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={"invoked_skills": ["skill-creator"]},
+    )
 
     result = await SaveSkillTool().execute(
         SaveSkillToolInput(
@@ -27,14 +30,25 @@ async def test_save_skill_creates_complete_skill_without_python_or_template_edit
             display_name="안녕히 가세요",
             short_description="안녕히 가세요 인사에 짧게 응답",
             default_prompt="작별 인사에 정중하게 응답해 주세요.",
+            supporting_files=[
+                {
+                    "path": "scripts/random_suffix.py",
+                    "content": "import random\n\nprint(random.randint(0, 9999))\n",
+                }
+            ],
         ),
         context,
     )
 
     skill_dir = target_root / "annyeonghi-gaseyo"
     assert result.is_error is False
-    assert "no Python command or template edit is needed" in result.output
+    assert "scripts/random_suffix.py" in result.output.replace("\\", "/")
+    assert "no Python initialization command" in result.output
     assert "[TODO" not in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert (skill_dir / "scripts" / "random_suffix.py").read_text(encoding="utf-8") == (
+        "import random\n\nprint(random.randint(0, 9999))\n"
+    )
+    assert str(skill_dir / "scripts" / "random_suffix.py") in result.metadata["written_files"]
     interface = yaml.safe_load((skill_dir / "agents" / "openai.yaml").read_text(encoding="utf-8"))[
         "interface"
     ]
@@ -57,7 +71,10 @@ async def test_save_skill_updates_existing_skill_in_place(tmp_path, monkeypatch)
         "get_default_learning_skills_dir",
         lambda: tmp_path / "unused",
     )
-    context = ToolExecutionContext(cwd=tmp_path)
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={"invoked_skills": ["skill-creator"]},
+    )
 
     result = await SaveSkillTool().execute(
         SaveSkillToolInput(
@@ -84,6 +101,25 @@ def test_default_registry_exposes_save_skill_tool():
 
 
 @pytest.mark.asyncio
+async def test_save_skill_requires_skill_creator_in_current_session(tmp_path, monkeypatch):
+    target_root = tmp_path / "program" / ".skills" / "POSCO_Skill"
+    monkeypatch.setattr(save_skill_module, "get_default_learning_skills_dir", lambda: target_root)
+
+    result = await SaveSkillTool().execute(
+        SaveSkillToolInput(
+            name="skipped-guidance",
+            description="Use when testing a skill creation prerequisite.",
+            instructions="# Skipped guidance\n\nThis must not be written.",
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is True
+    assert "skill(name='skill-creator', mode='use')" in result.output
+    assert not target_root.exists()
+
+
+@pytest.mark.asyncio
 async def test_save_skill_rejects_invalid_description_before_creating_files(tmp_path, monkeypatch):
     target_root = tmp_path / "program" / ".skills" / "POSCO_Skill"
     monkeypatch.setattr(save_skill_module, "get_default_learning_skills_dir", lambda: target_root)
@@ -95,9 +131,36 @@ async def test_save_skill_rejects_invalid_description_before_creating_files(tmp_
             description="Use this for <placeholder> requests.",
             instructions="# Invalid\n\nThis must not be written.",
         ),
-        ToolExecutionContext(cwd=tmp_path),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={"invoked_skills": ["skill-creator"]},
+        ),
     )
 
     assert result.is_error is True
     assert "angle brackets" in result.output
+    assert not target_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_save_skill_rejects_supporting_file_path_traversal(tmp_path, monkeypatch):
+    target_root = tmp_path / "program" / ".skills" / "POSCO_Skill"
+    monkeypatch.setattr(save_skill_module, "get_default_learning_skills_dir", lambda: target_root)
+    monkeypatch.setattr(save_skill_module, "load_skill_registry", lambda *args, **kwargs: {})
+
+    result = await SaveSkillTool().execute(
+        SaveSkillToolInput(
+            name="unsafe-support",
+            description="Use when testing supporting file path validation.",
+            instructions="# Unsafe support\n\nDo not save paths outside the skill.",
+            supporting_files=[{"path": "scripts/../../outside.py", "content": "print('no')\n"}],
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={"invoked_skills": ["skill-creator"]},
+        ),
+    )
+
+    assert result.is_error is True
+    assert "scripts/, references/, or assets/" in result.output
     assert not target_root.exists()

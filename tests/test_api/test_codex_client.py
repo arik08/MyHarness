@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -63,6 +64,13 @@ class _FakeStreamResponse:
                     "(incomplete chunked read)"
                 )
             yield line
+
+
+class _HangingAfterLinesStreamResponse(_FakeStreamResponse):
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+        await asyncio.Event().wait()
 
 
 class _FakeAsyncClient:
@@ -329,6 +337,72 @@ async def test_codex_client_streams_text(monkeypatch):
     assert list(sink["json"]).index("tools") < list(sink["json"]).index("input")
     assert sink["json"]["tool_choice"] == "auto"
     assert sink["json"]["parallel_tool_calls"] is True
+
+
+@pytest.mark.asyncio
+async def test_codex_client_stops_reading_when_response_completed_arrives(monkeypatch):
+    sink: dict[str, Any] = {}
+    response = _HangingAfterLinesStreamResponse(
+        lines=[
+            'data: {"type":"response.output_text.delta","delta":"done"}',
+            "",
+            'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"output_text","text":"done"}]}}',
+            "",
+            'data: {"type":"response.completed","response":{"status":"completed"}}',
+            "",
+        ]
+    )
+    monkeypatch.setattr(
+        "myharness.api.codex_client.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(response, sink),
+    )
+    client = CodexApiClient(_fake_codex_token())
+    request = ApiMessageRequest(
+        model="gpt-5.6-sol",
+        messages=[ConversationMessage.from_user_text("hi")],
+        system_prompt="Be helpful.",
+    )
+
+    async def _collect_events():
+        return [event async for event in client.stream_message(request)]
+
+    events = await asyncio.wait_for(_collect_events(), timeout=0.2)
+
+    complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
+    assert complete.message.text == "done"
+    assert complete.stop_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_codex_client_stops_reading_when_response_incomplete_arrives(monkeypatch):
+    sink: dict[str, Any] = {}
+    response = _HangingAfterLinesStreamResponse(
+        lines=[
+            'data: {"type":"response.output_text.delta","delta":"partial"}',
+            "",
+            'data: {"type":"response.incomplete","response":{"status":"incomplete"}}',
+            "",
+        ]
+    )
+    monkeypatch.setattr(
+        "myharness.api.codex_client.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(response, sink),
+    )
+    client = CodexApiClient(_fake_codex_token())
+    request = ApiMessageRequest(
+        model="gpt-5.6-sol",
+        messages=[ConversationMessage.from_user_text("hi")],
+        system_prompt="Be helpful.",
+    )
+
+    async def _collect_events():
+        return [event async for event in client.stream_message(request)]
+
+    events = await asyncio.wait_for(_collect_events(), timeout=0.2)
+
+    complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
+    assert complete.message.text == "partial"
+    assert complete.stop_reason == "length"
     assert sink["headers"]["OpenAI-Beta"] == "responses=experimental"
     assert sink["headers"]["session_id"] == _codex_cache_session_id(_prompt_cache_key_for_request(request))
 

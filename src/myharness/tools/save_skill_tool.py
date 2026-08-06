@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 import yaml
@@ -15,6 +15,18 @@ from myharness.skills.refresh import mark_skill_registry_dirty
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.tools.path_display import display_tool_path
 from myharness.utils.fs import atomic_write_text
+
+
+class SkillSupportingFile(BaseModel):
+    """One text resource bundled with a skill."""
+
+    path: str = Field(
+        description=(
+            "Relative path under scripts/, references/, or assets/, for example "
+            "scripts/generate_number.py."
+        )
+    )
+    content: str = Field(description="Complete UTF-8 text content for the supporting file.")
 
 
 class SaveSkillToolInput(BaseModel):
@@ -46,6 +58,13 @@ class SaveSkillToolInput(BaseModel):
             "Optional example prompt. The tool ensures it explicitly references the skill as $name."
         ),
     )
+    supporting_files: list[SkillSupportingFile] = Field(
+        default_factory=list,
+        description=(
+            "Optional reusable text files to save with the skill under scripts/, references/, or assets/. "
+            "Put executable Python in scripts/*.py instead of only embedding it in SKILL.md."
+        ),
+    )
     mode: Literal["create", "update"] = Field(
         default="create",
         description="Use create for a new skill and update only for an existing skill.",
@@ -58,10 +77,14 @@ class SaveSkillTool(BaseTool):
     name = "save_skill"
     description = (
         "Create or update one complete MyHarness skill in a single validated operation. "
+        "You must first load skill-creator with the skill tool in the current conversation session; "
+        "this tool rejects direct calls that skip those instructions. "
         "Use this instead of running skill-creator Python scripts and then reading or editing a template. "
         "New skills are saved under the program-local .skills/POSCO_Skill category, independent of "
-        "the current chat workspace. The tool writes UTF-8 SKILL.md and agents/openai.yaml, normalizes "
-        "UI metadata, validates the result, and triggers the live skill catalog refresh."
+        "the current chat workspace. The tool writes UTF-8 SKILL.md, agents/openai.yaml, and optional "
+        "supporting_files under scripts/, references/, or assets/. Put reusable executable Python in a "
+        "scripts/*.py supporting file so its creation is visible in the workflow. The tool normalizes UI "
+        "metadata, validates the result, and triggers the live skill catalog refresh."
     )
     input_model = SaveSkillToolInput
 
@@ -70,6 +93,20 @@ class SaveSkillTool(BaseTool):
         arguments: SaveSkillToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
+        invoked_skills = context.metadata.get("invoked_skills")
+        loaded_skill_names = {
+            str(skill_name).strip().casefold()
+            for skill_name in invoked_skills
+        } if isinstance(invoked_skills, list) else set()
+        if "skill-creator" not in loaded_skill_names:
+            return ToolResult(
+                output=(
+                    "Load skill-creator first with skill(name='skill-creator', mode='use') in the "
+                    "current conversation session, then retry save_skill with the completed instructions."
+                ),
+                is_error=True,
+            )
+
         name = arguments.name.strip().lower()
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) or len(name) > 64:
             return ToolResult(
@@ -152,21 +189,39 @@ class SaveSkillTool(BaseTool):
 
         skill_path = skill_dir / "SKILL.md"
         openai_path = skill_dir / "agents" / "openai.yaml"
+        try:
+            supporting_targets = _supporting_file_targets(skill_dir, arguments.supporting_files)
+        except ValueError as exc:
+            return ToolResult(output=str(exc), is_error=True)
         atomic_write_text(skill_path, skill_content)
         atomic_write_text(openai_path, openai_content)
+        for supporting_file, target in supporting_targets:
+            atomic_write_text(target, supporting_file.content)
         mark_skill_registry_dirty(context.metadata, skill_path)
+
+        written_paths = [skill_path, openai_path, *(target for _file, target in supporting_targets)]
+        supporting_summary = (
+            f" Wrote {len(supporting_targets)} supporting file(s): "
+            + ", ".join(display_tool_path(target, context.cwd) for _file, target in supporting_targets)
+            + "."
+            if supporting_targets
+            else ""
+        )
 
         return ToolResult(
             output=(
                 f"{action} and validated skill '{name}' at "
                 f"{display_tool_path(skill_path, context.cwd)}. "
-                "The live skill catalog refresh was requested; no Python command or template edit is needed."
+                f"{supporting_summary} "
+                "The live skill catalog refresh was requested; no Python initialization command or "
+                "template edit is needed."
             ),
             metadata={
                 "skill_name": name,
                 "skill_path": str(skill_path),
                 "short_description": short_description,
                 "default_prompt": default_prompt,
+                "written_files": [str(path) for path in written_paths],
             },
         )
 
@@ -210,3 +265,38 @@ def _skill_markdown(name: str, description: str, instructions: str) -> str:
         sort_keys=False,
     ).strip()
     return f"---\n{frontmatter}\n---\n\n{instructions}\n"
+
+
+def _supporting_file_targets(
+    skill_dir: Path,
+    files: list[SkillSupportingFile],
+) -> list[tuple[SkillSupportingFile, Path]]:
+    if len(files) > 50:
+        raise ValueError("A skill can include at most 50 supporting files.")
+
+    skill_root = skill_dir.resolve()
+    targets: list[tuple[SkillSupportingFile, Path]] = []
+    seen: set[str] = set()
+    for supporting_file in files:
+        raw_path = supporting_file.path.strip().replace("\\", "/")
+        relative_path = PurePosixPath(raw_path)
+        if (
+            not raw_path
+            or relative_path.is_absolute()
+            or any(part in {"", ".", ".."} for part in relative_path.parts)
+            or relative_path.parts[0].casefold() not in {"scripts", "references", "assets"}
+        ):
+            raise ValueError(
+                "Supporting file paths must be relative paths under scripts/, references/, or assets/."
+            )
+        key = relative_path.as_posix().casefold()
+        if key in seen:
+            raise ValueError(f"Duplicate supporting file path: {relative_path.as_posix()}")
+        seen.add(key)
+        target = (skill_root / Path(*relative_path.parts)).resolve()
+        try:
+            target.relative_to(skill_root)
+        except ValueError as exc:
+            raise ValueError("Supporting file path must stay inside the skill directory.") from exc
+        targets.append((supporting_file, target))
+    return targets

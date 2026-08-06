@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations.
+description: Guide for creating effective skills. Use when users want to create or update a skill that extends Codex with specialized knowledge, workflows, or tool integrations. Always load this skill before calling save_skill; this description is only a routing trigger, not the creation workflow.
 metadata:
   short-description: Create or update a skill
 ---
@@ -293,7 +293,7 @@ Skip this step only if the skill being developed already exists. In this case, c
 
 Before running `init_skill.py`, ask where the user wants the skill created. In MyHarness, if they do not specify a location, default to the program-local `.skills/POSCO_Skill/` category at the MyHarness root so the skill is bundled and auto-discovered with the app. Never create a new skill in `.skills/General/`; developers populate that category only by manually copying skill folders. For Codex-only usage outside MyHarness, default to `$CODEX_HOME/skills`; when `CODEX_HOME` is unset, fall back to `~/.codex/skills`.
 
-When the MyHarness `save_skill` tool is available, use it as the primary creation and update path. Submit the final `name`, trigger `description`, complete Markdown `instructions`, and UI metadata in one call. Do not run Python initialization scripts, read the generated template, or attempt partial `edit_file` replacements afterward. `save_skill` writes and validates both `SKILL.md` and `agents/openai.yaml`, selects the program-local POSCO category for new skills, preserves the existing location for updates, and requests a live catalog refresh.
+When the MyHarness `save_skill` tool is available, use it as the primary creation and update path. Submit the final `name`, trigger `description`, complete Markdown `instructions`, UI metadata, and any reusable text resources through `supporting_files` in one call. Put executable Python in a `scripts/*.py` supporting file and reference that path from `SKILL.md`; do not leave reusable executable code only in a Markdown fence. Do not run Python initialization scripts, read the generated template, or attempt partial `edit_file` replacements afterward. `save_skill` writes and validates `SKILL.md`, `agents/openai.yaml`, and supporting files under `scripts/`, `references/`, or `assets/`, selects the program-local POSCO category for new skills, preserves the existing location for updates, and requests a live catalog refresh.
 
 Use `init_skill.py` only as a fallback outside a MyHarness runtime where `save_skill` is unavailable.
 
@@ -341,6 +341,8 @@ After substantial revisions, or if the skill is particularly tricky, you should 
 #### Start with Reusable Skill Contents
 
 To begin implementation, start with the reusable resources identified above: `scripts/`, `references/`, and `assets/` files. Note that this step may require user input. For example, when implementing a `brand-guidelines` skill, the user may need to provide brand assets or templates to store in `assets/`, or documentation to store in `references/`.
+
+With MyHarness `save_skill`, pass each reusable text resource as a `supporting_files` entry containing its relative `path` and complete `content`. This makes every generated script or reference visible as its own file-writing preview in the workflow.
 
 Added scripts must be tested by actually running them to ensure there are no bugs and that the output matches what is expected. If there are many similar scripts, only a representative sample needs to be tested to ensure confidence that they all work while balancing time to completion.
 

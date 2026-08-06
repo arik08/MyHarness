@@ -125,6 +125,13 @@ class SlowFirstEventApiClient:
         )
 
 
+class StalledAfterTextEventApiClient:
+    async def stream_message(self, request):
+        del request
+        yield ApiTextDeltaEvent(text="partial reply")
+        await asyncio.Event().wait()
+
+
 class FastStreamingApiClient:
     def __init__(self, event_count: int) -> None:
         self.event_count = event_count
@@ -325,6 +332,33 @@ async def test_query_engine_provider_idle_status_uses_user_facing_label(tmp_path
     assert status_events
     assert status_events[0].message == "AI 응답을 기다리고 있습니다."
     assert "Provider" not in status_events[0].message
+
+
+@pytest.mark.asyncio
+async def test_query_engine_stops_a_stream_that_stalls_after_output_started(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    monkeypatch.setattr("myharness.engine.query.PROVIDER_STREAM_IDLE_FIRST_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr("myharness.engine.query.PROVIDER_STREAM_IDLE_REPEAT_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(
+        "myharness.engine.query.PROVIDER_STREAM_POST_EVENT_IDLE_MAX_SECONDS",
+        0.02,
+        raising=False,
+    )
+    engine = QueryEngine(
+        api_client=StalledAfterTextEventApiClient(),
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="gpt-5.6-sol",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("create a skill")]
+
+    assert isinstance(events[0], AssistantTextDelta)
+    assert events[0].text == "partial reply"
+    assert isinstance(events[-1], ErrorEvent)
+    assert "produced no events" in events[-1].message
 
 
 @pytest.mark.asyncio
@@ -1147,6 +1181,10 @@ async def test_query_engine_tracks_recent_read_files_and_skills(tmp_path: Path):
                     message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
                     usage=UsageSnapshot(input_tokens=1, output_tokens=1),
                 ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="still loaded")]),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
             ]
         ),
         tool_registry=registry,
@@ -1178,6 +1216,60 @@ async def test_query_engine_tracks_recent_read_files_and_skills(tmp_path: Path):
     assert isinstance(verified, list)
     assert any("Inspected file" in entry for entry in verified)
     assert any("Loaded skill demo-skill" in entry for entry in verified)
+
+    second_events = [event async for event in engine.submit_message("reuse loaded skill")]
+    assert isinstance(second_events[-1], AssistantTurnComplete)
+    assert engine.tool_metadata.get("invoked_skills") == ["demo-skill"]
+
+
+@pytest.mark.asyncio
+async def test_query_engine_does_not_count_source_only_skill_display_as_loaded(tmp_path: Path):
+    registry = create_default_tool_registry()
+    skill_tool = registry.get("skill")
+    assert skill_tool is not None
+
+    async def _fake_skill_execute(arguments, context):
+        del arguments, context
+        return ToolResult(output="Displayed source only")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(skill_tool, "execute", _fake_skill_execute)
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                name="skill",
+                                input={"name": "skill-creator", "mode": "source"},
+                            )
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={},
+    )
+
+    try:
+        events = [event async for event in engine.submit_message("show source only")]
+    finally:
+        monkeypatch.undo()
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert "skill-creator" not in engine.tool_metadata.get("invoked_skills", [])
 
 
 @pytest.mark.asyncio
