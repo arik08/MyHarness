@@ -110,11 +110,13 @@ export function useWorkspaceData() {
   useEffect(() => {
     let cancelled = false;
     if (!state.workspaceName && !state.workspacePath) {
+      dispatch({ type: "set_history_loading", value: false });
       return () => {
         cancelled = true;
       };
     }
     if ((state.historyReadOnly && state.history.length > 0) || (state.restoringHistory && state.pendingHistoryId)) {
+      dispatch({ type: "set_history_loading", value: false });
       return () => {
         cancelled = true;
       };
@@ -144,7 +146,7 @@ export function useWorkspaceData() {
       })
       .catch((error) => {
         if (!cancelled) {
-          dispatch({ type: "set_history", history: [] });
+          dispatch({ type: "set_history", history: [], hasMore: false, nextOffset: 0 });
           dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
         }
       });

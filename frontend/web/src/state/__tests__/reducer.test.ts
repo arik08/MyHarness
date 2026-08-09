@@ -162,6 +162,26 @@ describe("appReducer", () => {
     expect(admin.history).toEqual([historyItem]);
   });
 
+  it("preserves pagination when a local history edit omits page metadata", () => {
+    const historyItem = {
+      value: "session-old",
+      label: "5/3 10:00 2 msg",
+      description: "이전 대화",
+    };
+    const edited = appReducer(
+      {
+        ...initialAppState,
+        history: [historyItem],
+        historyHasMore: true,
+        historyNextOffset: 25,
+      },
+      { type: "set_history", history: [{ ...historyItem, pinned: true }] },
+    );
+
+    expect(edited.historyHasMore).toBe(true);
+    expect(edited.historyNextOffset).toBe(25);
+  });
+
   it("persists admin mode preference locally", () => {
     localStorage.removeItem("myharness:adminMode");
 

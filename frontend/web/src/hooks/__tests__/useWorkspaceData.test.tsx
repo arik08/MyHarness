@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listHistory } from "../../api/history";
 import { listProjectFiles } from "../../api/artifacts";
@@ -27,8 +27,16 @@ vi.mock("../../api/workspaces", () => ({
 
 function Probe() {
   useWorkspaceData();
-  const { state } = useAppState();
-  return <output data-testid="history">{JSON.stringify(state.history)}</output>;
+  const { state, dispatch } = useAppState();
+  return (
+    <>
+      <output data-testid="history">{JSON.stringify(state.history)}</output>
+      <output data-testid="history-loading">{state.historyLoading ? "loading" : "idle"}</output>
+      <button type="button" onClick={() => dispatch({ type: "begin_history_restore", sessionId: "session-old" })}>
+        restore history
+      </button>
+    </>
+  );
 }
 
 describe("useWorkspaceData", () => {
@@ -163,6 +171,30 @@ describe("useWorkspaceData", () => {
       limit: 25,
       offset: 0,
     }));
+  });
+
+  it("clears a cancelled history refresh when history restoration starts", async () => {
+    vi.mocked(listHistory).mockImplementation(() => new Promise(() => {}));
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "web-current",
+          clientId: "client-1",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("history-loading").textContent).toBe("loading"));
+    fireEvent.click(screen.getByRole("button", { name: "restore history" }));
+
+    await waitFor(() => expect(screen.getByTestId("history-loading").textContent).toBe("idle"));
   });
 
   it("keeps the saved title when a history item is also an open backend session", async () => {

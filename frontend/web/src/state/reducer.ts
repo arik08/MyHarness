@@ -3466,8 +3466,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         history,
         historyLoading: false,
         historyLoadingMore: false,
-        historyHasMore: action.hasMore === true,
-        historyNextOffset: typeof action.nextOffset === "number" ? action.nextOffset : history.length,
+        historyHasMore: typeof action.hasMore === "boolean" ? action.hasMore : state.historyHasMore,
+        historyNextOffset: typeof action.nextOffset === "number" ? action.nextOffset : state.historyNextOffset,
         modal: isResumeSelectModal(state.modal) ? null : state.modal,
       };
     }

@@ -60,12 +60,26 @@ export function Sidebar() {
   const [expandedHistoryActionId, setExpandedHistoryActionId] = useState("");
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [visiblePendingHistoryId, setVisiblePendingHistoryId] = useState<string | null>(null);
-  const historyLoadingMoreRef = useRef(false);
+  const historyListRef = useRef<HTMLDivElement | null>(null);
+  const historyScope = `${state.workspacePath}\u0000${state.workspaceName}`;
+  const historyScopeRef = useRef(historyScope);
+  const previousHistoryScopeRef = useRef(historyScope);
+  const historyLoadingMoreRequestRef = useRef<object | null>(null);
+  historyScopeRef.current = historyScope;
   const [runtimePickerGeometry, setRuntimePickerGeometry] = useState<RuntimePickerGeometry>({
     left: null,
     top: null,
     panelMaxHeight: null,
   });
+
+  useEffect(() => {
+    if (previousHistoryScopeRef.current === historyScope) {
+      return;
+    }
+    previousHistoryScopeRef.current = historyScope;
+    historyLoadingMoreRequestRef.current = null;
+    dispatch({ type: "set_history_loading_more", value: false });
+  }, [dispatch, historyScope]);
 
   async function startFreshChat(workspace?: Workspace) {
     const nextWorkspace = workspace || (state.workspacePath ? { name: state.workspaceName, path: state.workspacePath } : undefined);
@@ -328,10 +342,12 @@ export function Sidebar() {
   }
 
   async function loadMoreHistory() {
-    if (!state.historyHasMore || state.historyLoading || state.historyLoadingMore || historyLoadingMoreRef.current) {
+    if (!state.historyHasMore || state.historyLoading || state.historyLoadingMore || historyLoadingMoreRequestRef.current) {
       return;
     }
-    historyLoadingMoreRef.current = true;
+    const request = {};
+    const requestScope = historyScope;
+    historyLoadingMoreRequestRef.current = request;
     dispatch({ type: "set_history_loading_more", value: true });
     try {
       const data = await listHistory({
@@ -340,7 +356,11 @@ export function Sidebar() {
         limit: historyPageSize,
         offset: state.historyNextOffset,
       });
+      if (historyLoadingMoreRequestRef.current !== request || historyScopeRef.current !== requestScope) {
+        return;
+      }
       const history = Array.isArray(data.options) ? data.options : [];
+      historyLoadingMoreRequestRef.current = null;
       dispatch({
         type: "append_history",
         history,
@@ -348,13 +368,20 @@ export function Sidebar() {
         nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : state.historyNextOffset + history.length,
       });
     } catch (error) {
+      if (historyLoadingMoreRequestRef.current !== request || historyScopeRef.current !== requestScope) {
+        return;
+      }
+      historyLoadingMoreRequestRef.current = null;
       dispatch({ type: "set_history_loading_more", value: false });
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      historyLoadingMoreRef.current = false;
+      if (historyLoadingMoreRequestRef.current === request) {
+        historyLoadingMoreRequestRef.current = null;
+        dispatch({ type: "set_history_loading_more", value: false });
+      }
     }
   }
 
@@ -733,6 +760,33 @@ export function Sidebar() {
     ? sortedRenderedHistory.filter((item) => historyTitleMatches(titleForHistoryItem(item), historySearch))
     : sortedRenderedHistory;
 
+  useEffect(() => {
+    const historyList = historyListRef.current;
+    if (
+      !historyList
+      || historyList.clientHeight <= 0
+      || historyList.scrollHeight <= 0
+      || !state.historyHasMore
+      || state.historyLoading
+      || state.historyLoadingMore
+      || historyLoadingMoreRequestRef.current
+    ) {
+      return;
+    }
+    const distanceToBottom = historyList.scrollHeight - historyList.scrollTop - historyList.clientHeight;
+    if (distanceToBottom <= 24) {
+      void loadMoreHistory();
+    }
+  }, [
+    filteredRenderedHistory.length,
+    historySearch,
+    state.historyHasMore,
+    state.historyLoading,
+    state.historyNextOffset,
+    state.workspaceName,
+    state.workspacePath,
+  ]);
+
   return (
     <aside
       className="sidebar"
@@ -899,6 +953,7 @@ export function Sidebar() {
           ) : null}
         </label>
         <div
+          ref={historyListRef}
           className="history-list"
           aria-busy={(state.historyLoading || state.historyLoadingMore) ? "true" : "false"}
           onScroll={handleHistoryScroll}

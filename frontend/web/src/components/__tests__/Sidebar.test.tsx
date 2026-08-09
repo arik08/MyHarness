@@ -620,6 +620,126 @@ describe("Sidebar", () => {
     expect(screen.getByText("대화 50")).toBeTruthy();
   });
 
+  it("keeps loading while a refreshed history list is still too short to scroll", async () => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    const initialHistory = Array.from({ length: 25 }, (_, index) => ({
+      value: `session-${index + 1}`,
+      label: `5/3 10:${String(index).padStart(2, "0")} 2 msg`,
+      description: `대화 ${index + 1}`,
+    }));
+    vi.mocked(listHistory)
+      .mockResolvedValueOnce({
+        options: [{ value: "session-hidden", label: "숨긴 대화", description: "숨긴 대화", hidden: true }],
+        hasMore: true,
+        nextOffset: 50,
+      })
+      .mockResolvedValueOnce({
+        options: [{ value: "session-visible", label: "5/3 09:00 2 msg", description: "더 오래된 대화" }],
+        hasMore: false,
+        nextOffset: 75,
+      });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: initialHistory,
+          historyLoading: true,
+          historyHasMore: true,
+          historyNextOffset: 25,
+        } as typeof initialAppState}
+      >
+        <Sidebar />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
+      </AppStateProvider>,
+    );
+
+    const historyList = document.querySelector(".history-list") as HTMLElement;
+    Object.defineProperty(historyList, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(historyList, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(historyList, "scrollTop", { configurable: true, value: 0 });
+
+    act(() => {
+      dispatch({ type: "set_history_loading", value: false });
+    });
+
+    await waitFor(() => expect(listHistory).toHaveBeenNthCalledWith(1, {
+      workspacePath: "C:/demo",
+      workspaceName: "Default",
+      limit: 25,
+      offset: 25,
+    }));
+    await waitFor(() => expect(listHistory).toHaveBeenNthCalledWith(2, {
+      workspacePath: "C:/demo",
+      workspaceName: "Default",
+      limit: 25,
+      offset: 50,
+    }));
+    expect(screen.getByText("더 오래된 대화")).toBeTruthy();
+  });
+
+  it("ignores a delayed page from the workspace that was just left", async () => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    let resolveOldWorkspacePage!: (value: Awaited<ReturnType<typeof listHistory>>) => void;
+    vi.mocked(listHistory).mockReturnValueOnce(new Promise((resolve) => {
+      resolveOldWorkspacePage = resolve;
+    }));
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Project A",
+          workspacePath: "C:/project-a",
+          history: [{ value: "session-a", label: "5/3 10:00 2 msg", description: "프로젝트 A 대화" }],
+          historyHasMore: true,
+          historyNextOffset: 25,
+        } as typeof initialAppState}
+      >
+        <Sidebar />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
+      </AppStateProvider>,
+    );
+
+    const historyList = document.querySelector(".history-list") as HTMLElement;
+    Object.defineProperty(historyList, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(historyList, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(historyList, "scrollTop", { configurable: true, value: 600 });
+    fireEvent.scroll(historyList);
+
+    await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
+      workspacePath: "C:/project-a",
+      workspaceName: "Project A",
+      limit: 25,
+      offset: 25,
+    }));
+
+    act(() => {
+      dispatch({ type: "set_workspace", workspace: { name: "Project B", path: "C:/project-b" } });
+      dispatch({
+        type: "set_history",
+        history: [{ value: "session-b", label: "5/3 09:00 2 msg", description: "프로젝트 B 대화" }],
+        hasMore: false,
+        nextOffset: 25,
+      });
+    });
+    await act(async () => {
+      resolveOldWorkspacePage({
+        options: [{ value: "session-a-old", label: "5/2 10:00 2 msg", description: "늦게 온 A 대화" }],
+        hasMore: false,
+        nextOffset: 50,
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("프로젝트 B 대화")).toBeTruthy();
+    expect(screen.queryByText("늦게 온 A 대화")).toBeNull();
+  });
+
   it("renders pinned history items before recent items sorted by title", () => {
     render(
       <AppStateProvider
