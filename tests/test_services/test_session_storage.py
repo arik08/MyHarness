@@ -8,7 +8,7 @@ from pathlib import Path
 import myharness.services.session_storage as session_storage
 import pytest
 from myharness.api.usage import UsageSnapshot
-from myharness.engine.messages import ConversationMessage, TextBlock
+from myharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock
 from myharness.services.session_storage import (
     delete_session_by_id,
     display_summary_for_first_user,
@@ -203,6 +203,168 @@ def test_save_and_load_session_snapshot_keeps_history_events(tmp_path: Path, mon
         {"type": "tool_started", "tool_name": "shell_command", "tool_input": {"command": "pytest"}},
         {"type": "tool_completed", "tool_name": "shell_command", "output": "passed", "is_error": False},
         {"type": "assistant", "text": "완료했습니다."},
+    ]
+
+
+def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+    large_output = "fetch-head\n" + ("web evidence " * 8_000) + "\nfetch-tail"
+    large_content = "<html>\n" + ("<p>generated</p>\n" * 8_000) + "</html>"
+    messages = [
+        ConversationMessage.from_user_text("웹 자료를 확인해 보고서를 작성해줘"),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="fetch-1", name="web_fetch", input={"url": "https://example.com"})],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="fetch-1", content=large_output)],
+        ),
+        ConversationMessage(role="assistant", content=[TextBlock(text="완료했습니다.")]),
+    ]
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=messages,
+        usage=UsageSnapshot(),
+        session_id="large-replay",
+        history_events=[
+            {"type": "user", "text": "웹 자료를 확인해 보고서를 작성해줘"},
+            {
+                "type": "tool_input_delta",
+                "tool_name": "write_file",
+                "arguments_delta": large_content,
+            },
+            {
+                "type": "tool_started",
+                "tool_name": "write_file",
+                "tool_input": {"file_path": "outputs/report.html", "content": large_content},
+            },
+            {
+                "type": "tool_progress",
+                "tool_name": "write_file",
+                "tool_input": {"file_path": "outputs/report.html", "content": large_content},
+                "message": "파일 작성 중",
+            },
+            {
+                "type": "tool_completed",
+                "tool_name": "write_file",
+                "output": "outputs/report.html",
+                "is_error": False,
+            },
+            {
+                "type": "tool_completed",
+                "tool_name": "web_fetch",
+                "output": large_output,
+                "is_error": False,
+            },
+            {"type": "assistant", "text": "완료했습니다."},
+        ],
+    )
+
+    # Existing snapshots can still contain the pre-compaction replay payload.
+    # Restore must compact those files on their first load as well.
+    session_path = session_storage.get_project_session_dir(project) / "session-large-replay.json"
+    legacy_snapshot = json.loads(session_path.read_text(encoding="utf-8"))
+    legacy_events = legacy_snapshot["history_events"]
+    legacy_events.insert(
+        1,
+        {
+            "type": "tool_input_delta",
+            "tool_name": "write_file",
+            "arguments_delta": large_content,
+        },
+    )
+    legacy_started = next(event for event in legacy_events if event["type"] == "tool_started")
+    legacy_started["tool_input"] = {"file_path": "outputs/report.html", "content": large_content}
+    legacy_events.insert(
+        legacy_events.index(legacy_started) + 1,
+        {
+            "type": "tool_progress",
+            "tool_name": "write_file",
+            "tool_input": {"file_path": "outputs/report.html", "content": large_content},
+            "message": "파일 작성 중",
+        },
+    )
+    legacy_web_completed = next(
+        event
+        for event in legacy_events
+        if event["type"] == "tool_completed" and event["tool_name"] == "web_fetch"
+    )
+    legacy_web_completed["output"] = large_output
+    session_path.write_text(json.dumps(legacy_snapshot, ensure_ascii=False), encoding="utf-8")
+
+    snapshot = load_session_by_id(project, "large-replay")
+
+    assert snapshot is not None
+    assert snapshot["messages"][2]["content"][0]["content"] == large_output
+    replay_events = snapshot["history_events"]
+    assert all(event["type"] != "tool_input_delta" for event in replay_events)
+    started = next(event for event in replay_events if event["type"] == "tool_started")
+    completed = next(
+        event
+        for event in replay_events
+        if event["type"] == "tool_completed" and event["tool_name"] == "web_fetch"
+    )
+    write_completed = next(
+        event
+        for event in replay_events
+        if event["type"] == "tool_completed" and event["tool_name"] == "write_file"
+    )
+    assert started["tool_input"] == {
+        "file_path": "outputs/report.html",
+        "_history_replay_truncated": True,
+        "_history_replay_original_chars": len(
+            json.dumps(
+                {"file_path": "outputs/report.html", "content": large_content},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        ),
+    }
+    assert all(event["type"] != "tool_progress" for event in replay_events)
+    assert write_completed["output"] == "outputs/report.html"
+    assert len(completed["output"]) <= session_storage._HISTORY_WEB_TOOL_OUTPUT_MAX_CHARS
+    assert completed["output"].startswith("fetch-head")
+    assert completed["output"].endswith("fetch-tail")
+    assert "이전 세션 빠른 복원을 위해 원문 축약" in completed["output"]
+
+    pending_progress = session_storage._sanitize_history_events([
+        {
+            "type": "tool_progress",
+            "tool_name": "write_file",
+            "tool_call_id": "pending-write",
+            "tool_input": {"content": large_content},
+            "message": "3초 경과",
+        },
+        {
+            "type": "tool_progress",
+            "tool_name": "write_file",
+            "tool_call_id": "pending-write",
+            "tool_input": {"content": large_content},
+            "message": "6초 경과",
+        },
+    ])
+    assert pending_progress == [{
+        "type": "tool_progress",
+        "tool_name": "write_file",
+        "tool_call_id": "pending-write",
+        "tool_input": {},
+        "message": "6초 경과",
+    }]
+
+    swarm_history = session_storage._sanitize_history_events([
+        {"type": "swarm_status", "swarm_teammates": [{"id": "agent-1", "status": "running"}]},
+        {"type": "assistant", "text": "중간 보고"},
+        {"type": "swarm_status", "swarm_teammates": [{"id": "agent-1", "status": "completed"}]},
+    ])
+    assert swarm_history == [
+        {"type": "assistant", "text": "중간 보고"},
+        {"type": "swarm_status", "swarm_teammates": [{"id": "agent-1", "status": "completed"}]},
     ]
 
 

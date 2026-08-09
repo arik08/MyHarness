@@ -1943,6 +1943,7 @@ describe("appReducer", () => {
             { type: "user", text: "첫 질문" },
             { type: "assistant", text: "첫 답변" },
             { type: "tool_started", tool_name: "shell_command", tool_input: { command: "pytest" } },
+            { type: "tool_progress", tool_name: "shell_command", tool_input: {}, message: "테스트 실행 중" },
             { type: "tool_completed", tool_name: "shell_command", output: "passed", is_error: false },
             { type: "user", text: "후속 질문" },
           ],
@@ -1958,6 +1959,7 @@ describe("appReducer", () => {
     expect(restoredWorkflowEvents.find((event) => event.role === "planning")?.detail).toBe("첫 답변");
     const shellEvent = restoredWorkflowEvents.find((event) => event.toolName === "shell_command");
     expect(shellEvent?.status).toBe("done");
+    expect(shellEvent?.toolInput).toEqual({ command: "pytest" });
     expect(shellEvent?.output).toBe("passed");
     expect(busy.workflowEvents).toHaveLength(0);
     expect(busy.workflowAnchorMessageId).toBeNull();
@@ -2716,6 +2718,28 @@ describe("appReducer", () => {
 
     const sqliteEvent = completed.workflowEvents.find((event) => event.toolName === "mcp__sqlite_analysis__list_tables");
     expect(sqliteEvent?.detail).toBe("[ \"flights_airport\", \"airlines\", \"routes\" ]");
+  });
+
+  it("keeps raw tool output available without copying it into a huge workflow detail", () => {
+    const output = `URL: https://example.com\n${"large web result ".repeat(4_000)}\nend`;
+    const active = appReducer(initialAppState, {
+      type: "append_message",
+      message: { role: "user", text: "웹 자료를 확인해줘" },
+    });
+    const started = appReducer(active, {
+      type: "backend_event",
+      event: { type: "tool_started", tool_name: "web_fetch", tool_input: { url: "https://example.com" } },
+    });
+    const completed = appReducer(started, {
+      type: "backend_event",
+      event: { type: "tool_completed", tool_name: "web_fetch", output },
+    });
+
+    const fetchEvent = completed.workflowEvents.find((event) => event.toolName === "web_fetch");
+    expect(fetchEvent?.output).toBe(output);
+    expect(fetchEvent?.detail.length).toBeLessThanOrEqual(240);
+    expect(fetchEvent?.detail).toMatch(/^URL: https:\/\/example\.com/);
+    expect(fetchEvent?.detail).toMatch(/\.\.\.$/);
   });
 
   it("keeps interim workflow judgments and replaced details as visible history", () => {

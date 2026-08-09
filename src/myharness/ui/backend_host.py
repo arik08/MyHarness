@@ -125,6 +125,23 @@ _SWARM_TASK_TYPES = {"local_agent", "remote_agent", "in_process_teammate"}
 _SAVED_SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _SESSION_TITLE_SOURCE_PROMPT = "prompt"
 _SESSION_TITLE_SOURCE_CONVERSATION = "conversation"
+
+
+def _same_history_tool_call(left: dict[str, object], right: dict[str, object]) -> bool:
+    left_id = str(left.get("tool_call_id") or "")
+    right_id = str(right.get("tool_call_id") or "")
+    if left_id and right_id:
+        return left_id == right_id
+
+    left_index = left.get("tool_call_index")
+    right_index = right.get("tool_call_index")
+    left_name = str(left.get("tool_name") or "")
+    right_name = str(right.get("tool_name") or "")
+    if left_index is not None and right_index is not None:
+        return left_name == right_name and left_index == right_index
+    return bool(left_name) and left_name == right_name
+
+
 _SWARM_DELEGATION_HINT = (
     "The user explicitly asked to divide the work across roles or an AI team. "
     "First sketch a lightweight workflow/DAG: identify which roles can run in parallel now, "
@@ -3966,6 +3983,21 @@ class ReactBackendHost:
         if len(self._history_events) > 1000:
             self._history_events = self._history_events[-1000:]
 
+    def _discard_matching_history_tool_events(
+        self,
+        payload: dict[str, object],
+        *,
+        event_types: set[str],
+    ) -> None:
+        self._history_events = [
+            event
+            for event in self._history_events
+            if not (
+                str(event.get("type") or "") in event_types
+                and _same_history_tool_call(event, payload)
+            )
+        ]
+
     def _record_history_event(self, event: BackendEvent) -> None:
         if event.type == "reasoning_summary":
             text = (event.message or "").strip()
@@ -4046,11 +4078,26 @@ class ReactBackendHost:
                 else:
                     self._append_history_event(payload)
                 return
+            if event.type == "tool_started":
+                self._discard_matching_history_tool_events(
+                    payload,
+                    event_types={"tool_input_delta"},
+                )
             if event.tool_input:
-                payload["tool_input"] = event.tool_input
-            if event.type == "tool_progress" and event.message:
-                payload["message"] = event.message
+                if event.type != "tool_progress":
+                    payload["tool_input"] = event.tool_input
+            if event.type == "tool_progress":
+                if event.message:
+                    payload["message"] = event.message
+                self._discard_matching_history_tool_events(
+                    payload,
+                    event_types={"tool_progress"},
+                )
             if event.type == "tool_completed":
+                self._discard_matching_history_tool_events(
+                    payload,
+                    event_types={"tool_input_delta", "tool_progress"},
+                )
                 payload["output"] = event.output or ""
                 payload["is_error"] = bool(event.is_error)
             self._append_history_event(payload)
@@ -4066,10 +4113,12 @@ class ReactBackendHost:
                 "swarm_teammates": teammates,
                 "swarm_notifications": notifications,
             }
-            if self._history_events and self._history_events[-1].get("type") == "swarm_status":
-                self._history_events[-1] = payload
-            else:
-                self._append_history_event(payload)
+            self._history_events = [
+                history_event
+                for history_event in self._history_events
+                if history_event.get("type") != "swarm_status"
+            ]
+            self._append_history_event(payload)
 
     async def _emit(self, event: BackendEvent) -> None:
         log.debug("emit event: type=%s tool=%s", event.type, getattr(event, "tool_name", None))

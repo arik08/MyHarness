@@ -184,3 +184,20 @@ test("detects when Last-Event-ID is too old for complete raw replay", () => {
   assert.equal(canReplayFromLastEventId(rawEvents, "10"), true);
   assert.equal(canReplayFromLastEventId(rawEvents, "9"), false);
 });
+
+test("drops obsolete raw payloads when the transcript is replaced", () => {
+  const events = [];
+  appendRawSessionEvent(events, 1, {
+    type: "history_snapshot",
+    history_events: [{ type: "tool_completed", output: "x".repeat(100_000) }],
+  });
+  appendRawSessionEvent(events, 2, { type: "clear_transcript" });
+  appendRawSessionEvent(events, 3, {
+    type: "history_snapshot",
+    history_events: [{ type: "assistant", text: "새로 선택한 대화" }],
+  });
+
+  assert.deepEqual(events.map((entry) => entry.id), [2, 3]);
+  assert.equal(JSON.stringify(events).includes("x".repeat(1_000)), false);
+  assert.equal(canReplayFromLastEventId(events, "1"), true);
+});

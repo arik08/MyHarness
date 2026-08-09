@@ -840,6 +840,65 @@ def test_backend_host_records_tool_input_deltas_for_snapshot_replay():
     ]
 
 
+def test_backend_host_replaces_transient_tool_history_with_stable_events():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    large_input = {"file_path": "outputs/report.html", "content": "x" * 100_000}
+
+    host._record_history_event(
+        BackendEvent(
+            type="tool_input_delta",
+            tool_name="write_file",
+            tool_call_index=0,
+            arguments_delta="x" * 100_000,
+        )
+    )
+    host._record_history_event(
+        BackendEvent(
+            type="tool_started",
+            tool_name="write_file",
+            tool_call_id="write-1",
+            tool_call_index=0,
+            tool_input=large_input,
+        )
+    )
+    host._record_history_event(
+        BackendEvent(
+            type="tool_progress",
+            tool_name="write_file",
+            tool_call_id="write-1",
+            tool_call_index=0,
+            tool_input=large_input,
+            message="3초 경과",
+        )
+    )
+    host._record_history_event(
+        BackendEvent(
+            type="tool_progress",
+            tool_name="write_file",
+            tool_call_id="write-1",
+            tool_call_index=0,
+            tool_input=large_input,
+            message="6초 경과",
+        )
+    )
+
+    assert [event["type"] for event in host._history_events] == ["tool_started", "tool_progress"]
+    assert host._history_events[-1]["message"] == "6초 경과"
+    assert "tool_input" not in host._history_events[-1]
+
+    host._record_history_event(
+        BackendEvent(
+            type="tool_completed",
+            tool_name="write_file",
+            tool_call_id="write-1",
+            tool_call_index=0,
+            output="Wrote outputs/report.html",
+        )
+    )
+
+    assert [event["type"] for event in host._history_events] == ["tool_started", "tool_completed"]
+
+
 def test_backend_host_records_swarm_status_for_snapshot_replay():
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
 
@@ -875,6 +934,24 @@ def test_backend_host_records_swarm_status_for_snapshot_replay():
             ],
             "swarm_notifications": [{"id": "note-1", "from": "Research", "message": "Started", "timestamp": 123}],
         }
+    ]
+
+    host._append_history_event({"type": "assistant", "text": "중간 보고"})
+    host._record_history_event(
+        BackendEvent(
+            type="swarm_status",
+            swarm_teammates=[{"id": "agent-1", "name": "Research", "status": "completed"}],
+            swarm_notifications=[],
+        )
+    )
+
+    assert host._history_events == [
+        {"type": "assistant", "text": "중간 보고"},
+        {
+            "type": "swarm_status",
+            "swarm_teammates": [{"id": "agent-1", "name": "Research", "status": "completed"}],
+            "swarm_notifications": [],
+        },
     ]
 
 

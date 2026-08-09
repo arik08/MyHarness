@@ -934,10 +934,6 @@ function workflowOutputFirstLine(output: string, fallback: string) {
   return output.split(/\r?\n/).find((line) => line.trim()) || fallback;
 }
 
-function workflowOutputCompactLine(output: string, fallback: string) {
-  return output.replace(/\s+/g, " ").trim() || fallback;
-}
-
 function todoFailureDetail(output: string) {
   const firstLine = workflowOutputFirstLine(output, "작업 목록 정리에 실패했습니다.").trim();
   return firstLine.replace(/^Invalid input for (?:todo_write|TodoWrite):\s*/i, "입력 형식 오류: ");
@@ -996,7 +992,7 @@ function workflowToolDetail(
     }
   }
   if (output) {
-    return workflowOutputCompactLine(output, `${toolName || "도구"} 완료`);
+    return truncateWorkflowDetail(output, 240) || `${toolName || "도구"} 완료`;
   }
   return workflowDetailFromInput(input) || fallback;
 }

@@ -142,6 +142,9 @@ export function shouldReplayRawEvent(event) {
 }
 
 export function appendRawSessionEvent(events, id, event, limit = defaultRawEventLimit) {
+  if (eventType(event) === "clear_transcript") {
+    events.splice(0, events.length);
+  }
   events.push({ id, event: cloneEvent(event) });
   if (events.length > limit) {
     events.splice(0, events.length - limit);

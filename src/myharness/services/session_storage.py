@@ -41,6 +41,29 @@ _PERSISTED_TOOL_METADATA_KEYS = (
 )
 
 _SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_HISTORY_TOOL_OUTPUT_MAX_CHARS = 4_000
+_HISTORY_WEB_TOOL_OUTPUT_MAX_CHARS = 1_000
+_HISTORY_TOOL_INPUT_MAX_CHARS = 8_000
+_HISTORY_TOOL_INPUT_FIELD_MAX_CHARS = 1_000
+_HISTORY_TOOL_INPUT_SUMMARY_KEYS = (
+    "path",
+    "file_path",
+    "output_path",
+    "file",
+    "name",
+    "url",
+    "query",
+    "pattern",
+    "command",
+    "cmd",
+    "cwd",
+    "mode",
+    "title",
+    "description",
+    "phase",
+    "phase_label",
+    "output_format",
+)
 
 _TITLE_STOPWORDS = {
     "about",
@@ -484,7 +507,13 @@ def _client_latest_file_name(tool_metadata: dict[str, object] | None) -> str:
 
 
 def _sanitize_history_events(history_events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Keep only JSON-safe event dictionaries for web history replay."""
+    """Keep a compact, JSON-safe projection for web history replay.
+
+    Model continuation uses the separately persisted ``messages`` payload. The
+    history event stream only rebuilds the visible transcript, so streaming
+    deltas and repeated/raw tool payloads should not make old sessions slow to
+    open.
+    """
     if not isinstance(history_events, list):
         return []
     events: list[dict[str, Any]] = []
@@ -494,10 +523,97 @@ def _sanitize_history_events(history_events: list[dict[str, Any]] | None) -> lis
         event_type = str(event.get("type") or "").strip()
         if not event_type:
             continue
+        if event_type == "tool_input_delta":
+            continue
         sanitized = {str(key): _sanitize_metadata(value) for key, value in event.items()}
         sanitized["type"] = event_type
+        if event_type == "tool_progress":
+            # ``tool_started`` already carries the authoritative input. Keeping
+            # it on every progress tick duplicated large file bodies/scripts.
+            sanitized["tool_input"] = {}
+        elif event_type == "tool_started" and isinstance(sanitized.get("tool_input"), dict):
+            sanitized["tool_input"] = _compact_history_tool_input(sanitized["tool_input"])
+        elif event_type == "tool_completed" and isinstance(sanitized.get("output"), str):
+            tool_name = str(sanitized.get("tool_name") or "").lower()
+            max_chars = (
+                _HISTORY_WEB_TOOL_OUTPUT_MAX_CHARS
+                if "web_fetch" in tool_name or "web_search" in tool_name
+                else _HISTORY_TOOL_OUTPUT_MAX_CHARS
+            )
+            sanitized["output"] = _truncate_history_text(
+                sanitized["output"],
+                max_chars=max_chars,
+            )
         events.append(sanitized)
-    return events
+    return _coalesce_history_replay_state(events)
+
+
+def _history_tool_event_key(event: dict[str, Any]) -> tuple[object, ...]:
+    call_id = str(event.get("tool_call_id") or "")
+    if call_id:
+        return ("id", call_id)
+    tool_name = str(event.get("tool_name") or "")
+    call_index = event.get("tool_call_index")
+    if call_index is not None:
+        return ("index", tool_name, call_index)
+    return ("tool", tool_name)
+
+
+def _coalesce_history_replay_state(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    stable_events: list[dict[str, Any] | None] = []
+    pending_progress: dict[tuple[object, ...], int] = {}
+    latest_swarm_index: int | None = None
+    for event in events:
+        event_type = str(event.get("type") or "")
+        if event_type == "swarm_status":
+            if latest_swarm_index is not None:
+                stable_events[latest_swarm_index] = None
+            latest_swarm_index = len(stable_events)
+        if event_type == "tool_progress":
+            key = _history_tool_event_key(event)
+            previous_index = pending_progress.get(key)
+            if previous_index is not None:
+                stable_events[previous_index] = None
+            pending_progress[key] = len(stable_events)
+        elif event_type == "tool_completed":
+            previous_index = pending_progress.pop(_history_tool_event_key(event), None)
+            if previous_index is not None:
+                stable_events[previous_index] = None
+        elif event_type in {"user", "assistant"}:
+            pending_progress.clear()
+        stable_events.append(event)
+    return [event for event in stable_events if event is not None]
+
+
+def _truncate_history_text(value: str, *, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    marker = f"\n...[이전 세션 빠른 복원을 위해 원문 축약 · 원본 {len(value):,}자]...\n"
+    remaining = max(0, max_chars - len(marker))
+    head_chars = remaining * 3 // 4
+    tail_chars = remaining - head_chars
+    return f"{value[:head_chars]}{marker}{value[-tail_chars:] if tail_chars else ''}"
+
+
+def _compact_history_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
+    serialized = json.dumps(tool_input, ensure_ascii=False, separators=(",", ":"))
+    if len(serialized) <= _HISTORY_TOOL_INPUT_MAX_CHARS:
+        return tool_input
+
+    summary: dict[str, Any] = {}
+    for key in _HISTORY_TOOL_INPUT_SUMMARY_KEYS:
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            summary[key] = _truncate_history_text(
+                value,
+                max_chars=_HISTORY_TOOL_INPUT_FIELD_MAX_CHARS,
+            )
+        elif isinstance(value, (int, float, bool)) or value is None:
+            if key in tool_input:
+                summary[key] = value
+    summary["_history_replay_truncated"] = True
+    summary["_history_replay_original_chars"] = len(serialized)
+    return summary
 
 
 def _sanitize_usage_accounting(
