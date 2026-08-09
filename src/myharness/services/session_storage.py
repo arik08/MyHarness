@@ -808,6 +808,9 @@ def migrate_session_snapshots(cwd: str | Path, *, force: bool = False) -> dict[s
     }
     snapshots: dict[str, dict[str, Any]] = {}
     for path in sorted(session_dir.glob("session-*.json")):
+        summary = _load_snapshot_summary(path)
+        if summary is not None and summary.get("storage_version") == _SESSION_STORAGE_VERSION:
+            continue
         payload, rewritten, before, after = _migrate_named_snapshot(path)
         if payload is None:
             result["skipped"] += 1
@@ -821,6 +824,9 @@ def migrate_session_snapshots(cwd: str | Path, *, force: bool = False) -> dict[s
 
     latest_paths = [session_dir / "latest.json", *sorted(session_dir.glob("latest-*.json"))]
     for latest_path in latest_paths:
+        summary = _load_snapshot_summary(latest_path)
+        if summary is not None and summary.get("storage_version") == _SESSION_STORAGE_VERSION:
+            continue
         fingerprint = _file_fingerprint(latest_path)
         if fingerprint is None:
             continue
@@ -939,6 +945,7 @@ def _write_snapshot_summary(snapshot_path: Path, data: dict[str, Any]) -> None:
     session_id = str(data.get("session_id") or snapshot_path.stem.replace("session-", ""))
     summary = _snapshot_list_item(data, session_id=session_id, path=snapshot_path)
     summary["hidden"] = _is_hidden_worker_snapshot(data)
+    summary["storage_version"] = _SESSION_STORAGE_VERSION
     atomic_write_text(
         _snapshot_summary_path(snapshot_path),
         json.dumps(summary, ensure_ascii=False, separators=(",", ":")) + "\n",
@@ -997,7 +1004,11 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[di
             if bool(summary.get("hidden")):
                 continue
             sid = str(summary["session_id"])
-            item = {key: value for key, value in summary.items() if key != "hidden"}
+            item = {
+                key: value
+                for key, value in summary.items()
+                if key not in {"hidden", "storage_version"}
+            }
         else:
             data = _load_snapshot_file(path)
             if data is None:
@@ -1016,7 +1027,11 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[di
         if summary is not None:
             sid = str(summary["session_id"])
             if sid not in seen_ids and not bool(summary.get("hidden")):
-                sessions.append({key: value for key, value in summary.items() if key != "hidden"})
+                sessions.append({
+                    key: value
+                    for key, value in summary.items()
+                    if key not in {"hidden", "storage_version"}
+                })
         else:
             data = _load_snapshot_file(latest_path)
             if data is not None:

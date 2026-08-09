@@ -3904,6 +3904,7 @@ function sessionSummaryMetadata(payload, path, info) {
     last_assistant_at: Number(payload?.last_assistant_at || 0),
     pinned: payload?.pinned === true,
     hidden: hiddenWorkerSnapshot(payload),
+    storage_version: sessionStorageVersion,
   };
 }
 
@@ -3935,6 +3936,22 @@ async function writeSessionJsonIfUnchanged(path, payload, expectedInfo) {
     return true;
   } finally {
     await rm(tmpPath, { force: true }).catch(() => {});
+  }
+}
+
+async function hasCurrentSessionMetadata(path) {
+  const metadataPath = sessionMetaPath(path);
+  try {
+    const [snapshotInfo, metadataInfo, metadata] = await Promise.all([
+      stat(path),
+      stat(metadataPath),
+      readJsonFileIfExists(metadataPath),
+    ]);
+    return metadataInfo.mtimeMs >= snapshotInfo.mtimeMs
+      && metadata?.storage_version === sessionStorageVersion
+      && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(String(metadata.session_id || ""));
+  } catch {
+    return false;
   }
 }
 
@@ -3993,7 +4010,8 @@ async function migrateWorkspaceSessionStorage(sessionDir) {
   for (const entry of entries) {
     if (!entry.isFile() || !/^session-.+\.json$/i.test(entry.name)) continue;
     try {
-      if (!await migrateNamedSessionSnapshot(join(normalizedDir, entry.name))) skipped = true;
+      const path = join(normalizedDir, entry.name);
+      if (!await hasCurrentSessionMetadata(path) && !await migrateNamedSessionSnapshot(path)) skipped = true;
     } catch (error) {
       if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
       skipped = true;
@@ -4002,7 +4020,8 @@ async function migrateWorkspaceSessionStorage(sessionDir) {
   for (const entry of entries) {
     if (!entry.isFile() || !/^latest(?:-.+)?\.json$/i.test(entry.name)) continue;
     try {
-      if (!await migrateLatestSessionSnapshot(join(normalizedDir, entry.name))) skipped = true;
+      const path = join(normalizedDir, entry.name);
+      if (!await hasCurrentSessionMetadata(path) && !await migrateLatestSessionSnapshot(path)) skipped = true;
     } catch (error) {
       if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
       skipped = true;

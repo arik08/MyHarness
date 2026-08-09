@@ -164,6 +164,7 @@ def test_migrate_session_snapshots_preserves_messages_and_compacts_legacy_files(
     assert load_session_snapshot(project)["messages"] == legacy["messages"]
     assert (session_dir / "session-legacy123.meta").exists()
     assert (session_dir / "latest.meta").exists()
+    assert json.loads((session_dir / "session-legacy123.meta").read_text(encoding="utf-8"))["storage_version"] == 2
 
     second = migrate_session_snapshots(project, force=True)
     assert second["migrated"] == 0
@@ -192,6 +193,39 @@ def test_migrate_session_snapshots_promotes_orphan_latest_before_pointer_convers
     assert (session_dir / "session-orphan123.json").exists()
     assert json.loads((session_dir / "latest.json").read_text(encoding="utf-8"))["format"] == session_storage._SESSION_POINTER_FORMAT
     assert load_session_snapshot(project)["messages"] == legacy["messages"]
+
+
+def test_migration_trusts_fresh_current_metadata_but_rechecks_changed_snapshots(tmp_path: Path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    session_dir = get_project_session_dir(project)
+    session_path = session_dir / "session-marked123.json"
+    marked = {
+        "storage_version": 2,
+        "session_id": "marked123",
+        "model": "claude-test",
+        "system_prompt": "메타가 최신일 때는 본문을 다시 검사하지 않음",
+        "messages": [ConversationMessage.from_user_text("완료 표식 테스트").model_dump(mode="json")],
+        "history_events": [],
+        "usage": UsageSnapshot().model_dump(mode="json"),
+        "created_at": 100,
+        "summary": "완료 표식",
+    }
+    original = json.dumps(marked, ensure_ascii=False, separators=(",", ":")) + "\n"
+    session_path.write_text(original, encoding="utf-8")
+    session_storage._write_snapshot_summary(session_path, marked)
+
+    first = migrate_session_snapshots(project, force=True)
+
+    assert first["migrated"] == 0
+    assert session_path.read_text(encoding="utf-8") == original
+
+    session_path.write_text(original + " ", encoding="utf-8")
+    second = migrate_session_snapshots(project, force=True)
+    migrated = json.loads(session_path.read_text(encoding="utf-8"))
+
+    assert second["migrated"] == 1
+    assert "system_prompt" not in migrated
 
 
 def test_saved_session_list_uses_compact_metadata_without_loading_full_history(

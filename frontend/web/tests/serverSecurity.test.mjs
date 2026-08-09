@@ -1553,7 +1553,7 @@ test("uses the Korean new-chat title for empty saved history snapshots", async (
   assert.match(historyPayload.options[0].label, /새 대화$/);
 });
 
-test("lists sessions from fresh compact metadata without parsing the full snapshot", async (t) => {
+test("trusts fresh v2 metadata without parsing the full snapshot", async (t) => {
   const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
   let workspacePath = "";
   t.after(async () => {
@@ -1570,7 +1570,15 @@ test("lists sessions from fresh compact metadata without parsing the full snapsh
   workspacePath = workspacePayload.workspace?.path || "";
   const sessionDir = join(workspacePath, ".myharness", "sessions");
   await mkdir(sessionDir, { recursive: true });
-  await writeFile(join(sessionDir, "session-meta-only.json"), "{broken", "utf8");
+  const snapshotPath = join(sessionDir, "session-meta-only.json");
+  const snapshotText = `${JSON.stringify({
+    storage_version: 2,
+    session_id: "meta-only",
+    system_prompt: "완료 메타가 최신이면 제거되지 않아야 하는 검사 표식",
+    messages: [],
+    history_events: [{ type: "tool_completed", tool_name: "skill", output: "x".repeat(10_000) }],
+  })}\n`;
+  await writeFile(snapshotPath, snapshotText, "utf8");
   await writeFile(join(sessionDir, "session-meta-only.meta"), JSON.stringify({
     session_id: "meta-only",
     summary: "메타로 읽은 세션",
@@ -1580,6 +1588,7 @@ test("lists sessions from fresh compact metadata without parsing the full snapsh
     last_assistant_at: 200,
     pinned: false,
     hidden: false,
+    storage_version: 2,
   }), "utf8");
 
   const response = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspacePath)}`);
@@ -1589,6 +1598,7 @@ test("lists sessions from fresh compact metadata without parsing the full snapsh
   assert.equal(payload.options[0].value, "meta-only");
   assert.equal(payload.options[0].description, "메타로 읽은 세션");
   assert.match(payload.options[0].label, /9msg/);
+  assert.equal(await readFile(snapshotPath, "utf8"), snapshotText);
 });
 
 test("migrates legacy history files without deleting messages and converts latest copies to pointers", async (t) => {
