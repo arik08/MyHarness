@@ -2814,10 +2814,11 @@ async function readJsonFileIfExists(path) {
   }
 }
 
-async function writeJsonFileAtomic(path, payload) {
+async function writeJsonFileAtomic(path, payload, { compact = false } = {}) {
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = `${path}.${process.pid}.${Date.now()}-${crypto.randomUUID()}.tmp`;
-  await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  const serialized = compact ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
+  await writeFile(tmpPath, `${serialized}\n`, "utf8");
   await rename(tmpPath, path);
 }
 
@@ -3743,10 +3744,274 @@ function firstUserSummary(messages) {
   return "";
 }
 
-async function readSessionListItem(path) {
-  const data = JSON.parse(await readFile(path, "utf8"));
-  const info = await stat(path);
+const historyListItemCache = new Map();
+const historySnapshotPreviewCache = new Map();
+const migratedSessionDirectories = new Set();
+const sessionStorageVersion = 2;
+const sessionPointerFormat = "myharness-session-pointer";
+const historyToolOutputMaxChars = 1_000;
+const historyToolErrorOutputMaxChars = 4_000;
+const historyWebToolOutputMaxChars = 1_000;
+const historyToolInputMaxChars = 8_000;
+const historyToolInputFieldMaxChars = 1_000;
+const historyToolInputSummaryKeys = [
+  "path", "file_path", "output_path", "file", "name", "url", "query", "pattern",
+  "command", "cmd", "cwd", "mode", "title", "description", "phase", "phase_label", "output_format",
+];
+
+function historyFileFingerprint(info) {
+  return `${info.size}:${info.mtimeMs}`;
+}
+
+function truncateHistoryReplayText(value, maxChars) {
+  const text = String(value || "");
+  if (text.length <= maxChars) return text;
+  const marker = `\n...[이전 세션 빠른 복원을 위해 원문 축약 · 원본 ${text.length.toLocaleString("ko-KR")}자]...\n`;
+  const remaining = Math.max(0, maxChars - marker.length);
+  const headChars = Math.floor(remaining * 3 / 4);
+  const tailChars = remaining - headChars;
+  return `${text.slice(0, headChars)}${marker}${tailChars ? text.slice(-tailChars) : ""}`;
+}
+
+function compactHistoryToolInput(toolInput) {
+  if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) return toolInput;
+  const serialized = JSON.stringify(toolInput);
+  if (serialized.length <= historyToolInputMaxChars) return toolInput;
+  const summary = {};
+  for (const key of historyToolInputSummaryKeys) {
+    const value = toolInput[key];
+    if (typeof value === "string" && value) {
+      summary[key] = truncateHistoryReplayText(value, historyToolInputFieldMaxChars);
+    } else if (value === null || ["number", "boolean"].includes(typeof value)) {
+      if (Object.hasOwn(toolInput, key)) summary[key] = value;
+    }
+  }
+  summary._history_replay_truncated = true;
+  summary._history_replay_original_chars = serialized.length;
+  return summary;
+}
+
+function historyToolEventKey(event) {
+  const callId = String(event?.tool_call_id || "");
+  if (callId) return `id:${callId}`;
+  const toolName = String(event?.tool_name || "");
+  if (event?.tool_call_index !== undefined && event?.tool_call_index !== null) {
+    return `index:${toolName}:${event.tool_call_index}`;
+  }
+  return `tool:${toolName}`;
+}
+
+function sanitizeHistoryEventsForReplay(historyEvents) {
+  const events = [];
+  for (const event of Array.isArray(historyEvents) ? historyEvents : []) {
+    if (!event || typeof event !== "object") continue;
+    const eventType = String(event.type || "").trim();
+    if (!eventType || eventType === "tool_input_delta") continue;
+    const sanitized = { ...event, type: eventType };
+    if (eventType === "tool_progress") {
+      sanitized.tool_input = {};
+    } else if (eventType === "tool_started") {
+      sanitized.tool_input = compactHistoryToolInput(sanitized.tool_input);
+    } else if (eventType === "tool_completed" && typeof sanitized.output === "string") {
+      const toolName = String(sanitized.tool_name || "").toLowerCase();
+      sanitized.output = truncateHistoryReplayText(
+        sanitized.output,
+        sanitized.is_error === true
+          ? historyToolErrorOutputMaxChars
+          : toolName.includes("web_fetch") || toolName.includes("web_search")
+          ? historyWebToolOutputMaxChars
+          : historyToolOutputMaxChars,
+      );
+    }
+    events.push(sanitized);
+  }
+
+  const stableEvents = [];
+  const pendingProgress = new Map();
+  let latestSwarmIndex = null;
+  for (const event of events) {
+    const eventType = String(event.type || "");
+    if (eventType === "swarm_status") {
+      if (latestSwarmIndex !== null) stableEvents[latestSwarmIndex] = null;
+      latestSwarmIndex = stableEvents.length;
+    }
+    if (eventType === "tool_progress") {
+      const key = historyToolEventKey(event);
+      const previousIndex = pendingProgress.get(key);
+      if (previousIndex !== undefined) stableEvents[previousIndex] = null;
+      pendingProgress.set(key, stableEvents.length);
+    } else if (eventType === "tool_completed") {
+      const previousIndex = pendingProgress.get(historyToolEventKey(event));
+      if (previousIndex !== undefined) stableEvents[previousIndex] = null;
+      pendingProgress.delete(historyToolEventKey(event));
+    } else if (eventType === "user" || eventType === "assistant") {
+      pendingProgress.clear();
+    }
+    stableEvents.push(event);
+  }
+  return stableEvents.filter(Boolean);
+}
+
+function historyEventsFromStoredMessages(messages) {
+  return (Array.isArray(messages) ? messages : []).flatMap((message) => {
+    if (message?.role !== "user" && message?.role !== "assistant") return [];
+    const text = messageText(message).trim();
+    return text ? [{ type: message.role, text }] : [];
+  });
+}
+
+function sessionMetaPath(path) {
+  return path.replace(/\.json$/i, ".meta");
+}
+
+function sessionPointerId(payload) {
+  if (payload?.format !== sessionPointerFormat) return "";
+  const sessionId = String(payload.session_id || "").trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sessionId) ? sessionId : "";
+}
+
+function latestSessionPointer(sessionId) {
+  return { format: sessionPointerFormat, version: 1, session_id: sessionId };
+}
+
+function normalizedStoredSession(payload) {
+  const stored = {
+    ...(payload && typeof payload === "object" ? payload : {}),
+    storage_version: sessionStorageVersion,
+    history_events: sanitizeHistoryEventsForReplay(payload?.history_events),
+  };
+  if (typeof stored.system_prompt === "string" && stored.system_prompt && !stored.system_prompt_hash) {
+    stored.system_prompt_hash = crypto.createHash("sha256").update(stored.system_prompt, "utf8").digest("hex");
+  }
+  delete stored.system_prompt;
+  return stored;
+}
+
+function hiddenWorkerSnapshot(payload) {
+  const metadata = payload?.tool_metadata;
+  return metadata?.session_visibility === "hidden" || metadata?.session_kind === "task_worker";
+}
+
+function sessionSummaryMetadata(payload, path, info) {
   const fileName = basename(path);
+  return {
+    session_id: String(payload?.session_id || "").trim()
+      || fileName.replace(/^session-/, "").replace(/\.json$/i, ""),
+    summary: compactText(payload?.summary) || firstUserSummary(payload?.messages),
+    message_count: Number(payload?.message_count ?? (Array.isArray(payload?.messages) ? payload.messages.length : 0)),
+    model: String(payload?.model || ""),
+    created_at: Number(payload?.created_at || info.mtimeMs / 1000),
+    last_assistant_at: Number(payload?.last_assistant_at || 0),
+    pinned: payload?.pinned === true,
+    hidden: hiddenWorkerSnapshot(payload),
+  };
+}
+
+async function writeSessionMetadata(path, payload, info = null) {
+  const snapshotInfo = info || await stat(path);
+  await writeJsonFileAtomic(
+    sessionMetaPath(path),
+    sessionSummaryMetadata(payload, path, snapshotInfo),
+    { compact: true },
+  );
+}
+
+async function readStoredSessionSnapshot(path) {
+  const payload = JSON.parse(await readFile(path, "utf8"));
+  const pointerId = sessionPointerId(payload);
+  if (!pointerId) return payload;
+  return JSON.parse(await readFile(join(dirname(path), `session-${pointerId}.json`), "utf8"));
+}
+
+async function writeSessionJsonIfUnchanged(path, payload, expectedInfo) {
+  const tmpPath = `${path}.${process.pid}.${Date.now()}-${crypto.randomUUID()}.tmp`;
+  await writeFile(tmpPath, `${JSON.stringify(payload)}\n`, "utf8");
+  try {
+    const currentInfo = await stat(path);
+    if (historyFileFingerprint(currentInfo) !== historyFileFingerprint(expectedInfo)) {
+      return false;
+    }
+    await rename(tmpPath, path);
+    return true;
+  } finally {
+    await rm(tmpPath, { force: true }).catch(() => {});
+  }
+}
+
+async function migrateNamedSessionSnapshot(path) {
+  const [original, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
+  const parsed = JSON.parse(original);
+  if (!parsed || typeof parsed !== "object" || sessionPointerId(parsed)) return null;
+  const payload = normalizedStoredSession(parsed);
+  const serialized = `${JSON.stringify(payload)}\n`;
+  if (serialized !== original) {
+    const rewritten = await writeSessionJsonIfUnchanged(path, payload, info);
+    if (!rewritten) return null;
+  }
+  const currentInfo = await stat(path);
+  await writeSessionMetadata(path, payload, currentInfo);
+  return payload;
+}
+
+async function migrateLatestSessionSnapshot(path) {
+  const [original, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
+  const parsed = JSON.parse(original);
+  let sessionId = sessionPointerId(parsed);
+  let payload = null;
+  if (sessionId) {
+    payload = await readStoredSessionSnapshot(path);
+  } else {
+    payload = normalizedStoredSession(parsed);
+    sessionId = String(payload.session_id || "").trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sessionId)) return false;
+    const target = join(dirname(path), `session-${sessionId}.json`);
+    try {
+      payload = await migrateNamedSessionSnapshot(target) || await readStoredSessionSnapshot(target);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      await writeJsonFileAtomic(target, payload, { compact: true });
+      await writeSessionMetadata(target, payload);
+    }
+    const rewritten = await writeSessionJsonIfUnchanged(path, latestSessionPointer(sessionId), info);
+    if (!rewritten) return false;
+  }
+  await writeSessionMetadata(path, payload);
+  return true;
+}
+
+async function migrateWorkspaceSessionStorage(sessionDir) {
+  const normalizedDir = normalize(sessionDir);
+  if (migratedSessionDirectories.has(normalizedDir)) return;
+  let entries;
+  try {
+    entries = await readdir(normalizedDir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  let skipped = false;
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^session-.+\.json$/i.test(entry.name)) continue;
+    try {
+      if (!await migrateNamedSessionSnapshot(join(normalizedDir, entry.name))) skipped = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+      skipped = true;
+    }
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^latest(?:-.+)?\.json$/i.test(entry.name)) continue;
+    try {
+      if (!await migrateLatestSessionSnapshot(join(normalizedDir, entry.name))) skipped = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+      skipped = true;
+    }
+  }
+  if (!skipped) migratedSessionDirectories.add(normalizedDir);
+}
+
+function historyItemFromMetadata(data, info, fileName) {
   const sessionId = String(data.session_id || "").trim()
     || fileName.replace(/^session-/, "").replace(/\.json$/i, "");
   const summary = compactText(data.summary) || firstUserSummary(data.messages) || "새 대화";
@@ -3754,7 +4019,7 @@ async function readSessionListItem(path) {
   const lastAssistantAt = lastAssistantActivityTimestamp(data, info);
   const date = new Date(createdAt * (createdAt < 10_000_000_000 ? 1000 : 1));
   const labelDate = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-  const messageCount = Number(data.message_count || (Array.isArray(data.messages) ? data.messages.length : 0));
+  const messageCount = Number(data.message_count ?? (Array.isArray(data.messages) ? data.messages.length : 0));
   return {
     value: sessionId || fileName.replace(/^session-/, "").replace(/\.json$/i, ""),
     label: `${labelDate}  ${messageCount}msg  ${summary}`,
@@ -3762,11 +4027,74 @@ async function readSessionListItem(path) {
     createdAt,
     lastAssistantAt,
     pinned: data.pinned === true,
+    hidden: data.hidden === true,
   };
+}
+
+async function readSessionListItem(path) {
+  const info = await stat(path);
+  let meta = null;
+  let metaInfo = null;
+  try {
+    metaInfo = await stat(sessionMetaPath(path));
+    if (metaInfo.mtimeMs >= info.mtimeMs) {
+      meta = JSON.parse(await readFile(sessionMetaPath(path), "utf8"));
+      if (!String(meta?.session_id || "").trim()) meta = null;
+    }
+  } catch {
+    meta = null;
+  }
+  const fingerprint = `${historyFileFingerprint(info)}:${metaInfo ? historyFileFingerprint(metaInfo) : "no-meta"}`;
+  const cached = historyListItemCache.get(path);
+  if (cached?.fingerprint === fingerprint) {
+    return { ...cached.item };
+  }
+  const fileName = basename(path);
+  const data = meta || await readStoredSessionSnapshot(path);
+  const item = historyItemFromMetadata(data, info, fileName);
+  historyListItemCache.set(path, { fingerprint, item });
+  return { ...item };
+}
+
+async function readWorkspaceHistorySnapshot(workspace, sessionId) {
+  const cleanId = String(sessionId || "").trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(cleanId)) {
+    throw new Error("Invalid session id");
+  }
+  const path = join(sessionDirectoryForWorkspace(workspace), `session-${cleanId}.json`);
+  const info = await stat(path);
+  const fingerprint = historyFileFingerprint(info);
+  const cached = historySnapshotPreviewCache.get(path);
+  if (cached?.fingerprint === fingerprint) return cached.event;
+  const data = JSON.parse(await readFile(path, "utf8"));
+  const storedEvents = Array.isArray(data.history_events) && data.history_events.length
+    ? data.history_events
+    : historyEventsFromStoredMessages(data.messages);
+  const event = {
+    type: "history_snapshot",
+    preview_only: true,
+    value: cleanId,
+    message: String(data.summary || "").trim(),
+    compact_metadata: {
+      workflow_duration_seconds: data.tool_metadata && typeof data.tool_metadata === "object"
+        ? data.tool_metadata.workflow_duration_seconds
+        : null,
+    },
+    history_events: sanitizeHistoryEventsForReplay(storedEvents)
+      .filter((historyEvent) => historyEvent.type === "user" || historyEvent.type === "assistant")
+      .map((historyEvent) => ({
+        type: historyEvent.type,
+        text: String(historyEvent.text || ""),
+        ...(Number.isFinite(Number(historyEvent.timestamp)) ? { timestamp: Number(historyEvent.timestamp) } : {}),
+      })),
+  };
+  historySnapshotPreviewCache.set(path, { fingerprint, event });
+  return event;
 }
 
 async function listWorkspaceHistory(workspace, options = {}) {
   const sessionDir = sessionDirectoryForWorkspace(workspace);
+  await migrateWorkspaceSessionStorage(sessionDir);
   const hiddenIds = new Set(await readHiddenHistoryIds(workspace));
   let entries = [];
   try {
@@ -3787,7 +4115,7 @@ async function listWorkspaceHistory(workspace, options = {}) {
     try {
       const item = await readSessionListItem(file);
       if (item.value) {
-        item.hidden = hiddenIds.has(item.value);
+        item.hidden = item.hidden === true || hiddenIds.has(item.value);
         seen.add(item.value);
         items.push(item);
       }
@@ -3800,7 +4128,7 @@ async function listWorkspaceHistory(workspace, options = {}) {
   try {
     const latest = await readSessionListItem(latestPath);
     if (latest.value && !seen.has(latest.value)) {
-      latest.hidden = hiddenIds.has(latest.value);
+      latest.hidden = latest.hidden === true || hiddenIds.has(latest.value);
       items.push(latest);
     }
   } catch {
@@ -4121,6 +4449,7 @@ async function deleteWorkspaceHistoryItem(workspace, sessionId) {
   let deleted = false;
   try {
     await rm(target);
+    await rm(sessionMetaPath(target), { force: true });
     deleted = true;
   } catch (error) {
     if (error?.code !== "ENOENT") {
@@ -4130,8 +4459,10 @@ async function deleteWorkspaceHistoryItem(workspace, sessionId) {
   for (const latestPath of await latestSnapshotPaths(sessionDir)) {
     try {
       const latest = JSON.parse(await readFile(latestPath, "utf8"));
-      if (String(latest.session_id || "latest") === cleanId || cleanId === "latest") {
+      const latestSessionId = sessionPointerId(latest) || String(latest.session_id || "latest");
+      if (latestSessionId === cleanId || cleanId === "latest") {
         await rm(latestPath);
+        await rm(sessionMetaPath(latestPath), { force: true });
         deleted = true;
       }
     } catch (error) {
@@ -4165,8 +4496,10 @@ async function updateMatchingLatestSnapshots(sessionDir, sessionId, payload) {
   for (const latestPath of await latestSnapshotPaths(sessionDir)) {
     try {
       const latest = JSON.parse(await readFile(latestPath, "utf8"));
-      if (String(latest.session_id || "") === sessionId) {
-        await writeJsonFileAtomic(latestPath, payload);
+      const latestSessionId = sessionPointerId(latest) || String(latest.session_id || "");
+      if (latestSessionId === sessionId) {
+        await writeJsonFileAtomic(latestPath, latestSessionPointer(sessionId), { compact: true });
+        await writeSessionMetadata(latestPath, payload);
       }
     } catch (error) {
       if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
@@ -4187,14 +4520,15 @@ async function updateWorkspaceHistoryTitle(workspace, sessionId, title) {
   }
   const sessionDir = sessionDirectoryForWorkspace(workspace);
   const target = join(sessionDir, `session-${cleanId}.json`);
-  const payload = JSON.parse(await readFile(target, "utf8"));
+  const payload = normalizedStoredSession(await readStoredSessionSnapshot(target));
   payload.summary = cleanTitle;
   payload.tool_metadata = {
     ...(payload.tool_metadata && typeof payload.tool_metadata === "object" ? payload.tool_metadata : {}),
     session_title: cleanTitle,
     session_title_user_edited: true,
   };
-  await writeJsonFileAtomic(target, payload);
+  await writeJsonFileAtomic(target, payload, { compact: true });
+  await writeSessionMetadata(target, payload);
   await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
   return payload;
 }
@@ -4206,9 +4540,10 @@ async function updateWorkspaceHistoryPin(workspace, sessionId, pinned) {
   }
   const sessionDir = sessionDirectoryForWorkspace(workspace);
   const target = join(sessionDir, `session-${cleanId}.json`);
-  const payload = JSON.parse(await readFile(target, "utf8"));
+  const payload = normalizedStoredSession(await readStoredSessionSnapshot(target));
   payload.pinned = pinned === true;
-  await writeJsonFileAtomic(target, payload);
+  await writeJsonFileAtomic(target, payload, { compact: true });
+  await writeSessionMetadata(target, payload);
   await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
   return payload;
 }
@@ -5500,6 +5835,21 @@ async function handleApi(request, response, pathname) {
       }
     } catch (error) {
       json(response, 400, { error: error.message || "Could not list history" });
+    }
+    return true;
+  }
+
+  if (request.method === "GET" && pathname === "/api/history/snapshot") {
+    try {
+      const params = new URL(request.url, `http://localhost:${port}`).searchParams;
+      const workspace = workspaceFromHistoryRequest({
+        workspacePath: params.get("workspacePath"),
+        workspaceName: params.get("workspaceName"),
+      }, workspaceScope);
+      const event = await readWorkspaceHistorySnapshot(workspace, params.get("sessionId"));
+      json(response, 200, event);
+    } catch (error) {
+      json(response, error?.code === "ENOENT" ? 404 : 400, { error: error.message || "Could not load history" });
     }
     return true;
   }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from myharness.services.session_storage import (
     list_session_snapshots,
     load_session_by_id,
     load_session_snapshot,
+    migrate_session_snapshots,
     save_session_snapshot,
     title_matches_first_user,
     title_echoes_first_user,
@@ -72,6 +74,124 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
     assert snapshot["tool_metadata"]["task_focus_state"]["goal"] == "Fix compact carry-over"
     assert snapshot["tool_metadata"]["recent_verified_work"] == ["Focused session storage test passed"]
     assert snapshot["tool_metadata"]["user_input_archive"][0]["text"] == "중요한 과거 사용자 입력"
+
+
+def test_new_session_storage_uses_compact_utf8_snapshot_and_latest_pointer(tmp_path: Path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    latest_path = save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="시스템 지침",
+        messages=[ConversationMessage.from_user_text("한글 대화")],
+        usage=UsageSnapshot(),
+        session_id="compactutf8",
+    )
+    session_path = get_project_session_dir(project) / "session-compactutf8.json"
+    serialized = session_path.read_text(encoding="utf-8")
+    stored = json.loads(serialized)
+    pointer = json.loads(latest_path.read_text(encoding="utf-8"))
+
+    assert serialized.count("\n") == 1
+    assert "한글 대화" in serialized
+    assert "\\ud55c" not in serialized
+    assert stored["storage_version"] == session_storage._SESSION_STORAGE_VERSION
+    assert "system_prompt" not in stored
+    assert stored["system_prompt_hash"] == hashlib.sha256("시스템 지침".encode("utf-8")).hexdigest()
+    assert pointer == {
+        "format": session_storage._SESSION_POINTER_FORMAT,
+        "version": 1,
+        "session_id": "compactutf8",
+    }
+    assert latest_path.stat().st_size < 120
+    assert load_session_snapshot(project)["messages"] == stored["messages"]
+
+
+def test_migrate_session_snapshots_preserves_messages_and_compacts_legacy_files(tmp_path: Path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    session_dir = get_project_session_dir(project)
+    large_input = "보고서 본문 " * 20_000
+    large_output = "도구 결과 " * 20_000
+    legacy = {
+        "session_id": "legacy123",
+        "cwd": str(project),
+        "model": "claude-test",
+        "system_prompt": "과거 시스템 지침",
+        "messages": [ConversationMessage.from_user_text("유용한 과거 세션").model_dump(mode="json")],
+        "history_events": [
+            {"type": "tool_progress", "tool_name": "write_file", "tool_call_id": "write-1", "tool_input": {"content": large_input}, "message": "1초"},
+            {"type": "tool_progress", "tool_name": "write_file", "tool_call_id": "write-1", "tool_input": {"content": large_input}, "message": "2초"},
+            {"type": "tool_completed", "tool_name": "skill", "tool_call_id": "skill-1", "output": large_output, "is_error": False},
+            {"type": "assistant", "text": "완료"},
+        ],
+        "usage": UsageSnapshot().model_dump(mode="json"),
+        "tool_metadata": {},
+        "created_at": 100,
+        "summary": "보존할 세션",
+        "message_count": 1,
+        "pinned": False,
+    }
+    original = json.dumps(legacy, indent=2) + "\n"
+    session_path = session_dir / "session-legacy123.json"
+    latest_path = session_dir / "latest.json"
+    session_path.write_text(original, encoding="utf-8")
+    latest_path.write_text(original, encoding="utf-8")
+    before = session_path.stat().st_size + latest_path.stat().st_size
+
+    result = migrate_session_snapshots(project, force=True)
+
+    after = session_path.stat().st_size + latest_path.stat().st_size
+    stored = json.loads(session_path.read_text(encoding="utf-8"))
+    pointer = json.loads(latest_path.read_text(encoding="utf-8"))
+    assert result["migrated"] == 1
+    assert result["pointers"] == 1
+    assert after < before // 10
+    assert "system_prompt" not in stored
+    assert stored["system_prompt_hash"] == hashlib.sha256("과거 시스템 지침".encode("utf-8")).hexdigest()
+    assert stored["messages"] == legacy["messages"]
+    assert pointer["session_id"] == "legacy123"
+    progress = [event for event in stored["history_events"] if event["type"] == "tool_progress"]
+    assert progress == [{
+        "type": "tool_progress",
+        "tool_name": "write_file",
+        "tool_call_id": "write-1",
+        "tool_input": {},
+        "message": "2초",
+    }]
+    completed = next(event for event in stored["history_events"] if event["type"] == "tool_completed")
+    assert len(completed["output"]) <= session_storage._HISTORY_TOOL_OUTPUT_MAX_CHARS
+    assert load_session_snapshot(project)["messages"] == legacy["messages"]
+    assert (session_dir / "session-legacy123.meta").exists()
+    assert (session_dir / "latest.meta").exists()
+
+    second = migrate_session_snapshots(project, force=True)
+    assert second["migrated"] == 0
+    assert second["pointers"] == 0
+
+
+def test_migrate_session_snapshots_promotes_orphan_latest_before_pointer_conversion(tmp_path: Path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    session_dir = get_project_session_dir(project)
+    legacy = {
+        "session_id": "orphan123",
+        "model": "claude-test",
+        "system_prompt": "system",
+        "messages": [ConversationMessage.from_user_text("latest에만 있던 세션").model_dump(mode="json")],
+        "history_events": [],
+        "usage": UsageSnapshot().model_dump(mode="json"),
+        "created_at": 100,
+        "summary": "orphan",
+    }
+    (session_dir / "latest.json").write_text(json.dumps(legacy), encoding="utf-8")
+
+    result = migrate_session_snapshots(project, force=True)
+
+    assert result["promoted"] == 1
+    assert (session_dir / "session-orphan123.json").exists()
+    assert json.loads((session_dir / "latest.json").read_text(encoding="utf-8"))["format"] == session_storage._SESSION_POINTER_FORMAT
+    assert load_session_snapshot(project)["messages"] == legacy["messages"]
 
 
 def test_saved_session_list_uses_compact_metadata_without_loading_full_history(
@@ -211,6 +331,8 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
     project = tmp_path / "repo"
     project.mkdir()
     large_output = "fetch-head\n" + ("web evidence " * 8_000) + "\nfetch-tail"
+    large_tool_output = "tool-head\n" + ("skill instructions " * 8_000) + "\ntool-tail"
+    large_error_output = "error-head\n" + ("trace detail " * 8_000) + "\nerror-tail"
     large_content = "<html>\n" + ("<p>generated</p>\n" * 8_000) + "</html>"
     messages = [
         ConversationMessage.from_user_text("웹 자료를 확인해 보고서를 작성해줘"),
@@ -261,6 +383,18 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
                 "tool_name": "web_fetch",
                 "output": large_output,
                 "is_error": False,
+            },
+            {
+                "type": "tool_completed",
+                "tool_name": "skill",
+                "output": large_tool_output,
+                "is_error": False,
+            },
+            {
+                "type": "tool_completed",
+                "tool_name": "shell_command",
+                "output": large_error_output,
+                "is_error": True,
             },
             {"type": "assistant", "text": "완료했습니다."},
         ],
@@ -315,6 +449,16 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
         for event in replay_events
         if event["type"] == "tool_completed" and event["tool_name"] == "write_file"
     )
+    skill_completed = next(
+        event
+        for event in replay_events
+        if event["type"] == "tool_completed" and event["tool_name"] == "skill"
+    )
+    error_completed = next(
+        event
+        for event in replay_events
+        if event["type"] == "tool_completed" and event.get("is_error") is True
+    )
     assert started["tool_input"] == {
         "file_path": "outputs/report.html",
         "_history_replay_truncated": True,
@@ -332,6 +476,12 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
     assert completed["output"].startswith("fetch-head")
     assert completed["output"].endswith("fetch-tail")
     assert "이전 세션 빠른 복원을 위해 원문 축약" in completed["output"]
+    assert len(skill_completed["output"]) <= session_storage._HISTORY_TOOL_OUTPUT_MAX_CHARS
+    assert skill_completed["output"].startswith("tool-head")
+    assert skill_completed["output"].endswith("tool-tail")
+    assert len(error_completed["output"]) <= session_storage._HISTORY_TOOL_ERROR_OUTPUT_MAX_CHARS
+    assert error_completed["output"].startswith("error-head")
+    assert error_completed["output"].endswith("error-tail")
 
     pending_progress = session_storage._sanitize_history_events([
         {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import time
@@ -13,7 +14,7 @@ import pytest
 import myharness.commands.registry as registry_module
 from myharness.commands.registry import CommandContext, create_default_command_registry
 from myharness.autopilot import RepoVerificationStep
-from myharness.config.paths import get_feedback_log_path, get_project_issue_file, get_project_pr_comments_file
+from myharness.config.paths import get_feedback_log_path, get_project_config_dir, get_project_issue_file, get_project_pr_comments_file
 from myharness.config.settings import load_settings, save_settings, Settings
 from myharness.coordinator.agent_definitions import AgentDefinition
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE
@@ -1039,10 +1040,28 @@ async def test_agents_session_files_and_reload_plugins_commands(tmp_path: Path, 
     session_path_result = await session_path_command.handler(session_path_args, context)
     assert "sessions" in session_path_result.message
 
+    legacy_session = get_project_config_dir(tmp_path) / "sessions" / "session-legacycmd.json"
+    legacy_session.write_text(json.dumps({
+        "session_id": "legacycmd",
+        "model": "test",
+        "system_prompt": "legacy system prompt",
+        "messages": [],
+        "history_events": [],
+        "usage": {},
+        "summary": "legacy command session",
+    }), encoding="utf-8")
+    optimize_command, optimize_args = registry.lookup("/session optimize")
+    optimize_result = await optimize_command.handler(optimize_args, context)
+    assert "세션 저장소 최적화 완료" in optimize_result.message
+    assert "system_prompt" not in json.loads(legacy_session.read_text(encoding="utf-8"))
+
     session_tag_command, session_tag_args = registry.lookup("/session tag smoke")
     session_tag_result = await session_tag_command.handler(session_tag_args, context)
     assert "smoke.json" in session_tag_result.message
     assert "smoke.md" in session_tag_result.message
+    smoke_snapshot = json.loads((get_project_config_dir(tmp_path) / "sessions" / "smoke.json").read_text(encoding="utf-8"))
+    assert smoke_snapshot.get("format") != "myharness-session-pointer"
+    assert isinstance(smoke_snapshot.get("messages"), list)
 
     tag_command, tag_args = registry.lookup("/tag alias-smoke")
     tag_result = await tag_command.handler(tag_args, context)

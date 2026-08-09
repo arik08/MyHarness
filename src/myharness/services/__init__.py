@@ -11,6 +11,7 @@ from myharness.services.session_storage import (
     export_session_markdown,
     get_project_session_dir,
     load_session_snapshot,
+    migrate_session_snapshots,
     save_session_snapshot,
 )
 from myharness.services.token_estimation import estimate_message_tokens, estimate_tokens
@@ -25,6 +26,7 @@ __all__ = [
     "export_session_markdown",
     "get_project_session_dir",
     "load_session_snapshot",
+    "migrate_session_snapshots",
     "save_session_snapshot",
     "summarize_messages",
 ]

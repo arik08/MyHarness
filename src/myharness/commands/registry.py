@@ -67,6 +67,7 @@ from myharness.services import (
     compact_conversation,
     compact_messages,
     estimate_conversation_tokens,
+    migrate_session_snapshots,
     summarize_messages,
 )
 from myharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
@@ -1008,6 +1009,16 @@ def create_default_command_registry(
             return CommandResult(message="\n".join(files) if files else "(비어 있음)")
         if tokens[0] == "path":
             return CommandResult(message=str(session_dir))
+        if tokens[0] == "optimize":
+            result = await asyncio.to_thread(migrate_session_snapshots, context.cwd, force=True)
+            saved_bytes = max(0, result["bytes_before"] - result["bytes_after"])
+            return CommandResult(
+                message=(
+                    f"세션 저장소 최적화 완료: 세션 {result['migrated']}개, 최신 포인터 {result['pointers']}개, "
+                    f"절감 {saved_bytes / (1024 * 1024):.1f}MB"
+                    + (f", 건너뜀 {result['skipped']}개" if result["skipped"] else "")
+                )
+            )
         if tokens[0] == "tag" and len(tokens) == 2:
             safe_name = "".join(character for character in tokens[1] if character.isalnum() or character in {"-", "_"})
             if not safe_name:
@@ -1023,7 +1034,10 @@ def create_default_command_registry(
             export_path = context.session_backend.export_markdown(cwd=context.cwd, messages=context.engine.messages)
             tagged_json = session_dir / f"{safe_name}.json"
             tagged_md = session_dir / f"{safe_name}.md"
-            shutil.copy2(snapshot_path, tagged_json)
+            saved_snapshot = context.session_backend.load_latest(context.cwd)
+            saved_session_id = str((saved_snapshot or {}).get("session_id") or "")
+            canonical_snapshot = session_dir / f"session-{saved_session_id}.json"
+            shutil.copy2(canonical_snapshot if canonical_snapshot.exists() else snapshot_path, tagged_json)
             shutil.copy2(export_path, tagged_md)
             return CommandResult(message=f"세션 태그를 저장했습니다: {safe_name}\n- {tagged_json}\n- {tagged_md}")
         if tokens[0] == "clear":
@@ -1031,7 +1045,7 @@ def create_default_command_registry(
                 shutil.rmtree(session_dir)
             session_dir.mkdir(parents=True, exist_ok=True)
             return CommandResult(message=f"세션 저장소를 비웠습니다: {session_dir}")
-        return CommandResult(message="사용법: /session [show|ls|path|tag NAME|clear]")
+        return CommandResult(message="사용법: /session [show|ls|path|optimize|tag NAME|clear]")
 
     async def _rewind_handler(args: str, context: CommandContext) -> CommandResult:
         turns = 1

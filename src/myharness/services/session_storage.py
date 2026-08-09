@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -41,7 +42,10 @@ _PERSISTED_TOOL_METADATA_KEYS = (
 )
 
 _SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_HISTORY_TOOL_OUTPUT_MAX_CHARS = 4_000
+_SESSION_STORAGE_VERSION = 2
+_SESSION_POINTER_FORMAT = "myharness-session-pointer"
+_HISTORY_TOOL_OUTPUT_MAX_CHARS = 1_000
+_HISTORY_TOOL_ERROR_OUTPUT_MAX_CHARS = 4_000
 _HISTORY_WEB_TOOL_OUTPUT_MAX_CHARS = 1_000
 _HISTORY_TOOL_INPUT_MAX_CHARS = 8_000
 _HISTORY_TOOL_INPUT_FIELD_MAX_CHARS = 1_000
@@ -103,6 +107,8 @@ _GENERIC_LINK_REFERENCE_RE = re.compile(
     r"^(?:이|그|저|요)?\s*(?:내용|영상|링크|페이지|자료|글|문서|사이트)"
     r"(?:\s*(?:설명|요약|정리|분석|봐|읽|알려|해줘|해주세요|줘|해달라|해|좀))*$"
 )
+
+_MIGRATED_SESSION_DIRS: set[Path] = set()
 
 
 def _sanitize_metadata(value: Any) -> Any:
@@ -465,10 +471,11 @@ def save_session_snapshot(
         fallback_now=now,
     )
     payload = {
+        "storage_version": _SESSION_STORAGE_VERSION,
         "session_id": sid,
         "cwd": str(Path(cwd).resolve()),
         "model": model,
-        "system_prompt": system_prompt,
+        "system_prompt_hash": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
         "messages": [message.model_dump(mode="json") for message in messages],
         "history_events": _sanitize_history_events(history_events),
         "usage": usage.model_dump(),
@@ -480,20 +487,36 @@ def save_session_snapshot(
         "message_count": len(messages),
         "pinned": existing_pinned,
     }
-    data = json.dumps(payload, indent=2) + "\n"
+    data = _serialize_snapshot(payload)
 
-    # Save as latest. Web sessions keep a tab/client-scoped latest pointer so
-    # simultaneous users in one project do not overwrite one shared pointer.
-    client_latest_name = _client_latest_file_name(tool_metadata)
-    latest_path = session_dir / (client_latest_name or "latest.json")
-    atomic_write_text(latest_path, data)
-    _write_snapshot_summary(latest_path, payload)
-
-    # Save by session ID
+    # Save the canonical snapshot first. A crash before the small latest pointer
+    # update still leaves the complete session recoverable by its stable ID.
     atomic_write_text(session_path, data)
     _write_snapshot_summary(session_path, payload)
 
+    # Web sessions keep a tab/client-scoped latest pointer so simultaneous
+    # users in one project do not overwrite one shared latest selection.
+    client_latest_name = _client_latest_file_name(tool_metadata)
+    latest_path = session_dir / (client_latest_name or "latest.json")
+    atomic_write_text(latest_path, _serialize_latest_pointer(sid))
+    _write_snapshot_summary(latest_path, payload)
+
     return latest_path
+
+
+def _serialize_snapshot(payload: dict[str, Any]) -> str:
+    """Serialize session data without ASCII escaping or presentation whitespace."""
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+def _serialize_latest_pointer(session_id: str) -> str:
+    return _serialize_snapshot(
+        {
+            "format": _SESSION_POINTER_FORMAT,
+            "version": 1,
+            "session_id": session_id,
+        }
+    )
 
 
 def _client_latest_file_name(tool_metadata: dict[str, object] | None) -> str:
@@ -536,7 +559,9 @@ def _sanitize_history_events(history_events: list[dict[str, Any]] | None) -> lis
         elif event_type == "tool_completed" and isinstance(sanitized.get("output"), str):
             tool_name = str(sanitized.get("tool_name") or "").lower()
             max_chars = (
-                _HISTORY_WEB_TOOL_OUTPUT_MAX_CHARS
+                _HISTORY_TOOL_ERROR_OUTPUT_MAX_CHARS
+                if sanitized.get("is_error") is True
+                else _HISTORY_WEB_TOOL_OUTPUT_MAX_CHARS
                 if "web_fetch" in tool_name or "web_search" in tool_name
                 else _HISTORY_TOOL_OUTPUT_MAX_CHARS
             )
@@ -679,21 +704,172 @@ def _sanitize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _load_snapshot_file(path: Path) -> dict[str, Any] | None:
+def _read_json_object(path: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
-    if not isinstance(payload, dict):
+    return payload if isinstance(payload, dict) else None
+
+
+def _pointer_session_id(payload: dict[str, Any]) -> str:
+    if payload.get("format") != _SESSION_POINTER_FORMAT:
+        return ""
+    session_id = str(payload.get("session_id") or "").strip()
+    return session_id if _SAFE_SESSION_ID_RE.fullmatch(session_id) else ""
+
+
+def _load_snapshot_file(path: Path) -> dict[str, Any] | None:
+    payload = _read_json_object(path)
+    if payload is None:
         return None
+    pointer_session_id = _pointer_session_id(payload)
+    if pointer_session_id:
+        target = path.parent / f"session-{pointer_session_id}.json"
+        if target == path:
+            return None
+        payload = _read_json_object(target)
+        if payload is None or _pointer_session_id(payload):
+            return None
     try:
         return _sanitize_snapshot_payload(payload)
     except ValueError:
         return None
 
 
+def _storage_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    stored = _sanitize_snapshot_payload(dict(payload))
+    system_prompt = stored.pop("system_prompt", None)
+    if isinstance(system_prompt, str) and system_prompt and not stored.get("system_prompt_hash"):
+        stored["system_prompt_hash"] = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+    stored["storage_version"] = _SESSION_STORAGE_VERSION
+    return stored
+
+
+def _file_fingerprint(path: Path) -> tuple[int, int] | None:
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+    return stat_result.st_size, stat_result.st_mtime_ns
+
+
+def _rewrite_if_unchanged(path: Path, data: str, expected: tuple[int, int]) -> bool:
+    if _file_fingerprint(path) != expected:
+        return False
+    atomic_write_text(path, data)
+    return True
+
+
+def _migrate_named_snapshot(path: Path) -> tuple[dict[str, Any] | None, bool, int, int]:
+    """Migrate one canonical snapshot while preserving model continuation data."""
+    fingerprint = _file_fingerprint(path)
+    if fingerprint is None:
+        return None, False, 0, 0
+    try:
+        original = path.read_text(encoding="utf-8")
+        payload = json.loads(original)
+    except (json.JSONDecodeError, OSError):
+        return None, False, 0, 0
+    if not isinstance(payload, dict) or _pointer_session_id(payload):
+        return None, False, 0, 0
+    try:
+        stored = _storage_payload(payload)
+    except ValueError:
+        return None, False, 0, 0
+    serialized = _serialize_snapshot(stored)
+    rewritten = original != serialized
+    if rewritten and not _rewrite_if_unchanged(path, serialized, fingerprint):
+        return None, False, 0, 0
+    _write_snapshot_summary(path, stored)
+    return stored, rewritten, len(original.encode("utf-8")), len(serialized.encode("utf-8"))
+
+
+def migrate_session_snapshots(cwd: str | Path, *, force: bool = False) -> dict[str, int]:
+    """Upgrade legacy session files without deleting conversations or model state."""
+    session_dir = get_project_session_dir(cwd).resolve()
+    if not force and session_dir in _MIGRATED_SESSION_DIRS:
+        return {
+            "migrated": 0,
+            "pointers": 0,
+            "promoted": 0,
+            "skipped": 0,
+            "bytes_before": 0,
+            "bytes_after": 0,
+        }
+
+    result = {
+        "migrated": 0,
+        "pointers": 0,
+        "promoted": 0,
+        "skipped": 0,
+        "bytes_before": 0,
+        "bytes_after": 0,
+    }
+    snapshots: dict[str, dict[str, Any]] = {}
+    for path in sorted(session_dir.glob("session-*.json")):
+        payload, rewritten, before, after = _migrate_named_snapshot(path)
+        if payload is None:
+            result["skipped"] += 1
+            continue
+        session_id = str(payload.get("session_id") or path.stem.removeprefix("session-"))
+        snapshots[session_id] = payload
+        if rewritten:
+            result["migrated"] += 1
+            result["bytes_before"] += before
+            result["bytes_after"] += after
+
+    latest_paths = [session_dir / "latest.json", *sorted(session_dir.glob("latest-*.json"))]
+    for latest_path in latest_paths:
+        fingerprint = _file_fingerprint(latest_path)
+        if fingerprint is None:
+            continue
+        raw = _read_json_object(latest_path)
+        if raw is None:
+            result["skipped"] += 1
+            continue
+        session_id = _pointer_session_id(raw)
+        payload = snapshots.get(session_id) if session_id else None
+        if not session_id:
+            try:
+                payload = _storage_payload(raw)
+            except ValueError:
+                result["skipped"] += 1
+                continue
+            session_id = str(payload.get("session_id") or "").strip()
+            if not _SAFE_SESSION_ID_RE.fullmatch(session_id):
+                result["skipped"] += 1
+                continue
+            target = session_dir / f"session-{session_id}.json"
+            if not target.exists():
+                serialized = _serialize_snapshot(payload)
+                atomic_write_text(target, serialized)
+                _write_snapshot_summary(target, payload)
+                snapshots[session_id] = payload
+                result["promoted"] += 1
+            else:
+                payload = snapshots.get(session_id) or _load_snapshot_file(target)
+            pointer_text = _serialize_latest_pointer(session_id)
+            original_size = fingerprint[0]
+            if not _rewrite_if_unchanged(latest_path, pointer_text, fingerprint):
+                result["skipped"] += 1
+                continue
+            result["pointers"] += 1
+            result["bytes_before"] += original_size
+            result["bytes_after"] += len(pointer_text.encode("utf-8"))
+        if payload is None:
+            payload = _load_snapshot_file(session_dir / f"session-{session_id}.json")
+        if payload is not None:
+            _write_snapshot_summary(latest_path, payload)
+
+    if result["skipped"] == 0:
+        _MIGRATED_SESSION_DIRS.add(session_dir)
+    return result
+
+
 def load_session_snapshot(cwd: str | Path) -> dict[str, Any] | None:
     """Load the most recent session snapshot for the project."""
+    migrate_session_snapshots(cwd)
     session_dir = get_project_session_dir(cwd)
     path = session_dir / "latest.json"
     if not path.exists():
@@ -804,6 +980,7 @@ def _is_hidden_worker_snapshot(data: dict[str, Any]) -> bool:
 
 def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[dict[str, Any]]:
     """List saved sessions for the project, newest first."""
+    migrate_session_snapshots(cwd)
     session_dir = get_project_session_dir(cwd)
     sessions: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
@@ -873,6 +1050,7 @@ def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | Non
     # Try named session first
     path = session_dir / f"session-{session_id}.json"
     if path.exists():
+        _migrate_named_snapshot(path)
         data = _load_snapshot_file(path)
         if data is not None and _is_hidden_worker_snapshot(data):
             return None
@@ -895,19 +1073,22 @@ def delete_session_by_id(cwd: str | Path, session_id: str) -> bool:
     session_dir = get_project_session_dir(cwd)
     deleted = False
 
+    for latest_path in [session_dir / "latest.json", *session_dir.glob("latest-*.json")]:
+        if latest_path.exists():
+            raw = _read_json_object(latest_path)
+            latest_session_id = _pointer_session_id(raw) if raw is not None else ""
+            if not latest_session_id and raw is not None:
+                latest_session_id = str(raw.get("session_id") or "")
+            if latest_session_id == session_id:
+                latest_path.unlink()
+                _snapshot_summary_path(latest_path).unlink(missing_ok=True)
+                deleted = True
+
     session_path = session_dir / f"session-{session_id}.json"
     if session_path.exists():
         session_path.unlink()
         _snapshot_summary_path(session_path).unlink(missing_ok=True)
         deleted = True
-
-    for latest_path in [session_dir / "latest.json", *session_dir.glob("latest-*.json")]:
-        if latest_path.exists():
-            data = _load_snapshot_file(latest_path)
-            if data is not None and data.get("session_id") == session_id:
-                latest_path.unlink()
-                _snapshot_summary_path(latest_path).unlink(missing_ok=True)
-                deleted = True
 
     documents_dir = session_document_dir_for_delete(cwd, session_id)
     if documents_dir is not None and documents_dir.exists() and documents_dir.is_dir():
