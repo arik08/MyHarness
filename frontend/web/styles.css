@@ -760,7 +760,7 @@ a:focus-visible {
 }
 
 .brand-command,
-.fullscreen-command,
+.marketplace-command,
 .settings-command,
 .theme-command,
 .sidebar-toggle {
@@ -780,7 +780,7 @@ a:focus-visible {
 }
 
 .brand-command,
-.fullscreen-command,
+.marketplace-command,
 .settings-command,
 .theme-command,
 .sidebar-toggle {
@@ -788,7 +788,7 @@ a:focus-visible {
 }
 
 .brand-command:hover,
-.fullscreen-command:hover,
+.marketplace-command:hover,
 .settings-command:hover,
 .theme-command:hover,
 .sidebar-toggle:hover {
@@ -796,7 +796,7 @@ a:focus-visible {
   color: var(--ink);
 }
 
-.fullscreen-command svg,
+.marketplace-command svg,
 .settings-command svg,
 .theme-command svg,
 .sidebar-toggle svg {
@@ -815,7 +815,7 @@ a:focus-visible {
 }
 
 .brand-command::after,
-.fullscreen-command::after,
+.marketplace-command::after,
 .settings-command::after,
 .theme-command::after,
 .sidebar-toggle::after {
@@ -846,8 +846,8 @@ a:focus-visible {
 .sidebar-toggle:focus-visible::after,
 .brand-command:hover::after,
 .brand-command:focus-visible::after,
-.fullscreen-command:hover::after,
-.fullscreen-command:focus-visible::after,
+.marketplace-command:hover::after,
+.marketplace-command:focus-visible::after,
 .settings-command:hover::after,
 .settings-command:focus-visible::after,
 .theme-command:hover::after,
@@ -892,7 +892,7 @@ a:focus-visible {
 }
 
 .app-shell.sidebar-collapsed .brand-command,
-.app-shell.sidebar-collapsed .fullscreen-command,
+.app-shell.sidebar-collapsed .marketplace-command,
 .app-shell.sidebar-collapsed .settings-command,
 .app-shell.sidebar-collapsed .theme-command {
   display: none;
@@ -2990,6 +2990,88 @@ a:focus-visible {
   gap: 8px;
   margin-left: auto;
   z-index: 3;
+}
+
+.concurrency-status {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.concurrency-status-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.concurrency-status-tooltip {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  min-width: 214px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition: opacity 140ms ease, transform 140ms cubic-bezier(0.25, 1, 0.5, 1), visibility 0s linear 140ms;
+  visibility: hidden;
+}
+
+.concurrency-status:hover .concurrency-status-tooltip,
+.concurrency-status:focus-within .concurrency-status-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0s;
+  visibility: visible;
+}
+
+.concurrency-status-tooltip > strong {
+  padding: 2px 5px 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.concurrency-status-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 3px 5px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.concurrency-status-row svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.55;
+}
+
+.concurrency-status-value {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .header-icon-button {
@@ -11366,6 +11448,23 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   line-height: 1.42;
 }
 
+.concurrency-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.concurrency-settings-grid .setting-field {
+  margin: 0;
+}
+
+.concurrency-settings-note {
+  margin-top: 18px;
+}
+
 @media (max-width: 640px) {
   .modal-card .modal-close {
     right: 0;
@@ -11399,6 +11498,10 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   }
 
   .scope-segmented-control {
+    grid-template-columns: 1fr;
+  }
+
+  .concurrency-settings-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -11617,6 +11720,20 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@media (max-width: 700px) {
+  .header-actions {
+    gap: 4px;
+  }
+
+  .header-actions > .status-pill {
+    display: none;
+  }
+
+  .concurrency-status-tooltip {
+    right: -40px;
   }
 }
 

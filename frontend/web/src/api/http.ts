@@ -14,6 +14,10 @@ async function readError(response: Response): Promise<Error> {
   return error;
 }
 
+export function isUnknownSessionError(error: unknown) {
+  return error instanceof Error && error.message.trim() === "Unknown session";
+}
+
 function adminModeHeaders(): Record<string, string> {
   try {
     return localStorage.getItem("myharness:adminMode") === "1" ? { "X-MyHarness-Admin-Mode": "1" } : {};

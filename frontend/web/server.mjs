@@ -209,8 +209,20 @@ const shellOutputMaxChars = Number.isFinite(configuredShellOutputMaxChars)
 const tokenCountMaxChars = 200_000;
 const modelOutputTokenDefault = 42_000;
 const composeTargetOutputTokenMax = 40_000;
-const maxActiveSessions = Math.max(1, Number(process.env.MYHARNESS_MAX_ACTIVE_SESSIONS || 20));
-const maxBusySessions = Math.max(1, Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS || 8));
+const defaultMaxActiveSessions = Math.min(500, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_ACTIVE_SESSIONS) || 20)));
+const defaultMaxBusySessions = Math.min(100, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS) || 8)));
+const defaultMaxBusySessionsPerClient = Math.min(20, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS_PER_CLIENT) || 3)));
+const defaultBackendIdleClientCloseMs = Math.max(
+  10,
+  Number(process.env.MYHARNESS_BACKEND_IDLE_CLIENT_CLOSE_MS) || 30 * 60 * 1000,
+);
+const defaultIdleSessionTimeoutMinutes = Math.min(1440, Math.max(
+  1,
+  Math.round(defaultBackendIdleClientCloseMs / 60_000),
+));
+let maxActiveSessions = defaultMaxActiveSessions;
+let maxBusySessions = defaultMaxBusySessions;
+let maxBusySessionsPerClient = defaultMaxBusySessionsPerClient;
 const currentSessionBusyMessage = "현재 대화가 응답 중입니다. 답변이 끝난 뒤 다시 시도하거나 텍스트로 이어서 지시하세요.";
 const clientResponseLimitMessage = "현재 브라우저에서 여러 작업이 동시에 진행 중입니다. 진행 중인 응답이 끝난 뒤 다시 시도하세요.";
 const serverResponseLimitMessage = "여러 명이 동시에 작업 중이라 서버가 바쁩니다. 다른 응답이 끝난 뒤 다시 시도하세요.";
@@ -224,10 +236,7 @@ const modelOutputTokenCaps = Object.freeze({
   "gpt-5.4-mini": 128_000,
 });
 const configurableOutputTokenModels = Object.freeze(Object.keys(modelOutputTokenCaps));
-const backendIdleClientCloseMs = Math.max(
-  10,
-  Number(process.env.MYHARNESS_BACKEND_IDLE_CLIENT_CLOSE_MS || 30 * 60 * 1000),
-);
+let backendIdleClientCloseMs = defaultBackendIdleClientCloseMs;
 const sseHeartbeatMs = Math.max(10, Number(process.env.MYHARNESS_SSE_HEARTBEAT_MS || 15_000));
 
 function errorPayload(error) {
@@ -2384,7 +2393,7 @@ async function submitAiArtifactEdit(session, artifactPath, comments) {
   if (session.busy) {
     throw httpError(409, currentSessionBusyMessage);
   }
-  if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
+  if (session.clientId && countBusySessionsForClient(session.clientId) >= maxBusySessionsPerClient) {
     throw httpError(429, clientResponseLimitMessage);
   }
   if (countBusySessions() >= maxBusySessions) {
@@ -2980,6 +2989,115 @@ async function saveWorkspaceScopeSettings(body = {}, request = null) {
   });
   workspaceScopeMode = mode;
   return readWorkspaceScopeSettings(request);
+}
+
+const concurrencySettingBounds = Object.freeze({
+  maxActiveSessions: { min: 1, max: 500, label: "열린 작업 세션" },
+  maxBusySessions: { min: 1, max: 100, label: "동시 AI 응답" },
+  maxBusySessionsPerClient: { min: 1, max: 20, label: "브라우저당 동시 AI 응답" },
+  idleSessionTimeoutMinutes: { min: 1, max: 1440, label: "유휴 세션 종료 시간" },
+});
+
+function validatedConcurrencyInteger(value, key) {
+  const bounds = concurrencySettingBounds[key];
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < bounds.min || number > bounds.max) {
+    throw httpError(400, `${bounds.label} 값은 ${bounds.min}~${bounds.max} 사이의 정수여야 합니다.`);
+  }
+  return number;
+}
+
+function normalizedConcurrencySettings(raw = {}, { strict = false } = {}) {
+  const defaults = {
+    maxActiveSessions: defaultMaxActiveSessions,
+    maxBusySessions: defaultMaxBusySessions,
+    maxBusySessionsPerClient: defaultMaxBusySessionsPerClient,
+    idleSessionTimeoutMinutes: defaultIdleSessionTimeoutMinutes,
+  };
+  const source = {
+    maxActiveSessions: raw.maxActiveSessions ?? raw.max_active_sessions,
+    maxBusySessions: raw.maxBusySessions ?? raw.max_busy_sessions,
+    maxBusySessionsPerClient: raw.maxBusySessionsPerClient ?? raw.max_busy_sessions_per_client,
+    idleSessionTimeoutMinutes: raw.idleSessionTimeoutMinutes ?? raw.idle_session_timeout_minutes,
+  };
+  const values = {};
+  for (const key of Object.keys(defaults)) {
+    try {
+      values[key] = validatedConcurrencyInteger(source[key] ?? defaults[key], key);
+    } catch (error) {
+      if (strict) throw error;
+      values[key] = validatedConcurrencyInteger(defaults[key], key);
+    }
+  }
+  if (values.maxBusySessions > values.maxActiveSessions) {
+    if (strict) throw httpError(400, "동시 AI 응답 수는 열린 작업 세션 수보다 클 수 없습니다.");
+    values.maxBusySessions = Math.min(values.maxBusySessions, values.maxActiveSessions);
+  }
+  if (values.maxBusySessionsPerClient > values.maxBusySessions) {
+    if (strict) throw httpError(400, "브라우저당 동시 AI 응답 수는 전체 동시 AI 응답 수보다 클 수 없습니다.");
+    values.maxBusySessionsPerClient = Math.min(values.maxBusySessionsPerClient, values.maxBusySessions);
+  }
+  return values;
+}
+
+function applyConcurrencySettings(values, { rescheduleIdleSessions = false } = {}) {
+  maxActiveSessions = values.maxActiveSessions;
+  maxBusySessions = values.maxBusySessions;
+  maxBusySessionsPerClient = values.maxBusySessionsPerClient;
+  backendIdleClientCloseMs = values.idleSessionTimeoutMinutes * 60_000;
+  if (!rescheduleIdleSessions) return;
+  for (const session of sessions.values()) {
+    if (session.clientCloseTimer) {
+      clearTimeout(session.clientCloseTimer);
+      session.clientCloseTimer = null;
+    }
+    scheduleIdleClientClose(session, "idle timeout setting changed");
+  }
+}
+
+function currentConcurrencySettings() {
+  return {
+    maxActiveSessions,
+    maxBusySessions,
+    maxBusySessionsPerClient,
+    idleSessionTimeoutMinutes: backendIdleClientCloseMs / 60_000,
+  };
+}
+
+function currentConcurrencyStatus(request) {
+  const params = new URL(request.url, `http://localhost:${port}`).searchParams;
+  const clientId = String(params.get("clientId") || "").trim();
+  return {
+    ...currentConcurrencySettings(),
+    activeSessions: [...sessions.values()].filter((session) => !session.shuttingDown).length,
+    busySessions: countBusySessions(),
+    busySessionsForClient: clientId ? countBusySessionsForClient(clientId) : 0,
+  };
+}
+
+async function loadConcurrencySettings() {
+  const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
+  if (!settings.web_concurrency || typeof settings.web_concurrency !== "object") {
+    return currentConcurrencySettings();
+  }
+  const values = normalizedConcurrencySettings(settings.web_concurrency);
+  applyConcurrencySettings(values);
+  return currentConcurrencySettings();
+}
+
+async function saveConcurrencySettings(body = {}) {
+  const values = normalizedConcurrencySettings(body, { strict: true });
+  const settingsPath = join(globalConfigDir(), "settings.json");
+  await mutateJsonFile(settingsPath, (settings) => {
+    settings.web_concurrency = {
+      max_active_sessions: values.maxActiveSessions,
+      max_busy_sessions: values.maxBusySessions,
+      max_busy_sessions_per_client: values.maxBusySessionsPerClient,
+      idle_session_timeout_minutes: values.idleSessionTimeoutMinutes,
+    };
+  });
+  applyConcurrencySettings(values, { rescheduleIdleSessions: true });
+  return currentConcurrencySettings();
 }
 
 function normalizeLearnedSkillsMode(value, fallback = "hide") {
@@ -4937,7 +5055,7 @@ async function createBackendSession(options = {}) {
   if ([...sessions.values()].filter((session) => !session.shuttingDown).length >= maxActiveSessions) {
     throw httpError(429, activeSessionLimitMessage);
   }
-  if (clientId && countBusySessionsForClient(clientId) >= 3) {
+  if (clientId && countBusySessionsForClient(clientId) >= maxBusySessionsPerClient) {
     throw httpError(429, clientResponseLimitMessage);
   }
   if (countBusySessions() >= maxBusySessions) {
@@ -5156,6 +5274,12 @@ function liveSessionPayload(session) {
 
 const settingsAdminMessage = "Global settings can only be changed from the local MyHarness host";
 const settingsApiRoutes = {
+  "/api/settings/concurrency": {
+    read: (request) => currentConcurrencyStatus(request),
+    write: (body) => saveConcurrencySettings(body),
+    readError: "Could not read concurrency settings",
+    writeError: "Could not save concurrency settings",
+  },
   "/api/settings/pgpt": {
     read: () => readPgptSettings(),
     write: (body) => savePgptSettings(body),
@@ -5920,7 +6044,7 @@ async function handleApi(request, response, pathname) {
         json(response, ok ? 200 : 409, { ok, queued, steering: !queued });
         return true;
       }
-      if (session.clientId && countBusySessionsForClient(session.clientId) >= 3) {
+      if (session.clientId && countBusySessionsForClient(session.clientId) >= maxBusySessionsPerClient) {
         json(response, 429, { error: clientResponseLimitMessage });
         return true;
       }
@@ -6180,6 +6304,7 @@ if (!String(process.env.MYHARNESS_SHELL || "").trim()) {
   const savedShellSettings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
   shellPreference = normalizeShellPreference(savedShellSettings.shell || savedShellSettings.web_shell || shellPreference);
 }
+await loadConcurrencySettings();
 
 let retriedLoopbackListen = false;
 server.on("error", (error) => {

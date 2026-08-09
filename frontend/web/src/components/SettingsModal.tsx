@@ -7,6 +7,7 @@ import {
   changeWorkspaceScope,
   changeYoloMode,
   openFolderDialog,
+  readConcurrencySettings,
   readLearnedSkillsSettings,
   readOutputTokenSettings,
   readPgptSettings,
@@ -15,7 +16,9 @@ import {
   readWorkspaceScopeSettings,
   readYoloModeSettings,
   saveOutputTokenSettings,
+  saveConcurrencySettings,
   savePgptSettings,
+  type ConcurrencySettings,
   type OutputTokenSettings,
   type PgptSettings,
   type UserStats,
@@ -39,7 +42,7 @@ function handleBackdropClick(event: MouseEvent<HTMLDivElement>, onDismiss: () =>
   }
 }
 
-type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "gpt56-context" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt" | "admin";
+type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "gpt56-context" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt" | "concurrency" | "admin";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [view, setView] = useState<SettingsView>("home");
@@ -124,6 +127,10 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
               <strong>Yolo 모드</strong>
               <small>명령 실행과 파일 작업 권한 자동 승인 여부를 정합니다.</small>
             </button>
+            <button type="button" className="settings-row" onClick={() => onSelect("concurrency")} disabled={!serverHostSettingsAccess}>
+              <strong>동시 사용 제한</strong>
+              <small>세션, AI 응답, 브라우저별 실행 수와 유휴 종료 시간을 관리합니다.</small>
+            </button>
           </>
         ) : null}
         <button type="button" className="settings-row" onClick={() => onSelect("stats")}>
@@ -165,6 +172,7 @@ function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack:
   if (view === "download") return <DownloadSettings onBack={onBack} />;
   if (view === "shell") return <ShellSettings onBack={onBack} />;
   if (view === "yolo") return <YoloSettings onBack={onBack} />;
+  if (view === "concurrency") return <ConcurrencySettingsForm onBack={onBack} />;
   if (view === "stats") return <UserStatsSettings onBack={onBack} />;
   if (view === "admin") return <AdminModeSettings onBack={onBack} />;
   if (view === "restart") return <RestartSessionSettings onBack={onBack} onClose={onClose} />;
@@ -227,7 +235,7 @@ function AdminModeSettings({ onBack }: { onBack: () => void }) {
 }
 
 function isServerHostSettingsView(view: SettingsView) {
-  return view === "shell" || view === "yolo" || view === "workspace" || view === "learned-skills" || view === "pgpt";
+  return view === "shell" || view === "yolo" || view === "workspace" || view === "learned-skills" || view === "pgpt" || view === "concurrency";
 }
 
 function ServerHostOnlySettings({ onBack }: { onBack: () => void }) {
@@ -287,7 +295,7 @@ function NumericSetting({ label, helper, min, max, step, value, onChange }: { la
   return (
     <label className="setting-field">
       <span className="setting-field-label">{label}</span>
-      <input type="number" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.currentTarget.value))} />
+      <input type="number" aria-label={label} min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.currentTarget.value))} />
       <small>{helper}</small>
     </label>
   );
@@ -396,6 +404,72 @@ function OutputTokenSettingsForm({ onBack }: { onBack: () => void }) {
         <button type="button" className="primary" onClick={() => void save()} disabled={!settings}>저장</button>
       </div>
       <p className="workspace-error">{error}</p>
+    </>
+  );
+}
+
+const defaultConcurrencySettings: ConcurrencySettings = {
+  maxActiveSessions: 20,
+  maxBusySessions: 8,
+  maxBusySessionsPerClient: 3,
+  idleSessionTimeoutMinutes: 30,
+};
+
+function ConcurrencySettingsForm({ onBack }: { onBack: () => void }) {
+  const [settings, setSettings] = useState<ConcurrencySettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    void readConcurrencySettings()
+      .then(setSettings)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+  }, []);
+
+  function update(value: Partial<ConcurrencySettings>) {
+    setSettings((current) => current ? { ...current, ...value } : current);
+  }
+
+  async function save() {
+    if (!settings) return;
+    if (settings.maxBusySessions > settings.maxActiveSessions) {
+      setError("동시 AI 응답 수는 열린 작업 세션 수보다 클 수 없습니다.");
+      return;
+    }
+    if (settings.maxBusySessionsPerClient > settings.maxBusySessions) {
+      setError("브라우저당 동시 AI 응답 수는 전체 동시 AI 응답 수보다 클 수 없습니다.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      setSettings(await saveConcurrencySettings(settings));
+      onBack();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <SettingsHeader title="동시 사용 제한">서버 전체와 브라우저별 동시 작업 수, 연결이 끊긴 세션의 유지 시간을 관리합니다.</SettingsHeader>
+      {!settings ? <p className="settings-helper">설정을 불러오는 중입니다...</p> : (
+        <div className="concurrency-settings-grid">
+          <NumericSetting label="열린 작업 세션" helper="새 대화를 포함해 서버에 열어둘 수 있는 백엔드 세션 수입니다." min={1} max={500} step={1} value={settings.maxActiveSessions} onChange={(value) => update({ maxActiveSessions: value })} />
+          <NumericSetting label="동시 AI 응답" helper="서버 전체에서 한 번에 응답을 생성할 수 있는 세션 수입니다." min={1} max={100} step={1} value={settings.maxBusySessions} onChange={(value) => update({ maxBusySessions: value })} />
+          <NumericSetting label="브라우저당 동시 AI 응답" helper="같은 브라우저가 동시에 실행할 수 있는 응답 수입니다." min={1} max={20} step={1} value={settings.maxBusySessionsPerClient} onChange={(value) => update({ maxBusySessionsPerClient: value })} />
+          <NumericSetting label="유휴 세션 종료 (분)" helper="연결이 끊기고 작업도 없는 세션을 종료하기까지 기다리는 시간입니다." min={1} max={1440} step={1} value={settings.idleSessionTimeoutMinutes} onChange={(value) => update({ idleSessionTimeoutMinutes: value })} />
+        </div>
+      )}
+      <p className="settings-helper concurrency-settings-note">현재 실행 중인 작업은 강제로 종료하지 않습니다. 저장한 제한은 새 세션과 다음 응답부터 적용됩니다.</p>
+      <div className="modal-actions">
+        <button type="button" onClick={onBack} disabled={saving}>뒤로</button>
+        <button type="button" onClick={() => setSettings(defaultConcurrencySettings)} disabled={!settings || saving}>기본값 복원</button>
+        <button type="button" className="primary" aria-busy={saving} onClick={() => void save()} disabled={!settings || saving}>저장</button>
+      </div>
+      <p className="workspace-error" role="alert">{error}</p>
     </>
   );
 }

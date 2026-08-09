@@ -28,6 +28,38 @@ export function saveOutputTokenSettings(values: Record<string, number>) {
   return postJson<OutputTokenSettings>("/api/settings/output-tokens", { values });
 }
 
+export type ConcurrencySettings = {
+  maxActiveSessions: number;
+  maxBusySessions: number;
+  maxBusySessionsPerClient: number;
+  idleSessionTimeoutMinutes: number;
+};
+
+export type ConcurrencyStatus = ConcurrencySettings & {
+  activeSessions: number;
+  busySessions: number;
+  busySessionsForClient: number;
+};
+
+export const concurrencySettingsChangedEvent = "myharness:concurrency-settings-changed";
+
+export function readConcurrencySettings() {
+  return getJson<ConcurrencySettings>("/api/settings/concurrency");
+}
+
+export function readConcurrencyStatus(clientId: string) {
+  const query = new URLSearchParams({ clientId });
+  return getJson<ConcurrencyStatus>(`/api/settings/concurrency?${query.toString()}`);
+}
+
+export async function saveConcurrencySettings(settings: ConcurrencySettings) {
+  const saved = await postJson<ConcurrencySettings>("/api/settings/concurrency", settings);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(concurrencySettingsChangedEvent));
+  }
+  return saved;
+}
+
 export function readShellSettings() {
   return getJson<{ shell: string }>("/api/settings/shell");
 }

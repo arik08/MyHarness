@@ -1291,6 +1291,40 @@ describe("Composer", () => {
     }));
   });
 
+  it("recreates an expired backend session and retries the message once", async () => {
+    const user = userEvent.setup();
+    vi.mocked(sendMessage)
+      .mockRejectedValueOnce(new Error("Unknown session"))
+      .mockResolvedValueOnce({ ok: true });
+    vi.mocked(startSession).mockResolvedValueOnce({ sessionId: "session-recovered" });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-expired",
+          clientId: "client-1",
+          workspacePath: "C:/demo",
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "세션 복구 질문");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: "client-1",
+      cwd: "C:/demo",
+    })));
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: "session-recovered",
+      line: "세션 복구 질문",
+    }));
+  });
+
   it("shows a fresh-chat user message before the new backend session finishes starting", async () => {
     const user = userEvent.setup();
     let resolveStart!: (value: { sessionId: string }) => void;

@@ -357,11 +357,33 @@ test("bounds captured shell output before the command exits", async (t) => {
   assert.match(payload.stdout, /^x{128}\n\n\[output truncated\]$/);
 });
 
-test("explains session limits as multi-user busy state", async (t) => {
-  const app = await startWebServer({
-    env: { MYHARNESS_WORKSPACE_SCOPE: "shared", MYHARNESS_MAX_ACTIVE_SESSIONS: "1" },
-  });
+test("saves concurrency settings and applies the active-session limit immediately", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
   t.after(() => app.stop());
+
+  const defaultsResponse = await fetch(`${app.baseUrl}/api/settings/concurrency`);
+  assert.equal(defaultsResponse.status, 200);
+  assert.deepEqual(await defaultsResponse.json(), {
+    maxActiveSessions: 20,
+    maxBusySessions: 8,
+    maxBusySessionsPerClient: 3,
+    idleSessionTimeoutMinutes: 30,
+    activeSessions: 0,
+    busySessions: 0,
+    busySessionsForClient: 0,
+  });
+
+  const savedResponse = await fetch(`${app.baseUrl}/api/settings/concurrency`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({
+      maxActiveSessions: 1,
+      maxBusySessions: 1,
+      maxBusySessionsPerClient: 1,
+      idleSessionTimeoutMinutes: 5,
+    }),
+  });
+  assert.equal(savedResponse.status, 200);
 
   const firstResponse = await fetch(`${app.baseUrl}/api/session`, {
     method: "POST",
@@ -369,6 +391,17 @@ test("explains session limits as multi-user busy state", async (t) => {
     body: JSON.stringify({ clientId: "limit-a" }),
   });
   assert.equal(firstResponse.status, 200);
+
+  const statusResponse = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=limit-a`);
+  assert.deepEqual(await statusResponse.json(), {
+    maxActiveSessions: 1,
+    maxBusySessions: 1,
+    maxBusySessionsPerClient: 1,
+    idleSessionTimeoutMinutes: 5,
+    activeSessions: 1,
+    busySessions: 0,
+    busySessionsForClient: 0,
+  });
 
   const secondResponse = await fetch(`${app.baseUrl}/api/session`, {
     method: "POST",
@@ -379,6 +412,34 @@ test("explains session limits as multi-user busy state", async (t) => {
 
   assert.equal(secondResponse.status, 429);
   assert.match(secondPayload.error, /여러 명이 동시에 사용 중/);
+
+  const stored = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+  assert.deepEqual(stored.web_concurrency, {
+    max_active_sessions: 1,
+    max_busy_sessions: 1,
+    max_busy_sessions_per_client: 1,
+    idle_session_timeout_minutes: 5,
+  });
+});
+
+test("rejects inconsistent concurrency settings", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+
+  const response = await fetch(`${app.baseUrl}/api/settings/concurrency`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({
+      maxActiveSessions: 4,
+      maxBusySessions: 5,
+      maxBusySessionsPerClient: 2,
+      idleSessionTimeoutMinutes: 30,
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.match(payload.error, /열린 작업 세션 수보다 클 수 없습니다/);
 });
 
 test("keeps runtime choices client-scoped across shared workspace sessions", async (t) => {

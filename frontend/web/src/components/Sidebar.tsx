@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import { useAppState } from "../state/app-state";
 import { deleteHistory, hideHistory, historyPageSize, listHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
+import { isUnknownSessionError } from "../api/http";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import { currentConversationHistoryTitle, currentConversationTitle, isConversationResponseVisiblyBusy, isResponseVisiblyBusy } from "../state/selectors";
@@ -93,6 +94,19 @@ export function Sidebar() {
           value: nextSessionId,
         });
       } catch (error) {
+        if (isUnknownSessionError(error)) {
+          try {
+            const session = await startSession({
+              clientId: state.clientId,
+              cwd: nextWorkspace?.path || undefined,
+              ...runtimePreferencesFromState(state),
+            });
+            dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
+            return;
+          } catch (recoveryError) {
+            error = recoveryError;
+          }
+        }
         dispatch({
           type: "open_modal",
           modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
@@ -118,6 +132,19 @@ export function Sidebar() {
       });
       dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
     } catch (error) {
+      if (isUnknownSessionError(error)) {
+        try {
+          const session = await startSession({
+            clientId: state.clientId,
+            cwd: nextWorkspace?.path || undefined,
+            ...runtimePreferencesFromState(state),
+          });
+          dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
+          return;
+        } catch (recoveryError) {
+          error = recoveryError;
+        }
+      }
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
@@ -239,6 +266,31 @@ export function Sidebar() {
         value: nextHistoryId,
       });
     } catch (error) {
+      if (isUnknownSessionError(error)) {
+        try {
+          const session = await startSession({
+            clientId: state.clientId,
+            cwd: state.workspacePath || undefined,
+            ...runtimePreferencesFromState(state),
+          });
+          dispatch({
+            type: "session_started",
+            sessionId: session.sessionId,
+            clientId: state.clientId,
+          });
+          if (session.workspace) {
+            dispatch({ type: "set_workspace", workspace: session.workspace });
+          }
+          await sendBackendRequest(session.sessionId, state.clientId, {
+            type: "apply_select_command",
+            command: "resume",
+            value: nextHistoryId,
+          });
+          return;
+        } catch (recoveryError) {
+          error = recoveryError;
+        }
+      }
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
@@ -429,21 +481,6 @@ export function Sidebar() {
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
       dispatch({ type: "set_busy", value: false });
-    }
-  }
-
-  async function toggleFullscreen() {
-    try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-      } else {
-        await document.documentElement.requestFullscreen();
-      }
-    } catch (error) {
-      dispatch({
-        type: "open_modal",
-        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
-      });
     }
   }
 
@@ -801,16 +838,21 @@ export function Sidebar() {
         <a className="brand" href="#" aria-label="MyHarness 채팅 홈">
           <span className="brand-name">MyHarness</span>
         </a>
-        <button className="fullscreen-command" type="button" aria-label="브라우저 전체화면" data-tooltip="브라우저 전체화면" onClick={() => void toggleFullscreen()}>
+        <a
+          className="marketplace-command"
+          href="http://172.30.86.138:3334"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="스킬 내용 조회"
+          data-tooltip="스킬 내용 조회"
+        >
           <svg aria-hidden="true" viewBox="0 0 24 24">
-            <rect x="3" y="4" width="18" height="16" rx="2" />
-            <path d="M3 8h18" />
-            <path d="M8 13H6v-2" />
-            <path d="M16 13h2v-2" />
-            <path d="M8 15H6v2" />
-            <path d="M16 15h2v2" />
+            <path d="M3 9l1.5-5h15L21 9" />
+            <path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" />
+            <path d="M5 12v8h14v-8" />
+            <path d="M9 20v-5h6v5" />
           </svg>
-        </button>
+        </a>
         <button className="settings-command" type="button" aria-label="설정" data-tooltip="설정" onClick={() => dispatch({ type: "open_modal", modal: { kind: "settings" } })}>
           <svg aria-hidden="true" viewBox="0 0 24 24">
             <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />

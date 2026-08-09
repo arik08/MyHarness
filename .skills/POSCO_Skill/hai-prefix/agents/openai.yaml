@@ -1,5 +1,0 @@
-interface:
-  display_name: 하이! 접두어
-  short_description: 모든 사용자 응답의 맨 앞에 정확히 “하이!”를 붙이는 말투 스킬입니다. 사용자가 하이 인사 접두어, 하이로
-    시작하
-  default_prompt: $hai-prefix를 사용해 모든 응답을 하이!로 시작해줘

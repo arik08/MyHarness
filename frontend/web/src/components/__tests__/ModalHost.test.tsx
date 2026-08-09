@@ -7,7 +7,7 @@ import { AppStateProvider } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { restartSession } from "../../api/session";
 import { deleteWorkspace } from "../../api/workspaces";
-import { readUserStats } from "../../api/settings";
+import { readConcurrencySettings, readUserStats, saveConcurrencySettings } from "../../api/settings";
 
 vi.mock("../../api/session", () => ({
   restartSession: vi.fn(),
@@ -20,7 +20,9 @@ vi.mock("../../api/workspaces", () => ({
 
 vi.mock("../../api/settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/settings")>()),
+  readConcurrencySettings: vi.fn(),
   readUserStats: vi.fn(),
+  saveConcurrencySettings: vi.fn(),
 }));
 
 describe("ModalHost remote access helpers", () => {
@@ -46,6 +48,13 @@ describe("ModalHost remote access helpers", () => {
 describe("ModalHost download settings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(readConcurrencySettings).mockResolvedValue({
+      maxActiveSessions: 20,
+      maxBusySessions: 8,
+      maxBusySessionsPerClient: 3,
+      idleSessionTimeoutMinutes: 30,
+    });
+    vi.mocked(saveConcurrencySettings).mockImplementation(async (settings) => settings);
   });
 
   function renderDownloadSettingsModal() {
@@ -145,6 +154,7 @@ describe("ModalHost download settings", () => {
     expect(screen.queryByText("숨긴 히스토리와 완전 삭제 권한")).toBeNull();
     expect(screen.queryByRole("button", { name: /명령어 셀/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Yolo 모드/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /동시 사용 제한/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /작업공간 범위/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /자동학습 스킬 표시/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /P-GPT API 키/ })).toBeNull();
@@ -157,6 +167,7 @@ describe("ModalHost download settings", () => {
     expect(screen.getByText("관리자 모드 적용 중")).toBeTruthy();
     expect(screen.getByRole("button", { name: /명령어 셀/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Yolo 모드/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /동시 사용 제한/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /작업공간 범위/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /자동학습 스킬 표시/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /P-GPT API 키/ })).toBeTruthy();
@@ -171,7 +182,34 @@ describe("ModalHost download settings", () => {
     expect(localStorage.getItem("myharness:adminMode")).toBe("0");
     expect(screen.queryByText("숨긴 히스토리와 완전 삭제 권한")).toBeNull();
     expect(screen.queryByRole("button", { name: /명령어 셀/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /동시 사용 제한/ })).toBeNull();
     expect(screen.queryByText("Admin mode에서 변경")).toBeNull();
+  });
+
+  it("lets an admin update concurrency limits", async () => {
+    renderDownloadSettingsModal();
+
+    await userEvent.click(screen.getByRole("button", { name: /Admin mode/ }));
+    await userEvent.type(screen.getByLabelText("Admin mode 비밀번호"), "1");
+    await userEvent.click(screen.getByRole("button", { name: "Admin mode 진입" }));
+    await userEvent.click(screen.getByRole("button", { name: /동시 사용 제한/ }));
+
+    const activeSessions = await screen.findByRole("spinbutton", { name: "열린 작업 세션" });
+    expect((activeSessions as HTMLInputElement).value).toBe("20");
+    expect((screen.getByRole("spinbutton", { name: "동시 AI 응답" }) as HTMLInputElement).value).toBe("8");
+    expect((screen.getByRole("spinbutton", { name: "브라우저당 동시 AI 응답" }) as HTMLInputElement).value).toBe("3");
+    expect((screen.getByRole("spinbutton", { name: "유휴 세션 종료 (분)" }) as HTMLInputElement).value).toBe("30");
+
+    await userEvent.clear(activeSessions);
+    await userEvent.type(activeSessions, "24");
+    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => expect(saveConcurrencySettings).toHaveBeenCalledWith({
+      maxActiveSessions: 24,
+      maxBusySessions: 8,
+      maxBusySessionsPerClient: 3,
+      idleSessionTimeoutMinutes: 30,
+    }));
   });
 
   it("keeps detailed user stats collapsed until requested", async () => {

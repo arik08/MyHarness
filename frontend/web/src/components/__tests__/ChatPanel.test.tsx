@@ -1,13 +1,19 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatPanel } from "../ChatPanel";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { sendBackendRequest } from "../../api/messages";
+import { readConcurrencyStatus } from "../../api/settings";
 
 vi.mock("../../api/messages", () => ({
   sendBackendRequest: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+vi.mock("../../api/settings", () => ({
+  concurrencySettingsChangedEvent: "myharness:concurrency-settings-changed",
+  readConcurrencyStatus: vi.fn(),
 }));
 
 function ArtifactPanelState() {
@@ -29,6 +35,38 @@ describe("ChatPanel", () => {
   beforeEach(() => {
     Element.prototype.scrollTo = vi.fn();
     vi.mocked(sendBackendRequest).mockClear();
+    vi.mocked(readConcurrencyStatus).mockReset().mockResolvedValue({
+      maxActiveSessions: 20,
+      maxBusySessions: 8,
+      maxBusySessionsPerClient: 3,
+      idleSessionTimeoutMinutes: 30,
+      activeSessions: 12,
+      busySessions: 5,
+      busySessionsForClient: 2,
+    });
+  });
+
+  it("shows concurrency values in one compact status tooltip", async () => {
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, clientId: "browser-1" }}>
+        <ChatPanel />
+      </AppStateProvider>,
+    );
+
+    const statusButton = await screen.findByRole("button", {
+      name: "동시 사용 현황: 열린 작업 세션 12 / 20, 동시에 AI 응답을 생성하는 세션 5 / 8, 같은 브라우저의 동시 AI 응답 2 / 3",
+    });
+    const tooltip = screen.getByRole("tooltip");
+
+    expect(readConcurrencyStatus).toHaveBeenCalledWith("browser-1");
+    expect(statusButton.closest(".header-actions")).toBeTruthy();
+    expect(document.querySelectorAll(".concurrency-status-button")).toHaveLength(1);
+    expect(statusButton.querySelector('[data-icon="capacity"]')).toBeTruthy();
+    expect(tooltip.querySelector('[data-status="responses"] [data-icon="responses"]')).toBeTruthy();
+    expect(statusButton.getAttribute("aria-describedby")).toBe(tooltip.id);
+    expect(within(tooltip).getByText("12 / 20")).toBeTruthy();
+    expect(within(tooltip).getByText("5 / 8")).toBeTruthy();
+    expect(within(tooltip).getByText("2 / 3")).toBeTruthy();
   });
 
   it("keeps the artifact panel open when the chat area is clicked once", async () => {

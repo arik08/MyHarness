@@ -1,4 +1,0 @@
-interface:
-  display_name: "안녕히 가세요"
-  short_description: "안녕히 가세요 인사에 짧고 정중하게 작별 응답"
-  default_prompt: "Use $annyeonghi-gaseyo to respond to a farewell politely."

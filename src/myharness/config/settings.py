@@ -68,6 +68,15 @@ class MemorySettings(BaseModel):
     auto_compact_threshold_tokens: int | None = None
 
 
+class WebConcurrencySettings(BaseModel):
+    """Web server concurrency limits persisted by the admin settings UI."""
+
+    max_active_sessions: int = Field(default=20, ge=1, le=500)
+    max_busy_sessions: int = Field(default=8, ge=1, le=100)
+    max_busy_sessions_per_client: int = Field(default=3, ge=1, le=20)
+    idle_session_timeout_minutes: int = Field(default=30, ge=1, le=1440)
+
+
 class LearningSettings(BaseModel):
     """Automatic skill learning configuration."""
 
@@ -726,6 +735,7 @@ class Settings(BaseModel):
     fast_mode: bool = False
     effort: str = "low"
     shell: str = "auto"
+    web_concurrency: WebConcurrencySettings | None = None
     passes: int = 1
     verbose: bool = False
 

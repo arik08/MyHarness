@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
 import { cancelMessage, sendMessage, uploadClientAttachments } from "../api/messages";
 import type { ClientAttachmentRef, ComposeOptions } from "../api/messages";
+import { isUnknownSessionError } from "../api/http";
 import { startSession } from "../api/session";
 import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
@@ -725,7 +726,7 @@ export function Composer() {
           dispatch({ type: "set_workspace", workspace: session.workspace });
         }
       }
-      await sendMessage({
+      const payload = {
         sessionId: targetSessionId,
         clientId: state.clientId,
         line,
@@ -734,7 +735,29 @@ export function Composer() {
         composeOptions,
         suppressUserTranscript: true,
         systemPrompt: state.systemPrompt.trim() || undefined,
-      });
+      };
+      try {
+        await sendMessage(payload);
+      } catch (error) {
+        if (!isUnknownSessionError(error)) {
+          throw error;
+        }
+        const session = await startSession({
+          clientId: state.clientId,
+          cwd: state.workspacePath || undefined,
+          ...runtimePreferencesFromState(state),
+        });
+        dispatch({
+          type: "session_started",
+          sessionId: session.sessionId,
+          clientId: state.clientId,
+          busy: true,
+        });
+        if (session.workspace) {
+          dispatch({ type: "set_workspace", workspace: session.workspace });
+        }
+        await sendMessage({ ...payload, sessionId: session.sessionId });
+      }
     } catch (error) {
       dispatch({
         type: "backend_event",

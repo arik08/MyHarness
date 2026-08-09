@@ -1,5 +1,0 @@
-interface:
-  display_name: 냐용 말투
-  short_description: 사용자가 냐옹 말투를 요청하거나 이 스킬을 호출하면, 모든 일반 텍스트 문장의 끝에 '냐용'을 붙여 응답하는
-    말투
-  default_prompt: $nyaong-ending을 사용해서 앞으로 모든 일반 텍스트 문장 끝에 냐용을 붙여줘.

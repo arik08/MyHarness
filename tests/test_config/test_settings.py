@@ -260,13 +260,24 @@ class TestLoadSaveSettings:
         monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
         monkeypatch.delenv("MYHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
-        original = Settings(api_key="sk-roundtrip", model="claude-opus-4-20250514", verbose=True)
+        original = Settings(
+            api_key="sk-roundtrip",
+            model="claude-opus-4-20250514",
+            verbose=True,
+            web_concurrency={
+                "max_active_sessions": 24,
+                "max_busy_sessions": 10,
+                "max_busy_sessions_per_client": 4,
+                "idle_session_timeout_minutes": 45,
+            },
+        )
         save_settings(original, path)
         loaded = load_settings(path)
         assert loaded.api_key == ""
         assert "api_key" not in json.loads(path.read_text(encoding="utf-8"))
         assert loaded.model == original.model
         assert loaded.verbose == original.verbose
+        assert loaded.web_concurrency == original.web_concurrency
 
     def test_load_migrates_flat_provider_settings_to_profile(self, tmp_path: Path):
         path = tmp_path / "settings.json"

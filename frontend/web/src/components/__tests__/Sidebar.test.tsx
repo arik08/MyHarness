@@ -118,6 +118,23 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
   });
 
+  it("links the header marketplace control to the skill catalog", () => {
+    render(
+      <AppStateProvider initialState={initialAppState}>
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const marketplaceLink = screen.getByRole("link", { name: "스킬 내용 조회" });
+    const iconPaths = Array.from(marketplaceLink.querySelectorAll("path")).map((path) => path.getAttribute("d"));
+
+    expect(marketplaceLink.getAttribute("href")).toBe("http://172.30.86.138:3334");
+    expect(marketplaceLink.getAttribute("target")).toBe("_blank");
+    expect(marketplaceLink.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(marketplaceLink.getAttribute("data-tooltip")).toBe("스킬 내용 조회");
+    expect(iconPaths).toContain("M3 9l1.5-5h15L21 9");
+  });
+
   it("opens command help from the sidebar without contacting the chat session", async () => {
     render(
       <AppStateProvider
@@ -1125,6 +1142,45 @@ describe("Sidebar", () => {
     });
   });
 
+  it("replaces an expired backend before restoring another saved conversation", async () => {
+    vi.mocked(sendBackendRequest)
+      .mockRejectedValueOnce(new Error("Unknown session"))
+      .mockResolvedValueOnce({ ok: true });
+    vi.mocked(startSession).mockResolvedValueOnce({ sessionId: "session-recovered" });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-expired",
+          clientId: "client-1",
+          busy: false,
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        }}
+      >
+        <Sidebar />
+        <ModalHost />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: "client-1",
+      cwd: "C:/demo",
+    })));
+    expect(sendBackendRequest).toHaveBeenCalledTimes(2);
+    expect(sendBackendRequest).toHaveBeenLastCalledWith("session-recovered", "client-1", {
+      type: "apply_select_command",
+      command: "resume",
+      value: "session-old",
+    });
+    expect(screen.queryByText("Unknown session")).toBeNull();
+  });
+
   it("keeps the current chat visible while a saved history item is restoring", async () => {
     render(
       <AppStateProvider
@@ -1400,6 +1456,37 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "새 대화 작업 더보기" })).toBeTruthy();
     expect(startSession).not.toHaveBeenCalled();
     expect(restartSession).not.toHaveBeenCalled();
+  });
+
+  it("starts a replacement backend when an idle new chat finds an expired session", async () => {
+    vi.mocked(sendBackendRequest).mockRejectedValueOnce(new Error("Unknown session"));
+    vi.mocked(startSession).mockResolvedValueOnce({ sessionId: "session-recovered" });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-expired",
+          clientId: "client-1",
+          busy: false,
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+        }}
+      >
+        <Sidebar />
+        <ModalHost />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
+
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: "client-1",
+      cwd: "C:/demo",
+    })));
+    expect(screen.getByTestId("session").textContent).toBe("session-recovered");
+    expect(screen.queryByText("Unknown session")).toBeNull();
   });
 
   it("shows the initial active empty chat as a history row", async () => {
