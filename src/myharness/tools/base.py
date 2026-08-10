@@ -73,6 +73,13 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         self._api_schema_cache = None
 
+    def unregister(self, name: str) -> BaseTool | None:
+        """Remove a tool by name and return it when present."""
+        tool = self._tools.pop(name, None)
+        if tool is not None:
+            self._api_schema_cache = None
+        return tool
+
     def get(self, name: str) -> BaseTool | None:
         """Return a registered tool by name."""
         return self._tools.get(name)

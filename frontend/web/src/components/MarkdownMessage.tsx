@@ -625,9 +625,13 @@ function replacePromptTokensInTextNode(node: Text, references: PromptTokenRefere
     return;
   }
   pattern.lastIndex = 0;
+  const matches = [...value.matchAll(pattern)];
+  if (!matches.some((match) => isActionablePromptToken(splitPromptToken(match[2] || "").token, references))) {
+    return;
+  }
   const fragment = document.createDocumentFragment();
   let cursor = 0;
-  for (const match of value.matchAll(pattern)) {
+  for (const match of matches) {
     const leading = match[1] || "";
     const rawToken = match[2] || "";
     const tokenStart = (match.index || 0) + leading.length;

@@ -2175,6 +2175,123 @@ describe("appReducer", () => {
     expect(restored.pendingHistoryId).toBeNull();
   });
 
+  it("shows an already restored saved conversation immediately when returning to it", () => {
+    const restoredA = appReducer(
+      {
+        ...initialAppState,
+        sessionId: "live-session",
+        pendingHistoryId: "saved-a",
+        restoringHistory: true,
+      },
+      {
+        type: "backend_event",
+        event: {
+          type: "history_snapshot",
+          preview_only: true,
+          value: "saved-a",
+          history_events: [
+            { type: "user", text: "A 질문" },
+            { type: "assistant", text: "A 답변" },
+          ],
+        },
+      },
+    );
+    const loadingB = appReducer(restoredA, { type: "begin_history_restore", sessionId: "saved-b" });
+    const restoredB = appReducer(loadingB, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        value: "saved-b",
+        history_events: [
+          { type: "user", text: "B 질문" },
+          { type: "assistant", text: "B 답변" },
+        ],
+      },
+    });
+
+    const returningA = appReducer(restoredB, { type: "begin_history_restore", sessionId: "saved-a" });
+
+    expect(returningA.messages.map((message) => message.text)).toEqual(["A 질문", "A 답변"]);
+    expect(returningA.activeHistoryId).toBe("saved-a");
+    expect(returningA.historyReadOnly).toBe(true);
+    expect(returningA.pendingHistoryId).toBe("saved-a");
+  });
+
+  it("keeps the lightweight preview when the backend repeats the same history snapshot", () => {
+    const preview = appReducer(
+      {
+        ...initialAppState,
+        pendingHistoryId: "saved-a",
+        restoringHistory: true,
+      },
+      {
+        type: "backend_event",
+        event: {
+          type: "history_snapshot",
+          preview_only: true,
+          value: "saved-a",
+          history_events: [
+            { type: "user", text: "저장된 질문" },
+            { type: "assistant", text: "저장된 답변" },
+          ],
+        },
+      },
+    );
+
+    const repeated = appReducer(preview, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        value: "saved-a",
+        history_events: [
+          { type: "user", text: "저장된 질문" },
+          { type: "tool_started", tool_name: "save_skill", tool_input: { content: "x".repeat(20_000) } },
+          { type: "tool_completed", tool_name: "save_skill", output: "완료" },
+          { type: "assistant", text: "저장된 답변" },
+        ],
+      },
+    });
+
+    expect(repeated.messages.map((message) => message.text)).toEqual(["저장된 질문", "저장된 답변"]);
+    expect(repeated.workflowEvents).toEqual([]);
+    expect(repeated.restoringHistory).toBe(true);
+  });
+
+  it("keeps an instant history preview while the backend session attaches", () => {
+    const preview = appReducer(
+      {
+        ...initialAppState,
+        pendingHistoryId: "saved-a",
+        restoringHistory: true,
+      },
+      {
+        type: "backend_event",
+        event: {
+          type: "history_snapshot",
+          preview_only: true,
+          value: "saved-a",
+          history_events: [
+            { type: "user", text: "저장된 질문" },
+            { type: "assistant", text: "저장된 답변" },
+          ],
+        },
+      },
+    );
+    const attached = appReducer(preview, {
+      type: "session_started",
+      sessionId: "live-a",
+      clientId: "client-a",
+    });
+    const afterClear = appReducer(attached, {
+      type: "backend_event",
+      event: { type: "clear_transcript" },
+      sessionId: "live-a",
+    });
+
+    expect(attached.historyReadOnly).toBe(true);
+    expect(afterClear.messages.map((message) => message.text)).toEqual(["저장된 질문", "저장된 답변"]);
+  });
+
   it("restores a busy live session view when returning from another history session", () => {
     const activeUser = appReducer(
       {

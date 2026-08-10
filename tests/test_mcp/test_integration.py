@@ -10,6 +10,7 @@ from myharness.mcp.config import load_mcp_configs_from_dirs, load_mcp_server_con
 from myharness.mcp.types import McpResourceInfo, McpStdioServerConfig, McpToolInfo
 from myharness.plugins.types import LoadedPlugin
 from myharness.plugins.schemas import PluginManifest
+from myharness.project_preferences import ProjectPreferences, save_project_preferences
 from myharness.tools import create_default_tool_registry
 from myharness.tools.base import ToolExecutionContext
 
@@ -60,6 +61,28 @@ def test_load_mcp_server_configs_filters_disabled_servers():
 
     assert "local" not in servers
     assert "local" in all_servers
+
+
+def test_load_mcp_server_configs_filters_server_for_disabled_skill_wrapper(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr("myharness.mcp.config.get_program_mcp_dirs", lambda: [])
+    skill_dir = tmp_path / ".skills" / "demo-search"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-search\ndescription: Search through demo MCP.\n"
+        "source: skill-mcp:demo\n---\n\nUse the demo MCP tools.\n",
+        encoding="utf-8",
+    )
+    save_project_preferences(tmp_path, ProjectPreferences(disabled_skills=["demo-search"]))
+    settings = Settings(
+        mcp_servers={"demo": McpStdioServerConfig(command="python", args=["server.py"])}
+    )
+
+    servers = load_mcp_server_configs(settings, [], cwd=tmp_path)
+    all_servers = load_mcp_server_configs(settings, [], cwd=tmp_path, include_disabled=True)
+
+    assert "demo" not in servers
+    assert "demo" in all_servers
 
 
 def test_program_mcp_relative_cwd_stays_portable_with_source_base(tmp_path: Path):

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
-import { cancelMessage, sendMessage, uploadClientAttachments } from "../api/messages";
+import { cancelMessage, sendBackendRequest, sendMessage, uploadClientAttachments } from "../api/messages";
 import type { ClientAttachmentRef, ComposeOptions } from "../api/messages";
 import { isUnknownSessionError } from "../api/http";
 import { startSession } from "../api/session";
@@ -710,6 +710,13 @@ export function Composer() {
     resetExpandedPanel();
 
     try {
+      if (state.historyReadOnly && state.activeHistoryId) {
+        await sendBackendRequest(targetSessionId, state.clientId, {
+          type: "apply_select_command",
+          command: "resume",
+          value: state.activeHistoryId,
+        });
+      }
       if (state.pendingFreshChat) {
         const session = await startSession({
           clientId: state.clientId,

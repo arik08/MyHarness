@@ -8,7 +8,7 @@ import { ModalHost } from "../ModalHost";
 import { StatusPill } from "../StatusPill";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { deleteHistory, hideHistory, listHistory, toggleHistoryPin } from "../../api/history";
+import { deleteHistory, hideHistory, listHistory, loadHistorySnapshot, toggleHistoryPin } from "../../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../../api/session";
 import { sendBackendRequest, sendMessage } from "../../api/messages";
 import type { Workspace } from "../../types/backend";
@@ -26,6 +26,7 @@ vi.mock("../../api/history", () => ({
   historyPageSize: 25,
   hideHistory: vi.fn(),
   listHistory: vi.fn(),
+  loadHistorySnapshot: vi.fn(),
   toggleHistoryPin: vi.fn(),
   updateHistoryTitle: vi.fn(),
 }));
@@ -70,6 +71,7 @@ describe("Sidebar", () => {
     vi.mocked(shutdownSession).mockResolvedValue({ ok: true });
     vi.mocked(hideHistory).mockResolvedValue({ hidden: true });
     vi.mocked(listHistory).mockResolvedValue({ options: [], hasMore: false, nextOffset: 0 });
+    vi.mocked(loadHistorySnapshot).mockReturnValue(new Promise(() => {}));
     vi.mocked(toggleHistoryPin).mockResolvedValue({ ok: true, pinned: true, sessionId: "session-old" });
     vi.mocked(sendBackendRequest).mockResolvedValue({ ok: true });
   });
@@ -698,6 +700,37 @@ describe("Sidebar", () => {
     expect(screen.getByText("더 오래된 대화")).toBeTruthy();
   });
 
+  it("keeps searching later pages when the loaded page has no matching rows", async () => {
+    vi.mocked(listHistory).mockResolvedValue({ options: [], hasMore: false, nextOffset: 50 });
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "session-1", label: "5/3 10:00 2 msg", description: "다른 대화" }],
+          historyHasMore: true,
+          historyNextOffset: 25,
+        } as typeof initialAppState}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const historyList = document.querySelector(".history-list") as HTMLElement;
+    Object.defineProperty(historyList, "scrollHeight", { configurable: true, value: 0 });
+    Object.defineProperty(historyList, "clientHeight", { configurable: true, value: 400 });
+    await userEvent.type(screen.getByRole("searchbox", { name: "채팅 세션 제목 검색" }), "냐용");
+
+    await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
+      workspacePath: "C:/demo",
+      workspaceName: "Default",
+      limit: 25,
+      offset: 25,
+    }));
+  });
+
   it("ignores a delayed page from the workspace that was just left", async () => {
     let dispatch!: ReturnType<typeof useAppState>["dispatch"];
     let resolveOldWorkspacePage!: (value: Awaited<ReturnType<typeof listHistory>>) => void;
@@ -1211,21 +1244,53 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("message-texts").textContent).toBe("현재 화면 질문");
     expect(screen.getByTestId("active-history").textContent).toBe("");
     expect(screen.getByTestId("pending-history").textContent).toBe("session-old");
-    expect(document.querySelector(".history-item.busy")).toBeNull();
     expect(screen.queryByText("진행 중인 대화")).toBeNull();
 
-    const restoringRow = await waitFor(() => {
-      const row = Array.from(document.querySelectorAll(".history-item.busy"))
-        .find((item) => item.textContent?.includes("이전 대화"));
-      expect(row).toBeTruthy();
-      return row;
-    }, { timeout: 800 });
+    const restoringRow = Array.from(document.querySelectorAll(".history-item.busy"))
+      .find((item) => item.textContent?.includes("이전 대화"));
+    expect(restoringRow).toBeTruthy();
     expect(restoringRow?.textContent).toContain("이전 대화");
     expect(restoringRow?.classList.contains("active")).toBe(false);
     expect(document.querySelectorAll(".history-item.busy")).toHaveLength(1);
   });
 
-  it("keeps the composer in send mode and delays restore status while a saved history item is restoring", async () => {
+  it("shows a saved conversation before backend discovery finishes", async () => {
+    vi.mocked(listLiveSessions).mockReturnValue(new Promise(() => {}));
+    vi.mocked(loadHistorySnapshot).mockResolvedValue({
+      type: "history_snapshot",
+      value: "session-old",
+      message: "이전 대화",
+      history_events: [
+        { type: "user", text: "저장된 질문" },
+        { type: "assistant", text: "저장된 답변" },
+      ],
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          clientId: "client-1",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          messages: [{ id: "current", role: "user", text: "현재 질문" }],
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        }}
+      >
+        <Sidebar />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+
+    await waitFor(() => expect(screen.getByTestId("message-texts").textContent).toBe("저장된 질문|저장된 답변"));
+    expect(screen.getByTestId("active-history").textContent).toBe("session-old");
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+  });
+
+  it("keeps the composer in send mode and shows restore status immediately", async () => {
     render(
       <AppStateProvider
         initialState={{
@@ -1250,10 +1315,7 @@ describe("Sidebar", () => {
 
     expect(screen.getByRole("button", { name: "메시지 보내기" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "작업 중단" })).toBeNull();
-    expect(document.querySelector("#readyPill")?.textContent).toBe("준비됨");
-    await waitFor(() => expect(document.querySelector("#readyPill")?.textContent).toBe("대화 불러오는 중"), {
-      timeout: 800,
-    });
+    expect(document.querySelector("#readyPill")?.textContent).toBe("대화 불러오는 중");
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
       type: "apply_select_command",
       command: "resume",

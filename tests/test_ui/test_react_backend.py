@@ -6,12 +6,13 @@ import asyncio
 import io
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from myharness.api.client import ApiMessageCompleteEvent, ApiTextDeltaEvent
 from myharness.api.usage import UsageSnapshot
-from myharness.config.settings import Settings
+from myharness.config.settings import Settings, save_settings
 from myharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
@@ -29,7 +30,7 @@ from myharness.services.long_report_progress import write_long_report_progress_s
 from myharness.skills.types import SkillDefinition
 from myharness.state.app_state import AppState
 from myharness.tasks.types import TaskRecord
-from myharness.tools import create_default_tool_registry
+from myharness.tools import McpToolAdapter, create_default_tool_registry
 from myharness.ui.backend_host import (
     BackendHostConfig,
     ReactBackendHost,
@@ -347,6 +348,36 @@ async def test_dirty_skill_refresh_updates_catalog_without_resetting_conversatio
 
 
 @pytest.mark.asyncio
+async def test_backend_skill_disable_refreshes_current_prompt(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / ".skills" / "remote-review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: remote-review\ndescription: Review remote requests.\n---\n\n"
+        "Always use the remote review checklist.\n",
+        encoding="utf-8",
+    )
+    save_project_preferences(tmp_path, ProjectPreferences())
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(
+        api_client=StaticApiClient("unused"),
+        cwd=tmp_path,
+        connect_mcp=False,
+    )
+    host._emit = AsyncMock()  # type: ignore[method-assign]
+
+    try:
+        assert "remote-review" in host._bundle.engine.system_prompt
+
+        await host._handle_set_skill_enabled("remote-review", False)
+
+        assert "remote-review" not in host._bundle.engine.system_prompt
+        assert load_project_preferences(tmp_path).disabled_skills == ["remote-review"]
+    finally:
+        await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
 async def test_skill_file_monitor_refreshes_after_external_skill_update(tmp_path, monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = SimpleNamespace(  # type: ignore[assignment]
@@ -422,10 +453,40 @@ async def test_real_skill_file_monitor_emits_new_skill_without_restart(tmp_path,
 async def test_backend_host_persists_configured_posco_mcp_toggle(tmp_path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("myharness.mcp.config.get_program_mcp_dirs", lambda: [])
+    save_settings(
+        Settings(
+            mcp_servers={
+                "posco-email": McpStdioServerConfig(
+                    command="python",
+                    args=["server.py"],
+                    auto_connect=False,
+                )
+            }
+        )
+    )
 
     events: list[BackendEvent] = []
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
-    host._bundle = await build_runtime(api_client=StaticApiClient("unused"), cwd=tmp_path)
+    host._bundle = await build_runtime(
+        api_client=StaticApiClient("unused"),
+        cwd=tmp_path,
+        connect_mcp=False,
+    )
+    tool_info = McpToolInfo(
+        server_name="posco-email",
+        name="search_mail",
+        description="Search mail",
+        input_schema={"type": "object"},
+    )
+    host._bundle.mcp_manager._statuses["posco-email"] = McpConnectionStatus(
+        name="posco-email",
+        state="connected",
+        transport="stdio",
+        tools=[tool_info],
+    )
+    adapter = McpToolAdapter(host._bundle.mcp_manager, tool_info)
+    host._bundle.tool_registry.register(adapter)
 
     async def _emit(event: BackendEvent) -> None:
         events.append(event)
@@ -437,6 +498,9 @@ async def test_backend_host_persists_configured_posco_mcp_toggle(tmp_path, monke
     preferences = load_project_preferences(tmp_path)
     assert preferences is not None
     assert "posco-email" in preferences.disabled_mcp_servers
+    assert host._bundle.mcp_manager.get_server_config("posco-email") is None
+    assert host._bundle.tool_registry.get(adapter.name) is None
+    assert adapter.name not in {schema["name"] for schema in host._bundle.tool_registry.to_api_schema()}
     assert not any(event.type == "error" for event in events)
     disabled_status = next(
         server
@@ -445,6 +509,57 @@ async def test_backend_host_persists_configured_posco_mcp_toggle(tmp_path, monke
         if server["name"] == "posco-email"
     )
     assert disabled_status["state"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_backend_skill_mcp_disable_removes_live_server_tools(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("myharness.mcp.config.get_program_mcp_dirs", lambda: [])
+    save_settings(
+        Settings(
+            mcp_servers={
+                "posco-email": McpStdioServerConfig(
+                    command="python",
+                    args=["server.py"],
+                    auto_connect=False,
+                )
+            }
+        )
+    )
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(
+        api_client=StaticApiClient("unused"),
+        cwd=tmp_path,
+        connect_mcp=False,
+    )
+    tool_info = McpToolInfo(
+        server_name="posco-email",
+        name="search_mail",
+        description="Search mail",
+        input_schema={"type": "object"},
+    )
+    host._bundle.mcp_manager._statuses["posco-email"] = McpConnectionStatus(
+        name="posco-email",
+        state="connected",
+        transport="stdio",
+        tools=[tool_info],
+    )
+    adapter = McpToolAdapter(host._bundle.mcp_manager, tool_info)
+    host._bundle.tool_registry.register(adapter)
+    host._emit = AsyncMock()  # type: ignore[method-assign]
+
+    try:
+        await host._handle_set_skill_enabled("posco-email", False)
+
+        preferences = load_project_preferences(tmp_path)
+        assert preferences is not None
+        assert "posco-email" in preferences.disabled_skills
+        assert host._bundle.mcp_manager.get_server_config("posco-email") is None
+        assert host._bundle.tool_registry.get(adapter.name) is None
+        assert adapter.name not in {schema["name"] for schema in host._bundle.tool_registry.to_api_schema()}
+    finally:
+        await close_runtime(host._bundle)
 
 
 def test_plugin_snapshots_include_plugin_skills(tmp_path, monkeypatch):

@@ -1325,6 +1325,40 @@ describe("Composer", () => {
     }));
   });
 
+  it("resumes a previewed saved session before sending its follow-up", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-live",
+          clientId: "client-1",
+          activeHistoryId: "session-saved",
+          historyReadOnly: true,
+          messages: [
+            { id: "question", role: "user", text: "저장된 질문" },
+            { id: "answer", role: "assistant", text: "저장된 답변", isComplete: true },
+          ],
+        }}
+      >
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "이어서 설명해줘");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(sendBackendRequest).toHaveBeenCalledWith("session-live", "client-1", {
+      type: "apply_select_command",
+      command: "resume",
+      value: "session-saved",
+    });
+    expect(vi.mocked(sendBackendRequest).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(sendMessage).mock.invocationCallOrder[0],
+    );
+  });
+
   it("shows a fresh-chat user message before the new backend session finishes starting", async () => {
     const user = userEvent.setup();
     let resolveStart!: (value: { sessionId: string }) => void;

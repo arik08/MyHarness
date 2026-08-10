@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import { useAppState } from "../state/app-state";
-import { deleteHistory, hideHistory, historyPageSize, listHistory, toggleHistoryPin, updateHistoryTitle } from "../api/history";
+import { deleteHistory, hideHistory, historyPageSize, listHistory, loadHistorySnapshot, toggleHistoryPin, updateHistoryTitle } from "../api/history";
 import { isUnknownSessionError } from "../api/http";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
 import { sendBackendRequest, sendMessage } from "../api/messages";
@@ -24,7 +24,7 @@ const themeOptions: Array<{ id: ThemeId; label: string }> = [
 ];
 
 const historyTitleMaxLength = 26;
-const historyRestoreSpinnerDelayMs = 500;
+const historyPreviewHeadStartMs = 500;
 const historyTitleCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
 const sidebarMinWidth = sidebarDefaultWidthPx;
 const sidebarMaxWidth = 520;
@@ -60,8 +60,8 @@ export function Sidebar() {
   const [deletingHistoryId, setDeletingHistoryId] = useState("");
   const [expandedHistoryActionId, setExpandedHistoryActionId] = useState("");
   const [historySearchQuery, setHistorySearchQuery] = useState("");
-  const [visiblePendingHistoryId, setVisiblePendingHistoryId] = useState<string | null>(null);
   const historyListRef = useRef<HTMLDivElement | null>(null);
+  const historyRestoreRequestRef = useRef<object | null>(null);
   const historyScope = `${state.workspacePath}\u0000${state.workspaceName}`;
   const historyScopeRef = useRef(historyScope);
   const previousHistoryScopeRef = useRef(historyScope);
@@ -199,7 +199,30 @@ export function Sidebar() {
       return;
     }
     window.dispatchEvent(new Event("myharness:saveMessageScroll"));
+    const restoreRequest = {};
+    historyRestoreRequestRef.current = restoreRequest;
     dispatch({ type: "begin_history_restore", sessionId: nextHistoryId });
+    const previewRequest = loadHistorySnapshot({
+      sessionId: nextHistoryId,
+      workspacePath: item.workspace?.path || state.workspacePath || undefined,
+      workspaceName: item.workspace?.name || state.workspaceName || undefined,
+    }).then((event) => {
+      if (historyRestoreRequestRef.current === restoreRequest) {
+        dispatch({ type: "backend_event", event });
+      }
+      return true;
+    }).catch(() => {
+      // The backend resume path below remains authoritative and reports failures.
+      return false;
+    });
+    const previewLoaded = await Promise.race([
+      previewRequest,
+      new Promise<false>((resolve) => window.setTimeout(() => resolve(false), historyPreviewHeadStartMs)),
+    ]);
+    if (previewLoaded && historyRestoreRequestRef.current === restoreRequest) {
+      dispatch({ type: "finish_history_restore" });
+      return;
+    }
     try {
       let targetSessionId = state.sessionId;
       const findLiveSession = (sessions: Awaited<ReturnType<typeof listLiveSessions>>["sessions"]) => (
@@ -298,6 +321,17 @@ export function Sidebar() {
       dispatch({ type: "set_busy", value: false });
       dispatch({ type: "finish_history_restore" });
     }
+  }
+
+  function preloadHistory(item: HistoryItem) {
+    if (isLiveOnlyHistoryItem(item)) return;
+    void loadHistorySnapshot({
+      sessionId: item.value,
+      workspacePath: item.workspace?.path || state.workspacePath || undefined,
+      workspaceName: item.workspace?.name || state.workspaceName || undefined,
+    }).catch(() => {
+      // Selection still has the authoritative backend restore path.
+    });
   }
 
   async function removeHistory(item: HistoryItem) {
@@ -585,19 +619,6 @@ export function Sidebar() {
   }
 
   useEffect(() => {
-    const pendingHistoryId = state.pendingHistoryId;
-    if (!pendingHistoryId) {
-      setVisiblePendingHistoryId(null);
-      return undefined;
-    }
-    setVisiblePendingHistoryId(null);
-    const timeoutId = window.setTimeout(() => {
-      setVisiblePendingHistoryId(pendingHistoryId);
-    }, historyRestoreSpinnerDelayMs);
-    return () => window.clearTimeout(timeoutId);
-  }, [state.pendingHistoryId]);
-
-  useEffect(() => {
     if (!state.runtimePicker.open) return;
     function handlePointerDown(event: MouseEvent) {
       const target = event.target as Node | null;
@@ -802,7 +823,6 @@ export function Sidebar() {
     if (
       !historyList
       || historyList.clientHeight <= 0
-      || historyList.scrollHeight <= 0
       || !state.historyHasMore
       || state.historyLoading
       || state.historyLoadingMore
@@ -1009,7 +1029,7 @@ export function Sidebar() {
               const label = titleForHistoryItem(item);
               const displayLabel = formatHistoryTitle(label);
               const detailLabel = item.description ? compactHistoryTitle(item.label) : "";
-              const isPendingRestore = state.pendingHistoryId === item.value && visiblePendingHistoryId === item.value;
+              const isPendingRestore = state.pendingHistoryId === item.value;
               const cachedLiveMessages = item.liveSessionId
                 ? state.liveSessionViewsBySessionId[item.liveSessionId]?.messages
                 : undefined;
@@ -1059,6 +1079,8 @@ export function Sidebar() {
                       type="button"
                       onClick={() => void openHistory(item)}
                       onDoubleClick={() => startHistoryRename(item.value, label)}
+                      onPointerEnter={() => preloadHistory(item)}
+                      onFocus={() => preloadHistory(item)}
                     >
                       {item.pinned ? <span className="history-pin-indicator" aria-hidden="true">★</span> : null}
                       <span className="history-title">{displayLabel}</span>

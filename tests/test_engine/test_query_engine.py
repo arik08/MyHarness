@@ -2530,6 +2530,69 @@ async def test_query_engine_cleans_dangling_tool_use_when_cancelled_mid_tool(tmp
 
 
 @pytest.mark.asyncio
+async def test_query_engine_synthesizes_tool_result_when_single_tool_raises(tmp_path: Path):
+    registry = ToolRegistry()
+    registry.register(_BoomTool())
+    api_client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[ToolUseBlock(id="toolu_boom", name="boom_tool", input={})],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="Recovered from the single-tool failure.")],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="The same engine is still alive.")],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("run the failing tool")]
+
+    completed = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert len(completed) == 1
+    assert completed[0].tool_name == "boom_tool"
+    assert completed[0].is_error is True
+    assert "RuntimeError" in completed[0].output
+    assert "boom" in completed[0].output
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "Recovered from the single-tool failure."
+
+    provider_tool_results = [
+        block
+        for block in api_client.requests[1].messages[-1].content
+        if isinstance(block, ToolResultBlock)
+    ]
+    assert len(provider_tool_results) == 1
+    assert provider_tool_results[0].tool_use_id == "toolu_boom"
+    assert provider_tool_results[0].is_error is True
+
+    next_events = [event async for event in engine.submit_message("are you still alive?")]
+    assert isinstance(next_events[-1], AssistantTurnComplete)
+    assert next_events[-1].message.text == "The same engine is still alive."
+
+
+@pytest.mark.asyncio
 async def test_query_engine_synthesizes_tool_result_when_parallel_tool_raises(tmp_path: Path):
     """Parallel tool calls must each yield a tool_result even when one tool raises.
 

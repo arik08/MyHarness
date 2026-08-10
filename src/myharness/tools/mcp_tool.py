@@ -8,7 +8,7 @@ import re
 
 from pydantic import BaseModel, Field, create_model
 
-from myharness.mcp.client import McpClientManager, McpServerNotConnectedError
+from myharness.mcp.client import McpClientManager, McpServerNotConnectedError, McpToolExecutionError
 from myharness.mcp.types import McpToolInfo
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
@@ -49,6 +49,8 @@ class McpToolAdapter(BaseTool):
                 is_error=True,
             )
         except McpServerNotConnectedError as exc:
+            return ToolResult(output=str(exc), is_error=True)
+        except McpToolExecutionError as exc:
             return ToolResult(output=str(exc), is_error=True)
         if output.startswith("[NOT_FOUND]"):
             display_output = _strip_not_found_warning(output)

@@ -874,6 +874,25 @@ describe("MessageList", () => {
     expect(document.querySelector(".markdown-body code")).toBeNull();
   });
 
+  it("leaves an unavailable assistant skill token stable instead of repeatedly replacing its text node", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          skills: [],
+          messages: [
+            { id: "assistant-1", role: "assistant", text: "이제 `$nyaong-ending`을 호출하면 냐용 말투로 응답해요." },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    expect(document.querySelector(".markdown-body")?.textContent).toContain("$nyaong-ending");
+    expect(document.querySelector(".markdown-body .prompt-token")).toBeNull();
+  });
+
   it("renders legacy badges for steering and queued user messages", () => {
     render(
       <AppStateProvider

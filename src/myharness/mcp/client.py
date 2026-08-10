@@ -41,6 +41,10 @@ class McpServerNotConnectedError(Exception):
     """Raised when an MCP server is not connected or its session has been lost."""
 
 
+class McpToolExecutionError(Exception):
+    """Raised when a connected MCP server reports a tool-level error."""
+
+
 def _stdio_cwd(config: McpStdioServerConfig) -> str | None:
     if not config.cwd:
         return None
@@ -159,6 +163,18 @@ class McpClientManager:
             )
         return True
 
+    async def remove_server_config(self, name: str) -> bool:
+        """Disconnect and forget one server config. Return whether anything changed."""
+        existed = name in self._server_configs or name in self._statuses or name in self._sessions
+        stack = self._stacks.pop(name, None)
+        if stack is not None:
+            with contextlib.suppress(RuntimeError, asyncio.CancelledError):
+                await stack.aclose()
+        self._sessions.pop(name, None)
+        self._server_configs.pop(name, None)
+        self._statuses.pop(name, None)
+        return existed
+
     async def close(self) -> None:
         """Close all active MCP sessions."""
         for stack in reversed(list(self._stacks.values())):
@@ -210,7 +226,10 @@ class McpClientManager:
             parts.append(str(result.structuredContent))
         if not parts:
             parts.append("(no output)")
-        return "\n".join(parts).strip()
+        output = "\n".join(parts).strip()
+        if result.isError:
+            raise McpToolExecutionError(output)
+        return output
 
     async def read_resource(self, server_name: str, uri: str) -> str:
         """Read one MCP resource and stringify the response."""

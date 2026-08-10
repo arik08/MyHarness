@@ -21,26 +21,42 @@ def _function_body(script: str, function_name: str) -> str:
     return match.group("body")
 
 
-def test_web_server_launcher_stops_process_trees_without_wmi_recursion() -> None:
+def test_web_server_launcher_stops_and_verifies_the_full_process_tree() -> None:
     script = _read_launcher("run_myharness_web_server.ps1")
-    stop_tree = _function_body(script, "Stop-ProcessTree")
     stop_server = _function_body(script, "Stop-ServerProcess")
 
-    assert "taskkill" in stop_tree.lower()
-    assert "catch {" in stop_tree
-    assert "$taskkillExitCode -ne 0" in stop_tree
-    assert "Get-CimInstance" not in stop_tree
-    assert "WaitForExit(5000)" not in stop_server
+    assert 'launcher_process_tree.ps1' in script
+    assert "Stop-MyHarnessProcessTrees" in stop_server
+    assert "Wait-MyHarnessRuntimeStopped" in stop_server
+    assert "HasExited" not in stop_server.split("[Console]::add_CancelKeyPress", 1)[0]
 
 
-def test_dev_launcher_falls_back_when_taskkill_fails() -> None:
+def test_shared_launcher_process_tree_helper_tracks_and_verifies_descendants() -> None:
+    helper = _read_launcher("launcher_process_tree.ps1")
+    get_tree = _function_body(helper, "Get-MyHarnessProcessTreeIds")
+    stop_trees = _function_body(helper, "Stop-MyHarnessProcessTrees")
+    wait_stopped = _function_body(helper, "Wait-MyHarnessRuntimeStopped")
+
+    assert "Get-CimInstance Win32_Process" in get_tree
+    assert "ParentProcessId" in get_tree
+    assert "taskkill.exe" in stop_trees
+    assert '"/PID", ([string]$rootId), "/T", "/F"' in stop_trees
+    assert "Stop-Process -Id $treeIds[$index] -Force" in stop_trees
+    assert "Get-Process -Id $_ -ErrorAction SilentlyContinue" in wait_stopped
+    assert "Get-MyHarnessListeningPorts" in wait_stopped
+    assert "could not fully stop the previous runtime" in wait_stopped
+
+
+def test_dev_launcher_stops_and_verifies_all_tracked_processes() -> None:
     script = _read_launcher("run_myharness_web_dev.ps1")
-    stop_tree = _function_body(script, "Stop-ProcessTree")
+    stop_all = _function_body(script, "Stop-All")
 
-    assert "taskkill" in stop_tree.lower()
-    assert "catch {" in stop_tree
-    assert "$taskkillExitCode -ne 0" in stop_tree
-    assert "Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue" in stop_tree
+    assert 'launcher_process_tree.ps1' in script
+    assert "$script:BackendProcess.Id" in stop_all
+    assert "$script:ViteProcess.Id" in stop_all
+    assert "Stop-MyHarnessProcessTrees" in stop_all
+    assert "Wait-MyHarnessRuntimeStopped" in stop_all
+    assert "HasExited" not in stop_all
 
 
 def test_dev_launcher_closes_existing_dev_launcher_tree_before_ports() -> None:

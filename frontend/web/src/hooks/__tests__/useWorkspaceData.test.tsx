@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listHistory } from "../../api/history";
 import { listProjectFiles } from "../../api/artifacts";
@@ -34,6 +34,12 @@ function Probe() {
       <output data-testid="history-loading">{state.historyLoading ? "loading" : "idle"}</output>
       <button type="button" onClick={() => dispatch({ type: "begin_history_restore", sessionId: "session-old" })}>
         restore history
+      </button>
+      <button type="button" onClick={() => dispatch({ type: "set_busy", value: true })}>
+        start response
+      </button>
+      <button type="button" onClick={() => dispatch({ type: "session_started", sessionId: "web-reconnected" })}>
+        connect session
       </button>
     </>
   );
@@ -171,6 +177,30 @@ describe("useWorkspaceData", () => {
       limit: 25,
       offset: 0,
     }));
+  });
+
+  it("does not reload saved history for startup session and busy state changes", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          clientId: "client-1",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(listHistory).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "connect session" }));
+      fireEvent.click(screen.getByRole("button", { name: "start response" }));
+      await Promise.resolve();
+    });
+
+    expect(listHistory).toHaveBeenCalledTimes(1);
   });
 
   it("clears a cancelled history refresh when history restoration starts", async () => {

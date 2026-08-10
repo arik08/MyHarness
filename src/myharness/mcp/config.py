@@ -83,6 +83,22 @@ def load_mcp_server_configs(
     if include_disabled:
         return servers
     disabled = set(getattr(settings, "disabled_mcp_servers", set()) or set())
+    if cwd is not None:
+        disabled.update(_disabled_mcp_skill_servers(settings, cwd))
     if disabled:
         servers = {name: config for name, config in servers.items() if name not in disabled}
     return servers
+
+
+def _disabled_mcp_skill_servers(settings, cwd: str | Path) -> set[str]:
+    """Return MCP servers whose skill-mcp wrapper is disabled in this workspace."""
+    from myharness.skills import load_skill_registry
+    from myharness.skills.routing import is_mcp_routed_skill, mcp_server_name_from_skill_source
+
+    registry = load_skill_registry(cwd, settings=settings, include_disabled=True)
+    return {
+        server_name
+        for skill in registry.list_skills()
+        if not skill.enabled and is_mcp_routed_skill(skill)
+        if (server_name := mcp_server_name_from_skill_source(skill.source))
+    }

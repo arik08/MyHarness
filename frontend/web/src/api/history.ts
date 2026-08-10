@@ -1,5 +1,5 @@
 import { deleteJson, getJson, postJson } from "./http";
-import type { HistoryItem, Workspace } from "../types/backend";
+import type { BackendEvent, HistoryItem, Workspace } from "../types/backend";
 
 export const historyPageSize = 25;
 
@@ -10,6 +10,10 @@ export type HistoryListResponse = {
   nextOffset?: number;
 };
 
+export type HistorySnapshotResponse = Extract<BackendEvent, { type: "history_snapshot" }>;
+
+const historySnapshotRequests = new Map<string, Promise<HistorySnapshotResponse>>();
+
 export function listHistory(params: { workspacePath?: string; workspaceName?: string; limit?: number; offset?: number } = {}) {
   const query = new URLSearchParams();
   if (params.workspacePath) query.set("workspacePath", params.workspacePath);
@@ -18,6 +22,22 @@ export function listHistory(params: { workspacePath?: string; workspaceName?: st
   if (typeof params.offset === "number") query.set("offset", String(params.offset));
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return getJson<HistoryListResponse>(`/api/history${suffix}`);
+}
+
+export function loadHistorySnapshot(params: { sessionId: string; workspacePath?: string; workspaceName?: string }) {
+  const query = new URLSearchParams({ sessionId: params.sessionId });
+  if (params.workspacePath) query.set("workspacePath", params.workspacePath);
+  if (params.workspaceName) query.set("workspaceName", params.workspaceName);
+  const key = query.toString();
+  const existing = historySnapshotRequests.get(key);
+  if (existing) return existing;
+  const request = getJson<HistorySnapshotResponse>(`/api/history/snapshot?${key}`)
+    .catch((error) => {
+      historySnapshotRequests.delete(key);
+      throw error;
+    });
+  historySnapshotRequests.set(key, request);
+  return request;
 }
 
 export function deleteHistory(sessionId: string, workspacePath: string, workspaceName: string) {

@@ -8,8 +8,9 @@ from contextlib import AsyncExitStack
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from mcp.types import CallToolResult, TextContent
 
-from myharness.mcp.client import McpClientManager, McpServerNotConnectedError
+from myharness.mcp.client import McpClientManager, McpServerNotConnectedError, McpToolExecutionError
 from myharness.mcp.types import McpConnectionStatus, McpStdioServerConfig, McpToolInfo
 from myharness.tools.base import ToolExecutionContext
 from myharness.tools.mcp_tool import McpToolAdapter
@@ -54,6 +55,43 @@ async def test_call_tool_includes_unknown_server_detail_for_unconfigured():
     manager = McpClientManager({})
     with pytest.raises(McpServerNotConnectedError, match="unknown server"):
         await manager.call_tool("ghost", "tool", {})
+
+
+@pytest.mark.asyncio
+async def test_call_tool_raises_when_connected_server_reports_tool_error():
+    manager = McpClientManager({})
+    session = AsyncMock()
+    session.call_tool.return_value = CallToolResult(
+        content=[TextContent(type="text", text="invalid source argument")],
+        isError=True,
+    )
+    manager._sessions["official"] = session
+
+    with pytest.raises(McpToolExecutionError, match="invalid source argument"):
+        await manager.call_tool("official", "query", {})
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_adapter_marks_server_tool_error_as_error():
+    manager = MagicMock()
+    manager.call_tool = AsyncMock(side_effect=McpToolExecutionError("invalid period"))
+    adapter = McpToolAdapter(
+        manager,
+        McpToolInfo(
+            server_name="official",
+            name="query",
+            description="Query",
+            input_schema={"type": "object", "properties": {}},
+        ),
+    )
+
+    result = await adapter.execute(
+        adapter.input_model.model_validate({}),
+        ToolExecutionContext(cwd=Path.cwd()),
+    )
+
+    assert result.is_error is True
+    assert result.output == "invalid period"
 
 
 # --- McpClientManager.read_resource ---
@@ -144,6 +182,22 @@ async def test_force_connect_retries_an_unchanged_failed_server(monkeypatch):
 
     assert changed is True
     connect.assert_awaited_once_with("retry", config)
+
+
+@pytest.mark.asyncio
+async def test_remove_server_config_forgets_connection_and_closes_stack():
+    config = McpStdioServerConfig(command="python", args=[])
+    manager = McpClientManager({"demo": config})
+    stack = AsyncMock()
+    manager._stacks["demo"] = stack
+    manager._sessions["demo"] = AsyncMock()
+
+    changed = await manager.remove_server_config("demo")
+
+    assert changed is True
+    stack.aclose.assert_awaited_once_with()
+    assert manager.get_server_config("demo") is None
+    assert manager.list_statuses() == []
 
 
 @pytest.mark.asyncio

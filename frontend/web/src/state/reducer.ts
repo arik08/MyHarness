@@ -2124,11 +2124,15 @@ function backendModalForSession(
 }
 
 function liveSessionViewKeysForState(state: AppState) {
+  if (state.historyReadOnly) {
+    return state.activeHistoryId ? [state.activeHistoryId] : [];
+  }
   return Array.from(new Set([state.sessionId, state.activeHistoryId].filter((value): value is string => Boolean(value))));
 }
 
 function currentLiveSessionView(state: AppState): LiveSessionView {
   return {
+    historyReadOnly: state.historyReadOnly,
     activeHistoryId: state.activeHistoryId,
     chatTitle: state.chatTitle,
     messages: state.messages,
@@ -2149,7 +2153,7 @@ function currentLiveSessionView(state: AppState): LiveSessionView {
 }
 
 function rememberCurrentLiveSessionView(state: AppState) {
-  if (!state.sessionId || state.historyReadOnly || (!state.messages.length && !state.workflowEvents.length)) {
+  if ((!state.sessionId && !state.activeHistoryId) || (!state.messages.length && !state.workflowEvents.length)) {
     return state.liveSessionViewsBySessionId;
   }
   const view = currentLiveSessionView(state);
@@ -2178,6 +2182,24 @@ function reduceHistoryRestoreEvent(
   event: Extract<BackendEvent, { type: "history_snapshot" }>,
 ): AppState {
   const historyEvent = event as Extract<BackendEvent, { type: "history_snapshot" }>;
+  const previewOnly = (historyEvent as typeof historyEvent & { preview_only?: boolean }).preview_only === true;
+  const historyId = String(historyEvent.value || state.pendingHistoryId || state.activeHistoryId || "").trim();
+  if (
+    historyId
+    && state.historyReadOnly
+    && !state.pendingHistoryId
+    && state.activeHistoryId === historyId
+    && state.messages.length
+    && state.preserveMessagesOnNextClearTranscript
+  ) {
+    return {
+      ...state,
+      restoringHistory: true,
+      busy: false,
+      status: "processing",
+      statusText: "대화 불러오는 중",
+    };
+  }
   const messages: ChatMessage[] = [];
   let workflowEvents: WorkflowEvent[] = [];
   let workflowAnchorMessageId: string | null = null;
@@ -2456,7 +2478,7 @@ function reduceHistoryRestoreEvent(
   const stillRestoring = state.restoringHistory || Boolean(state.pendingHistoryId);
   return {
     ...state,
-    activeHistoryId: String(historyEvent.value || state.pendingHistoryId || state.activeHistoryId || "").trim() || null,
+    activeHistoryId: historyId || null,
     pendingHistoryId: null,
     chatTitle: normalizeChatTitle(String(historyEvent.message || state.chatTitle || "")),
     messages,
@@ -2472,7 +2494,7 @@ function reduceHistoryRestoreEvent(
     restoringHistory: true,
     historyReadOnly: true,
     pendingFreshChat: false,
-    preserveMessagesOnNextClearTranscript: false,
+    preserveMessagesOnNextClearTranscript: previewOnly,
     busy: false,
     status: stillRestoring ? "processing" : "ready",
     statusText: stillRestoring ? "대화 불러오는 중" : "준비됨",
@@ -3198,7 +3220,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         liveSessionViewsBySessionId,
         swarmPopupOpen: false,
         history,
-        historyReadOnly: false,
+        historyReadOnly: state.preserveMessagesOnNextClearTranscript && state.historyReadOnly,
         pendingFreshChat: false,
         preserveMessagesOnNextClearTranscript: restoredLiveView ? true : state.preserveMessagesOnNextClearTranscript,
         activeHistoryId: restoredLiveView?.activeHistoryId ?? state.activeHistoryId,
@@ -3569,25 +3591,42 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       {
         const backendModalsBySessionId = rememberCurrentBackendModal(state);
         const liveSessionViewsBySessionId = rememberCurrentLiveSessionView(state);
+        const restoredView = liveSessionViewForSession(liveSessionViewsBySessionId, action.sessionId);
         return {
-        ...state,
-        liveSessionViewsBySessionId,
-        busy: false,
-        status: "processing",
-        statusText: "대화 불러오는 중",
-        pendingHistoryId: action.sessionId,
-        restoringHistory: true,
-        historyReadOnly: false,
-        pendingFreshChat: false,
-        preserveMessagesOnNextClearTranscript: false,
-        modal: null,
-        artifactPanelOpen: false,
-        activeArtifact: null,
-        activeArtifactPayload: null,
-        swarmPopupOpen: false,
-        runtimePicker: { ...state.runtimePicker, open: false },
-        backendModalsBySessionId,
-      };
+          ...state,
+          liveSessionViewsBySessionId,
+          busy: false,
+          status: "processing",
+          statusText: "대화 불러오는 중",
+          pendingHistoryId: action.sessionId,
+          restoringHistory: true,
+          historyReadOnly: restoredView?.historyReadOnly === true,
+          pendingFreshChat: false,
+          modal: null,
+          artifactPanelOpen: false,
+          activeArtifact: null,
+          activeArtifactPayload: null,
+          swarmPopupOpen: false,
+          runtimePicker: { ...state.runtimePicker, open: false },
+          backendModalsBySessionId,
+          preserveMessagesOnNextClearTranscript: restoredView?.historyReadOnly === true,
+          activeHistoryId: restoredView?.activeHistoryId ?? state.activeHistoryId,
+          chatTitle: restoredView?.chatTitle ?? state.chatTitle,
+          messages: restoredView?.messages ?? state.messages,
+          workflowAnchorMessageId: restoredView?.workflowAnchorMessageId ?? state.workflowAnchorMessageId,
+          workflowEventsByMessageId: restoredView?.workflowEventsByMessageId ?? state.workflowEventsByMessageId,
+          workflowDurationSecondsByMessageId: restoredView?.workflowDurationSecondsByMessageId ?? state.workflowDurationSecondsByMessageId,
+          workflowInputBuffers: restoredView?.workflowInputBuffers ?? state.workflowInputBuffers,
+          workflowEvents: restoredView?.workflowEvents ?? state.workflowEvents,
+          workflowDurationSeconds: restoredView?.workflowDurationSeconds ?? state.workflowDurationSeconds,
+          workflowStartedAtMs: restoredView?.workflowStartedAtMs ?? state.workflowStartedAtMs,
+          todoMarkdown: restoredView?.todoMarkdown ?? state.todoMarkdown,
+          todoSessionId: restoredView?.todoSessionId ?? state.todoSessionId,
+          todoCollapsed: restoredView?.todoCollapsed ?? state.todoCollapsed,
+          swarmTeammates: restoredView?.swarmTeammates ?? state.swarmTeammates,
+          swarmNotifications: restoredView?.swarmNotifications ?? state.swarmNotifications,
+          sessionUsage: restoredView?.sessionUsage ?? state.sessionUsage,
+        };
       }
 
     case "finish_history_restore":

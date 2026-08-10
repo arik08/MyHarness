@@ -61,6 +61,7 @@ from myharness.project_preferences import (
     apply_project_preferences_to_settings,
     set_project_mcp_enabled,
     set_project_plugin_enabled,
+    set_project_skill_enabled,
 )
 from myharness.services import (
     build_post_compact_messages,
@@ -75,7 +76,7 @@ from myharness.skills import load_skill_registry
 from myharness.skills.display import display_skill_description
 from myharness.skills.loader import is_learned_skill
 from myharness.skills.routing import is_mcp_routed_skill, mcp_server_name_from_skill_source
-from myharness.skills.state import get_skill_usage_counts, set_skill_enabled, toggle_skill_enabled
+from myharness.skills.state import get_skill_usage_counts
 from myharness.tasks import get_task_manager
 from myharness.plugins.types import PluginCommandDefinition
 from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
@@ -1292,11 +1293,12 @@ def create_default_command_registry(
             if skill is None:
                 return CommandResult(message=f"스킬을 찾을 수 없습니다: {rest}")
             if action in {"on", "enable"}:
-                enabled = set_skill_enabled(skill.name, True)
+                enabled = True
             elif action in {"off", "disable"}:
-                enabled = set_skill_enabled(skill.name, False)
+                enabled = False
             else:
-                enabled = toggle_skill_enabled(skill.name)
+                enabled = not skill.enabled
+            set_project_skill_enabled(context.cwd, skill.name, enabled, settings)
             refreshed = load_skill_registry(
                 context.cwd,
                 extra_skill_dirs=context.extra_skill_dirs,
@@ -1309,7 +1311,8 @@ def create_default_command_registry(
                 message=(
                     f"스킬 '{skill.name}'을(를) {'활성화' if enabled else '비활성화'}했습니다.\n\n"
                     f"{_format_skills_management_text(skills)}"
-                )
+                ),
+                refresh_runtime=True,
             )
         if args and action not in {"list", "show"}:
             skill = skill_registry.get(args)
@@ -1687,11 +1690,12 @@ def create_default_command_registry(
             if server_name in mcp_skills:
                 skill = mcp_skills[server_name]
                 if tokens[0] == "enable":
-                    enabled = set_skill_enabled(skill.name, True)
+                    enabled = True
                 elif tokens[0] == "disable":
-                    enabled = set_skill_enabled(skill.name, False)
+                    enabled = False
                 else:
-                    enabled = toggle_skill_enabled(skill.name)
+                    enabled = not skill.enabled
+                set_project_skill_enabled(context.cwd, skill.name, enabled, settings)
                 return CommandResult(
                     message=f"MCP 스킬 '{skill.name}'을(를) {'활성화' if enabled else '비활성화'}했습니다.",
                     refresh_runtime=True,

@@ -45,3 +45,6 @@ def test_tool_registry_caches_schemas_until_registration_changes() -> None:
     assert first_tool.schema_calls == 1
     assert replacement.schema_calls == 1
     assert refreshed[0]["description"] == "replacement"
+
+    assert registry.unregister("probe") is replacement
+    assert registry.to_api_schema() == []

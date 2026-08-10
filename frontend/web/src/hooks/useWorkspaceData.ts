@@ -156,14 +156,11 @@ export function useWorkspaceData() {
     };
   }, [
     dispatch,
-    state.activeHistoryId,
-    state.busy,
     state.clientId,
     state.historyReadOnly,
     state.historyRefreshKey,
     state.pendingHistoryId,
     state.restoringHistory,
-    state.sessionId,
     state.workspaceName,
     state.workspacePath,
   ]);

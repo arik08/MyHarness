@@ -23,7 +23,8 @@ from myharness.engine.query_engine import QueryEngine
 from myharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
 from myharness.permissions import PermissionChecker
 from myharness.plugins.types import PluginCommandDefinition
-from myharness.project_preferences import load_project_preferences
+from myharness.project_preferences import ProjectPreferences, load_project_preferences, save_project_preferences
+from myharness.skills import load_skill_registry
 from myharness.skills.types import SkillDefinition
 from myharness.state import AppState, AppStateStore
 from myharness.tasks import get_task_manager
@@ -312,6 +313,7 @@ async def test_skills_command_toggles_skill_enabled_state(tmp_path: Path, monkey
         "# Ship\nUse the project release checklist.\n",
         encoding="utf-8",
     )
+    save_project_preferences(tmp_path, ProjectPreferences())
     registry = create_default_command_registry()
     command, args = registry.lookup("/skills toggle ship")
     assert command is not None
@@ -320,6 +322,8 @@ async def test_skills_command_toggles_skill_enabled_state(tmp_path: Path, monkey
 
     assert "비활성화" in result.message
     assert "[비활성]" in result.message
+    assert load_project_preferences(tmp_path).disabled_skills == ["ship"]
+    assert load_skill_registry(tmp_path).get("ship") is None
 
 
 @pytest.mark.asyncio
@@ -761,6 +765,28 @@ async def test_mcp_command_toggles_server_usage(tmp_path: Path, monkeypatch):
     list_command, list_args = registry.lookup("/mcp list")
     list_result = await list_command.handler(list_args, context)
     assert "- demo [비활성] (stdio)" in list_result.message
+
+
+@pytest.mark.asyncio
+async def test_mcp_command_toggles_skill_wrapper_in_workspace(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / ".skills" / "demo-search"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-search\ndescription: Search through demo MCP.\n"
+        "source: skill-mcp:demo\n---\n\nUse the demo MCP tools.\n",
+        encoding="utf-8",
+    )
+    save_project_preferences(tmp_path, ProjectPreferences())
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/mcp toggle demo-search")
+    assert command is not None
+
+    result = await command.handler(args, _make_context(tmp_path))
+
+    assert "비활성화" in result.message
+    assert result.refresh_runtime is True
+    assert load_project_preferences(tmp_path).disabled_skills == ["demo-search"]
 
 
 @pytest.mark.asyncio

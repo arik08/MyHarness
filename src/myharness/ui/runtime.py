@@ -44,7 +44,7 @@ from myharness.prompts import build_runtime_system_prompt
 from myharness.project_preferences import apply_project_preferences_to_settings
 from myharness.state import AppState, AppStateStore
 from myharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
-from myharness.tools import ToolExecutionContext, ToolRegistry, create_default_tool_registry
+from myharness.tools import McpToolAdapter, ToolExecutionContext, ToolRegistry, create_default_tool_registry
 from myharness.keybindings import load_keybindings
 
 PermissionPrompt = Callable[[str, str], Awaitable[bool]]
@@ -729,9 +729,34 @@ def _active_runtime_permission_mode(bundle: RuntimeBundle, settings: Settings) -
     return settings.permission.mode.value
 
 
+async def refresh_runtime_mcp(bundle: RuntimeBundle) -> bool:
+    """Synchronize live MCP connections and exposed tools with effective settings."""
+    configs = load_mcp_server_configs(
+        bundle.current_settings(),
+        bundle.current_plugins(),
+        cwd=bundle.cwd,
+    )
+    changed = False
+    configured_names = set(configs)
+    for status in list(bundle.mcp_manager.list_statuses()):
+        if status.name not in configured_names:
+            changed = await bundle.mcp_manager.remove_server_config(status.name) or changed
+    for name, config in configs.items():
+        changed = await bundle.mcp_manager.ensure_server_config(name, config) or changed
+    if not changed:
+        return False
+    for tool in list(bundle.tool_registry.list_tools()):
+        if isinstance(tool, McpToolAdapter):
+            bundle.tool_registry.unregister(tool.name)
+    for tool_info in bundle.mcp_manager.list_tools():
+        bundle.tool_registry.register(McpToolAdapter(bundle.mcp_manager, tool_info))
+    return True
+
+
 async def refresh_runtime_client(bundle: RuntimeBundle) -> None:
     """Refresh the active runtime client after provider/auth/profile changes."""
     settings = bundle.current_settings()
+    await refresh_runtime_mcp(bundle)
     if not bundle.external_api_client:
         try:
             next_client = _resolve_api_client_from_settings(settings)
@@ -747,6 +772,16 @@ async def refresh_runtime_client(bundle: RuntimeBundle) -> None:
         await _close_api_client(previous_client)
     bundle.engine.set_model(settings.model)
     bundle.engine.set_max_tokens(settings.effective_max_tokens())
+    bundle.engine.set_system_prompt(
+        build_runtime_system_prompt(
+            settings,
+            cwd=bundle.cwd,
+            latest_user_prompt=None,
+            extra_skill_dirs=bundle.extra_skill_dirs,
+            extra_plugin_roots=bundle.extra_plugin_roots,
+            task_worker=bundle.task_worker,
+        )
+    )
     bundle.engine.tool_metadata["force_full_prompt_next"] = True
     bundle.engine.tool_metadata["cache_prefix_event"] = "provider_settings_changed"
     sync_app_state(bundle)

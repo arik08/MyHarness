@@ -34,6 +34,7 @@ export type ChatMessage = {
 };
 
 export type LiveSessionView = {
+  historyReadOnly?: boolean;
   activeHistoryId: string | null;
   chatTitle: string;
   messages: ChatMessage[];

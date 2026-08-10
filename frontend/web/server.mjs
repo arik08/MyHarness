@@ -3748,6 +3748,7 @@ const historyListItemCache = new Map();
 const historySnapshotPreviewCache = new Map();
 const migratedSessionDirectories = new Set();
 const sessionStorageVersion = 2;
+const historyFileReadConcurrency = 16;
 const sessionPointerFormat = "myharness-session-pointer";
 const historyToolOutputMaxChars = 1_000;
 const historyToolErrorOutputMaxChars = 4_000;
@@ -3761,6 +3762,23 @@ const historyToolInputSummaryKeys = [
 
 function historyFileFingerprint(info) {
   return `${info.size}:${info.mtimeMs}`;
+}
+
+async function mapHistoryFiles(paths, mapper) {
+  const results = new Array(paths.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(historyFileReadConcurrency, paths.length) },
+    async () => {
+      while (nextIndex < paths.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(paths[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 function truncateHistoryReplayText(value, maxChars) {
@@ -4007,26 +4025,28 @@ async function migrateWorkspaceSessionStorage(sessionDir) {
     throw error;
   }
   let skipped = false;
-  for (const entry of entries) {
-    if (!entry.isFile() || !/^session-.+\.json$/i.test(entry.name)) continue;
+  const sessionPaths = entries
+    .filter((entry) => entry.isFile() && /^session-.+\.json$/i.test(entry.name))
+    .map((entry) => join(normalizedDir, entry.name));
+  await mapHistoryFiles(sessionPaths, async (path) => {
     try {
-      const path = join(normalizedDir, entry.name);
       if (!await hasCurrentSessionMetadata(path) && !await migrateNamedSessionSnapshot(path)) skipped = true;
     } catch (error) {
       if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
       skipped = true;
     }
-  }
-  for (const entry of entries) {
-    if (!entry.isFile() || !/^latest(?:-.+)?\.json$/i.test(entry.name)) continue;
+  });
+  const latestPaths = entries
+    .filter((entry) => entry.isFile() && /^latest(?:-.+)?\.json$/i.test(entry.name))
+    .map((entry) => join(normalizedDir, entry.name));
+  await mapHistoryFiles(latestPaths, async (path) => {
     try {
-      const path = join(normalizedDir, entry.name);
       if (!await hasCurrentSessionMetadata(path) && !await migrateLatestSessionSnapshot(path)) skipped = true;
     } catch (error) {
       if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
       skipped = true;
     }
-  }
+  });
   if (!skipped) migratedSessionDirectories.add(normalizedDir);
 }
 
@@ -4130,17 +4150,19 @@ async function listWorkspaceHistory(workspace, options = {}) {
   const sessionFiles = entries
     .filter((entry) => entry.isFile() && /^session-.+\.json$/i.test(entry.name))
     .map((entry) => join(sessionDir, entry.name));
-  for (const file of sessionFiles) {
+  const sessionItems = await mapHistoryFiles(sessionFiles, async (file) => {
     try {
-      const item = await readSessionListItem(file);
-      if (item.value) {
-        item.hidden = item.hidden === true || hiddenIds.has(item.value);
-        seen.add(item.value);
-        items.push(item);
-      }
+      return await readSessionListItem(file);
     } catch {
       // Ignore corrupt or partially written snapshots.
+      return null;
     }
+  });
+  for (const item of sessionItems) {
+    if (!item?.value) continue;
+    item.hidden = item.hidden === true || hiddenIds.has(item.value);
+    seen.add(item.value);
+    items.push(item);
   }
 
   const latestPath = join(sessionDir, "latest.json");

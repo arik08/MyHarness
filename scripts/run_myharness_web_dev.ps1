@@ -6,21 +6,13 @@ $script:LauncherScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
 $script:BackendLauncherScriptPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "run_myharness_web_server.ps1"))
 $script:FrontendWebDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\frontend\web"))
 . (Join-Path $PSScriptRoot "local_env.ps1")
+. (Join-Path $PSScriptRoot "launcher_process_tree.ps1")
 
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
 
-    try {
-        & taskkill.exe /PID $ProcessId /T /F >$null 2>$null
-        $taskkillExitCode = $LASTEXITCODE
-    }
-    catch {
-        $taskkillExitCode = 1
-    }
-
-    if ($taskkillExitCode -ne 0) {
-        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
-    }
+    $processIds = @(Stop-MyHarnessProcessTrees -RootProcessIds @($ProcessId))
+    Wait-MyHarnessRuntimeStopped -ProcessIds $processIds -Ports @()
 }
 
 function Stop-ExistingDevLaunchers {
@@ -56,25 +48,6 @@ function Stop-ExistingDevLaunchers {
 
     if ($existingLaunchers) {
         Start-Sleep -Milliseconds 800
-    }
-}
-
-function Stop-ChildProcess {
-    param($Process)
-
-    if (-not $Process -or $Process.HasExited) {
-        return
-    }
-
-    Stop-ProcessTree -ProcessId $Process.Id
-    try {
-        $Process.Refresh()
-    }
-    catch {
-        # Process handles can become invalid immediately after taskkill.
-    }
-    if (-not $Process.HasExited) {
-        $Process.WaitForExit(1000) | Out-Null
     }
 }
 
@@ -199,8 +172,25 @@ function Resolve-VitePort {
 }
 
 function Stop-All {
-    Stop-ChildProcess -Process $script:ViteProcess
-    Stop-ChildProcess -Process $script:BackendProcess
+    param([switch]$PassThru)
+
+    $rootProcessIds = @()
+    if ($script:BackendProcess) {
+        $rootProcessIds += [int]$script:BackendProcess.Id
+    }
+    if ($script:ViteProcess) {
+        $rootProcessIds += [int]$script:ViteProcess.Id
+    }
+
+    $processIds = @(Stop-MyHarnessProcessTrees -RootProcessIds $rootProcessIds)
+    $ports = @($backendPort)
+    if ($script:VitePort) {
+        $ports += [int]$script:VitePort
+    }
+    Wait-MyHarnessRuntimeStopped -ProcessIds $processIds -Ports $ports
+    if ($PassThru) {
+        return $processIds
+    }
 }
 
 function Read-LauncherKey {
@@ -316,10 +306,12 @@ function Start-ViteServer {
 }
 
 function Restart-All {
-    Write-Host "[INFO] Full restart requested. Stopping backend and Vite, clearing ports, and starting fresh..."
-    Stop-All
+    Write-Host "[INFO] Cold reset requested. Fully stopping backend, Python/MCP children, and Vite..."
+    $previousProcessIds = @(Stop-All -PassThru)
     Stop-ListeningPort -Port $backendPort -Label "backend"
     Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
+    Wait-MyHarnessRuntimeStopped -ProcessIds $previousProcessIds -Ports @($backendPort, $script:VitePort)
+    Write-Host "[INFO] Previous runtime fully stopped. Starting fresh processes so code changes are reloaded..."
     $script:BackendProcess = Start-BackendLauncher
     $script:ViteProcess = Start-ViteServer
 }
@@ -380,20 +372,21 @@ try {
             Restart-All
         }
 
+        $key = $null
         try {
             $key = Read-LauncherKey
-            if (Test-LauncherKey -Key $key -ExpectedKey Q) {
-                $script:StopRequested = $true
-                Write-Host "[INFO] Stop requested. Stopping backend and Vite dev server..."
-                Stop-All
-                break
-            }
-            if (Test-LauncherKey -Key $key -ExpectedKey R -Characters @("r", "R", ([string][char]0x3131))) {
-                Restart-All
-            }
         }
         catch {
             Start-Sleep -Milliseconds 500
+        }
+        if (Test-LauncherKey -Key $key -ExpectedKey Q) {
+            $script:StopRequested = $true
+            Write-Host "[INFO] Stop requested. Stopping backend and Vite dev server..."
+            Stop-All | Out-Null
+            break
+        }
+        if (Test-LauncherKey -Key $key -ExpectedKey R -Characters @("r", "R", ([string][char]0x3131))) {
+            Restart-All
         }
     }
 }

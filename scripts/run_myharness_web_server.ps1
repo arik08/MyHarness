@@ -7,6 +7,7 @@ $script:LogDirectory = if ($env:MYHARNESS_LOGS_DIR) { $env:MYHARNESS_LOGS_DIR } 
 $script:LauncherLog = Join-Path $script:LogDirectory "myharness-web-launcher.log"
 $script:FrontendWebDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\frontend\web"))
 . (Join-Path $PSScriptRoot "local_env.ps1")
+. (Join-Path $PSScriptRoot "launcher_process_tree.ps1")
 
 function Write-LauncherLog {
     param(
@@ -131,17 +132,8 @@ function Open-LauncherLock {
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
 
-    try {
-        & taskkill.exe /PID $ProcessId /T /F >$null 2>$null
-        $taskkillExitCode = $LASTEXITCODE
-    }
-    catch {
-        $taskkillExitCode = 1
-    }
-
-    if ($taskkillExitCode -ne 0) {
-        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
-    }
+    $processIds = @(Stop-MyHarnessProcessTrees -RootProcessIds @($ProcessId))
+    Wait-MyHarnessRuntimeStopped -ProcessIds $processIds -Ports @()
 }
 
 function Stop-ListeningPort {
@@ -179,20 +171,8 @@ function Stop-ListeningPort {
 function Stop-ServerProcess {
     param([Parameter(Mandatory = $true)]$Process)
 
-    if ($Process.HasExited) {
-        return
-    }
-
-    Stop-ProcessTree -ProcessId $Process.Id
-    try {
-        $Process.Refresh()
-    }
-    catch {
-        # Process handles can become invalid immediately after taskkill.
-    }
-    if (-not $Process.HasExited -and -not $Process.WaitForExit(1000)) {
-        Write-Host "[WARN] Server process did not exit cleanly; continuing restart."
-    }
+    $processIds = @(Stop-MyHarnessProcessTrees -RootProcessIds @([int]$Process.Id))
+    Wait-MyHarnessRuntimeStopped -ProcessIds $processIds -Ports @($serverPort)
 }
 
 [Console]::add_CancelKeyPress({

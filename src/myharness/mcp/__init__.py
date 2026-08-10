@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
-    from myharness.mcp.client import McpClientManager, McpServerNotConnectedError
+    from myharness.mcp.client import McpClientManager, McpServerNotConnectedError, McpToolExecutionError
     from myharness.mcp.types import (
         McpConnectionStatus,
         McpHttpServerConfig,
@@ -21,6 +21,7 @@ __all__ = [
     "McpClientManager",
     "McpConnectionStatus",
     "McpServerNotConnectedError",
+    "McpToolExecutionError",
     "McpHttpServerConfig",
     "McpJsonConfig",
     "McpResourceInfo",
@@ -41,6 +42,10 @@ def __getattr__(name: str):
         from myharness.mcp.client import McpServerNotConnectedError
 
         return McpServerNotConnectedError
+    if name == "McpToolExecutionError":
+        from myharness.mcp.client import McpToolExecutionError
+
+        return McpToolExecutionError
     if name == "load_mcp_server_configs":
         from myharness.mcp.config import load_mcp_server_configs
 

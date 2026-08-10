@@ -92,6 +92,7 @@ from myharness.ui.runtime import (
     close_runtime,
     handle_line,
     refresh_runtime_client,
+    refresh_runtime_mcp,
     schedule_runtime_prefix_cache_warmup,
     start_runtime,
     sync_app_state,
@@ -2891,13 +2892,24 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="error", message="Skill name is required"))
             return
         assert self._bundle is not None
+        settings = self._bundle.current_settings()
+        registry = load_skill_registry(
+            self._bundle.cwd,
+            extra_skill_dirs=self._bundle.extra_skill_dirs,
+            extra_plugin_roots=self._bundle.extra_plugin_roots,
+            settings=settings,
+            include_disabled=True,
+        )
+        skill = next((item for item in registry.list_skills() if item.name.lower() == name.lower()), None)
         set_project_skill_enabled(
             self._bundle.cwd,
             name,
             enabled is not False,
-            self._bundle.current_settings(),
+            settings,
         )
-        await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
+        await self._refresh_skill_runtime()
+        if skill is not None and is_mcp_routed_skill_source(skill.source):
+            await self._refresh_mcp_configs()
         await self._emit(self._status_snapshot())
 
     async def _handle_set_mcp_enabled(self, name: str, enabled: bool | None) -> None:
@@ -2922,18 +2934,9 @@ class ReactBackendHost:
     async def _refresh_mcp_configs(self) -> None:
         """Connect newly discovered MCP configs and expose their tools immediately."""
         assert self._bundle is not None
-        configs = load_mcp_server_configs(
-            self._bundle.current_settings(),
-            self._bundle.current_plugins(),
-            cwd=self._bundle.cwd,
-        )
-        changed = False
-        for name, config in configs.items():
-            changed = await self._bundle.mcp_manager.ensure_server_config(name, config) or changed
+        changed = await refresh_runtime_mcp(self._bundle)
         if not changed:
             return
-        for tool_info in self._bundle.mcp_manager.list_tools():
-            self._bundle.tool_registry.register(McpToolAdapter(self._bundle.mcp_manager, tool_info))
         self._bundle.engine.set_system_prompt(
             build_runtime_system_prompt(
                 self._bundle.current_settings(),

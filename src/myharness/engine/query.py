@@ -64,6 +64,7 @@ MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
 MAX_AUTO_CONTINUATIONS = 4
+MAX_TOOL_EXCEPTION_MESSAGE_CHARS = 2_000
 PROVIDER_STREAM_IDLE_FIRST_SECONDS = 7.0
 PROVIDER_STREAM_IDLE_REPEAT_SECONDS = 10.0
 PROVIDER_STREAM_IDLE_MAX_SECONDS = 600.0
@@ -1097,7 +1098,7 @@ async def run_query(
                 tool_use_id=tc.id,
                 index=0,
             ), None
-            result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
+            result = await _execute_tool_call_safely(context, tc.name, tc.id, tc.input)
             yield ToolExecutionCompleted(
                 tool_name=tc.name,
                 output=result.display_content or result.content,
@@ -1120,21 +1121,8 @@ async def run_query(
             execution_slots = asyncio.Semaphore(_parallel_tool_execution_limit())
 
             async def _run(index, tc):
-                try:
-                    async with execution_slots:
-                        result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
-                except Exception as exc:
-                    log.exception(
-                        "tool execution raised: name=%s id=%s",
-                        tc.name,
-                        tc.id,
-                        exc_info=exc,
-                    )
-                    result = ToolResultBlock(
-                        tool_use_id=tc.id,
-                        content=f"Tool {tc.name} failed: {type(exc).__name__}: {exc}",
-                        is_error=True,
-                    )
+                async with execution_slots:
+                    result = await _execute_tool_call_safely(context, tc.name, tc.id, tc.input)
                 return index, tc, result
 
             # Emit each completion as soon as that tool finishes so fast tools
@@ -1174,6 +1162,35 @@ async def run_query(
     if context.max_turns is not None:
         raise MaxTurnsExceeded(context.max_turns)
     raise RuntimeError("Query loop exited without a max_turns limit or final response")
+
+
+async def _execute_tool_call_safely(
+    context: QueryContext,
+    tool_name: str,
+    tool_use_id: str,
+    tool_input: dict[str, object],
+) -> ToolResultBlock:
+    """Convert ordinary tool failures into provider-compatible tool results."""
+    try:
+        return await _execute_tool_call(context, tool_name, tool_use_id, tool_input)
+    except Exception as exc:
+        log.exception(
+            "tool execution raised: name=%s id=%s",
+            tool_name,
+            tool_use_id,
+        )
+        try:
+            detail = str(exc).strip()
+        except Exception:
+            detail = "error details unavailable"
+        if len(detail) > MAX_TOOL_EXCEPTION_MESSAGE_CHARS:
+            detail = f"{detail[:MAX_TOOL_EXCEPTION_MESSAGE_CHARS]}…"
+        suffix = f": {detail}" if detail else ""
+        return ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=f"Tool {tool_name} failed: {type(exc).__name__}{suffix}",
+            is_error=True,
+        )
 
 
 async def _execute_tool_call(
