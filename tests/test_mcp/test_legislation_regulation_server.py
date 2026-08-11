@@ -16,7 +16,7 @@ from myharness.mcp.types import McpStdioServerConfig
 
 
 def _load_server() -> ModuleType:
-    path = Path(__file__).resolve().parents[2] / ".mcp" / "legislation_regulation_server.py"
+    path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "legislation-regulation" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("legislation_regulation_server_under_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -117,12 +117,12 @@ def test_congress_requires_key_without_exposing_it(monkeypatch) -> None:
 
 
 def test_config_is_loaded_without_credentials() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
     config = load_mcp_configs_from_dirs([mcp_dir])["legislation-regulation"]
 
     assert isinstance(config, McpStdioServerConfig)
     assert config.env is None
-    assert config.args == [".mcp/legislation_regulation_server.py"]
+    assert config.args == ["runtime/server.py"]
 
 
 @pytest.mark.parametrize(

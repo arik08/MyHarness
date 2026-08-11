@@ -404,7 +404,8 @@ async def test_codex_client_stops_reading_when_response_incomplete_arrives(monke
     assert complete.message.text == "partial"
     assert complete.stop_reason == "length"
     assert sink["headers"]["OpenAI-Beta"] == "responses=experimental"
-    assert sink["headers"]["session_id"] == _codex_cache_session_id(_prompt_cache_key_for_request(request))
+    assert sink["headers"]["session-id"] == _codex_cache_session_id(_prompt_cache_key_for_request(request))
+    assert "session_id" not in sink["headers"]
 
 
 @pytest.mark.asyncio
@@ -440,7 +441,6 @@ async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypat
     assert sink["json"]["reasoning"] == {
         "effort": "high",
         "context": "all_turns",
-        "summary": "auto",
     }
     assert sink["json"]["context_management"] == [
         {"type": "compaction", "compact_threshold": 900_000}
@@ -527,7 +527,7 @@ async def test_codex_client_prewarms_the_same_static_prefix_with_minimal_output(
     assert sink["json"]["input"][1]["role"] == "user"
     assert sink["json"]["input"][1]["content"][0]["text"] != "real user message"
     assert sink["json"]["tools"][0]["name"] == "read_file"
-    assert sink["json"]["max_output_tokens"] == 16
+    assert "max_output_tokens" not in sink["json"]
     assert request.messages[0].text == "real user message"
     assert usage is not None
     assert usage.cached_input_tokens == 96

@@ -2,9 +2,9 @@ $ErrorActionPreference = "Stop"
 $script:StopRequested = $false
 $script:BackendProcess = $null
 $script:ViteProcess = $null
-$script:LauncherScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
-$script:BackendLauncherScriptPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "run_myharness_web_server.ps1"))
 $script:FrontendWebDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\frontend\web"))
+$script:LogDirectory = if ($env:MYHARNESS_LOGS_DIR) { $env:MYHARNESS_LOGS_DIR } else { Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) ".myharness\logs" }
+$script:LockDirectory = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) ".myharness\locks"
 . (Join-Path $PSScriptRoot "local_env.ps1")
 . (Join-Path $PSScriptRoot "launcher_process_tree.ps1")
 
@@ -15,39 +15,46 @@ function Stop-ProcessTree {
     Wait-MyHarnessRuntimeStopped -ProcessIds $processIds -Ports @()
 }
 
-function Stop-ExistingDevLaunchers {
-    $escapedScriptPath = [regex]::Escape($script:LauncherScriptPath)
-    $escapedBackendLauncherPath = [regex]::Escape($script:BackendLauncherScriptPath)
-    $scanJob = Start-Job -ScriptBlock {
-        param($ScriptPathPattern, $BackendLauncherPathPattern, $CurrentProcessId)
+function Open-DevLauncherLock {
+    param([Parameter(Mandatory = $true)][int]$Port)
 
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.ProcessId -ne $CurrentProcessId -and
-                $_.Name -match "^(powershell|pwsh)(\.exe)?$" -and
-                ($_.CommandLine -match $ScriptPathPattern -or $_.CommandLine -match $BackendLauncherPathPattern)
-            }
-    } -ArgumentList $escapedScriptPath, $escapedBackendLauncherPath, $PID
-
+    if (-not (Test-Path -LiteralPath $script:LockDirectory)) {
+        New-Item -ItemType Directory -Path $script:LockDirectory -Force | Out-Null
+    }
+    $lockPath = Join-Path $script:LockDirectory "dev-$Port.lock"
     try {
-        $completedJob = Wait-Job -Job $scanJob -Timeout 2
-        if ($null -eq $completedJob) {
-            Write-Host "[WARN] Existing launcher scan timed out. Continuing without pre-cleanup."
-            return
-        }
-        $existingLaunchers = @(Receive-Job -Job $scanJob)
+        return [System.IO.File]::Open(
+            $lockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
     }
-    finally {
-        Remove-Job -Job $scanJob -Force -ErrorAction SilentlyContinue
+    catch [System.IO.IOException] {
+        Write-Host "[INFO] Another MyHarness dev launcher already owns backend port $Port. Exiting this duplicate launcher."
+        exit 0
     }
+}
 
-    foreach ($launcher in $existingLaunchers) {
-        Write-Host "[INFO] Existing MyHarness dev launcher found at PID $($launcher.ProcessId). Closing it before starting fresh..."
-        Stop-ProcessTree -ProcessId ([int]$launcher.ProcessId)
-    }
+function Test-BackendSupervisorLockAvailable {
+    param([Parameter(Mandatory = $true)][int]$Port)
 
-    if ($existingLaunchers) {
-        Start-Sleep -Milliseconds 800
+    if (-not (Test-Path -LiteralPath $script:LockDirectory)) {
+        New-Item -ItemType Directory -Path $script:LockDirectory -Force | Out-Null
+    }
+    $lockPath = Join-Path $script:LockDirectory "server-$Port.lock"
+    try {
+        $lock = [System.IO.File]::Open(
+            $lockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        $lock.Dispose()
+        return $true
+    }
+    catch [System.IO.IOException] {
+        return $false
     }
 }
 
@@ -88,7 +95,7 @@ function Stop-ListeningPort {
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $backendPort = Get-MyHarnessConfiguredPort -RepoRoot $repoRoot
 $env:PORT = [string]$backendPort
-Stop-ExistingDevLaunchers
+$script:DevLauncherLock = Open-DevLauncherLock -Port $backendPort
 
 function Test-CanListenOnPort {
     param(
@@ -248,6 +255,9 @@ function Test-LauncherKey {
 }
 
 function Start-BackendLauncher {
+    if (-not (Test-BackendSupervisorLockAvailable -Port $backendPort)) {
+        throw "A MyHarness backend supervisor already owns port $backendPort. Stop that launcher before starting the dev launcher."
+    }
     Stop-ListeningPort -Port $backendPort -Label "backend"
     Write-Host "[INFO] Starting MyHarness backend launcher on http://localhost:$env:PORT ..."
     $previousKeyHandling = $env:MYHARNESS_SERVER_KEY_HANDLING

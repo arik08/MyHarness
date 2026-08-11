@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { initialAppState } from "../../state/reducer";
-import { loadRuntimePreferences, runtimePreferencesFromState } from "../runtimePreferences";
+import { loadRuntimePreferences, rememberRuntimeChoice, runtimePreferencesFromState } from "../runtimePreferences";
 
 describe("runtime preference utilities", () => {
   afterEach(() => {
@@ -20,6 +20,25 @@ describe("runtime preference utilities", () => {
 
     expect(preferences.activeProfile).toBe("codex");
     expect(preferences.gpt56ContextMode).toBe("cost-saver");
+  });
+
+  it("defaults to P-GPT when no provider choice has been stored", () => {
+    expect(loadRuntimePreferences().activeProfile).toBe("p-gpt");
+  });
+
+  it("keeps the last explicitly selected provider", () => {
+    rememberRuntimeChoice("provider", {
+      value: "codex",
+      label: "Codex",
+      description: "ChatGPT OAuth",
+      active: false,
+    });
+
+    expect(loadRuntimePreferences().activeProfile).toBe("codex");
+    expect(JSON.parse(localStorage.getItem("myharness:runtimePreferences") || "{}")).toMatchObject({
+      version: 2,
+      activeProfile: "codex",
+    });
   });
 
   it("normalizes stale detected provider names stored as active profiles", () => {

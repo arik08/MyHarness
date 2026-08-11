@@ -8,6 +8,12 @@ import { StreamingAssistantMessage } from "../StreamingAssistantMessage";
 import { messageBottomFollowEvent } from "../../hooks/useMessageAutoFollow";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
+import { sendBackendRequest } from "../../api/messages";
+
+vi.mock("../../api/messages", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../api/messages")>(),
+  sendBackendRequest: vi.fn().mockResolvedValue({ ok: true }),
+}));
 
 vi.mock("mermaid", () => ({
   default: {
@@ -211,6 +217,7 @@ describe("MessageList", () => {
     sessionStorage.clear();
     Element.prototype.scrollTo = vi.fn();
     vi.restoreAllMocks();
+    vi.mocked(sendBackendRequest).mockReset().mockResolvedValue({ ok: true });
   });
 
   it("renders chat messages without visible role labels to match the legacy web UI", () => {
@@ -914,6 +921,37 @@ describe("MessageList", () => {
     expect(document.querySelector(".message-kind-queued")).toBeTruthy();
   });
 
+  it("lets a user cancel only queued messages that have not reached the model", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-1",
+          clientId: "client-1",
+          messages: [
+            { id: "pending-1", role: "user", text: "아직 대기", kind: "queued", pendingRequestId: "pending-1" },
+            { id: "delivered-1", role: "user", text: "이미 전달", kind: "steering" },
+          ],
+        }}
+      >
+        <MessageList />
+      </AppStateProvider>,
+    );
+
+    const cancel = screen.getByRole("button", { name: "대기열 요청 취소" });
+    expect(screen.queryByRole("button", { name: "스티어링 요청 취소" })).toBeNull();
+    await user.click(cancel);
+
+    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
+      type: "cancel_queued_line",
+      request_id: "pending-1",
+    });
+    expect(cancel.hasAttribute("disabled")).toBe(true);
+    expect(cancel.getAttribute("title")).toBeNull();
+    expect(cancel.getAttribute("data-tooltip")).toBe("전달 전 요청 취소");
+  });
+
   it("renders question answer records with a dedicated badge", () => {
     render(
       <AppStateProvider
@@ -972,6 +1010,7 @@ describe("MessageList", () => {
               usage: {
                 provider: "openai",
                 model: "gpt-5.4",
+                effort: "high",
                 input_tokens: 1200,
                 cached_input_tokens: 900,
                 uncached_input_tokens: 300,
@@ -1017,6 +1056,7 @@ describe("MessageList", () => {
     expect(screen.getByText("이번 답변")).toBeTruthy();
     expect(screen.getByText("세션 누적")).toBeTruthy();
     expect(screen.getByText("GPT-5.4")).toBeTruthy();
+    expect(screen.getByText("Effort · HIGH").closest(".assistant-usage-table-effort-head")).toBeTruthy();
     expect(screen.getAllByText("토큰량").length).toBe(2);
     expect(screen.getAllByText("비용").length).toBe(2);
     expect(screen.getAllByText("-").length).toBe(2);
@@ -1048,6 +1088,7 @@ describe("MessageList", () => {
     const usage = {
       provider: "openai",
       model: "gpt-5.4",
+      effort: "none",
       input_tokens: 1200,
       cached_input_tokens: 900,
       uncached_input_tokens: 300,
@@ -1091,6 +1132,7 @@ describe("MessageList", () => {
     expect(screen.getAllByText("비용").length).toBe(1);
     expect(screen.getAllByText("Uncached").length).toBe(1);
     expect(screen.getByText("이번 답변").closest(".assistant-usage-table-group-head")).toBeTruthy();
+    expect(screen.getByText("Effort · AUTO")).toBeTruthy();
     expect(await screen.findByText("6원")).toBeTruthy();
     expect(screen.queryByText(/환율/)).toBeNull();
   });

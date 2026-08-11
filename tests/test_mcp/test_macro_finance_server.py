@@ -15,7 +15,7 @@ from myharness.mcp.types import McpStdioServerConfig
 
 
 def _load_server() -> ModuleType:
-    module_path = Path(__file__).resolve().parents[2] / ".mcp" / "macro_finance_server.py"
+    module_path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "macro-finance" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("macro_finance_server_under_test", module_path)
     assert spec is not None
     assert spec.loader is not None
@@ -159,12 +159,12 @@ def test_health_reports_missing_fred_key(monkeypatch) -> None:
 
 
 def test_macro_finance_config_is_loaded_without_credentials() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
 
     config = load_mcp_configs_from_dirs([mcp_dir])["macro-finance"]
 
     assert isinstance(config, McpStdioServerConfig)
-    assert config.args == [".mcp/macro_finance_server.py"]
+    assert config.args == ["runtime/server.py"]
     assert config.env is None
 
 

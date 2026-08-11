@@ -59,27 +59,31 @@ def test_dev_launcher_stops_and_verifies_all_tracked_processes() -> None:
     assert "HasExited" not in stop_all
 
 
-def test_dev_launcher_closes_existing_dev_launcher_tree_before_ports() -> None:
+def test_dev_launcher_uses_port_scoped_lock_before_reclaiming_ports() -> None:
     script = _read_launcher("run_myharness_web_dev.ps1")
-    stop_existing = _function_body(script, "Stop-ExistingDevLaunchers")
+    open_lock = _function_body(script, "Open-DevLauncherLock")
+    start_backend = _function_body(script, "Start-BackendLauncher")
 
-    assert "[System.IO.Path]::GetFullPath($PSCommandPath)" in script
-    assert "$_.ProcessId -ne $CurrentProcessId" in stop_existing
-    assert "$_.Name -match" in stop_existing
-    assert "$_.CommandLine -match $ScriptPathPattern" in stop_existing
-    assert "$_.CommandLine -match $BackendLauncherPathPattern" in stop_existing
-    assert "Stop-ProcessTree -ProcessId ([int]$launcher.ProcessId)" in stop_existing
-    assert "Wait-Job -Job $scanJob -Timeout 2" in stop_existing
-    assert "Existing launcher scan timed out. Continuing without pre-cleanup." in stop_existing
-    assert script.index("Stop-ExistingDevLaunchers") < script.index('Stop-ListeningPort -Port $backendPort -Label "backend"')
+    assert '"dev-$Port.lock"' in open_lock
+    assert "[System.IO.FileShare]::None" in open_lock
+    assert "Another MyHarness dev launcher already owns backend port $Port" in open_lock
+    assert "$script:LockDirectory" in open_lock
+    assert "$script:LogDirectory" not in open_lock
+    assert "Get-CimInstance Win32_Process" not in script
+    assert "$script:DevLauncherLock = Open-DevLauncherLock -Port $backendPort" in script
+    assert "Test-BackendSupervisorLockAvailable -Port $backendPort" in start_backend
+    assert start_backend.index("Test-BackendSupervisorLockAvailable") < start_backend.index("Stop-ListeningPort")
 
 
 def test_web_server_supervisor_uses_exclusive_per_port_lock() -> None:
     script = _read_launcher("run_myharness_web_server.ps1")
+    open_lock = _function_body(script, "Open-LauncherLock")
 
     assert '"server-$Port.lock"' in script
     assert "[System.IO.FileShare]::None" in script
     assert "Another MyHarness backend supervisor already owns port $serverPort" in script
+    assert "$script:LockDirectory" in open_lock
+    assert "$script:LogDirectory" not in open_lock
 
 
 def test_windows_launchers_pin_child_processes_to_frontend_web_directory() -> None:
@@ -159,6 +163,9 @@ def test_backend_unexpected_exit_clears_port_before_restart() -> None:
 
     assert "full restarting server in 3 seconds" in script
     assert "Stop-ListeningPort -Port $serverPort" in script[script.index("server_exited_unexpectedly") :]
+    assert "$process.WaitForExit()" in script
+    assert "$process.Refresh()" in script
+    assert 'if ($null -eq $exitCode) { "unknown" }' in script
 
 
 def test_dev_launcher_disables_vite_stdin_shortcuts() -> None:
@@ -214,7 +221,14 @@ def test_direct_launchers_read_backend_port_from_folder_local_env() -> None:
     for script in (dev_script, server_script):
         assert '. (Join-Path $PSScriptRoot "local_env.ps1")' in script
         assert "Get-MyHarnessConfiguredPort -RepoRoot $repoRoot" in script
-        assert "$env:PORT = [string]" in script
+    assert "$env:PORT = [string]" in script
+
+
+def test_direct_launchers_allow_isolated_runs_to_ignore_folder_local_port() -> None:
+    local_env = _read_launcher("local_env.ps1")
+
+    assert '$env:MYHARNESS_IGNORE_LOCAL_ENV -ne "1"' in local_env
+    assert local_env.index("MYHARNESS_IGNORE_LOCAL_ENV") < local_env.index("Get-MyHarnessLocalEnvValue -RepoRoot $RepoRoot -Name \"PORT\"")
 
 
 def test_launchers_close_busy_backend_ports_by_default() -> None:
@@ -261,6 +275,51 @@ def test_web_launchers_disable_keyring_probing() -> None:
         launcher = (ROOT / name).read_text(encoding="utf-8")
 
         assert 'set "MYHARNESS_DISABLE_KEYRING=1"' in launcher
+
+
+def test_installer_verifies_bundled_national_assembly_mcp() -> None:
+    installer = (ROOT / "Installer.bat").read_text(encoding="utf-8")
+
+    assert "Node.js 20.19 or newer is required." in installer
+    assert 'if not exist ".skills\\mcp\\national-assembly\\runtime\\index.js"' in installer
+    assert 'if not exist ".skills\\mcp\\national-assembly\\runtime\\244.index.js"' in installer
+    assert 'node --check ".skills\\mcp\\national-assembly\\runtime\\index.js"' in installer
+    assert 'node --check ".skills\\mcp\\national-assembly\\runtime\\244.index.js"' in installer
+    assert "git clone" not in installer
+    assert 'pushd ".skills\\mcp\\national-assembly\\runtime"' not in installer
+
+
+def test_installer_updates_existing_web_dependencies_without_npm_ci() -> None:
+    installer = (ROOT / "Installer.bat").read_text(encoding="utf-8")
+
+    assert 'call :install_web_dependencies' in installer
+    assert 'if exist "node_modules" goto install_web_dependencies_incremental' in installer
+    assert 'call npm ci' in installer
+    assert '[WARN] npm ci failed. Retrying with npm install...' in installer
+    assert installer.count('call npm install') >= 1
+
+
+def test_installer_installs_every_dependency_it_verifies() -> None:
+    installer = (ROOT / "Installer.bat").read_text(encoding="utf-8").lower()
+    install_line = next(
+        line for line in installer.splitlines() if "-m pip install markitdown" in line
+    )
+
+    for package in (
+        "markitdown",
+        "pymupdf",
+        "mammoth",
+        "markdownify",
+        "beautifulsoup4",
+        "openpyxl",
+        "svglib",
+        "reportlab",
+        "pillow",
+        "numpy",
+        "requests",
+        "curl_cffi",
+    ):
+        assert package in install_line
 
 
 def test_dev_vite_port_falls_forward_without_killing_preferred_port() -> None:

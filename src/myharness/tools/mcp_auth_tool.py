@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from myharness.config.settings import load_settings, save_settings
-from myharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig, McpWebSocketServerConfig
+from myharness.mcp.types import McpAuthConfig, McpHttpServerConfig, McpStdioServerConfig, McpWebSocketServerConfig
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
@@ -28,11 +28,13 @@ class McpAuthTool(BaseTool):
     async def execute(self, arguments: McpAuthToolInput, context: ToolExecutionContext) -> ToolResult:
         settings = load_settings()
         mcp_manager = context.metadata.get("mcp_manager")
-        config = settings.mcp_servers.get(arguments.server_name)
-        if config is None and mcp_manager is not None:
+        config = None
+        if mcp_manager is not None:
             getter = getattr(mcp_manager, "get_server_config", None)
             if callable(getter):
                 config = getter(arguments.server_name)
+        if config is None:
+            config = settings.mcp_servers.get(arguments.server_name)
         if config is None:
             return ToolResult(output=f"알 수 없는 MCP 서버입니다: {arguments.server_name}", is_error=True)
 
@@ -55,7 +57,17 @@ class McpAuthTool(BaseTool):
         else:
             return ToolResult(output="지원하지 않는 MCP 서버 설정 유형입니다.", is_error=True)
 
-        settings.mcp_servers[arguments.server_name] = updated
+        overrides = dict(settings.mcp_auth)
+        current_auth = overrides.get(arguments.server_name, McpAuthConfig())
+        if isinstance(config, McpStdioServerConfig):
+            auth_env = dict(current_auth.env)
+            auth_env[env_key] = env[env_key]
+            overrides[arguments.server_name] = current_auth.model_copy(update={"env": auth_env})
+        else:
+            auth_headers = dict(current_auth.headers)
+            auth_headers[header_key] = headers[header_key]
+            overrides[arguments.server_name] = current_auth.model_copy(update={"headers": auth_headers})
+        settings.mcp_auth = overrides
         save_settings(settings)
 
         if mcp_manager is not None:

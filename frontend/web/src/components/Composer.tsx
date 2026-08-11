@@ -787,12 +787,15 @@ export function Composer() {
       });
       return;
     }
+    const requestId = globalThis.crypto?.randomUUID?.() || `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     dispatch({
       type: "append_message",
       message: {
+        id: requestId,
         role: "user",
         text: line,
         kind: mode === "queue" ? "queued" : "steering",
+        pendingRequestId: requestId,
       },
     });
     dispatch({ type: "clear_composer" });
@@ -804,6 +807,7 @@ export function Composer() {
         attachments: [],
         mode,
         suppressUserTranscript: true,
+        requestId,
       });
     } catch (error) {
       dispatch({

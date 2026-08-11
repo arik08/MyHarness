@@ -14,7 +14,7 @@ from myharness.mcp.config import load_mcp_configs_from_dirs
 
 
 def _load_server() -> ModuleType:
-    path = Path(__file__).resolve().parents[2] / ".mcp" / "environment_industry_server.py"
+    path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "environment-industry" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("environment_industry_server_under_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -86,11 +86,11 @@ def test_usda_ers_key_is_not_returned(monkeypatch) -> None:
 
 
 def test_config_loads_without_credentials() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
     config = load_mcp_configs_from_dirs([mcp_dir])["environment-industry"]
 
     assert config.env is None
-    assert config.args == [".mcp/environment_industry_server.py"]
+    assert config.args == ["runtime/server.py"]
 
 
 def test_prodcom_rejects_multivalue_filters_before_network() -> None:

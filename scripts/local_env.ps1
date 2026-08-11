@@ -27,7 +27,10 @@ function Get-MyHarnessConfiguredPort {
         [int]$Fallback = 4174
     )
 
-    $rawPort = Get-MyHarnessLocalEnvValue -RepoRoot $RepoRoot -Name "PORT"
+    $rawPort = $null
+    if ($env:MYHARNESS_IGNORE_LOCAL_ENV -ne "1") {
+        $rawPort = Get-MyHarnessLocalEnvValue -RepoRoot $RepoRoot -Name "PORT"
+    }
     if (-not $rawPort) {
         $rawPort = $env:PORT
     }

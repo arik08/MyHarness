@@ -348,7 +348,7 @@ class McpClientManager:
                 read_timeout_seconds=timedelta(seconds=MCP_REQUEST_TIMEOUT_SECONDS),
             )
         )
-        await session.initialize()
+        initialize_result = await session.initialize()
         tool_result = await session.list_tools()
         resource_result = None
         try:
@@ -381,6 +381,7 @@ class McpClientManager:
             state="connected",
             transport=getattr(config, "type", "unknown"),
             auth_configured=auth_configured,
+            instructions=str(getattr(initialize_result, "instructions", "") or ""),
             tools=tools,
             resources=resources,
         )

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "posco-mih": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "runtime/server.py",
+        "posco-mih"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "description": "[연결필요] MIH(Marketing Information Hub) 권한 연동 후 시장, 고객, 수요, 가격 같은 마케팅 정보를 조회할 수 있습니다."
+    }
+  }
+}

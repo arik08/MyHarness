@@ -49,6 +49,23 @@ def test_get_retries_transient_status_then_succeeds(monkeypatch) -> None:
     assert get.call_count == 3
 
 
+def test_get_retries_transient_network_error_then_succeeds(monkeypatch) -> None:
+    response = _response(200)
+    get = MagicMock(
+        side_effect=[
+            httpx.ReadTimeout("temporary timeout"),
+            response,
+        ]
+    )
+    monkeypatch.setattr(official_data.httpx, "get", get)
+    monkeypatch.setattr(official_data.time, "sleep", lambda _seconds: None)
+
+    result = official_data.request("Source", "https://example.test")
+
+    assert result is response
+    assert get.call_count == 2
+
+
 def test_non_json_diagnostic_never_reflects_response_body(monkeypatch) -> None:
     response = _response(200)
     response.content = b"credential=top-secret-value"
@@ -156,6 +173,27 @@ def test_post_retries_transient_status_then_succeeds(monkeypatch) -> None:
         "https://example.test/token",
         data={"grant_type": "client_credentials"},
         auth=("client", "secret"),
+    )
+
+    assert result == {"token": "ok"}
+    assert post.call_count == 2
+
+
+def test_post_retries_transient_network_error_then_succeeds(monkeypatch) -> None:
+    response = _response(200, json_value={"token": "ok"})
+    post = MagicMock(
+        side_effect=[
+            httpx.ConnectError("temporary connection failure"),
+            response,
+        ]
+    )
+    monkeypatch.setattr(official_data.httpx, "post", post)
+    monkeypatch.setattr(official_data.time, "sleep", lambda _seconds: None)
+
+    result = official_data.post_form_json(
+        "Source",
+        "https://example.test/token",
+        data={"grant_type": "client_credentials"},
     )
 
     assert result == {"token": "ok"}

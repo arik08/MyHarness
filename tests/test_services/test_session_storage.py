@@ -209,6 +209,7 @@ def test_migration_trusts_fresh_current_metadata_but_rechecks_changed_snapshots(
         "history_events": [],
         "usage": UsageSnapshot().model_dump(mode="json"),
         "created_at": 100,
+        "history_replay_compacted": True,
         "summary": "완료 표식",
     }
     original = json.dumps(marked, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -362,6 +363,8 @@ def test_save_and_load_session_snapshot_keeps_history_events(tmp_path: Path, mon
 
 def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    saved_at = 1_700_000_000.0
+    monkeypatch.setattr(session_storage.time, "time", lambda: saved_at)
     project = tmp_path / "repo"
     project.mkdir()
     large_output = "fetch-head\n" + ("web evidence " * 8_000) + "\nfetch-tail"
@@ -430,14 +433,31 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
                 "output": large_error_output,
                 "is_error": True,
             },
-            {"type": "assistant", "text": "완료했습니다."},
+            {
+                "type": "assistant",
+                "text": "완료했습니다.",
+                "artifacts": [{"path": "outputs/report.html", "name": "HTML 보고서"}],
+            },
         ],
     )
 
-    # Existing snapshots can still contain the pre-compaction replay payload.
-    # Restore must compact those files on their first load as well.
     session_path = session_storage.get_project_session_dir(project) / "session-large-replay.json"
     legacy_snapshot = json.loads(session_path.read_text(encoding="utf-8"))
+    recent_started = next(
+        event for event in legacy_snapshot["history_events"] if event["type"] == "tool_started"
+    )
+    assert legacy_snapshot["history_replay_compacted"] is False
+    assert recent_started["tool_input"]["content"] == large_content
+    assert any(event["type"] == "tool_input_delta" for event in legacy_snapshot["history_events"])
+    assert any(event["type"] == "tool_progress" for event in legacy_snapshot["history_events"])
+    assert next(
+        event
+        for event in legacy_snapshot["history_events"]
+        if event["type"] == "tool_completed" and event["tool_name"] == "web_fetch"
+    )["output"] == large_output
+
+    # Once the saved replay is three days old, the first load rewrites only
+    # replay-only payloads while preserving visible workflow and artifact data.
     legacy_events = legacy_snapshot["history_events"]
     legacy_events.insert(
         1,
@@ -465,7 +485,6 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
     )
     legacy_web_completed["output"] = large_output
     session_path.write_text(json.dumps(legacy_snapshot, ensure_ascii=False), encoding="utf-8")
-
     snapshot = load_session_by_id(project, "large-replay")
 
     assert snapshot is not None
@@ -493,17 +512,21 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
         for event in replay_events
         if event["type"] == "tool_completed" and event.get("is_error") is True
     )
-    assert started["tool_input"] == {
-        "file_path": "outputs/report.html",
-        "_history_replay_truncated": True,
-        "_history_replay_original_chars": len(
-            json.dumps(
-                {"file_path": "outputs/report.html", "content": large_content},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        ),
-    }
+    assert started["tool_input"]["file_path"] == "outputs/report.html"
+    assert started["tool_input"]["content"] == (
+        large_content[: session_storage._HISTORY_TOOL_INPUT_FIELD_MAX_CHARS - 3].rstrip()
+        + "..."
+    )
+    assert "이전 세션 빠른 복원을 위해 원문 축약" not in started["tool_input"]["content"]
+    assert len(started["tool_input"]["content"]) <= session_storage._HISTORY_TOOL_INPUT_FIELD_MAX_CHARS
+    assert started["tool_input"]["_history_replay_truncated"] is True
+    assert started["tool_input"]["_history_replay_original_chars"] == len(
+        json.dumps(
+            {"file_path": "outputs/report.html", "content": large_content},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
     assert all(event["type"] != "tool_progress" for event in replay_events)
     assert write_completed["output"] == "outputs/report.html"
     assert len(completed["output"]) <= session_storage._HISTORY_WEB_TOOL_OUTPUT_MAX_CHARS
@@ -516,7 +539,24 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
     assert len(error_completed["output"]) <= session_storage._HISTORY_TOOL_ERROR_OUTPUT_MAX_CHARS
     assert error_completed["output"].startswith("error-head")
     assert error_completed["output"].endswith("error-tail")
-
+    assistant = next(event for event in replay_events if event["type"] == "assistant")
+    assert assistant["artifacts"] == [{"path": "outputs/report.html", "name": "HTML 보고서"}]
+    stored_after_compaction = json.loads(session_path.read_text(encoding="utf-8"))
+    assert stored_after_compaction["history_replay_compacted"] is True
+    dense_input = {
+        "path": "outputs/report.html",
+        **{f"field_{index}": "z" * 500 for index in range(20)},
+    }
+    compacted_dense_input = session_storage._compact_history_tool_input(dense_input)
+    assert compacted_dense_input["path"] == "outputs/report.html"
+    assert len(
+        json.dumps(compacted_dense_input, ensure_ascii=False, separators=(",", ":"))
+    ) <= session_storage._HISTORY_TOOL_INPUT_MAX_CHARS
+    assert all(
+        len(value) <= session_storage._HISTORY_TOOL_INPUT_FIELD_MAX_CHARS
+        for value in compacted_dense_input.values()
+        if isinstance(value, str)
+    )
     pending_progress = session_storage._sanitize_history_events([
         {
             "type": "tool_progress",
@@ -550,6 +590,68 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
         {"type": "assistant", "text": "중간 보고"},
         {"type": "swarm_status", "swarm_teammates": [{"id": "agent-1", "status": "completed"}]},
     ]
+
+
+def test_load_repairs_legacy_truncated_tool_input_from_model_messages(tmp_path: Path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    large_content = "<html>" + ("generated body " * 2_000) + "</html>"
+    messages = [
+        ConversationMessage.from_user_text("HTML 파일 만들어줘"),
+        ConversationMessage(
+            role="assistant",
+            content=[
+                ToolUseBlock(
+                    id="write-legacy",
+                    name="write_file",
+                    input={"path": "outputs/report.html", "content": large_content},
+                )
+            ],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="write-legacy", content="outputs/report.html")],
+        ),
+    ]
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=messages,
+        usage=UsageSnapshot(),
+        session_id="legacy-tool-input",
+        history_events=[
+            {"type": "user", "text": "HTML 파일 만들어줘"},
+            {
+                "type": "tool_started",
+                "tool_name": "write_file",
+                "tool_call_id": "write-legacy",
+                "tool_input": {"path": "outputs/report.html", "content": large_content},
+            },
+            {
+                "type": "tool_completed",
+                "tool_name": "write_file",
+                "tool_call_id": "write-legacy",
+                "output": "outputs/report.html",
+            },
+        ],
+    )
+    session_path = get_project_session_dir(project) / "session-legacy-tool-input.json"
+    stored = json.loads(session_path.read_text(encoding="utf-8"))
+    started = next(event for event in stored["history_events"] if event["type"] == "tool_started")
+    started["tool_input"] = {
+        "path": "outputs/report.html",
+        "_history_replay_truncated": True,
+        "_history_replay_original_chars": len(large_content),
+    }
+    session_path.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+
+    restored = load_session_by_id(project, "legacy-tool-input")
+
+    assert restored is not None
+    restored_started = next(event for event in restored["history_events"] if event["type"] == "tool_started")
+    assert restored_started["tool_input"]["content"] == large_content
+    assert restored["history_replay_compacted"] is False
 
 
 def test_user_edited_session_title_is_preserved(tmp_path: Path, monkeypatch):
@@ -606,6 +708,47 @@ def test_overwriting_session_snapshot_keeps_original_created_at(
 
     assert snapshot is not None
     assert snapshot["created_at"] == 100.0
+
+
+def test_overwriting_session_snapshot_preserves_sidebar_flags(tmp_path: Path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    session_id = "sidebar-flags"
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage.from_user_text("첫 질문")],
+        usage=UsageSnapshot(),
+        session_id=session_id,
+    )
+    session_path = get_project_session_dir(project) / f"session-{session_id}.json"
+    stored = json.loads(session_path.read_text(encoding="utf-8"))
+    stored["pinned"] = True
+    stored["liked"] = True
+    session_path.write_text(
+        json.dumps(stored, ensure_ascii=False, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[ConversationMessage.from_user_text("이어진 질문")],
+        usage=UsageSnapshot(),
+        session_id=session_id,
+    )
+
+    snapshot = load_session_by_id(project, session_id)
+    listed = next(item for item in list_session_snapshots(project) if item["session_id"] == session_id)
+
+    assert snapshot is not None
+    assert snapshot["pinned"] is True
+    assert snapshot["liked"] is True
+    assert listed["pinned"] is True
+    assert listed["liked"] is True
 
 
 def test_overwriting_session_snapshot_updates_last_assistant_activity(

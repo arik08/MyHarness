@@ -52,6 +52,7 @@ from myharness.memory import (
     remove_memory_entry,
 )
 from myharness.mcp.config import load_mcp_server_configs
+from myharness.mcp.types import McpAuthConfig
 from myharness.output_styles import load_output_styles
 from myharness.permissions import PermissionChecker, PermissionMode
 from myharness.plugins import load_plugins
@@ -1720,7 +1721,7 @@ def create_default_command_registry(
             )
         if tokens and tokens[0] == "auth" and len(tokens) >= 3:
             server_name = tokens[1]
-            config = settings.mcp_servers.get(server_name)
+            config = servers.get(server_name)
             if config is None:
                 return CommandResult(message=f"알 수 없는 MCP 서버: {server_name}")
 
@@ -1748,19 +1749,24 @@ def create_default_command_registry(
                 header_value = (
                     f"Bearer {value}" if mode == "bearer" and header_key == "Authorization" else value
                 )
-                headers = dict(getattr(config, "headers", {}) or {})
-                headers[header_key] = header_value
-                settings.mcp_servers[server_name] = config.model_copy(update={"headers": headers})
+                overrides = dict(settings.mcp_auth)
+                current_auth = overrides.get(server_name, McpAuthConfig())
+                auth_headers = dict(current_auth.headers)
+                auth_headers[header_key] = header_value
+                overrides[server_name] = current_auth.model_copy(update={"headers": auth_headers})
             elif hasattr(config, "env"):
                 if mode not in {"bearer", "env"}:
                     return CommandResult(message="stdio MCP 인증은 bearer 또는 env 모드를 지원합니다.")
                 env_key = key or "MCP_AUTH_TOKEN"
                 env_value = f"Bearer {value}" if mode == "bearer" else value
-                env = dict(getattr(config, "env", {}) or {})
-                env[env_key] = env_value
-                settings.mcp_servers[server_name] = config.model_copy(update={"env": env})
+                overrides = dict(settings.mcp_auth)
+                current_auth = overrides.get(server_name, McpAuthConfig())
+                auth_env = dict(current_auth.env)
+                auth_env[env_key] = env_value
+                overrides[server_name] = current_auth.model_copy(update={"env": auth_env})
             else:
                 return CommandResult(message=f"서버 {server_name}은(는) 인증 업데이트를 지원하지 않습니다")
+            settings.mcp_auth = overrides
             save_settings(settings)
             return CommandResult(message=f"{server_name} MCP 인증을 저장했습니다. 다시 연결하려면 세션을 재시작하세요.")
         return CommandResult(message="사용법: /mcp [list|enable NAME|disable NAME|toggle NAME|auth SERVER ...]")

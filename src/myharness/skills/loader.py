@@ -136,6 +136,7 @@ def load_skills_from_dirs(
 
     Supported layout:
     - ``<root>/<skill-dir>/SKILL.md``
+    - ``<root>/<module>/skills/<skill-dir>/SKILL.md`` for self-contained MCP packages
     """
     skills: list[SkillDefinition] = []
     if not directories:
@@ -150,6 +151,13 @@ def load_skills_from_dirs(
                 skill_path = child / "SKILL.md"
                 if skill_path.exists():
                     candidates.append(skill_path)
+                package_skills = child / "skills"
+                if package_skills.is_dir():
+                    candidates.extend(
+                        skill_dir / "SKILL.md"
+                        for skill_dir in sorted(package_skills.iterdir())
+                        if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists()
+                    )
         for path in candidates:
             if path in seen:
                 continue

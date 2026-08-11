@@ -22,7 +22,7 @@ const defaultAppSettings: AppSettings = {
 
 export type AppAction =
   | { type: "backend_event"; event: BackendEvent; sessionId?: string }
-  | { type: "append_message"; message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "createdAt">>; skipHistory?: boolean }
+  | { type: "append_message"; message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>; skipHistory?: boolean }
   | { type: "session_started"; sessionId: string; clientId?: string; busy?: boolean }
   | { type: "session_replaced"; sessionId: string; workspace?: Workspace }
   | { type: "set_theme"; themeId: ThemeId }
@@ -47,6 +47,7 @@ export type AppAction =
   | { type: "set_history"; history: HistoryItem[]; hasMore?: boolean; nextOffset?: number }
   | { type: "append_history"; history: HistoryItem[]; hasMore?: boolean; nextOffset?: number }
   | { type: "hide_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
+  | { type: "restore_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "delete_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "set_history_loading"; value: boolean }
   | { type: "set_history_loading_more"; value: boolean }
@@ -359,11 +360,11 @@ export const initialAppState: AppState = {
   },
 };
 
-function createMessage(message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "createdAt">>): ChatMessage {
+function createMessage(message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>): ChatMessage {
   return { id: nextId(), ...message };
 }
 
-function appendMessage(messages: ChatMessage[], message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "createdAt">>): ChatMessage[] {
+function appendMessage(messages: ChatMessage[], message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>): ChatMessage[] {
   return [...messages, createMessage(message)];
 }
 
@@ -437,6 +438,7 @@ function normalizeUsageCostSummary(value: unknown): UsageCostSummary | undefined
   return {
     provider: typeof raw.provider === "string" ? raw.provider : undefined,
     model: typeof raw.model === "string" ? raw.model : undefined,
+    effort: typeof raw.effort === "string" ? raw.effort : undefined,
     input_tokens: inputTokens,
     cached_input_tokens: cachedInputTokens,
     cache_write_tokens: cacheWriteTokens,
@@ -2246,7 +2248,10 @@ function reduceHistoryRestoreEvent(
       continue;
     }
     if (type === "assistant") {
-      const artifacts = normalizeAssistantArtifacts(record.artifacts);
+      const artifacts = normalizeAssistantArtifacts([
+        ...workflowEventArtifactCandidates(workflowEvents),
+        ...normalizeAssistantArtifacts(record.artifacts),
+      ]);
       const usage = normalizeUsageCostSummary(record.usage);
       const sessionUsage = normalizeUsageCostSummary(record.session_usage);
       restoredSessionUsage = sessionUsage || restoredSessionUsage;
@@ -2476,11 +2481,20 @@ function reduceHistoryRestoreEvent(
   const restoredWorkflowAnchorMessageId = hasRestorableWorkflowEvents(workflowEvents) ? workflowAnchorMessageId : null;
   const restoredWorkflowEvents = restoredWorkflowAnchorMessageId ? workflowEvents : [];
   const stillRestoring = state.restoringHistory || Boolean(state.pendingHistoryId);
+  const snapshotTitle = String(historyEvent.message || "").trim();
+  const historyListTitle = state.history.find((item) => item.value === historyId)?.description?.trim() || "";
+  const firstRestoredUserTitle = messages.find((message) => (
+    message.role === "user" && !message.kind && !/^\/\S*/.test(message.text.trim())
+  ))?.text.replace(/\s+/g, " ").trim() || "";
+  const titleCandidate = snapshotTitle || state.chatTitle;
+  const restoredTitle = titleCandidate === "새 대화"
+    ? historyListTitle || firstRestoredUserTitle || titleCandidate
+    : titleCandidate;
   return {
     ...state,
     activeHistoryId: historyId || null,
     pendingHistoryId: null,
-    chatTitle: normalizeChatTitle(String(historyEvent.message || state.chatTitle || "")),
+    chatTitle: normalizeChatTitle(restoredTitle),
     messages,
     workflowAnchorMessageId: restoredWorkflowAnchorMessageId,
     workflowEventsByMessageId,
@@ -2707,6 +2721,21 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     return state;
   }
   const event = action.event;
+  if (event.type === "queued_message_status") {
+    const requestId = String(event.request_id || "").trim();
+    if (!requestId) {
+      return state;
+    }
+    if (event.status === "cancelled") {
+      return { ...state, messages: state.messages.filter((message) => message.pendingRequestId !== requestId) };
+    }
+    return {
+      ...state,
+      messages: state.messages.map((message) => (
+        message.pendingRequestId === requestId ? { ...message, pendingRequestId: undefined } : message
+      )),
+    };
+  }
   if (state.historyReadOnly && event.type !== "history_snapshot") {
     return state;
   }
@@ -2820,11 +2849,19 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
   }
 
   if (event.type === "session_title") {
-    const title = normalizeChatTitle(String(event.message ?? event.value ?? ""));
+    const eventTitle = normalizeChatTitle(String(event.message ?? event.value ?? ""));
+    const activeHistoryValue = state.activeHistoryId || state.sessionId;
+    const restoredHistoryTitle = state.history.find((item) => item.value === activeHistoryValue)?.description?.trim() || "";
+    const restoredUserTitle = state.messages.find((message) => (
+      message.role === "user" && !message.kind && !/^\/\S*/.test(message.text.trim())
+    ))?.text.replace(/\s+/g, " ").trim() || "";
+    const title = state.historyReadOnly && eventTitle === "새 대화"
+      ? normalizeChatTitle(restoredHistoryTitle || restoredUserTitle || eventTitle)
+      : eventTitle;
     return {
       ...state,
       chatTitle: title,
-      history: updateCurrentHistoryTitle(state.history, state.activeHistoryId || state.sessionId, title),
+      history: updateCurrentHistoryTitle(state.history, activeHistoryValue, title),
     };
   }
 
@@ -2888,6 +2925,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         kind: item.kind || undefined,
         toolName: item.tool_name || undefined,
         isError: item.is_error === true,
+        pendingRequestId: item.request_id || undefined,
       });
       if (isSlashCommandMessage(text)) {
         return {
@@ -2914,6 +2952,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
         kind: item.kind || undefined,
         toolName: item.tool_name || undefined,
         isError: item.is_error === true,
+        pendingRequestId: item.request_id || undefined,
         isComplete: item.role === "assistant" ? true : undefined,
       }),
     };
@@ -2957,7 +2996,10 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const value = rawValue || (artifacts.length ? "작성 완료했습니다." : "");
     const last = state.messages[state.messages.length - 1];
     const isFinalAnswer = event.has_tool_uses !== true;
-    const usage = normalizeUsageCostSummary(event.usage);
+    const normalizedUsage = normalizeUsageCostSummary(event.usage);
+    const usage = normalizedUsage && !normalizedUsage.effort
+      ? { ...normalizedUsage, effort: state.effort || "none" }
+      : normalizedUsage;
     const sessionUsage = normalizeUsageCostSummary(event.session_usage);
     const nextSessionUsage = sessionUsage || state.sessionUsage;
     if (isFinalAnswer && isDuplicateAssistantCompletion(last, value, artifacts)) {
@@ -3522,6 +3564,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...nextState,
         history: visibleHistoryRows(nextState, state.history),
+      };
+    }
+
+    case "restore_history_local": {
+      const hiddenKey = historyVisibilityKeyFromAction(action);
+      const hiddenHistoryKeys = forgetHiddenHistoryKey(state.hiddenHistoryKeys, hiddenKey);
+      if (hiddenHistoryKeys !== state.hiddenHistoryKeys) {
+        saveHiddenHistoryKeys(hiddenHistoryKeys);
+      }
+      return {
+        ...state,
+        hiddenHistoryKeys,
+        history: state.history.map((item) => (
+          item.value === action.sessionId ? { ...item, hidden: false } : item
+        )),
       };
     }
 

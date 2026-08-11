@@ -52,7 +52,7 @@ async def test_mcp_auth_tool_updates_http_headers(tmp_path: Path, monkeypatch):
 
     assert result.is_error is False
     assert "demo MCP 인증을 저장했습니다" in result.output
-    saved = load_settings().mcp_servers["demo"]
+    saved = load_settings().mcp_auth["demo"]
     assert saved.headers["Authorization"] == "Bearer secret"
     assert manager.updated[0][0] == "demo"
     assert manager.reconnected == 1
@@ -76,7 +76,7 @@ async def test_mcp_auth_tool_updates_stdio_env(tmp_path: Path, monkeypatch):
     )
 
     assert result.is_error is False
-    saved = load_settings().mcp_servers["fixture"]
+    saved = load_settings().mcp_auth["fixture"]
     assert saved.env["FIXTURE_TOKEN"] == "abc123"
 
 
@@ -96,6 +96,6 @@ async def test_mcp_auth_tool_can_start_from_active_manager_config(tmp_path: Path
     )
 
     assert result.is_error is False
-    saved = load_settings().mcp_servers["fixture"]
+    saved = load_settings().mcp_auth["fixture"]
     assert saved.env["MCP_AUTH_TOKEN"] == "Bearer token-smoke"
     assert manager.reconnected == 1

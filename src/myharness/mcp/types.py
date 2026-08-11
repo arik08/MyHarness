@@ -45,6 +45,13 @@ class McpWebSocketServerConfig(BaseModel):
 McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpWebSocketServerConfig
 
 
+class McpAuthConfig(BaseModel):
+    """Credential overlay kept separate from an MCP package runtime definition."""
+
+    env: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
 class McpJsonConfig(BaseModel):
     """Config file shape used by plugins and project files."""
 
@@ -81,5 +88,6 @@ class McpConnectionStatus:
     description: str = ""
     transport: str = "unknown"
     auth_configured: bool = False
+    instructions: str = ""
     tools: list[McpToolInfo] = field(default_factory=list)
     resources: list[McpResourceInfo] = field(default_factory=list)

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "posco-plm": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "runtime/server.py",
+        "posco-plm"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "description": "[연결필요] 포스코 투자관리시스템 연동 후 투자 과제, 예산, 승인, 진행 현황을 조회할 수 있습니다."
+    }
+  }
+}

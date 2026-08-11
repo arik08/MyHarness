@@ -9,7 +9,7 @@ from typing import Any
 
 
 def _load_kosis_server() -> ModuleType:
-    module_path = Path(__file__).resolve().parents[2] / ".mcp" / "kosis_server.py"
+    module_path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "kosis" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("kosis_server_under_test", module_path)
     assert spec is not None
     assert spec.loader is not None

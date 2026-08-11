@@ -43,12 +43,13 @@ STATIC_TOOL_CALLS = {
 @pytest.mark.asyncio
 async def test_grouped_official_data_servers_start_and_list_tools() -> None:
     root = Path(__file__).resolve().parents[2]
-    all_configs = load_mcp_configs_from_dirs([root / ".mcp"])
+    all_configs = load_mcp_configs_from_dirs([root / ".skills" / "mcp"])
     configs = {name: all_configs[name] for name in SERVER_NAMES}
     manager = McpClientManager(configs)
 
     try:
-        await manager.connect_all()
+        for name, config in configs.items():
+            await manager.ensure_server_config(name, config, force_connect=True)
         statuses = {status.name: status for status in manager.list_statuses()}
 
         assert set(statuses) == SERVER_NAMES
@@ -63,9 +64,10 @@ async def test_grouped_official_data_servers_start_and_list_tools() -> None:
             assert output["retrieved_at"]
 
         for status in statuses.values():
-            assert len(status.resources) == 1
+            assert any(resource.uri.startswith("skill://") for resource in status.resources)
+            overview = next(resource for resource in status.resources if not resource.uri.startswith("skill://"))
             resource = json.loads(
-                await manager.read_resource(status.name, status.resources[0].uri)
+                await manager.read_resource(status.name, overview.uri)
             )
             assert resource
 

@@ -4,6 +4,7 @@ $script:CurrentServerProcess = $null
 $script:RestartCount = 0
 $script:KeyHandlingEnabled = $env:MYHARNESS_SERVER_KEY_HANDLING -ne "0"
 $script:LogDirectory = if ($env:MYHARNESS_LOGS_DIR) { $env:MYHARNESS_LOGS_DIR } else { Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) ".myharness\logs" }
+$script:LockDirectory = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) ".myharness\locks"
 $script:LauncherLog = Join-Path $script:LogDirectory "myharness-web-launcher.log"
 $script:FrontendWebDirectory = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\frontend\web"))
 . (Join-Path $PSScriptRoot "local_env.ps1")
@@ -110,10 +111,10 @@ function Test-LauncherKey {
 function Open-LauncherLock {
     param([Parameter(Mandatory = $true)][int]$Port)
 
-    if (-not (Test-Path -LiteralPath $script:LogDirectory)) {
-        New-Item -ItemType Directory -Path $script:LogDirectory -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $script:LockDirectory)) {
+        New-Item -ItemType Directory -Path $script:LockDirectory -Force | Out-Null
     }
-    $lockPath = Join-Path $script:LogDirectory "server-$Port.lock"
+    $lockPath = Join-Path $script:LockDirectory "server-$Port.lock"
     try {
         return [System.IO.File]::Open(
             $lockPath,
@@ -238,6 +239,8 @@ while (-not $script:StopRequested) {
         }
 
         if ($process.HasExited) {
+            $process.WaitForExit()
+            $process.Refresh()
             $exitCode = $process.ExitCode
         }
     }
@@ -258,9 +261,10 @@ while (-not $script:StopRequested) {
         continue
     }
 
-    Write-Host "[WARN] Server process exited with code $exitCode."
+    $exitCodeLabel = if ($null -eq $exitCode) { "unknown" } else { [string]$exitCode }
+    Write-Host "[WARN] Server process exited with code $exitCodeLabel."
     Write-Host "[INFO] Keeping launcher alive; full restarting server in 3 seconds. Press Q or Ctrl+C to stop."
-    Write-LauncherLog "server_exited_unexpectedly" @{ child_pid = $process.Id; exit_code = $exitCode; restart_count = $script:RestartCount }
+    Write-LauncherLog "server_exited_unexpectedly" @{ child_pid = $process.Id; exit_code = $exitCodeLabel; restart_count = $script:RestartCount }
     Start-Sleep -Seconds 3
     Stop-ListeningPort -Port $serverPort
     $script:RestartCount += 1

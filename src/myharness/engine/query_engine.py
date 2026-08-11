@@ -91,6 +91,11 @@ class QueryEngine:
         return self._max_tokens
 
     @property
+    def reasoning_effort(self) -> str | None:
+        """Return the reasoning effort used for future model requests."""
+        return self._reasoning_effort
+
+    @property
     def system_prompt(self) -> str:
         """Return the active system prompt."""
         return self._system_prompt

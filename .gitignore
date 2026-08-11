@@ -27,6 +27,8 @@ htmlcov/
 # React TUI frontend
 frontend/terminal/node_modules/
 frontend/web/node_modules/
+node_modules/
+.skills/mcp/*/runtime/node_modules/
 
 # User data (never commit API keys or session data)
 .myharness/*

@@ -34,6 +34,7 @@ export type BackendStateSnapshot = {
 export type UsageCostSummary = {
   provider?: string;
   model?: string;
+  effort?: string;
   input_tokens: number;
   cached_input_tokens: number;
   cache_write_tokens?: number;
@@ -59,6 +60,7 @@ export type TranscriptItem = {
   tool_name?: string | null;
   tool_input?: Record<string, unknown> | null;
   is_error?: boolean | null;
+  request_id?: string | null;
 };
 
 export type CompactProgressPhase =
@@ -108,6 +110,7 @@ export type BackendEvent =
   | { type: "state_snapshot"; state?: BackendStateSnapshot; plugins?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null }
   | { type: "skills_snapshot"; skills?: unknown[] }
   | { type: "transcript_item"; item?: TranscriptItem }
+  | { type: "queued_message_status"; request_id?: string | null; status?: "delivered" | "cancelled" | "not_found" | string | null }
   | { type: "reasoning_summary"; message?: string | null }
   | { type: "assistant_delta"; message?: string | null; value?: string | null }
   | { type: "assistant_complete"; message?: string | null; has_tool_uses?: boolean | null; artifacts?: ArtifactSummary[] | null; usage?: UsageCostSummary | null; session_usage?: UsageCostSummary | null }
@@ -160,6 +163,7 @@ export type HistoryItem = {
   liveSessionId?: string;
   busy?: boolean;
   pinned?: boolean;
+  liked?: boolean;
   pending?: boolean;
   lastAssistantAt?: number;
 };

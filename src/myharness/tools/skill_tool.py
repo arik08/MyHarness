@@ -61,8 +61,37 @@ class SkillTool(BaseTool):
                     "transcript_output": transcript_output,
                 },
             )
+        await _activate_routed_mcp(skill, context)
         increment_skill_usage_count(skill.name)
         return ToolResult(output=_format_skill_output(skill))
+
+
+async def _activate_routed_mcp(skill, context: ToolExecutionContext) -> None:
+    """Connect and register a skill-backed MCP server on first use."""
+    from myharness.skills.routing import is_mcp_routed_skill, mcp_server_name_from_skill_source
+    from myharness.tools.mcp_tool import McpToolAdapter
+
+    if not is_mcp_routed_skill(skill):
+        return
+    manager = context.metadata.get("mcp_manager")
+    tool_registry = context.metadata.get("tool_registry")
+    if manager is None or tool_registry is None:
+        return
+    server_name = mcp_server_name_from_skill_source(skill.source)
+    if not server_name:
+        return
+    config = manager.get_server_config(server_name)
+    if config is None:
+        return
+    await manager.ensure_server_config(server_name, config, force_connect=True)
+    status = next(
+        (item for item in manager.list_statuses() if item.name == server_name),
+        None,
+    )
+    if status is None or status.state != "connected":
+        return
+    for tool_info in status.tools:
+        tool_registry.register(McpToolAdapter(manager, tool_info))
 
 
 def _format_skill_output(skill) -> str:

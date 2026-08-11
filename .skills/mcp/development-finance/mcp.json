@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "development-finance": {
+      "type": "stdio",
+      "description": "ADB KIDB 공식 SDMX 지표를 조회하고 기존 World Bank MCP와 개발금융 데이터 라우팅을 제공합니다.",
+      "command": "python",
+      "args": [
+        "runtime/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false
+    }
+  }
+}

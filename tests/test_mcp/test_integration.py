@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from myharness.config.settings import Settings
 from myharness.mcp.config import load_mcp_configs_from_dirs, load_mcp_server_configs
-from myharness.mcp.types import McpResourceInfo, McpStdioServerConfig, McpToolInfo
+from myharness.mcp.types import McpAuthConfig, McpResourceInfo, McpStdioServerConfig, McpToolInfo
 from myharness.plugins.types import LoadedPlugin
 from myharness.plugins.schemas import PluginManifest
 from myharness.project_preferences import ProjectPreferences, save_project_preferences
+from myharness.skills.loader import load_skills_from_dirs
 from myharness.tools import create_default_tool_registry
 from myharness.tools.base import ToolExecutionContext
 
@@ -107,6 +109,95 @@ def test_program_mcp_relative_cwd_stays_portable_with_source_base(tmp_path: Path
 
     assert servers["local_sqlite"].cwd == "."
     assert servers["local_sqlite"]._cwd_base == str(tmp_path.resolve())
+
+
+def test_packaged_mcp_relative_cwd_resolves_inside_module(tmp_path: Path):
+    packages_dir = tmp_path / ".skills" / "mcp"
+    package_dir = packages_dir / "demo"
+    package_dir.mkdir(parents=True)
+    (package_dir / "mcp.json").write_text(
+        '{"mcpServers":{"demo":{"type":"stdio","command":"python",'
+        '"args":["runtime/server.py"],"cwd":".","auto_connect":false}}}',
+        encoding="utf-8",
+    )
+
+    servers = load_mcp_configs_from_dirs([packages_dir])
+
+    assert servers["demo"]._cwd_base == str(package_dir.resolve())
+
+
+def test_packaged_mcp_runtime_wins_while_user_credentials_are_preserved(tmp_path: Path, monkeypatch):
+    packages_dir = tmp_path / ".skills" / "mcp"
+    package_dir = packages_dir / "demo"
+    package_dir.mkdir(parents=True)
+    (package_dir / "mcp.json").write_text(
+        '{"mcpServers":{"demo":{"type":"stdio","command":"python",'
+        '"args":["runtime/server.py"],"cwd":".","auto_connect":false,'
+        '"env":{"BUILTIN":"yes"}}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("myharness.mcp.config.get_program_mcp_dirs", lambda: [packages_dir])
+    settings = Settings(
+        mcp_servers={
+            "demo": McpStdioServerConfig(
+                command="python",
+                args=[".mcp/old_server.py"],
+                cwd=".",
+                env={"OLD_TOKEN": "preserved"},
+            )
+        },
+        mcp_auth={"demo": McpAuthConfig(env={"NEW_TOKEN": "overlay"})},
+    )
+
+    server = load_mcp_server_configs(settings, [], include_disabled=True)["demo"]
+
+    assert server.args == ["runtime/server.py"]
+    assert server.auto_connect is False
+    assert server._cwd_base == str(package_dir.resolve())
+    assert server.env == {
+        "BUILTIN": "yes",
+        "OLD_TOKEN": "preserved",
+        "NEW_TOKEN": "overlay",
+    }
+
+
+def test_removed_package_is_not_resurrected_by_legacy_program_setting(monkeypatch):
+    monkeypatch.setattr("myharness.mcp.config.get_program_mcp_dirs", lambda: [])
+    settings = Settings(
+        mcp_servers={
+            "retired": McpStdioServerConfig(
+                command="python",
+                args=[".mcp/retired_server.py"],
+                cwd=".",
+            )
+        }
+    )
+
+    assert "retired" not in load_mcp_server_configs(settings, [], include_disabled=True)
+
+
+def test_deleting_one_package_removes_its_config_and_skill(tmp_path: Path):
+    packages_dir = tmp_path / ".skills" / "mcp"
+    package_dir = packages_dir / "demo"
+    skill_dir = package_dir / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    (package_dir / "mcp.json").write_text(
+        '{"mcpServers":{"demo":{"type":"stdio","command":"python",'
+        '"args":["runtime/server.py"],"cwd":".","auto_connect":false}}}',
+        encoding="utf-8",
+    )
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: Demo package\nsource: skill-mcp:demo\n---\n",
+        encoding="utf-8",
+    )
+
+    assert "demo" in load_mcp_configs_from_dirs([packages_dir])
+    assert [skill.name for skill in load_skills_from_dirs([packages_dir])] == ["demo"]
+
+    shutil.rmtree(package_dir)
+
+    assert "demo" not in load_mcp_configs_from_dirs([packages_dir])
+    assert load_skills_from_dirs([packages_dir]) == []
 
 
 def test_stdio_cwd_resolves_against_source_base(tmp_path: Path):

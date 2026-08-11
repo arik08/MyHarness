@@ -61,6 +61,7 @@ class FrontendRequest(BaseModel):
         "submit_line",
         "steer_line",
         "queue_line",
+        "cancel_queued_line",
         "permission_response",
         "question_response",
         "start_new_session",
@@ -106,6 +107,7 @@ class TranscriptItem(BaseModel):
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None
     is_error: bool | None = None
+    request_id: str | None = None
 
 
 class TaskSnapshot(BaseModel):
@@ -159,6 +161,7 @@ class BackendEvent(BaseModel):
         "tasks_snapshot",
         "skills_snapshot",
         "transcript_item",
+        "queued_message_status",
         "reasoning_summary",
         "compact_progress",
         "assistant_delta",
@@ -211,6 +214,8 @@ class BackendEvent(BaseModel):
     compact_checkpoint: str | None = None
     compact_metadata: dict[str, Any] | None = None
     quiet: bool = False
+    request_id: str | None = None
+    status: str | None = None
     # New fields for enhanced events
     todo_markdown: str | None = None
     plan_mode: str | None = None

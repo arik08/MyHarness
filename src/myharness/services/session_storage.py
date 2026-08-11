@@ -47,8 +47,9 @@ _SESSION_POINTER_FORMAT = "myharness-session-pointer"
 _HISTORY_TOOL_OUTPUT_MAX_CHARS = 1_000
 _HISTORY_TOOL_ERROR_OUTPUT_MAX_CHARS = 4_000
 _HISTORY_WEB_TOOL_OUTPUT_MAX_CHARS = 1_000
-_HISTORY_TOOL_INPUT_MAX_CHARS = 8_000
-_HISTORY_TOOL_INPUT_FIELD_MAX_CHARS = 1_000
+_HISTORY_TOOL_INPUT_MAX_CHARS = 2_000
+_HISTORY_TOOL_INPUT_FIELD_MAX_CHARS = 240
+_HISTORY_REPLAY_COMPACT_AFTER_SECONDS = 3 * 24 * 60 * 60
 _HISTORY_TOOL_INPUT_SUMMARY_KEYS = (
     "path",
     "file_path",
@@ -67,6 +68,12 @@ _HISTORY_TOOL_INPUT_SUMMARY_KEYS = (
     "phase",
     "phase_label",
     "output_format",
+    "content",
+    "new_string",
+    "new_source",
+    "patch",
+    "diff",
+    "instructions",
 )
 
 _TITLE_STOPWORDS = {
@@ -431,12 +438,14 @@ def save_session_snapshot(
         raise ValueError(f"Invalid session id: {sid!r}")
     session_path = session_dir / f"session-{sid}.json"
     existing_pinned = False
+    existing_liked = False
     existing_created_at: float | None = None
     existing_last_assistant_at = 0.0
     if session_path.exists():
         try:
             existing = json.loads(session_path.read_text(encoding="utf-8"))
             existing_pinned = bool(existing.get("pinned"))
+            existing_liked = bool(existing.get("liked"))
             existing_last_assistant_at = _timestamp_millis(existing.get("last_assistant_at"))
             try:
                 created_at = float(existing.get("created_at") or 0)
@@ -446,6 +455,7 @@ def save_session_snapshot(
                 existing_created_at = None
         except (OSError, json.JSONDecodeError):
             existing_pinned = False
+            existing_liked = False
     now = time.time()
     messages = sanitize_conversation_messages(messages)
     metadata_title = _session_title_from_metadata(tool_metadata)
@@ -470,14 +480,20 @@ def save_session_snapshot(
         existing_last_assistant_at=existing_last_assistant_at,
         fallback_now=now,
     )
+    stored_messages = [message.model_dump(mode="json") for message in messages]
     payload = {
         "storage_version": _SESSION_STORAGE_VERSION,
         "session_id": sid,
         "cwd": str(Path(cwd).resolve()),
         "model": model,
         "system_prompt_hash": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
-        "messages": [message.model_dump(mode="json") for message in messages],
-        "history_events": _sanitize_history_events(history_events),
+        "messages": stored_messages,
+        "history_events": _sanitize_history_events(
+            _restore_history_tool_inputs(history_events, stored_messages),
+            compact=False,
+        ),
+        "history_events_saved_at": now,
+        "history_replay_compacted": False,
         "usage": usage.model_dump(),
         "usage_accounting": persisted_usage_accounting,
         "tool_metadata": _persistable_tool_metadata(tool_metadata),
@@ -486,6 +502,7 @@ def save_session_snapshot(
         "summary": summary,
         "message_count": len(messages),
         "pinned": existing_pinned,
+        "liked": existing_liked,
     }
     data = _serialize_snapshot(payload)
 
@@ -529,13 +546,17 @@ def _client_latest_file_name(tool_metadata: dict[str, object] | None) -> str:
     return f"latest-{safe[:80]}.json" if safe else ""
 
 
-def _sanitize_history_events(history_events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Keep a compact, JSON-safe projection for web history replay.
+def _sanitize_history_events(
+    history_events: list[dict[str, Any]] | None,
+    *,
+    compact: bool = True,
+) -> list[dict[str, Any]]:
+    """Keep a JSON-safe projection for web history replay.
 
     Model continuation uses the separately persisted ``messages`` payload. The
-    history event stream only rebuilds the visible transcript, so streaming
-    deltas and repeated/raw tool payloads should not make old sessions slow to
-    open.
+    history event stream only rebuilds the visible transcript. Recent sessions
+    retain the original event detail; old sessions drop streaming duplicates
+    and shorten large replay-only tool payloads.
     """
     if not isinstance(history_events, list):
         return []
@@ -546,17 +567,17 @@ def _sanitize_history_events(history_events: list[dict[str, Any]] | None) -> lis
         event_type = str(event.get("type") or "").strip()
         if not event_type:
             continue
-        if event_type == "tool_input_delta":
+        if compact and event_type == "tool_input_delta":
             continue
         sanitized = {str(key): _sanitize_metadata(value) for key, value in event.items()}
         sanitized["type"] = event_type
-        if event_type == "tool_progress":
+        if compact and event_type == "tool_progress":
             # ``tool_started`` already carries the authoritative input. Keeping
             # it on every progress tick duplicated large file bodies/scripts.
             sanitized["tool_input"] = {}
-        elif event_type == "tool_started" and isinstance(sanitized.get("tool_input"), dict):
+        elif compact and event_type == "tool_started" and isinstance(sanitized.get("tool_input"), dict):
             sanitized["tool_input"] = _compact_history_tool_input(sanitized["tool_input"])
-        elif event_type == "tool_completed" and isinstance(sanitized.get("output"), str):
+        elif compact and event_type == "tool_completed" and isinstance(sanitized.get("output"), str):
             tool_name = str(sanitized.get("tool_name") or "").lower()
             max_chars = (
                 _HISTORY_TOOL_ERROR_OUTPUT_MAX_CHARS
@@ -570,7 +591,7 @@ def _sanitize_history_events(history_events: list[dict[str, Any]] | None) -> lis
                 max_chars=max_chars,
             )
         events.append(sanitized)
-    return _coalesce_history_replay_state(events)
+    return _coalesce_history_replay_state(events) if compact else events
 
 
 def _history_tool_event_key(event: dict[str, Any]) -> tuple[object, ...]:
@@ -622,23 +643,130 @@ def _truncate_history_text(value: str, *, max_chars: int) -> str:
 
 def _compact_history_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
     serialized = json.dumps(tool_input, ensure_ascii=False, separators=(",", ":"))
-    if len(serialized) <= _HISTORY_TOOL_INPUT_MAX_CHARS:
-        return tool_input
+    compacted = {
+        str(key): _compact_history_tool_input_value(value)
+        for key, value in tool_input.items()
+    }
+    compacted_serialized = json.dumps(compacted, ensure_ascii=False, separators=(",", ":"))
+    if compacted_serialized == serialized:
+        return compacted
 
-    summary: dict[str, Any] = {}
-    for key in _HISTORY_TOOL_INPUT_SUMMARY_KEYS:
-        value = tool_input.get(key)
-        if isinstance(value, str) and value:
-            summary[key] = _truncate_history_text(
-                value,
-                max_chars=_HISTORY_TOOL_INPUT_FIELD_MAX_CHARS,
-            )
-        elif isinstance(value, (int, float, bool)) or value is None:
-            if key in tool_input:
-                summary[key] = value
-    summary["_history_replay_truncated"] = True
-    summary["_history_replay_original_chars"] = len(serialized)
+    marked_compacted = {
+        **compacted,
+        "_history_replay_truncated": True,
+        "_history_replay_original_chars": len(serialized),
+    }
+    marked_serialized = json.dumps(marked_compacted, ensure_ascii=False, separators=(",", ":"))
+    if len(marked_serialized) <= _HISTORY_TOOL_INPUT_MAX_CHARS:
+        return marked_compacted
+
+    summary: dict[str, Any] = {
+        "_history_replay_truncated": True,
+        "_history_replay_original_chars": len(serialized),
+    }
+    ordered_keys = dict.fromkeys((*_HISTORY_TOOL_INPUT_SUMMARY_KEYS, *compacted.keys()))
+    for key in ordered_keys:
+        if key not in compacted:
+            continue
+        candidate = {**summary, key: compacted[key]}
+        candidate_chars = len(json.dumps(candidate, ensure_ascii=False, separators=(",", ":")))
+        if candidate_chars <= _HISTORY_TOOL_INPUT_MAX_CHARS:
+            summary[key] = compacted[key]
     return summary
+
+
+def _compact_history_tool_input_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _truncate_history_tool_input_text(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _compact_history_tool_input_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_compact_history_tool_input_value(item) for item in value]
+    return value
+
+
+def _truncate_history_tool_input_text(value: str) -> str:
+    if len(value) <= _HISTORY_TOOL_INPUT_FIELD_MAX_CHARS:
+        return value
+
+    prefix_max_chars = _HISTORY_TOOL_INPUT_FIELD_MAX_CHARS - 3
+    return f"{value[:prefix_max_chars].rstrip()}..."
+
+
+def _restore_history_tool_inputs(
+    history_events: Any,
+    messages: Any,
+) -> Any:
+    if not isinstance(history_events, list) or not isinstance(messages, list):
+        return history_events
+    inputs_by_call_id: dict[str, dict[str, Any]] = {}
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            call_id = str(block.get("id") or "")
+            tool_input = block.get("input")
+            if call_id and isinstance(tool_input, dict):
+                inputs_by_call_id[call_id] = tool_input
+    if not inputs_by_call_id:
+        return history_events
+
+    restored: list[Any] = []
+    for event in history_events:
+        if not isinstance(event, dict) or event.get("type") != "tool_started":
+            restored.append(event)
+            continue
+        tool_input = event.get("tool_input")
+        call_id = str(event.get("tool_call_id") or "")
+        replacement = inputs_by_call_id.get(call_id)
+        if (
+            isinstance(tool_input, dict)
+            and tool_input.get("_history_replay_truncated") is True
+            and replacement is not None
+        ):
+            restored.append({**event, "tool_input": replacement})
+        else:
+            restored.append(event)
+    return restored
+
+
+def _history_replay_reference_time(payload: dict[str, Any]) -> float:
+    for key in ("history_events_saved_at", "last_assistant_at", "created_at"):
+        try:
+            timestamp = float(payload.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if timestamp <= 0:
+            continue
+        return timestamp / 1000 if timestamp >= 10_000_000_000 else timestamp
+    return 0.0
+
+
+def _history_replay_should_compact(
+    payload: dict[str, Any],
+    *,
+    now: float | None = None,
+) -> bool:
+    reference_time = _history_replay_reference_time(payload)
+    if reference_time <= 0:
+        return False
+    current_time = time.time_ns() / 1_000_000_000 if now is None else now
+    return current_time - reference_time >= _HISTORY_REPLAY_COMPACT_AFTER_SECONDS
+
+
+def _history_replay_needs_compaction(payload: dict[str, Any]) -> bool:
+    return (
+        payload.get("history_replay_compacted") is not True
+        and _history_replay_should_compact(payload)
+    )
 
 
 def _sanitize_usage_accounting(
@@ -687,14 +815,24 @@ def _sanitize_usage_accounting(
 def _sanitize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize persisted messages for forward compatibility."""
     raw_messages = payload.get("messages", [])
+    stored_messages = raw_messages if isinstance(raw_messages, list) else []
     if isinstance(raw_messages, list):
         messages = sanitize_conversation_messages(
             [ConversationMessage.model_validate(item) for item in raw_messages]
         )
         payload = dict(payload)
-        payload["messages"] = [message.model_dump(mode="json") for message in messages]
+        stored_messages = [message.model_dump(mode="json") for message in messages]
+        payload["messages"] = stored_messages
         payload["message_count"] = len(messages)
-    payload["history_events"] = _sanitize_history_events(payload.get("history_events"))
+    compact_history = (
+        payload.get("history_replay_compacted") is True
+        or _history_replay_should_compact(payload)
+    )
+    payload["history_events"] = _sanitize_history_events(
+        _restore_history_tool_inputs(payload.get("history_events"), stored_messages),
+        compact=compact_history,
+    )
+    payload["history_replay_compacted"] = compact_history
     if not isinstance(payload.get("usage_accounting"), dict):
         payload["usage_accounting"] = _sanitize_usage_accounting(
             None,
@@ -809,7 +947,11 @@ def migrate_session_snapshots(cwd: str | Path, *, force: bool = False) -> dict[s
     snapshots: dict[str, dict[str, Any]] = {}
     for path in sorted(session_dir.glob("session-*.json")):
         summary = _load_snapshot_summary(path)
-        if summary is not None and summary.get("storage_version") == _SESSION_STORAGE_VERSION:
+        if (
+            summary is not None
+            and summary.get("storage_version") == _SESSION_STORAGE_VERSION
+            and not _history_replay_needs_compaction(summary)
+        ):
             continue
         payload, rewritten, before, after = _migrate_named_snapshot(path)
         if payload is None:
@@ -932,6 +1074,8 @@ def _snapshot_list_item(
         "model": data.get("model", ""),
         "created_at": data.get("created_at", path.stat().st_mtime),
         "last_assistant_at": _timestamp_millis(data.get("last_assistant_at")),
+        "pinned": data.get("pinned") is True,
+        "liked": data.get("liked") is True,
     }
 
 
@@ -946,6 +1090,8 @@ def _write_snapshot_summary(snapshot_path: Path, data: dict[str, Any]) -> None:
     summary = _snapshot_list_item(data, session_id=session_id, path=snapshot_path)
     summary["hidden"] = _is_hidden_worker_snapshot(data)
     summary["storage_version"] = _SESSION_STORAGE_VERSION
+    summary["history_events_saved_at"] = data.get("history_events_saved_at", 0)
+    summary["history_replay_compacted"] = data.get("history_replay_compacted") is True
     atomic_write_text(
         _snapshot_summary_path(snapshot_path),
         json.dumps(summary, ensure_ascii=False, separators=(",", ":")) + "\n",

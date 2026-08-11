@@ -425,7 +425,8 @@ async def run_verification(root: Path) -> tuple[list[CheckResult], list[str]]:
     verifier = LiveVerifier(manager)
     failures: list[str] = []
     try:
-        await manager.connect_all()
+        for name in SERVER_SOURCES:
+            await manager.ensure_server_config(name, all_configs[name], force_connect=True)
         statuses = {item.name: item for item in manager.list_statuses()}
         for name in SERVER_SOURCES:
             status = statuses[name]

@@ -1,4 +1,5 @@
-import { Fragment, useMemo, useRef } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { sendBackendRequest } from "../api/messages";
 import { useMessageAutoFollow } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
 import type { AppState, ChatMessage, WorkflowEvent } from "../types/ui";
@@ -215,6 +216,7 @@ function mergeAdjacentLogMessages(messages: ChatMessage[]): RenderMessageItem[] 
 
 export function MessageList() {
   const { state, dispatch } = useAppState();
+  const [cancellingRequestIds, setCancellingRequestIds] = useState<Set<string>>(() => new Set());
   const lastMessage = state.messages.at(-1);
   const renderMessages = useMemo(() => mergeAdjacentLogMessages(state.messages), [state.messages]);
   const promptTokenReferencesRef = useRef({
@@ -232,6 +234,34 @@ export function MessageList() {
     };
   }
   const promptTokenReferences = promptTokenReferencesRef.current;
+  useEffect(() => {
+    const pendingIds = new Set(state.messages.flatMap((message) => message.pendingRequestId ? [message.pendingRequestId] : []));
+    setCancellingRequestIds((current) => {
+      const next = new Set([...current].filter((id) => pendingIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [state.messages]);
+
+  async function cancelPendingMessage(requestId: string) {
+    if (!state.sessionId || cancellingRequestIds.has(requestId)) return;
+    setCancellingRequestIds((current) => new Set(current).add(requestId));
+    try {
+      await sendBackendRequest(state.sessionId, state.clientId, {
+        type: "cancel_queued_line",
+        request_id: requestId,
+      });
+    } catch (error) {
+      setCancellingRequestIds((current) => {
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+      dispatch({
+        type: "backend_event",
+        event: { type: "error", message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  }
   const activeWorkflowFollowSignature = useMemo(
     () => state.workflowEvents.map((event) => [
       event.id,
@@ -344,6 +374,18 @@ export function MessageList() {
                   <UserMessageText text={message.text} promptTokenReferences={promptTokenReferences} />
                 )}
               </div>
+              {message.pendingRequestId && (message.kind === "steering" || message.kind === "queued") ? (
+                <button
+                  type="button"
+                  className="pending-message-cancel"
+                  aria-label={`${kindBadge?.label || "대기"} 요청 취소`}
+                  data-tooltip="전달 전 요청 취소"
+                  disabled={cancellingRequestIds.has(message.pendingRequestId)}
+                  onClick={() => void cancelPendingMessage(message.pendingRequestId || "")}
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              ) : null}
             </article>
             {showWorkflowHere ? (
               <WorkflowPanel

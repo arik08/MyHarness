@@ -109,7 +109,8 @@ def request(
         ) as exc:
             last_error = exc
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-            if status not in TRANSIENT_STATUS_CODES or attempt == MAX_REQUEST_ATTEMPTS:
+            retryable = not isinstance(exc, httpx.HTTPStatusError) or status in TRANSIENT_STATUS_CODES
+            if not retryable or attempt == MAX_REQUEST_ATTEMPTS:
                 break
             time.sleep(min(0.25 * attempt, 1.0))
     raise RuntimeError(
@@ -168,7 +169,8 @@ def post_form_json(
         except (httpx.HTTPError, ValueError, OSError, ssl.SSLError) as exc:
             last_error = exc
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-            if status not in TRANSIENT_STATUS_CODES or attempt == MAX_REQUEST_ATTEMPTS:
+            retryable = not isinstance(exc, httpx.HTTPStatusError) or status in TRANSIENT_STATUS_CODES
+            if not retryable or attempt == MAX_REQUEST_ATTEMPTS:
                 break
             time.sleep(min(0.25 * attempt, 1.0))
     raise RuntimeError(

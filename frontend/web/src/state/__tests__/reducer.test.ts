@@ -141,6 +141,29 @@ describe("appReducer", () => {
     expect(lockedAgain.history).toEqual([]);
   });
 
+  it("restores a hidden history row and clears both hidden markers", () => {
+    const key = historyVisibilityKey("session-hidden", "C:/demo", "Default");
+    const restored = appReducer(
+      {
+        ...initialAppState,
+        adminMode: true,
+        workspaceName: "Default",
+        workspacePath: "C:/demo",
+        hiddenHistoryKeys: [key],
+        history: [{
+          value: "session-hidden",
+          label: "5/3 10:00 2 msg",
+          description: "숨긴 대화",
+          hidden: true,
+        }],
+      },
+      { type: "restore_history_local", sessionId: "session-hidden", workspacePath: "C:/demo", workspaceName: "Default" },
+    );
+
+    expect(restored.hiddenHistoryKeys).not.toContain(key);
+    expect(restored.history[0]?.hidden).toBe(false);
+  });
+
   it("uses server-provided hidden history markers across browsers", () => {
     const historyItem = {
       value: "session-hidden",
@@ -1120,6 +1143,29 @@ describe("appReducer", () => {
     expect(next.workflowAnchorMessageId).toBe(next.messages[0].id);
   });
 
+  it("removes cancelled queued messages and keeps delivered messages without a cancel token", () => {
+    const pending = appReducer(initialAppState, {
+      type: "append_message",
+      message: { id: "request-1", role: "user", text: "추가 지시", kind: "steering", pendingRequestId: "request-1" },
+    });
+    const delivered = appReducer(pending, {
+      type: "backend_event",
+      event: { type: "queued_message_status", request_id: "request-1", status: "delivered" },
+    });
+    expect(delivered.messages[0]).toMatchObject({ id: "request-1", text: "추가 지시" });
+    expect(delivered.messages[0].pendingRequestId).toBeUndefined();
+
+    const pendingAgain = appReducer(delivered, {
+      type: "append_message",
+      message: { id: "request-2", role: "user", text: "다음 질문", kind: "queued", pendingRequestId: "request-2" },
+    });
+    const cancelled = appReducer(pendingAgain, {
+      type: "backend_event",
+      event: { type: "queued_message_status", request_id: "request-2", status: "cancelled" },
+    });
+    expect(cancelled.messages.map((message) => message.id)).toEqual(["request-1"]);
+  });
+
   it("ignores a delayed steering replay transcript for the same active user text", () => {
     const withRegularUser = appReducer({ ...initialAppState, busy: true }, {
       type: "append_message",
@@ -1187,6 +1233,7 @@ describe("appReducer", () => {
         usage: {
           provider: "openai",
           model: "gpt-5.4",
+          effort: "high",
           input_tokens: 1200,
           cached_input_tokens: 900,
           uncached_input_tokens: 300,
@@ -1210,8 +1257,28 @@ describe("appReducer", () => {
     });
 
     expect(next.messages[0].usage?.cached_input_tokens).toBe(900);
+    expect(next.messages[0].usage?.effort).toBe("high");
     expect(next.messages[0].sessionUsage?.total_tokens).toBe(2700);
     expect(next.sessionUsage?.total_tokens).toBe(2700);
+  });
+
+  it("uses the active effort for completion events from older backends", () => {
+    const next = appReducer({ ...initialAppState, effort: "xhigh" }, {
+      type: "backend_event",
+      event: {
+        type: "assistant_complete",
+        message: "완료했습니다.",
+        usage: {
+          input_tokens: 10,
+          cached_input_tokens: 0,
+          uncached_input_tokens: 10,
+          output_tokens: 2,
+          total_tokens: 12,
+        },
+      },
+    });
+
+    expect(next.messages[0].usage?.effort).toBe("xhigh");
   });
 
   it("freezes assistant session usage at the completion position", () => {
@@ -1985,6 +2052,37 @@ describe("appReducer", () => {
     expect(busy.workflowAnchorMessageId).toBeNull();
   });
 
+  it("does not replace a restored conversation title with the generic new-chat label", () => {
+    const restored = appReducer(
+      {
+        ...initialAppState,
+        chatTitle: "새 대화",
+        pendingHistoryId: "saved-greeting",
+        history: [{ value: "saved-greeting", label: "08/12 00:48 2 msg", description: "인사말씀" }],
+      },
+      {
+        type: "backend_event",
+        event: {
+          type: "history_snapshot",
+          value: "saved-greeting",
+          history_events: [
+            { type: "user", text: "인사말씀" },
+            { type: "assistant", text: "안녕하세요." },
+          ],
+        },
+      },
+    );
+
+    const afterGenericTitleEvent = appReducer(restored, {
+      type: "backend_event",
+      event: { type: "session_title", message: "새 대화" },
+    });
+
+    expect(afterGenericTitleEvent.activeHistoryId).toBe("saved-greeting");
+    expect(afterGenericTitleEvent.chatTitle).toBe("인사말씀");
+    expect(afterGenericTitleEvent.history[0].description).toBe("인사말씀");
+  });
+
   it("restores question answer records without treating them as separate prompts", () => {
     const restored = appReducer(initialAppState, {
       type: "backend_event",
@@ -2077,6 +2175,36 @@ describe("appReducer", () => {
     ]);
     expect(restored.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
       "outputs/한국_주변국_GDP_분석_보고서.html",
+    ]);
+  });
+
+  it("recovers restored artifact cards from successful file workflow events", () => {
+    const restored = appReducer(initialAppState, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot",
+        history_events: [
+          { type: "user", text: "과거 보고서 작성" },
+          {
+            type: "tool_started",
+            tool_name: "write_file",
+            tool_call_id: "write-old-report",
+            tool_input: { path: "outputs/과거_보고서.html", content: "<html></html>" },
+          },
+          {
+            type: "tool_completed",
+            tool_name: "write_file",
+            tool_call_id: "write-old-report",
+            output: "outputs/과거_보고서.html",
+            is_error: false,
+          },
+          { type: "assistant", text: "보고서를 완성했습니다." },
+        ],
+      },
+    });
+
+    expect(restored.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
+      "outputs/과거_보고서.html",
     ]);
   });
 

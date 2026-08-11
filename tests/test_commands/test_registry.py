@@ -1297,12 +1297,12 @@ async def test_mcp_and_voice_commands_report_richer_state(tmp_path: Path, monkey
     mcp_http_command, mcp_http_args = registry.lookup("/mcp auth http-demo secret-token")
     mcp_http_result = await mcp_http_command.handler(mcp_http_args, context)
     assert "http-demo MCP 인증을 저장했습니다" in mcp_http_result.message
-    assert load_settings().mcp_servers["http-demo"].headers["Authorization"] == "Bearer secret-token"
+    assert load_settings().mcp_auth["http-demo"].headers["Authorization"] == "Bearer secret-token"
 
     mcp_stdio_command, mcp_stdio_args = registry.lookup("/mcp auth stdio-demo env DEMO_TOKEN")
     mcp_stdio_result = await mcp_stdio_command.handler(mcp_stdio_args, context)
     assert "stdio-demo MCP 인증을 저장했습니다" in mcp_stdio_result.message
-    assert load_settings().mcp_servers["stdio-demo"].env["MCP_AUTH_TOKEN"] == "DEMO_TOKEN"
+    assert load_settings().mcp_auth["stdio-demo"].env["MCP_AUTH_TOKEN"] == "DEMO_TOKEN"
 
     voice_command, voice_args = registry.lookup("/voice show")
     voice_result = await voice_command.handler(voice_args, context)

@@ -19,6 +19,7 @@ export type ChatMessage = {
   text: string;
   createdAt?: number;
   kind?: TranscriptItem["kind"];
+  pendingRequestId?: string;
   toolName?: string;
   isError?: boolean;
   isComplete?: boolean;

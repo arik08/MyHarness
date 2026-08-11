@@ -117,6 +117,13 @@ _ASSISTANT_PROGRESS_OPEN = "<myharness-progress>"
 _ASSISTANT_PROGRESS_CLOSE = "</myharness-progress>"
 _ASSISTANT_ARTIFACTS_OPEN = "<myharness-artifacts>"
 _ASSISTANT_ARTIFACTS_CLOSE = "</myharness-artifacts>"
+_HISTORY_ARTIFACT_EXTENSIONS = {
+    ".html", ".htm", ".md", ".markdown", ".txt", ".json", ".csv", ".xml",
+    ".yaml", ".yml", ".toml", ".ini", ".log", ".py", ".js", ".mjs", ".cjs",
+    ".ts", ".tsx", ".jsx", ".css", ".sql", ".sh", ".ps1", ".bat", ".cmd",
+    ".png", ".gif", ".jpg", ".jpeg", ".webp", ".svg", ".pdf", ".doc", ".docx",
+    ".xls", ".xlsx", ".ppt", ".pptx", ".zip",
+}
 _SWARM_STRAGGLER_MIN_SECONDS = 10 * 60
 _SWARM_STRAGGLER_PEER_FACTOR = 3.0
 _SWARM_STRAGGLER_WAVE_WINDOW_SECONDS = 15 * 60
@@ -363,6 +370,102 @@ def _dedupe_assistant_artifacts(artifacts: list[dict[str, Any]]) -> list[dict[st
         seen.add(key)
         deduped.append({**artifact, "path": path})
     return deduped
+
+
+def _history_tool_artifact_path(tool_name: str, tool_input: dict[str, object]) -> str:
+    if tool_name.lower() not in {"write_file", "file_write", "write_long_report", "create_report"}:
+        return ""
+    return str(
+        tool_input.get("path")
+        or tool_input.get("file_path")
+        or tool_input.get("output_path")
+        or ""
+    ).strip()
+
+
+def _recent_message_artifact_candidates(
+    messages: list[ConversationMessage],
+) -> list[dict[str, Any]]:
+    pending_tools: dict[str, tuple[str, dict[str, object]]] = {}
+    turn_candidates: list[dict[str, Any]] = []
+    latest_candidates: list[dict[str, Any]] = []
+    for message in messages:
+        if message.role == "user" and any(
+            isinstance(block, TextBlock) and block.text.strip()
+            for block in message.content
+        ):
+            if turn_candidates:
+                latest_candidates = turn_candidates
+            turn_candidates = []
+            pending_tools.clear()
+        if message.role == "assistant":
+            _visible_text, marker_artifacts = _strip_assistant_artifact_markers(message.text)
+            turn_candidates.extend(marker_artifacts)
+            for tool_use in message.tool_uses:
+                pending_tools[tool_use.id] = (tool_use.name, dict(tool_use.input))
+            continue
+        if message.role != "user":
+            continue
+        for block in message.content:
+            if not isinstance(block, ToolResultBlock):
+                continue
+            tool_name, tool_input = pending_tools.pop(block.tool_use_id, ("", {}))
+            if block.is_error:
+                continue
+            path = _history_tool_artifact_path(tool_name, tool_input)
+            if path:
+                turn_candidates.append({"path": path})
+    if turn_candidates:
+        latest_candidates = turn_candidates
+    return _dedupe_assistant_artifacts(latest_candidates)
+
+
+def _recover_history_artifact_links(
+    history_events: list[dict[str, object]],
+    messages: list[ConversationMessage],
+    cwd: str | Path,
+) -> list[dict[str, object]]:
+    candidates = _recent_message_artifact_candidates(messages)
+    if not candidates:
+        return history_events
+
+    workspace = Path(cwd).resolve()
+    recovered: list[dict[str, Any]] = []
+    for artifact in candidates:
+        raw_path = str(artifact.get("path") or "").strip().replace("\\", "/")
+        try:
+            target = Path(raw_path)
+            target = target.resolve() if target.is_absolute() else (workspace / target).resolve()
+            relative_path = target.relative_to(workspace).as_posix()
+        except (OSError, ValueError):
+            continue
+        if not target.is_file() or target.suffix.lower() not in _HISTORY_ARTIFACT_EXTENSIONS:
+            continue
+        recovered.append({
+            **artifact,
+            "path": relative_path,
+            "name": str(artifact.get("name") or target.name),
+            "size": target.stat().st_size,
+        })
+    recovered = _dedupe_assistant_artifacts(recovered)
+    if not recovered:
+        return history_events
+
+    repaired = [dict(event) for event in history_events]
+    assistant_index = next(
+        (index for index in range(len(repaired) - 1, -1, -1) if repaired[index].get("type") == "assistant"),
+        None,
+    )
+    if assistant_index is None:
+        repaired.append({"type": "assistant", "text": "작성 완료했습니다.", "artifacts": recovered})
+        return repaired
+    existing = repaired[assistant_index].get("artifacts")
+    existing_artifacts = existing if isinstance(existing, list) else []
+    repaired[assistant_index]["artifacts"] = _dedupe_assistant_artifacts([
+        *[item for item in existing_artifacts if isinstance(item, dict)],
+        *recovered,
+    ])
+    return repaired
 
 
 def _format_file_size(value: object) -> str:
@@ -1405,19 +1508,24 @@ class ReactBackendHost:
                 if request.type == "cancel_current":
                     await self._cancel_current_request()
                     continue
+                if request.type == "cancel_queued_line":
+                    await self._cancel_queued_line(request.request_id or "")
+                    continue
                 if request.type == "steer_line":
                     if self._busy:
                         if self._final_answer_emitted:
-                            await self._queue_follow_up_line(request.line or "")
+                            await self._queue_follow_up_line(request.line or "", request.request_id or "")
                         else:
-                            await self._queue_steering_line(request.line or "")
+                            await self._queue_steering_line(request.line or "", request.request_id or "")
                     else:
+                        await self._emit_queued_message_status(request.request_id or "", "delivered")
                         await self._request_queue.put(FrontendRequest(type="submit_line", line=request.line or ""))
                     continue
                 if request.type == "queue_line":
                     if self._busy:
-                        await self._queue_line_after_current(request.line or "")
+                        await self._queue_line_after_current(request.line or "", request.request_id or "")
                     else:
+                        await self._emit_queued_message_status(request.request_id or "", "delivered")
                         await self._request_queue.put(
                             FrontendRequest(
                                 type="submit_line",
@@ -1922,45 +2030,77 @@ class ReactBackendHost:
             return
         task.cancel()
 
-    async def _queue_steering_line(self, line: str) -> None:
+    @staticmethod
+    def _pending_line(value: str | tuple[str, str]) -> tuple[str, str]:
+        return value if isinstance(value, tuple) else ("", value)
+
+    async def _emit_queued_message_status(self, request_id: str, status: str) -> None:
+        if request_id:
+            await self._emit(BackendEvent(type="queued_message_status", request_id=request_id, status=status))
+
+    async def _remove_queued_line(self, request_id: str) -> bool:
+        if not request_id:
+            return False
+        for queue in (self._steering_queue, self._queued_line_queue, self._follow_up_line_queue):
+            retained: list[str | tuple[str, str]] = []
+            removed = False
+            while not queue.empty():
+                value = queue.get_nowait()
+                queued_request_id, _ = self._pending_line(value)
+                if not removed and queued_request_id == request_id:
+                    removed = True
+                    continue
+                retained.append(value)
+            for value in retained:
+                queue.put_nowait(value)
+            if removed:
+                return True
+        return False
+
+    async def _cancel_queued_line(self, request_id: str) -> None:
+        removed = await self._remove_queued_line(request_id)
+        await self._emit_queued_message_status(request_id, "cancelled" if removed else "not_found")
+
+    async def _queue_steering_line(self, line: str, request_id: str = "") -> None:
         text = line.strip()
         if not text:
             return
-        await self._steering_queue.put(text)
+        await self._steering_queue.put((request_id, text) if request_id else text)
         await self._emit(
-            BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=text, kind="steering"))
+            BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=text, kind="steering", request_id=request_id or None))
         )
 
-    async def _queue_line_after_current(self, line: str) -> None:
+    async def _queue_line_after_current(self, line: str, request_id: str = "") -> None:
         text = line.strip()
         if not text:
             return
-        await self._queued_line_queue.put(text)
+        await self._queued_line_queue.put((request_id, text) if request_id else text)
         await self._emit(
-            BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=text, kind="queued"))
+            BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=text, kind="queued", request_id=request_id or None))
         )
         await self._emit(BackendEvent(type="status", message="다음 질문을 대기열에 추가했습니다."))
 
-    async def _queue_follow_up_line(self, line: str) -> None:
+    async def _queue_follow_up_line(self, line: str, request_id: str = "") -> None:
         text = line.strip()
         if text:
-            await self._follow_up_line_queue.put(text)
+            await self._follow_up_line_queue.put((request_id, text) if request_id else text)
 
     async def _promote_next_queued_line(self) -> None:
         if not self._queued_line_queue.empty():
-            line = self._queued_line_queue.get_nowait()
+            request_id, line = self._pending_line(self._queued_line_queue.get_nowait())
             await self._emit(BackendEvent(type="status", message="대기열 질문을 전송합니다."))
         elif not self._follow_up_line_queue.empty():
-            line = self._follow_up_line_queue.get_nowait()
+            request_id, line = self._pending_line(self._follow_up_line_queue.get_nowait())
             await self._emit(
                 BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=line))
             )
             await self._emit(BackendEvent(type="status", message="후속 질문을 전송합니다."))
         elif not self._steering_queue.empty():
-            line = self._steering_queue.get_nowait()
+            request_id, line = self._pending_line(self._steering_queue.get_nowait())
             await self._emit(BackendEvent(type="status", message="스티어링 요청을 후속 질문으로 전송합니다."))
         else:
             return
+        await self._emit_queued_message_status(request_id, "delivered")
         await self._request_queue.put(
             FrontendRequest(type="submit_line", line=line, suppress_user_transcript=True)
         )
@@ -1968,7 +2108,9 @@ class ReactBackendHost:
     async def _drain_steering_lines(self) -> list[str]:
         lines: list[str] = []
         while not self._steering_queue.empty():
-            lines.append(self._steering_queue.get_nowait())
+            request_id, line = self._pending_line(self._steering_queue.get_nowait())
+            await self._emit_queued_message_status(request_id, "delivered")
+            lines.append(line)
         return lines
 
     async def _read_requests(self) -> None:
@@ -2014,31 +2156,36 @@ class ReactBackendHost:
             if request.type == "cancel_current":
                 await self._cancel_current_request()
                 continue
+            if request.type == "cancel_queued_line":
+                await self._cancel_queued_line(request.request_id or "")
+                continue
             if request.type == "task_output":
                 await self._handle_task_output(request.task_id or "", request.max_bytes or 12000)
                 continue
             if request.type == "steer_line":
                 if self._busy:
                     if self._final_answer_emitted:
-                        await self._queue_follow_up_line(request.line or "")
+                        await self._queue_follow_up_line(request.line or "", request.request_id or "")
                     else:
-                        await self._queue_steering_line(request.line or "")
+                        await self._queue_steering_line(request.line or "", request.request_id or "")
                 else:
+                    await self._emit_queued_message_status(request.request_id or "", "delivered")
                     await self._request_queue.put(FrontendRequest(type="submit_line", line=request.line or ""))
                 continue
             if request.type == "queue_line":
                 if self._busy:
-                    await self._queue_line_after_current(request.line or "")
+                    await self._queue_line_after_current(request.line or "", request.request_id or "")
                 else:
-                        await self._request_queue.put(
-                            FrontendRequest(
-                                type="submit_line",
-                                line=request.line or "",
-                                attachments=request.attachments,
-                                attachment_refs=request.attachment_refs,
-                                compose_options=request.compose_options,
-                            )
+                    await self._emit_queued_message_status(request.request_id or "", "delivered")
+                    await self._request_queue.put(
+                        FrontendRequest(
+                            type="submit_line",
+                            line=request.line or "",
+                            attachments=request.attachments,
+                            attachment_refs=request.attachment_refs,
+                            compose_options=request.compose_options,
                         )
+                    )
                 continue
             await self._request_queue.put(request)
 
@@ -2144,6 +2291,7 @@ class ReactBackendHost:
         assistant_artifact_filter = _AssistantArtifactFilter()
         assistant_artifacts: list[dict[str, Any]] = []
         turn_usage_start = copy.deepcopy(self._bundle.engine.usage_accounting)
+        turn_reasoning_effort = self._bundle.engine.reasoning_effort
 
         async def _emit_assistant_progress(messages: list[str]) -> None:
             for message in messages:
@@ -2355,6 +2503,7 @@ class ReactBackendHost:
                         turn_usage_start,
                     )
                     usage_payload = self._bundle.engine.usage_cost_summary(turn_accounting)
+                    usage_payload["effort"] = str(turn_reasoning_effort or "none")
                     session_usage_payload = self._bundle.engine.usage_cost_summary()
                     self._final_answer_emitted = True
                 await self._emit(
@@ -3333,6 +3482,11 @@ class ReactBackendHost:
         history_events = snapshot.get("history_events")
         if not isinstance(history_events, list) or not history_events:
             history_events = self._history_events_from_messages(messages)
+        history_events = _recover_history_artifact_links(
+            [dict(item) for item in history_events if isinstance(item, dict)],
+            messages,
+            self._bundle.cwd,
+        )
         self._history_events = [
             dict(item)
             for item in history_events

@@ -25,6 +25,7 @@ export type SendMessagePayload = {
   composeOptions?: ComposeOptions;
   mode?: "queue" | "queued" | "steer";
   suppressUserTranscript?: boolean;
+  requestId?: string;
   systemPrompt?: string;
 };
 

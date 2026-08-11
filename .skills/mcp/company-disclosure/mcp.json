@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "company-disclosure": {
+      "type": "stdio",
+      "description": "OpenDART, SEC EDGAR, Companies House의 기업·공시·구조화 재무 데이터를 조회합니다.",
+      "command": "python",
+      "args": [
+        "runtime/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false
+    }
+  }
+}

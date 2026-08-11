@@ -53,7 +53,6 @@ _UNSUPPORTED_OPTION_TERMS = (
     "not permitted",
 )
 DEFAULT_GPT56_COMPACT_THRESHOLD_TOKENS = 250_000
-DEFAULT_GPT56_REASONING_SUMMARY = "auto"
 CODEX_INSTRUCTIONS = (
     "You are MyHarness. When the conversation is in Korean, "
     "write reasoning summaries in Korean."
@@ -137,7 +136,7 @@ def _build_codex_headers(token: str, *, prompt_cache_key: str | None = None) -> 
     }
     cache_session_id = _codex_cache_session_id(prompt_cache_key)
     if cache_session_id:
-        headers["session_id"] = cache_session_id
+        headers["session-id"] = cache_session_id
     return headers
 
 
@@ -392,7 +391,7 @@ class CodexApiClient:
             cache_event=None,
         )
         usage: UsageSnapshot | None = None
-        async for event in self._stream_once(warmup_request, max_output_tokens=16):
+        async for event in self._stream_once(warmup_request):
             if isinstance(event, ApiMessageCompleteEvent):
                 usage = event.usage
         return usage
@@ -421,7 +420,6 @@ class CodexApiClient:
                 reasoning["effort"] = reasoning_effort
             if _is_gpt_56_model(request.model):
                 reasoning["context"] = "all_turns"
-                reasoning["summary"] = DEFAULT_GPT56_REASONING_SUMMARY
             body["reasoning"] = reasoning
         if _is_gpt_56_model(request.model):
             threshold = request.compact_threshold_tokens or DEFAULT_GPT56_COMPACT_THRESHOLD_TOKENS

@@ -15,7 +15,7 @@ from myharness.mcp.config import load_mcp_configs_from_dirs
 
 
 def _load_server() -> ModuleType:
-    path = Path(__file__).resolve().parents[2] / ".mcp" / "patent_tech_server.py"
+    path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "patent-tech" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("patent_tech_server_under_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -105,11 +105,11 @@ def test_semantic_scholar_key_is_required_header(monkeypatch) -> None:
 
 
 def test_config_loads_without_credentials() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
     config = load_mcp_configs_from_dirs([mcp_dir])["patent-tech"]
 
     assert config.env is None
-    assert config.args == [".mcp/patent_tech_server.py"]
+    assert config.args == ["runtime/server.py"]
 
 
 def test_crossref_health_uses_crossref_params_and_returns_json(monkeypatch) -> None:

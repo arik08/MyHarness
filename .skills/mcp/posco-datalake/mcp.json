@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "posco-datalake": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "runtime/server.py",
+        "posco-datalake"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "description": "[연결필요] 데이터레이크 접근 권한과 보안 승인을 마친 뒤 경영/생산/재무 테이블 같은 정형 데이터를 조회할 수 있습니다."
+    }
+  }
+}

@@ -58,6 +58,31 @@ def test_load_skill_registry_includes_program_dot_skills(tmp_path: Path, monkeyp
     assert str(program_root / ".skills" / "General" / "program-guide" / "SKILL.md") == program_guide.path
 
 
+def test_load_skill_registry_includes_packaged_mcp_skill(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    program_root = tmp_path / "program"
+    package_skills_dir = program_root / "src" / "myharness" / "skills"
+    package_skills_dir.mkdir(parents=True)
+    (program_root / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
+    mcp_skill_dir = program_root / ".skills" / "mcp" / "demo" / "skills" / "demo"
+    mcp_skill_dir.mkdir(parents=True)
+    (mcp_skill_dir / "SKILL.md").write_text(
+        "---\nname: demo\n"
+        "description: Packaged MCP guide\n"
+        "source: skill-mcp:demo\n---\n\n"
+        "# Demo\nLoad this guide only when the demo MCP is needed.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(skill_loader, "__file__", str(package_skills_dir / "loader.py"))
+
+    registry = load_skill_registry(tmp_path / "workspace")
+    demo = registry.get("demo")
+
+    assert demo is not None
+    assert demo.source == "skill-mcp:demo"
+    assert demo.path == str(mcp_skill_dir / "SKILL.md")
+
+
 def test_program_dot_skills_take_priority_over_other_skill_dirs(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     program_root = tmp_path / "program"

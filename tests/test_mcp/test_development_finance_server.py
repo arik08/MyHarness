@@ -14,7 +14,7 @@ from myharness.mcp.config import load_mcp_configs_from_dirs
 
 
 def _load_server() -> ModuleType:
-    path = Path(__file__).resolve().parents[2] / ".mcp" / "development_finance_server.py"
+    path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "development-finance" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("development_finance_server_under_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -70,11 +70,11 @@ def test_adb_series_rejects_more_than_twenty_codes() -> None:
 
 
 def test_config_loads_without_credentials() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
     config = load_mcp_configs_from_dirs([mcp_dir])["development-finance"]
 
     assert config.env is None
-    assert config.args == [".mcp/development_finance_server.py"]
+    assert config.args == ["runtime/server.py"]
 
 
 def test_adb_series_requires_bounded_ordered_period() -> None:

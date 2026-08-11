@@ -53,6 +53,7 @@ from myharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 from myharness.tools import create_default_tool_registry
 from myharness.tools.ask_user_question_tool import AskUserQuestionTool
 from myharness.config.settings import load_settings
+from myharness.mcp.types import McpConnectionStatus, McpToolInfo, McpStdioServerConfig
 from myharness.services.session_documents import store_session_document
 
 
@@ -693,6 +694,58 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
         ToolExecutionContext(cwd=tmp_path),
     )
     assert config_result.output == "설정을 업데이트했습니다: theme"
+
+
+@pytest.mark.asyncio
+async def test_skill_tool_activates_and_registers_packaged_mcp(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / "config" / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: Demo MCP\nsource: skill-mcp:demo\n---\n\nUse demo.\n",
+        encoding="utf-8",
+    )
+
+    class Manager:
+        def __init__(self):
+            self.config = McpStdioServerConfig(command="python", auto_connect=False)
+            self.forced = False
+
+        def get_server_config(self, name):
+            return self.config if name == "demo" else None
+
+        async def ensure_server_config(self, name, config, *, force_connect=False):
+            self.forced = name == "demo" and config is self.config and force_connect
+
+        def list_statuses(self):
+            return [
+                McpConnectionStatus(
+                    name="demo",
+                    state="connected",
+                    tools=[
+                        McpToolInfo(
+                            server_name="demo",
+                            name="hello",
+                            description="Say hello",
+                            input_schema={"type": "object", "properties": {}},
+                        )
+                    ],
+                )
+            ]
+
+    manager = Manager()
+    registry = create_default_tool_registry()
+    result = await SkillTool().execute(
+        SkillToolInput(name="demo"),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={"mcp_manager": manager, "tool_registry": registry},
+        ),
+    )
+
+    assert result.is_error is False
+    assert manager.forced is True
+    assert registry.get("mcp__demo__hello") is not None
 
 
 @pytest.mark.asyncio

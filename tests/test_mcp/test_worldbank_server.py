@@ -16,7 +16,7 @@ from myharness.mcp.types import McpStdioServerConfig
 
 
 def _load_worldbank_server() -> ModuleType:
-    module_path = Path(__file__).resolve().parents[2] / ".mcp" / "worldbank_server.py"
+    module_path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "worldbank" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("worldbank_server_under_test", module_path)
     assert spec is not None
     assert spec.loader is not None
@@ -183,12 +183,12 @@ def test_transient_network_error_is_retried(monkeypatch) -> None:
 
 
 def test_worldbank_config_is_loaded_as_stdio_server() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
 
     configs = load_mcp_configs_from_dirs([mcp_dir])
 
     server = configs["worldbank"]
     assert isinstance(server, McpStdioServerConfig)
     assert server.command == "python"
-    assert server.args == [".mcp/worldbank_server.py"]
+    assert server.args == ["runtime/server.py"]
     assert server.cwd == "."

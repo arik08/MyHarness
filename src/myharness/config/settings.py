@@ -19,7 +19,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from myharness.hooks.schemas import HookDefinition
-from myharness.mcp.types import McpServerConfig
+from myharness.mcp.types import McpAuthConfig, McpServerConfig
 from myharness.permissions.modes import PermissionMode
 from myharness.utils.file_lock import exclusive_file_lock
 from myharness.utils.fs import atomic_write_text
@@ -726,6 +726,7 @@ class Settings(BaseModel):
     allow_project_plugins: bool = False
     disabled_mcp_servers: set[str] = Field(default_factory=set)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+    mcp_auth: dict[str, McpAuthConfig] = Field(default_factory=dict)
 
     # UI
     theme: str = "default"

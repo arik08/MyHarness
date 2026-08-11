@@ -181,6 +181,12 @@ function usageModelLabel(usage?: UsageCostSummary | null) {
   return (model || provider || "-").toUpperCase();
 }
 
+function usageEffortLabel(usage?: UsageCostSummary | null) {
+  const effort = String(usage?.effort || "").trim().toLowerCase();
+  if (!effort) return "-";
+  return effort === "none" || effort === "auto" ? "AUTO" : effort.toUpperCase();
+}
+
 function usageHasData(usage?: UsageCostSummary | null) {
   return Boolean(usage && (usage.input_tokens || usage.output_tokens || usage.cached_input_tokens || usage.cache_write_tokens));
 }
@@ -322,7 +328,7 @@ function UsageComparisonTable({ answerUsage, sessionUsage, exchangeRate }: { ans
           <th className="assistant-usage-table-group-head" scope="colgroup" colSpan={2}>세션 누적</th>
         </tr>
         <tr>
-          <th scope="col" />
+          <th className="assistant-usage-table-effort-head" scope="col">Effort · {usageEffortLabel(answerUsage)}</th>
           <th scope="col">토큰량</th>
           <th scope="col">비용</th>
           <th scope="col">토큰량</th>
@@ -362,7 +368,7 @@ function UsageAnswerTable({ answerUsage, exchangeRate }: { answerUsage?: UsageCo
           <th className="assistant-usage-table-group-head" scope="colgroup" colSpan={2}>이번 답변</th>
         </tr>
         <tr>
-          <th scope="col" />
+          <th className="assistant-usage-table-effort-head" scope="col">Effort · {usageEffortLabel(answerUsage)}</th>
           <th scope="col">토큰량</th>
           <th scope="col">비용</th>
         </tr>

@@ -16,7 +16,7 @@ from myharness.mcp.types import McpStdioServerConfig
 
 
 def _load_comtrade_server() -> ModuleType:
-    module_path = Path(__file__).resolve().parents[2] / ".mcp" / "comtrade_server.py"
+    module_path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "comtrade" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("comtrade_server_under_test", module_path)
     assert spec is not None
     assert spec.loader is not None
@@ -307,14 +307,14 @@ def test_transient_network_error_is_retried(monkeypatch) -> None:
 
 
 def test_comtrade_config_is_loaded_as_stdio_server() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
 
     configs = load_mcp_configs_from_dirs([mcp_dir])
 
     server = configs["comtrade"]
     assert isinstance(server, McpStdioServerConfig)
     assert server.command == "python"
-    assert server.args == [".mcp/comtrade_server.py"]
+    assert server.args == ["runtime/server.py"]
     assert server.cwd == "."
     assert server.env == {
         "UN_COMTRADE_API_KEY": "785399a0da8c404982634f0da4dbcda1",
@@ -323,7 +323,15 @@ def test_comtrade_config_is_loaded_as_stdio_server() -> None:
 
 
 def test_comtrade_skill_requires_latest_common_period_for_country_comparisons() -> None:
-    skill_path = Path(__file__).resolve().parents[2] / ".skills" / "General" / "comtrade" / "SKILL.md"
+    skill_path = (
+        Path(__file__).resolve().parents[2]
+        / ".skills"
+        / "mcp"
+        / "comtrade"
+        / "skills"
+        / "comtrade"
+        / "SKILL.md"
+    )
 
     skill_text = skill_path.read_text(encoding="utf-8")
 

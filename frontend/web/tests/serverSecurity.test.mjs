@@ -1,5 +1,6 @@
 ﻿import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
@@ -1356,7 +1357,7 @@ test("submits AI artifact edits with the next version target path", async (t) =>
   await sleep(1500);
 });
 
-test("pins history snapshots and lists pinned chats first", async (t) => {
+test("persists history pins and likes while listing pinned chats first", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
   });
@@ -1431,11 +1432,22 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
   const pinZetaPayload = await pinZetaResponse.json();
   assert.equal(pinZetaResponse.status, 200);
   assert.equal(pinZetaPayload.pinned, true);
+  const likeZetaResponse = await fetch(`${app.baseUrl}/api/history/like`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: "zeta", liked: true, workspacePath: workspace.path, workspaceName: workspace.name }),
+  });
+  const likeZetaPayload = await likeZetaResponse.json();
+  assert.equal(likeZetaResponse.status, 200);
+  assert.equal(likeZetaPayload.liked, true);
+  const savedZeta = JSON.parse(await readFile(join(sessionDir, "session-zeta.json"), "utf8"));
   const latestClientZeta = JSON.parse(await readFile(join(sessionDir, "latest-client-zeta.json"), "utf8"));
   const latestClientZetaMeta = JSON.parse(await readFile(join(sessionDir, "latest-client-zeta.meta"), "utf8"));
+  assert.equal(savedZeta.liked, true);
   assert.equal(latestClientZeta.format, "myharness-session-pointer");
   assert.equal(latestClientZeta.session_id, "zeta");
   assert.equal(latestClientZetaMeta.pinned, true);
+  assert.equal(latestClientZetaMeta.liked, true);
   const pinAlphaResponse = await fetch(`${app.baseUrl}/api/history/pin`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1452,9 +1464,138 @@ test("pins history snapshots and lists pinned chats first", async (t) => {
   assert.deepEqual(historyPayload.options.map((item) => item.value), ["alpha", "zeta", "newer"]);
   assert.equal(historyPayload.options[0].pinned, true);
   assert.equal(historyPayload.options[1].pinned, true);
+  assert.equal(historyPayload.options.find((item) => item.value === "zeta")?.liked, true);
+  assert.equal(historyPayload.options.find((item) => item.value === "newer")?.liked, false);
 });
 
-test("marks hidden history snapshots so remote admin clients can show the hidden indicator", async (t) => {
+test("searches all saved history titles before paginating the matches", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) await rm(workspacePath, { recursive: true, force: true });
+  });
+
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `HistorySearch${Date.now().toString(36)}` }),
+  });
+  const { workspace } = await workspaceResponse.json();
+  workspacePath = workspace.path;
+  const sessionDir = join(workspacePath, ".myharness", "sessions");
+  await mkdir(sessionDir, { recursive: true });
+  for (const [sessionId, createdAt, summary] of [
+    ["newest", 300, "관련 없는 최신 대화"],
+    ["match-newer", 200, "분기 보고서"],
+    ["match-older", 100, "연간보고서"],
+  ]) {
+    await writeFile(join(sessionDir, `session-${sessionId}.json`), JSON.stringify({
+      session_id: sessionId,
+      created_at: createdAt,
+      summary,
+      messages: [],
+      message_count: 1,
+    }));
+  }
+
+  const firstResponse = await fetch(
+    `${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspacePath)}&search=${encodeURIComponent("보고 서")}&limit=1&offset=0`,
+  );
+  const first = await firstResponse.json();
+  assert.equal(firstResponse.status, 200);
+  assert.deepEqual(first.options.map((item) => item.value), ["match-newer"]);
+  assert.equal(first.hasMore, true);
+  assert.equal(first.nextOffset, 1);
+
+  const secondResponse = await fetch(
+    `${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspacePath)}&search=${encodeURIComponent("보고 서")}&limit=1&offset=1`,
+  );
+  const second = await secondResponse.json();
+  assert.equal(secondResponse.status, 200);
+  assert.deepEqual(second.options.map((item) => item.value), ["match-older"]);
+  assert.equal(second.hasMore, false);
+});
+
+test("moves a saved history session between workspaces with its metadata", async (t) => {
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+  });
+  const workspacePaths = [];
+  t.after(async () => {
+    await app.stop();
+    for (const workspacePath of workspacePaths) {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  const createWorkspace = async (prefix) => {
+    const response = await fetch(`${app.baseUrl}/api/workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `${prefix}${Date.now().toString(36)}` }),
+    });
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.ok(payload.workspace?.path);
+    workspacePaths.push(payload.workspace.path);
+    return payload.workspace;
+  };
+  const source = await createWorkspace("MoveSource");
+  const target = await createWorkspace("MoveTarget");
+  const sourceSessionDir = join(source.path, ".myharness", "sessions");
+  const targetSessionDir = join(target.path, ".myharness", "sessions");
+  await mkdir(sourceSessionDir, { recursive: true });
+  const snapshot = {
+    session_id: "move-me",
+    created_at: 100,
+    summary: "move this session",
+    messages: [],
+    message_count: 1,
+    pinned: true,
+    liked: true,
+  };
+  await writeFile(join(sourceSessionDir, "session-move-me.json"), JSON.stringify(snapshot));
+  await writeFile(join(sourceSessionDir, "latest-client-move.json"), JSON.stringify(snapshot));
+
+  const moveResponse = await fetch(`${app.baseUrl}/api/history/move`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: "move-me",
+      workspacePath: source.path,
+      workspaceName: source.name,
+      targetWorkspacePath: target.path,
+      targetWorkspaceName: target.name,
+    }),
+  });
+  const movePayload = await moveResponse.json();
+
+  assert.equal(moveResponse.status, 200);
+  assert.equal(movePayload.workspace.path, target.path);
+  assert.equal(existsSync(join(sourceSessionDir, "session-move-me.json")), false);
+  assert.equal(existsSync(join(sourceSessionDir, "latest-client-move.json")), false);
+  const movedSnapshot = JSON.parse(await readFile(join(targetSessionDir, "session-move-me.json"), "utf8"));
+  const movedMeta = JSON.parse(await readFile(join(targetSessionDir, "session-move-me.meta"), "utf8"));
+  assert.equal(movedSnapshot.summary, "move this session");
+  assert.equal(movedSnapshot.pinned, true);
+  assert.equal(movedSnapshot.liked, true);
+  assert.equal(movedMeta.pinned, true);
+  assert.equal(movedMeta.liked, true);
+
+  const [sourceHistoryResponse, targetHistoryResponse] = await Promise.all([
+    fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(source.path)}`),
+    fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(target.path)}`),
+  ]);
+  const [sourceHistory, targetHistory] = await Promise.all([
+    sourceHistoryResponse.json(),
+    targetHistoryResponse.json(),
+  ]);
+  assert.equal(sourceHistory.options.some((item) => item.value === "move-me"), false);
+  assert.equal(targetHistory.options.find((item) => item.value === "move-me")?.liked, true);
+});
+
+test("marks and restores hidden history snapshots for admin clients", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
   });
@@ -1506,6 +1647,26 @@ test("marks hidden history snapshots so remote admin clients can show the hidden
   assert.equal(historyResponse.status, 200);
   assert.equal(historyPayload.options[0].value, "shared-hidden");
   assert.equal(historyPayload.options[0].hidden, true);
+
+  const forbiddenRestoreResponse = await fetch(`${app.baseUrl}/api/history/restore`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: "shared-hidden", workspacePath: workspace.path, workspaceName: workspace.name }),
+  });
+  assert.equal(forbiddenRestoreResponse.status, 403);
+
+  const restoreResponse = await fetch(`${app.baseUrl}/api/history/restore`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({ sessionId: "shared-hidden", workspacePath: workspace.path, workspaceName: workspace.name }),
+  });
+  const restorePayload = await restoreResponse.json();
+  assert.equal(restoreResponse.status, 200);
+  assert.equal(restorePayload.restored, true);
+
+  const restoredHistoryResponse = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspace.path)}`);
+  const restoredHistoryPayload = await restoredHistoryResponse.json();
+  assert.equal(restoredHistoryPayload.options[0].hidden, false);
 });
 
 test("uses the Korean new-chat title for empty saved history snapshots", async (t) => {
@@ -1577,6 +1738,8 @@ test("trusts fresh v2 metadata without parsing the full snapshot", async (t) => 
     system_prompt: "완료 메타가 최신이면 제거되지 않아야 하는 검사 표식",
     messages: [],
     history_events: [{ type: "tool_completed", tool_name: "skill", output: "x".repeat(10_000) }],
+    history_events_saved_at: Date.now() / 1_000,
+    history_replay_compacted: false,
   })}\n`;
   await writeFile(snapshotPath, snapshotText, "utf8");
   await writeFile(join(sessionDir, "session-meta-only.meta"), JSON.stringify({
@@ -1589,6 +1752,8 @@ test("trusts fresh v2 metadata without parsing the full snapshot", async (t) => 
     pinned: false,
     hidden: false,
     storage_version: 2,
+    history_events_saved_at: Date.now() / 1_000,
+    history_replay_compacted: false,
   }), "utf8");
 
   const response = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspacePath)}`);
@@ -2242,19 +2407,47 @@ test("loads a compact saved-history preview without starting a backend session",
 
   const sessionDir = join(workspacePath, ".myharness", "sessions");
   await mkdir(sessionDir, { recursive: true });
+  const generatedHtml = `<html>${"generated body ".repeat(2_000)}</html>`;
   await writeFile(join(sessionDir, "session-preview-1.json"), JSON.stringify({
     session_id: "preview-1",
     summary: "즉시 보일 대화",
-    messages: [],
+    history_events_saved_at: (Date.now() - 4 * 24 * 60 * 60 * 1_000) / 1_000,
+    history_replay_compacted: false,
+    messages: [
+      {
+        role: "assistant",
+        content: [{
+          type: "tool_use",
+          id: "write-1",
+          name: "write_file",
+          input: { path: "outputs/report.html", content: generatedHtml },
+        }],
+      },
+    ],
     tool_metadata: { workflow_duration_seconds: 7 },
     history_events: [
       { type: "user", text: "저장된 질문" },
+      {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_call_id: "write-1",
+        tool_input: {
+          path: "outputs/report.html",
+          _history_replay_truncated: true,
+          _history_replay_original_chars: generatedHtml.length,
+        },
+      },
       { type: "tool_input_delta", tool_name: "write_file", arguments_delta: "ignored" },
       { type: "tool_progress", tool_name: "web_fetch", message: "첫 진행", tool_input: { url: "https://example.com" } },
       { type: "tool_progress", tool_name: "web_fetch", message: "마지막 진행", tool_input: { url: "https://example.com" } },
       { type: "tool_completed", tool_name: "web_fetch", output: "x".repeat(10_000) },
       { type: "tool_completed", tool_name: "skill", output: "y".repeat(10_000) },
-      { type: "assistant", text: "저장된 답변" },
+      { type: "tool_completed", tool_name: "write_file", tool_call_id: "write-1", output: "outputs/report.html" },
+      {
+        type: "assistant",
+        text: "저장된 답변",
+        artifacts: [{ path: "outputs/report.html", name: "HTML 보고서" }],
+      },
     ],
   }), "utf8");
 
@@ -2272,8 +2465,167 @@ test("loads a compact saved-history preview without starting a backend session",
   assert.equal(payload.value, "preview-1");
   assert.equal(payload.message, "즉시 보일 대화");
   assert.equal(payload.compact_metadata.workflow_duration_seconds, 7);
-  assert.deepEqual(payload.history_events.map((event) => event.type), ["user", "assistant"]);
-  assert.deepEqual(payload.history_events[1], { type: "assistant", text: "저장된 답변" });
+  assert.deepEqual(
+    payload.history_events.map((event) => event.type),
+    ["user", "tool_started", "tool_completed", "tool_completed", "tool_completed", "assistant"],
+  );
+  const started = payload.history_events.find((event) => event.type === "tool_started");
+  assert.equal(started.tool_input.path, "outputs/report.html");
+  assert.equal(started.tool_input.content, `${generatedHtml.slice(0, 237).trimEnd()}...`);
+  assert.doesNotMatch(started.tool_input.content, /이전 세션 빠른 복원을 위해 원문 축약/);
+  assert.ok(started.tool_input.content.length <= 240);
+  const webCompleted = payload.history_events.find((event) => event.tool_name === "web_fetch");
+  assert.ok(webCompleted.output.length <= 1_000);
+  const assistant = payload.history_events.at(-1);
+  assert.equal(assistant.text, "저장된 답변");
+  assert.deepEqual(assistant.artifacts, [{ path: "outputs/report.html", name: "HTML 보고서" }]);
+  const compactedOnDisk = JSON.parse(
+    await readFile(join(sessionDir, "session-preview-1.json"), "utf8"),
+  );
+  assert.equal(compactedOnDisk.history_replay_compacted, true);
+  const diskStarted = compactedOnDisk.history_events.find((event) => event.type === "tool_started");
+  assert.equal(diskStarted.tool_input.path, "outputs/report.html");
+  assert.equal(diskStarted.tool_input.content, `${generatedHtml.slice(0, 237).trimEnd()}...`);
+  assert.deepEqual(
+    compactedOnDisk.history_events.at(-1).artifacts,
+    [{ path: "outputs/report.html", name: "HTML 보고서" }],
+  );
+
+  await writeFile(join(sessionDir, "session-preview-fallback.json"), JSON.stringify({
+    session_id: "preview-fallback",
+    summary: "메시지에서 복원할 대화",
+    history_events: [],
+    messages: [
+      { role: "user", content: [{ type: "text", text: "파일을 만들어줘" }] },
+      {
+        role: "assistant",
+        content: [{
+          type: "tool_use",
+          id: "fallback-write",
+          name: "write_file",
+          input: { path: "outputs/fallback.html", content: generatedHtml },
+        }],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "fallback-write", content: "outputs/fallback.html" }],
+      },
+      { role: "assistant", content: [{ type: "text", text: "파일을 만들었습니다." }] },
+    ],
+  }), "utf8");
+  const fallbackParams = new URLSearchParams({
+    sessionId: "preview-fallback",
+    workspacePath,
+    workspaceName: workspacePayload.workspace.name,
+  });
+  const fallbackResponse = await fetch(`${app.baseUrl}/api/history/snapshot?${fallbackParams}`);
+  const fallbackPayload = await fallbackResponse.json();
+  assert.equal(fallbackResponse.status, 200);
+  assert.deepEqual(
+    fallbackPayload.history_events.map((event) => event.type),
+    ["user", "tool_started", "user", "tool_completed", "assistant"],
+  );
+  assert.equal(fallbackPayload.history_events[1].tool_input.path, "outputs/fallback.html");
+
+  const recentPath = join(sessionDir, "session-preview-recent.json");
+  await writeFile(recentPath, JSON.stringify({
+    session_id: "preview-recent",
+    summary: "최근 원본 대화",
+    history_events_saved_at: Date.now() / 1_000,
+    history_replay_compacted: false,
+    messages: [],
+    history_events: [
+      { type: "user", text: "최근 파일을 만들어줘" },
+      {
+        type: "tool_started",
+        tool_name: "write_file",
+        tool_call_id: "recent-write",
+        tool_input: { path: "outputs/recent.html", content: generatedHtml },
+      },
+      { type: "tool_completed", tool_name: "write_file", tool_call_id: "recent-write", output: "outputs/recent.html" },
+      { type: "assistant", text: "완료", artifacts: [{ path: "outputs/recent.html", name: "최근 HTML" }] },
+    ],
+  }), "utf8");
+  const recentParams = new URLSearchParams({
+    sessionId: "preview-recent",
+    workspacePath,
+    workspaceName: workspacePayload.workspace.name,
+  });
+  const recentResponse = await fetch(`${app.baseUrl}/api/history/snapshot?${recentParams}`);
+  assert.equal(recentResponse.status, 200);
+  const recentOnDisk = JSON.parse(await readFile(recentPath, "utf8"));
+  assert.equal(recentOnDisk.history_replay_compacted, false);
+  assert.equal(recentOnDisk.history_events[1].tool_input.content, generatedHtml);
+  assert.deepEqual(
+    recentOnDisk.history_events.at(-1).artifacts,
+    [{ path: "outputs/recent.html", name: "최근 HTML" }],
+  );
+
+  const legacyArtifactRel = "outputs/company_legacy_report.html";
+  const legacyArtifactPath = join(workspacePath, legacyArtifactRel);
+  await mkdir(join(workspacePath, "outputs"), { recursive: true });
+  await writeFile(legacyArtifactPath, "<html><body>legacy report</body></html>", "utf8");
+  const repairPath = join(sessionDir, "session-preview-repair.json");
+  await writeFile(repairPath, JSON.stringify({
+    session_id: "preview-repair",
+    summary: "artifact 링크가 사라진 과거 대화",
+    history_events_saved_at: Date.now() / 1_000,
+    history_replay_compacted: false,
+    messages: [
+      { role: "user", content: [{ type: "text", text: "회사 보고서를 만들어줘" }] },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "legacy-write",
+            name: "write_file",
+            input: { path: legacyArtifactRel, content: "<html></html>" },
+          },
+          {
+            type: "tool_use",
+            id: "missing-write",
+            name: "write_file",
+            input: { path: "outputs/deleted_report.html", content: "<html></html>" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "legacy-write", content: legacyArtifactRel },
+          { type: "tool_result", tool_use_id: "missing-write", content: "outputs/deleted_report.html" },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: "회사 보고서를 완성했습니다." }] },
+      { role: "user", content: [{ type: "text", text: "고마워" }] },
+      { role: "assistant", content: [{ type: "text", text: "도움이 되어 기쁩니다." }] },
+    ],
+    history_events: [
+      { type: "user", text: "회사 보고서를 만들어줘" },
+      { type: "assistant", text: "회사 보고서를 완성했습니다." },
+      { type: "user", text: "고마워" },
+      { type: "assistant", text: "도움이 되어 기쁩니다." },
+    ],
+  }), "utf8");
+  const repairParams = new URLSearchParams({
+    sessionId: "preview-repair",
+    workspacePath,
+    workspaceName: workspacePayload.workspace.name,
+  });
+  const repairResponse = await fetch(`${app.baseUrl}/api/history/snapshot?${repairParams}`);
+  const repairPayload = await repairResponse.json();
+  assert.equal(repairResponse.status, 200);
+  assert.deepEqual(
+    repairPayload.history_events.at(-1).artifacts.map((artifact) => artifact.path),
+    [legacyArtifactRel],
+  );
+  const repairedOnDisk = JSON.parse(await readFile(repairPath, "utf8"));
+  assert.deepEqual(
+    repairedOnDisk.history_events.at(-1).artifacts.map((artifact) => artifact.path),
+    [legacyArtifactRel],
+  );
+  assert.ok(Number(repairedOnDisk.history_artifacts_recovered_at) > 0);
 
   const unsafe = new URLSearchParams({ sessionId: "../settings", workspacePath });
   const unsafeResponse = await fetch(`${app.baseUrl}/api/history/snapshot?${unsafe}`);

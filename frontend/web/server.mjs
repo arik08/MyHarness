@@ -3056,6 +3056,19 @@ function applyConcurrencySettings(values, { rescheduleIdleSessions = false } = {
   }
 }
 
+async function withWorkspacePairMutation(firstWorkspacePath, secondWorkspacePath, action) {
+  const paths = [...new Set([
+    mutationQueueKey(firstWorkspacePath),
+    mutationQueueKey(secondWorkspacePath),
+  ])].sort();
+  const run = (index) => (
+    index >= paths.length
+      ? action()
+      : withWorkspaceMutation(paths[index], () => run(index + 1))
+  );
+  return run(0);
+}
+
 function currentConcurrencySettings() {
   return {
     maxActiveSessions,
@@ -3753,11 +3766,13 @@ const sessionPointerFormat = "myharness-session-pointer";
 const historyToolOutputMaxChars = 1_000;
 const historyToolErrorOutputMaxChars = 4_000;
 const historyWebToolOutputMaxChars = 1_000;
-const historyToolInputMaxChars = 8_000;
-const historyToolInputFieldMaxChars = 1_000;
+const historyToolInputMaxChars = 2_000;
+const historyToolInputFieldMaxChars = 240;
+const historyReplayCompactAfterMs = 3 * 24 * 60 * 60 * 1_000;
 const historyToolInputSummaryKeys = [
   "path", "file_path", "output_path", "file", "name", "url", "query", "pattern",
   "command", "cmd", "cwd", "mode", "title", "description", "phase", "phase_label", "output_format",
+  "content", "new_string", "new_source", "patch", "diff", "instructions",
 ];
 
 function historyFileFingerprint(info) {
@@ -3794,19 +3809,93 @@ function truncateHistoryReplayText(value, maxChars) {
 function compactHistoryToolInput(toolInput) {
   if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) return toolInput;
   const serialized = JSON.stringify(toolInput);
-  if (serialized.length <= historyToolInputMaxChars) return toolInput;
-  const summary = {};
-  for (const key of historyToolInputSummaryKeys) {
-    const value = toolInput[key];
-    if (typeof value === "string" && value) {
-      summary[key] = truncateHistoryReplayText(value, historyToolInputFieldMaxChars);
-    } else if (value === null || ["number", "boolean"].includes(typeof value)) {
-      if (Object.hasOwn(toolInput, key)) summary[key] = value;
+  const compacted = Object.fromEntries(
+    Object.entries(toolInput).map(([key, value]) => [key, compactHistoryToolInputValue(value)]),
+  );
+  const compactedSerialized = JSON.stringify(compacted);
+  if (compactedSerialized === serialized) return compacted;
+  const markedCompacted = {
+    ...compacted,
+    _history_replay_truncated: true,
+    _history_replay_original_chars: serialized.length,
+  };
+  if (JSON.stringify(markedCompacted).length <= historyToolInputMaxChars) return markedCompacted;
+  const summary = {
+    _history_replay_truncated: true,
+    _history_replay_original_chars: serialized.length,
+  };
+  const orderedKeys = [...new Set([...historyToolInputSummaryKeys, ...Object.keys(compacted)])];
+  for (const key of orderedKeys) {
+    if (!Object.hasOwn(compacted, key)) continue;
+    const candidate = { ...summary, [key]: compacted[key] };
+    if (JSON.stringify(candidate).length <= historyToolInputMaxChars) {
+      summary[key] = compacted[key];
     }
   }
-  summary._history_replay_truncated = true;
-  summary._history_replay_original_chars = serialized.length;
   return summary;
+}
+
+function compactHistoryToolInputValue(value) {
+  if (typeof value === "string") {
+    return truncateHistoryToolInputText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => compactHistoryToolInputValue(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, compactHistoryToolInputValue(item)]),
+    );
+  }
+  return value;
+}
+
+function truncateHistoryToolInputText(value) {
+  if (value.length <= historyToolInputFieldMaxChars) return value;
+  return `${value.slice(0, historyToolInputFieldMaxChars - 3).trimEnd()}...`;
+}
+
+function historyReplayReferenceTime(payload) {
+  for (const key of ["history_events_saved_at", "last_assistant_at", "created_at"]) {
+    const timestamp = Number(payload?.[key] || 0);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) continue;
+    return timestamp < 10_000_000_000 ? timestamp * 1_000 : timestamp;
+  }
+  return 0;
+}
+
+function historyReplayShouldCompact(payload, now = Date.now()) {
+  const referenceTime = historyReplayReferenceTime(payload);
+  return referenceTime > 0 && now - referenceTime >= historyReplayCompactAfterMs;
+}
+
+function historyReplayNeedsCompaction(payload) {
+  return payload?.history_replay_compacted !== true && historyReplayShouldCompact(payload);
+}
+
+function restoreHistoryToolInputs(historyEvents, messages) {
+  if (!Array.isArray(historyEvents) || !Array.isArray(messages)) return historyEvents;
+  const inputsByCallId = new Map();
+  for (const message of messages) {
+    for (const block of Array.isArray(message?.content) ? message.content : []) {
+      const callId = String(block?.id || "");
+      if (block?.type === "tool_use" && callId && block.input && typeof block.input === "object" && !Array.isArray(block.input)) {
+        inputsByCallId.set(callId, block.input);
+      }
+    }
+  }
+  return historyEvents.map((event) => {
+    const callId = String(event?.tool_call_id || "");
+    const replacement = inputsByCallId.get(callId);
+    if (
+      event?.type === "tool_started"
+      && event.tool_input?._history_replay_truncated === true
+      && replacement
+    ) {
+      return { ...event, tool_input: replacement };
+    }
+    return event;
+  });
 }
 
 function historyToolEventKey(event) {
@@ -3819,18 +3908,18 @@ function historyToolEventKey(event) {
   return `tool:${toolName}`;
 }
 
-function sanitizeHistoryEventsForReplay(historyEvents) {
+function sanitizeHistoryEventsForReplay(historyEvents, { compact = true } = {}) {
   const events = [];
   for (const event of Array.isArray(historyEvents) ? historyEvents : []) {
     if (!event || typeof event !== "object") continue;
     const eventType = String(event.type || "").trim();
-    if (!eventType || eventType === "tool_input_delta") continue;
+    if (!eventType || (compact && eventType === "tool_input_delta")) continue;
     const sanitized = { ...event, type: eventType };
-    if (eventType === "tool_progress") {
+    if (compact && eventType === "tool_progress") {
       sanitized.tool_input = {};
-    } else if (eventType === "tool_started") {
+    } else if (compact && eventType === "tool_started") {
       sanitized.tool_input = compactHistoryToolInput(sanitized.tool_input);
-    } else if (eventType === "tool_completed" && typeof sanitized.output === "string") {
+    } else if (compact && eventType === "tool_completed" && typeof sanitized.output === "string") {
       const toolName = String(sanitized.tool_name || "").toLowerCase();
       sanitized.output = truncateHistoryReplayText(
         sanitized.output,
@@ -3843,6 +3932,8 @@ function sanitizeHistoryEventsForReplay(historyEvents) {
     }
     events.push(sanitized);
   }
+
+  if (!compact) return events;
 
   const stableEvents = [];
   const pendingProgress = new Map();
@@ -3871,11 +3962,176 @@ function sanitizeHistoryEventsForReplay(historyEvents) {
 }
 
 function historyEventsFromStoredMessages(messages) {
-  return (Array.isArray(messages) ? messages : []).flatMap((message) => {
-    if (message?.role !== "user" && message?.role !== "assistant") return [];
+  const events = [];
+  const pendingTools = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message?.role === "user") {
+      const text = messageText(message).trim();
+      if (text) events.push({ type: "user", text });
+      for (const block of Array.isArray(message.content) ? message.content : []) {
+        if (block?.type !== "tool_result") continue;
+        const callId = String(block.tool_use_id || "");
+        const pending = pendingTools.get(callId) || { name: "tool", input: {} };
+        pendingTools.delete(callId);
+        events.push({
+          type: "tool_completed",
+          tool_name: pending.name,
+          tool_call_id: callId || undefined,
+          tool_input: pending.input,
+          output: String(block.content || ""),
+          is_error: block.is_error === true,
+        });
+      }
+      continue;
+    }
+    if (message?.role !== "assistant") continue;
+    for (const block of Array.isArray(message.content) ? message.content : []) {
+      if (block?.type !== "tool_use") continue;
+      const callId = String(block.id || "");
+      const toolInput = block.input && typeof block.input === "object" && !Array.isArray(block.input) ? block.input : {};
+      pendingTools.set(callId, { name: String(block.name || "tool"), input: toolInput });
+      events.push({
+        type: "tool_started",
+        tool_name: String(block.name || "tool"),
+        tool_call_id: callId || undefined,
+        tool_input: toolInput,
+      });
+    }
     const text = messageText(message).trim();
-    return text ? [{ type: message.role, text }] : [];
-  });
+    if (text) events.push({ type: "assistant", text });
+  }
+  return events;
+}
+
+function historyMessageHasUserPrompt(message) {
+  if (message?.role !== "user") return false;
+  if (typeof message.content === "string") return Boolean(message.content.trim());
+  return (Array.isArray(message.content) ? message.content : []).some((block) =>
+    block?.type === "text" && String(block.text || block.content || "").trim()
+  );
+}
+
+function historyToolArtifactPath(toolName, toolInput) {
+  const lowerName = String(toolName || "").toLowerCase();
+  if (!["write_file", "file_write", "write_long_report", "create_report"].includes(lowerName)) {
+    return "";
+  }
+  const input = toolInput && typeof toolInput === "object" && !Array.isArray(toolInput)
+    ? toolInput
+    : {};
+  return String(input.path || input.file_path || input.output_path || "").trim();
+}
+
+function historyArtifactMarkerPaths(text) {
+  const paths = [];
+  const markerPattern = /<myharness-artifacts>([\s\S]*?)<\/myharness-artifacts>/gi;
+  for (const match of String(text || "").matchAll(markerPattern)) {
+    try {
+      const payload = JSON.parse(match[1]);
+      const items = Array.isArray(payload) ? payload : payload?.artifacts || payload?.files || [];
+      for (const item of Array.isArray(items) ? items : []) {
+        const path = String(typeof item === "string" ? item : item?.path || item?.file || "").trim();
+        if (path) paths.push(path);
+      }
+    } catch {
+      // Ignore malformed legacy markers and continue with successful tool calls.
+    }
+  }
+  return paths;
+}
+
+function recentHistoryArtifactCandidates(messages) {
+  const source = Array.isArray(messages) ? messages : [];
+  const pendingTools = new Map();
+  let turnCandidates = [];
+  let latestCandidates = [];
+  for (const message of source) {
+    if (historyMessageHasUserPrompt(message)) {
+      if (turnCandidates.length) latestCandidates = turnCandidates;
+      turnCandidates = [];
+      pendingTools.clear();
+    }
+    if (message?.role === "assistant") {
+      turnCandidates.push(...historyArtifactMarkerPaths(messageText(message)));
+      for (const block of Array.isArray(message.content) ? message.content : []) {
+        if (block?.type !== "tool_use") continue;
+        const callId = String(block.id || "");
+        if (callId) {
+          pendingTools.set(callId, {
+            name: String(block.name || ""),
+            input: block.input && typeof block.input === "object" && !Array.isArray(block.input)
+              ? block.input
+              : {},
+          });
+        }
+      }
+      continue;
+    }
+    if (message?.role !== "user") continue;
+    for (const block of Array.isArray(message.content) ? message.content : []) {
+      if (block?.type !== "tool_result") continue;
+      const pending = pendingTools.get(String(block.tool_use_id || ""));
+      if (!pending) continue;
+      pendingTools.delete(String(block.tool_use_id || ""));
+      if (block.is_error === true) continue;
+      const path = historyToolArtifactPath(pending.name, pending.input);
+      if (path) turnCandidates.push(path);
+    }
+  }
+  if (turnCandidates.length) latestCandidates = turnCandidates;
+  return [...new Set(latestCandidates.map((path) => path.replace(/\\/g, "/")).filter(Boolean))];
+}
+
+async function recoverHistoryArtifactLinks(workspace, historyEvents, messages) {
+  const events = Array.isArray(historyEvents)
+    ? historyEvents.map((event) => event && typeof event === "object" ? { ...event } : event)
+    : [];
+  const candidates = recentHistoryArtifactCandidates(messages);
+  if (!candidates.length) return { events, recovered: false };
+
+  let assistantIndex = -1;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index]?.type === "assistant") {
+      assistantIndex = index;
+      break;
+    }
+  }
+  const existingArtifacts = assistantIndex >= 0 && Array.isArray(events[assistantIndex]?.artifacts)
+    ? events[assistantIndex].artifacts
+    : [];
+  const knownPaths = new Set(existingArtifacts
+    .map((artifact) => String(artifact?.path || artifact?.file || "").replace(/\\/g, "/").toLowerCase())
+    .filter(Boolean));
+  const recoveredArtifacts = [];
+  const session = { workspace };
+  for (const candidate of candidates) {
+    try {
+      const { target, rel, info } = await resolveArtifactTarget(session, candidate);
+      const type = artifactTypes[extname(target).toLowerCase()];
+      const key = rel.toLowerCase();
+      if (!type || !info.isFile() || knownPaths.has(key)) continue;
+      knownPaths.add(key);
+      recoveredArtifacts.push({
+        path: rel,
+        name: basename(target),
+        kind: type.kind,
+        label: type.kind === "html" ? "HTML" : extname(target).slice(1).toUpperCase() || "파일",
+        mime: type.mime,
+        size: info.size,
+      });
+    } catch {
+      // A deleted or out-of-workspace file must not become a broken artifact link.
+    }
+  }
+  if (!recoveredArtifacts.length) return { events, recovered: false };
+
+  const artifacts = [...existingArtifacts, ...recoveredArtifacts];
+  if (assistantIndex >= 0) {
+    events[assistantIndex] = { ...events[assistantIndex], artifacts };
+  } else {
+    events.push({ type: "assistant", text: "작성 완료했습니다.", artifacts });
+  }
+  return { events, recovered: true };
 }
 
 function sessionMetaPath(path) {
@@ -3893,10 +4149,16 @@ function latestSessionPointer(sessionId) {
 }
 
 function normalizedStoredSession(payload) {
+  const compactHistory = payload?.history_replay_compacted === true
+    || historyReplayShouldCompact(payload);
   const stored = {
     ...(payload && typeof payload === "object" ? payload : {}),
     storage_version: sessionStorageVersion,
-    history_events: sanitizeHistoryEventsForReplay(payload?.history_events),
+    history_events: sanitizeHistoryEventsForReplay(
+      restoreHistoryToolInputs(payload?.history_events, payload?.messages),
+      { compact: compactHistory },
+    ),
+    history_replay_compacted: compactHistory,
   };
   if (typeof stored.system_prompt === "string" && stored.system_prompt && !stored.system_prompt_hash) {
     stored.system_prompt_hash = crypto.createHash("sha256").update(stored.system_prompt, "utf8").digest("hex");
@@ -3921,8 +4183,11 @@ function sessionSummaryMetadata(payload, path, info) {
     created_at: Number(payload?.created_at || info.mtimeMs / 1000),
     last_assistant_at: Number(payload?.last_assistant_at || 0),
     pinned: payload?.pinned === true,
+    liked: payload?.liked === true,
     hidden: hiddenWorkerSnapshot(payload),
     storage_version: sessionStorageVersion,
+    history_events_saved_at: Number(payload?.history_events_saved_at || 0),
+    history_replay_compacted: payload?.history_replay_compacted === true,
   };
 }
 
@@ -3967,7 +4232,8 @@ async function hasCurrentSessionMetadata(path) {
     ]);
     return metadataInfo.mtimeMs >= snapshotInfo.mtimeMs
       && metadata?.storage_version === sessionStorageVersion
-      && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(String(metadata.session_id || ""));
+      && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(String(metadata.session_id || ""))
+      && !historyReplayNeedsCompaction(metadata);
   } catch {
     return false;
   }
@@ -4066,6 +4332,7 @@ function historyItemFromMetadata(data, info, fileName) {
     createdAt,
     lastAssistantAt,
     pinned: data.pinned === true,
+    liked: data.liked === true,
     hidden: data.hidden === true,
   };
 }
@@ -4101,14 +4368,37 @@ async function readWorkspaceHistorySnapshot(workspace, sessionId) {
     throw new Error("Invalid session id");
   }
   const path = join(sessionDirectoryForWorkspace(workspace), `session-${cleanId}.json`);
-  const info = await stat(path);
-  const fingerprint = historyFileFingerprint(info);
+  let info = await stat(path);
+  let fingerprint = historyFileFingerprint(info);
   const cached = historySnapshotPreviewCache.get(path);
-  if (cached?.fingerprint === fingerprint) return cached.event;
-  const data = JSON.parse(await readFile(path, "utf8"));
-  const storedEvents = Array.isArray(data.history_events) && data.history_events.length
+  if (
+    cached?.fingerprint === fingerprint
+    && Date.now() - info.mtimeMs < historyReplayCompactAfterMs
+  ) return cached.event;
+  let data = JSON.parse(await readFile(path, "utf8"));
+  if (historyReplayNeedsCompaction(data)) {
+    data = await migrateNamedSessionSnapshot(path) || data;
+    info = await stat(path);
+    fingerprint = historyFileFingerprint(info);
+  }
+  let storedEvents = Array.isArray(data.history_events) && data.history_events.length
     ? data.history_events
     : historyEventsFromStoredMessages(data.messages);
+  const repairedArtifacts = await recoverHistoryArtifactLinks(workspace, storedEvents, data.messages);
+  storedEvents = repairedArtifacts.events;
+  if (repairedArtifacts.recovered) {
+    data = {
+      ...data,
+      history_events: storedEvents,
+      history_artifacts_recovered_at: Date.now() / 1_000,
+    };
+    const rewritten = await writeSessionJsonIfUnchanged(path, data, info);
+    if (rewritten) {
+      info = await stat(path);
+      fingerprint = historyFileFingerprint(info);
+      await writeSessionMetadata(path, data, info);
+    }
+  }
   const event = {
     type: "history_snapshot",
     preview_only: true,
@@ -4119,13 +4409,9 @@ async function readWorkspaceHistorySnapshot(workspace, sessionId) {
         ? data.tool_metadata.workflow_duration_seconds
         : null,
     },
-    history_events: sanitizeHistoryEventsForReplay(storedEvents)
-      .filter((historyEvent) => historyEvent.type === "user" || historyEvent.type === "assistant")
-      .map((historyEvent) => ({
-        type: historyEvent.type,
-        text: String(historyEvent.text || ""),
-        ...(Number.isFinite(Number(historyEvent.timestamp)) ? { timestamp: Number(historyEvent.timestamp) } : {}),
-      })),
+    history_events: sanitizeHistoryEventsForReplay(
+      restoreHistoryToolInputs(storedEvents, data.messages),
+    ),
   };
   historySnapshotPreviewCache.set(path, { fingerprint, event });
   return event;
@@ -4586,6 +4872,82 @@ async function updateWorkspaceHistoryPin(workspace, sessionId, pinned) {
   await writeJsonFileAtomic(target, payload, { compact: true });
   await writeSessionMetadata(target, payload);
   await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
+  return payload;
+}
+
+function normalizeHistorySearchText(value) {
+  return String(value || "").toLocaleLowerCase("ko").replace(/\s+/g, "");
+}
+
+function filterHistoryItemsByTitle(items, search) {
+  const normalizedSearch = normalizeHistorySearchText(search);
+  if (!normalizedSearch) return items;
+  return items.filter((item) => normalizeHistorySearchText(item.description || item.label).includes(normalizedSearch));
+}
+
+async function updateWorkspaceHistoryLike(workspace, sessionId, liked) {
+  const cleanId = String(sessionId || "").trim();
+  if (!cleanId) {
+    throw new Error("Session id is required");
+  }
+  const sessionDir = sessionDirectoryForWorkspace(workspace);
+  const target = join(sessionDir, `session-${cleanId}.json`);
+  const payload = normalizedStoredSession(await readStoredSessionSnapshot(target));
+  payload.liked = liked === true;
+  await writeJsonFileAtomic(target, payload, { compact: true });
+  await writeSessionMetadata(target, payload);
+  await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
+  return payload;
+}
+
+async function moveWorkspaceHistoryItem(sourceWorkspace, targetWorkspace, sessionId) {
+  const cleanId = String(sessionId || "").trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(cleanId)) {
+    throw new Error("Invalid session id");
+  }
+  if (sourceWorkspace.path === targetWorkspace.path) {
+    throw new Error("Source and target workspaces must be different");
+  }
+  if ([...sessions.values()].some((session) => (
+    String(session.savedSessionId || "").trim() === cleanId
+    && sessionBelongsToWorkspace(session, sourceWorkspace)
+  ))) {
+    throw new Error("실행 중인 세션은 워크스페이스를 변경할 수 없습니다.");
+  }
+
+  const sourceDir = sessionDirectoryForWorkspace(sourceWorkspace);
+  const targetDir = sessionDirectoryForWorkspace(targetWorkspace);
+  const sourcePath = join(sourceDir, `session-${cleanId}.json`);
+  const targetPath = join(targetDir, `session-${cleanId}.json`);
+  const payload = normalizedStoredSession(await readStoredSessionSnapshot(sourcePath));
+  await mkdir(targetDir, { recursive: true });
+  try {
+    await stat(targetPath);
+    throw new Error("대상 워크스페이스에 같은 세션이 이미 있습니다.");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  await rename(sourcePath, targetPath);
+  await rm(sessionMetaPath(sourcePath), { force: true });
+  await writeSessionMetadata(targetPath, payload);
+  for (const latestPath of await latestSnapshotPaths(sourceDir)) {
+    try {
+      const latest = JSON.parse(await readFile(latestPath, "utf8"));
+      const latestSessionId = sessionPointerId(latest) || String(latest.session_id || "");
+      if (latestSessionId === cleanId) {
+        await rm(latestPath);
+        await rm(sessionMetaPath(latestPath), { force: true });
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
+        throw error;
+      }
+    }
+  }
+  await forgetHiddenWorkspaceHistoryItem(sourceWorkspace, cleanId);
   return payload;
 }
 
@@ -5856,9 +6218,11 @@ async function handleApi(request, response, pathname) {
       const workspacePath = params.get("workspacePath");
       const workspaceName = params.get("workspaceName");
       const page = parseHistoryPageParams(params);
+      const search = params.get("search");
       if (workspacePath || workspaceName) {
         const workspace = workspaceFromHistoryRequest({ workspacePath, workspaceName }, workspaceScope);
-        const paged = paginateHistoryItems(await listWorkspaceHistory(workspace), page);
+        const items = filterHistoryItemsByTitle(await listWorkspaceHistory(workspace), search);
+        const paged = paginateHistoryItems(items, page);
         json(response, 200, {
           workspace,
           options: paged.options.map((item) => ({ ...item, workspace })),
@@ -5866,7 +6230,8 @@ async function handleApi(request, response, pathname) {
           nextOffset: paged.nextOffset,
         });
       } else {
-        const paged = paginateHistoryItems(await listAllWorkspaceHistory(workspaceScope), page);
+        const items = filterHistoryItemsByTitle(await listAllWorkspaceHistory(workspaceScope), search);
+        const paged = paginateHistoryItems(items, page);
         json(response, 200, {
           workspace: null,
           options: paged.options,
@@ -5922,6 +6287,22 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
+  if (request.method === "POST" && pathname === "/api/history/restore") {
+    if (!hasAdminModeAccess(request)) {
+      json(response, 403, { error: "Admin mode is required to restore history" });
+      return true;
+    }
+    try {
+      const body = await readJson(request);
+      const workspace = workspaceFromHistoryRequest(body, workspaceScope);
+      await withWorkspaceMutation(workspace.path, () => forgetHiddenWorkspaceHistoryItem(workspace, body.sessionId));
+      json(response, 200, { restored: true, workspace });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not restore history" });
+    }
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/history/title") {
     try {
       const body = await readJson(request);
@@ -5952,6 +6333,48 @@ async function handleApi(request, response, pathname) {
       });
     } catch (error) {
       json(response, 400, { error: error.message || "Could not update history pin" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/history/like") {
+    try {
+      const body = await readJson(request);
+      const workspace = workspaceFromHistoryRequest(body, workspaceScope);
+      const snapshot = await withWorkspaceMutation(workspace.path, () => updateWorkspaceHistoryLike(workspace, body.sessionId, body.liked === true));
+      json(response, 200, {
+        ok: true,
+        workspace,
+        sessionId: snapshot.session_id || body.sessionId,
+        liked: snapshot.liked === true,
+      });
+    } catch (error) {
+      json(response, 400, { error: error.message || "Could not update history like" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/history/move") {
+    try {
+      const body = await readJson(request);
+      const sourceWorkspace = workspaceFromHistoryRequest(body, workspaceScope);
+      const targetWorkspace = workspaceFromHistoryRequest({
+        workspacePath: body.targetWorkspacePath,
+        workspaceName: body.targetWorkspaceName,
+      }, workspaceScope);
+      const snapshot = await withWorkspacePairMutation(
+        sourceWorkspace.path,
+        targetWorkspace.path,
+        () => moveWorkspaceHistoryItem(sourceWorkspace, targetWorkspace, body.sessionId),
+      );
+      json(response, 200, {
+        ok: true,
+        sessionId: snapshot.session_id || body.sessionId,
+        sourceWorkspace,
+        workspace: targetWorkspace,
+      });
+    } catch (error) {
+      json(response, error?.code === "ENOENT" ? 404 : 400, { error: error.message || "Could not move history" });
     }
     return true;
   }
@@ -6431,7 +6854,11 @@ async function handleApi(request, response, pathname) {
           return true;
         }
         const queued = deliveryMode === "queue" || deliveryMode === "queued";
-        const ok = sendBackend(session, { type: queued ? "queue_line" : "steer_line", line });
+        const ok = sendBackend(session, {
+          type: queued ? "queue_line" : "steer_line",
+          line,
+          request_id: String(body.requestId || body.request_id || "").trim() || null,
+        });
         json(response, ok ? 200 : 409, { ok, queued, steering: !queued });
         return true;
       }

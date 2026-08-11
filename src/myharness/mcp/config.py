@@ -8,7 +8,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from myharness.mcp.types import McpJsonConfig, McpStdioServerConfig
+from myharness.mcp.types import (
+    McpAuthConfig,
+    McpHttpServerConfig,
+    McpJsonConfig,
+    McpStdioServerConfig,
+    McpWebSocketServerConfig,
+)
 from myharness.plugins.types import LoadedPlugin
 
 logger = logging.getLogger(__name__)
@@ -18,13 +24,20 @@ def get_program_mcp_dirs() -> list[Path]:
     """Return MyHarness installation-local MCP config directories."""
     package_dir = Path(__file__).resolve().parents[1]
     candidates = [
-        package_dir / ".mcp",
-        package_dir.parent / ".mcp",
+        package_dir / ".skills" / "mcp",
+        package_dir.parent / ".skills" / "mcp",
+        package_dir / ".mcp",  # Legacy layout.
+        package_dir.parent / ".mcp",  # Legacy layout.
     ]
 
     for ancestor in package_dir.parents:
         if (ancestor / "pyproject.toml").exists() and (ancestor / "src" / "myharness").exists():
-            candidates.append(ancestor / ".mcp")
+            candidates.extend(
+                [
+                    ancestor / ".skills" / "mcp",
+                    ancestor / ".mcp",  # Legacy layout.
+                ]
+            )
             break
 
     seen: set[Path] = set()
@@ -36,19 +49,17 @@ def get_program_mcp_dirs() -> list[Path]:
         seen.add(resolved)
         if resolved.exists():
             result.append(resolved)
-        elif (resolved.parent / "pyproject.toml").exists():
-            resolved.mkdir(parents=True, exist_ok=True)
-            result.append(resolved)
     return result
 
 
 def load_mcp_configs_from_dirs(directories: list[Path]) -> dict[str, object]:
-    """Load MCP server configs from ``*.json`` files in the given directories."""
+    """Load legacy configs and self-contained ``*/mcp.json`` packages."""
     servers: dict[str, object] = {}
     for directory in directories:
         if not directory.exists():
             continue
-        for path in sorted(directory.glob("*.json")):
+        config_paths = sorted({*directory.glob("*.json"), *directory.glob("*/mcp.json")})
+        for path in config_paths:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 config = McpJsonConfig.model_validate(payload)
@@ -59,7 +70,8 @@ def load_mcp_configs_from_dirs(directories: list[Path]) -> dict[str, object]:
                 if isinstance(server, McpStdioServerConfig) and server.cwd:
                     cwd_path = Path(server.cwd).expanduser()
                     if not cwd_path.is_absolute():
-                        server._cwd_base = str(directory.parent.resolve())
+                        base = path.parent if path.name == "mcp.json" else directory.parent
+                        server._cwd_base = str(base.resolve())
                 servers.setdefault(name, server)
     return servers
 
@@ -73,8 +85,17 @@ def load_mcp_server_configs(
 ) -> dict[str, object]:
     """Merge settings and plugin MCP server configs."""
     mcp_dirs = get_program_mcp_dirs()
-    servers = load_mcp_configs_from_dirs(mcp_dirs)
-    servers.update(settings.mcp_servers)
+    packaged_servers = load_mcp_configs_from_dirs(mcp_dirs)
+    servers = dict(settings.mcp_servers)
+    for name, config in list(servers.items()):
+        if name not in packaged_servers and _is_legacy_program_config(config):
+            logger.info("Ignoring retired program MCP config for %s", name)
+            servers.pop(name)
+    for name, packaged in packaged_servers.items():
+        servers[name] = _merge_mcp_credentials(packaged, settings.mcp_servers.get(name))
+    for name, auth in getattr(settings, "mcp_auth", {}).items():
+        if name in servers:
+            servers[name] = _apply_mcp_auth(servers[name], auth)
     for plugin in plugins:
         if not plugin.enabled:
             continue
@@ -88,6 +109,37 @@ def load_mcp_server_configs(
     if disabled:
         servers = {name: config for name, config in servers.items() if name not in disabled}
     return servers
+
+
+def _merge_mcp_credentials(packaged: object, configured: object | None) -> object:
+    """Keep a packaged runtime authoritative while preserving old auth values."""
+    if isinstance(packaged, McpStdioServerConfig) and isinstance(configured, McpStdioServerConfig):
+        env = {**(packaged.env or {}), **(configured.env or {})}
+        return packaged.model_copy(update={"env": env or None})
+    if isinstance(packaged, (McpHttpServerConfig, McpWebSocketServerConfig)) and isinstance(
+        configured, (McpHttpServerConfig, McpWebSocketServerConfig)
+    ):
+        headers = {**packaged.headers, **configured.headers}
+        return packaged.model_copy(update={"headers": headers})
+    return packaged
+
+
+def _apply_mcp_auth(config: object, auth: McpAuthConfig) -> object:
+    if isinstance(config, McpStdioServerConfig):
+        env = {**(config.env or {}), **auth.env}
+        return config.model_copy(update={"env": env or None})
+    if isinstance(config, (McpHttpServerConfig, McpWebSocketServerConfig)):
+        return config.model_copy(update={"headers": {**config.headers, **auth.headers}})
+    return config
+
+
+def _is_legacy_program_config(config: object) -> bool:
+    if not isinstance(config, McpStdioServerConfig):
+        return False
+    return any(
+        str(argument).replace("\\", "/").startswith(".mcp/")
+        for argument in config.args
+    )
 
 
 def _disabled_mcp_skill_servers(settings, cwd: str | Path) -> set[str]:

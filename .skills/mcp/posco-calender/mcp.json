@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "posco-calender": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "runtime/server.py",
+        "posco-calender"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "description": "[연결필요] POSCO 일정 데이터 연동 후 회의, 보고 일정, 주요 업무 마일스톤을 참조할 수 있습니다."
+    }
+  }
+}

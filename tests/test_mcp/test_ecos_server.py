@@ -15,7 +15,7 @@ from myharness.mcp.types import McpStdioServerConfig
 
 
 def _load_ecos_server() -> ModuleType:
-    module_path = Path(__file__).resolve().parents[2] / ".mcp" / "ecos_server.py"
+    module_path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "ecos" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location("ecos_server_under_test", module_path)
     assert spec is not None
     assert spec.loader is not None
@@ -101,13 +101,13 @@ def test_missing_api_key_has_clear_error(monkeypatch) -> None:
 
 
 def test_ecos_config_is_loaded_as_stdio_server() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
 
     configs = load_mcp_configs_from_dirs([mcp_dir])
 
     server = configs["ecos"]
     assert isinstance(server, McpStdioServerConfig)
     assert server.command == "python"
-    assert server.args == [".mcp/ecos_server.py"]
+    assert server.args == ["runtime/server.py"]
     assert server.cwd == "."
     assert server.env == {"ECOS_API_KEY": "IAY2CU4G4W24KJC0UHRM"}

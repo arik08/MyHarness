@@ -21,7 +21,7 @@ from myharness.engine.stream_events import (
     ToolExecutionStarted,
     ToolInputDelta,
 )
-from myharness.engine.messages import ConversationMessage, ResponsesStateBlock, TextBlock, ToolUseBlock
+from myharness.engine.messages import ConversationMessage, ResponsesStateBlock, TextBlock, ToolResultBlock, ToolUseBlock
 from myharness.mcp.types import McpConnectionStatus, McpStdioServerConfig, McpToolInfo
 from myharness.project_preferences import ProjectPreferences, load_project_preferences, save_project_preferences
 from myharness.skills.state import increment_skill_usage_count
@@ -350,6 +350,7 @@ async def test_dirty_skill_refresh_updates_catalog_without_resetting_conversatio
 @pytest.mark.asyncio
 async def test_backend_skill_disable_refreshes_current_prompt(tmp_path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     skill_dir = tmp_path / ".skills" / "remote-review"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -1341,6 +1342,44 @@ async def test_read_requests_queues_steering_line_while_busy(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_read_requests_cancels_pending_user_line_by_request_id(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._busy = True
+    events: list[BackendEvent] = []
+
+    async def _emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    payloads = iter([
+        b'{"type":"queue_line","line":"next question","request_id":"pending-1"}\n',
+        b'{"type":"cancel_queued_line","request_id":"pending-1"}\n',
+        b"",
+    ])
+
+    class _FakeBuffer:
+        def readline(self):
+            return next(payloads)
+
+    class _FakeStdin:
+        buffer = _FakeBuffer()
+
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", _FakeStdin())
+
+    await host._read_requests()
+
+    assert host._queued_line_queue.empty()
+    assert any(
+        event.type == "queued_message_status"
+        and event.request_id == "pending-1"
+        and event.status == "cancelled"
+        for event in events
+    )
+    queued = await host._request_queue.get()
+    assert queued.type == "shutdown"
+
+
+@pytest.mark.asyncio
 async def test_read_requests_queues_late_steering_as_follow_up_after_final_answer(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._busy = True
@@ -1918,8 +1957,8 @@ async def test_backend_host_emits_answer_and_session_usage_for_final_answer(tmp_
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     client = ToolThenAnswerApiClient()
-    host = ReactBackendHost(BackendHostConfig(api_client=client, model="gpt-5.4", api_format="openai"))
-    host._bundle = await build_runtime(api_client=client, model="gpt-5.4", api_format="openai")
+    host = ReactBackendHost(BackendHostConfig(api_client=client, model="gpt-5.4", api_format="openai", effort="high"))
+    host._bundle = await build_runtime(api_client=client, model="gpt-5.4", api_format="openai", effort="high")
     events = []
 
     async def _emit(event):
@@ -1937,6 +1976,7 @@ async def test_backend_host_emits_answer_and_session_usage_for_final_answer(tmp_
     assert complete.usage["input_tokens"] == 30
     assert complete.usage["output_tokens"] == 3
     assert complete.usage["cached_input_tokens"] == 10
+    assert complete.usage["effort"] == "high"
     assert complete.session_usage["total_tokens"] == 33
     assert complete.session_usage["cached_input_tokens"] == 10
 
@@ -3021,12 +3061,33 @@ async def test_backend_host_restore_history_replaces_session_metadata(tmp_path, 
     host._ensure_async_agent_monitor = _ensure_async_agent_monitor  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
+        artifact_path = tmp_path / "outputs" / "restored_report.html"
+        artifact_path.parent.mkdir(parents=True)
+        artifact_path.write_text("<html><body>restored</body></html>", encoding="utf-8")
         host._bundle.engine.tool_metadata["session_title"] = "이전 세션 제목"
         host._bundle.session_backend.save_snapshot(
             cwd=host._bundle.cwd,
             model=host._bundle.engine.model,
             system_prompt=host._bundle.engine.system_prompt,
-            messages=[ConversationMessage(role="user", content=[TextBlock(text="복원할 질문")])],
+            messages=[
+                ConversationMessage(role="user", content=[TextBlock(text="복원할 질문")]),
+                ConversationMessage(
+                    role="assistant",
+                    content=[ToolUseBlock(
+                        id="write-restored",
+                        name="write_file",
+                        input={"path": "outputs/restored_report.html", "content": "<html></html>"},
+                    )],
+                ),
+                ConversationMessage(
+                    role="user",
+                    content=[ToolResultBlock(
+                        tool_use_id="write-restored",
+                        content="outputs/restored_report.html",
+                    )],
+                ),
+                ConversationMessage(role="assistant", content=[TextBlock(text="저장된 원본 답변")]),
+            ],
             usage=host._bundle.engine.total_usage,
             session_id="restored123",
             tool_metadata={
@@ -3053,7 +3114,15 @@ async def test_backend_host_restore_history_replaces_session_metadata(tmp_path, 
     assert snapshot_event.history_events == [
         {"type": "user", "text": "저장된 원본 질문"},
         {"type": "tool_started", "tool_name": "shell_command", "tool_input": {"command": "pytest"}},
-        {"type": "assistant", "text": "저장된 원본 답변"},
+        {
+            "type": "assistant",
+            "text": "저장된 원본 답변",
+            "artifacts": [{
+                "path": "outputs/restored_report.html",
+                "name": "restored_report.html",
+                "size": artifact_path.stat().st_size,
+            }],
+        },
     ]
     assert ensure_monitor_calls == 1
 
@@ -3952,7 +4021,7 @@ def test_forced_mcp_line_accepts_display_name_without_sticky_followup():
     assert followup_prompt == "간단한 데이터 뽑아봐"
 
 
-def test_mcp_snapshot_uses_config_description_for_disabled_servers(tmp_path):
+def test_mcp_snapshot_uses_packaged_description_for_disabled_servers(tmp_path):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     settings = Settings(
         mcp_servers={
@@ -3975,11 +4044,11 @@ def test_mcp_snapshot_uses_config_description_for_disabled_servers(tmp_path):
 
     status = next(item for item in statuses if item.name == "vector_db")
     assert status.state == "disabled"
-    assert status.description == "로컬 Markdown 조직 업무 문서를 SQLite 기반으로 검색합니다."
+    assert "GraphRAG" in status.description
     assert status.detail == "Disabled in settings."
 
 
-def test_mcp_snapshot_uses_config_description_for_connected_servers(tmp_path):
+def test_mcp_snapshot_uses_packaged_description_for_connected_servers(tmp_path):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     settings = Settings(
         mcp_servers={
@@ -4005,7 +4074,7 @@ def test_mcp_snapshot_uses_config_description_for_connected_servers(tmp_path):
 
     status = next(item for item in statuses if item.name == "comtrade")
     assert status.state == "connected"
-    assert status.description == "UN Comtrade API MCP입니다. 무역 데이터를 조회합니다."
+    assert "preview" in status.description
 
 
 def test_selected_mcp_registry_keeps_builtin_tools_and_selected_server_tools():

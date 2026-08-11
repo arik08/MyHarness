@@ -51,6 +51,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
+node -e "const [major, minor] = process.versions.node.split('.').map(Number); process.exit(major > 20 || (major === 20 && minor >= 19) ? 0 : 1)"
+if errorlevel 1 (
+  echo [ERROR] Node.js 20.19 or newer is required.
+  echo Install a current Node.js LTS release, then run this installer again.
+  echo.
+  pause
+  exit /b 1
+)
+
 where npm >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] npm was not found on PATH.
@@ -90,24 +99,13 @@ if errorlevel 1 (
 )
 
 echo [INFO] Installing web dependencies...
-pushd "frontend\web"
-if exist "package-lock.json" (
-  call npm ci
-  if errorlevel 1 (
-    echo [WARN] npm ci failed. Retrying with npm install...
-    call npm install
-  )
-) else (
-  call npm install
-)
+call :install_web_dependencies
 if errorlevel 1 (
-  popd
   echo.
   echo [ERROR] Web dependency installation failed.
   pause
   exit /b 1
 )
-popd
 
 echo [INFO] Verifying web files...
 node --check "frontend\web\server.mjs"
@@ -117,6 +115,55 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+
+echo [INFO] Verifying bundled National Assembly MCP...
+if not exist ".skills\mcp\national-assembly\runtime\index.js" (
+  echo [ERROR] Bundled National Assembly MCP entrypoint is missing.
+  pause
+  exit /b 1
+)
+if not exist ".skills\mcp\national-assembly\runtime\244.index.js" (
+  echo [ERROR] Bundled National Assembly MCP runtime chunk is missing.
+  pause
+  exit /b 1
+)
+if not exist ".skills\mcp\national-assembly\runtime\package.json" (
+  echo [ERROR] Bundled National Assembly MCP package metadata is missing.
+  pause
+  exit /b 1
+)
+if not exist ".skills\mcp\national-assembly\runtime\UPSTREAM_LICENSE.txt" (
+  echo [ERROR] Bundled National Assembly MCP upstream license is missing.
+  pause
+  exit /b 1
+)
+if not exist ".skills\mcp\national-assembly\runtime\licenses.txt" (
+  echo [ERROR] Bundled National Assembly MCP dependency notices are missing.
+  pause
+  exit /b 1
+)
+node --check ".skills\mcp\national-assembly\runtime\index.js"
+if errorlevel 1 (
+  echo [ERROR] Bundled National Assembly MCP entrypoint has a syntax error.
+  pause
+  exit /b 1
+)
+node --check ".skills\mcp\national-assembly\runtime\244.index.js"
+if errorlevel 1 (
+  echo [ERROR] Bundled National Assembly MCP runtime chunk has a syntax error.
+  pause
+  exit /b 1
+)
+
+echo [INFO] Installing packaged MCP runtime dependencies...
+call npm ci --prefix ".skills\mcp\korean-law\runtime" --no-audit --no-fund
+if errorlevel 1 (
+  echo.
+  echo [ERROR] Packaged MCP runtime dependency installation failed.
+  pause
+  exit /b 1
+)
+
 echo [INFO] Building React web UI...
 pushd "frontend\web"
 call npm run build
@@ -139,6 +186,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo [INFO] Verifying self-contained MCP packages...
+"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% "scripts\verify_mcp_packages.py" --require-runtime-deps
+if errorlevel 1 (
+  echo.
+  echo [ERROR] MCP package verification failed.
+  pause
+  exit /b 1
+)
+
 echo [INFO] Installing PPTX writer dependencies...
 if exist ".skills\pptx-writer\scripts\bootstrap_pptx_env.py" (
   "%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% ".skills\pptx-writer\scripts\bootstrap_pptx_env.py"
@@ -149,6 +205,15 @@ if exist ".skills\pptx-writer\scripts\bootstrap_pptx_env.py" (
 if errorlevel 1 (
   echo.
   echo [ERROR] PPTX writer dependency installation failed.
+  pause
+  exit /b 1
+)
+
+echo [INFO] Installing document and data dependencies...
+"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% -m pip install markitdown pymupdf mammoth markdownify beautifulsoup4 openpyxl svglib reportlab pillow numpy requests curl_cffi
+if errorlevel 1 (
+  echo.
+  echo [ERROR] Document and data dependency installation failed.
   pause
   exit /b 1
 )
@@ -212,6 +277,30 @@ echo      Reads prefer .myharness\credentials.json, then PGPT_* environment vari
 echo.
 pause
 exit /b 0
+
+:install_web_dependencies
+pushd "frontend\web"
+if exist "node_modules" goto install_web_dependencies_incremental
+if not exist "package-lock.json" goto install_web_dependencies_npm_install
+call npm ci
+if not errorlevel 1 goto install_web_dependencies_done
+echo [WARN] npm ci failed. Retrying with npm install...
+goto install_web_dependencies_npm_install
+
+:install_web_dependencies_incremental
+echo [INFO] Existing web dependencies found. Updating without removing in-use files...
+
+:install_web_dependencies_npm_install
+call npm install
+if errorlevel 1 goto install_web_dependencies_failed
+
+:install_web_dependencies_done
+popd
+exit /b 0
+
+:install_web_dependencies_failed
+popd
+exit /b 1
 
 :find_bootstrap_python
 set "MYHARNESS_BOOTSTRAP_PYTHON="

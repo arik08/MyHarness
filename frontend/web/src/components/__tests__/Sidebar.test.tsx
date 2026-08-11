@@ -1,14 +1,15 @@
 import { useEffect } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clampSidebarWidth, Sidebar } from "../Sidebar";
+import { Sidebar } from "../Sidebar";
+import { clampSidebarWidth } from "../../layout/sidebarLayout";
 import { Composer } from "../Composer";
 import { ModalHost } from "../ModalHost";
 import { StatusPill } from "../StatusPill";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { deleteHistory, hideHistory, listHistory, loadHistorySnapshot, toggleHistoryPin } from "../../api/history";
+import { deleteHistory, hideHistory, listHistory, loadHistorySnapshot, moveHistory, restoreHistory, toggleHistoryLike, toggleHistoryPin, updateHistoryTitle } from "../../api/history";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../../api/session";
 import { sendBackendRequest, sendMessage } from "../../api/messages";
 import type { Workspace } from "../../types/backend";
@@ -27,6 +28,9 @@ vi.mock("../../api/history", () => ({
   hideHistory: vi.fn(),
   listHistory: vi.fn(),
   loadHistorySnapshot: vi.fn(),
+  moveHistory: vi.fn(),
+  restoreHistory: vi.fn(),
+  toggleHistoryLike: vi.fn(),
   toggleHistoryPin: vi.fn(),
   updateHistoryTitle: vi.fn(),
 }));
@@ -70,13 +74,22 @@ describe("Sidebar", () => {
     vi.mocked(startSession).mockResolvedValue({ sessionId: "session-restored" });
     vi.mocked(shutdownSession).mockResolvedValue({ ok: true });
     vi.mocked(hideHistory).mockResolvedValue({ hidden: true });
+    vi.mocked(restoreHistory).mockResolvedValue({ restored: true });
     vi.mocked(listHistory).mockResolvedValue({ options: [], hasMore: false, nextOffset: 0 });
     vi.mocked(loadHistorySnapshot).mockReturnValue(new Promise(() => {}));
+    vi.mocked(moveHistory).mockResolvedValue({
+      ok: true,
+      sessionId: "session-old",
+      sourceWorkspace: { name: "Default", path: "C:/demo" },
+      workspace: { name: "Other", path: "C:/other" },
+    });
+    vi.mocked(toggleHistoryLike).mockResolvedValue({ ok: true, liked: true, sessionId: "session-old" });
     vi.mocked(toggleHistoryPin).mockResolvedValue({ ok: true, pinned: true, sessionId: "session-old" });
+    vi.mocked(updateHistoryTitle).mockResolvedValue({ ok: true, title: "바꾼 이름" });
     vi.mocked(sendBackendRequest).mockResolvedValue({ ok: true });
   });
 
-  it("uses one right-side action slot that expands from more to delete and pin", async () => {
+  it("opens the Lumina-style session management menu from the right-side action", async () => {
     render(
       <AppStateProvider
         initialState={{
@@ -92,19 +105,237 @@ describe("Sidebar", () => {
     const moreButton = screen.getByRole("button", { name: "이전 대화 작업 더보기" });
 
     expect(moreButton.getAttribute("data-tooltip")).toBe("작업 더보기");
-    expect(screen.queryByRole("button", { name: "이전 대화 삭제" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "이전 대화 상단 고정" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "이전 대화 세션 작업" })).toBeNull();
 
     await userEvent.click(moreButton);
 
-    const deleteButton = screen.getByRole("button", { name: "이전 대화 삭제" });
-    const pinButton = screen.getByRole("button", { name: "이전 대화 상단 고정" });
-    const paths = Array.from(deleteButton.querySelectorAll("path")).map((path) => path.getAttribute("d"));
+    expect(screen.getByRole("menu", { name: "이전 대화 세션 작업" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "상단 고정" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "좋아요" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "세션명 변경" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "워크스페이스 변경" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "목록에서 숨기기" })).toBeTruthy();
+  });
 
-    expect(deleteButton.getAttribute("data-tooltip")).toBe("목록에서 숨김");
-    expect(pinButton.getAttribute("data-tooltip")).toBe("상단 고정");
-    expect(paths).toContain("M4 7h16");
-    expect(paths).not.toContain("M6 6l12 12");
+  it("renames a session from the management menu", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "세션명 변경" }));
+    const input = screen.getByRole("textbox", { name: "대화 제목" });
+    await userEvent.clear(input);
+    await userEvent.type(input, "바꾼 이름{Enter}");
+
+    await waitFor(() => expect(updateHistoryTitle).toHaveBeenCalledWith("session-old", "바꾼 이름", "C:/demo", "Default"));
+    expect(screen.getByText("바꾼 이름")).toBeTruthy();
+  });
+
+  it("does not start renaming when a history row is double-clicked", async () => {
+    vi.mocked(loadHistorySnapshot).mockResolvedValue({
+      type: "history_snapshot",
+      value: "session-old",
+      history_events: [
+        { type: "user", text: "인사말씀" },
+        { type: "assistant", text: "안녕하세요." },
+      ],
+    });
+    const { container } = render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          chatTitle: "새 대화",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "인사말씀" }],
+        }}
+      >
+        <Sidebar />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+
+    await userEvent.dblClick(screen.getByRole("button", { name: "인사말씀" }));
+
+    await waitFor(() => expect(screen.getByTestId("active-history").textContent).toBe("session-old"));
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("인사말씀");
+    expect(screen.queryByRole("textbox", { name: "대화 제목" })).toBeNull();
+    expect(updateHistoryTitle).not.toHaveBeenCalled();
+  });
+
+  it("moves a saved session to another workspace from the management menu", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          workspaces: [
+            { name: "Default", path: "C:/demo" },
+            { name: "Other", path: "C:/other" },
+          ],
+          history: [{
+            value: "session-old",
+            label: "5/3 10:00 2 msg",
+            description: "이전 대화",
+            workspace: { name: "Default", path: "C:/demo" },
+          }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "워크스페이스 변경" }));
+    await userEvent.click(within(screen.getByRole("menu", { name: "이동할 워크스페이스" })).getByRole("menuitem", { name: "Other" }));
+
+    await waitFor(() => expect(moveHistory).toHaveBeenCalledWith(
+      "session-old",
+      "C:/demo",
+      "Default",
+      "C:/other",
+      "Other",
+    ));
+    expect(screen.queryByText("이전 대화")).toBeNull();
+  });
+
+  it("selects all manageable sessions and moves them together", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          workspaces: [
+            { name: "Default", path: "C:/demo" },
+            { name: "Other", path: "C:/other" },
+          ],
+          history: [
+            { value: "session-a", label: "5/3 10:00 2 msg", description: "첫 대화", workspace: { name: "Default", path: "C:/demo" } },
+            { value: "session-b", label: "5/2 10:00 2 msg", description: "둘째 대화", workspace: { name: "Default", path: "C:/demo" } },
+          ],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const manageButton = screen.getByRole("button", { name: "채팅 세션 관리" });
+    expect(manageButton.querySelector("path[d='M13 5h8']")).not.toBeNull();
+    expect(manageButton.querySelector("path[d='m2.5 12 3 3 5-6']")).toBeNull();
+    await userEvent.click(manageButton);
+    const selectAllButton = screen.getByRole("button", { name: "모든 세션 선택" });
+    expect(selectAllButton.querySelector("path[d='M13 19h8']")).not.toBeNull();
+    await userEvent.click(selectAllButton);
+    expect(screen.getByText("2개 선택")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 워크스페이스 변경" }));
+    await userEvent.click(within(screen.getByRole("menu", { name: "이동할 워크스페이스" })).getByRole("menuitem", { name: "Other" }));
+
+    await waitFor(() => expect(moveHistory).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(moveHistory).mock.calls.map((call) => call[0])).toEqual(["session-a", "session-b"]);
+    expect(screen.queryByText("첫 대화")).toBeNull();
+    expect(screen.queryByText("둘째 대화")).toBeNull();
+  });
+
+  it("requires a second confirmation before hiding multiple selected sessions", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [
+            { value: "session-a", label: "5/3 10:00 2 msg", description: "첫 대화" },
+            { value: "session-b", label: "5/2 10:00 2 msg", description: "둘째 대화" },
+          ],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "채팅 세션 관리" }));
+    await userEvent.click(screen.getByRole("button", { name: "모든 세션 선택" }));
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 삭제" }));
+    expect(hideHistory).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 삭제 확인, 한 번 더 누르면 삭제" }));
+
+    await waitFor(() => expect(hideHistory).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(hideHistory).mock.calls.map((call) => call[0])).toEqual(["session-a", "session-b"]);
+    expect(screen.queryByText("첫 대화")).toBeNull();
+    expect(screen.queryByText("둘째 대화")).toBeNull();
+  });
+
+  it("selects and deselects consecutive history rows by pointer drag", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          history: [
+            { value: "session-a", label: "5/3 10:00 2 msg", description: "첫 대화" },
+            { value: "session-b", label: "5/2 10:00 2 msg", description: "둘째 대화" },
+            { value: "session-c", label: "5/1 10:00 2 msg", description: "셋째 대화" },
+          ],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "채팅 세션 관리" }));
+    const first = screen.getByRole("button", { name: "첫 대화 선택" });
+    const second = screen.getByRole("button", { name: "둘째 대화 선택" });
+    const third = screen.getByRole("button", { name: "셋째 대화 선택" });
+    const fireMousePointer = (
+      target: Element,
+      type: "pointerdown" | "pointerover" | "pointerup",
+      pointerId: number,
+      buttons: number,
+      relatedTarget: EventTarget | null = null,
+    ) => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, buttons, relatedTarget });
+      Object.defineProperties(event, {
+        pointerId: { value: pointerId },
+        pointerType: { value: "mouse" },
+      });
+      fireEvent(target, event);
+    };
+
+    fireMousePointer(first, "pointerdown", 1, 1);
+    fireMousePointer(second, "pointerover", 1, 1, first);
+    fireMousePointer(third, "pointerover", 1, 1, second);
+    fireMousePointer(third, "pointerup", 1, 0);
+
+    expect(screen.getByText("3개 선택")).toBeTruthy();
+    expect(first.getAttribute("aria-pressed")).toBe("true");
+    expect(second.getAttribute("aria-pressed")).toBe("true");
+    expect(third.getAttribute("aria-pressed")).toBe("true");
+
+    fireMousePointer(second, "pointerdown", 2, 1);
+    fireMousePointer(third, "pointerover", 2, 1, second);
+    fireMousePointer(third, "pointerup", 2, 0);
+
+    expect(screen.getByText("1개 선택")).toBeTruthy();
+    expect(first.getAttribute("aria-pressed")).toBe("true");
+    expect(second.getAttribute("aria-pressed")).toBe("false");
+    expect(third.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("asks the shared tooltip layer to show sidebar row tooltips on the right", () => {
@@ -515,8 +746,8 @@ describe("Sidebar", () => {
 
     const visibleTitle = screen.getByText(/chat history/);
 
-    expect(visibleTitle.textContent).toBe("chat history 대화 제목을 짧게 나오게...");
-    expect(visibleTitle.textContent?.length).toBeLessThanOrEqual(29);
+    expect(visibleTitle.textContent).toBe("chat history 대화 제목을 짧게 나오게…");
+    expect(visibleTitle.textContent?.length).toBeLessThanOrEqual(27);
   });
 
   it("filters chat session titles from the search field below the history heading", async () => {
@@ -536,6 +767,10 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
+    const searchToggle = screen.getByRole("button", { name: "제목 검색" });
+    expect(screen.queryByRole("searchbox", { name: "채팅 세션 제목 검색" })).toBeNull();
+
+    await userEvent.click(searchToggle);
     const search = screen.getByRole("searchbox", { name: "채팅 세션 제목 검색" });
     const historyPanel = document.querySelector(".history-panel");
     const orderedHistoryElements = Array.from(historyPanel?.children || []).map((element) => element.className);
@@ -550,6 +785,10 @@ describe("Sidebar", () => {
     await userEvent.type(search, "회의록작성");
     expect(screen.getByText("회의록 작성")).toBeTruthy();
     expect(screen.queryByText("예산 검토")).toBeNull();
+
+    await userEvent.click(searchToggle);
+    expect(screen.queryByRole("searchbox", { name: "채팅 세션 제목 검색" })).toBeNull();
+    expect(screen.getByText("예산 검토")).toBeTruthy();
   });
 
   it("keeps existing history rows visible while refreshing history", () => {
@@ -700,8 +939,24 @@ describe("Sidebar", () => {
     expect(screen.getByText("더 오래된 대화")).toBeTruthy();
   });
 
-  it("keeps searching later pages when the loaded page has no matching rows", async () => {
-    vi.mocked(listHistory).mockResolvedValue({ options: [], hasMore: false, nextOffset: 50 });
+  it("searches saved history on the server without loading every history page", async () => {
+    const initialHistory = Array.from({ length: 25 }, (_, index) => ({
+      value: `session-${index + 1}`,
+      label: `5/3 10:${String(index).padStart(2, "0")} 2 msg`,
+      description: `보고서 ${index + 1}`,
+    }));
+    vi.mocked(listHistory)
+      .mockResolvedValueOnce({
+        options: [{ value: "session-old", label: "5/1 09:00 2 msg", description: "오래된 보고서" }],
+        hasMore: true,
+        nextOffset: 25,
+      })
+      .mockResolvedValueOnce({
+        options: [{ value: "session-older", label: "4/1 09:00 2 msg", description: "더 오래된 보고서" }],
+        hasMore: false,
+        nextOffset: 26,
+      });
+
     render(
       <AppStateProvider
         initialState={{
@@ -709,7 +964,7 @@ describe("Sidebar", () => {
           sessionId: "session-active",
           workspaceName: "Default",
           workspacePath: "C:/demo",
-          history: [{ value: "session-1", label: "5/3 10:00 2 msg", description: "다른 대화" }],
+          history: initialHistory,
           historyHasMore: true,
           historyNextOffset: 25,
         } as typeof initialAppState}
@@ -719,16 +974,34 @@ describe("Sidebar", () => {
     );
 
     const historyList = document.querySelector(".history-list") as HTMLElement;
-    Object.defineProperty(historyList, "scrollHeight", { configurable: true, value: 0 });
+    Object.defineProperty(historyList, "scrollHeight", { configurable: true, value: 1000 });
     Object.defineProperty(historyList, "clientHeight", { configurable: true, value: 400 });
-    await userEvent.type(screen.getByRole("searchbox", { name: "채팅 세션 제목 검색" }), "냐용");
+    Object.defineProperty(historyList, "scrollTop", { configurable: true, value: 0 });
+
+    await userEvent.click(screen.getByRole("button", { name: "제목 검색" }));
+    await userEvent.type(screen.getByRole("searchbox", { name: "채팅 세션 제목 검색" }), "보고서");
 
     await waitFor(() => expect(listHistory).toHaveBeenCalledWith({
       workspacePath: "C:/demo",
       workspaceName: "Default",
       limit: 25,
-      offset: 25,
+      offset: 0,
+      search: "보고서",
     }));
+    expect(await screen.findByText("오래된 보고서")).toBeTruthy();
+    expect(listHistory).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(historyList, "scrollTop", { configurable: true, value: 600 });
+    fireEvent.scroll(historyList);
+
+    await waitFor(() => expect(listHistory).toHaveBeenNthCalledWith(2, {
+      workspacePath: "C:/demo",
+      workspaceName: "Default",
+      limit: 25,
+      offset: 25,
+      search: "보고서",
+    }));
+    expect(await screen.findByText("더 오래된 보고서")).toBeTruthy();
   });
 
   it("ignores a delayed page from the workspace that was just left", async () => {
@@ -812,6 +1085,107 @@ describe("Sidebar", () => {
     expect(titles).toEqual(["가장 앞 고정 대화", "나중 고정 대화", "최신 대화"]);
   });
 
+  it("shows exactly one leading icon with pin taking priority over like", () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          history: [
+            { value: "session-pinned-liked", label: "5/3 10:00 2 msg", description: "고정 좋아요 대화", pinned: true, liked: true },
+            { value: "session-liked", label: "5/2 10:00 2 msg", description: "좋아요 대화", liked: true },
+            { value: "session-plain", label: "5/1 10:00 2 msg", description: "일반 대화" },
+          ],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const pinnedIcon = screen.getByRole("button", { name: "고정 좋아요 대화 상단 고정 해제" });
+    const likedIcon = screen.getByRole("button", { name: "좋아요 대화 좋아요 취소" });
+    const chatIcon = screen.getByRole("button", { name: "일반 대화 좋아요" });
+
+    expect(pinnedIcon.querySelectorAll("svg")).toHaveLength(1);
+    expect(pinnedIcon.querySelector(".history-pinned-pin")).not.toBeNull();
+    expect(pinnedIcon.querySelector("path[d^='M10.1221 3.13715']")).not.toBeNull();
+    expect(pinnedIcon.querySelector(".history-liked-star")).toBeNull();
+    expect(likedIcon.querySelector(".history-liked-star")).not.toBeNull();
+    expect(chatIcon.querySelector("path[d^='M2.992 16.342']")).not.toBeNull();
+  });
+
+  it("toggles a saved chat like from the left icon without opening the chat", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [{ value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const likeButton = screen.getByRole("button", { name: "이전 대화 좋아요" });
+    expect(likeButton.getAttribute("aria-pressed")).toBe("false");
+    expect(likeButton.querySelector(".history-liked-star")).toBeNull();
+
+    await userEvent.click(likeButton);
+
+    await waitFor(() => expect(toggleHistoryLike).toHaveBeenCalledWith("session-old", true, "C:/demo", "Default"));
+    const unlikeButton = screen.getByRole("button", { name: "이전 대화 좋아요 취소" });
+    expect(unlikeButton.getAttribute("aria-pressed")).toBe("true");
+    expect(unlikeButton.querySelector(".history-liked-star")).not.toBeNull();
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+  });
+
+  it("filters the session list to liked chats from the heading star", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          history: [
+            { value: "session-liked", label: "5/3 10:00 2 msg", description: "좋아요 대화", liked: true },
+            { value: "session-plain", label: "5/2 10:00 2 msg", description: "일반 대화" },
+          ],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const filterButton = screen.getByRole("button", { name: "좋아요만 보기" });
+    expect(filterButton.getAttribute("aria-pressed")).toBe("false");
+
+    await userEvent.click(filterButton);
+
+    expect(screen.getByText("좋아요 대화")).toBeTruthy();
+    expect(screen.queryByText("일반 대화")).toBeNull();
+    expect(screen.getByRole("button", { name: "전체 보기" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("shows the liked-filter empty state when no chat is liked", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          history: [{ value: "session-plain", label: "5/2 10:00 2 msg", description: "일반 대화" }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "좋아요만 보기" }));
+
+    expect(screen.getByText("좋아요한 채팅이 없습니다.")).toBeTruthy();
+  });
+
   it("pins a history item from the expanded right-side action", async () => {
     render(
       <AppStateProvider
@@ -828,14 +1202,21 @@ describe("Sidebar", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
-    await userEvent.click(screen.getByRole("button", { name: "이전 대화 상단 고정" }));
+    const pinMenuItem = screen.getByRole("menuitem", { name: "상단 고정" });
+    expect(pinMenuItem.querySelector(".history-pin-icon path[d^='M10.1221 3.13715']")).not.toBeNull();
+    expect(pinMenuItem.querySelector("path[d^='M9 10.76']")).toBeNull();
+    await userEvent.click(pinMenuItem);
 
     await waitFor(() => expect(toggleHistoryPin).toHaveBeenCalledWith("session-old", true, "C:/demo", "Default"));
-    expect(screen.getByText("★")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "이전 대화 상단 고정 해제" }).querySelector(".history-pinned-pin")).not.toBeNull();
     expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
-  it("hides a saved history item from its own workspace in normal mode", async () => {
+  it("hides a saved history item immediately without moving the remaining rows", async () => {
+    let resolveHideHistory: ((value: { hidden: boolean }) => void) | undefined;
+    vi.mocked(hideHistory).mockImplementationOnce(() => new Promise<{ hidden: boolean }>((resolve) => {
+      resolveHideHistory = resolve;
+    }));
     render(
       <AppStateProvider
         initialState={{
@@ -844,12 +1225,16 @@ describe("Sidebar", () => {
           clientId: "client-1",
           workspaceName: "Default",
           workspacePath: "C:/current",
-          history: [{
-            value: "session-old",
-            label: "5/3 10:00 2 msg",
-            description: "이전 대화",
-            workspace: { name: "Other", path: "C:/other" },
-          }],
+          history: [
+            { value: "session-newer", label: "5/4 10:00 2 msg", description: "위 대화" },
+            {
+              value: "session-old",
+              label: "5/3 10:00 2 msg",
+              description: "이전 대화",
+              workspace: { name: "Other", path: "C:/other" },
+            },
+            { value: "session-older", label: "5/2 10:00 2 msg", description: "아래 대화" },
+          ],
         }}
       >
         <Sidebar />
@@ -857,12 +1242,48 @@ describe("Sidebar", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
-    await userEvent.click(screen.getByRole("button", { name: "이전 대화 삭제" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "목록에서 숨기기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
 
-    await waitFor(() => expect(screen.queryByText("이전 대화")).toBeNull());
+    expect(screen.queryByText("이전 대화")).toBeNull();
+    expect(Array.from(document.querySelectorAll(".history-title")).map((node) => node.textContent)).toEqual(["위 대화", "아래 대화"]);
     expect(hideHistory).toHaveBeenCalledWith("session-old", "C:/other", "Other");
     expect(deleteHistory).not.toHaveBeenCalled();
     expect(sendBackendRequest).not.toHaveBeenCalled();
+    await act(async () => resolveHideHistory?.({ hidden: true }));
+  });
+
+  it("restores an optimistically hidden history item in its original position when hiding fails", async () => {
+    let rejectHideHistory: ((reason?: unknown) => void) | undefined;
+    vi.mocked(hideHistory).mockImplementationOnce(() => new Promise<{ hidden: boolean }>((_resolve, reject) => {
+      rejectHideHistory = reject;
+    }));
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [
+            { value: "session-newer", label: "5/4 10:00 2 msg", description: "위 대화" },
+            { value: "session-old", label: "5/3 10:00 2 msg", description: "이전 대화" },
+            { value: "session-older", label: "5/2 10:00 2 msg", description: "아래 대화" },
+          ],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "목록에서 숨기기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
+
+    expect(screen.queryByText("이전 대화")).toBeNull();
+    await act(async () => rejectHideHistory?.(new Error("hide failed")));
+    await waitFor(() => expect(screen.getByText("이전 대화")).toBeTruthy());
+    expect(Array.from(document.querySelectorAll(".history-title")).map((node) => node.textContent)).toEqual(["위 대화", "이전 대화", "아래 대화"]);
   });
 
   it("marks server-hidden history items in admin mode", () => {
@@ -916,14 +1337,45 @@ describe("Sidebar", () => {
     expect(screen.getByText("이전 대화").closest(".history-item")?.classList.contains("hidden-history")).toBe(true);
     expect(screen.queryByText("숨김")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
-    const deleteButton = screen.getByRole("button", { name: "이전 대화 삭제" });
-
-    expect(deleteButton.getAttribute("data-tooltip")).toBe("완전 삭제");
-
-    await userEvent.click(deleteButton);
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
 
     await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith("session-old", "C:/other", "Other"));
     expect(screen.queryByText("이전 대화")).toBeNull();
+  });
+
+  it("restores a hidden saved history item from the admin context menu", async () => {
+    const hiddenKey = historyVisibilityKey("session-old", "C:/other", "Other");
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          adminMode: true,
+          hiddenHistoryKeys: [hiddenKey],
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/current",
+          history: [{
+            value: "session-old",
+            label: "5/3 10:00 2 msg",
+            description: "이전 대화",
+            workspace: { name: "Other", path: "C:/other" },
+            hidden: true,
+          }],
+        }}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const row = screen.getByText("이전 대화").closest(".history-item");
+    expect(row?.classList.contains("hidden-history")).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "목록에 복원" }));
+
+    await waitFor(() => expect(restoreHistory).toHaveBeenCalledWith("session-old", "C:/other", "Other"));
+    expect(row?.classList.contains("hidden-history")).toBe(false);
+    expect(screen.queryByRole("menuitem", { name: "목록에 복원" })).toBeNull();
   });
 
   it("does not redraw the active saved history row after deleting it", async () => {
@@ -950,7 +1402,8 @@ describe("Sidebar", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "이전 대화 작업 더보기" }));
-    await userEvent.click(screen.getByRole("button", { name: "이전 대화 삭제" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "목록에서 숨기기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
 
     await waitFor(() => expect(screen.queryByText("이전 대화")).toBeNull());
     expect(deleteHistory).not.toHaveBeenCalled();
@@ -989,7 +1442,8 @@ describe("Sidebar", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "삭제된 대화 작업 더보기" }));
-    await userEvent.click(screen.getByRole("button", { name: "삭제된 대화 삭제" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "목록에서 숨기기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
 
     await waitFor(() => expect(screen.queryByText("삭제된 대화")).toBeNull());
     expect(deleteHistory).not.toHaveBeenCalled();
@@ -1025,7 +1479,8 @@ describe("Sidebar", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "열려 있는 세션 작업 더보기" }));
-    await userEvent.click(screen.getByRole("button", { name: "열려 있는 세션 삭제" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "세션 닫기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
 
     await waitFor(() => expect(shutdownSession).toHaveBeenCalledWith("web-live-idle", "client-1"));
     expect(deleteHistory).not.toHaveBeenCalled();
@@ -1107,7 +1562,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getAllByRole("button", { name: /저장된 live 대화/ })[0]);
+    await userEvent.click(screen.getByRole("button", { name: "저장된 live 대화" }));
 
     expect(listLiveSessions).not.toHaveBeenCalled();
     expect(sendBackendRequest).not.toHaveBeenCalled();
@@ -1162,7 +1617,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화" }));
 
     await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
       clientId: "client-1",
@@ -1199,7 +1654,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화" }));
 
     await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
       clientId: "client-1",
@@ -1233,7 +1688,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "이전 대화" }));
 
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
       type: "apply_select_command",
@@ -1283,7 +1738,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "이전 대화" }));
 
     await waitFor(() => expect(screen.getByTestId("message-texts").textContent).toBe("저장된 질문|저장된 답변"));
     expect(screen.getByTestId("active-history").textContent).toBe("session-old");
@@ -1311,7 +1766,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "이전 대화" }));
 
     expect(screen.getByRole("button", { name: "메시지 보내기" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "작업 중단" })).toBeNull();
@@ -1350,7 +1805,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화" }));
 
     await waitFor(() => expect(listLiveSessions).toHaveBeenCalledWith({
       clientId: "client-1",
@@ -1401,7 +1856,7 @@ describe("Sidebar", () => {
     expect(document.querySelector(".history-item.busy")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "진행 중인 응답 작업 더보기" })).toBeNull();
 
-    await userEvent.click(screen.getAllByRole("button", { name: /진행 중인 응답/ })[0]);
+    await userEvent.click(screen.getByRole("button", { name: "진행 중인 응답" }));
 
     await waitFor(() => expect(listLiveSessions).toHaveBeenCalled());
     expect(sendBackendRequest).not.toHaveBeenCalled();
@@ -1446,7 +1901,7 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getAllByRole("button", { name: /원래 답변/ })[0]);
+    await userEvent.click(screen.getByRole("button", { name: "원래 답변" }));
 
     await waitFor(() => expect(listLiveSessions).toHaveBeenCalledTimes(2));
     expect(listLiveSessions).toHaveBeenNthCalledWith(1, {
@@ -1573,7 +2028,8 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "새 대화 작업 더보기" })).toBeTruthy();
 
     await userEvent.click(screen.getByRole("button", { name: "새 대화 작업 더보기" }));
-    await userEvent.click(screen.getByRole("button", { name: "새 대화 삭제" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "목록에서 숨기기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
 
     await waitFor(() => expect(hideHistory).toHaveBeenCalledWith("saved-initial", "C:/demo", "Default"));
     expect(deleteHistory).not.toHaveBeenCalled();
@@ -1601,7 +2057,8 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(1));
     await userEvent.click(screen.getByRole("button", { name: "새 대화 작업 더보기" }));
-    await userEvent.click(screen.getByRole("button", { name: "새 대화 삭제" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "목록에서 숨기기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
 
     await waitFor(() => expect(container.querySelector(".history-item .history-title")?.textContent || "").not.toBe("새 대화"));
     expect(sendBackendRequest).toHaveBeenCalledTimes(1);
@@ -1629,7 +2086,7 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(1));
-    await userEvent.click(screen.getAllByRole("button", { name: /이전 대화/ })[0]);
+    await userEvent.click(screen.getByRole("button", { name: "이전 대화" }));
 
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(2));
     expect(screen.getAllByText("새 대화").some((node) => node.classList.contains("history-title"))).toBe(true);
@@ -1657,7 +2114,10 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "재시작" }));
+    const restartButton = screen.getByRole("button", { name: "재시작" });
+    expect(restartButton.getAttribute("data-tooltip")).toBe("재시작");
+    expect(restartButton.querySelectorAll("svg path")).toHaveLength(4);
+    await userEvent.click(restartButton);
 
     await waitFor(() => expect(restartSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "session-active",

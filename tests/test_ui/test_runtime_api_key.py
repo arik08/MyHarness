@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -110,6 +111,7 @@ async def test_refresh_runtime_client_closes_replaced_owned_client(monkeypatch):
         set_api_client=lambda client: None,
         set_model=lambda model: None,
         set_max_tokens=lambda max_tokens: None,
+        set_system_prompt=lambda prompt: None,
     )
     hook_executor = SimpleNamespace(update_context=lambda **kwargs: None)
     bundle = SimpleNamespace(
@@ -118,11 +120,18 @@ async def test_refresh_runtime_client_closes_replaced_owned_client(monkeypatch):
         api_client=previous,
         engine=engine,
         hook_executor=hook_executor,
+        cwd=".",
+        extra_skill_dirs=(),
+        extra_plugin_roots=(),
+        task_worker=False,
     )
+    refresh_mcp = AsyncMock(return_value=False)
     monkeypatch.setattr(
         "myharness.ui.runtime._resolve_api_client_from_settings",
         lambda current: replacement,
     )
+    monkeypatch.setattr("myharness.ui.runtime.refresh_runtime_mcp", refresh_mcp)
+    monkeypatch.setattr("myharness.ui.runtime.build_runtime_system_prompt", lambda *args, **kwargs: "prompt")
     monkeypatch.setattr("myharness.ui.runtime.sync_app_state", lambda current: None)
 
     await refresh_runtime_client(bundle)
@@ -130,6 +139,7 @@ async def test_refresh_runtime_client_closes_replaced_owned_client(monkeypatch):
     assert bundle.api_client is replacement
     assert previous.closed is True
     assert replacement.closed is False
+    refresh_mcp.assert_awaited_once_with(bundle)
 
 
 @pytest.mark.asyncio

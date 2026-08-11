@@ -14,7 +14,7 @@ from myharness.mcp.types import McpStdioServerConfig
 
 
 ROOT = Path(__file__).resolve().parents[2]
-VECTOR_DIR = ROOT / ".mcp" / "vector_db"
+VECTOR_DIR = ROOT / ".skills" / "mcp" / "vector-db-rag" / "runtime"
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -108,12 +108,12 @@ def test_indexes_two_documents_with_separate_document_metadata(tmp_path: Path) -
 
 
 def test_vector_db_config_is_loaded_as_stdio_server() -> None:
-    configs = load_mcp_configs_from_dirs([ROOT / ".mcp"])
+    configs = load_mcp_configs_from_dirs([ROOT / ".skills" / "mcp"])
 
     server = configs["vector_db"]
     assert isinstance(server, McpStdioServerConfig)
     assert server.command == "python"
-    assert server.args == [".mcp/vector_db/server.py"]
+    assert server.args == ["runtime/server.py"]
     assert server.cwd == "."
     assert server.auto_connect is False
 

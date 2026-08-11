@@ -1307,6 +1307,19 @@ a:focus-visible {
   padding: 0 4px 0 9px;
 }
 
+.history-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.history-bulk-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
 .section-label {
   color: var(--faint);
   font-size: 11px;
@@ -1322,25 +1335,138 @@ a:focus-visible {
 }
 
 .history-heading .history-refresh {
+  display: grid;
+  place-items: center;
+  width: 28px;
   min-height: 28px;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--faint);
-  font-size: 11px;
-  font-weight: 760;
-  letter-spacing: 0.02em;
-  text-transform: none;
 }
 
 .history-heading .history-refresh:hover,
 .history-heading .history-refresh:focus-visible {
-  color: var(--faint);
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+.history-heading .history-refresh svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
 }
 
 .history-heading .history-refresh:disabled {
   cursor: wait;
   opacity: 0.55;
+}
+
+.history-heading .history-search-toggle,
+.history-heading .history-liked-filter,
+.history-heading .history-manage,
+.history-bulk-actions > button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+}
+
+.history-heading .history-search-toggle svg,
+.history-heading .history-liked-filter svg,
+.history-heading .history-manage svg,
+.history-bulk-actions > button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.history-heading .history-search-toggle svg,
+.history-heading .history-liked-filter svg {
+  width: 18px;
+  height: 18px;
+}
+
+.history-heading .history-manage:disabled,
+.history-bulk-actions > button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.history-bulk-actions > button.danger {
+  color: var(--danger);
+}
+
+.history-bulk-actions > button.danger.armed {
+  background: var(--danger-soft);
+}
+
+.history-bulk-workspaces {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 12;
+  width: 178px;
+  max-height: 190px;
+  overflow: auto;
+  padding: 4px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.history-heading .history-bulk-workspaces button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  text-align: left;
+}
+
+.history-heading .history-bulk-workspaces button:hover,
+.history-heading .history-bulk-workspaces button:focus-visible {
+  background: var(--sidebar-hover);
+}
+
+.history-heading .history-bulk-workspaces button svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.history-heading .history-search-toggle.active,
+.history-heading .history-liked-filter.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.history-heading .history-liked-filter.active svg {
+  fill: currentColor;
 }
 
 .history-list {
@@ -1374,7 +1500,7 @@ a:focus-visible {
 .history-item {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 26px minmax(0, 1fr);
   align-items: center;
   gap: 0;
   width: 100%;
@@ -1385,9 +1511,9 @@ a:focus-visible {
 }
 
 .history-open,
+.history-like,
 .history-more,
-.history-delete,
-.history-pin {
+.history-bulk-row {
   border: 0;
   background: transparent;
   color: inherit;
@@ -1398,6 +1524,113 @@ a:focus-visible {
   min-width: 0;
   padding: 5px 34px 5px 4px;
   text-align: left;
+}
+
+.history-open:focus-visible,
+.history-title-editor input:focus-visible {
+  outline: none;
+}
+
+.history-like {
+  display: grid;
+  z-index: 1;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--faint);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.history-like svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.history-like:not(:disabled):hover,
+.history-like:focus-visible {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+.history-like.liked {
+  color: var(--accent);
+}
+
+.history-like.liked:not(:disabled):hover,
+.history-like.liked:focus-visible {
+  color: var(--accent);
+}
+
+.history-like .history-liked-star {
+  fill: currentColor;
+}
+
+.history-like .history-pin-icon {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 0.55;
+}
+
+.history-like:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.history-item.bulk-mode {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 2px 4px;
+}
+
+.history-item.bulk-selected {
+  background: var(--accent-soft);
+}
+
+.history-bulk-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 4px 3px 2px;
+  text-align: left;
+}
+
+.history-bulk-row:disabled {
+  cursor: default;
+  opacity: 0.46;
+}
+
+.history-bulk-checkbox {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--panel-raised);
+}
+
+.history-bulk-checkbox.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.history-bulk-checkbox svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.3;
 }
 
 .history-item:hover {
@@ -1412,24 +1645,15 @@ a:focus-visible {
   color: var(--muted);
 }
 
-.history-item.hidden-history::before,
-.history-item.active::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 6px;
-  bottom: 7px;
-  width: 3px;
-  border-radius: 999px;
-  pointer-events: none;
+.history-item.hidden-history .history-like {
+  color: color-mix(in srgb, var(--danger) 78%, var(--faint));
 }
 
-.history-item.hidden-history::before {
-  background: rgba(190, 45, 45, 0.78);
-}
-
-.history-item.active::before {
-  background: var(--accent);
+.history-item.hidden-history .history-like.pinned:not(:disabled):hover,
+.history-item.hidden-history .history-like.pinned:focus-visible,
+.history-item.hidden-history .history-like.liked:not(:disabled):hover,
+.history-item.hidden-history .history-like.liked:focus-visible {
+  color: color-mix(in srgb, var(--danger) 78%, var(--faint));
 }
 
 .history-title {
@@ -1445,20 +1669,6 @@ a:focus-visible {
 
 .history-item small {
   display: none;
-}
-
-.history-item.pinned .history-open {
-  padding-left: 22px;
-}
-
-.history-pin-indicator {
-  position: absolute;
-  top: 50%;
-  left: 4px;
-  color: var(--pin-star);
-  font-size: 12px;
-  line-height: 1;
-  transform: translateY(-50%);
 }
 
 .history-busy-spinner {
@@ -1481,9 +1691,7 @@ a:focus-visible {
   opacity: 0.95;
 }
 
-.history-more,
-.history-delete,
-.history-pin {
+.history-more {
   display: grid;
   position: absolute;
   top: 50%;
@@ -1510,27 +1718,11 @@ a:focus-visible {
 }
 
 .history-item:hover .history-more,
-.history-more:focus-visible,
-.history-item.actions-open .history-delete,
-.history-delete:focus-visible,
-.history-pin:focus-visible {
+.history-more:focus-visible {
   opacity: 1;
 }
 
-.history-pin {
-  right: 29px;
-  color: var(--pin-star);
-  opacity: 1;
-}
-
-.history-item.actions-open .history-delete,
-.history-item.actions-open .history-pin {
-  animation: historyActionReveal 0.14s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.history-item.busy .history-more,
-.history-item.busy .history-delete,
-.history-item.busy .history-pin {
+.history-item.busy .history-more {
   opacity: 0;
   pointer-events: none;
 }
@@ -1539,47 +1731,109 @@ a:focus-visible {
   color: var(--ink);
 }
 
-.history-delete:hover {
+.history-more svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.history-options-menu {
+  position: fixed;
+  z-index: 180;
+  width: 208px;
+  max-height: min(360px, calc(100vh - 16px));
+  overflow: auto;
+  padding: 4px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.history-options-menu > button,
+.history-options-workspaces button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 31px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
   background: transparent;
-  color: #b42318;
+  color: var(--ink);
+  font-size: 12.5px;
+  text-align: left;
 }
 
-.history-pin:hover {
-  color: var(--pin-star-hover);
+.history-options-menu > button:hover:not(:disabled),
+.history-options-menu > button:focus-visible,
+.history-options-workspaces button:hover:not(:disabled),
+.history-options-workspaces button:focus-visible {
+  background: var(--sidebar-hover);
 }
 
-.history-more span {
-  transform: translateY(-2px);
+.history-options-menu button:disabled {
+  cursor: default;
+  opacity: 0.43;
 }
 
-.history-delete svg,
-.history-pin svg {
-  width: 17px;
-  height: 17px;
+.history-options-menu button svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.9;
+  stroke-width: 1.75;
 }
 
-.history-pin svg {
-  fill: color-mix(in srgb, currentColor 10%, transparent);
+.history-options-menu button svg.history-pin-icon {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 0.55;
 }
 
-@keyframes historyActionReveal {
-  from {
-    opacity: 0;
-    transform: translateY(-50%) scale(0.86);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(-50%) scale(1);
-  }
+.history-options-menu button svg.filled-star {
+  fill: currentColor;
+  color: var(--accent);
+}
+
+.history-options-menu > button.danger {
+  color: var(--danger);
+}
+
+.history-options-menu > button.danger.armed {
+  background: var(--danger-soft);
+}
+
+.history-options-workspaces {
+  max-height: 156px;
+  overflow: auto;
+  margin: 2px 4px 4px 22px;
+  padding: 2px 0 2px 4px;
+  border-left: 1px solid var(--line);
+}
+
+.history-options-workspaces button {
+  min-height: 28px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.history-action-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: historyBusySpin 0.8s linear infinite;
 }
 
 .history-title-editor {
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 1;
   min-width: 0;
   padding: 3px 4px;
@@ -3376,6 +3630,7 @@ a:focus-visible {
 .message.user.message-kind-steering,
 .message.user.message-kind-queued,
 .message.user.message-kind-question-answer {
+  position: relative;
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
@@ -3556,6 +3811,42 @@ a:focus-visible {
     transform 0.12s ease;
 }
 
+.pending-message-cancel {
+  position: absolute;
+  top: 0;
+  right: -22px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pending-message-cancel:hover,
+.pending-message-cancel:focus-visible {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
+.pending-message-cancel:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.pending-message-cancel:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .assistant-usage-popover[data-columns="1"] {
   width: min(310px, calc(100vw - 32px));
 }
@@ -3591,15 +3882,15 @@ a:focus-visible {
 }
 
 .assistant-usage-table-label-col {
-  width: 86px;
+  width: 144px;
 }
 
 .assistant-usage-table-token-col {
-  width: 100px;
+  width: 86px;
 }
 
 .assistant-usage-table-cost-col {
-  width: 80px;
+  width: 64px;
 }
 
 .assistant-usage-table th,
@@ -3636,6 +3927,16 @@ a:focus-visible {
   color: var(--accent);
   font-size: 14px;
   font-weight: 800;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.assistant-usage-table thead tr:last-child .assistant-usage-table-effort-head {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
   text-align: left;
   text-overflow: ellipsis;
 }
@@ -10037,7 +10338,13 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   padding: 0;
   background: transparent;
   border: 0;
+  border-radius: 8px;
   text-align: left;
+}
+
+[data-react-webui="true"] .history-item:hover,
+[data-react-webui="true"] .history-item:focus-within {
+  background: var(--sidebar-hover);
 }
 
 [data-react-webui="true"] .history-open {
@@ -10045,26 +10352,25 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
   gap: 3px;
   width: 100%;
   min-width: 0;
-  padding: 8px 36px 8px 9px;
+  padding: 8px 4px 8px 2px;
   border-radius: 8px;
   color: var(--ink);
 }
 
-[data-react-webui="true"] .history-item.pinned .history-open {
-  padding-left: 25px;
-}
-
-[data-react-webui="true"] .history-pin-indicator {
-  left: 9px;
-}
-
-[data-react-webui="true"] .history-open:hover {
+[data-react-webui="true"] .history-item:hover .history-more,
+[data-react-webui="true"] .history-item:focus-within .history-more {
   background: var(--sidebar-hover);
+  box-shadow: -8px 0 8px var(--sidebar-hover);
 }
 
-[data-react-webui="true"] .history-item.active .history-open,
-[data-react-webui="true"] .history-item.active .history-open:hover {
+[data-react-webui="true"] .history-item.active {
   background: var(--history-active-open-bg, var(--accent-soft));
+}
+
+[data-react-webui="true"] .history-item.active:hover .history-more,
+[data-react-webui="true"] .history-item.active:focus-within .history-more {
+  background: var(--history-active-open-bg, var(--accent-soft));
+  box-shadow: -8px 0 8px var(--history-active-open-bg, var(--accent-soft));
 }
 
 [data-react-webui="true"] .history-open small {

@@ -21,7 +21,7 @@ from myharness.mcp.types import McpStdioServerConfig
 
 
 def _load_server() -> ModuleType:
-    module_path = Path(__file__).resolve().parents[2] / ".mcp" / "company_disclosure_server.py"
+    module_path = Path(__file__).resolve().parents[2] / ".skills" / "mcp" / "company-disclosure" / "runtime" / "server.py"
     spec = importlib.util.spec_from_file_location(
         "company_disclosure_server_under_test", module_path
     )
@@ -195,14 +195,14 @@ def test_document_tool_returns_links_without_downloading() -> None:
 
 
 def test_company_disclosure_config_is_loaded_without_embedded_credentials() -> None:
-    mcp_dir = Path(__file__).resolve().parents[2] / ".mcp"
+    mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
 
     configs = load_mcp_configs_from_dirs([mcp_dir])
 
     config = configs["company-disclosure"]
     assert isinstance(config, McpStdioServerConfig)
     assert config.command == "python"
-    assert config.args == [".mcp/company_disclosure_server.py"]
+    assert config.args == ["runtime/server.py"]
     assert config.cwd == "."
     assert config.env is None
 

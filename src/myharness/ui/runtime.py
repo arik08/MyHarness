@@ -424,6 +424,7 @@ async def build_runtime(
         auto_skill_learning_enabled=settings.learning.effective_mode != "off",
         tool_metadata={
             "mcp_manager": mcp_manager,
+            "tool_registry": tool_registry,
             "bridge_manager": bridge_manager,
             "extra_skill_dirs": normalized_skill_dirs,
             "extra_plugin_roots": normalized_plugin_roots,
