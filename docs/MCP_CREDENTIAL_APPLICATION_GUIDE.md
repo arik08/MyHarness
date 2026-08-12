@@ -1,284 +1,430 @@
-# MCP API 키·계정 신청 가이드
+# MyHarness MCP API 자격증명 발급 안내서
 
-작성일: 2026-08-10  
-대상: MyHarness에 구현된 공식 데이터 MCP 중 현재 자격증명이 없어 실API 검증이 차단된 소스
+작성 기준: 2026-08-12 20:50 KST
 
-## 현재 발급·검증 상태 (2026-08-11)
+대상: MyHarness 공식 데이터 MCP를 실제 운영하려는 사용자
 
-API 키와 개인 연락처는 저장소가 아니라 `~/.myharness/settings.json`의 사용자 MCP 설정에만 저장한다.
+검증 기준: MCP 연결이나 `health` 응답만이 아니라 실제 검색·상세·수치 데이터 호출
 
-| 대상 | 현재 상태 | 실사용 검증 |
-|---|---|---|
-| api.data.gov 공통 키 | 발급·등록 완료 | Congress 법안 상세 조회와 USDA ERS 변수 검색을 MCP stdio 경로로 통과 |
-| U.S. Census Data API | 발급·이메일 활성화·등록 완료 | HS 7208 월별 수입 조회를 MCP stdio 경로로 통과 |
-| OpenAlex | 계정 생성·키 등록 완료 | 수소·철강 논문 검색을 MCP stdio 경로로 통과 |
-| SEC EDGAR | 실제 조직·연락처 User-Agent 등록 완료 | 기업 검색과 공시 목록 조회를 MCP stdio 경로로 통과 |
-| FRED | Google 계정 선택 단계에서 사용자 조작 대기 | 아직 차단 |
-| 일본 e-Stat | 이메일 임시등록 완료, 본등록의 비밀번호 또는 Google 연동 대기 | 아직 차단 |
-| 관세청 공공데이터포털 | 데이터셋 확인 완료, 포털 로그인 대기 | 아직 차단 |
-| WTO | 계정·비밀번호·CAPTCHA가 필요해 미신청 | 아직 차단 |
-| Companies House | 별도 계정과 애플리케이션 생성이 필요해 미신청 | 아직 차단 |
-| Semantic Scholar | 소속·웹사이트·상세 사용계획·CAPTCHA·수동심사 때문에 미신청 | 키 없이 쓸 수 있는 일부 공개 엔드포인트와 별도 검토 필요 |
-| EPO OPS | 회사 주소·전화·회사 대리 권한 확인·CAPTCHA·약관 동의가 필요해 미신청 | 아직 차단 |
-| KIPRISPlus | 관리자 승인과 상품별 결제 절차가 있어 미신청 | 아직 차단 |
+## 0. 결론부터 보기
 
-전체 엄격 검증 결과는 `PASS 59 / BLOCKED_NO_CREDENTIAL 9 / FAIL 0`이다. 새로 발급한 키에 대해서는 건강상태 조회에 그치지 않고 Census, Congress, USDA ERS, OpenAlex의 대표 데이터 도구를 별도로 호출해 모두 통과시켰다.
+현재 실검증 결과는 다음과 같다.
 
-## 1. 먼저 신청할 최소 세트
+- 공식 데이터 검증기: `PASS 60 / BLOCKED_NO_CREDENTIAL 8 / FAIL 0`
+- 전체 MCP 함수 검증에서 추가 확인된 차단: NABO `get_nabo` 1개
+- 새로 발급하거나 신청해야 하는 자격증명 묶음: **9개**
+- API 키 이외의 코드·연결·파싱 실패: **0개**
 
-전부 발급할 필요는 없다. 비용·승인 부담과 업무 활용도를 고려하면 아래 순서가 적절하다.
+### 지금 발급받을 목록
 
-| 우선순위 | 신청 대상 | 열리는 MCP·소스 | 국가·기관 | 난도 | 권고 |
-|---|---|---|---|---|---|
-| 1 | 공공데이터포털 관세청 API | `trade-market` / 관세청 | 대한민국 / 관세청 | 쉬움 | 철강 HS 수출입에 직접 필요하므로 우선 신청 |
-| 2 | api.data.gov 공통 키 | `legislation-regulation` / Congress, `environment-industry` / USDA ERS | 미국 / GSA·의회도서관·USDA | 매우 쉬움 | 한 번 발급해 두 소스에 재사용 |
-| 3 | FRED 키 | `macro-finance` / FRED | 미국 / 세인트루이스 연은 | 쉬움 | 거시·금리·산업 선행지표에 활용도가 높음 |
-| 4 | Census 키 | `trade-market` / U.S. Census Trade | 미국 / 상무부 센서스국 | 매우 쉬움 | 미국 HS 양자무역 분석에 필요 |
-| 5 | OpenAlex 키 | `patent-tech` / OpenAlex | 미국 / OurResearch | 매우 쉬움 | 2026년 2월부터 모든 API 요청에 키 필요 |
-| 6 | Companies House 키 | `company-disclosure` / Companies House | 영국 / Companies House | 쉬움 | 영국 경쟁사·법인 조사 수요가 있을 때 신청 |
+| 우선순위 | 기관·데이터 | MyHarness 설정 이름 | 난도 | 비용·승인 | 권고 |
+|---:|---|---|---|---|---|
+| 1 | 관세청 수출입무역통계 | `KCS_TRADE_API_KEY` 또는 `DATA_GO_KR_API_KEY` | 쉬움 | 무료, 개발계정 자동승인 | 바로 신청 |
+| 2 | FRED | `FRED_API_KEY` | 쉬움 | 무료 계정 | 바로 신청 |
+| 3 | 국회예산정책처 NABO | `NABO_API_KEY` | 쉬움~보통 | SNS 인증 후 담당자 승인 | 바로 신청 |
+| 4 | Companies House | `COMPANIES_HOUSE_API_KEY` | 쉬움 | 계정·앱 생성 | 영국 기업 분석 시 필수 |
+| 5 | WTO Timeseries | `WTO_API_KEY` | 보통 | Standard 무료 구독 | 국제 무역·관세 분석 시 권장 |
+| 6 | 일본 e-Stat | `ESTAT_JP_APP_ID` | 보통 | 무료, 계정 필요 | 일본 통계 수요가 있으면 신청 |
+| 7 | Semantic Scholar | `SEMANTIC_SCHOLAR_API_KEY` | 보통 | 신청·이메일 발급, 심사 가능 | 논문 분석 안정성에 권장 |
+| 8 | EPO OPS | `EPO_OPS_CLIENT_ID`, `EPO_OPS_CLIENT_SECRET` | 보통~높음 | 주 4GB까지 무료, 초과 유료 | 특허 분석 수요 확인 후 신청 |
+| 9 | KIPRISPlus | `KIPRIS_API_KEY` 또는 `KIPRIS_PLUS_API_KEY` | 높음 | 상품 승인, 무료량 초과 시 유료 | 가장 나중에 신청 |
 
-WTO와 일본 e-Stat은 해당 국가·분야 분석 수요가 있을 때 추가한다. Semantic Scholar, EPO OPS, KIPRISPlus는 승인·쿼터·비용 부담이 있으므로 실제 사용 요구가 확인된 뒤 신청한다.
+### 이미 정상이라 새로 받을 필요가 없는 항목
 
-## 2. 신청이 필요 없는 항목
+2026-08-12 실호출에서 다음 자격증명 경로는 이미 정상 동작했다. 키 값을 다시 만들거나 이 문서에 적을 필요가 없다.
 
-| MCP·소스 | 국가·기관 | 해야 할 일 |
-|---|---|---|
-| `company-disclosure` / OpenDART | 대한민국 / 금융감독원 | 기존 `DART_API_KEY`가 이미 MyHarness 사용자 설정에 등록되어 있어 추가 신청 불필요 |
-| `company-disclosure` / SEC EDGAR 조회 API | 미국 / SEC | API 키·SEC 계정 신청 불필요. 실제 조직명과 모니터링되는 이메일을 `SEC_USER_AGENT`로 설정해야 함 |
-| Eurostat, ECB, BIS, NY Fed, OECD, Federal Register, 유럽의회, EUR-Lex, UK Bills, legislation.gov.uk, Crossref, EPA ECHO, ADB | 각 기관 | 인증 없이 실제 API 검증 완료. 추가 신청 불필요 |
-| 기존 KOSIS, Comtrade, ECOS, EIA MCP | 대한민국·국제기구·미국 | 사용자가 이미 키를 보유하고 있으므로 새 그룹에 중복 등록하지 않음 |
+- OpenDART: `DART_API_KEY` 또는 `OPENDART_API_KEY`
+- SEC EDGAR: `SEC_USER_AGENT` — API 키가 아니라 실제 조직명·연락 이메일 식별자
+- U.S. Census: `CENSUS_API_KEY`
+- Congress.gov·USDA ERS 공통: `DATA_GOV_API_KEY`
+- OpenAlex: `OPENALEX_API_KEY`
+- 기존 Comtrade·ECOS·EIA·KOSIS·열린국회정보 자격증명
 
-SEC의 `SEC_USER_AGENT`에는 임의 문자열을 넣으면 안 된다. 예를 들어 `회사명 MyHarness 담당자메일@회사도메인`처럼 실제 연락 가능한 정보를 사용한다. SEC의 회사별 submissions·XBRL 조회 API는 인증키가 없지만, 자동 접근에는 식별 가능한 User-Agent와 공정 접근 정책 준수가 필요하다.
+Eurostat, ECB, BIS, NY Fed, OECD, Federal Register, 유럽의회, EUR-Lex, UK Bills, legislation.gov.uk, Crossref, EPA ECHO, ADB, World Bank는 현재 MyHarness 사용 범위에서 별도 키 없이 통과했다.
 
-## 3. 소스별 신청 절차
+## 1. 신청 전에 알아둘 보안 원칙
 
-### 3.1 관세청 수출입무역통계 — 대한민국
+### 저장소 파일에 키를 넣지 않는다
 
-- 대상 MCP: `trade-market`
-- 공식 신청 페이지: [관세청 품목별 국가별 수출입실적](https://www.data.go.kr/data/15100475/openapi.do)
-- 설정 이름: `KCS_TRADE_API_KEY` 또는 `DATA_GO_KR_API_KEY`
-- 한국 사용자 난도: 쉬움
-- 비용·승인: 무료. 개발계정 자동승인, 운영계정은 심의승인
+다음 위치에는 실제 값을 적지 않는다.
 
-신청 순서:
+- `.skills/mcp/*/mcp.json`
+- `docs/*.md`
+- 테스트 파일과 스크린샷
+- Git에 추적되는 설정 파일
 
-1. 공공데이터포털에 개인 또는 기업회원으로 로그인한다.
-2. 위 데이터셋에서 `활용신청`을 누른다.
-3. 개인 서비스키 또는 프로젝트 서비스키를 선택하고 활용 목적을 입력한다.
-4. 개발계정 자동승인 후 마이페이지의 인증키를 복사한다.
-5. 운영 트래픽이 필요할 때만 활용사례를 등록하고 운영계정·트래픽 증설 심의를 신청한다.
+현재 이 체크아웃의 `myharness.local.env`는 Git 추적 대상이다. 따라서 **현 상태에서는 여기에 비밀키를 넣지 않는다.** 대신 Git에서 무시되는 로컬 파일 `API_KEY.env`를 사용할 수 있다. `run_myharness_web.bat`와 `run_myharness_web_dev.bat`가 이 파일을 `myharness.local.env` 다음에 읽어 MCP 프로세스에 전달한다. 파일은 저장소에 커밋하지 않는다.
 
-이 데이터셋은 개발계정 기준 일 10,000건이며, API 응답은 XML이다. MyHarness는 XML을 구조화 데이터로 직접 파싱하므로 OCR은 사용하지 않는다. 포털에서 제공하는 Encoding·Decoding 키 중 어느 쪽을 전달해도 현재 어댑터에서 정규화한다.
+### 키를 화면이나 명령 기록에 노출하지 않고 저장하기
 
-### 3.2 api.data.gov 공통 키 — 미국
+PowerShell에서 다음 함수를 한 번 정의한다. 입력값은 화면에 표시되지 않는다.
 
-- 대상 MCP: `legislation-regulation`의 Congress.gov, `environment-industry`의 USDA ERS
-- 공식 신청 페이지: [api.data.gov API Key Sign Up](https://api.data.gov/signup/)
-- 설정 이름: `DATA_GOV_API_KEY`
-- 한국 사용자 난도: 매우 쉬움
-- 비용·승인: 무료, 이름과 유효 이메일로 신청 후 이메일 발급
-
-신청 순서:
-
-1. 신청 페이지에서 이름과 이메일을 입력한다.
-2. 이메일로 전달된 API 키를 확인한다.
-3. 하나의 키를 `DATA_GOV_API_KEY`로 등록한다.
-4. 이 키를 Congress와 USDA ERS 양쪽에 공통으로 사용한다.
-
-`DEMO_KEY`는 기본 한도가 매우 낮아 운영에 사용하지 않는다. 자체 키의 일반 기본 한도는 참여 서비스별 차이가 있을 수 있으나 api.data.gov 기본값은 시간당 1,000회다. Congress 전용 신청 화면을 선호하면 [Congress.gov API Sign Up](https://api.congress.gov/sign-up/)을 사용해도 결과적으로 api.data.gov 키가 발급된다.
-
-### 3.3 FRED — 미국
-
-- 대상 MCP: `macro-finance`
-- 공식 안내: [FRED API Keys](https://fred.stlouisfed.org/docs/api/fred/v2/api_key.html)
-- 설정 이름: `FRED_API_KEY`
-- 한국 사용자 난도: 쉬움
-- 비용·승인: 무료 계정 필요
-
-신청 순서:
-
-1. FRED 계정을 생성하고 로그인한다.
-2. API Keys 화면에서 MyHarness용 키를 새로 요청한다.
-3. 애플리케이션 이름은 `MyHarness macro-finance`처럼 용도를 구분해 입력한다.
-4. 발급된 키를 `FRED_API_KEY`로 등록한다.
-
-FRED는 애플리케이션마다 별도 키를 발급하라고 안내하므로 다른 프로그램의 키를 돌려쓰기보다 MyHarness용 키를 따로 만드는 것이 좋다.
-
-### 3.4 U.S. Census International Trade — 미국
-
-- 대상 MCP: `trade-market`
-- 공식 신청 페이지: [Request a U.S. Census Data API Key](https://api.census.gov/data/key_signup.html)
-- 설정 이름: `CENSUS_API_KEY`
-- 한국 사용자 난도: 매우 쉬움
-- 비용·승인: 무료
-
-신청 순서:
-
-1. Organization Name에 회사명 또는 소속명을 영문으로 입력한다.
-2. 실제 수신 가능한 이메일을 입력하고 이용약관에 동의한다.
-3. 이메일로 도착한 키와 활성화 안내를 확인한다.
-4. 발급 키를 `CENSUS_API_KEY`로 등록한다.
-
-api.data.gov 키와 Census 키는 서로 다른 체계이므로 별도로 발급해야 한다.
-
-### 3.5 OpenAlex — 미국
-
-- 대상 MCP: `patent-tech`
-- 공식 키 페이지: [OpenAlex API Settings](https://openalex.org/settings/api)
-- 공식 안내: [OpenAlex Authentication & Pricing](https://developers.openalex.org/guides/authentication)
-- 설정 이름: `OPENALEX_API_KEY`
-- 한국 사용자 난도: 매우 쉬움
-- 비용·승인: 계정·키 무료. 현재 무료 사용분은 일일 사용 크레딧 방식
-
-신청 순서:
-
-1. OpenAlex 계정을 만든다.
-2. 로그인 후 API Settings로 이동한다.
-3. 표시된 API 키를 복사해 `OPENALEX_API_KEY`로 등록한다.
-
-OpenAlex는 2026년 2월 13일부터 모든 API 요청에 키를 요구한다. MyHarness MCP는 논문·주제 메타데이터만 사용하고 유료 PDF 다운로드 기능은 사용하지 않는다.
-
-### 3.6 Companies House — 영국
-
-- 대상 MCP: `company-disclosure`
-- 공식 시작 안내: [Get started with the Companies House API](https://developer.company-information.service.gov.uk/get-started)
-- 앱·키 생성 안내: [How to create an application](https://developer.company-information.service.gov.uk/how-to-create-an-application)
-- 설정 이름: `COMPANIES_HOUSE_API_KEY`
-- 한국 사용자 난도: 쉬움
-- 비용·승인: 일반 공개 회사조회용 API 키는 무료
-
-신청 순서:
-
-1. Companies House 사용자 계정을 등록하고 로그인한다.
-2. `Create an application`에서 애플리케이션 이름과 설명을 입력한다.
-3. 실제 회사정보 조회를 위해 live application을 선택한다.
-4. 애플리케이션 화면에서 `Create new key`를 누른다.
-5. client type은 일반 공개 GET 조회에 사용하는 `API key`를 선택한다. Stream key나 OAuth web client는 선택하지 않는다.
-6. 생성된 키를 `COMPANIES_HOUSE_API_KEY`로 등록한다.
-
-한국 법인·주소를 요구하는 회사설립 절차가 아니라 개발자 계정과 API 애플리케이션 생성 절차다. MyHarness는 공개 회사검색·프로필·임원·공시이력 조회만 사용한다.
-
-### 3.7 WTO Timeseries API — 국제기구
-
-- 대상 MCP: `trade-market`
-- 공식 포털: [WTO API Developer Portal](https://apiportal.wto.org/)
-- 상품 페이지: [WTO API Products](https://apiportal.wto.org/products)
-- 설정 이름: `WTO_API_KEY`
-- 한국 사용자 난도: 보통
-- 비용·승인: Standard 구독 무료
-
-신청 순서:
-
-1. WTO Developer Portal에서 계정을 생성하고 이메일을 확인한다.
-2. 로그인 후 Products에서 `Standard` 상품을 선택한다.
-3. 무료 구독을 신청하고 발급된 subscription key를 확인한다.
-4. primary key를 `WTO_API_KEY`로 등록한다.
-
-Standard 상품은 일반 호출 10회/초·10,000회/시간이지만, 시계열 data/data_count는 1회/초 제한이 있으므로 대량 병렬 호출에는 적합하지 않다.
-
-### 3.8 일본 e-Stat — 일본
-
-- 대상 MCP: `macro-finance`
-- 공식 영문 가이드: [e-Stat API User Guide](https://www.e-stat.go.jp/api/en/api-info/api-guide)
-- 설정 이름: `ESTAT_JP_APP_ID`
-- 한국 사용자 난도: 보통
-- 비용·승인: 무료, e-Stat 계정 필요
-
-신청 순서:
-
-1. e-Stat 사용자 계정을 등록하고 로그인한다.
-2. My Page의 `API (Issue Application ID)` 메뉴로 이동한다.
-3. 애플리케이션 이름·설명·URL을 입력한다. 외부 공개 서비스가 아니면 URL에 `http://localhost/` 같은 로컬 주소를 사용할 수 있다.
-4. `Issue`를 눌러 Application ID를 발급한다.
-5. 발급값을 `ESTAT_JP_APP_ID`로 등록한다.
-
-공식 FAQ상 한 계정에서 Application ID는 최대 3개다. 키 발급보다 실제 통계표 ID와 차원코드를 찾는 작업이 더 어렵다는 점을 고려해야 한다.
-
-### 3.9 Semantic Scholar — 미국
-
-- 대상 MCP: `patent-tech`
-- 공식 신청 페이지: [Semantic Scholar Academic Graph API](https://www.semanticscholar.org/product/api#api-key-form)
-- 설정 이름: `SEMANTIC_SCHOLAR_API_KEY`
-- 한국 사용자 난도: 보통~높음
-- 비용·승인: 신청형 무료 키. 이메일 수령까지 대기·심사가 있을 수 있음
-
-신청 순서:
-
-1. 공식 페이지의 `Request an API Key` 양식을 연다.
-2. 이름·이메일·소속·프로젝트 설명·예상 사용량을 사실대로 입력한다.
-3. 용도에는 논문 메타데이터·인용관계 검색이며 PDF 재배포는 하지 않는다고 명시한다.
-4. 이메일로 키가 도착하면 `SEMANTIC_SCHOLAR_API_KEY`로 등록한다.
-
-초기 인증 키 한도는 공식 안내상 전체 엔드포인트 합계 1 RPS다. 무인증 요청은 공유 한도 때문에 이 환경에서 429가 발생했으므로 키 승인 전에는 사용 불가 상태를 유지한다.
-
-### 3.10 EPO Open Patent Services — 유럽 국제기구
-
-- 대상 MCP: `patent-tech`
-- 공식 안내·등록 시작점: [EPO Open Patent Services](https://www.epo.org/en/searching-for-patents/data/web-services/ops)
-- 설정 이름: `EPO_OPS_CLIENT_ID`, `EPO_OPS_CLIENT_SECRET`
-- 한국 사용자 난도: 보통~높음
-- 비용·승인: 등록과 테스트 앱 필요. 무료 허용량 초과 시 청구정보·비용 발생 가능
-
-신청 순서:
-
-1. OPS 페이지에서 `Register`를 눌러 EPO 개발자 계정을 만든다.
-2. 로그인 후 테스트 애플리케이션을 정의한다.
-3. APIs 메뉴에서 검색·서지 응답을 시험한다.
-4. 애플리케이션의 OAuth consumer key와 consumer secret을 확인한다.
-5. consumer key를 `EPO_OPS_CLIENT_ID`, consumer secret을 `EPO_OPS_CLIENT_SECRET`에 등록한다.
-
-EPO OPS는 단일 키가 아니라 OAuth 자격증명 두 개가 필요하다. 무료 임계치를 넘는 다운로드는 비용이 발생할 수 있으므로, MyHarness에서는 PDF·이미지·전문 다운로드 없이 서지·패밀리 XML만 사용한다.
-
-### 3.11 KIPRISPlus — 대한민국
-
-- 대상 MCP: `patent-tech`
-- 공식 이용절차: [KIPRISPlus 이용 절차](https://plus.kipris.or.kr/portal/main/contents.do?menuNo=210104)
-- 필요한 상품: [특허·실용 공개·등록공보](https://plus.kipris.or.kr/portal/popup/service/DBII_000000000000001/view.do)
-- 설정 이름: `KIPRIS_API_KEY` 또는 `KIPRIS_PLUS_API_KEY`
-- 한국 사용자 난도: 가입은 쉬우나 상품 승인·비용 때문에 운영 난도 높음
-- 비용·승인: 상품 조건에 따라 관리자 승인과 수수료 결제가 필요할 수 있음
-
-신청 순서:
-
-1. 개인 또는 단체회원으로 가입한다. 법인계좌·법인카드를 쓰려면 단체회원이 적합하다.
-2. Open API 메뉴에서 `특허·실용 공개·등록공보` 상품을 선택한다.
-3. 장바구니에서 활용 서비스명·활용 목적·이용 조건을 입력해 구매 신청한다.
-4. 관리자 승인 여부와 견적을 마이페이지에서 확인한다.
-5. 유료 조건이면 내부 예산 승인을 받은 뒤 결제한다.
-6. 마이페이지의 `APIKEY관리`에서 인증키를 확인해 등록한다.
-
-현재 어댑터가 필요한 것은 `getWordSearch`와 `getBibliographyDetailInfoSearch`를 포함한 검색·서지 API다. 도면·전문 PDF·Bulk 상품은 구매할 필요가 없다. 단순 무료 키로 가정하면 안 되므로 실제 견적과 이용조건을 확인하기 전까지 보류가 안전하다.
-
-## 4. 발급 후 전달할 값
-
-키를 발급받은 뒤에는 저장소나 `.mcp/*.json`에 직접 적지 말고 MyHarness 사용자 MCP 설정에 넣는다. 전달해야 할 이름은 다음과 같다.
-
-```text
-SEC_USER_AGENT=
-COMPANIES_HOUSE_API_KEY=
-KCS_TRADE_API_KEY=
-CENSUS_API_KEY=
-WTO_API_KEY=
-FRED_API_KEY=
-ESTAT_JP_APP_ID=
-DATA_GOV_API_KEY=
-KIPRIS_API_KEY=
-EPO_OPS_CLIENT_ID=
-EPO_OPS_CLIENT_SECRET=
-OPENALEX_API_KEY=
-SEMANTIC_SCHOLAR_API_KEY=
+```powershell
+function Set-MyHarnessUserSecret {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $secure = Read-Host "$Name 값을 붙여넣으세요" -AsSecureString
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+        [Environment]::SetEnvironmentVariable($Name, $plain, "User")
+    }
+    finally {
+        if ($plain) { $plain = $null }
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+}
 ```
 
-`DATA_GOV_API_KEY`는 Congress와 USDA ERS가 함께 사용하므로 두 번 발급할 필요가 없다. `SEC_USER_AGENT`는 비밀키가 아니지만 실제 연락처이므로 공개 저장소에는 넣지 않는다.
+발급받은 항목만 다음처럼 등록한다.
 
-## 5. 발급 후 완료 판정
+```powershell
+Set-MyHarnessUserSecret KCS_TRADE_API_KEY
+Set-MyHarnessUserSecret FRED_API_KEY
+Set-MyHarnessUserSecret NABO_API_KEY
+```
 
-키를 등록했다고 바로 완료 처리하지 않는다. 다음 순서로 검증한다.
+EPO는 두 값을 각각 등록한다.
 
-1. `python scripts/verify_official_data_mcps.py`로 실제 7개 stdio MCP를 기동한다.
-2. 해당 소스의 상태가 `BLOCKED_NO_CREDENTIAL`에서 `PASS`로 바뀌는지 확인한다.
-3. 카탈로그·검색·상세조회처럼 서로 다른 도구를 실제 공식 API에 호출한다.
-4. 응답에 키가 노출되지 않는지, 기간·페이지 제한이 적용되는지 확인한다.
-5. 검증 결과가 모두 통과한 소스만 운영 가능으로 변경한다.
+```powershell
+Set-MyHarnessUserSecret EPO_OPS_CLIENT_ID
+Set-MyHarnessUserSecret EPO_OPS_CLIENT_SECRET
+```
 
-현재 자격증명 미보유 소스는 모의 계약 테스트까지만 통과한 상태다. 키 발급 후 위 실검증을 거치기 전에는 “구현 완료”가 아니라 “어댑터 준비 완료, 인증 미검증”으로 보고해야 한다.
+등록 후에는 MyHarness를 완전히 종료하고 다시 실행해야 새 환경변수가 반영된다.
+
+### 선택 사항: 로컬 `API_KEY.env` 파일
+
+저장소 루트의 [API_KEY.env](/C:/Users/user/Desktop/Documents/Python/MyHarness/API_KEY.env)에 발급받은 값을 직접 넣을 수 있다. 이 파일은 `.gitignore`에 등록되어 있으며 현재는 빈 템플릿이다.
+
+전체 변수 이름만 확인하려면 추적 가능한 [.env.example](/C:/Users/user/Desktop/Documents/Python/MyHarness/.env.example)을 참고한다. `.env.example`은 예시 파일이므로 런처가 읽지 않는다.
+
+```text
+KCS_TRADE_API_KEY=새로_발급받은_관세청_일반인증키
+```
+
+URL 인코딩된 키를 그대로 한 줄에 넣고, 키 값 앞뒤에 따옴표를 붙이지 않는다. 기존 채팅에 노출된 키는 재사용하지 말고 포털에서 재발급한다.
+
+### 값은 출력하지 않고 등록 여부만 확인하기
+
+```powershell
+$names = @(
+  "COMPANIES_HOUSE_API_KEY", "KCS_TRADE_API_KEY", "WTO_API_KEY",
+  "FRED_API_KEY", "ESTAT_JP_APP_ID", "NABO_API_KEY",
+  "SEMANTIC_SCHOLAR_API_KEY", "EPO_OPS_CLIENT_ID",
+  "EPO_OPS_CLIENT_SECRET", "KIPRIS_API_KEY"
+)
+$names | ForEach-Object {
+    $configured = -not [string]::IsNullOrWhiteSpace(
+        [Environment]::GetEnvironmentVariable($_, "User")
+    )
+    [PSCustomObject]@{ Name = $_; Configured = $configured }
+}
+```
+
+## 2. 공통 신청서 작성 예시
+
+기관 신청서에서 서비스명·URL·용도·호출량을 물으면 다음 내용을 실제 상황에 맞게 수정해 사용한다. 회사 내부 사실을 임의로 추가하지 않는다.
+
+### 한국어 용도 문구
+
+> MyHarness는 사무계 업무용 내부 AI 에이전트 시스템입니다. 공식 공개 API에서 기업 공시, 무역, 거시경제, 입법, 특허·학술 메타데이터를 소량 조회해 내부 조사와 보고서 작성에 활용합니다. 원문 데이터나 API 키를 재판매·공개 배포하지 않으며, 결과에는 출처를 표시합니다. 대량 수집이나 PDF 전문 다운로드는 수행하지 않고 페이지·기간·건수를 제한합니다.
+
+### 영문 용도 문구
+
+> MyHarness is an internal AI agent for business research and report preparation. It retrieves small, bounded sets of official public metadata and statistics for company, trade, macroeconomic, legislative, patent, and scholarly analysis. We do not resell or publicly redistribute raw API data or credentials. Requests are rate-limited and scoped by date, page size, country, and identifier. We do not perform bulk full-text or image downloads.
+
+### 공통 입력 예시
+
+| 항목 | 권장 입력 |
+|---|---|
+| Application name | `MyHarness official-data connector` |
+| Website / URL | 외부 공개 서비스가 없으면 기관이 허용하는 경우 `http://localhost/` |
+| Intended use | Internal research and report preparation |
+| Expected traffic | 개발·검증 단계: 일 수십~수백 회, 실제 예상치를 보수적으로 입력 |
+| Data retention | 분석 결과와 출처 링크만 보관, 원시 대량 덤프·키는 산출물에 저장하지 않음 |
+| Contact | 실제 수신 가능한 담당자 이메일 |
+
+## 3. 무료·우선 발급 대상
+
+### 3.1 관세청 품목별 국가별 수출입실적
+
+- 대상 MCP: `trade-market`, source `customs_kr`
+- 설정 이름: `KCS_TRADE_API_KEY` 권장, 대체로 `DATA_GO_KR_API_KEY`
+- 공식 신청: [공공데이터포털 관세청 품목별 국가별 수출입실적](https://www.data.go.kr/data/15100475/openapi.do)
+- 비용: 무료
+- 승인: 개발계정 자동승인, 운영계정 심의승인
+- 공식 표시 한도: 개발계정 10,000건
+- 응답 형식: XML — MyHarness가 구조화 파싱하므로 OCR 불필요
+
+신청 절차:
+
+1. 공공데이터포털에 개인 또는 기업회원으로 로그인한다.
+2. 위 데이터셋의 `활용신청`을 누른다.
+3. 활용 목적에 내부 철강·원료 수출입 조사라고 사실대로 적는다.
+4. 개발계정 승인이 끝나면 마이페이지에서 서비스키를 확인한다.
+5. 포털이 Encoding/Decoding 키를 모두 보여주면 우선 **일반 인증키(Encoding)** 를 보관한다. MyHarness는 전달값을 정규화하지만 한 값만 관리하는 편이 안전하다.
+6. `KCS_TRADE_API_KEY`로 등록한다.
+
+주의사항:
+
+- API 기간은 공식 명세상 1년 이내로 제한한다.
+- 운영계정·트래픽 증설은 실제 호출량이 개발한도를 넘을 때만 신청한다.
+- `DATA_GOV_API_KEY`는 미국 api.data.gov 키이므로 한국 공공데이터포털의 `DATA_GO_KR_API_KEY`와 이름이 다르다.
+
+발급 후 검증 예시: 한국의 특정 HS 품목, 상대국, 1개월을 지정해 실제 금액·중량 행이 반환되는지 확인한다.
+
+### 3.2 FRED
+
+- 대상 MCP: `macro-finance`, source `fred`
+- 설정 이름: `FRED_API_KEY`
+- 공식 안내: [FRED API Keys](https://fred.stlouisfed.org/docs/api/fred/v2/api_key.html)
+- 비용: 무료
+- 조건: FRED 계정 로그인 필요
+
+신청 절차:
+
+1. FRED 계정을 만들고 로그인한다.
+2. API Keys 화면에서 새 키를 요청한다.
+3. 애플리케이션 이름을 `MyHarness macro-finance`로 구분한다.
+4. 발급된 키를 `FRED_API_KEY`로 등록한다.
+
+FRED는 애플리케이션별 별도 키를 권고한다. 다른 프로그램 키를 복사해 쓰기보다 MyHarness 전용 키를 만든다.
+
+발급 후 검증 예시: `GDP`, `CPIAUCSL`, `DFF` 중 하나를 검색하고 최근 관측치의 날짜·수치·단위가 모두 나오는지 확인한다.
+
+### 3.3 국회예산정책처 NABO
+
+- 대상 MCP: `national-assembly`, tool `get_nabo`
+- 설정 이름: `NABO_API_KEY`
+- 공식 이용안내: [NABO Open API 이용안내](https://www.nabo.go.kr/ko/api/apiUseInfo.do?key=2509230003)
+- 공식 신청·관리: [NABO 인증키 신청·관리](https://www.nabo.go.kr/ko/api/apply.do?key=2509230004)
+- 승인: SNS 인증 → 신청 → 담당자 승인 → 키 발급
+- 문의: `iamnabo@nabo.go.kr`, 02-2070-3114
+
+신청 절차:
+
+1. 신청 페이지에서 SNS 인증으로 신청자를 확인한다.
+2. 서비스 용도에 NABO 보고서·정기간행물 메타데이터를 내부 정책·예산 조사에 활용한다고 적는다.
+3. 담당자 승인을 기다린다.
+4. 발급 상태가 승인인지 확인하고 `NABO_API_KEY`로 등록한다.
+
+공식 API는 `INVALID_KEY`, `NOT_APPROVED`, `NOT_YET_VALID`, `EXPIRED`를 구분한다. 키 문자열이 존재하더라도 승인 전·사용 시작 전·만료 상태면 정상 동작하지 않는다.
+
+발급 후 검증 예시: `get_nabo(type="report", keyword="예산", page_size=5)`에서 제목·게시일·상세 URL이 실제로 반환되는지 확인한다.
+
+### 3.4 Companies House
+
+- 대상 MCP: `company-disclosure`, source `companies_house`
+- 설정 이름: `COMPANIES_HOUSE_API_KEY`
+- 공식 시작 안내: [Get started](https://developer.company-information.service.gov.uk/get-started)
+- 공식 앱 생성: [How to create an application](https://developer.company-information.service.gov.uk/how-to-create-an-application)
+
+신청 절차:
+
+1. Companies House 사용자 계정을 만들고 로그인한다.
+2. `Create an application`에서 이름과 설명을 입력한다.
+3. 실제 공개 회사정보 조회에는 live application을 선택한다. 먼저 샌드박스만 시험하려면 test application을 별도로 만든다.
+4. 애플리케이션 화면에서 `Create new key`를 누른다.
+5. client type은 **API key**를 선택한다. MyHarness 공개 GET 조회에는 Stream key나 OAuth web client가 필요하지 않다.
+6. 발급값을 `COMPANIES_HOUSE_API_KEY`로 등록한다.
+
+이 절차는 영국 회사를 설립하는 과정이 아니다. 개발자 계정과 API application을 만드는 과정이다.
+
+발급 후 검증 예시: 알려진 영국 회사명을 검색한 뒤 반환된 company number로 프로필·임원·filing history를 연속 조회한다.
+
+### 3.5 WTO Timeseries API
+
+- 대상 MCP: `trade-market`, source `wto`
+- 설정 이름: `WTO_API_KEY`
+- 공식 포털: [WTO API Developer Portal](https://apiportal.wto.org/)
+- 공식 상품: [WTO API Products](https://apiportal.wto.org/products)
+- Standard 구독: 무료
+- 공식 한도: 일반 10회/초·10,000회/시간, time-series `data`·`data_count`는 1회/초
+
+신청 절차:
+
+1. WTO Developer Portal에 가입하고 이메일을 확인한다.
+2. 로그인 후 Products에서 Standard를 구독한다.
+3. subscription의 primary key를 확인한다.
+4. `WTO_API_KEY`로 등록한다.
+
+발급 후 검증 예시: 한국·연도·지표를 모두 지정해 시계열 값과 단위가 반환되는지 확인한다. 1초당 1회 제한 경로는 병렬 호출하지 않는다.
+
+### 3.6 일본 e-Stat
+
+- 대상 MCP: `macro-finance`, source `estat_jp`
+- 설정 이름: `ESTAT_JP_APP_ID`
+- 공식 가이드: [e-Stat API User Guide](https://www.e-stat.go.jp/api/api/api/index.php/en/api-info/api-guide)
+- 공식 FAQ: [e-Stat API FAQ](https://www.e-stat.go.jp/api/en/api-dev/faq)
+- 비용: 무료
+- 제한: 계정당 Application ID 최대 3개
+
+신청 절차:
+
+1. e-Stat 계정을 등록하고 로그인한다.
+2. My Page의 `API (Issue Application ID)`로 이동한다.
+3. 이름·URL·설명을 입력한다. 공개 서비스가 아니면 공식 가이드가 허용하는 `http://localhost/`를 URL로 쓸 수 있다.
+4. `Issue`를 눌러 Application ID를 발급한다.
+5. `ESTAT_JP_APP_ID`로 등록한다.
+
+발급 후 검증 예시: 먼저 통계표 검색으로 실제 `statsDataId`를 얻고, 그 ID로 관측값을 조회한다. 임의 통계표 ID를 만들지 않는다.
+
+## 4. 신청·심사형 대상
+
+### 4.1 Semantic Scholar
+
+- 대상 MCP: `patent-tech`, source `semantic_scholar`
+- 설정 이름: `SEMANTIC_SCHOLAR_API_KEY`
+- 공식 신청: [Semantic Scholar Academic Graph API](https://www.semanticscholar.org/product/api)
+- 발급: 신청 후 이메일 수령
+- 초기 인증 한도: 공식 안내상 전체 엔드포인트 합계 1 RPS
+
+공식적으로 다수 엔드포인트는 무인증 접근이 가능하지만 공유 무인증 트래픽은 혼잡 시 추가 제한될 수 있다. MyHarness는 공유 출구 IP에서의 429와 불안정성을 피하기 위해 운영상 키를 필수로 취급한다.
+
+신청서 권장 내용:
+
+- 용도: scholarly metadata, citations, authors and paper identifiers for internal research
+- 저장: 제목·저자·DOI·인용 메타데이터와 출처 링크
+- 제외: PDF 재배포, 대량 원문 수집, 키 공유
+- 호출량: 1 RPS 이하, batch endpoint 우선
+
+발급 후 검증 예시: 논문 검색으로 실제 paper ID를 얻고, 그 ID로 상세 메타데이터와 인용 수를 조회한다.
+
+### 4.2 EPO Open Patent Services
+
+- 대상 MCP: `patent-tech`, source `epo_ops`
+- 설정 이름: `EPO_OPS_CLIENT_ID`, `EPO_OPS_CLIENT_SECRET`
+- 공식 안내·등록: [EPO Open Patent Services](https://www.epo.org/en/searching-for-patents/data/web-services/ops)
+- 인증: OAuth consumer key + consumer secret
+- 무료 범위: 주 4GB까지
+- 초과 요금: 연 EUR 2,800 구독 — 신청 시점의 최신 가격을 다시 확인
+
+신청 절차:
+
+1. EPO OPS에 등록해 계정을 만든다.
+2. 로그인 후 test app을 정의한다.
+3. APIs 메뉴에서 테스트한다.
+4. 실제 애플리케이션을 정의하고 OAuth 자격증명을 발급받는다.
+5. consumer key를 `EPO_OPS_CLIENT_ID`, consumer secret을 `EPO_OPS_CLIENT_SECRET`에 등록한다.
+
+MyHarness 용도에는 검색·서지·패밀리 XML이면 충분하다. 이미지·전문 대량 다운로드나 4GB/주 초과 유료 구독은 먼저 신청하지 않는다. OPS는 대량 데이터 백엔드용 서비스가 아니며 문서 조회도 공식 안내상 범위를 제한해야 한다.
+
+발급 후 검증 예시: 특허 검색 결과의 실제 publication number를 사용해 서지·패밀리 상세를 조회한다.
+
+### 4.3 KIPRISPlus
+
+- 대상 MCP: `patent-tech`, source `kipris`
+- 설정 이름: `KIPRIS_API_KEY` 권장, 대체로 `KIPRIS_PLUS_API_KEY`
+- 공식 절차: [KIPRISPlus 가입 및 신청 안내](https://plus.kipris.or.kr/portal/main/contents.do?menuNo=210104)
+- 공식 수수료: [KIPRISPlus 서비스 수수료](https://plus.kipris.or.kr/portal/use/paymentMmg.do?menuNo=210112)
+- 공식 개발자료: [KIPRISPlus Open API 개발 가이드](https://plus.kipris.or.kr/portal/bbs/view.do?bbsId=B0000001&nttId=1060)
+
+2026-08-12 공식 수수료 페이지 기준:
+
+- 월 1,000회까지 무료
+- 유료 이용 시 일 5,320원, 365일 기준 연 1,941,800원(VAT 포함)
+- Open API 상품 2개 이하 신청 시 50% 할인
+- 개인·중소·중견기업·공공기관·비영리 단체는 추가 50% 할인 가능
+
+가격·할인 조건은 변경될 수 있으므로 결제 직전에 공식 장바구니와 견적을 다시 확인한다.
+
+신청 절차:
+
+1. 개인 또는 단체회원으로 가입한다. 법인계좌·법인카드를 쓰면 단체회원이 필요하다.
+2. Open API 메뉴에서 특허·실용 공개·등록공보의 검색·서지 상품을 찾는다.
+3. 장바구니에서 이용 조건과 활용 목적을 입력한다.
+4. 관리자 승인을 기다린다.
+5. 무료 월 1,000회 범위로 충분한지 먼저 판단한다.
+6. 유료가 필요하면 내부 예산 승인 후 결제한다.
+7. 마이페이지 `APIKEY관리`에서 키를 확인해 등록한다.
+
+MyHarness에는 검색과 서지 상세가 필요하다. 도면, 전문 PDF, Bulk Data 상품은 현재 목적에 필요하지 않으므로 함께 구매하지 않는다.
+
+## 5. 발급 후 검증 절차
+
+키를 등록했다는 사실만으로 완료 처리하지 않는다.
+
+### 5.1 앱 재시작
+
+Windows 사용자 환경변수를 새로 등록한 후 기존 MyHarness 프로세스를 종료하고 런처로 다시 시작한다.
+
+### 5.2 전체 공식 데이터 검증
+
+저장소 루트에서 실행한다.
+
+```powershell
+python scripts/verify_official_data_mcps.py --root .
+```
+
+현재 기준선:
+
+```text
+SUMMARY pass=60 blocked_no_credential=8 fail=0
+```
+
+새 키가 정상이라면 해당 source의 `BLOCKED_NO_CREDENTIAL`이 줄고 `PASS`가 증가해야 한다. 총합만 보지 말고 해당 `health:<mcp>:<source>` 행을 확인한다.
+
+NABO는 현재 위 검증기 집계에 포함되지 않으므로 `national-assembly`의 `get_nabo`를 별도로 실제 호출한다.
+
+### 5.3 완료 판정
+
+각 자격증명은 다음을 모두 만족해야 완료다.
+
+1. MCP stdio 프로세스가 시작된다.
+2. 해당 source health가 `configured=true`, 실제 endpoint `ok=true`다.
+3. 검색 결과가 비어 있지 않다.
+4. 검색에서 받은 실제 ID로 상세 조회가 된다.
+5. 숫자·날짜·단위·제목 등 도메인 값이 요청과 일치한다.
+6. 키 값이 로그·오류·산출물에 노출되지 않는다.
+7. 첫 호출부터 성공하며 재시도에서만 우연히 성공한 상태가 아니다.
+
+### 5.4 오류별 판단
+
+| 증상 | 의미 | 조치 |
+|---|---|---|
+| `BLOCKED_NO_CREDENTIAL` | 환경변수가 없거나 빈 값 | 이름과 사용자 환경변수 등록 여부 확인 후 재시작 |
+| 401 / `INVALID_KEY` | 키 오타·잘못된 키 종류 | 복사한 키와 환경변수 이름 확인 |
+| 403 / `NOT_APPROVED` | 신청 승인 전이거나 상품 권한 없음 | 포털 승인 상태·구독 상품 확인 |
+| `NOT_YET_VALID` | 사용 시작일 전 | 승인된 사용 시작일 확인 |
+| `EXPIRED` | 만료 | 재발급·갱신 |
+| 429 | 호출 한도 초과 | 재시도 폭주 금지, source 한도에 맞춰 속도 제한 |
+| 200이지만 0건 | 자격증명 성공일 수 있음 | 현실적인 조건·카탈로그로 한 번 대조하고 원 조건 0건은 그대로 보고 |
+
+## 6. 추천 신청 순서
+
+한 번에 아홉 곳을 모두 신청할 필요는 없다.
+
+### 1차: 당일 처리 가능성이 높은 무료 키
+
+1. 관세청 공공데이터포털
+2. FRED
+3. Companies House
+4. WTO Standard
+5. e-Stat
+
+### 2차: 승인 대기 가능
+
+6. NABO
+7. Semantic Scholar
+
+### 3차: 비용·계약 판단 필요
+
+8. EPO OPS — 무료 4GB/주 범위만 우선
+9. KIPRISPlus — 월 1,000회 무료 범위와 필요한 상품을 확인한 뒤 신청
+
+## 7. 발급 완료 체크리스트
+
+```text
+[ ] KCS_TRADE_API_KEY
+[ ] FRED_API_KEY
+[ ] NABO_API_KEY
+[ ] COMPANIES_HOUSE_API_KEY
+[ ] WTO_API_KEY
+[ ] ESTAT_JP_APP_ID
+[ ] SEMANTIC_SCHOLAR_API_KEY
+[ ] EPO_OPS_CLIENT_ID
+[ ] EPO_OPS_CLIENT_SECRET
+[ ] KIPRIS_API_KEY
+```
+
+키를 전달하거나 검증을 요청할 때는 채팅·문서에 값을 붙이지 않는다. 사용자 환경변수에 직접 등록한 뒤 “어떤 이름을 등록했는지”만 알려주면 MyHarness에서 값 노출 없이 실호출 검증할 수 있다.

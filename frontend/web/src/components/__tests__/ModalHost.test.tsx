@@ -199,6 +199,7 @@ describe("ModalHost download settings", () => {
     expect((screen.getByRole("spinbutton", { name: "동시 AI 응답" }) as HTMLInputElement).value).toBe("8");
     expect((screen.getByRole("spinbutton", { name: "브라우저당 동시 AI 응답" }) as HTMLInputElement).value).toBe("3");
     expect((screen.getByRole("spinbutton", { name: "유휴 세션 종료 (분)" }) as HTMLInputElement).value).toBe("30");
+    expect(screen.getByText(/상한을 넘은 새 세션과 응답은 순서가 표시되는 대기열/)).toBeTruthy();
 
     await userEvent.clear(activeSessions);
     await userEvent.type(activeSessions, "24");

@@ -96,6 +96,30 @@ def test_get_energy_price_uses_known_series_id(monkeypatch) -> None:
     assert calls[0].endswith("/seriesid/PET.RWTC.D")
 
 
+def test_get_series_enforces_date_range_ignored_by_seriesid_endpoint(monkeypatch) -> None:
+    eia_server = _load_eia_server()
+    captured: dict[str, Any] = {}
+
+    def fake_request(path: str, params: dict[str, Any]) -> object:
+        captured.update(params)
+        return {
+            "response": {
+                "data": [
+                    {"period": "2026-01-02", "value": 3},
+                    {"period": "2024-01-02", "value": 2},
+                    {"period": "2023-12-29", "value": 1},
+                ]
+            }
+        }
+
+    monkeypatch.setattr(eia_server, "_request_json", fake_request)
+
+    rows = json.loads(eia_server.get_series("PET.RWTC.D", "2024-01-02", "2024-01-02", 1))
+
+    assert rows == [{"period": "2024-01-02", "value": 2}]
+    assert captured == {"length": eia_server.MAX_ROWS}
+
+
 def test_missing_api_key_has_clear_error(monkeypatch) -> None:
     eia_server = _load_eia_server()
     monkeypatch.delenv("EIA_API_KEY", raising=False)

@@ -914,6 +914,12 @@ export function Composer() {
   return (
     <form className="composer" id="composer" ref={composerRef} onSubmit={handleSubmit}>
       <TodoDock variant="dock" />
+      {state.statusText.includes("대기열") && state.statusText.includes("번째") ? (
+        <div className="capacity-queue-notice" role="status" aria-live="polite">
+          <span aria-hidden="true" />
+          {state.statusText}
+        </div>
+      ) : null}
       <div className={`pasted-text-tray${state.composer.pastedTexts.length ? "" : " hidden"}`} id="pastedTextTray" aria-label="붙여넣은 텍스트">
         {state.composer.pastedTexts.map((text, index) => (
           <div className="pasted-text-chip" key={`${text.length}-${index}`}>

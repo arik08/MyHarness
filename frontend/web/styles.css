@@ -1672,23 +1672,17 @@ a:focus-visible {
 }
 
 .history-busy-spinner {
-  position: absolute;
-  top: 50%;
-  right: 7px;
-  z-index: 2;
-  width: 20px;
-  height: 20px;
+  justify-self: center;
+  width: 16px;
+  height: 16px;
   border: 2px solid rgba(92, 84, 74, 0.2);
   border-top-color: var(--accent);
   border-radius: 999px;
-  opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%);
 }
 
 .history-item.busy .history-busy-spinner {
   animation: historyBusySpin 0.9s linear infinite;
-  opacity: 0.95;
 }
 
 .history-more {
@@ -8765,6 +8759,32 @@ a:focus-visible {
 
 .composer::before {
   display: none;
+}
+
+.capacity-queue-notice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: min(804px, 100%);
+  margin: 0 auto 8px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-raised) 92%, var(--accent-soft));
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  pointer-events: auto;
+}
+
+.capacity-queue-notice > span {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.1s ease-in-out infinite;
 }
 
 .inline-question-card {

@@ -630,7 +630,7 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("region", { name: "Provider 선택" })).toBeNull();
   });
 
-  it("shows the busy spinner in the delete slot while the active answer is running", () => {
+  it("shows the busy spinner in the left icon slot while the active answer is running", () => {
     const { container } = render(
       <AppStateProvider
         initialState={{
@@ -650,6 +650,8 @@ describe("Sidebar", () => {
 
     expect(item?.classList.contains("busy")).toBe(true);
     expect(spinner).not.toBeNull();
+    expect(item?.firstElementChild).toBe(spinner);
+    expect(container.querySelector(".history-like")).toBeNull();
     expect(actionButton).toBeNull();
   });
 
@@ -1166,6 +1168,37 @@ describe("Sidebar", () => {
     expect(screen.getByText("좋아요 대화")).toBeTruthy();
     expect(screen.queryByText("일반 대화")).toBeNull();
     expect(screen.getByRole("button", { name: "전체 보기" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("does not auto-load more history when the liked filter makes the list too short to scroll", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-active",
+          workspaceName: "Default",
+          workspacePath: "C:/demo",
+          history: [
+            { value: "session-liked", label: "5/3 10:00 2 msg", description: "좋아요 대화", liked: true },
+            { value: "session-plain", label: "5/2 10:00 2 msg", description: "일반 대화" },
+          ],
+          historyHasMore: true,
+          historyNextOffset: 25,
+        } as typeof initialAppState}
+      >
+        <Sidebar />
+      </AppStateProvider>,
+    );
+
+    const historyList = document.querySelector(".history-list") as HTMLElement;
+    Object.defineProperty(historyList, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(historyList, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(historyList, "scrollTop", { configurable: true, value: 0 });
+
+    await userEvent.click(screen.getByRole("button", { name: "좋아요만 보기" }));
+
+    await waitFor(() => expect(screen.queryByText("일반 대화")).toBeNull());
+    expect(listHistory).not.toHaveBeenCalled();
   });
 
   it("shows the liked-filter empty state when no chat is liked", async () => {

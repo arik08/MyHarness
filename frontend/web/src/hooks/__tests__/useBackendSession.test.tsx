@@ -11,6 +11,7 @@ vi.mock("../../api/events", () => ({
 }));
 
 vi.mock("../../api/session", () => ({
+  capacityQueueStatusEvent: "myharness:capacity-queue-status",
   listLiveSessions: vi.fn(),
   startSession: vi.fn(),
 }));
@@ -22,6 +23,7 @@ function Probe() {
     <>
       <output data-testid="session">{state.sessionId || ""}</output>
       <output data-testid="busy">{String(state.busy)}</output>
+      <output data-testid="status">{state.statusText}</output>
       <output data-testid="workspace">{state.workspacePath}</output>
       <output data-testid="messages">{state.messages.map((message) => message.text).join("|")}</output>
       <output data-testid="workflow-anchor">{state.workflowAnchorMessageId || ""}</output>
@@ -114,6 +116,45 @@ describe("useBackendSession", () => {
 
     expect(screen.getByTestId("messages").textContent).toBe("진행 중 질문|돌아와도 보이는 답변");
     expect(screen.getByTestId("workflow-anchor").textContent).toBeTruthy();
+  });
+
+  it("keeps a busy request active while EventSource reconnects after a transport error", async () => {
+    let eventHandlers: Parameters<typeof openBackendEvents>[1] | null = null;
+    vi.mocked(openBackendEvents).mockImplementation((_params, handlers) => {
+      eventHandlers = handlers;
+      return { close: vi.fn() } as unknown as EventSource;
+    });
+
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          clientId: "client-1",
+          sessionId: "session-a",
+          busy: true,
+          status: "processing",
+          statusText: "답변 생성 중",
+        }}
+      >
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    await waitFor(() => expect(openBackendEvents).toHaveBeenCalled());
+    act(() => {
+      eventHandlers?.onError(new Event("error"));
+    });
+
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+    expect(screen.getByTestId("status").textContent).toBe("답변 생성 중");
+    expect(screen.getByTestId("messages").textContent).toBe("");
+
+    act(() => {
+      eventHandlers?.onEvent({ type: "error", message: "백엔드 작업 오류" });
+    });
+
+    expect(screen.getByTestId("busy").textContent).toBe("false");
+    expect(screen.getByTestId("messages").textContent).toContain("백엔드 작업 오류");
   });
 
   it("coalesces rapid streamed tool input events before updating workflow preview", async () => {
@@ -253,6 +294,29 @@ describe("useBackendSession", () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
     expect(listLiveSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the session queue position reported while starting a backend", async () => {
+    vi.mocked(listLiveSessions).mockReturnValue(new Promise(() => {}));
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}>
+        <Probe />
+      </AppStateProvider>,
+    );
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("myharness:capacity-queue-status", {
+        detail: {
+          kind: "session",
+          status: "waiting",
+          position: 3,
+          message: "접속 대기열 3번째 · 작업 세션 자리를 기다리는 중",
+        },
+      }));
+    });
+
+    expect(screen.getByTestId("status").textContent).toBe("접속 대기열 3번째 · 작업 세션 자리를 기다리는 중");
+    expect(screen.getByTestId("busy").textContent).toBe("false");
   });
 
   it("starts a new backend session when no live session is available", async () => {

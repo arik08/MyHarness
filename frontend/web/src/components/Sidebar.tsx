@@ -1262,6 +1262,7 @@ export function Sidebar() {
     if (
       !historyList
       || historyList.clientHeight <= 0
+      || likedHistoryOnly
       || !hasMore
       || loading
     ) {
@@ -1659,27 +1660,31 @@ export function Sidebar() {
                     </button>
                   ) : (
                     <>
-                      <button
-                        className={`history-like${item.pinned ? " pinned" : item.liked ? " liked" : ""}`}
-                        type="button"
-                        aria-label={`${label} ${item.pinned ? "상단 고정 해제" : item.liked ? "좋아요 취소" : canLike ? "좋아요" : "좋아요는 저장 후 사용 가능"}`}
-                        aria-pressed={item.pinned === true || item.liked === true}
-                        data-tooltip={item.pinned ? "상단 고정 해제" : item.liked ? "좋아요 취소" : canLike ? "좋아요" : "대화 저장 후 좋아요 가능"}
-                        disabled={item.pinned ? !canPin : !canLike}
-                        onClick={() => void (item.pinned ? pinHistory(item) : likeHistory(item))}
-                      >
-                        {item.pinned ? (
-                          <HistoryPinIcon className="history-pinned-pin" />
-                        ) : item.liked ? (
-                          <svg className="history-liked-star" aria-hidden="true" viewBox="0 0 24 24">
-                            <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16Z" />
-                          </svg>
-                        ) : (
-                          <svg aria-hidden="true" viewBox="0 0 24 24">
-                            <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
-                          </svg>
-                        )}
-                      </button>
+                      {isBusy ? (
+                        <span className="history-busy-spinner" aria-hidden="true" />
+                      ) : (
+                        <button
+                          className={`history-like${item.pinned ? " pinned" : item.liked ? " liked" : ""}`}
+                          type="button"
+                          aria-label={`${label} ${item.pinned ? "상단 고정 해제" : item.liked ? "좋아요 취소" : canLike ? "좋아요" : "좋아요는 저장 후 사용 가능"}`}
+                          aria-pressed={item.pinned === true || item.liked === true}
+                          data-tooltip={item.pinned ? "상단 고정 해제" : item.liked ? "좋아요 취소" : canLike ? "좋아요" : "대화 저장 후 좋아요 가능"}
+                          disabled={item.pinned ? !canPin : !canLike}
+                          onClick={() => void (item.pinned ? pinHistory(item) : likeHistory(item))}
+                        >
+                          {item.pinned ? (
+                            <HistoryPinIcon className="history-pinned-pin" />
+                          ) : item.liked ? (
+                            <svg className="history-liked-star" aria-hidden="true" viewBox="0 0 24 24">
+                              <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 1 1.597-1.16Z" />
+                            </svg>
+                          ) : (
+                            <svg aria-hidden="true" viewBox="0 0 24 24">
+                              <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
                       {editing ? (
                         <form
                           className="history-title-editor"
@@ -1715,7 +1720,6 @@ export function Sidebar() {
                           {detailLabel ? <small>{detailLabel}</small> : null}
                         </button>
                       )}
-                      <span className="history-busy-spinner" aria-hidden="true" />
                       {showActions ? (
                         <button
                           className="history-more"

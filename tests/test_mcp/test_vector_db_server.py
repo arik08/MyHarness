@@ -174,3 +174,16 @@ def test_mcp_server_uses_configured_db_path(tmp_path: Path, monkeypatch) -> None
 
     assert payload["results"]
     assert payload["results"][0]["document_name"] == "업무문서 A"
+
+
+def test_vector_db_skill_distinguishes_empty_corpus_and_uses_isolated_verification_db() -> None:
+    skill_path = ROOT / ".skills/mcp/vector-db-rag/skills/vector-db-rag/SKILL.md"
+    text = skill_path.read_text(encoding="utf-8")
+
+    assert "store_status" in text and "list_sources" in text
+    assert "empty corpus" in text and "retrieval failure" in text
+    assert "only those user-provided documents" in text
+    assert "VECTOR_DB_RAG_DB_PATH" in text
+    assert "temporary isolated database" in text
+    assert "Do not write test data" in text
+    assert '"indexed corpus, no matching result"' in text
