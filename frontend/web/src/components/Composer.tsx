@@ -728,6 +728,7 @@ export function Composer() {
           type: "session_started",
           sessionId: session.sessionId,
           clientId: state.clientId,
+          busy: true,
         });
         if (session.workspace) {
           dispatch({ type: "set_workspace", workspace: session.workspace });
