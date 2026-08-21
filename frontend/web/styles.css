@@ -6307,18 +6307,13 @@ a:focus-visible {
 }
 
 .workflow-copy small {
-  display: -webkit-box;
+  display: block;
   min-width: 0;
-  max-height: calc(1.5em * 2);
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
-  overflow: hidden;
   overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
 }
 
 .workflow-step[data-workflow-role="reasoning"] .workflow-status-detail strong {

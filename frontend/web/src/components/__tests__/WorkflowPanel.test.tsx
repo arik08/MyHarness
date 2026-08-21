@@ -1,11 +1,37 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppStateProvider } from "../../state/app-state";
 import { WorkflowPanel } from "../WorkflowPanel";
 
+function readStylesheet() {
+  return readFileSync(resolve(__dirname, "../../../styles.css"), "utf8").replace(/\r\n/g, "\n");
+}
+
+function stylesheetBlock(selector: string) {
+  const stylesheet = readStylesheet();
+  const start = stylesheet.indexOf(`${selector} {`);
+  if (start < 0) {
+    throw new Error(`Stylesheet selector not found: ${selector}`);
+  }
+  const end = stylesheet.indexOf("\n}", start);
+  return stylesheet.slice(start, end + 2);
+}
+
 describe("WorkflowPanel", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("shows the full reasoning progress memo instead of clamping it to two lines", () => {
+    const memoStyles = stylesheetBlock(".workflow-copy small");
+
+    expect(memoStyles).toContain("display: block;");
+    expect(memoStyles).toContain("white-space: normal;");
+    expect(memoStyles).not.toContain("max-height");
+    expect(memoStyles).not.toContain("line-clamp");
+    expect(memoStyles).not.toContain("overflow: hidden");
   });
 
   it("does not append a second elapsed timer when the detail already contains elapsed text", () => {
