@@ -67,6 +67,11 @@ let workspaceScopeMode = normalizeWorkspaceScopeMode(process.env.MYHARNESS_WORKS
 let shellPreference = normalizeShellPreference(process.env.MYHARNESS_SHELL);
 const protocolPrefix = "OHJSON:";
 const sessions = new Map();
+const sessionCapacityQueue = [];
+const sessionCapacityResults = new Map();
+const responseCapacityQueue = [];
+let capacityQueueDrainRunning = false;
+let capacityQueueDrainPending = false;
 let webUsageStatsWriteQueue = Promise.resolve();
 const jsonFileMutationQueues = new Map();
 const recentDevRedirectVisitTtlMs = 15_000;
@@ -224,9 +229,6 @@ let maxActiveSessions = defaultMaxActiveSessions;
 let maxBusySessions = defaultMaxBusySessions;
 let maxBusySessionsPerClient = defaultMaxBusySessionsPerClient;
 const currentSessionBusyMessage = "현재 대화가 응답 중입니다. 답변이 끝난 뒤 다시 시도하거나 텍스트로 이어서 지시하세요.";
-const clientResponseLimitMessage = "현재 브라우저에서 여러 작업이 동시에 진행 중입니다. 진행 중인 응답이 끝난 뒤 다시 시도하세요.";
-const serverResponseLimitMessage = "여러 명이 동시에 작업 중이라 서버가 바쁩니다. 다른 응답이 끝난 뒤 다시 시도하세요.";
-const activeSessionLimitMessage = "여러 명이 동시에 사용 중이라 열려 있는 작업 세션이 많습니다. 사용하지 않는 채팅을 닫고 다시 시도하세요.";
 const modelOutputTokenCaps = Object.freeze({
   "gpt-5.6-luna": 128_000,
   "gpt-5.6-terra": 128_000,
@@ -2393,12 +2395,7 @@ async function submitAiArtifactEdit(session, artifactPath, comments) {
   if (session.busy) {
     throw httpError(409, currentSessionBusyMessage);
   }
-  if (session.clientId && countBusySessionsForClient(session.clientId) >= maxBusySessionsPerClient) {
-    throw httpError(429, clientResponseLimitMessage);
-  }
-  if (countBusySessions() >= maxBusySessions) {
-    throw httpError(429, serverResponseLimitMessage);
-  }
+  await waitForResponseCapacity(session);
   const { target: targetFile } = workspaceRelativeTarget(session.workspace.path, targetRel);
   session.busy = true;
   let targetPrepared = false;
@@ -3083,9 +3080,11 @@ function currentConcurrencyStatus(request) {
   const clientId = String(params.get("clientId") || "").trim();
   return {
     ...currentConcurrencySettings(),
-    activeSessions: [...sessions.values()].filter((session) => !session.shuttingDown).length,
+    activeSessions: countActiveSessions(),
     busySessions: countBusySessions(),
     busySessionsForClient: clientId ? countBusySessionsForClient(clientId) : 0,
+    queuedSessions: sessionCapacityQueue.length,
+    queuedResponses: responseCapacityQueue.length,
   };
 }
 
@@ -3111,6 +3110,7 @@ async function saveConcurrencySettings(body = {}) {
     };
   });
   applyConcurrencySettings(values, { rescheduleIdleSessions: true });
+  scheduleCapacityQueueDrain();
   return currentConcurrencySettings();
 }
 
@@ -5790,14 +5790,8 @@ async function createBackendSession(options = {}) {
   const workspace = await resolveSessionWorkspace(options);
   const clientId = String(options.clientId || "").trim();
   const clientAddress = normalizeClientAddress(options.clientAddress || "");
-  if ([...sessions.values()].filter((session) => !session.shuttingDown).length >= maxActiveSessions) {
-    throw httpError(429, activeSessionLimitMessage);
-  }
-  if (clientId && countBusySessionsForClient(clientId) >= maxBusySessionsPerClient) {
-    throw httpError(429, clientResponseLimitMessage);
-  }
-  if (countBusySessions() >= maxBusySessions) {
-    throw httpError(429, serverResponseLimitMessage);
+  if (!sessionHasCapacity()) {
+    throw httpError(429, "작업 세션을 시작할 수 있는 자리가 아직 없습니다.");
   }
   const python = backendPythonCommand();
   const args = [...python.args, "-m", "myharness", "--backend-only", "--cwd", workspace.path];
@@ -5856,6 +5850,7 @@ async function createBackendSession(options = {}) {
     clientId,
     clientAddress,
     busy: false,
+    capacityQueued: false,
     ready: false,
     runtimePreferences: {
       activeProfile: cleanRuntimePreference(options.activeProfile || options.active_profile),
@@ -5934,6 +5929,7 @@ async function createBackendSession(options = {}) {
     });
     emit(session, { type: "shutdown", code, message: `Backend exited with code ${code ?? 0}` });
     sessions.delete(id);
+    scheduleCapacityQueueDrain();
   });
 
   return session;
@@ -5957,6 +5953,216 @@ function countBusySessions() {
     }
   }
   return count;
+}
+
+function countActiveSessions() {
+  return [...sessions.values()].filter((session) => !session.shuttingDown).length;
+}
+
+function sessionHasCapacity() {
+  return countActiveSessions() < maxActiveSessions;
+}
+
+function responseHasCapacity(session) {
+  return Boolean(
+    session
+    && !session.shuttingDown
+    && !session.busy
+    && (!session.clientId || countBusySessionsForClient(session.clientId) < maxBusySessionsPerClient)
+    && countBusySessions() < maxBusySessions,
+  );
+}
+
+function capacityQueueMessage(kind, position) {
+  return kind === "session"
+    ? `접속 대기열 ${position}번째 · 작업 세션 자리를 기다리는 중`
+    : `응답 대기열 ${position}번째 · AI 응답 자리를 기다리는 중`;
+}
+
+function emitResponseQueuePositions() {
+  responseCapacityQueue.forEach((entry, index) => {
+    const session = sessions.get(entry.sessionId);
+    if (!session || session.shuttingDown) return;
+    emit(session, {
+      type: "capacity_queue_status",
+      kind: "response",
+      status: "waiting",
+      position: index + 1,
+      message: capacityQueueMessage("response", index + 1),
+    });
+  });
+}
+
+function startSessionMessage(session, request) {
+  const wasQueued = session.capacityQueued === true;
+  if (request.suppressUserTranscript && !request.line.startsWith("!")) {
+    rememberSuppressedUserTranscript(
+      session.replayState,
+      visibleSubmittedUserText(request.line, request.attachments, request.attachmentRefs),
+    );
+  }
+  session.capacityQueued = false;
+  session.busy = true;
+  if (wasQueued) {
+    emit(session, {
+      type: "capacity_queue_status",
+      kind: "response",
+      status: "started",
+      position: 0,
+      message: "대기 순서가 되어 AI 응답을 시작합니다.",
+    });
+  }
+  const backendPayload = {
+    type: "submit_line",
+    line: request.line,
+    attachments: request.attachments,
+    attachment_refs: request.attachmentRefs,
+    suppress_user_transcript: request.suppressUserTranscript,
+  };
+  if (request.composeOptions) {
+    backendPayload.compose_options = request.composeOptions;
+  }
+  const ok = sendBackend(session, backendPayload);
+  if (!ok) {
+    session.busy = false;
+    emit(session, { type: "error", message: "대기 중이던 요청을 시작하지 못했습니다." });
+    scheduleCapacityQueueDrain();
+  }
+  return ok;
+}
+
+function enqueueSessionMessage(session, request) {
+  session.capacityQueued = true;
+  responseCapacityQueue.push({
+    id: crypto.randomUUID(),
+    type: "message",
+    sessionId: session.id,
+    request,
+  });
+  emitResponseQueuePositions();
+  return responseCapacityQueue.length;
+}
+
+function waitForResponseCapacity(session) {
+  if (session.capacityQueued) {
+    return Promise.reject(httpError(409, "현재 요청이 응답 대기열에 있습니다."));
+  }
+  if (responseHasCapacity(session)) return Promise.resolve();
+  session.capacityQueued = true;
+  return new Promise((resolve, reject) => {
+    responseCapacityQueue.push({
+      id: crypto.randomUUID(),
+      type: "gate",
+      sessionId: session.id,
+      resolve,
+      reject,
+    });
+    emitResponseQueuePositions();
+  });
+}
+
+function cancelQueuedSessionMessage(session) {
+  const index = responseCapacityQueue.findIndex((entry) => entry.sessionId === session.id);
+  if (index < 0) return false;
+  const [entry] = responseCapacityQueue.splice(index, 1);
+  session.capacityQueued = false;
+  entry.reject?.(httpError(409, "대기 중인 요청이 취소되었습니다."));
+  emit(session, {
+    type: "capacity_queue_status",
+    kind: "response",
+    status: "cancelled",
+    position: 0,
+    message: "대기 중인 요청을 취소했습니다.",
+  });
+  emit(session, { type: "line_complete" });
+  emitResponseQueuePositions();
+  return true;
+}
+
+function enqueueSessionStart(options) {
+  const entry = {
+    id: crypto.randomUUID(),
+    clientId: String(options.clientId || "").trim(),
+    options,
+  };
+  sessionCapacityQueue.push(entry);
+  scheduleCapacityQueueDrain();
+  return { queueId: entry.id, position: sessionCapacityQueue.length };
+}
+
+function rememberSessionCapacityResult(queueId, result) {
+  sessionCapacityResults.set(queueId, result);
+  const timer = setTimeout(() => sessionCapacityResults.delete(queueId), 60_000);
+  timer.unref?.();
+}
+
+async function drainCapacityQueues() {
+  if (capacityQueueDrainRunning) {
+    capacityQueueDrainPending = true;
+    return;
+  }
+  capacityQueueDrainRunning = true;
+  try {
+    do {
+      capacityQueueDrainPending = false;
+      while (responseCapacityQueue.length) {
+        const entry = responseCapacityQueue[0];
+        const session = sessions.get(entry.sessionId);
+        if (!session || session.shuttingDown) {
+          responseCapacityQueue.shift();
+          if (session) session.capacityQueued = false;
+          entry.reject?.(httpError(409, "대기 중 세션이 종료되었습니다."));
+          continue;
+        }
+        if (!responseHasCapacity(session)) break;
+        responseCapacityQueue.shift();
+        if (entry.type === "gate") {
+          session.capacityQueued = false;
+          session.busy = true;
+          emit(session, {
+            type: "capacity_queue_status",
+            kind: "response",
+            status: "started",
+            position: 0,
+            message: "대기 순서가 되어 AI 응답을 시작합니다.",
+          });
+          entry.resolve();
+        } else {
+          startSessionMessage(session, entry.request);
+        }
+      }
+      emitResponseQueuePositions();
+
+      while (sessionCapacityQueue.length && sessionHasCapacity()) {
+        const entry = sessionCapacityQueue.shift();
+        try {
+          const session = await createBackendSession(entry.options);
+          rememberSessionCapacityResult(entry.id, {
+            status: "ready",
+            clientId: entry.clientId,
+            sessionId: session.id,
+            workspace: session.workspace,
+          });
+        } catch (error) {
+          if (error.status === 429) {
+            sessionCapacityQueue.unshift(entry);
+            break;
+          }
+          rememberSessionCapacityResult(entry.id, {
+            status: "error",
+            clientId: entry.clientId,
+            error: error.message || "Could not start session",
+          });
+        }
+      }
+    } while (capacityQueueDrainPending);
+  } finally {
+    capacityQueueDrainRunning = false;
+  }
+}
+
+function scheduleCapacityQueueDrain() {
+  setImmediate(() => void drainCapacityQueues());
 }
 
 function updateSessionStateFromBackendEvent(session, event) {
@@ -5996,6 +6202,7 @@ function updateSessionStateFromBackendEvent(session, event) {
   if (event.type === "line_complete" || event.type === "error" || event.type === "shutdown") {
     session.busy = false;
     scheduleIdleClientClose(session);
+    scheduleCapacityQueueDrain();
   }
 }
 
@@ -6005,7 +6212,7 @@ function liveSessionPayload(session) {
     savedSessionId: session.savedSessionId || "",
     title: session.title || "",
     workspace: session.workspace,
-    busy: Boolean(session.busy),
+    busy: Boolean(session.busy || session.capacityQueued),
     createdAt: session.createdAt,
   };
 }
@@ -6379,13 +6586,52 @@ async function handleApi(request, response, pathname) {
     return true;
   }
 
+  if (request.method === "GET" && pathname === "/api/session/queue") {
+    const searchParams = new URL(request.url, `http://localhost:${port}`).searchParams;
+    const queueId = String(searchParams.get("queueId") || "").trim();
+    const clientId = String(searchParams.get("clientId") || "").trim();
+    const result = sessionCapacityResults.get(queueId);
+    if (result) {
+      if (result.clientId !== clientId) {
+        json(response, 404, { error: "Unknown queued session" });
+      } else if (result.status === "error") {
+        json(response, 409, { error: result.error });
+      } else {
+        json(response, 200, result);
+      }
+      return true;
+    }
+    const index = sessionCapacityQueue.findIndex((entry) => entry.id === queueId && entry.clientId === clientId);
+    if (index < 0) {
+      json(response, 404, { error: "Unknown queued session" });
+      return true;
+    }
+    json(response, 200, {
+      status: "waiting",
+      queueId,
+      position: index + 1,
+      message: capacityQueueMessage("session", index + 1),
+    });
+    return true;
+  }
+
   if (request.method === "POST" && pathname === "/api/session") {
     try {
       const options = await readJson(request);
       options.workspaceScope = workspaceScope;
       options.clientAddress = clientAddress;
-      const session = await createBackendSession(options);
-      json(response, 200, { sessionId: session.id, workspace: session.workspace });
+      try {
+        const session = await createBackendSession(options);
+        json(response, 200, { sessionId: session.id, workspace: session.workspace });
+      } catch (error) {
+        if (error.status !== 429) throw error;
+        const queued = enqueueSessionStart(options);
+        json(response, 202, {
+          status: "waiting",
+          ...queued,
+          message: capacityQueueMessage("session", queued.position),
+        });
+      }
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not start session" });
     }
@@ -6424,20 +6670,31 @@ async function handleApi(request, response, pathname) {
         shutdownSession(oldSession, "ui restart");
         killProcessTree(oldSession.process);
       }
-      const session = await createBackendSession(options);
-      writeRuntimeLog("backend_session_restart_created", {
-        old_session_id: oldSessionId,
-        new_session_id: session.id,
-        new_child_pid: session.process?.pid || null,
-        workspace: session.workspace?.path || "",
-        client_id: session.clientId || "",
-      });
-      json(response, 200, {
-        ok: true,
-        oldSessionId,
-        sessionId: session.id,
-        workspace: session.workspace,
-      });
+      try {
+        const session = await createBackendSession(options);
+        writeRuntimeLog("backend_session_restart_created", {
+          old_session_id: oldSessionId,
+          new_session_id: session.id,
+          new_child_pid: session.process?.pid || null,
+          workspace: session.workspace?.path || "",
+          client_id: session.clientId || "",
+        });
+        json(response, 200, {
+          ok: true,
+          oldSessionId,
+          sessionId: session.id,
+          workspace: session.workspace,
+        });
+      } catch (error) {
+        if (error.status !== 429) throw error;
+        const queued = enqueueSessionStart(options);
+        json(response, 202, {
+          status: "waiting",
+          oldSessionId,
+          ...queued,
+          message: capacityQueueMessage("session", queued.position),
+        });
+      }
     } catch (error) {
       writeRuntimeLog("backend_session_restart_failed", {
         error: errorPayload(error),
@@ -6862,32 +7119,28 @@ async function handleApi(request, response, pathname) {
         json(response, ok ? 200 : 409, { ok, queued, steering: !queued });
         return true;
       }
-      if (session.clientId && countBusySessionsForClient(session.clientId) >= maxBusySessionsPerClient) {
-        json(response, 429, { error: clientResponseLimitMessage });
+      if (session.capacityQueued) {
+        json(response, 409, { error: "현재 요청이 응답 대기열에 있습니다." });
         return true;
       }
-      if (countBusySessions() >= maxBusySessions) {
-        json(response, 429, { error: serverResponseLimitMessage });
-        return true;
-      }
-      if (body.suppressUserTranscript === true && !line.startsWith("!")) {
-        rememberSuppressedUserTranscript(session.replayState, visibleSubmittedUserText(line, attachments, attachmentRefs));
-      }
-      session.busy = true;
-      const backendPayload = {
-        type: "submit_line",
+      const messageRequest = {
         line,
         attachments,
-        attachment_refs: attachmentRefs,
-        suppress_user_transcript: body.suppressUserTranscript === true,
+        attachmentRefs,
+        composeOptions,
+        suppressUserTranscript: body.suppressUserTranscript === true,
       };
-      if (composeOptions) {
-        backendPayload.compose_options = composeOptions;
+      if (!responseHasCapacity(session)) {
+        const position = enqueueSessionMessage(session, messageRequest);
+        json(response, 202, {
+          ok: true,
+          queued: true,
+          queuePosition: position,
+          message: capacityQueueMessage("response", position),
+        });
+        return true;
       }
-      const ok = sendBackend(session, backendPayload);
-      if (!ok) {
-        session.busy = false;
-      }
+      const ok = startSessionMessage(session, messageRequest);
       json(response, ok ? 200 : 409, { ok });
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not send message" });
@@ -6969,6 +7222,10 @@ async function handleApi(request, response, pathname) {
       const session = sessionFromIdForClient(body.sessionId, body.clientId);
       if (!session) {
         json(response, 404, { error: "Unknown session" });
+        return true;
+      }
+      if (cancelQueuedSessionMessage(session)) {
+        json(response, 200, { ok: true, queued: true });
         return true;
       }
       const ok = sendBackend(session, { type: "cancel_current" });

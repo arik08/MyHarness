@@ -1166,6 +1166,30 @@ describe("appReducer", () => {
     expect(cancelled.messages.map((message) => message.id)).toEqual(["request-1"]);
   });
 
+  it("shows capacity queue position and keeps the response busy until it starts", () => {
+    const waiting = appReducer({ ...initialAppState, busy: true }, {
+      type: "backend_event",
+      event: {
+        type: "capacity_queue_status",
+        kind: "response",
+        status: "waiting",
+        position: 2,
+        message: "응답 대기열 2번째 · AI 응답 자리를 기다리는 중",
+      },
+    });
+
+    expect(waiting.busy).toBe(true);
+    expect(waiting.status).toBe("processing");
+    expect(waiting.statusText).toBe("응답 대기열 2번째 · AI 응답 자리를 기다리는 중");
+
+    const started = appReducer(waiting, {
+      type: "backend_event",
+      event: { type: "capacity_queue_status", kind: "response", status: "started", position: 0 },
+    });
+    expect(started.busy).toBe(true);
+    expect(started.statusText).toBe("AI 응답 시작 중");
+  });
+
   it("ignores a delayed steering replay transcript for the same active user text", () => {
     const withRegularUser = appReducer({ ...initialAppState, busy: true }, {
       type: "append_message",

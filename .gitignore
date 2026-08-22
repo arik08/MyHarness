@@ -14,6 +14,7 @@ build/
 venv/
 env/
 .env
+API_KEY.env
 *.so
 .coverage
 htmlcov/

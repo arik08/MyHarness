@@ -39,6 +39,8 @@ export type ConcurrencyStatus = ConcurrencySettings & {
   activeSessions: number;
   busySessions: number;
   busySessionsForClient: number;
+  queuedSessions?: number;
+  queuedResponses?: number;
 };
 
 export const concurrencySettingsChangedEvent = "myharness:concurrency-settings-changed";

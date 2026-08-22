@@ -26,6 +26,11 @@ function readStylesheet() {
   return readFileSync(resolve(__dirname, "../../../styles.css"), "utf8").replace(/\r\n/g, "\n");
 }
 
+function BusyProbe() {
+  const { state } = useAppState();
+  return <output data-testid="busy-state">{String(state.busy)}</output>;
+}
+
 describe("Composer", () => {
   beforeEach(() => {
     vi.mocked(cancelMessage).mockClear();
@@ -1289,6 +1294,33 @@ describe("Composer", () => {
       sessionId: "session-new",
       line: "새 질문",
     }));
+  });
+
+  it("keeps a fresh chat busy while its first response is waiting for stream events", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          sessionId: "session-old",
+          clientId: "client-1",
+          pendingFreshChat: true,
+          workspacePath: "C:/demo",
+        }}
+      >
+        <BusyProbe />
+        <Composer />
+      </AppStateProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "첫 질문");
+    await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-new",
+      line: "첫 질문",
+    })));
+    expect(screen.getByTestId("busy-state").textContent).toBe("true");
   });
 
   it("recreates an expired backend session and retries the message once", async () => {

@@ -463,7 +463,7 @@ function ConcurrencySettingsForm({ onBack }: { onBack: () => void }) {
           <NumericSetting label="유휴 세션 종료 (분)" helper="연결이 끊기고 작업도 없는 세션을 종료하기까지 기다리는 시간입니다." min={1} max={1440} step={1} value={settings.idleSessionTimeoutMinutes} onChange={(value) => update({ idleSessionTimeoutMinutes: value })} />
         </div>
       )}
-      <p className="settings-helper concurrency-settings-note">현재 실행 중인 작업은 강제로 종료하지 않습니다. 저장한 제한은 새 세션과 다음 응답부터 적용됩니다.</p>
+      <p className="settings-helper concurrency-settings-note">현재 실행 중인 작업은 강제로 종료하지 않습니다. 상한을 넘은 새 세션과 응답은 순서가 표시되는 대기열에 들어가며, 자리가 나면 자동으로 시작됩니다.</p>
       <div className="modal-actions">
         <button type="button" onClick={onBack} disabled={saving}>뒤로</button>
         <button type="button" onClick={() => setSettings(defaultConcurrencySettings)} disabled={!settings || saving}>기본값 복원</button>
