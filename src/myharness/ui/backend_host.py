@@ -2291,6 +2291,8 @@ class ReactBackendHost:
         assistant_artifact_filter = _AssistantArtifactFilter()
         assistant_artifacts: list[dict[str, Any]] = []
         turn_usage_start = copy.deepcopy(self._bundle.engine.usage_accounting)
+        turn_provider = str(self._bundle.engine.tool_metadata.get("provider") or "")
+        turn_model = self._bundle.engine.model
         turn_reasoning_effort = self._bundle.engine.reasoning_effort
 
         async def _emit_assistant_progress(messages: list[str]) -> None:
@@ -2502,7 +2504,11 @@ class ReactBackendHost:
                         self._bundle.engine.usage_accounting,
                         turn_usage_start,
                     )
-                    usage_payload = self._bundle.engine.usage_cost_summary(turn_accounting)
+                    usage_payload = self._bundle.engine.usage_cost_summary(
+                        turn_accounting,
+                        provider=turn_provider,
+                        model=turn_model,
+                    )
                     usage_payload["effort"] = str(turn_reasoning_effort or "none")
                     session_usage_payload = self._bundle.engine.usage_cost_summary()
                     self._final_answer_emitted = True

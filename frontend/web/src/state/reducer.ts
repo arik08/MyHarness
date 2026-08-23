@@ -3012,10 +3012,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const value = rawValue || (artifacts.length ? "작성 완료했습니다." : "");
     const last = state.messages[state.messages.length - 1];
     const isFinalAnswer = event.has_tool_uses !== true;
-    const normalizedUsage = normalizeUsageCostSummary(event.usage);
-    const usage = normalizedUsage && !normalizedUsage.effort
-      ? { ...normalizedUsage, effort: state.effort || "none" }
-      : normalizedUsage;
+    const usage = normalizeUsageCostSummary(event.usage);
     const sessionUsage = normalizeUsageCostSummary(event.session_usage);
     const nextSessionUsage = sessionUsage || state.sessionUsage;
     if (isFinalAnswer && isDuplicateAssistantCompletion(last, value, artifacts)) {

@@ -1962,7 +1962,11 @@ async def test_backend_host_emits_answer_and_session_usage_for_final_answer(tmp_
     events = []
 
     async def _emit(event):
+        host._record_history_event(event)
         events.append(event)
+        if event.type == "assistant_delta":
+            host._bundle.engine.set_model("gpt-5.6-luna")
+            host._bundle.engine.set_reasoning_effort("low")
 
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
@@ -1976,9 +1980,13 @@ async def test_backend_host_emits_answer_and_session_usage_for_final_answer(tmp_
     assert complete.usage["input_tokens"] == 30
     assert complete.usage["output_tokens"] == 3
     assert complete.usage["cached_input_tokens"] == 10
+    assert complete.usage["model"] == "gpt-5.4"
     assert complete.usage["effort"] == "high"
     assert complete.session_usage["total_tokens"] == 33
     assert complete.session_usage["cached_input_tokens"] == 10
+    stored_answer = next(event for event in host._history_events if event.get("type") == "assistant")
+    assert stored_answer["usage"]["model"] == "gpt-5.4"
+    assert stored_answer["usage"]["effort"] == "high"
 
 
 @pytest.mark.asyncio

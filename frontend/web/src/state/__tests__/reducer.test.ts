@@ -1286,7 +1286,7 @@ describe("appReducer", () => {
     expect(next.sessionUsage?.total_tokens).toBe(2700);
   });
 
-  it("uses the active effort for completion events from older backends", () => {
+  it("does not infer a completed answer's effort from the current selection", () => {
     const next = appReducer({ ...initialAppState, effort: "xhigh" }, {
       type: "backend_event",
       event: {
@@ -1302,7 +1302,7 @@ describe("appReducer", () => {
       },
     });
 
-    expect(next.messages[0].usage?.effort).toBe("xhigh");
+    expect(next.messages[0].usage?.effort).toBeUndefined();
   });
 
   it("freezes assistant session usage at the completion position", () => {
