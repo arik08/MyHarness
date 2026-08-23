@@ -11,6 +11,7 @@ export const artifactHtmlEditMessage = "myharness:artifact-html-edit";
 export const artifactAiSelectionMessage = "myharness:artifact-ai-selection";
 export const artifactAiCommentsMessage = "myharness:artifact-ai-comments";
 export const artifactFrameScrollMessage = "myharness:artifact-frame-scroll";
+export const artifactFrameResizeMessage = "myharness:artifact-frame-resize";
 export const artifactHtmlEditModeMessage = "myharness:artifact-html-edit-mode";
 export const artifactCaptureRequestMessage = "myharness:artifact-capture-request";
 export const artifactCaptureSnapshotMessage = "myharness:artifact-capture-snapshot";
@@ -1011,6 +1012,34 @@ function iframeScrollBridge(content: string, artifactPath: string, restoreScroll
   } else {
     applyRestore();
   }
+})();
+</script>`;
+  if (/<\/body\s*>/i.test(content)) {
+    return content.replace(/<\/body\s*>/i, `${bridge}</body>`);
+  }
+  return `${content}${bridge}`;
+}
+
+function iframeResizeBridge(content: string, artifactPath: string) {
+  const bridge = `
+<script data-myharness-resize-script="true">
+(() => {
+  const messageType = ${JSON.stringify(artifactFrameResizeMessage)};
+  const artifactPath = ${JSON.stringify(artifactPath)};
+  const dispatchResize = () => {
+    try {
+      window.dispatchEvent(new Event("resize"));
+    } catch {
+      const resizeEvent = document.createEvent("Event");
+      resizeEvent.initEvent("resize", true, true);
+      window.dispatchEvent(resizeEvent);
+    }
+  };
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== messageType || event.data.path !== artifactPath) return;
+    dispatchResize();
+    requestAnimationFrame(dispatchResize);
+  });
 })();
 </script>`;
   if (/<\/body\s*>/i.test(content)) {
@@ -2165,7 +2194,20 @@ function iframeRelativeAssetUrls(content: string, assetBaseUrl: string) {
       return `${assetBaseUrl}${raw}`;
     }
   };
-  return content
+  const scriptBodies: string[] = [];
+  let scriptBodyTokenPrefix = "__MYHARNESS_SCRIPT_BODY_";
+  while (content.includes(scriptBodyTokenPrefix)) {
+    scriptBodyTokenPrefix = `_${scriptBodyTokenPrefix}`;
+  }
+  const protectedContent = content.replace(
+    /(<script\b[^>]*>)([\s\S]*?)(<\/script\s*>)/gi,
+    (_match, openTag, body, closeTag) => {
+      const token = `${scriptBodyTokenPrefix}${scriptBodies.length}__`;
+      scriptBodies.push(body);
+      return `${openTag}${token}${closeTag}`;
+    },
+  );
+  const rewrittenContent = protectedContent
     .replace(/\b(src|poster)\s*=\s*(["'])([^"']+)\2/gi, (_match, attr, quote, value) => {
       return `${attr}=${quote}${escapeAttribute(toAssetUrl(value))}${quote}`;
     })
@@ -2175,6 +2217,10 @@ function iframeRelativeAssetUrls(content: string, assetBaseUrl: string) {
     .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote, value) => {
       return `url(${quote}${escapeAttribute(toAssetUrl(value))}${quote})`;
     });
+  return rewrittenContent.replace(
+    new RegExp(`${scriptBodyTokenPrefix}(\\d+)__`, "g"),
+    (_match, index) => scriptBodies[Number(index)] ?? _match,
+  );
 }
 
 export function isEditablePayload(artifact: ArtifactSummary, payload: ArtifactPayload) {
@@ -2299,6 +2345,27 @@ export function ArtifactPreview({
     return () => frame.removeEventListener("load", postMode);
   }, [aiSelectionEnabled, artifact.path, htmlEditMode, kind, sourceMode]);
   useEffect(() => {
+    if (kind !== "html" || sourceMode) return undefined;
+    const frame = htmlFrameElementRef.current;
+    if (!frame) return undefined;
+    const notifyFrameResize = () => {
+      frame.contentWindow?.postMessage({
+        type: artifactFrameResizeMessage,
+        path: artifact.path,
+      }, "*");
+    };
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(notifyFrameResize);
+    resizeObserver?.observe(frame);
+    frame.addEventListener("load", notifyFrameResize);
+    window.addEventListener("resize", notifyFrameResize);
+    notifyFrameResize();
+    return () => {
+      resizeObserver?.disconnect();
+      frame.removeEventListener("load", notifyFrameResize);
+      window.removeEventListener("resize", notifyFrameResize);
+    };
+  }, [artifact.path, kind, sourceMode]);
+  useEffect(() => {
     if (kind !== "html" || sourceMode) return;
     const frame = htmlFrameElementRef.current;
     if (!frame) return;
@@ -2411,7 +2478,7 @@ export function ArtifactPreview({
       const restoredScroll = htmlScrollPositionsRef.current.get(artifact.path);
       htmlEditFrameRef.current = {
         key: editFrameKey,
-        srcDoc: iframeCaptureBridge(iframeBackBridge(iframeScrollBridge(iframeMermaidZoomBridge(sourcedContent), artifact.path, restoredScroll)), artifact.path),
+        srcDoc: iframeCaptureBridge(iframeBackBridge(iframeResizeBridge(iframeScrollBridge(iframeMermaidZoomBridge(sourcedContent), artifact.path, restoredScroll), artifact.path)), artifact.path),
       };
     }
     return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts allow-popups" srcDoc={htmlEditFrameRef.current.srcDoc} />;

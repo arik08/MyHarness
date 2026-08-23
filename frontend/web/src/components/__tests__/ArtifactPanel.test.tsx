@@ -5,7 +5,7 @@ import html2canvas from "html2canvas";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactPanel, clampArtifactPanelWidth } from "../ArtifactPanel";
-import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactCaptureHorizontalBounds, artifactHtmlEditMessage, artifactHtmlEditModeMessage, selectArtifactCaptureScale, selectArtifactCaptureViewportWidth } from "../ArtifactPreview";
+import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactCaptureHorizontalBounds, artifactFrameResizeMessage, artifactHtmlEditMessage, artifactHtmlEditModeMessage, selectArtifactCaptureScale, selectArtifactCaptureViewportWidth } from "../ArtifactPreview";
 import { ModalHost } from "../ModalHost";
 import { TooltipLayer } from "../TooltipLayer";
 import { AppStateProvider, useAppState } from "../../state/app-state";
@@ -51,11 +51,11 @@ vi.mock("html2canvas", () => ({
   })),
 }));
 
-function renderHtmlPreviewSrcdoc(content: string, comments: ArtifactAiEditComment[] = []) {
+function renderHtmlPreviewSrcdoc(content: string, comments: ArtifactAiEditComment[] = [], assetBaseUrl = "") {
   const { container, unmount } = render(
     <ArtifactPreview
       artifact={{ path: "outputs/report.html", name: "report.html", kind: "html" }}
-      payload={{ kind: "html", content }}
+      payload={{ kind: "html", content, assetBaseUrl }}
       draftContent={content}
       sourceMode={false}
       downloadUrl="#"
@@ -674,6 +674,94 @@ describe("ArtifactPanel", () => {
     expect(srcdoc).not.toContain('host.style.overflow = "hidden"');
     expect(srcdoc).toContain('ancestor.style.minWidth = "0"');
     expect(srcdoc).not.toContain("image.width = canvas.width");
+  });
+
+  it("rewrites relative assets without modifying inline script bodies", () => {
+    const inlineScript = [
+      "const image = canvas.toDataURL(type);",
+      "const fallback = 'url(./images/fallback.png)';",
+      "RSD.draw3d.mount(stage);",
+    ].join("\n");
+    const srcdoc = renderHtmlPreviewSrcdoc([
+      "<html><head>",
+      "<style>.stage{background:url('./images/stage.png')}</style>",
+      '<script src="./scripts/rsd-draw3d.js"></script>',
+      `</head><body><img src="./images/chart.png"><script>${inlineScript}</script></body></html>`,
+    ].join(""), [], "/api/artifact/asset/outputs/");
+
+    expect(srcdoc).toContain('src="/api/artifact/asset/outputs/scripts/rsd-draw3d.js"');
+    expect(srcdoc).toContain('src="/api/artifact/asset/outputs/images/chart.png"');
+    expect(srcdoc).toContain("url('/api/artifact/asset/outputs/images/stage.png')");
+    expect(srcdoc).toContain(`<script>${inlineScript}</script>`);
+    expect(srcdoc).not.toContain("toDataurl(/api/artifact/asset/outputs/type)");
+    expect(srcdoc).not.toContain("url('/api/artifact/asset/outputs/images/fallback.png')");
+  });
+
+  it("relays artifact frame size changes to responsive 3D scripts", async () => {
+    const srcdoc = renderHtmlPreviewSrcdoc([
+      "<html><body><div id=\"stage3d\"><canvas></canvas></div>",
+      "<script>",
+      "window.addEventListener('resize', () => {",
+      "  const canvas = document.querySelector('#stage3d canvas');",
+      "  canvas.dataset.resizeCount = String(Number(canvas.dataset.resizeCount || 0) + 1);",
+      "});",
+      "</script></body></html>",
+    ].join(""));
+    const dom = new JSDOM(srcdoc, {
+      pretendToBeVisual: true,
+      runScripts: "dangerously",
+      url: "http://localhost/",
+    });
+
+    dom.window.postMessage({
+      type: artifactFrameResizeMessage,
+      path: "outputs/report.html",
+    }, "*");
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 30));
+
+    expect(Number((dom.window.document.querySelector("#stage3d canvas") as HTMLCanvasElement).dataset.resizeCount)).toBeGreaterThan(0);
+  });
+
+  it("observes the HTML iframe and posts panel resize notifications", () => {
+    const originalResizeObserver = window.ResizeObserver;
+    let observer: { callback: ResizeObserverCallback; disconnect: ReturnType<typeof vi.fn> } | null = null;
+    class MockResizeObserver {
+      callback: ResizeObserverCallback;
+      disconnect = vi.fn();
+      observe = vi.fn();
+      unobserve = vi.fn();
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        observer = this;
+      }
+    }
+    window.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+    try {
+      const { container } = render(
+        <ArtifactPreview
+          artifact={{ path: "outputs/report.html", name: "report.html", kind: "html" }}
+          payload={{ kind: "html", content: "<html><body>Preview</body></html>" }}
+          draftContent="<html><body>Preview</body></html>"
+          sourceMode={false}
+          downloadUrl="#"
+          onDraftContentChange={vi.fn()}
+        />,
+      );
+      const frame = container.querySelector("iframe") as HTMLIFrameElement;
+      const postMessage = vi.spyOn(frame.contentWindow as Window, "postMessage");
+
+      act(() => {
+        observer?.callback([{ target: frame } as unknown as ResizeObserverEntry], observer as unknown as ResizeObserver);
+      });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: artifactFrameResizeMessage,
+        path: "outputs/report.html",
+      }, "*");
+    } finally {
+      window.ResizeObserver = originalResizeObserver;
+    }
   });
 
   it("keeps rasterized canvas charts inside their captured grid columns", async () => {
