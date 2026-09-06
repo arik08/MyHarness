@@ -77,7 +77,7 @@ digraph brainstorming {
 - If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
 - For appropriately-scoped projects, batch related questions and stay within the active system clarification budget
 - Prefer multiple choice questions when possible, but open-ended is fine too
-- Only one question per message - if a topic needs more exploration, break it into multiple questions
+- Batch related blocking questions concisely; do not ask again for information already supplied or reasonably inferable.
 - Focus on understanding: purpose, constraints, success criteria
 
 **Exploring approaches:**
@@ -111,7 +111,7 @@ digraph brainstorming {
 
 **Documentation:**
 
-- Write the validated design (spec) to `docs/brainstorming/specs/YYYY-MM-DD-<topic>-design.md`
+- Only when the user requests a design file, write the validated design (spec) to `docs/brainstorming/specs/YYYY-MM-DD-<topic>-design.md`.
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 
@@ -127,6 +127,8 @@ Fix any issues inline. No need to re-review — just fix and move on.
 
 **User Review Gate:**
 When the user explicitly requested a reviewable spec before implementation, ask them to review it:
+
+Use one approval point for the complete design. If the user already approved that design, saving the same content does not require a second approval. Request renewed approval only for material changes to the approved design or an explicitly requested separate review gate.
 
 > "Spec written to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
 

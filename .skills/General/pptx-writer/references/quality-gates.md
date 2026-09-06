@@ -24,5 +24,5 @@ Treat a nonzero exit code as blocking. If render tooling is missing, say that vi
 
 ## Repair Loop
 
-Patch and rerun QA until clean, or stop after three loops and report the remaining defects with slide numbers.
+Patch and rerun QA until clean, or stop repeated repairs after three loops. Report remaining defects with slide numbers, their impact, and what is needed to resume. Mark the result as partial completion or verification incomplete as appropriate; a defect report does not constitute passing QA.
 

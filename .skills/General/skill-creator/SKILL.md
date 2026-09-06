@@ -255,7 +255,7 @@ For example, when building an image-editor skill, relevant questions include:
 - "Can you give some examples of how this skill would be used?"
 - "I can imagine users asking for things like 'Remove the red-eye from this image' or 'Rotate this image'. Are there other ways you imagine this skill being used?"
 - "What would a user say that should trigger this skill?"
-- "Where should I create this skill? If you do not have a preference inside MyHarness, I will place it in the program-local `.skills/POSCO_Skill/` category so it travels with a zipped MyHarness bundle. For Codex-only usage, use `$CODEX_HOME/skills` or `~/.codex/skills`."
+- Ask about the target application or sharing scope only when it materially changes the destination and cannot be inferred; otherwise use the defaults below without a location question.
 
 To avoid overwhelming users, avoid asking too many questions in a single message. Start with the most important questions and follow up as needed for better effectiveness.
 
@@ -291,7 +291,7 @@ At this point, it is time to actually create the skill.
 
 Skip this step only if the skill being developed already exists. In this case, continue to the next step.
 
-Before running `init_skill.py`, ask where the user wants the skill created. In MyHarness, if they do not specify a location, default to the program-local `.skills/POSCO_Skill/` category at the MyHarness root so the skill is bundled and auto-discovered with the app. Never create a new skill in `.skills/General/`; developers populate that category only by manually copying skill folders. For Codex-only usage outside MyHarness, default to `$CODEX_HOME/skills`; when `CODEX_HOME` is unset, fall back to `~/.codex/skills`.
+Respect the user's specified location. Otherwise, use `.skills/POSCO_Skill/` at the MyHarness root for MyHarness skills, or `$CODEX_HOME/skills` (falling back to `~/.codex/skills`) for Codex-only skills, without asking for location confirmation. Ask only when the target application or sharing scope cannot be inferred and materially changes the destination. Preserve the current location for updates. Never create a new skill in `.skills/General/`; developers populate that category only by manually copying skill folders.
 
 When the MyHarness `save_skill` tool is available, use it as the primary creation and update path. Submit the final `name`, trigger `description`, complete Markdown `instructions`, UI metadata, and any reusable text resources through `supporting_files` in one call. Put executable Python in a `scripts/*.py` supporting file and reference that path from `SKILL.md`; do not leave reusable executable code only in a Markdown fence. Do not run Python initialization scripts, read the generated template, or attempt partial `edit_file` replacements afterward. `save_skill` writes and validates `SKILL.md`, `agents/openai.yaml`, and supporting files under `scripts/`, `references/`, or `assets/`, selects the program-local POSCO category for new skills, preserves the existing location for updates, and requests a live catalog refresh.
 

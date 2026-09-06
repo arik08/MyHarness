@@ -5,6 +5,8 @@ description: Create polished single-file HTML visual artifacts such as visually 
 
 # Visual Artifact
 
+This copy guides MyHarness runtime artifact creation. The personal Codex `visual-artifact` skill guides Codex artifact creation; apply each copy in its own execution environment.
+
 Create browser-native visual deliverables that are polished enough to screenshot, present, print, or convert to PDF/PPT.
 
 ## Default output
@@ -115,7 +117,7 @@ quarterly trends, sources, or a report:
 
 ## Workflow
 
-1. Infer audience, output type, size target, reuse goal, and visual archetype. For report requests, choose the visual archetype yourself and proceed; ask only when missing information prevents the factual work or the requested output format is genuinely unclear.
+1. Infer audience, output type, size target, reuse goal, and visual archetype. Choose style and layout yourself and proceed; ask only when missing information prevents factual work or the requested output format remains genuinely unclear after considering the user's request and applicable defaults.
 2. Structure the content before styling: sections, data, charts, interactions, export needs. Decide which reader questions deserve interactive controls and which findings must remain visible by default.
 3. Build the single HTML artifact with responsive CSS and print/capture considerations.
 4. Include `@media print` for PDF-friendly output when the artifact is report-like or slide-like.

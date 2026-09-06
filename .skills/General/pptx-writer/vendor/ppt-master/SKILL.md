@@ -225,7 +225,7 @@ python3 ${SKILL_DIR}/scripts/analyze_images.py <project_path>/images
 
 ### Step 5: Image Acquisition Phase (Conditional)
 
-🚧 **GATE**: Step 4 complete; Design Specification & Content Outline generated and user confirmed.
+🚧 **GATE**: Step 4 complete; Design Specification & Content Outline generated consistently with the user's Eight Confirmations approval from Step 4. Saving or outputting that approved design does not require a second approval. If the design changes materially, present the changed items for renewed approval before continuing.
 
 > **Trigger**: At least one row in the resource list has `Acquire Via: ai` and/or `Acquire Via: web`. If every row is `user` or `placeholder`, skip to Step 6.
 

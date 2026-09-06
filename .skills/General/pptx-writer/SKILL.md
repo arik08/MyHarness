@@ -18,7 +18,7 @@ Always run the request through this six-stage pipeline:
 5. **Visual QA**: inspect text overflow, Korean font damage, placeholder remnants, collisions, chart/table readability, and missing titles/page markers.
 6. **Final Reviewer**: check executive tone, message sharpness, source credibility, and slide-to-slide logic.
 
-Do not stop at "file created." A deck is complete only after the generated or edited `.pptx` passes QA, or the remaining risks are explicitly reported.
+Do not stop at "file created." A deck is complete only after the requested `.pptx` is generated or edited and passes required QA. Report unresolved defects as partial completion and unavailable checks as verification incomplete. Reporting risks is not a substitute for passing QA.
 
 ## Router
 
