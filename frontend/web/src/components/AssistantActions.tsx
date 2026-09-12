@@ -671,10 +671,11 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
         onClick={() => void branchAnswer()}
       >
         <svg aria-hidden="true" viewBox="0 0 24 24">
-          <circle cx="6" cy="5" r="2" />
-          <circle cx="6" cy="19" r="2" />
-          <circle cx="18" cy="5" r="2" />
-          <path d="M6 7v10M6 15c0-6 12-2 12-8" />
+          <path d="M4 12h8" />
+          <path d="M12 12 22 2" />
+          <path d="M16 2h6v6" />
+          <path d="m12 12 10 10" />
+          <path d="M16 22h6v-6" />
         </svg>
       </button>
       <UsageCostPopover answerUsage={message.usage} sessionUsage={message.sessionUsage} />
