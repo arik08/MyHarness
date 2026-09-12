@@ -82,7 +82,7 @@ const aiEditHeartbeatIntervalMs = 15_000;
 const clipboardImageMaxBytes = 64 * 1024 * 1024;
 const jsonRequestMaxBytes = 12 * 1024 * 1024;
 const entryPassword = process.env.MYHARNESS_ENTRY_PASSWORD === undefined
-  ? "1212"
+  ? "1111"
   : String(process.env.MYHARNESS_ENTRY_PASSWORD);
 const entryCookieName = "myharness_entry";
 const entryAccessMaxAgeSeconds = 24 * 60 * 60;
