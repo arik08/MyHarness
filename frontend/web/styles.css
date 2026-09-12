@@ -12015,10 +12015,10 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 
 @keyframes historyBusySpin {
   from {
-    transform: translateY(-50%) rotate(0deg);
+    transform: rotate(0deg);
   }
   to {
-    transform: translateY(-50%) rotate(360deg);
+    transform: rotate(360deg);
   }
 }
 
