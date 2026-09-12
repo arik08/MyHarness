@@ -337,6 +337,19 @@ class LiveVerifier:
             )
 
     async def verify_patent(self, healthy: dict[tuple[str, str], bool]) -> None:
+        for source in ("openalex", "semantic_scholar"):
+            if healthy[("patent-tech", source)]:
+                records = await self.call(
+                    f"{source}:search", "patent-tech", "search_records",
+                    {"source": source, "query": "hydrogen steel", "limit": 2}, require_data=True,
+                )
+                record_id = records["data"][0].get("id" if source == "openalex" else "paperId")
+                if not record_id:
+                    raise AssertionError(f"{source} result has no record ID")
+                await self.call(
+                    f"{source}:detail", "patent-tech", "get_record",
+                    {"source": source, "record_id": record_id}, require_data=True,
+                )
         if healthy[("patent-tech", "crossref")]:
             records = await self.call(
                 "crossref:search",
@@ -390,7 +403,7 @@ class LiveVerifier:
             "adb:catalog",
             "development-finance",
             "search_catalog",
-            {"source": "adb_kidb", "dataflow": "EO_NA", "query": "gross domestic", "limit": 5},
+            {"source": "adb_kidb", "dataflow": "DF_NA", "query": "GDP", "limit": 5},
             require_data=True,
         )
         await self.call(
@@ -399,7 +412,7 @@ class LiveVerifier:
             "query_series",
             {
                 "source": "adb_kidb",
-                "dataflow": "EO_NA",
+                "dataflow": "DF_NA",
                 "indicators": "NGDP_XDC",
                 "economies": "PHI+SIN",
                 "start_period": 2023,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { openBackendEvents } from "../api/events";
-import { listLiveSessions, startSession } from "../api/session";
+import { capacityQueueStatusEvent, listLiveSessions, startSession } from "../api/session";
 import { useAppState } from "../state/app-state";
 import type { SessionResponse } from "../types/backend";
 import { loadRuntimePreferences } from "../utils/runtimePreferences";
@@ -44,6 +44,24 @@ export function useBackendSession() {
   const { state, dispatch } = useAppState();
   const sourceRef = useRef<EventSource | null>(null);
   const [eventStreamGeneration, setEventStreamGeneration] = useState(0);
+
+  useEffect(() => {
+    function handleCapacityQueueStatus(event: Event) {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail || {};
+      dispatch({
+        type: "backend_event",
+        event: {
+          type: "capacity_queue_status",
+          kind: String(detail.kind || "session"),
+          status: String(detail.status || "waiting"),
+          position: Number(detail.position || 0),
+          message: String(detail.message || ""),
+        },
+      });
+    }
+    window.addEventListener(capacityQueueStatusEvent, handleCapacityQueueStatus);
+    return () => window.removeEventListener(capacityQueueStatusEvent, handleCapacityQueueStatus);
+  }, [dispatch]);
 
   useEffect(() => {
     if (state.sessionId) {
@@ -142,7 +160,8 @@ export function useBackendSession() {
       onEvent: (event) => coalescer.push(event),
       onError: () => {
         coalescer.flush();
-        dispatch({ type: "backend_event", event: { type: "error", message: "이벤트 연결 오류" }, sessionId });
+        // EventSource reconnects automatically. Keep the current work state until
+        // the backend sends an explicit error/completion event or polling repairs it.
       },
     });
 

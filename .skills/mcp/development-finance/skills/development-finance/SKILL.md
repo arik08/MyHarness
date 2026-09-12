@@ -9,6 +9,7 @@ source: skill-mcp:development-finance
 국제개발금융기관의 국가·산업·인프라 지표에는 `development-finance` MCP를 사용합니다.
 
 - ADB의 아시아 국가·지역 지표는 `source="adb_kidb"`를 사용합니다. 먼저 `search_catalog`에 dataflow를 넣어 공식 indicator 코드를 확인하고, `query_series`에서 지표·경제권 코드를 최대 20개씩 조회합니다.
+- 현재 KIDB v5 데이터플로는 국민계정 `DF_NA`, 인구·사회지표 `DF_PPSI`입니다. 예: `search_catalog(source="adb_kidb", dataflow="DF_NA", query="GDP")`에서 지표를 확인한 뒤 `query_series`에 국가와 시작·종료연도를 지정합니다. 다른 데이터플로는 [공식 API 문서](https://kidb.adb.org/api)의 카탈로그에서 확인합니다.
 - World Bank 개발·부채·인프라 지표는 이미 설치된 기존 `worldbank` MCP를 사용합니다. 새 서버에서 중복 호출하지 않습니다.
 - ADB KIDB는 분당 20회 제한이 있으므로 데이터플로·국가·기간을 묶어 조회하고 불필요한 반복 호출을 피합니다.
 - IFC·MIGA·AIIB·EBRD·IDB 프로젝트 포털은 안정적으로 문서화된 프로젝트 레코드 API가 없고, 상세자료가 HTML/PDF/XLSX와 포털 내부 호출에 의존합니다. 자동화하면 화면 변경·문서 OCR·누락 검증 문제가 커지므로 연결하지 않습니다.

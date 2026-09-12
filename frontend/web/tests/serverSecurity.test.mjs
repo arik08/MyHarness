@@ -372,6 +372,8 @@ test("saves concurrency settings and applies the active-session limit immediatel
     activeSessions: 0,
     busySessions: 0,
     busySessionsForClient: 0,
+    queuedSessions: 0,
+    queuedResponses: 0,
   });
 
   const savedResponse = await fetch(`${app.baseUrl}/api/settings/concurrency`, {
@@ -392,6 +394,7 @@ test("saves concurrency settings and applies the active-session limit immediatel
     body: JSON.stringify({ clientId: "limit-a" }),
   });
   assert.equal(firstResponse.status, 200);
+  const firstPayload = await firstResponse.json();
 
   const statusResponse = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=limit-a`);
   assert.deepEqual(await statusResponse.json(), {
@@ -402,6 +405,8 @@ test("saves concurrency settings and applies the active-session limit immediatel
     activeSessions: 1,
     busySessions: 0,
     busySessionsForClient: 0,
+    queuedSessions: 0,
+    queuedResponses: 0,
   });
 
   const secondResponse = await fetch(`${app.baseUrl}/api/session`, {
@@ -411,8 +416,37 @@ test("saves concurrency settings and applies the active-session limit immediatel
   });
   const secondPayload = await secondResponse.json();
 
-  assert.equal(secondResponse.status, 429);
-  assert.match(secondPayload.error, /여러 명이 동시에 사용 중/);
+  assert.equal(secondResponse.status, 202);
+  assert.equal(secondPayload.status, "waiting");
+  assert.equal(secondPayload.position, 1);
+
+  const queuedStatusResponse = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=limit-b`);
+  const queuedStatus = await queuedStatusResponse.json();
+  assert.equal(queuedStatus.queuedSessions, 1);
+
+  const shutdownResponse = await fetch(`${app.baseUrl}/api/shutdown`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: firstPayload.sessionId, clientId: "limit-a" }),
+  });
+  assert.equal(shutdownResponse.status, 200);
+
+  let queuedSession;
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const queueResponse = await fetch(
+      `${app.baseUrl}/api/session/queue?queueId=${encodeURIComponent(secondPayload.queueId)}&clientId=limit-b`,
+    );
+    if (queueResponse.status === 200) {
+      const payload = await queueResponse.json();
+      if (payload.status === "ready") {
+        queuedSession = payload;
+        break;
+      }
+    }
+    await sleep(100);
+  }
+  assert.ok(queuedSession?.sessionId);
 
   const stored = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
   assert.deepEqual(stored.web_concurrency, {
@@ -421,6 +455,77 @@ test("saves concurrency settings and applies the active-session limit immediatel
     max_busy_sessions_per_client: 1,
     idle_session_timeout_minutes: 5,
   });
+});
+
+test("queues an over-capacity response and starts it automatically when a slot opens", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  t.after(() => app.stop());
+
+  const settingsResponse = await fetch(`${app.baseUrl}/api/settings/concurrency`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({
+      maxActiveSessions: 2,
+      maxBusySessions: 1,
+      maxBusySessionsPerClient: 1,
+      idleSessionTimeoutMinutes: 5,
+    }),
+  });
+  assert.equal(settingsResponse.status, 200);
+
+  async function createSession(clientId) {
+    const response = await fetch(`${app.baseUrl}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientId }),
+    });
+    assert.equal(response.status, 200);
+    return await response.json();
+  }
+
+  const first = await createSession("response-a");
+  const second = await createSession("response-b");
+  await waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${encodeURIComponent(first.sessionId)}&clientId=response-a`,
+    (event) => event.type === "ready",
+    { timeoutMs: 10_000 },
+  );
+  await waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${encodeURIComponent(second.sessionId)}&clientId=response-b`,
+    (event) => event.type === "ready",
+    { timeoutMs: 10_000 },
+  );
+
+  const firstMessage = await fetch(`${app.baseUrl}/api/message`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: first.sessionId,
+      clientId: "response-a",
+      line: "!python -c \"import time; time.sleep(2)\"",
+    }),
+  });
+  assert.equal(firstMessage.status, 200);
+
+  const secondMessage = await fetch(`${app.baseUrl}/api/message`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: second.sessionId, clientId: "response-b", line: "대기열 자동 시작 확인" }),
+  });
+  const secondMessagePayload = await secondMessage.json();
+  assert.equal(secondMessage.status, 202);
+  assert.equal(secondMessagePayload.queued, true);
+  assert.equal(secondMessagePayload.queuePosition, 1);
+
+  const queuedStatusResponse = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=response-b`);
+  assert.equal((await queuedStatusResponse.json()).queuedResponses, 1);
+
+  const started = await waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${encodeURIComponent(second.sessionId)}&clientId=response-b`,
+    (event) => event.type === "capacity_queue_status" && event.status === "started",
+    { timeoutMs: 10_000 },
+  );
+  assert.match(started.message, /AI 응답을 시작/);
 });
 
 test("rejects inconsistent concurrency settings", async (t) => {

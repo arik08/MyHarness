@@ -16,6 +16,8 @@ source: skill-mcp:macro-finance
 - 먼저 `search_catalog`로 시리즈·데이터셋을 찾고 `query_series`에 공식 ID를 전달합니다. SDMX 소스는 dataset과 차원 순서를 임의로 추측하지 않습니다.
 - 결과 비교 전 주기, 단위, 계절조정 여부, 기준연도와 개정시점을 확인합니다. ECB만으로 철강 수요를 직접 단정하지 않습니다.
 - 인증 또는 연결 문제는 `get_source_health`로 구분합니다.
+- FRED는 루트의 비공개 `API_KEY.env`의 `FRED_API_KEY`를 사용하며, 키 변경 후 서버를 재연결합니다. 예: `query_series(source="fred", series_id="DFF", start_period="2025-01-01", end_period="2025-01-03", limit=3)`.
+- FRED 관측치의 `value="."`는 결측값입니다. 0으로 바꾸지 말고, 비교 전에 `search_catalog`에서 단위·주기·계절조정 여부를 확인합니다. FRED 키를 ECB·OECD·일본 e-Stat의 인증으로 사용하지 않습니다.
 
 ## 트리거 경계
 

@@ -209,6 +209,8 @@ def test_web_launchers_prefer_folder_local_env_before_environment_fallbacks() ->
         assert "MYHARNESS_DOTENV" not in batch
         assert 'set "MYHARNESS_LOCAL_ENV=%CD%\\myharness.local.env"' in batch
         assert 'if exist "%MYHARNESS_LOCAL_ENV%" call :load_local_env "%MYHARNESS_LOCAL_ENV%"' in batch
+        assert 'set "MYHARNESS_API_KEY_ENV=%CD%\\API_KEY.env"' in batch
+        assert 'if exist "%MYHARNESS_API_KEY_ENV%" call :load_local_env "%MYHARNESS_API_KEY_ENV%"' in batch
         assert batch.index("call :load_local_env") < batch.index('if "%PORT%"=="" set "PORT=4174"')
         assert 'if not "%%~A"=="" if not "%%~B"=="" set "%%~A=%%~B"' in batch
         assert 'if not "%%~B"=="" if not defined %%~A set "%%~A=%%~B"' in batch

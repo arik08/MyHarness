@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -61,13 +62,29 @@ def test_national_assembly_skill_is_mcp_routed() -> None:
     assert "열린국회정보" in skill.description
 
 
+def test_national_assembly_skill_requires_discovery_ids_and_bounded_empty_result_retry() -> None:
+    skill_path = (
+        Path(__file__).resolve().parents[2]
+        / ".skills/mcp/national-assembly/skills/national-assembly/SKILL.md"
+    )
+    text = skill_path.read_text(encoding="utf-8")
+
+    assert "discover_apis" in text
+    assert "BILL_ID" in text
+    assert "추측으로 만든 ID" in text
+    assert "현재 위원회명 alias" in text
+    assert "`status`" in text and "`research_data`" in text and "`source`" in text
+    assert "한 번 확인" in text
+    assert "무작위 파라미터 반복" in text
+
+
 def test_national_assembly_runtime_is_bundled_with_licenses(monkeypatch) -> None:
     bootstrap = _load_bootstrap_module()
     runtime_dir = Path(bootstrap.__file__).parent
     monkeypatch.delenv("NATIONAL_ASSEMBLY_MCP_DIR", raising=False)
 
     assert bootstrap._server_index() == runtime_dir / "index.js"
-    assert (runtime_dir / "244.index.js").is_file()
+    assert (runtime_dir / "859.index.js").is_file()
     assert (runtime_dir / "package.json").is_file()
     assert (runtime_dir / "UPSTREAM_LICENSE.txt").is_file()
     assert (runtime_dir / "licenses.txt").is_file()
@@ -97,6 +114,50 @@ async def test_national_assembly_bundled_runtime_connects_over_stdio() -> None:
         assert status.state == "connected", status.detail
         assert len(status.tools) >= 1
         assert len(status.resources) >= 1
+
+        members = json.loads(
+            await manager.call_tool(
+                "national-assembly",
+                "assembly_member",
+                {"party": "국민의힘", "page_size": 3},
+            )
+        )
+        assert members["total"] == 3
+        assert all(item for item in members["items"])
+
+        committee = json.loads(
+            await manager.call_tool(
+                "national-assembly",
+                "assembly_org",
+                {
+                    "type": "committee",
+                    "committee_name": "기획재정위원회",
+                    "page_size": 3,
+                },
+            )
+        )
+        assert committee["total"] >= 1
+        assert committee["items"][0]["위원회명"] == "재정경제기획위원회"
+
+        committee_detail = json.loads(
+            await manager.call_tool(
+                "national-assembly",
+                "committee_detail",
+                {"committee_name": "기획재정위원회"},
+            )
+        )
+        assert committee_detail["total"] >= 1
+        assert committee_detail["member_count"] >= 1
+
+        discovery = json.loads(
+            await manager.call_tool(
+                "national-assembly",
+                "discover_apis",
+                {"keyword": "의안 통계", "page_size": 5},
+            )
+        )
+        assert discovery["matched"] >= 1
+        assert discovery["items"]
     finally:
         await manager.close()
 

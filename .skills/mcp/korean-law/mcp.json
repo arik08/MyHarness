@@ -2,9 +2,9 @@
   "mcpServers": {
     "korean-law": {
       "type": "stdio",
-      "command": "node",
+      "command": "python",
       "args": [
-        "runtime/node_modules/korean-law-mcp/build/index.js"
+        "runtime/bootstrap.py"
       ],
       "env": {
         "LAW_OC": "myeongcheol",

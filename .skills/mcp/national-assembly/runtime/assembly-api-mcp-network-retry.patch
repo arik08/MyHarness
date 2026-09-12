@@ -116,3 +116,107 @@ index 6bcb19f..dd32552 100644
      });
 
     it("XML 응답을 에러로 처리한다", async () => {
+diff --git a/src/tools/discover.ts b/src/tools/discover.ts
+--- a/src/tools/discover.ts
++++ b/src/tools/discover.ts
+@@ -30,8 +30,18 @@ function matchesKeyword(
+   row: Record<string, unknown>,
+   keyword: string,
+ ): boolean {
+-  const lower = keyword.toLowerCase();
+-  const name = String(row.INF_NM ?? "").toLowerCase();
+-  const description = String(row.INF_EXP ?? "").toLowerCase();
+-  return name.includes(lower) || description.includes(lower);
++  const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
++  const aliases: Readonly<Record<string, string>> = {
++    "법안": "의안",
++    "bill": "의안",
++    "statistics": "통계",
++  };
++  const terms = keyword.trim().split(/\s+/).flatMap((term) => [term, aliases[term.toLowerCase()]]).filter(Boolean);
++  const haystack = normalize([
++    row.INF_NM,
++    row.INF_EXP,
++    row.CATE_NM,
++    row.ORG_NM,
++  ].map((value) => String(value ?? "")).join(" "));
++  return terms.every((term) => haystack.includes(normalize(term)));
+ }
+@@ -83,9 +93,6 @@ export function registerDiscoverTools(
+       try {
+         // Fetch full API catalog via OPENSRVAPI meta API
+-        const pageSize = Math.min(
+-          params.page_size ?? 300,
+-          300,
+-        );
++        const pageSize = 300;
+         const result: ApiResult = await api.fetchOpenAssembly(
+           API_CODES.META_API_LIST,
+           { pSize: pageSize },
+diff --git a/src/tools/full/committee-detail.ts b/src/tools/full/committee-detail.ts
+--- a/src/tools/full/committee-detail.ts
++++ b/src/tools/full/committee-detail.ts
+@@ -42,8 +42,13 @@ export function registerCommitteeDetailTool(
+         let committees = committeeResult.rows;
+
+         if (params.committee_name) {
+-          const nameLower = params.committee_name.toLowerCase();
++          const aliases: Readonly<Record<string, string>> = {
++            "기획재정위원회": "재정경제기획위원회",
++          };
++          const nameLower = (aliases[params.committee_name] ?? params.committee_name)
++            .replace(/\s+/g, "")
++            .toLowerCase();
+           committees = committees.filter((row) =>
+-            String(row.COMMITTEE_NAME ?? "").toLowerCase().includes(nameLower),
++            String(row.COMMITTEE_NAME ?? "").replace(/\s+/g, "").toLowerCase().includes(nameLower),
+           );
+         }
+@@ -74,7 +79,7 @@ export function registerCommitteeDetailTool(
+           // 위원 명단
+           if (shouldIncludeMembers) {
+             parallelFetches.push(
+-              api.fetchOpenAssembly(API_CODES.COMMITTEE_MEMBERS, { pSize }),
++              api.fetchOpenAssembly(API_CODES.COMMITTEE_MEMBERS, { pSize: 600 }),
+             );
+           } else {
+             parallelFetches.push(Promise.resolve({ rows: [] }));
+@@ -90,9 +95,9 @@ export function registerCommitteeDetailTool(
+               committees.map((c) => String(c.COMMITTEE_NAME ?? "")),
+             );
+             const filteredMembers = memberResult.value.rows.filter((row) =>
+-              committeeNames.has(String(row.COMMITTEE_NAME ?? "")),
++              committeeNames.has(String(row.DEPT_NM ?? row.COMMITTEE_NAME ?? "")),
+             );
+             members = filteredMembers.map((row) => ({
+-              위원회: row.COMMITTEE_NAME,
++              위원회: row.DEPT_NM ?? row.COMMITTEE_NAME,
+               이름: row.HG_NM,
+               정당: row.POLY_NM,
+diff --git a/src/tools/lite/assembly-org.ts b/src/tools/lite/assembly-org.ts
+--- a/src/tools/lite/assembly-org.ts
++++ b/src/tools/lite/assembly-org.ts
+@@ -101,15 +101,19 @@ async function handleCommittee(
+ ) {
+   const queryParams: Record<string, string | number> = {};
+   if (params.page) queryParams.pIndex = params.page;
+-  if (params.page_size) queryParams.pSize = Math.min(params.page_size, maxPageSize);
++  const requestedPageSize = Math.min(params.page_size ?? 20, maxPageSize);
++  queryParams.pSize = params.committee_name ? maxPageSize : requestedPageSize;
+
+   const committeeApiCode = params.lang === "en" ? "ENCMITINFO" : API_CODES.COMMITTEE_INFO;
+   const result = await api.fetchOpenAssembly(committeeApiCode, queryParams);
+   let rows = result.rows;
+
+   if (params.committee_name) {
+-    const kw = params.committee_name.toLowerCase();
++    const aliases: Readonly<Record<string, string>> = {
++      "기획재정위원회": "재정경제기획위원회",
++    };
++    const kw = (aliases[params.committee_name] ?? params.committee_name).replace(/\s+/g, "").toLowerCase();
+     rows = rows.filter((row) =>
+-      String(row.COMMITTEE_NAME ?? "").toLowerCase().includes(kw),
+-    );
++      String(row.COMMITTEE_NAME ?? "").replace(/\s+/g, "").toLowerCase().includes(kw),
++    ).slice(0, requestedPageSize);
+   }

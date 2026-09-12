@@ -180,17 +180,22 @@ def get_series(
 ) -> str:
     """Fetch EIA seriesid data such as PET.RWTC.D or NG.RNGWHHD.D."""
     safe_series = _safe_series_id(series_id)
+    requested_length = _clean_limit(length)
     rows = _extract_response_data(
         _request_json(
             f"seriesid/{safe_series}",
             {
-                "start": start,
-                "end": end,
-                "length": _clean_limit(length),
+                # The EIA seriesid compatibility endpoint silently ignores start/end.
+                # Fetch a bounded history and enforce the requested range locally.
+                "length": MAX_ROWS if start or end else requested_length,
             },
         )
     )
-    return _to_json(rows[: _clean_limit(length)])
+    if start is not None:
+        rows = [row for row in rows if str(row.get("period", "")) >= start]
+    if end is not None:
+        rows = [row for row in rows if str(row.get("period", "")) <= end]
+    return _to_json(rows[:requested_length])
 
 
 @server.tool()

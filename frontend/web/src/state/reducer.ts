@@ -2721,6 +2721,22 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     return state;
   }
   const event = action.event;
+  if (event.type === "capacity_queue_status") {
+    const position = Math.max(0, Number(event.position || 0));
+    const waiting = event.status === "waiting";
+    const responseQueue = event.kind === "response";
+    const fallback = waiting
+      ? `${responseQueue ? "응답" : "접속"} 대기열 ${position}번째`
+      : responseQueue
+        ? "AI 응답 시작 중"
+        : "작업 세션 시작 중";
+    return {
+      ...state,
+      busy: responseQueue ? event.status !== "cancelled" : state.busy,
+      status: event.status === "cancelled" ? "ready" : "processing",
+      statusText: String(event.message || fallback),
+    };
+  }
   if (event.type === "queued_message_status") {
     const requestId = String(event.request_id || "").trim();
     if (!requestId) {
@@ -2996,10 +3012,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const value = rawValue || (artifacts.length ? "작성 완료했습니다." : "");
     const last = state.messages[state.messages.length - 1];
     const isFinalAnswer = event.has_tool_uses !== true;
-    const normalizedUsage = normalizeUsageCostSummary(event.usage);
-    const usage = normalizedUsage && !normalizedUsage.effort
-      ? { ...normalizedUsage, effort: state.effort || "none" }
-      : normalizedUsage;
+    const usage = normalizeUsageCostSummary(event.usage);
     const sessionUsage = normalizeUsageCostSummary(event.session_usage);
     const nextSessionUsage = sessionUsage || state.sessionUsage;
     if (isFinalAnswer && isDuplicateAssistantCompletion(last, value, artifacts)) {

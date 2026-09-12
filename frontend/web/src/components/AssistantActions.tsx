@@ -176,8 +176,9 @@ function formatCacheHitRatio(usage?: UsageCostSummary | null) {
 }
 
 function usageModelLabel(usage?: UsageCostSummary | null) {
-  const model = String(usage?.model || usage?.model_breakdown?.[0]?.model || "").trim();
-  const provider = String(usage?.provider || usage?.model_breakdown?.[0]?.provider || "").trim();
+  const accountedUsage = usage?.model_breakdown?.length === 1 ? usage.model_breakdown[0] : usage;
+  const model = String(accountedUsage?.model || usage?.model || "").trim();
+  const provider = String(accountedUsage?.provider || usage?.provider || "").trim();
   return (model || provider || "-").toUpperCase();
 }
 

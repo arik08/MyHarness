@@ -7,6 +7,8 @@ cd /d "%~dp0"
 
 set "MYHARNESS_LOCAL_ENV=%CD%\myharness.local.env"
 if exist "%MYHARNESS_LOCAL_ENV%" call :load_local_env "%MYHARNESS_LOCAL_ENV%"
+set "MYHARNESS_API_KEY_ENV=%CD%\API_KEY.env"
+if exist "%MYHARNESS_API_KEY_ENV%" call :load_local_env "%MYHARNESS_API_KEY_ENV%"
 
 if "%PORT%"=="" set "PORT=4174"
 if "%MYHARNESS_DEV_PORT%"=="" (

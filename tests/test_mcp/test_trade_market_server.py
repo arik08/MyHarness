@@ -333,3 +333,19 @@ def test_trade_health_success_for_every_source(monkeypatch, source) -> None:
     result = json.loads(module.get_source_health(source))
 
     assert result["ok"] is True
+
+
+def test_trade_market_skill_requires_bounded_real_data_validation() -> None:
+    skill_path = (
+        Path(__file__).resolve().parents[2]
+        / ".skills/mcp/trade-market/skills/trade-market/SKILL.md"
+    )
+    text = skill_path.read_text(encoding="utf-8")
+
+    for field in ("reporter", "partner", "product", "period"):
+        assert field in text
+    assert "search_catalog" in text and "get_source_health" in text
+    assert "한 번만 대조" in text
+    assert "원 조건은 그대로 0건" in text
+    assert "자격증명 차단" in text
+    assert "latest_common_annual_trade_data" in text

@@ -111,6 +111,7 @@ export type BackendEvent =
   | { type: "skills_snapshot"; skills?: unknown[] }
   | { type: "transcript_item"; item?: TranscriptItem }
   | { type: "queued_message_status"; request_id?: string | null; status?: "delivered" | "cancelled" | "not_found" | string | null }
+  | { type: "capacity_queue_status"; kind?: "session" | "response" | string | null; status?: "waiting" | "started" | "cancelled" | string | null; position?: number | null; message?: string | null }
   | { type: "reasoning_summary"; message?: string | null }
   | { type: "assistant_delta"; message?: string | null; value?: string | null }
   | { type: "assistant_complete"; message?: string | null; has_tool_uses?: boolean | null; artifacts?: ArtifactSummary[] | null; usage?: UsageCostSummary | null; session_usage?: UsageCostSummary | null }

@@ -113,7 +113,10 @@ export function ConcurrencyStatus() {
   ];
   const statusLabel = items
     .map((item) => `${item.label} ${displayedRatio(item.current, item.maximum)}`)
+    .concat(`대기열 세션 ${status?.queuedSessions ?? 0}, 응답 ${status?.queuedResponses ?? 0}`)
     .join(", ");
+  const queuedSessions = status?.queuedSessions ?? 0;
+  const queuedResponses = status?.queuedResponses ?? 0;
 
   return (
     <span className="concurrency-status">
@@ -134,6 +137,13 @@ export function ConcurrencyStatus() {
             <span className="concurrency-status-value">{displayedRatio(item.current, item.maximum)}</span>
           </span>
         ))}
+        {queuedSessions || queuedResponses ? (
+          <span className="concurrency-status-row" data-status="queue">
+            <CapacityIcon />
+            <span>대기열</span>
+            <span className="concurrency-status-value">세션 {queuedSessions} · 응답 {queuedResponses}</span>
+          </span>
+        ) : null}
       </span>
     </span>
   );

@@ -115,12 +115,18 @@ class QueryEngine:
         """Return usage buckets grouped by provider/model."""
         return self._cost_tracker.accounting
 
-    def usage_cost_summary(self, accounting: dict | None = None) -> dict:
+    def usage_cost_summary(
+        self,
+        accounting: dict | None = None,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> dict:
         """Return a serializable usage/cost summary for the current session."""
         return usage_cost_summary(
             accounting or self._cost_tracker.accounting,
-            provider=str(self._tool_metadata.get("provider") or ""),
-            model=self._model,
+            provider=str(provider if provider is not None else self._tool_metadata.get("provider") or ""),
+            model=str(model if model is not None else self._model),
         )
 
     def clear(self) -> None:

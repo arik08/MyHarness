@@ -1009,7 +1009,7 @@ describe("MessageList", () => {
               isComplete: true,
               usage: {
                 provider: "openai",
-                model: "gpt-5.4",
+                model: "gpt-5.6-luna",
                 effort: "high",
                 input_tokens: 1200,
                 cached_input_tokens: 900,
@@ -1022,6 +1022,16 @@ describe("MessageList", () => {
                 estimated_cached_input_cost_usd: 0.000225,
                 estimated_output_cost_usd: 0.003,
                 cost_supported: true,
+                model_breakdown: [{
+                  provider: "openai",
+                  model: "gpt-5.4",
+                  input_tokens: 1200,
+                  cached_input_tokens: 900,
+                  uncached_input_tokens: 300,
+                  output_tokens: 200,
+                  total_tokens: 1400,
+                  cost_supported: true,
+                }],
               },
               sessionUsage: {
                 provider: "openai",

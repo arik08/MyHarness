@@ -43,6 +43,8 @@ describe("ChatPanel", () => {
       activeSessions: 12,
       busySessions: 5,
       busySessionsForClient: 2,
+      queuedSessions: 2,
+      queuedResponses: 4,
     });
   });
 
@@ -54,7 +56,7 @@ describe("ChatPanel", () => {
     );
 
     const statusButton = await screen.findByRole("button", {
-      name: "동시 사용 현황: 열린 작업 세션 12 / 20, 동시에 AI 응답을 생성하는 세션 5 / 8, 같은 브라우저의 동시 AI 응답 2 / 3",
+      name: "동시 사용 현황: 열린 작업 세션 12 / 20, 동시에 AI 응답을 생성하는 세션 5 / 8, 같은 브라우저의 동시 AI 응답 2 / 3, 대기열 세션 2, 응답 4",
     });
     const tooltip = screen.getByRole("tooltip");
 
@@ -67,6 +69,25 @@ describe("ChatPanel", () => {
     expect(within(tooltip).getByText("12 / 20")).toBeTruthy();
     expect(within(tooltip).getByText("5 / 8")).toBeTruthy();
     expect(within(tooltip).getByText("2 / 3")).toBeTruthy();
+    expect(within(tooltip).getByText("세션 2 · 응답 4")).toBeTruthy();
+  });
+
+  it("shows the current capacity queue position above the composer", async () => {
+    render(
+      <AppStateProvider
+        initialState={{
+          ...initialAppState,
+          busy: true,
+          status: "processing",
+          statusText: "응답 대기열 2번째 · AI 응답 자리를 기다리는 중",
+        }}
+      >
+        <ChatPanel />
+      </AppStateProvider>,
+    );
+
+    expect(screen.getByRole("status").textContent).toContain("응답 대기열 2번째");
+    await screen.findByRole("button", { name: /동시 사용 현황/ });
   });
 
   it("keeps the artifact panel open when the chat area is clicked once", async () => {
