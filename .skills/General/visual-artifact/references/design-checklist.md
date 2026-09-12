@@ -20,6 +20,9 @@ Use this checklist before final delivery of a visual HTML artifact.
 
 - Palette is limited and purposeful.
 - Typography uses a small scale: title, section heading, body, caption.
+- No rendered text is below `14px`, including captions, sources, metadata, KPI labels, and tooltips. Keep page titles `36px`, section headings `24px`, body `16px`, and presentation body `20px` (`18px` only for a verified readable dense layout).
+- Narrow screens, dense tables, and constrained iframe previews reflow or split content instead of shrinking text below the lower bounds.
+- Chart-library, SVG, canvas, legend, and tooltip text follows the same lower bounds as equivalent HTML text.
 - Borders/shadows are subtle.
 - Radii are restrained unless a soft style was requested.
 

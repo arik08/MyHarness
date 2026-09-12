@@ -92,6 +92,12 @@ quarterly trends, sources, or a report:
 - For Mermaid process maps and dense diagrams, use semantic color groups so the reader can scan the system at a glance: blue for standards/requests/reports, teal for operations/market/planning, orange for investment/CAPEX/strategic decisions, red for risk/issues, and purple for governance/approval. Prefer pale fills with crisp colored borders and readable dark text; use stronger fills only for start/end, warnings, or key status nodes. In flowcharts, add `classDef` styles and assign classes by meaning instead of leaving all nodes the same color.
 - Use accessible contrast and semantic HTML.
 
+## Minimum Type Sizes
+
+- All rendered text must be at least `14px`, including captions, sources, metadata, KPI labels, chart/SVG/canvas labels, legends, and tooltips. Keep body copy at least `16px`, section headings `24px`, and page titles `36px`.
+- For presentation or 16:9 artifacts, use body copy of at least `20px` (`18px` only for a verified readable dense layout).
+- Check final rendered sizes, including chart-library defaults and scaled diagrams. On narrow screens, in previews, and in print, wrap, reflow, or split content instead of shrinking text below these limits.
+
 ## Layout Density And Whitespace QA
 
 - Treat large unused white space inside report panels as a layout defect, especially when a chart or table occupies only the top half of a bordered card. Do not leave a mostly empty card just because its sibling column is taller.
