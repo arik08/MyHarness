@@ -104,7 +104,6 @@ log = logging.getLogger(__name__)
 log = logging.getLogger(__name__)
 
 _PROTOCOL_PREFIX = "OHJSON:"
-_BUILT_IN_SKILL_SOURCES = {"bundled"}
 _TOOL_PROGRESS_FIRST_DELAY_SECONDS = 2.5
 _TOOL_PROGRESS_INTERVAL_SECONDS = 3.0
 _ASSISTANT_DELTA_FLUSH_INTERVAL_SECONDS = 0.12
@@ -2231,7 +2230,7 @@ class ReactBackendHost:
             selected_mcp = self._parse_forced_mcp_routed_skill_line(line)
         if selected_mcp is not None:
             await self._ensure_forced_mcp_available(selected_mcp[0])
-        effective_line = line if image_blocks or is_shell_shortcut else self._line_with_forced_skill(line)
+        effective_line = line if is_shell_shortcut else self._line_with_forced_skill(line)
         if prompt_notes and not is_shell_shortcut:
             effective_line = "\n\n".join(part for part in (effective_line.strip(), *prompt_notes) if part)
         effective_prompt: str | ConversationMessage = effective_line
@@ -3009,7 +3008,6 @@ class ReactBackendHost:
                 usage_count=usage_counts.get(skill.name.lower(), 0),
             )
             for skill in registry.list_skills()
-            if skill.source not in _BUILT_IN_SKILL_SOURCES
             if not hide_learned or not is_learned_skill(skill)
         ]
 
@@ -3242,6 +3240,7 @@ class ReactBackendHost:
             extra_skill_dirs=self._bundle.extra_skill_dirs,
             extra_plugin_roots=self._bundle.extra_plugin_roots,
             settings=self._bundle.current_settings(),
+            include_disabled=True,
         )
         for skill in registry.list_skills():
             if skill.name.lower() == name.lower():
@@ -3249,35 +3248,20 @@ class ReactBackendHost:
         return None
 
     def _parse_forced_skill_line(self, line: str) -> tuple[str, str] | None:
-        stripped = line.strip()
-        if not stripped.startswith("$") or stripped == "$":
-            return None
-        remainder = stripped[1:].lstrip()
-        if not remainder:
-            return None
-        if remainder[0] in {"'", '"'}:
-            quote = remainder[0]
-            end = remainder.find(quote, 1)
-            if end <= 1:
-                return None
-            requested_name = remainder[1:end].strip()
-            user_request = remainder[end + 1 :].lstrip()
-        else:
-            requested_name, _, user_request = remainder.partition(" ")
-            requested_name = requested_name.strip()
-        if not requested_name:
+        if "$" not in line:
             return None
         skills = {skill.name.lower(): skill for skill in self._skill_snapshots()}
-        requested_key = requested_name.lower()
-        canonical_skill = skills.get(requested_key)
-        if canonical_skill is None and requested_key.startswith("mcp:"):
-            mcp_skill = skills.get(requested_key.removeprefix("mcp:"))
-            if mcp_skill is not None and is_mcp_routed_skill_source(mcp_skill.source):
-                canonical_skill = mcp_skill
-        canonical_name = canonical_skill.name if canonical_skill is not None else None
-        if canonical_name is None:
-            return None
-        return canonical_name, user_request
+        for match in re.finditer(r'''(?<!\S)\$\s*(?:"([^"]+)"|'([^']+)'|([^\s"']+))''', line):
+            requested_key = next(value for value in match.groups() if value is not None).strip().lower()
+            canonical_skill = skills.get(requested_key)
+            if canonical_skill is None and requested_key.startswith("mcp:"):
+                mcp_skill = skills.get(requested_key.removeprefix("mcp:"))
+                if mcp_skill is not None and is_mcp_routed_skill_source(mcp_skill.source):
+                    canonical_skill = mcp_skill
+            if canonical_skill is not None:
+                user_request = f"{line[:match.start()]}{line[match.end():]}".strip()
+                return canonical_skill.name, user_request
+        return None
 
     def _parse_forced_mcp_line(self, line: str) -> tuple[str, str] | None:
         statuses = self._mcp_statuses_for_snapshot()

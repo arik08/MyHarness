@@ -242,8 +242,10 @@ describe("CommandHelpMessage", () => {
 
     const input = screen.getByPlaceholderText("메시지를 입력하세요...");
     await user.type(input, "$");
-    expect(screen.queryByRole("option", { name: /\$ship/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /\$ship/ })).toBeTruthy();
     expect(screen.getByRole("option", { name: /\$review/ })).toBeTruthy();
+    await user.click(screen.getByRole("option", { name: /\$ship/ }));
+    expect(input).toHaveProperty("value", "$ship ");
   });
 
   it("shows skill usage counts beside the status pill", async () => {

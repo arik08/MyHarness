@@ -675,12 +675,12 @@ describe("Composer", () => {
     expect(document.querySelectorAll(".messages > article.message")).toHaveLength(0);
   });
 
-  it("shows every enabled skill suggestion when the draft starts with dollar", async () => {
+  it("shows enabled and disabled skills in dollar search and selects a disabled skill", async () => {
     const user = userEvent.setup();
     const skills = Array.from({ length: 10 }, (_, index) => ({
       name: `skill-${index + 1}`,
       description: `Skill ${index + 1}`,
-      enabled: true,
+      enabled: index % 2 === 0,
     }));
 
     render(
@@ -699,6 +699,26 @@ describe("Composer", () => {
 
     expect(screen.getAllByRole("option")).toHaveLength(skills.length);
     expect(screen.getByRole("option", { name: /\$skill-10/ })).toBeTruthy();
+    await user.type(input, "skill-10");
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    await user.keyboard("{Enter}");
+    expect(input).toHaveProperty("value", "$skill-10 ");
+  });
+
+  it("searches disabled skills by description and quotes names containing spaces", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        skills: [{ name: "검토 스킬", description: "문서 점검", enabled: false }],
+      }}>
+        <Composer />
+      </AppStateProvider>,
+    );
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    await user.type(input, "이 문서를 $점검");
+    await user.keyboard("{Enter}");
+    expect(input).toHaveProperty("value", '이 문서를 $"검토 스킬" ');
   });
 
   it("shows configured MCP servers in dollar suggestions", async () => {
@@ -735,7 +755,7 @@ describe("Composer", () => {
         initialState={{
           ...initialAppState,
           skills: [
-            { name: "browser-qa", description: "브라우저 MCP 라우팅", source: "skill-mcp:browser", enabled: true },
+            { name: "browser-qa", description: "브라우저 MCP 라우팅", source: "skill-mcp:browser", enabled: false },
             { name: "browser-notes", description: "일반 브라우저 메모", source: "project", enabled: true },
           ],
         }}

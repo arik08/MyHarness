@@ -374,6 +374,16 @@ async def test_backend_skill_disable_refreshes_current_prompt(tmp_path, monkeypa
 
         assert "remote-review" not in host._bundle.engine.system_prompt
         assert load_project_preferences(tmp_path).disabled_skills == ["remote-review"]
+        snapshot = next(skill for skill in host._skill_snapshots() if skill.name == "remote-review")
+        assert snapshot.enabled is False
+        for line in ("$remote-review inspect this", "inspect this with $remote-review"):
+            forced = host._line_with_forced_skill(line)
+            assert "Selected skill: remote-review" in forced
+            assert "Always use the remote review checklist." in forced
+            assert "inspect this" in forced
+        assert host._line_with_forced_skill("inspect this") == "inspect this"
+        assert "remote-review" not in host._bundle.engine.system_prompt
+        assert load_project_preferences(tmp_path).disabled_skills == ["remote-review"]
     finally:
         await close_runtime(host._bundle)
 
@@ -3136,7 +3146,9 @@ async def test_backend_host_restore_history_replaces_session_metadata(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_image", [False, True])
+@pytest.mark.parametrize("line", ["$review-pr inspect this branch", 'inspect this branch with $"review-pr"'])
+async def test_backend_host_forces_disabled_skill_from_dollar_selection(tmp_path, monkeypatch, with_image, line):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
@@ -3147,6 +3159,7 @@ async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatc
         encoding="utf-8",
     )
 
+    save_project_preferences(tmp_path, ProjectPreferences(disabled_skills=["review-pr"]))
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
     captured: dict[str, str] = {}
@@ -3156,14 +3169,18 @@ async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatc
 
     async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
         del bundle, print_system, render_event, clear_output
-        captured["line"] = line
+        captured["line"] = line if isinstance(line, str) else "\n".join(
+            block.text for block in line.content if isinstance(block, TextBlock)
+        )
         return True
 
     monkeypatch.setattr("myharness.ui.backend_host.handle_line", _fake_handle_line)
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
-        should_continue = await host._process_line("$review-pr inspect this branch")
+        assert "review-pr" not in host._bundle.engine.system_prompt
+        attachments = [FrontendAttachment(media_type="image/png", data="aGVsbG8=", name="sample.png")] if with_image else []
+        should_continue = await host._process_line(line, attachments=attachments)
     finally:
         await close_runtime(host._bundle)
 
@@ -3172,6 +3189,7 @@ async def test_backend_host_forces_skill_from_dollar_prefix(tmp_path, monkeypatc
     assert "# Selected Skill Content" in captured["line"]
     assert "# Review PR" in captured["line"]
     assert "inspect this branch" in captured["line"]
+    assert load_project_preferences(tmp_path).disabled_skills == ["review-pr"]
 
 
 @pytest.mark.asyncio

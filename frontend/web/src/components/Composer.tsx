@@ -112,10 +112,10 @@ function skillSuggestions(skills: SkillItem[], query: string): Suggestion[] {
   const normalized = query.replace(/^\$/, "").toLowerCase();
   return skills
     .filter((skill) => !isSkillMcpSource(skill.source || ""))
-    .filter((skill) => skill.enabled !== false && skill.name.toLowerCase().includes(normalized))
+    .filter((skill) => `${skill.name} ${skill.description || ""}`.toLowerCase().includes(normalized))
     .map((skill) => ({
       kind: "skill",
-      value: `$${skill.name}`,
+      value: /\s/.test(skill.name) ? `$"${skill.name}"` : `$${skill.name}`,
       label: `$${skill.name}`,
       description: skill.description || skill.source || "스킬",
     }));
@@ -129,7 +129,7 @@ function skillMcpSuggestions(skills: SkillItem[], query: string): Suggestion[] {
   const normalized = query.replace(/^\$/, "").replace(/^mcp:/i, "").toLowerCase();
   return skills
     .filter((skill) => isSkillMcpSource(skill.source || ""))
-    .filter((skill) => skill.enabled !== false && skill.name.toLowerCase().includes(normalized))
+    .filter((skill) => `${skill.name} ${skill.description || ""}`.toLowerCase().includes(normalized))
     .map((skill) => ({
       kind: "mcp" as const,
       value: `$mcp:${skill.name}`,

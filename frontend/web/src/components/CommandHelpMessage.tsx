@@ -544,6 +544,9 @@ function catalogTooltip(item: ToggleEntry, fallback: string) {
   return [
     item.name,
     item.description || item.source || fallback,
+    fallback === "스킬" || isSkillMcpItem(item)
+      ? "비활성화하면 자동 트리거만 꺼집니다. $로 직접 선택하면 사용할 수 있습니다."
+      : "",
   ].filter(Boolean).join("\n");
 }
 

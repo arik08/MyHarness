@@ -1052,3 +1052,28 @@ async def test_cron_and_remote_trigger_tools(tmp_path: Path, monkeypatch):
         context,
     )
     assert delete_result.is_error is False
+
+
+@pytest.mark.asyncio
+async def test_disabled_skill_can_be_explicitly_loaded_without_enabling_auto_triggers(tmp_path, monkeypatch):
+    from myharness.project_preferences import ProjectPreferences, save_project_preferences, load_project_preferences
+    from myharness.prompts.context import _build_skills_section
+
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / ".skills" / "manual-only"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: manual-only\ndescription: Manual review.\n---\nUse the manual checklist.\n",
+        encoding="utf-8",
+    )
+    save_project_preferences(tmp_path, ProjectPreferences(disabled_skills=["manual-only"]))
+    assert "manual-only" not in (_build_skills_section(tmp_path) or "")
+
+    result = await SkillTool().execute(
+        SkillToolInput(name="manual-only"), ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert not result.is_error
+    assert "Use the manual checklist." in result.output
+    assert load_project_preferences(tmp_path).disabled_skills == ["manual-only"]
+    assert "manual-only" not in (_build_skills_section(tmp_path) or "")

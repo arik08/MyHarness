@@ -31,6 +31,8 @@ class SkillTool(BaseTool):
     name = "skill"
     description = (
         "Read a bundled, user, or plugin skill by name. "
+        "Disabled skills may be loaded when the user explicitly requests them; "
+        "do not select them automatically based on task triggers. "
         "If the user asks what a skill's source/full text/SKILL.md looks like, call this with mode='source'."
     )
     input_model = SkillToolInput
@@ -44,6 +46,7 @@ class SkillTool(BaseTool):
             context.cwd,
             extra_skill_dirs=context.metadata.get("extra_skill_dirs"),
             extra_plugin_roots=context.metadata.get("extra_plugin_roots"),
+            include_disabled=True,
         )
         skill = registry.get(arguments.name) or registry.get(arguments.name.lower()) or registry.get(arguments.name.title())
         if skill is None:
