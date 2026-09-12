@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -23,8 +24,6 @@ def test_korean_law_runtime_uses_fixed_upstream_release() -> None:
 
 
 def test_korean_law_bootstrap_patches_exact_name_selection(tmp_path: Path) -> None:
-    import importlib.util
-
     bootstrap_path = ROOT / ".skills/mcp/korean-law/runtime/bootstrap.py"
     spec = importlib.util.spec_from_file_location("korean_law_bootstrap", bootstrap_path)
     assert spec and spec.loader
@@ -44,6 +43,17 @@ def test_korean_law_bootstrap_patches_exact_name_selection(tmp_path: Path) -> No
         "    const queryWords = queryName.split(/\\s+/).filter((w) => w.length > 0);",
         encoding="utf-8",
     )
+    # Minimal unpatched v4.9.7 anchors for the API/penalty compatibility fixes.
+    (build.parent / "lib").mkdir()
+    (build / "scenarios").mkdir()
+    (build.parent / "lib/api-client.js").write_text('            target: "eflaw",', encoding="utf-8")
+    (build / "law-text.js").write_text(
+        '    jo: z.string().optional().describe(\n'
+        "${input.efYd || 'current'}`;\n"
+        '        if (articleUnits.length === 0) {\n'
+        '        if (!input.jo && articleUnits.length > 20) {', encoding="utf-8"
+    )
+    (build / "scenarios/penalty.js").write_text('            search: "벌칙",', encoding="utf-8")
 
     bootstrap.apply_compatibility_patch(tmp_path)
     bootstrap.apply_compatibility_patch(tmp_path)
@@ -53,6 +63,54 @@ def test_korean_law_bootstrap_patches_exact_name_selection(tmp_path: Path) -> No
     assert "const exact = annexList.filter" in patched_annex
     assert "=== queryKey" in patched_annex
     assert "부분 LIKE 오탐" in patched_annex
+
+
+def test_law_text_uses_valid_endpoint_and_returns_filtered_article_bodies() -> None:
+    """Exercise the installed JS with a fake HTTP response, including cache reuse."""
+    import subprocess
+
+    runtime = ROOT / ".skills/mcp/korean-law/runtime"
+    spec = importlib.util.spec_from_file_location("law_bootstrap_contract", runtime / "bootstrap.py")
+    assert spec and spec.loader
+    bootstrap = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bootstrap)
+    bootstrap.apply_compatibility_patch(runtime)
+    script = r'''
+import assert from 'node:assert/strict';
+import {LawApiClient} from './lib/api-client.js';
+import {getLawText} from './tools/law-text.js';
+const urls = [];
+globalThis.fetch = async url => {
+    urls.push(new URL(url));
+    const units = Array.from({length: 25}, (_, i) => ({
+        조문여부: '조문', 조문번호: String(i + 1),
+        조문제목: i === 24 ? '과징금' : '일반 사항',
+        조문내용: i === 24 ? '원문 과징금 근거' : '일반 본문',
+    }));
+    return new Response(JSON.stringify({법령: {기본정보: {법령명_한글: '시험법'}, 조문: {조문단위: units}}}));
+};
+const api = new LawApiClient({apiKey: 'fixture'});
+const toc = await getLawText(api, {mst: '123'});
+assert.match(toc.content[0].text, /목차/);
+assert.equal(urls[0].searchParams.get('target'), 'law');
+const filtered = await getLawText(api, {mst: '123', search: '벌칙 과태료 과징금'});
+assert.equal(filtered.isError, undefined);
+assert.match(filtered.content[0].text, /원문 과징금 근거/);
+assert.doesNotMatch(filtered.content[0].text, /일반 본문|목차/);
+await api.getLawText({mst: '123', efYd: '20250101'});
+assert.equal(urls.at(-1).searchParams.get('target'), 'eflaw');
+assert.equal(urls.at(-1).searchParams.get('efYd'), '20250101');
+await api.getLawText({lawId: '456'});
+assert.equal(urls.at(-1).searchParams.get('target'), 'eflaw');
+console.log('PASS');
+'''
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=runtime / "node_modules/korean-law-mcp/build",
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PASS" in result.stdout
 
 
 @pytest.mark.asyncio

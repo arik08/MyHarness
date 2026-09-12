@@ -52,7 +52,7 @@ def test_adb_series_uses_bounded_sdmx_csv(monkeypatch) -> None:
     monkeypatch.setattr(module, "request", fake_request)
     result = json.loads(module.query_series("adb", "EO_NA", "NGDP_XDC", "PHI", 2024, 2024))
 
-    assert calls[0]["url"].endswith("/ADB,EO_NA/A.NGDP_XDC.PHI")
+    assert calls[0]["url"].endswith("/v5/sdmx/data/ADB,DF_NA/A.NGDP_XDC.PHI")
     assert calls[0]["params"]["format"] == "sdmx-csv"
     assert result["data"][0]["OBS_VALUE"] == "26446.3"
 

@@ -37,6 +37,20 @@ def test_first_env_strips_outer_whitespace(monkeypatch) -> None:
     assert official_data.first_env("OFFICIAL_TEST_KEY") == "value-with-space-inside"
 
 
+def test_health_preserves_http_failure_without_leaking_credentials(monkeypatch) -> None:
+    monkeypatch.setattr(official_data.httpx, "get", lambda *args, **kwargs: _response(429))
+    monkeypatch.setattr(official_data.time, "sleep", lambda _seconds: None)
+    result = json.loads(official_data.checked_health_envelope(
+        source="public source",
+        probe=lambda: official_data.request("public source", "https://example.test?key=secret-value"),
+        success_detail="reachable",
+    ))
+    assert result["ok"] is False
+    assert result["credential"]["required"] is False
+    assert "HTTP 429" in result["detail"]
+    assert "secret-value" not in json.dumps(result)
+
+
 def test_get_retries_transient_status_then_succeeds(monkeypatch) -> None:
     responses = [_response(429), _response(503), _response(200)]
     get = MagicMock(side_effect=responses)

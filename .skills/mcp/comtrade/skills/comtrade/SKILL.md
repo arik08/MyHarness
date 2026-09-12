@@ -14,5 +14,7 @@ source: skill-mcp:comtrade
 - 사용자가 명시적으로 "최근 12개월"을 요청한 경우에만 `freq_code="M"`과 완료된 12개 월을 사용합니다. `queryDiagnostics`의 국가별 기간 범위가 다르면 서로 다른 기간을 섞어 비교하지 않습니다.
 - 전체 교역은 `cmd_code="TOTAL"`, 수출은 `flow_code="X"`, 수입은 `flow_code="M"`을 기준으로 사용하되 사용자 조건을 우선합니다.
 - 연결 오류가 의심되면 `check_connection`을 호출합니다.
+- 인증은 루트의 비공개 `API_KEY.env`의 `UN_COMTRADE_API_KEY`를 사용합니다. `UN_COMTRADE_SECONDARY_API_KEY`는 기본 키가 비어 있을 때 선택되는 예비 키이며, 기본 키가 오류를 냈다고 자동으로 두 번째 키로 재시도하는 계약은 아닙니다. 키 교체 후 MCP를 재연결합니다.
+- `check_connection`과 `preview_trade_data` 성공만으로 인증된 데이터 API의 권한을 단정하지 않습니다. 정식 인증 확인은 한 국가·확정된 한 기간·작은 limit으로 `get_trade_data`를 호출합니다. 키가 거부되면 발급값과 구독 권한을 확인하고 문자를 임의로 보완하지 않습니다.
 - 빈 `data`는 해당 조건의 데이터 부재일 뿐 연결 실패를 뜻하지 않습니다. 복수 reporter 조회에서 `missingReporterCodes`나 `incompleteReporterCodes`가 있으면 국가별 조건과 공통 가용 기간을 다시 확인하고, 전체 국가가 0건이라고 단정하지 않습니다.
 - 답변에 reporter, period, 품목·flow·partner 조건과 UN Comtrade 출처를 함께 밝힙니다.

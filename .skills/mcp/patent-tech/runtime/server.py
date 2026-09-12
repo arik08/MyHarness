@@ -153,11 +153,8 @@ def _crossref_params() -> dict[str, str]:
 
 
 def _semantic_headers() -> dict[str, str]:
-    key = _required_env(
-        "SEMANTIC_SCHOLAR_API_KEY is required for reliable Semantic Scholar access.",
-        "SEMANTIC_SCHOLAR_API_KEY",
-    )
-    return {"x-api-key": key}
+    key = first_env("SEMANTIC_SCHOLAR_API_KEY")
+    return {"x-api-key": key} if key else {}
 
 
 def _year_range(start_year: int | None, end_year: int | None) -> tuple[int | None, int | None]:
@@ -436,8 +433,8 @@ def get_source_health(source: str) -> str:
             params={"rows": 1, **_crossref_params()},
         )
     else:
-        credential = ("SEMANTIC_SCHOLAR_API_KEY",)
-        detail = "Semantic Scholar API is reachable with the configured API key."
+        credential = ()
+        detail = "Semantic Scholar public API is reachable; an API key is recommended for independent rate limits."
 
         def probe() -> object:
             return request_json(
@@ -447,18 +444,11 @@ def get_source_health(source: str) -> str:
                 headers=_semantic_headers(),
             )
 
-    missing_detail = (
-        "Adapter is installed, but anonymous requests from the shared/corporate egress are "
-        "rate-limited; configure an API key for reliable use."
-        if selected == "semantic_scholar"
-        else "Official API adapter is installed but its credential is not configured."
-    )
     return checked_health_envelope(
         source=SOURCES[selected],
         credential_env=credential,
         probe=probe,
         success_detail=detail,
-        missing_detail=missing_detail,
     )
 
 

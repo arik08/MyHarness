@@ -40,11 +40,17 @@ def _token(value: str, *, name: str, pattern: str) -> str:
     return safe_identifier(value, field_name=name, pattern=pattern)
 
 
+def _dataflow(value: str) -> str:
+    flow = _token(value.upper(), name="dataflow", pattern=r"[A-Z0-9_]{2,40}")
+    # KIDB v5 renamed the formerly documented national-account/population flows.
+    return {"EO_NA": "DF_NA", "PPL_POP": "DF_PPSI"}.get(flow, flow)
+
+
 @server.tool()
 def search_catalog(source: str, dataflow: str, query: str = "", limit: int = 100) -> str:
     """List ADB KIDB indicators within an official dataflow."""
     selected = _source(source)
-    flow = _token(dataflow.upper(), name="dataflow", pattern=r"[A-Z0-9_]{2,40}")
+    flow = _dataflow(dataflow)
     payload = request_json(
         "ADB KIDB",
         f"{ADB_KIDB_BASE_URL}/dataflow/indicators/{flow}",
@@ -79,7 +85,7 @@ def query_series(
 ) -> str:
     """Query annual ADB indicators; indicators/economies are plus-separated official codes."""
     selected = _source(source)
-    flow = _token(dataflow.upper(), name="dataflow", pattern=r"[A-Z0-9_]{2,40}")
+    flow = _dataflow(dataflow)
     indicator_codes = _token(
         indicators.upper(), name="indicators", pattern=r"[A-Z0-9_]+(?:\+[A-Z0-9_]+){0,19}"
     )
@@ -99,7 +105,7 @@ def query_series(
         raise ValueError("ADB queries must cover at most 50 years.")
     response = request(
         "ADB KIDB",
-        f"{ADB_KIDB_BASE_URL}/v4/sdmx/data/ADB,{flow}/A.{indicator_codes}.{economy_codes}",
+        f"{ADB_KIDB_BASE_URL}/v5/sdmx/data/ADB,{flow}/A.{indicator_codes}.{economy_codes}",
         params={
             "startPeriod": int(start_period) if start_period is not None else None,
             "endPeriod": int(end_period) if end_period is not None else None,
@@ -129,9 +135,9 @@ def get_source_health(source: str) -> str:
     return checked_health_envelope(
         source=SOURCES[selected],
         probe=lambda: request_json(
-            "ADB KIDB", f"{ADB_KIDB_BASE_URL}/dataflow/indicators/PPL_POP", timeout=60
+            "ADB KIDB", f"{ADB_KIDB_BASE_URL}/dataflow/indicators/DF_PPSI", timeout=30
         ),
-        success_detail="ADB KIDB v4 SDMX API is reachable; public limit is 20 requests per minute.",
+        success_detail="ADB KIDB v5 SDMX API is reachable; public limit is 20 requests per minute.",
     )
 
 

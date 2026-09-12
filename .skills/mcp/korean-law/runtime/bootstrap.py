@@ -53,6 +53,45 @@ def apply_compatibility_patch(runtime: Path = RUNTIME) -> None:
         return [];
     // 쿼리에서 단어 추출""",
     )
+    # eflaw requires efYd with MST. The promulgation-date endpoint accepts MST
+    # alone and retains that exact version instead of substituting today's ID.
+    _replace_once(
+        package / "lib" / "api-client.js",
+        '            target: "eflaw",',
+        '            target: params.mst && !params.efYd ? "law" : "eflaw",',
+    )
+    law_text = package / "tools" / "law-text.js"
+    _replace_once(
+        law_text,
+        '    jo: z.string().optional().describe(',
+        '    search: z.string().optional().describe("조문 제목 검색어. 공백으로 구분한 검색어 중 하나와 일치하는 조문 본문을 반환"),\n'
+        '    jo: z.string().optional().describe(',
+    )
+    _replace_once(
+        law_text,
+        "${input.efYd || 'current'}`;",
+        "${input.efYd || 'current'}:${input.search || ''}`;",
+    )
+    _replace_once(
+        law_text,
+        '        if (articleUnits.length === 0) {',
+        '''        if (input.search?.trim()) {
+            const terms = input.search.trim().split(/\\s+/);
+            articleUnits = articleUnits.filter(unit => unit.조문여부 === "조문"
+                && terms.some(term => String(unit.조문제목 || "").includes(term)));
+        }
+        if (articleUnits.length === 0) {''',
+    )
+    _replace_once(
+        law_text,
+        '        if (!input.jo && articleUnits.length > 20) {',
+        '        if (!input.jo && !input.search && articleUnits.length > 20) {',
+    )
+    _replace_once(
+        package / "tools" / "scenarios" / "penalty.js",
+        '            search: "벌칙",',
+        '            search: "벌칙 과태료 과징금",',
+    )
 
 
 def main() -> int:

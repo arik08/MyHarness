@@ -10,6 +10,8 @@ HS·CN 품목과 국가별 수출입 조회에는 `trade-market` MCP를 사용�
 
 - 한국을 보고국으로 한 품목·국가별 통관 통계는 `source="customs_kr"`를 사용합니다. 국가코드는 ISO 영문 2자리이고 조회기간은 한 번에 12개월 이내입니다.
 - 관세청 GW의 공개 Endpoint는 `https://apis.data.go.kr/1220000/nitemtrade`, 상세 기능은 `/getNitemtradeList`입니다. 인증은 승인된 일반 인증키를 `KCS_TRADE_API_KEY` 또는 `DATA_GO_KR_API_KEY` 환경변수로 주입하며, 키 값 자체를 Skill·코드·문서에 기록하지 않습니다.
+- 키는 루트의 비공개 `API_KEY.env`에 저장합니다. URL 인코딩된 `%2F`·`%2B`·`%3D` 형태도 그대로 저장할 수 있으며 런타임이 한 번 디코딩한 뒤 HTTP 파라미터로 인코딩합니다. 키를 수동 URL에 이어 붙이거나 이중 인코딩하지 않습니다.
+- 관세청 활용신청 승인 대상은 `nitemtrade/getNitemtradeList`입니다. 이 키가 모든 공공데이터포털 API에 승인되었다고 가정하지 않습니다. 예: `query_trade(source="customs_kr", flow="both", start_period="2025-01", end_period="2025-01", product="72", partner="US", limit=5)`. 원 응답은 수입·수출을 함께 제공하므로 실제 반환 필드로 흐름을 구분합니다.
 - 미국 수출입은 `source="census"`를 사용합니다. 미국 Census의 숫자형 `CTY_CODE`와 수입·수출 HS 변수가 서로 다름에 주의합니다.
 - EU 회원국의 상세 CN/HS 교역은 `source="eurostat_comext"`와 `DS-045409`를 사용합니다. 대용량 전체 추출을 하지 말고 reporter·partner·product·period를 모두 제한합니다.
 - WTO 지표·관세·시장접근은 `source="wto"`를 사용하고, 먼저 `search_catalog`로 지표 코드를 확인합니다.

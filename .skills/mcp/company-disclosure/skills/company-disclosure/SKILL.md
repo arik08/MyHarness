@@ -15,6 +15,8 @@ source: skill-mcp:company-disclosure
 - SEC는 회사 연락처·제출 이력에 `record_type="company"`, XBRL facts에 `record_type="companyfacts"`를 사용합니다.
 - PDF 원문을 내려받거나 OCR하지 않습니다. 근거 원문이 필요하면 `get_document_link`의 공식 HTML 링크를 제공합니다.
 - 인증 오류와 서비스 장애를 구분하려면 `get_source_health`를 사용합니다. 응답이나 보고서에 API 키를 적지 않습니다.
+- DART 인증은 MyHarness 루트의 비공개 `API_KEY.env`에 저장한 `DART_API_KEY`(대체 이름 `OPENDART_API_KEY`)를 사용합니다. 웹 실행기는 이를 환경변수로 읽습니다. 키 변경 후 이미 연결된 서버는 재연결합니다. 다른 기업공시 소스의 키로 재사용하지 않습니다.
+- 예: `search_catalog(source="opendart", query="삼성전자", limit=2)`에서 반환된 `corp_code`를 회사·공시·재무 조회로 연결합니다. 재무 보고서 코드는 사업보고서 `11011`, 반기 `11012`, 1분기 `11013`, 3분기 `11014`이며 연결재무 `CFS`와 별도재무 `OFS`를 구분합니다.
 - 결과에는 공식 출처, 식별자, 조회시각, 기준시점, 개정·완전성 정보를 함께 제시합니다.
 
 ## 트리거 경계
