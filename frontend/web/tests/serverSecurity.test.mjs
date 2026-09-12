@@ -2736,3 +2736,54 @@ test("loads a compact saved-history preview without starting a backend session",
   const unsafeResponse = await fetch(`${app.baseUrl}/api/history/snapshot?${unsafe}`);
   assert.equal(unsafeResponse.status, 400);
 });
+
+
+test("branches a saved conversation through the selected answer without changing the source", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) await rmWithRetry(workspacePath, { recursive: true, force: true });
+  });
+  const created = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `BranchTest${Date.now().toString(36)}` }),
+  });
+  const { workspace } = await created.json();
+  workspacePath = workspace.path;
+  const directory = join(workspacePath, ".myharness", "sessions");
+  await mkdir(directory, { recursive: true });
+  const msg = (role, text) => ({ role, content: [{ type: "text", text }] });
+  const original = JSON.stringify({
+    session_id: "source", summary: "Branch source", model: "test", created_at: 100,
+    messages: [msg("user", "first"), msg("assistant", "answer"), msg("user", "later"), msg("assistant", "future answer")],
+    history_events: [{ type: "user", text: "first" }, { type: "assistant", text: "answer" }, { type: "user", text: "later" }, { type: "assistant", text: "future answer" }],
+    tool_metadata: { user_input_archive: ["later"], async_agent_tasks: ["running"] },
+  });
+  const sourcePath = join(directory, "session-source.json");
+  await writeFile(sourcePath, original);
+  const post = (body) => fetch(`${app.baseUrl}/api/history/branch`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspacePath, sessionId: "source", answerIndex: 0, answerText: "answer", ...body }),
+  });
+  const response = await post({});
+  assert.equal(response.status, 201);
+  const branch = await response.json();
+  assert.notEqual(branch.sessionId, "source");
+  assert.equal(branch.title, "Branch source · 분기");
+  assert.equal(await readFile(sourcePath, "utf8"), original);
+  const saved = JSON.parse(await readFile(join(directory, `session-${branch.sessionId}.json`), "utf8"));
+  assert.equal(saved.messages.length, 2);
+  assert.equal(saved.history_events.length, 2);
+  assert.equal(JSON.stringify(saved).includes("future answer"), false);
+  assert.equal(saved.tool_metadata.async_agent_tasks, undefined);
+  const preview = await fetch(`${app.baseUrl}/api/history/snapshot?workspacePath=${encodeURIComponent(workspacePath)}&sessionId=${branch.sessionId}`);
+  assert.equal(preview.status, 200);
+  assert.equal((await preview.json()).history_events.at(-1).text, "answer");
+  const listing = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspacePath)}`);
+  assert.equal((await listing.json()).options.length, 2);
+  assert.equal((await post({ sessionId: "../source" })).status, 400);
+  assert.equal((await post({ answerIndex: 99 })).status, 400);
+  assert.equal((await post({ answerText: "stale answer" })).status, 400);
+  assert.equal((await post({ workspacePath: tmpdir() })).status, 400);
+});

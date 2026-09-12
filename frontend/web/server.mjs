@@ -9,6 +9,7 @@ import { basename, delimiter, dirname, extname, isAbsolute, join, normalize, rel
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 import { countTokens } from "gpt-tokenizer";
+import { branchSnapshot } from "./history-branch.mjs";
 import { compareHistoryItems, historyOrderTimestamp, lastAssistantActivityTimestamp } from "./modules/historyOrder.js";
 import { isNoisyBackendLogLine } from "./modules/backendLogNoise.js";
 import { configuredPort } from "./modules/localEnv.js";
@@ -6557,6 +6558,46 @@ async function handleApi(request, response, pathname) {
       });
     } catch (error) {
       json(response, 400, { error: error.message || "Could not update history like" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/history/branch") {
+    try {
+      const body = await readJson(request);
+      const workspace = workspaceFromHistoryRequest(body, workspaceScope);
+      let sourceId = String(body.sessionId || "").trim();
+      const live = sessions.get(sourceId);
+      if (live) {
+        if (live.clientId !== body.clientId || !sessionBelongsToWorkspace(live, workspace)) {
+          json(response, 404, { error: "Unknown session" });
+          return true;
+        }
+        sourceId = live.savedSessionId;
+      }
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sourceId || "")) {
+        throw new Error("저장된 대화가 없습니다. 답변 저장이 끝난 뒤 시도해 주세요.");
+      }
+      const snapshot = await withWorkspaceMutation(workspace.path, async () => {
+        const directory = sessionDirectoryForWorkspace(workspace);
+        const source = await readStoredSessionSnapshot(join(directory, `session-${sourceId}.json`));
+        if (!Array.isArray(source.history_events) || !source.history_events.length) {
+          source.history_events = historyEventsFromStoredMessages(source.messages);
+        }
+        const result = branchSnapshot(source, {
+          sessionId: crypto.randomUUID().replaceAll("-", "").slice(0, 12),
+          answerIndex: body.answerIndex,
+          expectedText: body.answerText,
+        });
+        result.cwd = workspace.path;
+        const target = join(directory, `session-${result.session_id}.json`);
+        await writeJsonFileAtomic(target, result);
+        await writeSessionMetadata(target, result);
+        return result;
+      });
+      json(response, 201, { sessionId: snapshot.session_id, title: snapshot.summary, workspace });
+    } catch (error) {
+      json(response, error?.code === "ENOENT" ? 404 : 400, { error: error.message || "Could not branch history" });
     }
     return true;
   }

@@ -3,6 +3,10 @@ import { saveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
 import type { UsageCostSummary } from "../types/backend";
 import type { ChatMessage } from "../types/ui";
+import { branchHistory } from "../api/branch";
+import { startSession } from "../api/session";
+import { sendBackendRequest } from "../api/messages";
+import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { artifactName } from "../utils/artifacts";
 import { chatShareUrl, shareBaseUrl } from "../utils/chatShare";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -495,11 +499,53 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
   const [copying, setCopying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [branching, setBranching] = useState(false);
+  const branchPendingRef = useRef(false);
   const text = message.text.trim();
   const messageTime = formatMessageTime(message.createdAt);
 
   if (message.suppressActions || !message.isComplete || !text) {
     return null;
+  }
+
+  async function branchAnswer() {
+    if (branchPendingRef.current) return;
+    const answers = state.messages.filter((item) => item.role === "assistant" && item.isComplete && !item.suppressActions && item.text.trim());
+    const answerIndex = answers.findIndex((item) => item.id === message.id);
+    if (answerIndex < 0 || !(state.activeHistoryId || state.sessionId)) return;
+    branchPendingRef.current = true;
+    setBranching(true);
+    setStatus("새 채팅으로 분기 중...");
+    try {
+      const branch = await branchHistory({
+        sessionId: state.activeHistoryId || state.sessionId || "",
+        clientId: state.clientId,
+        workspacePath: state.workspacePath || undefined,
+        workspaceName: state.workspaceName || undefined,
+        answerIndex,
+        answerText: text,
+      });
+      dispatch({ type: "append_history", history: [{ value: branch.sessionId, label: branch.title, description: branch.title, workspace: branch.workspace }] });
+      const session = await startSession({
+        clientId: state.clientId,
+        cwd: branch.workspace.path,
+        ...runtimePreferencesFromState(state),
+      });
+      dispatch({ type: "session_started", sessionId: session.sessionId, clientId: state.clientId });
+      dispatch({ type: "set_workspace", workspace: branch.workspace });
+      dispatch({ type: "clear_composer" });
+      dispatch({ type: "begin_history_restore", sessionId: branch.sessionId });
+      await sendBackendRequest(session.sessionId, state.clientId, {
+        type: "apply_select_command", command: "resume", value: branch.sessionId,
+      });
+    } catch (error) {
+      dispatch({ type: "finish_history_restore" });
+      dispatch({ type: "open_modal", modal: { kind: "error", message: `분기 실패: ${error instanceof Error ? error.message : String(error)}` } });
+    } finally {
+      branchPendingRef.current = false;
+      setBranching(false);
+      setStatus("");
+    }
   }
 
   async function copyAnswer() {
@@ -614,6 +660,21 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
           <circle cx="18" cy="19" r="3" />
           <path d="m8.6 10.6 6.8-4.2" />
           <path d="m8.6 13.4 6.8 4.2" />
+        </svg>
+      </button>
+      <button
+        className="assistant-action-button"
+        type="button"
+        data-tooltip="여기서 분기"
+        aria-label="이 답변까지 새 채팅으로 분기"
+        disabled={branching || !(state.activeHistoryId || state.sessionId)}
+        onClick={() => void branchAnswer()}
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <circle cx="6" cy="5" r="2" />
+          <circle cx="6" cy="19" r="2" />
+          <circle cx="18" cy="5" r="2" />
+          <path d="M6 7v10M6 15c0-6 12-2 12-8" />
         </svg>
       </button>
       <UsageCostPopover answerUsage={message.usage} sessionUsage={message.sessionUsage} />

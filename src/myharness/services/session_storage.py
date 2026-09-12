@@ -39,6 +39,7 @@ _PERSISTED_TOOL_METADATA_KEYS = (
     "session_title_user_edited",
     "workflow_duration_seconds",
     "web_client_id",
+    "branch_origin",
 )
 
 _SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")

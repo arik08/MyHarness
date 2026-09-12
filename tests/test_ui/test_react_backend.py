@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -4215,3 +4217,63 @@ async def test_ask_question_emits_structured_choices():
         {"value": "green", "label": "Green", "description": "Use the green theme"},
         {"value": "blue", "label": "Blue", "description": ""},
     ]
+
+
+@pytest.mark.asyncio
+async def test_branch_snapshot_resumes_and_continues_without_changing_source(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    events = [
+        {"type": "user", "text": "first question"},
+        {"type": "assistant", "text": "first answer"},
+        {"type": "user", "text": "future question"},
+        {"type": "assistant", "text": "future answer"},
+    ]
+    source = {
+        "session_id": "source", "cwd": str(tmp_path), "model": "test",
+        "summary": "Original", "history_events": events,
+        "messages": [
+            {"role": event["type"], "content": [{"type": "text", "text": event["text"]}]}
+            for event in events
+        ],
+    }
+    branch_module = Path(__file__).resolve().parents[2] / "frontend/web/history-branch.mjs"
+    script = (
+        f"import {{ branchSnapshot }} from {json.dumps(branch_module.as_uri())};"
+        "let input = ''; for await (const chunk of process.stdin) input += chunk;"
+        "process.stdout.write(JSON.stringify(branchSnapshot(JSON.parse(input), "
+        "{sessionId: 'child', answerIndex: 0, expectedText: 'first answer'})));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        input=json.dumps(source), text=True, encoding="utf-8", capture_output=True, check=True,
+    )
+    sessions = tmp_path / ".myharness/sessions"
+    sessions.mkdir(parents=True)
+    original = sessions / "session-source.json"
+    original.write_text(json.dumps(source), encoding="utf-8")
+    before = original.read_bytes()
+    (sessions / "session-child.json").write_text(result.stdout, encoding="utf-8")
+    client = StaticApiClient("new branch answer")
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client, cwd=tmp_path, connect_mcp=False)
+    host._emit = AsyncMock()
+    try:
+        await host._restore_history_snapshot("child")
+        assert host._bundle.session_id == "child"
+        assert [message.text for message in host._bundle.engine.messages] == ["first question", "first answer"]
+        await host._process_line("new branch question")
+        saved = host._bundle.session_backend.load_by_id(tmp_path, "child")
+        assert saved is not None
+        texts = [ConversationMessage.model_validate(item).text for item in saved["messages"]]
+        assert texts == ["first question", "first answer", "new branch question", "new branch answer"]
+        assert saved["tool_metadata"]["branch_origin"] == {"session_id": "source", "answer_index": 0}
+        assert original.read_bytes() == before
+        await host._restore_history_snapshot("source")
+        assert "branch_origin" not in host._bundle.engine.tool_metadata
+        host._bundle.engine.tool_metadata["branch_origin"] = {"session_id": "source"}
+        host._start_new_saved_session()
+        assert "branch_origin" not in host._bundle.engine.tool_metadata
+    finally:
+        await close_runtime(host._bundle)

@@ -600,6 +600,7 @@ _RESTORABLE_TOOL_METADATA_DEFAULTS = {
     "session_title_source": "",
     "session_title_user_edited": False,
     "workflow_duration_seconds": None,
+    "branch_origin": None,
 }
 
 
@@ -2918,6 +2919,7 @@ class ReactBackendHost:
             "session_title_source",
             "session_title_user_edited",
             "workflow_duration_seconds",
+            "branch_origin",
         ):
             self._bundle.engine.tool_metadata.pop(key, None)
 
