@@ -18,6 +18,20 @@ MyHarness는 OpenHarness agent runtime을 브라우저 UI로 감싼 도구입니
 
 ## 빠른 시작
 
+### macOS
+
+Python과 Node.js가 설치된 Mac에서는 `run_myharness_web.command`를 더블클릭하거나 터미널에서 실행하세요.
+
+```sh
+./run_myharness_web.command
+```
+
+첫 실행에 프로젝트 가상환경과 의존성을 설치하고 UI를 빌드합니다. 브라우저에서 `http://127.0.0.1:4174`에 접속하세요. 기본 입장 비밀번호는 `1111`입니다. 종료는 실행한 터미널에서 `Ctrl+C`를 누르세요. UI 소스를 수정한 경우 `npm run build --prefix frontend/web`로 다시 빌드하세요.
+
+기존 provider 설정은 유지하며 `API_KEY.env`와 `myharness.local.env`의 값을 읽습니다. AI를 사용하려면 앱에서 사용할 provider의 인증을 설정해야 합니다. Mac 런처는 기본적으로 이 컴퓨터에서만 접속할 수 있게 실행됩니다.
+
+### Windows
+
 처음 받은 PC에서는 이 폴더에서 아래 파일을 한 번 실행하세요.
 
 ```bat

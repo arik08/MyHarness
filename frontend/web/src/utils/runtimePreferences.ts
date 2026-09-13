@@ -2,7 +2,6 @@ import type { AppState, RuntimePickerOption } from "../types/ui";
 
 const runtimePreferenceKey = "myharness:runtimePreferences";
 const runtimePreferenceVersion = 2;
-const defaultActiveProfile = "p-gpt";
 
 export type RuntimePreferences = {
   activeProfile?: string;
@@ -37,7 +36,8 @@ export function loadRuntimePreferences(): RuntimePreferences {
     const appSettings = JSON.parse(localStorage.getItem("myharness:appSettings") || "{}") as {
       gpt56ContextMode?: string;
     };
-    const activeProfile = normalizeActiveProfile(value.activeProfile) || defaultActiveProfile;
+    // Let the backend use settings.json until the user chooses a provider.
+    const activeProfile = normalizeActiveProfile(value.activeProfile) || undefined;
     const resetBuiltInModel = value.version !== runtimePreferenceVersion
       && (activeProfile === "codex" || activeProfile === "p-gpt");
     const preferences: RuntimePreferences = {
@@ -54,7 +54,7 @@ export function loadRuntimePreferences(): RuntimePreferences {
     return preferences;
   } catch {
     return {
-      activeProfile: defaultActiveProfile,
+      activeProfile: undefined,
       gpt56ContextMode: "cost-saver",
     };
   }

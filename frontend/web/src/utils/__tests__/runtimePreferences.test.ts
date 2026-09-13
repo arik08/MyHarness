@@ -22,8 +22,13 @@ describe("runtime preference utilities", () => {
     expect(preferences.gpt56ContextMode).toBe("cost-saver");
   });
 
-  it("defaults to P-GPT when no provider choice has been stored", () => {
-    expect(loadRuntimePreferences().activeProfile).toBe("p-gpt");
+  it("defers to the backend profile when no provider choice has been stored", () => {
+    expect(loadRuntimePreferences().activeProfile).toBeUndefined();
+  });
+
+  it("defers to the backend profile when browser preferences are invalid", () => {
+    localStorage.setItem("myharness:runtimePreferences", "invalid json");
+    expect(loadRuntimePreferences().activeProfile).toBeUndefined();
   });
 
   it("keeps the last explicitly selected provider", () => {
