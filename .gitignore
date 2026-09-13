@@ -44,6 +44,8 @@ react_tui_smoke.txt
 
 # Local UI/browser check artifacts
 .tmp-chrome-check/
+TEMP_DEBUG_IMAGES/
+**/.myharness/ui-checks/
 /*.png
 myharness-*.err.log
 myharness-*.out.log
