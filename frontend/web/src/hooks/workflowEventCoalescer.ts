@@ -50,6 +50,8 @@ export function createWorkflowEventCoalescer(
   const pending = new Map<string, PendingDelta>();
   let serial = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let assistantWindow = false;
+  let assistantDelta = "";
 
   function clearTimer() {
     if (timer === null) {
@@ -61,6 +63,10 @@ export function createWorkflowEventCoalescer(
 
   function flush() {
     clearTimer();
+    assistantWindow = false;
+    const text = assistantDelta;
+    assistantDelta = "";
+    if (text) emit({ type: "assistant_delta", message: text });
     const entries = [...pending.values()].sort((left, right) => left.order - right.order);
     pending.clear();
     for (const entry of entries) {
@@ -76,6 +82,22 @@ export function createWorkflowEventCoalescer(
   }
 
   function push(event: BackendEvent) {
+    if (event.type === "assistant_delta") {
+      const text = String(event.message ?? event.value ?? "");
+      if (!text) return;
+      if (pending.size) flush();
+      if (!assistantWindow) {
+        // Keep the first token immediate; batch the burst behind it on a fixed
+        // timer so a long transcript does not re-render once per network chunk.
+        assistantWindow = true;
+        emit(event);
+      } else {
+        assistantDelta += text;
+      }
+      scheduleFlush();
+      return;
+    }
+    if (assistantWindow) flush();
     if (!isToolInputDeltaEvent(event)) {
       flush();
       emit(event);

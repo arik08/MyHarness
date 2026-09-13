@@ -114,7 +114,9 @@ describe("CommandHelpMessage", () => {
       </AppStateProvider>,
     );
 
-    for (const label of ["스킬", "MCP", "플러그인", "사용 가능한 명령어"]) {
+    expect(screen.queryByText("플러그인")).toBeNull();
+    expect(screen.queryByText("사용 가능한 명령어")).toBeNull();
+    for (const label of ["스킬", "MCP"]) {
       const details = screen.getByText(label).closest("details") as HTMLDetailsElement | null;
       expect(details?.open).toBe(false);
       expectHelpSectionIcon(label);
@@ -368,59 +370,6 @@ describe("CommandHelpMessage", () => {
     expect(spreadsheetTooltip).not.toContain("spreadsheet is the primary");
   });
 
-  it("shows plugin descriptions in plugin catalog tooltips", async () => {
-    const user = userEvent.setup();
-    const helpText = [
-      "플러그인:",
-      "- sample-review-plugin [활성]: Legal review skills",
-      "",
-      "사용 가능한 명령어:",
-      "- /help 도움말",
-    ].join("\n");
-
-    render(
-      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1" }}>
-        <CommandHelpMessage text={helpText} />
-      </AppStateProvider>,
-    );
-
-    await openHelpSection(user, "플러그인");
-    const legalPlugin = screen.getByRole("button", { name: /sample-review-plugin/ });
-    expect(legalPlugin.textContent).toContain("Legal review");
-    expect(legalPlugin.getAttribute("data-tooltip")).toContain("Legal review");
-    expect(legalPlugin.getAttribute("data-tooltip")).toContain("Legal review");
-  });
-
-  it("keeps plugin order from the help catalog", async () => {
-    const user = userEvent.setup();
-    const helpText = [
-      "플러그인:",
-      "- workflow-kit [활성]: Workflow kit skills",
-      "- POSCO 스킬 [활성]: 업무 자료 정리",
-      "- sample-review-plugin [활성]: Legal review skills",
-      "",
-      "사용 가능한 명령어:",
-      "- /help 도움말",
-    ].join("\n");
-
-    const { container } = render(
-      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1" }}>
-        <CommandHelpMessage text={helpText} />
-      </AppStateProvider>,
-    );
-
-    await openHelpSection(user, "플러그인");
-    const pluginCard = Array.from(container.querySelectorAll("details.command-card"))
-      .find((card) => card.querySelector("summary")?.textContent?.includes("플러그인"));
-    const pluginNames = Array.from(pluginCard?.querySelectorAll("button.skill-toggle-pill strong") ?? [])
-      .map((node) => node.textContent);
-    expect(pluginNames).toEqual([
-      "workflow-kit",
-      "POSCO 스킬",
-      "sample-review-plugin",
-    ]);
-  });
-
   it("renders POSCO plugin skills from the real catalog without virtual business skills", async () => {
     const user = userEvent.setup();
     const poscoSkills = [
@@ -471,7 +420,6 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "스킬");
-    await openHelpSection(user, "플러그인");
 
     const poscoGroup = screen.getByRole("group", { name: "POSCO 스킬 플러그인 스킬" });
     expect(within(poscoGroup).getByText("POSCO 스킬")).toBeTruthy();
@@ -910,10 +858,8 @@ describe("CommandHelpMessage", () => {
     expect(screen.queryByRole("button", { name: /legal-contract-review/ })).toBeNull();
     expect(screen.queryByRole("group", { name: /sample-office-presets 플러그인 스킬/ })).toBeNull();
 
-    await openHelpSection(user, "플러그인");
-    const pluginButtons = screen.getAllByRole("button", { name: /sample-review-plugin/ });
-    expect(pluginButtons.some((button) => button.textContent?.includes("비활성"))).toBe(true);
-    expect(screen.getByRole("button", { name: /sample-office-presets/ }).textContent).toContain("비활성");
+    expect(screen.queryByText("플러그인")).toBeNull();
+
   });
 
   it("keeps a disabled plugin skill group visible while it is optimistically re-enabled", async () => {
@@ -1115,24 +1061,20 @@ describe("CommandHelpMessage", () => {
     );
 
     await openHelpSection(user, "스킬");
-    await openHelpSection(user, "플러그인");
 
     const legalGroup = screen.getByRole("group", { name: /sample-review-plugin 플러그인 스킬/ });
     expect(legalGroup.textContent).toContain("legal-contract-review");
     expect(legalGroup.getAttribute("data-skill-group-tone")).toBe("1");
-    expect(screen.getByText(/Legal review skills/).closest("button")?.getAttribute("data-skill-group-tone")).toBe("1");
 
     const deployGroup = screen.getByRole("group", { name: /deploy 플러그인 스킬/ });
     expect(deployGroup.textContent).toContain("deploy-helper");
     expect(deployGroup.getAttribute("data-skill-group-tone")).toBe("2");
-    expect(screen.getByText("Deploy skills").closest("button")?.getAttribute("data-skill-group-tone")).toBe("2");
 
     const workflowKitGroup = screen.getByRole("group", { name: /workflow-kit 플러그인 스킬/ });
     expect(workflowKitGroup.textContent).toContain("using-workflow-kit");
     expect(workflowKitGroup.textContent).toContain("skill-writer");
     expect(workflowKitGroup.textContent).not.toContain("review");
     expect(workflowKitGroup.getAttribute("data-skill-group-tone")).toBe("3");
-    expect(screen.getByText(/Workflow kit skills/).closest("button")?.getAttribute("data-skill-group-tone")).toBe("3");
 
     const pluginGroupNames = screen
       .getAllByRole("group")
@@ -1143,12 +1085,6 @@ describe("CommandHelpMessage", () => {
       "deploy 플러그인 스킬",
       "workflow-kit 플러그인 스킬",
     ]);
-
-    const pluginCard = Array.from(container.querySelectorAll("details.command-card"))
-      .find((card) => card.querySelector("summary")?.textContent?.includes("플러그인"));
-    const pluginNames = Array.from(pluginCard?.querySelectorAll("button.skill-toggle-pill strong") ?? [])
-      .map((node) => node.textContent);
-    expect(pluginNames).toEqual(["sample-review-plugin", "deploy", "workflow-kit"]);
 
     const standaloneGroup = screen.getByRole("group", { name: "일반 스킬" });
     expect(standaloneGroup.className).toContain("skill-plugin-group");

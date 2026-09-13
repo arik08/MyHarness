@@ -1,12 +1,28 @@
 """API exports."""
 
-from myharness.api.client import AnthropicApiClient
-from myharness.api.codex_client import CodexApiClient
-from myharness.api.copilot_client import CopilotClient
-from myharness.api.errors import MyHarnessApiError
-from myharness.api.openai_client import OpenAICompatibleClient
-from myharness.api.provider import ProviderInfo, auth_status, detect_provider
-from myharness.api.usage import UsageSnapshot
+from importlib import import_module
+
+_EXPORT_MODULES = {
+    "AnthropicApiClient": "client",
+    "CodexApiClient": "codex_client",
+    "CopilotClient": "copilot_client",
+    "OpenAICompatibleClient": "openai_client",
+    "MyHarnessApiError": "errors",
+    "ProviderInfo": "provider",
+    "auth_status": "provider",
+    "detect_provider": "provider",
+    "UsageSnapshot": "usage",
+}
+
+
+def __getattr__(name):
+    """Keep metadata imports independent of provider SDK initialization."""
+    module = _EXPORT_MODULES.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(f"{__name__}.{module}"), name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "AnthropicApiClient",

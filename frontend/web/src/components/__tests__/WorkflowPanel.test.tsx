@@ -20,6 +20,51 @@ function stylesheetBlock(selector: string) {
 }
 
 describe("WorkflowPanel", () => {
+  it("keeps a Korean work note beside its web tool after completion", () => {
+    const input = { query: "POSCO", progress_message: "포스코의 최근 언론 동향을 검색하고 있습니다." };
+    const running = { id: "web", toolName: "web_search", title: "web_search", detail: "query: POSCO", toolInput: input, status: "running" as const, level: "child" as const };
+    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[running]} /></AppStateProvider>);
+    expect(screen.getByText("웹 검색").closest(".workflow-step")?.querySelector("small")?.textContent).toContain(input.progress_message);
+    rerender(<AppStateProvider><WorkflowPanel events={[{ ...running, status: "done", output: "검색 결과: POSCO\n1. article\nURL: https://example.com" }]} /></AppStateProvider>);
+    const step = screen.getByText("웹 검색").closest(".workflow-step")!;
+    expect(step.querySelector("small")?.textContent).toContain(input.progress_message);
+    expect(step.querySelector("small")?.textContent).toContain("조회 완료");
+    expect(step.querySelector("small")?.textContent).not.toContain("URL:");
+    expect(step.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+  it("shows readable MCP results with the original output in a closed disclosure", () => {
+    const output = JSON.stringify({ total: 5, items: [{ billName: "철강산업 특별법" }] });
+    render(<AppStateProvider><WorkflowPanel events={[{
+      id: "bill-result", toolName: "mcp__national-assembly__assembly_bill",
+      title: "mcp__national-assembly__assembly_bill", detail: output.slice(0, 20),
+      output, status: "done", level: "child",
+    }]} /></AppStateProvider>);
+    const step = screen.getByText("국회 법안 검색").closest(".workflow-step")!;
+    expect(step.querySelector("small")?.textContent).toContain("조회 결과 5건 · 철강산업 특별법");
+    expect(step.querySelector("small")?.textContent).not.toContain('{"total"');
+    const toggle = step.querySelector("button")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(step.querySelector("pre")).toBeNull();
+    act(() => { toggle.querySelector("strong")!.click(); });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(step.querySelector("pre")?.textContent).toContain(output);
+    act(() => { step.querySelector("pre")!.click(); });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    act(() => { toggle.querySelector("small")!.click(); });
+    expect(step.querySelector("pre")).toBeNull();
+  });
+
+  it("keeps MCP failures visible even when raw output is collapsed", () => {
+    render(<AppStateProvider><WorkflowPanel events={[{
+      id: "bill-error", toolName: "mcp__national-assembly__bill_detail",
+      title: "mcp__national-assembly__bill_detail", detail: "invalid bill_id",
+      output: "invalid bill_id", status: "error", level: "child",
+    }]} /></AppStateProvider>);
+    const step = screen.getByText("법안 상세 조회").closest(".workflow-step")!;
+    expect(step.querySelector("small")?.textContent).toContain("실패했습니다");
+    expect(step.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -95,7 +140,7 @@ describe("WorkflowPanel", () => {
     expect(screen.queryByText("도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.")).toBeNull();
   });
 
-  it("renders markdown emphasis in reasoning summaries", () => {
+  it("shows progress memo inline without requiring a separate disclosure", () => {
     render(
       <AppStateProvider>
         <WorkflowPanel
@@ -104,7 +149,7 @@ describe("WorkflowPanel", () => {
               id: "reasoning",
               toolName: "",
               title: "진행 메모",
-              detail: "**Locating insertion point with grep**",
+              detail: "**포스코 관련 기사와 출처를 확인하고 있습니다.**",
               status: "done",
               level: "parent",
               role: "reasoning",
@@ -114,9 +159,12 @@ describe("WorkflowPanel", () => {
       </AppStateProvider>,
     );
 
-    const emphasized = screen.getByText("Locating insertion point with grep");
+    const emphasized = screen.getByText("포스코 관련 기사와 출처를 확인하고 있습니다.");
     expect(emphasized.tagName).toBe("STRONG");
-    expect(document.querySelector(".workflow-status-detail")?.textContent).toBe("완료 · Locating insertion point with grep");
+    const step = emphasized.closest(".workflow-step")!;
+    expect(step.querySelector("details")).toBeNull();
+    expect(step.querySelector(".workflow-status-detail")?.textContent).toBe("완료 · 포스코 관련 기사와 출처를 확인하고 있습니다.");
+    expect(screen.queryByText("내부 진행 기록")).toBeNull();
   });
 
   it("pins activity status below accumulating workflow records", () => {

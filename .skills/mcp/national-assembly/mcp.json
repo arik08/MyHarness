@@ -14,7 +14,20 @@
         "MCP_TRANSPORT": "stdio"
       },
       "cwd": ".",
-      "auto_connect": false
+      "auto_connect": false,
+      "read_only_tools": [
+        "assembly_member",
+        "assembly_bill",
+        "assembly_session",
+        "assembly_org",
+        "discover_apis",
+        "query_assembly",
+        "bill_detail",
+        "committee_detail",
+        "petition_detail",
+        "research_data",
+        "get_nabo"
+      ]
     }
   }
 }

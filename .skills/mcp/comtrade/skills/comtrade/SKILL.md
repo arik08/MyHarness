@@ -1,6 +1,6 @@
 ---
 name: comtrade
-description: UN Comtrade 국가별 수출입·품목·교역 상대국 데이터를 조회하는 MCP 라우팅입니다.
+description: 여러 국가의 품목별 수출입·교역상대국·시장점유율·공급망을 같은 기간으로 비교할 때 UN Comtrade를 조회합니다. 세계 교역 비교에 우선하며, 특정국 통관 상세·관세율은 trade-market을 사용합니다.
 source: skill-mcp:comtrade
 ---
 
@@ -9,6 +9,7 @@ source: skill-mcp:comtrade
 `comtrade` MCP로 국제 상품무역 데이터를 조회합니다.
 
 - 국가 코드를 모르면 `search_reporters`로 먼저 찾습니다.
+- `reporter_code` 및 `reporter_codes` 원소는 문자열입니다(예: `"410"`, `["410", "392"]`). HS 판을 별도로 지정할 근거가 없으면 `classification_code="HS"`를 사용합니다. 선택 인자에 null을 채우지 말고 생략하여 `partner2_code="0"`, `customs_code="C00"`, `mot_code="0"` 등 서버 기본값을 유지합니다.
 - API 키가 없어도 되는 소량 확인은 `preview_trade_data`, 정식 조회는 `get_trade_data`를 사용합니다.
 - 여러 국가의 연간 값을 비교하거나 사용자가 "최근 1년", "최근 연도"라고 요청하면 `latest_common_annual_trade_data`를 우선 사용합니다. 가장 최근 달력연도를 고정하지 말고 모든 reporter에 데이터가 있는 `selectedPeriod`를 공통 기준으로 사용합니다.
 - 사용자가 명시적으로 "최근 12개월"을 요청한 경우에만 `freq_code="M"`과 완료된 12개 월을 사용합니다. `queryDiagnostics`의 국가별 기간 범위가 다르면 서로 다른 기간을 섞어 비교하지 않습니다.

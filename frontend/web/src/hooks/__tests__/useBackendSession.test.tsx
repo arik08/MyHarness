@@ -1,6 +1,8 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openBackendEvents } from "../../api/events";
+import { loadHistorySnapshot } from "../../api/history";
+import { sendBackendRequest } from "../../api/messages";
 import { listLiveSessions, startSession } from "../../api/session";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
@@ -9,6 +11,8 @@ import { useBackendSession } from "../useBackendSession";
 vi.mock("../../api/events", () => ({
   openBackendEvents: vi.fn(() => ({ close: vi.fn() })),
 }));
+vi.mock("../../api/history", () => ({ loadHistorySnapshot: vi.fn() }));
+vi.mock("../../api/messages", () => ({ sendBackendRequest: vi.fn() }));
 
 vi.mock("../../api/session", () => ({
   capacityQueueStatusEvent: "myharness:capacity-queue-status",
@@ -22,6 +26,7 @@ function Probe() {
   return (
     <>
       <output data-testid="session">{state.sessionId || ""}</output>
+      <output data-testid="restoring">{String(state.restoringHistory)}</output>
       <output data-testid="busy">{String(state.busy)}</output>
       <output data-testid="status">{state.statusText}</output>
       <output data-testid="workspace">{state.workspacePath}</output>
@@ -38,6 +43,74 @@ function Probe() {
 }
 
 describe("useBackendSession", () => {
+  it("recovers a silent stream from its cursor while work is still busy, preserving long history", async () => {
+    vi.useFakeTimers();
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{
+      sessionId: "session-a", savedSessionId: "saved", busy: true, createdAt: 1, latestEventId: 9002,
+    }] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", sessionId: "session-a", busy: true }}><Probe /></AppStateProvider>);
+    const handlers = vi.mocked(openBackendEvents).mock.calls.at(-1)![1];
+    act(() => {
+      handlers.onEvent({ type: "history_snapshot", value: "saved", live_replay: true,
+        history_events: Array.from({ length: 500 }, (_, index) => [
+          { type: "user", text: `question-${index}` }, { type: "assistant", text: `answer-${index}` },
+        ]).flat(),
+      } as any);
+      handlers.onEvent({ type: "transcript_item", item: { role: "user", text: "latest question" } });
+      handlers.onCursor?.("9000");
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(openBackendEvents).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(openBackendEvents).mock.calls.at(-1)![0].get("lastEventId")).toBe("9000");
+    expect(screen.getByTestId("messages").textContent).toContain("question-0|answer-0");
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+    const resumed = vi.mocked(openBackendEvents).mock.calls.at(-1)![1];
+    act(() => {
+      resumed.onEvent({ type: "assistant_delta", message: "recovered answer" });
+      resumed.onCursor?.("9001");
+      resumed.onEvent({ type: "line_complete" });
+      resumed.onCursor?.("9002");
+    });
+    expect(screen.getByTestId("messages").textContent).toContain("latest question|recovered answer");
+    expect(screen.getByTestId("busy").textContent).toBe("false");
+  });
+
+  it("ignores an idle poll that arrives after new stream activity", async () => {
+    vi.useFakeTimers();
+    let resolvePoll!: (value: any) => void;
+    vi.mocked(listLiveSessions).mockImplementation(() => new Promise((resolve) => { resolvePoll = resolve; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", sessionId: "session-a", busy: true }}><Probe /></AppStateProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    const handlers = vi.mocked(openBackendEvents).mock.calls.at(-1)![1];
+    act(() => { handlers.onEvent({ type: "assistant_delta", message: "new work" }); });
+    await act(async () => { resolvePoll({ sessions: [{ sessionId: "session-a", busy: false, latestEventId: 1 }] }); });
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+    expect(openBackendEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for missing answer events instead of completing from the status poll", async () => {
+    vi.useFakeTimers();
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{
+      sessionId: "session-a", savedSessionId: "", busy: false, createdAt: 1, latestEventId: 12,
+    }] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", sessionId: "session-a", busy: true }}><Probe /></AppStateProvider>);
+    act(() => { vi.mocked(openBackendEvents).mock.calls.at(-1)![1].onCursor?.("10"); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+    expect(vi.mocked(openBackendEvents).mock.calls.at(-1)![0].get("lastEventId")).toBe("10");
+  });
+
+  it("does not mistake an unaccepted new question for a completed turn", async () => {
+    vi.useFakeTimers();
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{
+      sessionId: "session-a", savedSessionId: "", busy: false, createdAt: 1, latestEventId: 10,
+    }] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", sessionId: "session-a", busy: true }}><Probe /></AppStateProvider>);
+    act(() => { vi.mocked(openBackendEvents).mock.calls.at(-1)![1].onCursor?.("10"); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+    expect(openBackendEvents).toHaveBeenCalledTimes(1);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
@@ -45,6 +118,8 @@ describe("useBackendSession", () => {
     sessionStorage.clear();
     vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [] });
     vi.mocked(startSession).mockResolvedValue({ sessionId: "new-session" });
+    vi.mocked(sendBackendRequest).mockResolvedValue({ ok: true });
+    vi.mocked(loadHistorySnapshot).mockResolvedValue({ type: "history_snapshot", value: "saved-last", history_events: [] });
   });
 
   afterEach(() => {
@@ -114,8 +189,59 @@ describe("useBackendSession", () => {
       eventHandlers?.onEvent({ type: "assistant_delta", message: "돌아와도 보이는 답변" });
     });
 
-    expect(screen.getByTestId("messages").textContent).toBe("진행 중 질문|돌아와도 보이는 답변");
+    await waitFor(() => expect(screen.getByTestId("messages").textContent).toBe("진행 중 질문|돌아와도 보이는 답변"));
     expect(screen.getByTestId("workflow-anchor").textContent).toBeTruthy();
+  });
+
+  it("restores the last viewed saved conversation after the backend has restarted", async () => {
+    localStorage.setItem("myharness:lastConversation", JSON.stringify({
+      sessionId: "saved-last", workspacePath: "C:/other", workspaceName: "Other",
+    }));
+    sessionStorage.setItem("myharness:activeBackendSessionId", "unrelated-live");
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [
+      { sessionId: "unrelated-live", savedSessionId: "other", busy: true, createdAt: 1 },
+    ] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}><Probe /></AppStateProvider>);
+    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("new-session", "client-1", {
+      type: "apply_select_command", command: "resume", value: "saved-last",
+    }));
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "C:/other" }));
+    expect(JSON.parse(localStorage.getItem("myharness:lastConversation")!).sessionId).toBe("saved-last");
+    await waitFor(() => expect(openBackendEvents).toHaveBeenCalled());
+    const handlers = vi.mocked(openBackendEvents).mock.calls.at(-1)![1];
+    act(() => {
+      handlers.onEvent({ type: "active_session", value: "temporary-startup" });
+      handlers.onEvent({ type: "history_snapshot", value: "saved-last", history_events: [
+        { type: "user", text: "마지막 대화 내용" },
+      ] });
+      handlers.onEvent({ type: "line_complete" });
+    });
+    expect(screen.getByTestId("messages").textContent).toContain("마지막 대화 내용");
+    expect(screen.getByTestId("restoring").textContent).toBe("false");
+    expect(JSON.parse(localStorage.getItem("myharness:lastConversation")!).sessionId).toBe("saved-last");
+  });
+
+  it("uses the last viewed conversation across visits even without tab session storage", async () => {
+    localStorage.setItem("myharness:lastConversation", JSON.stringify({
+      sessionId: "saved-last", workspacePath: "C:/demo", workspaceName: "Default",
+    }));
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [
+      { sessionId: "last-viewed", savedSessionId: "saved-last", busy: false, createdAt: 1 },
+      { sessionId: "newest-process", savedSessionId: "other", busy: true, createdAt: 2 },
+    ] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}><Probe /></AppStateProvider>);
+    await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("last-viewed"));
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it("saves the first empty chat and falls back when the previous conversation is gone", async () => {
+    localStorage.setItem("myharness:lastConversation", JSON.stringify({
+      sessionId: "deleted", workspacePath: "C:/demo", workspaceName: "Default",
+    }));
+    vi.mocked(loadHistorySnapshot).mockRejectedValue(new Error("Not found"));
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}><Probe /></AppStateProvider>);
+    await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("new-session"));
+    expect(sendBackendRequest).toHaveBeenCalledWith("new-session", "client-1", { type: "start_new_session" });
   });
 
   it("keeps a busy request active while EventSource reconnects after a transport error", async () => {

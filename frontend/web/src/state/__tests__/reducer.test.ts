@@ -5,6 +5,77 @@ import { historyVisibilityKey } from "../../utils/history";
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
 
 describe("appReducer", () => {
+  it("repairs duplicate history IDs while preserving distinct conversations with the same title", () => {
+    const first = { value: "saved-a", label: "같은 제목", pinned: true, liked: true };
+    const second = { value: "saved-b", label: "같은 제목" };
+    const state = appReducer(initialAppState, {
+      type: "set_history", history: [first, first, second], hasMore: true, nextOffset: 25,
+    });
+    expect(state.history).toEqual([first, second]);
+    expect(state.historyNextOffset).toBe(25);
+    expect(state.historyHasMore).toBe(true);
+  });
+
+  it("keeps pending cached live history unique across repeated refreshes", () => {
+    let state = {
+      ...initialAppState,
+      sessionId: "web-b",
+      activeHistoryId: "saved-b",
+      liveSessionViewsBySessionId: { "web-a": {} as any },
+      history: [{
+        value: "saved-a", label: "진행 중인 채팅", description: "한국 2024년 무역 데이터 조회",
+        pending: true, live: true, liveSessionId: "web-a", busy: true,
+      }],
+    };
+    for (let refresh = 0; refresh < 5; refresh += 1) {
+      state = appReducer(state, { type: "set_history", history: [], hasMore: false, nextOffset: 0 }) as typeof state;
+      expect(state.history.map((item) => item.value)).toEqual(["saved-a"]);
+    }
+  });
+
+  it("preserves next-turn choices against active-turn snapshots until runtime application", () => {
+    let state = { ...initialAppState, busy: true, model: "old-model", effort: "low" };
+    state = appReducer(state, { type: "select_runtime_model", value: "next-model" });
+    state = appReducer(state, { type: "select_runtime_effort", value: "high" });
+    state = appReducer(state, { type: "backend_event", event: {
+      type: "state_snapshot", state: { model: "old-model", effort: "low" },
+    } });
+    expect(state.model).toBe("next-model");
+    expect(state.effort).toBe("high");
+    expect(state.busy).toBe(true);
+    state = appReducer(state, { type: "backend_event", event: { type: "line_complete" } });
+    state = appReducer(state, { type: "backend_event", event: {
+      type: "state_snapshot", state: { model: "next-model", effort: "high" },
+    } });
+    expect(state.model).toBe("next-model");
+    expect(state.runtimeChoicePending).toBe(false);
+  });
+
+  it("retains the saved startup empty chat after opening another conversation", () => {
+    let state = appReducer({ ...initialAppState, sessionId: "web-startup" }, {
+      type: "backend_event", event: { type: "active_session", value: "saved-startup" },
+    });
+    state = appReducer(state, { type: "backend_event", event: { type: "session_title", message: "새 대화" } });
+    state = appReducer(state, { type: "begin_history_restore", sessionId: "other" });
+    state = appReducer(state, { type: "backend_event", event: {
+      type: "history_snapshot", value: "other", history_events: [],
+    } });
+    expect(state.history).toContainEqual(expect.objectContaining({ value: "saved-startup", messageCount: 0 }));
+  });
+  it("merges a newly saved chat with its optimistic row without losing saved preferences", () => {
+    const state = appReducer({
+      ...initialAppState, sessionId: "web-new", activeHistoryId: null, busy: true,
+      history: [
+        { value: "web-new", label: "임시 질문" },
+        { value: "saved-new", label: "저장된 제목", pinned: true, liked: true },
+        { value: "saved-other", label: "다른 대화" },
+      ],
+    }, { type: "backend_event", event: { type: "active_session", value: "saved-new" } });
+    expect(state.history).toEqual([
+      { value: "saved-new", label: "저장된 제목", pinned: true, liked: true, live: true, liveSessionId: "web-new", busy: true },
+      { value: "saved-other", label: "다른 대화" },
+    ]);
+  });
   it("uses browser download as the default file save mode", () => {
     expect(initialAppState.appSettings.downloadMode).toBe("browser");
   });
@@ -1098,6 +1169,50 @@ describe("appReducer", () => {
     expect(opened.runtimePicker.models.map((option) => option.value)).toEqual(["gpt-5.5"]);
   });
 
+  it.each(["state_snapshot", "ready"] as const)("keeps runtime metadata live during read-only history: %s", (type) => {
+    const history = appReducer({ ...initialAppState, sessionId: "live-session" }, {
+      type: "backend_event",
+      event: {
+        type: "history_snapshot", value: "saved-report", preview_only: true,
+        history_events: [{ type: "user", text: "saved question" }, { type: "assistant", text: "saved report" }],
+      } as any,
+    });
+    const opened = appReducer(history, { type: "open_runtime_picker" });
+    expect(opened.historyReadOnly).toBe(true);
+    expect(opened.runtimePicker.loading).toBe(true);
+    const options = {
+      providers: [{ value: "codex", label: "Codex Subscription", active: true }],
+      models_by_provider: { codex: [{ value: "gpt-5.5", label: "gpt-5.5", active: true }] },
+      efforts: [{ value: "low", label: "Low", active: true }],
+    };
+    const updated = appReducer(opened, {
+      type: "backend_event", sessionId: "live-session",
+      event: { type, state: {
+        provider: "openai-codex", active_profile: "codex", provider_label: "Codex Subscription",
+        model: "gpt-5.5", effort: "low", runtime_options: options,
+      } },
+    });
+    expect(updated.providerLabel).toBe("Codex Subscription");
+    expect(updated.model).toBe("gpt-5.5");
+    expect(updated.runtimePicker.loading).toBe(false);
+    expect(updated.messages).toBe(history.messages);
+    expect(updated.activeHistoryId).toBe("saved-report");
+    expect(updated.sessionUsage).toBe(history.sessionUsage);
+    expect(updated.status).toBe(history.status);
+
+    const pickerReply = appReducer(opened, {
+      type: "backend_event", sessionId: "live-session",
+      event: { type: "select_request", modal: { command: "runtime-picker", runtime_options: options } },
+    });
+    expect(pickerReply.runtimePicker.loading).toBe(false);
+    expect(pickerReply.runtimePicker.providers).toHaveLength(1);
+    expect(pickerReply.messages).toBe(history.messages);
+    const transcriptReply = appReducer(updated, {
+      type: "backend_event", sessionId: "live-session", event: { type: "clear_transcript" },
+    });
+    expect(transcriptReply.messages).toBe(history.messages);
+  });
+
   it("closes stale resume selection modals when the history list changes", () => {
     const next = appReducer(
       {
@@ -2036,7 +2151,24 @@ describe("appReducer", () => {
     expect(started.history[0].value).toBe("abcdef123456");
     expect(started.history[0].description).toBe("새 대화");
     expect(started.history[0].pending).toBe(true);
+    expect(started.history[0].messageCount).toBe(0);
+    const used = appReducer(started, {
+      type: "append_message", message: { role: "user", text: "첫 질문" },
+    });
+    expect(used.history[0].messageCount).toBe(1);
     expect(restoringOld.history.some((item) => item.value === "abcdef123456")).toBe(true);
+    const switched = appReducer(restoringOld, { type: "finish_history_restore" });
+    const refreshed = appReducer(switched, {
+      type: "set_history",
+      history: [{ value: "saved-old", label: "old", description: "이전 대화" }],
+    });
+    expect(refreshed.history.some((item) => item.value === "abcdef123456")).toBe(true);
+    const confirmed = appReducer(refreshed, {
+      type: "set_history",
+      history: [{ value: "abcdef123456", label: "0 msg", description: "새 대화" }],
+    });
+    expect(confirmed.history.filter((item) => item.value === "abcdef123456")).toHaveLength(1);
+    expect(confirmed.history[0].pending).toBeUndefined();
   });
 
   it("rebuilds visible chat from restored history snapshots", () => {
@@ -3066,6 +3198,33 @@ describe("appReducer", () => {
     expect(purposeEvent?.detail).toBe("추가 검색 결과를 비교하고 있습니다.");
     expect(purposeEvent?.detailLog?.length).toBeGreaterThan(0);
     expect(secondCompleted.workflowEvents.filter((event) => event.role === "activity")).toHaveLength(1);
+  });
+
+  it("retains Korean progress through tool completion, subsequent calls, and final output", () => {
+    let state = appReducer(initialAppState, {
+      type: "append_message", message: { role: "user", text: "포스코 자료를 조사해줘" },
+    });
+    state = appReducer(state, { type: "backend_event", event: {
+      type: "tool_started", tool_name: "web_search", tool_input: { query: "POSCO" },
+    } });
+    const note = "포스코 관련 기사와 출처를 확인하고 있습니다.";
+    state = appReducer(state, { type: "backend_event", event: { type: "status", message: note } });
+    const memo = state.workflowEvents.find((event) => event.role === "reasoning" && event.detail === note)!;
+    expect(memo).toBeTruthy();
+    state = appReducer(state, { type: "backend_event", event: {
+      type: "tool_completed", tool_name: "web_search", output: "검색 결과",
+    } });
+    state = appReducer(state, { type: "backend_event", event: {
+      type: "tool_started", tool_name: "web_fetch", tool_input: { url: "https://example.com" },
+    } });
+    expect(state.workflowEvents.find((event) => event.id === memo.id)?.detail).toBe(note);
+    const followup = "검색된 자료의 발행일을 비교하고 있습니다.";
+    state = appReducer(state, { type: "backend_event", event: {
+      type: "tool_completed", tool_name: "web_fetch", output: "본문",
+    } });
+    state = appReducer(state, { type: "backend_event", event: { type: "status", message: followup } });
+    state = appReducer(state, { type: "backend_event", event: { type: "assistant_delta", message: "조사 결과입니다." } });
+    expect(state.workflowEvents.filter((event) => event.role === "reasoning").map((event) => event.detail)).toEqual([note, followup]);
   });
 
   it("keeps reasoning summaries and tool groups in chronological order", () => {

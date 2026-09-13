@@ -1669,8 +1669,11 @@ async def test_notification_hook_fires_on_permission_prompt(tmp_path: Path, monk
 async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setattr("myharness.tools.is_subagent_invocation_enabled", lambda: True)
     monkeypatch.setattr("myharness.tools.agent_tool.is_subagent_invocation_enabled", lambda: True)
+    from myharness.tools.agent_tool import AgentTool
+
+    registry = create_default_tool_registry()
+    registry.register(AgentTool())
     recorder = _RecordingHookExecutor()
     engine = QueryEngine(
         api_client=FakeApiClient(
@@ -1703,7 +1706,7 @@ async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Pa
                 ),
             ]
         ),
-        tool_registry=create_default_tool_registry(),
+        tool_registry=registry,
         permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
         cwd=tmp_path,
         model="claude-test",

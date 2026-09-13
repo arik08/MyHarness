@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from myharness.config.paths import (
     get_project_active_repo_context_path,
     get_project_issue_file,
@@ -125,9 +127,56 @@ def test_build_runtime_system_prompt_keeps_mcp_wrappers_out_of_skill_prefix(tmp_
     assert "prefix-regular-skill" in prompt
     assert "regular metadata remains visible" in prompt
     assert "REGULAR_BODY_MUST_STAY_LAZY" not in prompt
-    assert "prefix-routed-mcp" not in prompt
-    assert "routed metadata must stay out of the skill prefix" not in prompt
+    regular_section, mcp_section = prompt.split("# Available MCP Integrations", 1)
+    assert "prefix-routed-mcp" not in regular_section
+    assert 'skill(name="prefix-routed-mcp")' in mcp_section
+    assert "routed metadata must stay out of the skill prefix" in mcp_section
     assert "ROUTED_BODY_MUST_STAY_LAZY" not in prompt
+
+
+@pytest.mark.parametrize("prompt_profile", ["full", "continuation"])
+@pytest.mark.parametrize("task_worker", [False, True])
+def test_dart_request_exposes_packaged_mcp_routing(tmp_path: Path, monkeypatch, prompt_profile, task_worker):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+
+    prompt = build_runtime_system_prompt(
+        Settings(),
+        cwd=tmp_path,
+        latest_user_prompt="[포스코]의 최근 분기 DART 공시정보를 기반으로 최근 실적, 주요 사업, 투자·리스크 요인을 분석해줘",
+        prompt_profile=prompt_profile,
+        task_worker=task_worker,
+    )
+
+    assert "# Available MCP Integrations" in prompt
+    assert 'skill(name="company-disclosure")' in prompt
+    assert "OpenDART" in prompt
+    assert "before generic web_search/web_fetch" in prompt
+    assert "An output-format skill does not replace a matching data-source integration" in prompt
+    # Only routing metadata is eager; tool instructions stay behind skill activation.
+    assert 'search_catalog(source="opendart"' not in prompt
+
+
+@pytest.mark.parametrize("disable_via", ["server", "skill"])
+def test_disabled_disclosure_integration_is_not_advertised(tmp_path: Path, monkeypatch, disable_via):
+    from myharness.project_preferences import get_project_preferences_path
+
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    settings = Settings()
+    if disable_via == "server":
+        settings.disabled_mcp_servers = {"company-disclosure"}
+    else:
+        preferences = get_project_preferences_path(tmp_path)
+        preferences.parent.mkdir(parents=True, exist_ok=True)
+        preferences.write_text('{"disabled_skills": ["company-disclosure"]}', encoding="utf-8")
+
+    prompt = build_runtime_system_prompt(settings, cwd=tmp_path, latest_user_prompt="DART 공시 분석")
+
+    assert 'skill(name="company-disclosure")' not in prompt
+    assert "OpenDART" not in prompt
 
 
 def test_build_runtime_system_prompt_guides_item_level_source_links(tmp_path: Path, monkeypatch):

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from myharness.utils.shell import create_shell_subprocess
+from myharness.utils.process_tree import terminate_process_tree
 
 
 @dataclass
@@ -21,12 +22,7 @@ class SessionHandle:
 
     async def kill(self) -> None:
         """Terminate the session process."""
-        self.process.terminate()
-        try:
-            await asyncio.wait_for(self.process.wait(), timeout=3)
-        except asyncio.TimeoutError:
-            self.process.kill()
-            await self.process.wait()
+        await terminate_process_tree(self.process)
 
 
 async def spawn_session(

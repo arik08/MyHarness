@@ -258,12 +258,12 @@ exit /b 0
 
 :select_default_provider_profile
 set "MYHARNESS_SELECTED_PROFILE="
-for /f "usebackq delims=" %%P in (`"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% "%CD%\scripts\select_default_provider_profile.py" --settings "%MYHARNESS_SETTINGS%" 2^>nul`) do (
+for /f "usebackq delims=" %%P in (`""%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% "%CD%\scripts\select_default_provider_profile.py" --settings "%MYHARNESS_SETTINGS%" 2>"%MYHARNESS_LOGS_DIR%\provider-setup.log""`) do (
   set "MYHARNESS_SELECTED_PROFILE=%%P"
 )
 if "%MYHARNESS_SELECTED_PROFILE%"=="" (
   set "MYHARNESS_SELECTED_PROFILE=p-gpt"
-  echo [WARN] Could not auto-select provider profile. Falling back to P-GPT.
+  echo [WARN] Default profile setup failed. Details: %MYHARNESS_LOGS_DIR%\provider-setup.log
 )
 echo [INFO] Default provider profile: %MYHARNESS_SELECTED_PROFILE%
 exit /b 0

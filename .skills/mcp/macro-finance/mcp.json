@@ -8,7 +8,12 @@
         "runtime/server.py"
       ],
       "cwd": ".",
-      "auto_connect": false
+      "auto_connect": false,
+      "read_only_tools": [
+        "search_catalog",
+        "query_series",
+        "get_source_health"
+      ]
     }
   }
 }

@@ -24,6 +24,7 @@ import {
   type UserStats,
 } from "../api/settings";
 import { useAppState } from "../state/app-state";
+import { DesignModeToggle } from "../features/design-mode/DesignMode";
 import type { AppSettings } from "../types/ui";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import {
@@ -97,6 +98,7 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
         </button>
       </div>
       <div className="settings-grid">
+        <DesignModeToggle canEdit={state.adminMode} />
         <button type="button" className="settings-row" onClick={() => onSelect("prompt")}>
           <strong>프롬프트</strong>
           <small>{state.systemPrompt ? "사용자 프롬프트 적용 중" : "기본값"}</small>
@@ -409,8 +411,8 @@ function OutputTokenSettingsForm({ onBack }: { onBack: () => void }) {
 }
 
 const defaultConcurrencySettings: ConcurrencySettings = {
-  maxActiveSessions: 20,
-  maxBusySessions: 8,
+  maxActiveSessions: 40,
+  maxBusySessions: 20,
   maxBusySessionsPerClient: 3,
   idleSessionTimeoutMinutes: 30,
 };

@@ -11,7 +11,13 @@
         "EIA_API_KEY": "jMenIntSd7Mef51GX7yFhumWHsxDcJjL0y8xO1w5"
       },
       "cwd": ".",
-      "auto_connect": false
+      "auto_connect": false,
+      "read_only_tools": [
+        "get_series",
+        "get_energy_price",
+        "list_price_series",
+        "check_connection"
+      ]
     }
   }
 }

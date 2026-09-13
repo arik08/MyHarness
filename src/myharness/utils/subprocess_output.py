@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
+
+from myharness.utils.process_tree import terminate_process_tree
 
 DEFAULT_READ_CHUNK_BYTES = 64 * 1024
 DEFAULT_TAIL_BYTES = 64 * 1024
@@ -47,23 +48,13 @@ async def communicate_bounded(
 
     try:
         return await asyncio.wait_for(_communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            process.kill()
-        with contextlib.suppress(ProcessLookupError):
-            await process.wait()
-        for reader in readers:
-            reader.cancel()
-        await asyncio.gather(*readers, return_exceptions=True)
-        raise
     except BaseException:
-        with contextlib.suppress(ProcessLookupError):
-            process.kill()
-        with contextlib.suppress(ProcessLookupError):
-            await process.wait()
-        for reader in readers:
-            reader.cancel()
-        await asyncio.gather(*readers, return_exceptions=True)
+        try:
+            await terminate_process_tree(process)
+        finally:
+            for reader in readers:
+                reader.cancel()
+            await asyncio.gather(*readers, return_exceptions=True)
         raise
 
 

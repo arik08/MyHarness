@@ -425,15 +425,15 @@ async def test_model_command_default_clears_profile_override(tmp_path: Path, mon
     save_settings(
         Settings().model_copy(
             update={
-                "active_profile": "claude-api",
+                "active_profile": "p-gpt",
                 "profiles": {
-                    "claude-api": {
+                    "p-gpt": {
                         "label": "Claude API",
-                        "provider": "anthropic",
-                        "api_format": "anthropic",
-                        "auth_source": "anthropic_api_key",
-                        "default_model": "sonnet",
-                        "last_model": "opus",
+                        "provider": "openai",
+                        "api_format": "openai",
+                        "auth_source": "pgpt_api_key",
+                        "default_model": "gpt-5.6-luna",
+                        "last_model": "gpt-5.6-terra",
                     }
                 },
             }
@@ -447,7 +447,7 @@ async def test_model_command_default_clears_profile_override(tmp_path: Path, mon
 
     assert "기본값" in result.message
     assert load_settings().resolve_profile()[1].last_model == ""
-    assert load_settings().model == "claude-sonnet-4-6"
+    assert load_settings().model == "gpt-5.6-luna"
 
 
 @pytest.mark.asyncio
@@ -487,15 +487,15 @@ async def test_provider_command_switches_profile_and_requests_runtime_refresh(tm
         Settings().model_copy(
             update={
                 "profiles": {
-                    "kimi-anthropic": {
+                    "codex": {
                         "label": "Kimi Anthropic",
-                        "provider": "anthropic",
-                        "api_format": "anthropic",
-                        "auth_source": "anthropic_api_key",
-                        "default_model": "kimi-k2.5",
-                        "last_model": "kimi-k2.5",
+                        "provider": "openai_codex",
+                        "api_format": "openai",
+                        "auth_source": "codex_subscription",
+                        "default_model": "gpt-5.6-luna",
+                        "last_model": "gpt-5.6-luna",
                         "base_url": "https://api.moonshot.cn/anthropic",
-                        "allowed_models": ["kimi-k2.5"],
+                        "allowed_models": ["gpt-5.6-luna"],
                     }
                 }
             }
@@ -504,17 +504,17 @@ async def test_provider_command_switches_profile_and_requests_runtime_refresh(tm
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
-    command, args = registry.lookup("/provider kimi-anthropic")
+    command, args = registry.lookup("/provider codex")
     assert command is not None
 
     result = await command.handler(args, context)
 
     loaded = load_settings()
     assert result.refresh_runtime is True
-    assert loaded.active_profile == "kimi-anthropic"
+    assert loaded.active_profile == "codex"
     assert loaded.base_url == "https://api.moonshot.cn/anthropic"
-    assert loaded.model == "kimi-k2.5"
-    assert context.app_state.get().active_profile == "kimi-anthropic"
+    assert loaded.model == "gpt-5.6-luna"
+    assert context.app_state.get().active_profile == "codex"
     assert context.app_state.get().provider_label == "Kimi Anthropic"
 
 
@@ -621,17 +621,17 @@ async def test_model_command_rejects_values_outside_profile_allowlist(tmp_path: 
     save_settings(
         Settings().model_copy(
             update={
-                "active_profile": "kimi-anthropic",
+                "active_profile": "p-gpt",
                 "profiles": {
-                    "kimi-anthropic": {
+                    "p-gpt": {
                         "label": "Kimi Anthropic",
-                        "provider": "anthropic",
-                        "api_format": "anthropic",
-                        "auth_source": "anthropic_api_key",
-                        "default_model": "kimi-k2.5",
-                        "last_model": "kimi-k2.5",
+                        "provider": "openai",
+                        "api_format": "openai",
+                        "auth_source": "pgpt_api_key",
+                        "default_model": "gpt-5.6-luna",
+                        "last_model": "gpt-5.6-luna",
                         "base_url": "https://api.moonshot.cn/anthropic",
-                        "allowed_models": ["kimi-k2.5"],
+                        "allowed_models": ["gpt-5.6-luna"],
                     }
                 },
             }
@@ -643,7 +643,7 @@ async def test_model_command_rejects_values_outside_profile_allowlist(tmp_path: 
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "프로필 'kimi-anthropic'에서 사용할 수 없습니다" in result.message
+    assert "프로필 'p-gpt'에서 사용할 수 없습니다" in result.message
 
 
 @pytest.mark.asyncio
@@ -989,17 +989,17 @@ async def test_version_context_and_share_commands(tmp_path: Path, monkeypatch):
 async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    save_settings(Settings(active_profile="claude-api"))
+    monkeypatch.delenv("PGPT_API_KEY", raising=False)
+    save_settings(Settings(active_profile="p-gpt"))
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
-    login_command, login_args = registry.lookup("/login sk-test-123456")
+    login_command, login_args = registry.lookup("/login sk-test-123456 123456 30")
     login_result = await login_command.handler(login_args, context)
-    assert "API 키를 현재 프로세스 환경" in login_result.message
+    assert "P-GPT" in login_result.message
     assert load_settings().api_key == ""
-    assert os.environ["ANTHROPIC_API_KEY"] == "sk-test-123456"
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert os.environ["PGPT_API_KEY"] == "sk-test-123456"
+    monkeypatch.delenv("PGPT_API_KEY", raising=False)
 
     issue_command, issue_args = registry.lookup("/issue set Fix CI :: The CI flakes on task retry")
     issue_result = await issue_command.handler(issue_args, context)

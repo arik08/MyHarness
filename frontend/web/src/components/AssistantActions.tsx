@@ -5,7 +5,7 @@ import type { UsageCostSummary } from "../types/backend";
 import type { ChatMessage } from "../types/ui";
 import { branchHistory } from "../api/branch";
 import { startSession } from "../api/session";
-import { sendBackendRequest } from "../api/messages";
+import { loadHistorySnapshot } from "../api/history";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { artifactName } from "../utils/artifacts";
 import { chatShareUrl, shareBaseUrl } from "../utils/chatShare";
@@ -413,7 +413,7 @@ function UsageCostPopover({ answerUsage, sessionUsage }: { answerUsage?: UsageCo
     const controlRect = control.getBoundingClientRect();
     const popoverRect = popover.getBoundingClientRect();
     const popoverHeight = popoverRect.height || popover.offsetHeight || 220;
-    const desiredPopoverWidth = sectionCount > 1 ? 500 : 310;
+    const desiredPopoverWidth = sectionCount > 1 ? 500 : 360;
     const measuredPopoverWidth = popoverRect.width || popover.offsetWidth || 0;
     const popoverWidth = Math.max(measuredPopoverWidth, desiredPopoverWidth);
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth || popoverWidth;
@@ -526,18 +526,26 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
         answerText: text,
       });
       dispatch({ type: "append_history", history: [{ value: branch.sessionId, label: branch.title, description: branch.title, workspace: branch.workspace }] });
-      const session = await startSession({
-        clientId: state.clientId,
-        cwd: branch.workspace.path,
-        ...runtimePreferencesFromState(state),
-      });
+      const [snapshot, session] = await Promise.all([
+        loadHistorySnapshot({
+          sessionId: branch.sessionId,
+          workspacePath: branch.workspace.path,
+          workspaceName: branch.workspace.name,
+        }),
+        startSession({
+          clientId: state.clientId,
+          cwd: branch.workspace.path,
+          ...runtimePreferencesFromState(state),
+        }),
+      ]);
       dispatch({ type: "session_started", sessionId: session.sessionId, clientId: state.clientId });
       dispatch({ type: "set_workspace", workspace: branch.workspace });
       dispatch({ type: "clear_composer" });
       dispatch({ type: "begin_history_restore", sessionId: branch.sessionId });
-      await sendBackendRequest(session.sessionId, state.clientId, {
-        type: "apply_select_command", command: "resume", value: branch.sessionId,
-      });
+      // Render the saved branch directly, just like opening saved history.
+      // Composer resumes it in the new runtime when the user sends a message.
+      dispatch({ type: "backend_event", event: snapshot });
+      dispatch({ type: "finish_history_restore" });
     } catch (error) {
       dispatch({ type: "finish_history_restore" });
       dispatch({ type: "open_modal", modal: { kind: "error", message: `분기 실패: ${error instanceof Error ? error.message : String(error)}` } });

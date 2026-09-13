@@ -13,7 +13,19 @@
       },
       "cwd": ".",
       "auto_connect": false,
-      "description": "Korean Law MCP - 법제처 Open API 기반 법령, 판례, 행정규칙, 자치법규, 조약, 해석례 조회"
+      "description": "Korean Law MCP - 법제처 Open API 기반 법령, 판례, 행정규칙, 자치법규, 조약, 해석례 조회",
+      "read_only_tools": [
+        "search_law",
+        "get_law_text",
+        "ordinance_radar",
+        "get_annexes",
+        "legal_research",
+        "legal_analysis",
+        "discover_tools",
+        "execute_tool",
+        "search_decisions",
+        "get_decision_text"
+      ]
     }
   }
 }

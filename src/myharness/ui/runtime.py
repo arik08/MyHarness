@@ -11,10 +11,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable
 
-from myharness.api.client import AnthropicApiClient, ApiMessageRequest, ApiStreamEvent, SupportsStreamingMessages
+from myharness.api.client import ApiMessageRequest, ApiStreamEvent, SupportsStreamingMessages
 from myharness.api.errors import AuthenticationFailure
 from myharness.api.codex_client import CodexApiClient
-from myharness.api.copilot_client import CopilotClient
+# from myharness.api.client import AnthropicApiClient
+# from myharness.api.copilot_client import CopilotClient
 from myharness.api.openai_client import OpenAICompatibleClient
 from myharness.api.pgpt_auth import (
     build_pgpt_auth_token,
@@ -170,15 +171,15 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
         except Exception as exc:
             raise ValueError(_missing_auth_message(settings)) from exc
 
-    if settings.api_format == "copilot":
-        from myharness.api.copilot_client import COPILOT_DEFAULT_MODEL
-
-        copilot_model = (
-            COPILOT_DEFAULT_MODEL
-            if settings.model in {"claude-sonnet-4-20250514", "claude-sonnet-4-6", "sonnet", "default"}
-            else settings.model
-        )
-        return CopilotClient(model=copilot_model)
+    # if settings.api_format == "copilot":
+    #     from myharness.api.copilot_client import COPILOT_DEFAULT_MODEL
+    #
+    #     copilot_model = (
+    #         COPILOT_DEFAULT_MODEL
+    #         if settings.model in {"claude-sonnet-4-20250514", "claude-sonnet-4-6", "sonnet", "default"}
+    #         else settings.model
+    #     )
+    #     return CopilotClient(model=copilot_model)
     if settings.provider == "openai_codex":
         auth = _safe_resolve_auth()
         return CodexApiClient(
@@ -186,13 +187,13 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             base_url=settings.base_url,
             timeout=settings.timeout,
         )
-    if settings.provider == "anthropic_claude":
-        return AnthropicApiClient(
-            auth_token=_safe_resolve_auth().value,
-            base_url=settings.base_url,
-            claude_oauth=True,
-            auth_token_resolver=lambda: settings.resolve_auth().value,
-        )
+    # if settings.provider == "anthropic_claude":
+    #     return AnthropicApiClient(
+    #         auth_token=_safe_resolve_auth().value,
+    #         base_url=settings.base_url,
+    #         claude_oauth=True,
+    #         auth_token_resolver=lambda: settings.resolve_auth().value,
+    #     )
     if settings.api_format in ("openai", "openai_compat"):
         auth = _safe_resolve_auth()
         api_key = auth.value
@@ -212,20 +213,21 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
                 prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
                 enable_gpt56_responses=True,
             )
-        return OpenAICompatibleClient(
-            api_key=api_key,
-            base_url=settings.base_url,
-            timeout=settings.timeout,
-            enable_prompt_cache_options=settings.provider == "openai",
-            include_usage_with_tools=settings.provider == "openai",
-            prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
-            enable_gpt56_responses=settings.provider == "openai",
-        )
-    auth = _safe_resolve_auth()
-    return AnthropicApiClient(
-        api_key=auth.value,
-        base_url=settings.base_url,
-    )
+    #     return OpenAICompatibleClient(
+    #         api_key=api_key,
+    #         base_url=settings.base_url,
+    #         timeout=settings.timeout,
+    #         enable_prompt_cache_options=settings.provider == "openai",
+    #         include_usage_with_tools=settings.provider == "openai",
+    #         prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
+    #         enable_gpt56_responses=settings.provider == "openai",
+    #     )
+    # auth = _safe_resolve_auth()
+    # return AnthropicApiClient(
+    #     api_key=auth.value,
+    #     base_url=settings.base_url,
+    # )
+    raise ValueError("Only P-GPT and Codex providers are enabled.")
 
 
 def _pgpt_raw_sse_enabled() -> bool:

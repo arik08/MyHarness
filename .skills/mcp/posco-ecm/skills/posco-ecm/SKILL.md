@@ -1,6 +1,6 @@
 ---
 name: posco-ecm
-description: POSCO 사내 문서·보고서·결재 자료를 검색하기 위한 연결형 MCP 라우팅입니다.
+description: 사내 문서·보고서·결재 자료와 문서 버전 조회에 해당합니다. 현재 POSCO 연결 예정 MCP로 조회 도구가 없습니다. 실제 연결·도구가 확인된 경우 사용하며, 공개 웹 자료를 사내 조회 결과로 대체하지 않습니다.
 source: skill-mcp:posco-ecm
 ---
 

@@ -71,8 +71,8 @@ class MemorySettings(BaseModel):
 class WebConcurrencySettings(BaseModel):
     """Web server concurrency limits persisted by the admin settings UI."""
 
-    max_active_sessions: int = Field(default=20, ge=1, le=500)
-    max_busy_sessions: int = Field(default=8, ge=1, le=100)
+    max_active_sessions: int = Field(default=40, ge=1, le=500)
+    max_busy_sessions: int = Field(default=20, ge=1, le=100)
     max_busy_sessions_per_client: int = Field(default=3, ge=1, le=20)
     idle_session_timeout_minutes: int = Field(default=30, ge=1, le=1440)
 
@@ -432,59 +432,60 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             default_model=codex_models.default_model,
             allowed_models=list(codex_models.allowed_models),
         ),
-        "openai-compatible": ProviderProfile(
-            label="OpenAI-Compatible API",
-            provider="openai",
-            api_format="openai",
-            auth_source="openai_api_key",
-            default_model="gpt-5.5",
-        ),
-        "claude-subscription": ProviderProfile(
-            label="Claude Subscription",
-            provider="anthropic_claude",
-            api_format="anthropic",
-            auth_source="claude_subscription",
-            default_model="claude-sonnet-4-6",
-        ),
-        "claude-api": ProviderProfile(
-            label="Anthropic-Compatible API",
-            provider="anthropic",
-            api_format="anthropic",
-            auth_source="anthropic_api_key",
-            default_model="claude-sonnet-4-6",
-        ),
-        "copilot": ProviderProfile(
-            label="GitHub Copilot",
-            provider="copilot",
-            api_format="copilot",
-            auth_source="copilot_oauth",
-            default_model="gpt-5.5",
-        ),
-        "moonshot": ProviderProfile(
-            label="Moonshot (Kimi)",
-            provider="moonshot",
-            api_format="openai",
-            auth_source="moonshot_api_key",
-            default_model="kimi-k2.5",
-            base_url="https://api.moonshot.cn/v1",
-        ),
-        "gemini": ProviderProfile(
-            label="Google Gemini",
-            provider="gemini",
-            api_format="openai",
-            auth_source="gemini_api_key",
-            default_model="gemini-3.5-flash",
-            base_url=_GEMINI_OPENAI_BASE_URL,
-            allowed_models=list(_GEMINI_ALLOWED_MODELS),
-        ),
-        "minimax": ProviderProfile(
-            label="MiniMax",
-            provider="minimax",
-            api_format="openai",
-            auth_source="minimax_api_key",
-            default_model="MiniMax-M2.7",
-            base_url="https://api.minimax.io/v1",
-        ),
+        # Disabled providers: retain definitions for future re-enablement.
+        # "openai-compatible": ProviderProfile(
+        #     label="OpenAI-Compatible API",
+        #     provider="openai",
+        #     api_format="openai",
+        #     auth_source="openai_api_key",
+        #     default_model="gpt-5.5",
+        # ),
+        # "claude-subscription": ProviderProfile(
+        #     label="Claude Subscription",
+        #     provider="anthropic_claude",
+        #     api_format="anthropic",
+        #     auth_source="claude_subscription",
+        #     default_model="claude-sonnet-4-6",
+        # ),
+        # "claude-api": ProviderProfile(
+        #     label="Anthropic-Compatible API",
+        #     provider="anthropic",
+        #     api_format="anthropic",
+        #     auth_source="anthropic_api_key",
+        #     default_model="claude-sonnet-4-6",
+        # ),
+        # "copilot": ProviderProfile(
+        #     label="GitHub Copilot",
+        #     provider="copilot",
+        #     api_format="copilot",
+        #     auth_source="copilot_oauth",
+        #     default_model="gpt-5.5",
+        # ),
+        # "moonshot": ProviderProfile(
+        #     label="Moonshot (Kimi)",
+        #     provider="moonshot",
+        #     api_format="openai",
+        #     auth_source="moonshot_api_key",
+        #     default_model="kimi-k2.5",
+        #     base_url="https://api.moonshot.cn/v1",
+        # ),
+        # "gemini": ProviderProfile(
+        #     label="Google Gemini",
+        #     provider="gemini",
+        #     api_format="openai",
+        #     auth_source="gemini_api_key",
+        #     default_model="gemini-3.5-flash",
+        #     base_url=_GEMINI_OPENAI_BASE_URL,
+        #     allowed_models=list(_GEMINI_ALLOWED_MODELS),
+        # ),
+        # "minimax": ProviderProfile(
+        #     label="MiniMax",
+        #     provider="minimax",
+        #     api_format="openai",
+        #     auth_source="minimax_api_key",
+        #     default_model="MiniMax-M2.7",
+        #     base_url="https://api.minimax.io/v1",
+        # ),
     }
 
 
@@ -730,6 +731,7 @@ class Settings(BaseModel):
 
     # UI
     theme: str = "default"
+    design_mode: Literal["classic", "improved"] = "classic"
     output_style: str = "default"
     vim_mode: bool = False
     voice_mode: bool = False
@@ -760,6 +762,10 @@ class Settings(BaseModel):
                 else ProviderProfile.model_validate(raw_profile)
             )
             builtin = merged.get(name)
+            if builtin is None or (profile.provider, profile.api_format, profile.auth_source) != (
+                builtin.provider, builtin.api_format, builtin.auth_source
+            ):
+                continue
             if builtin is not None and profile.base_url is None and builtin.base_url is not None:
                 profile = profile.model_copy(update={"base_url": builtin.base_url})
             if builtin is not None and (
@@ -789,9 +795,9 @@ class Settings(BaseModel):
         profiles = self.merged_profiles()
         profile_name = (name or self.active_profile or "").strip() or "p-gpt"
         if profile_name not in profiles:
-            fallback_name, fallback = _profile_from_flat_settings(self)
-            profiles[fallback_name] = fallback
-            profile_name = fallback_name
+            if name:
+                raise ValueError(f"Disabled or unknown provider profile: {name!r}")
+            profile_name = "p-gpt"
         return profile_name, profiles[profile_name].model_copy(deep=True)
 
     def materialize_active_profile(self) -> Settings:
@@ -828,8 +834,10 @@ class Settings(BaseModel):
         directly before the profile layer is used everywhere.
         """
         profile_name, profile = self.resolve_profile()
-        next_provider = (self.provider or "").strip() or profile.provider
-        next_api_format = (self.api_format or "").strip() or profile.api_format
+        # Provider identity is fixed by the enabled catalog. Stale flat defaults
+        # must not replace it and cause a valid model override to be discarded.
+        next_provider = profile.provider
+        next_api_format = profile.api_format
         next_base_url = self.base_url if self.base_url is not None else profile.base_url
         next_context_window_tokens = (
             self.context_window_tokens
@@ -1035,6 +1043,8 @@ class Settings(BaseModel):
     def merge_cli_overrides(self, **overrides: Any) -> Settings:
         """Return a new Settings with CLI overrides applied (non-None values only)."""
         updates = {k: v for k, v in overrides.items() if v is not None}
+        if updates.get("active_profile"):
+            self.resolve_profile(str(updates["active_profile"]))
         permission_mode = updates.pop("permission_mode", None)
         if permission_mode is not None:
             updates["permission"] = self.permission.model_copy(
@@ -1047,7 +1057,7 @@ class Settings(BaseModel):
             updates["subagent_model"] = strip_ansi_escape_sequences(updates["subagent_model"])
         if not ({"provider", "api_format", "base_url"} & set(updates)):
             candidate_profile_name = str(updates.get("active_profile") or self.active_profile or "").strip()
-            candidate_profile_name, candidate_profile = self.resolve_profile(candidate_profile_name)
+            candidate_profile_name, candidate_profile = self.resolve_profile(updates.get("active_profile"))
             for model_key in ("model", "subagent_model"):
                 model_value = updates.get(model_key)
                 if isinstance(model_value, str):
@@ -1098,6 +1108,9 @@ class Settings(BaseModel):
         if profile_updates.issubset({"active_profile"}):
             return merged.materialize_active_profile()
         if "active_profile" not in updates and profile_updates & {"api_format", "provider", "base_url"}:
+            _, active_profile = merged.resolve_profile()
+            if (merged.provider, merged.api_format) == (active_profile.provider, active_profile.api_format):
+                return merged.sync_active_profile_from_flat_fields().materialize_active_profile()
             profile_name, profile = _profile_from_flat_settings(merged)
             profiles = merged.merged_profiles()
             profiles[profile_name] = profile

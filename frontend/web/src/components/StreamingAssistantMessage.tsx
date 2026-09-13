@@ -21,6 +21,7 @@ export function StreamingAssistantMessage({
   return (
     <StreamingTextRenderer
       text={message.text}
+      restoredText={message.restoredText}
       settings={settings}
       streaming={active && !message.isComplete}
       onVisibleTextChange={onVisibleTextChange}

@@ -8,6 +8,16 @@ from typing import Literal
 from pydantic import BaseModel, Field, PrivateAttr
 
 
+DUMMY_MCP_SERVERS = frozenset({
+    "posco-calender", "posco-datalake", "posco-ecm", "posco-email", "posco-erp",
+    "posco-gih", "posco-mih", "posco-ontology", "posco-plm",
+})
+
+
+def is_dummy_mcp(name: str) -> bool:
+    return name.strip().lower() in DUMMY_MCP_SERVERS
+
+
 class McpStdioServerConfig(BaseModel):
     """stdio MCP server configuration."""
 
@@ -20,6 +30,7 @@ class McpStdioServerConfig(BaseModel):
     cwd: str | None = None
     auto_connect: bool = True
     description: str = ""
+    read_only_tools: list[str] = Field(default_factory=list)
 
 
 class McpHttpServerConfig(BaseModel):
@@ -30,6 +41,7 @@ class McpHttpServerConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     auto_connect: bool = True
     description: str = ""
+    read_only_tools: list[str] = Field(default_factory=list)
 
 
 class McpWebSocketServerConfig(BaseModel):
@@ -40,6 +52,7 @@ class McpWebSocketServerConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     auto_connect: bool = True
     description: str = ""
+    read_only_tools: list[str] = Field(default_factory=list)
 
 
 McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpWebSocketServerConfig
@@ -66,6 +79,7 @@ class McpToolInfo:
     name: str
     description: str
     input_schema: dict[str, object]
+    read_only: bool = False
 
 
 @dataclass(frozen=True)

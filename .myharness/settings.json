@@ -213,5 +213,6 @@
     "model": "gpt-5.6-luna",
     "effort": "low",
     "pgpt_available": true
-  }
+  },
+  "design_mode": "improved"
 }

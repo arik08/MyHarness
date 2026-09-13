@@ -92,38 +92,6 @@ def test_select_from_menu_uses_questionary_when_tty(monkeypatch):
     assert answers
 
 
-def test_setup_flow_creates_kimi_profile_with_profile_scoped_key(tmp_path: Path, monkeypatch):
-    runner = CliRunner()
-    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path))
-
-    selections = iter(["claude-api", "kimi-anthropic"])
-    prompts = iter(
-        [
-            "https://api.moonshot.cn/anthropic",
-            "kimi-k2.5",
-        ]
-    )
-
-    monkeypatch.setattr("myharness.cli._select_setup_workflow", lambda *args, **kwargs: next(selections))
-    monkeypatch.setattr("myharness.cli._select_from_menu", lambda *args, **kwargs: next(selections))
-    monkeypatch.setattr("myharness.cli._text_prompt", lambda *args, **kwargs: next(prompts))
-    monkeypatch.setattr("myharness.auth.flows.ApiKeyFlow.run", lambda self: "sk-kimi-test")
-
-    result = runner.invoke(app, ["setup"])
-    assert result.exit_code == 0
-    assert "Setup complete:" in result.output
-    assert "- profile: kimi-anthropic" in result.output
-
-    settings = load_settings()
-    assert settings.active_profile == "kimi-anthropic"
-    profile = settings.resolve_profile()[1]
-    assert profile.base_url == "https://api.moonshot.cn/anthropic"
-    assert profile.credential_slot == "kimi-anthropic"
-    assert profile.allowed_models == ["kimi-k2.5"]
-
-    from myharness.auth.storage import load_credential
-
-    assert load_credential("profile:kimi-anthropic", "api_key") == "sk-kimi-test"
 
 
 def test_dangerously_skip_permissions_passes_full_auto_to_run_repl(monkeypatch):

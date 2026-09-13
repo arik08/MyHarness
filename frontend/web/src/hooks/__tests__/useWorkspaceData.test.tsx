@@ -47,6 +47,7 @@ function Probe() {
 
 describe("useWorkspaceData", () => {
   beforeEach(() => {
+    sessionStorage.clear();
     vi.clearAllMocks();
     vi.mocked(listWorkspaces).mockResolvedValue({
       root: "C:/demo",
@@ -56,6 +57,69 @@ describe("useWorkspaceData", () => {
     vi.mocked(listHistory).mockResolvedValue({ options: [] });
     vi.mocked(listProjectFiles).mockResolvedValue({ files: [], scope: "default" });
     vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [] });
+  });
+
+  it.each(["changed", "unchanged", "empty", "failed"])("restores recent data before the network and handles a %s refresh", async (result) => {
+    const oldRow = { value: "saved-cached", label: "오늘", description: "최근 받은 제목" };
+    vi.mocked(listHistory).mockResolvedValue({ options: [oldRow] });
+    const initial = { ...initialAppState, clientId: "cache-client" };
+    const first = render(<AppStateProvider initialState={initial}><Probe /></AppStateProvider>);
+    await waitFor(() => expect(screen.getByTestId("history").textContent).toContain("최근 받은 제목"));
+    first.unmount();
+
+    let resolveHistory!: (value: Awaited<ReturnType<typeof listHistory>>) => void;
+    let rejectHistory!: (error: Error) => void;
+    vi.mocked(listWorkspaces).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(listHistory).mockImplementation(() => new Promise((resolve, reject) => {
+      resolveHistory = resolve;
+      rejectHistory = reject;
+    }));
+    let latestHistory = initialAppState.history;
+    function ObserveHistory() {
+      latestHistory = useAppState().state.history;
+      return null;
+    }
+    render(<AppStateProvider initialState={initial}><Probe /><ObserveHistory /></AppStateProvider>);
+    expect(screen.getByTestId("history").textContent).toContain("최근 받은 제목");
+    expect(screen.getByTestId("history-loading").textContent).toBe("idle");
+    const cachedHistory = latestHistory;
+    await act(async () => {
+      if (result === "failed") rejectHistory(new Error("offline"));
+      else resolveHistory({ options: result === "empty" ? [] : [{ ...oldRow,
+        description: result === "changed" ? "새 제목" : oldRow.description }] });
+    });
+    const text = screen.getByTestId("history").textContent;
+    if (result === "empty") expect(text).toBe("[]");
+    else expect(text).toContain(result === "changed" ? "새 제목" : "최근 받은 제목");
+    if (result === "unchanged" || result === "failed") expect(latestHistory).toBe(cachedHistory);
+  });
+
+  it("ignores another client's cache and malformed cache data", async () => {
+    sessionStorage.setItem("myharness:recent:history:v1", JSON.stringify({
+      scope: JSON.stringify(["other-client", "C:/demo", "Default"]),
+      data: { history: [{ value: "private", label: "다른 사용자" }], hasMore: false, nextOffset: 1 },
+    }));
+    sessionStorage.setItem("myharness:recent:workspaces:v1", "{broken");
+    vi.mocked(listHistory).mockImplementation(() => new Promise(() => {}));
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", workspaceName: "Default", workspacePath: "C:/demo" }}><Probe /></AppStateProvider>);
+    expect(screen.getByTestId("history").textContent).toBe("[]");
+    expect(screen.getByTestId("history-loading").textContent).toBe("loading");
+    await act(async () => { await Promise.resolve(); });
+  });
+
+  it("shows saved history before a slow live-session lookup and keeps it on lookup failure", async () => {
+    let rejectLive!: (error: Error) => void;
+    vi.mocked(listLiveSessions).mockImplementation(() => new Promise((_resolve, reject) => { rejectLive = reject; }));
+    vi.mocked(listHistory).mockResolvedValue({ options: [{ value: "saved-fast", label: "오늘", description: "최근 작업" }] });
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", workspaceName: "Default", workspacePath: "C:/demo" }}>
+        <Probe />
+      </AppStateProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("history").textContent).toContain("saved-fast"));
+    expect(screen.getByTestId("history-loading").textContent).toBe("idle");
+    await act(async () => rejectLive(new Error("live status unavailable")));
+    expect(screen.getByTestId("history").textContent).toContain("saved-fast");
   });
 
   it("merges live backend sessions into the history list", async () => {
@@ -96,6 +160,35 @@ describe("useWorkspaceData", () => {
       });
       expect(history[1]).toMatchObject({ value: "saved-old" });
     });
+  });
+
+  it("uses the new active session when an earlier history request finishes after switching", async () => {
+    let resolveLive!: (value: Awaited<ReturnType<typeof listLiveSessions>>) => void;
+    vi.mocked(listLiveSessions).mockReturnValueOnce(new Promise((resolve) => { resolveLive = resolve; }));
+    render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        sessionId: "web-streaming",
+        clientId: "client-1",
+        busy: true,
+        workspaceName: "Default",
+        workspacePath: "C:/demo",
+        messages: [{ id: "question", role: "user", text: "계속 진행할 질문" }],
+      }}>
+        <Probe />
+      </AppStateProvider>,
+    );
+    await waitFor(() => expect(listLiveSessions).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "connect session" }));
+    await act(async () => resolveLive({ sessions: [{
+      sessionId: "web-streaming", savedSessionId: "saved-streaming", busy: true, createdAt: 1,
+      workspace: { name: "Default", path: "C:/demo" },
+    }] }));
+    const history = JSON.parse(screen.getByTestId("history").textContent || "[]");
+    expect(history.find((item: { value: string }) => item.value === "saved-streaming")).toMatchObject({
+      live: true, liveSessionId: "web-streaming", busy: true,
+    });
+    expect(listHistory).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes a background live chat when it finishes", async () => {
@@ -300,7 +393,7 @@ describe("useWorkspaceData", () => {
     });
   });
 
-  it("does not surface idle untitled placeholder sessions after switching history", async () => {
+  it.each(["", "새 대화", "MyHarness"])("does not surface idle placeholder sessions after switching history (%s)", async (title) => {
     vi.mocked(listHistory).mockResolvedValue({
       options: [{ value: "saved-current", label: "5/4 10:00 4 msg", description: "나무위키 역사 PPTX" }],
     });
@@ -308,7 +401,7 @@ describe("useWorkspaceData", () => {
       sessions: [{
         sessionId: "web-placeholder",
         savedSessionId: "placeholder-saved-id",
-        title: "",
+        title,
         workspace: { name: "Default", path: "C:/demo" },
         busy: false,
         createdAt: 1,

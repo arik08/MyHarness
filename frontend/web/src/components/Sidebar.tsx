@@ -26,6 +26,7 @@ const themeOptions: Array<{ id: ThemeId; label: string }> = [
 
 const historyTitleMaxLength = 26;
 const historyPreviewHeadStartMs = 500;
+const historyRestoreSpinnerDelayMs = 300;
 const historyTitleCollator = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
 const sidebarMinWidth = sidebarDefaultWidthPx;
 
@@ -73,7 +74,6 @@ export function Sidebar() {
   const { state, dispatch } = useAppState();
   const runtimePickerRef = useRef<HTMLDivElement | null>(null);
   const runtimeFooterRef = useRef<HTMLButtonElement | null>(null);
-  const runtimePickerLockedTopRef = useRef<number | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
   const [editingHistoryId, setEditingHistoryId] = useState("");
@@ -101,9 +101,21 @@ export function Sidebar() {
   const [optimisticallyHiddenHistoryIds, setOptimisticallyHiddenHistoryIds] = useState<Set<string>>(new Set());
   const historyListRef = useRef<HTMLDivElement | null>(null);
   const historyRestoreRequestRef = useRef<object | null>(null);
+  const [visibleRestoreSpinnerId, setVisibleRestoreSpinnerId] = useState("");
+  useEffect(() => {
+    setVisibleRestoreSpinnerId("");
+    const pendingHistoryId = state.pendingHistoryId;
+    if (!pendingHistoryId) return;
+    const timer = window.setTimeout(() => {
+      setVisibleRestoreSpinnerId(pendingHistoryId);
+    }, historyRestoreSpinnerDelayMs);
+    return () => window.clearTimeout(timer);
+  }, [state.pendingHistoryId]);
+  const newChatInFlightRef = useRef(false);
   const historyScope = `${state.workspacePath}\u0000${state.workspaceName}`;
   const historyScopeRef = useRef(historyScope);
   const previousHistoryScopeRef = useRef(historyScope);
+  const historyOrderRef = useRef<{ scope: string; ids: string[] }>({ scope: historyScope, ids: [] });
   const historyLoadingMoreRequestRef = useRef<object | null>(null);
   const historySearchRequestRef = useRef<object | null>(null);
   historyScopeRef.current = historyScope;
@@ -184,10 +196,57 @@ export function Sidebar() {
   }, [historyBulkMode]);
 
   async function startFreshChat(workspace?: Workspace) {
+    if (newChatInFlightRef.current) return;
+    if (!workspace) {
+      setLikedHistoryOnly(false);
+      setHistorySearchQuery("");
+      historySearchRequestRef.current = null;
+      const unusedChat = sortedRenderedHistory.slice(0, 1).find((item) => {
+        if (item.messageCount !== 0 || item.busy || item.hidden || optimisticallyHiddenHistoryIds.has(item.value)) return false;
+        if (item.workspace?.path && item.workspace.path !== state.workspacePath) return false;
+        if (item.value === (state.activeHistoryId || state.sessionId)
+          && (state.busy || state.messages.some((message) => message.role === "user"))) return false;
+        return !Object.values(state.liveSessionViewsBySessionId).some((view) => (
+          view.activeHistoryId === item.value && view.messages.some((message) => message.role === "user")
+        ));
+      });
+      if (unusedChat) {
+        await openHistory(unusedChat);
+        return;
+      }
+    }
+    newChatInFlightRef.current = true;
+    try {
+      await createFreshChat(workspace);
+    } finally {
+      newChatInFlightRef.current = false;
+    }
+  }
+
+  async function createFreshChat(workspace?: Workspace) {
+    const creationRequest = {};
+    historyRestoreRequestRef.current = creationRequest;
     const nextWorkspace = workspace || (state.workspacePath ? { name: state.workspaceName, path: state.workspacePath } : undefined);
-    if (!workspace && state.sessionId && !state.busy) {
+    const nextSessionId = createSavedSessionId();
+    setLikedHistoryOnly(false);
+    setHistorySearchQuery("");
+    historySearchRequestRef.current = null;
+    dispatch({ type: "add_new_chat_history", sessionId: nextSessionId, workspace: nextWorkspace });
+    const finishNewSession = async (session: Awaited<ReturnType<typeof startSession>>) => {
+      await sendBackendRequest(session.sessionId, state.clientId, {
+        type: "start_new_session",
+        value: nextSessionId,
+      });
+      if (historyRestoreRequestRef.current !== creationRequest) return;
+      dispatch({
+        type: "session_replaced",
+        sessionId: session.sessionId,
+        savedSessionId: nextSessionId,
+        workspace: session.workspace || nextWorkspace,
+      });
+    };
+    if (!workspace && state.sessionId && !state.busy && !state.historyReadOnly && !state.restoringHistory) {
       window.dispatchEvent(new Event("myharness:saveMessageScroll"));
-      const nextSessionId = createSavedSessionId();
       dispatch({ type: "begin_new_chat", sessionId: nextSessionId });
       try {
         await sendBackendRequest(state.sessionId, state.clientId, {
@@ -202,7 +261,7 @@ export function Sidebar() {
               cwd: nextWorkspace?.path || undefined,
               ...runtimePreferencesFromState(state),
             });
-            dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
+            await finishNewSession(session);
             return;
           } catch (recoveryError) {
             error = recoveryError;
@@ -216,13 +275,13 @@ export function Sidebar() {
       return;
     }
     try {
-      if (state.busy || !state.sessionId) {
+      if (state.busy || !state.sessionId || state.historyReadOnly || state.restoringHistory) {
         const session = await startSession({
           clientId: state.clientId,
           cwd: nextWorkspace?.path || undefined,
           ...runtimePreferencesFromState(state),
         });
-        dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
+        await finishNewSession(session);
         return;
       }
       const session = await restartSession({
@@ -231,7 +290,7 @@ export function Sidebar() {
         cwd: nextWorkspace?.path || undefined,
         ...runtimePreferencesFromState(state),
       });
-      dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
+      await finishNewSession(session);
     } catch (error) {
       if (isUnknownSessionError(error)) {
         try {
@@ -240,7 +299,7 @@ export function Sidebar() {
             cwd: nextWorkspace?.path || undefined,
             ...runtimePreferencesFromState(state),
           });
-          dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
+          await finishNewSession(session);
           return;
         } catch (recoveryError) {
           error = recoveryError;
@@ -254,6 +313,7 @@ export function Sidebar() {
   }
 
   async function restartActiveSession() {
+    historyRestoreRequestRef.current = null;
     const nextWorkspace = state.workspacePath ? { name: state.workspaceName, path: state.workspacePath } : undefined;
     try {
       if (!state.sessionId) {
@@ -296,20 +356,23 @@ export function Sidebar() {
     }
     closeHistoryMenu();
     const activeHistoryId = state.activeHistoryId || state.sessionId;
-    if (nextHistoryId === state.pendingHistoryId || nextHistoryId === activeHistoryId || nextHistoryId === state.sessionId) {
+    if (nextHistoryId === state.pendingHistoryId || (!state.pendingHistoryId && nextHistoryId === activeHistoryId)) {
       return;
     }
     window.dispatchEvent(new Event("myharness:saveMessageScroll"));
     const restoreRequest = {};
     historyRestoreRequestRef.current = restoreRequest;
+    const isCurrentRequest = () => historyRestoreRequestRef.current === restoreRequest;
+    let acceptPreview = true;
     dispatch({ type: "begin_history_restore", sessionId: nextHistoryId });
     const previewRequest = loadHistorySnapshot({
       sessionId: nextHistoryId,
       workspacePath: item.workspace?.path || state.workspacePath || undefined,
       workspaceName: item.workspace?.name || state.workspaceName || undefined,
     }).then((event) => {
-      if (historyRestoreRequestRef.current === restoreRequest) {
+      if (isCurrentRequest() && acceptPreview) {
         dispatch({ type: "backend_event", event });
+        dispatch({ type: "finish_history_restore" });
       }
       return true;
     }).catch(() => {
@@ -320,10 +383,7 @@ export function Sidebar() {
       previewRequest,
       new Promise<false>((resolve) => window.setTimeout(() => resolve(false), historyPreviewHeadStartMs)),
     ]);
-    if (previewLoaded && historyRestoreRequestRef.current === restoreRequest) {
-      dispatch({ type: "finish_history_restore" });
-      return;
-    }
+    if (!isCurrentRequest()) return;
     try {
       let targetSessionId = state.sessionId;
       const findLiveSession = (sessions: Awaited<ReturnType<typeof listLiveSessions>>["sessions"]) => (
@@ -337,43 +397,38 @@ export function Sidebar() {
         clientId: state.clientId,
         workspacePath: state.workspacePath || undefined,
       });
+      if (!isCurrentRequest()) return;
       let liveSession = findLiveSession(liveSessions.sessions);
       if (!liveSession && state.workspacePath) {
         const allLiveSessions = await listLiveSessions({ clientId: state.clientId });
+        if (!isCurrentRequest()) return;
         liveSession = findLiveSession(allLiveSessions.sessions);
       }
       if (liveSession) {
+        acceptPreview = false;
         dispatch({
           type: "session_started",
           sessionId: liveSession.sessionId,
           clientId: state.clientId,
           busy: liveSession.busy,
+          replay: true,
+          savedSessionId: liveSession.savedSessionId,
         });
         if (liveSession.workspace) {
           dispatch({ type: "set_workspace", workspace: liveSession.workspace });
         }
-        if (liveSession.busy) {
-          dispatch({ type: "finish_history_restore" });
-          return;
-        }
-        if (liveSession.savedSessionId) {
-          await sendBackendRequest(liveSession.sessionId, state.clientId, {
-            type: "apply_select_command",
-            command: "resume",
-            value: liveSession.savedSessionId,
-          });
-          return;
-        }
-        dispatch({ type: "set_busy", value: false });
         dispatch({ type: "finish_history_restore" });
         return;
       }
+      if (previewLoaded) return;
+      acceptPreview = false;
       if (state.busy) {
         const session = await startSession({
           clientId: state.clientId,
           cwd: state.workspacePath || undefined,
           ...runtimePreferencesFromState(state),
         });
+        if (!isCurrentRequest()) return;
         targetSessionId = session.sessionId;
         dispatch({
           type: "session_started",
@@ -390,6 +445,7 @@ export function Sidebar() {
         value: nextHistoryId,
       });
     } catch (error) {
+      if (!isCurrentRequest()) return;
       if (isUnknownSessionError(error)) {
         try {
           const session = await startSession({
@@ -397,6 +453,7 @@ export function Sidebar() {
             cwd: state.workspacePath || undefined,
             ...runtimePreferencesFromState(state),
           });
+          if (!isCurrentRequest()) return;
           dispatch({
             type: "session_started",
             sessionId: session.sessionId,
@@ -635,6 +692,7 @@ export function Sidebar() {
   }
 
   async function loadMoreHistory() {
+    if (likedHistoryOnly) return;
     if (!state.historyHasMore || state.historyLoading || state.historyLoadingMore || historyLoadingMoreRequestRef.current) {
       return;
     }
@@ -679,6 +737,7 @@ export function Sidebar() {
   }
 
   async function loadMoreHistorySearch() {
+    if (likedHistoryOnly) return;
     if (!historySearch || !historySearchHasMore || historySearchLoading || historySearchRequestRef.current) {
       return;
     }
@@ -928,10 +987,7 @@ export function Sidebar() {
       dispatch({ type: "set_runtime_picker_error", message: "세션이 준비되면 선택할 수 있습니다." });
       return;
     }
-    if (state.busy) {
-      dispatch({ type: "set_runtime_picker_error", message: "응답이 끝난 뒤 선택할 수 있습니다." });
-      return;
-    }
+    if (state.busy && state.runtimePicker.providers.length) return;
     try {
       await sendBackendRequest(state.sessionId, state.clientId, { type: "select_command", command: "runtime-picker" });
     } catch (error) {
@@ -943,14 +999,8 @@ export function Sidebar() {
   }
 
   async function applyRuntimeChoice(command: "provider" | "model" | "effort", option: RuntimePickerOption) {
-    if (!state.sessionId || state.busy) return;
-    const backendCommand = state.runtimePicker.agentScope === "sub"
-      ? command === "model"
-        ? "subagent_model"
-        : command === "effort"
-          ? "subagent_effort"
-          : command
-      : command;
+    if (!state.sessionId) return;
+    const backendCommand = command;
     if (command === "provider") {
       dispatch({ type: "select_runtime_provider", value: option.value });
     } else if (command === "model") {
@@ -997,7 +1047,6 @@ export function Sidebar() {
 
   useLayoutEffect(() => {
     if (!state.runtimePicker.open) {
-      runtimePickerLockedTopRef.current = null;
       setRuntimePickerGeometry({ left: null, top: null, panelMaxHeight: null });
       return;
     }
@@ -1025,29 +1074,13 @@ export function Sidebar() {
       const rect = anchor.getBoundingClientRect();
       const gap = 8;
       const viewportPad = 8;
-      const bottomLimit = Math.max(viewportPad, rect.top - gap);
-      const providerPanel = root.querySelector(".runtime-picker-provider-panel");
+      const bottomLimit = Math.max(viewportPad, Math.min(rect.top - gap, window.innerHeight - viewportPad));
       const narrowViewport = window.innerWidth < 680;
-
-      if (narrowViewport) {
-        runtimePickerLockedTopRef.current = null;
-      } else if (runtimePickerLockedTopRef.current === null) {
-        const providerHeight = Math.min(
-          Math.max(96, bottomLimit - viewportPad),
-          Math.max(
-            96,
-            pickerHasProviderContent(state.runtimePicker)
-              ? runtimePickerNaturalPanelHeight(providerPanel)
-              : providerPanel instanceof HTMLElement
-                ? providerPanel.scrollHeight || providerPanel.offsetHeight || root.offsetHeight
-                : root.offsetHeight,
-          ),
-        );
-        const candidateTop = Math.max(viewportPad, bottomLimit - providerHeight);
-        if (pickerHasProviderContent(state.runtimePicker)) {
-          runtimePickerLockedTopRef.current = candidateTop;
-        }
-      }
+      // Measure unclipped content so opening a taller model/effort panel can grow upward.
+      const tallestPanelHeight = Math.max(
+        96,
+        ...Array.from(root.querySelectorAll(".runtime-picker-panel"), runtimePickerNaturalPanelHeight),
+      );
 
       const openPanelCount = 1 + (state.runtimePicker.modelOpen ? 1 : 0) + (state.runtimePicker.effortOpen ? 1 : 0);
       const naturalLayerHeight = Math.max(96, root.scrollHeight || root.offsetHeight);
@@ -1055,7 +1088,7 @@ export function Sidebar() {
         viewportPad,
         narrowViewport
           ? bottomLimit - Math.min(naturalLayerHeight, Math.max(96, bottomLimit - viewportPad))
-          : runtimePickerLockedTopRef.current ?? Math.max(viewportPad, bottomLimit - Math.max(96, root.offsetHeight)),
+          : bottomLimit - Math.min(360, tallestPanelHeight),
       );
       const panelMaxHeight = narrowViewport
         ? Math.max(
@@ -1141,11 +1174,12 @@ export function Sidebar() {
   const activeHistoryDescription = currentConversationHistoryTitle(state);
   const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
   const responseVisiblyBusy = isResponseVisiblyBusy(state);
+  // Startup emits an unsaved bootstrap ID before the real conversation ID.
+  // An ID alone is not enough to add a row alongside fetched saved history.
   const shouldRenderActiveHistory = Boolean(
     state.pendingFreshChat
     || state.busy
-    || activeHistoryDescription
-    || state.activeHistoryId,
+    || activeHistoryDescription,
   );
   const renderedHistory = !state.pendingHistoryId && activeHistoryValue && !activeHistoryDeleted && !hasActiveHistoryItem && shouldRenderActiveHistory
     ? [
@@ -1163,16 +1197,46 @@ export function Sidebar() {
         ...visibleHistory,
       ]
     : visibleHistory;
-  const sortedRenderedHistory = sortPinnedHistory(renderedHistory);
+  const busySessionIds = new Set(state.history
+    .filter((item) => item.live === true && item.busy === true && (
+      item.liveSessionId !== state.sessionId || state.busy || state.restoringHistory || state.historyReadOnly
+    ))
+    .map((item) => item.liveSessionId || item.value));
+  if (state.busy && state.sessionId) busySessionIds.add(state.sessionId);
+  const historyOrderId = (item: HistoryItem) => item.liveSessionId
+    || (isActiveHistoryItem(item, activeHistoryValue, state.sessionId) ? state.sessionId : null)
+    || item.value;
+  const previousOrder = historyOrderRef.current.scope === historyScope ? historyOrderRef.current.ids : [];
+  // Rebuilding the active live row and refreshing history must not move chats
+  // under the pointer while the user switches between concurrent responses.
+  const stableHistory = busySessionIds.size >= 2
+    ? [...renderedHistory].sort((left, right) => (
+        previousOrder.indexOf(historyOrderId(left)) - previousOrder.indexOf(historyOrderId(right))
+      ))
+    : renderedHistory;
+  const sortedRenderedHistory = sortPinnedHistory(stableHistory);
+  useLayoutEffect(() => {
+    const ids = sortedRenderedHistory.map(historyOrderId);
+    historyOrderRef.current = {
+      scope: historyScope,
+      ids: busySessionIds.size >= 2
+        ? [...ids.filter((id) => !previousOrder.includes(id)), ...previousOrder]
+        : ids,
+    };
+  });
   const historySearch = historySearchQuery.trim();
   const hasHistorySearch = Boolean(historySearch);
+  const historyRequestSearch = likedHistoryOnly ? "" : historySearch;
+  const hasHistoryFilter = hasHistorySearch || likedHistoryOnly;
   const titleForHistoryItem = (item: HistoryItem) => {
     const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
     return isActive && conversationTitle !== "MyHarness"
-      ? conversationTitle
+      ? activeHistoryDescription
       : item.description || item.label;
   };
-  const renderedHistorySource = hasHistorySearch
+  const renderedHistorySource = likedHistoryOnly
+    ? sortPinnedHistory(appendUniqueHistoryItems(historySearchResults, sortedRenderedHistory))
+    : hasHistorySearch
     ? appendUniqueHistoryItems(sortedRenderedHistory, historySearchResults)
     : sortedRenderedHistory;
   const filteredRenderedHistory = renderedHistorySource.filter((item) => (
@@ -1202,7 +1266,7 @@ export function Sidebar() {
     setHistorySearchResults([]);
     setHistorySearchHasMore(false);
     setHistorySearchNextOffset(0);
-    if (!hasHistorySearch) {
+    if (!historyRequestSearch && !likedHistoryOnly) {
       setHistorySearchLoading(false);
       return () => {
         if (historySearchRequestRef.current === request) historySearchRequestRef.current = null;
@@ -1215,9 +1279,7 @@ export function Sidebar() {
       void listHistory({
         workspacePath: state.workspacePath,
         workspaceName: state.workspaceName,
-        limit: historyPageSize,
-        offset: 0,
-        search: historySearch,
+        ...(likedHistoryOnly ? { likedOnly: true } : { limit: historyPageSize, offset: 0, search: historyRequestSearch }),
       }).then((data) => {
         if (historySearchRequestRef.current !== request || historyScopeRef.current !== requestScope) return;
         const history = Array.isArray(data.options) ? data.options : [];
@@ -1236,13 +1298,13 @@ export function Sidebar() {
           setHistorySearchLoading(false);
         }
       });
-    }, 250);
+    }, likedHistoryOnly ? 0 : 250);
 
     return () => {
       window.clearTimeout(timeout);
       if (historySearchRequestRef.current === request) historySearchRequestRef.current = null;
     };
-  }, [dispatch, hasHistorySearch, historyScope, historySearch, state.workspaceName, state.workspacePath]);
+  }, [dispatch, likedHistoryOnly, historyScope, historyRequestSearch, state.workspaceName, state.workspacePath]);
 
   useEffect(() => {
     const selectableIds = new Set(historyBulkSelectableKey ? historyBulkSelectableKey.split("\u0000") : []);
@@ -1596,10 +1658,12 @@ export function Sidebar() {
           aria-busy={(state.historyLoading || state.historyLoadingMore || historySearchLoading) ? "true" : "false"}
           onScroll={handleHistoryScroll}
         >
-          {hasHistorySearch && historySearchLoading && !filteredRenderedHistory.length ? (
-            <p className="empty">제목을 검색하는 중...</p>
-          ) : state.historyLoading && !renderedHistory.length ? (
-            <p className="empty">대화 내역을 불러오는 중...</p>
+          {hasHistoryFilter && historySearchLoading && !filteredRenderedHistory.length ? (
+            <p className="empty">{likedHistoryOnly ? "좋아요한 채팅을 불러오는 중..." : "제목을 검색하는 중..."}</p>
+          ) : (state.historyLoading || (!state.workspaceName && !state.workspacePath && state.status === "connecting")) && !renderedHistory.length ? (
+            <div className="history-skeleton" role="status" aria-label="대화 내역을 불러오는 중">
+              <span /><span /><span /><span />
+            </div>
           ) : filteredRenderedHistory.length ? (
             filteredRenderedHistory.map((item) => {
               const editing = editingHistoryId === item.value;
@@ -1618,6 +1682,9 @@ export function Sidebar() {
               );
               const isActiveBusy = isActive && responseVisiblyBusy && (!state.pendingHistoryId || isPendingRestore);
               const isBusy = isActiveBusy || isPendingRestore || (item.live === true && liveResponseVisiblyBusy && !isActive);
+              const showBusySpinner = isActiveBusy
+                || (isPendingRestore && visibleRestoreSpinnerId === item.value)
+                || (item.live === true && liveResponseVisiblyBusy && !isActive);
               const isDeleting = deletingHistoryId === item.value;
               const canLike = !item.pending && !isLiveOnlyHistoryItem(item);
               const canPin = !item.pending && !isLiveOnlyHistoryItem(item);
@@ -1660,7 +1727,7 @@ export function Sidebar() {
                     </button>
                   ) : (
                     <>
-                      {isBusy ? (
+                      {showBusySpinner ? (
                         <span className="history-busy-spinner" aria-hidden="true" />
                       ) : (
                         <button
@@ -1867,12 +1934,9 @@ export function Sidebar() {
           picker={state.runtimePicker}
           providerLabel={state.providerLabel || state.provider}
           model={state.model}
-          subagentModel={state.subagentModel}
           effort={state.effort}
-          subagentEffort={state.subagentEffort}
           busy={state.busy}
           geometry={runtimePickerGeometry}
-          onScopeChange={(scope) => dispatch({ type: "select_runtime_agent_scope", value: scope })}
           onApply={applyRuntimeChoice}
         />
       ) : null}
@@ -1972,24 +2036,18 @@ function RuntimePicker({
   picker,
   providerLabel,
   model,
-  subagentModel,
   effort,
-  subagentEffort,
   busy,
   geometry,
-  onScopeChange,
   onApply,
 }: {
   refNode: RefObject<HTMLDivElement | null>;
   picker: ReturnType<typeof useAppState>["state"]["runtimePicker"];
   providerLabel: string;
   model: string;
-  subagentModel: string;
   effort: string;
-  subagentEffort: string;
   busy: boolean;
   geometry: RuntimePickerGeometry;
-  onScopeChange: (scope: "main" | "sub") => void;
   onApply: (command: "provider" | "model" | "effort", option: RuntimePickerOption) => Promise<void>;
 }) {
   const style: RuntimePickerStyle = {};
@@ -2010,31 +2068,9 @@ function RuntimePicker({
         title="Provider"
         value={providerLabel}
         className="runtime-picker-provider-panel"
-        headerAction={(
-          <div className="runtime-agent-scope" role="tablist" aria-label="모델 선택 대상">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={picker.agentScope === "main"}
-              className={picker.agentScope === "main" ? "active" : ""}
-              disabled={busy}
-              onClick={() => onScopeChange("main")}
-            >
-              Main
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={picker.agentScope === "sub"}
-              className={picker.agentScope === "sub" ? "active" : ""}
-              disabled={busy}
-              onClick={() => onScopeChange("sub")}
-            >
-              Sub
-            </button>
-          </div>
-        )}
+
       >
+        {busy ? <p className="runtime-picker-empty">변경한 설정은 다음 질문이나 새 세션부터 적용됩니다.</p> : null}
         {picker.error ? <p className="runtime-picker-empty">{picker.error}</p> : null}
         {!picker.error && picker.loading ? <p className="runtime-picker-empty">불러오는 중...</p> : null}
         {!picker.error && !picker.loading && picker.providers.map((option) => (
@@ -2043,33 +2079,33 @@ function RuntimePicker({
             command="provider"
             option={option}
             suffix="›"
-            disabled={busy}
+            disabled={false}
             onClick={() => onApply("provider", option)}
           />
         ))}
       </RuntimePanel>
       {picker.modelOpen ? (
-        <RuntimePanel title="모델" value={picker.agentScope === "sub" ? subagentModel : model} className="runtime-picker-model-panel">
+        <RuntimePanel title="모델" value={model} className="runtime-picker-model-panel">
           {picker.models.length ? picker.models.map((option) => (
             <RuntimeOption
               key={option.value}
               command="model"
               option={option}
               suffix="›"
-              disabled={busy}
+              disabled={false}
               onClick={() => onApply("model", option)}
             />
           )) : <p className="runtime-picker-empty">선택 가능한 모델이 없습니다.</p>}
         </RuntimePanel>
       ) : null}
       {picker.effortOpen ? (
-        <RuntimePanel title="추론 노력" value={(picker.agentScope === "sub" ? subagentEffort : effort) || "-"} className="runtime-picker-effort-panel">
+        <RuntimePanel title="추론 노력" value={effort || "-"} className="runtime-picker-effort-panel">
           {picker.efforts.length ? picker.efforts.map((option) => (
             <RuntimeOption
               key={option.value || option.label}
               command="effort"
               option={option}
-              disabled={busy}
+              disabled={false}
               onClick={() => onApply("effort", option)}
             />
           )) : <p className="runtime-picker-empty">선택 가능한 값이 없습니다.</p>}
@@ -2088,10 +2124,6 @@ type RuntimePickerGeometry = {
 type RuntimePickerStyle = CSSProperties & {
   "--runtime-picker-panel-max-height"?: string;
 };
-
-function pickerHasProviderContent(picker: ReturnType<typeof useAppState>["state"]["runtimePicker"]) {
-  return Boolean(picker.error || (!picker.loading && picker.providers.length));
-}
 
 function isActiveHistoryItem(item: HistoryItem, activeHistoryValue: string, sessionId: string | null) {
   if (!item.value) {

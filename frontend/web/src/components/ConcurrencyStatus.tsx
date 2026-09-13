@@ -1,4 +1,6 @@
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
+import { readServerMetrics, type ServerMetrics } from "../api/serverMetrics";
+import { ServerMetricsPanel, percentLabel } from "./ServerMetricsPanel";
 import {
   concurrencySettingsChangedEvent,
   readConcurrencyStatus,
@@ -64,10 +66,18 @@ function displayedRatio(current: number | null, maximum: number | null) {
   return `${current ?? "–"} / ${maximum ?? "–"}`;
 }
 
+function displayedStatus(item: StatusItem) {
+  return item.key === "sessions" ? `${item.current ?? "–"}개` : displayedRatio(item.current, item.maximum);
+}
+
 export function ConcurrencyStatus() {
   const { state } = useAppState();
   const [status, setStatus] = useState<ConcurrencyStatusValue | null>(null);
   const tooltipId = useId();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [metrics, setMetrics] = useState<ServerMetrics | null>(null);
+  const [metricsError, setMetricsError] = useState("");
+  const closeDetails = useCallback(() => setDetailsOpen(false), []);
 
   useEffect(() => {
     let active = true;
@@ -91,12 +101,29 @@ export function ConcurrencyStatus() {
     };
   }, [state.clientId]);
 
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      try {
+        const next = await readServerMetrics(detailsOpen);
+        if (active) { setMetrics(next); setMetricsError(""); }
+      } catch {
+        if (active) setMetricsError("서버 지표를 갱신하지 못했습니다. 서버 연결 및 재시작 여부를 확인하세요.");
+      } finally {
+        if (active) timer = setTimeout(refresh, refreshIntervalMs);
+      }
+    }
+    void refresh();
+    return () => { active = false; clearTimeout(timer); };
+  }, [detailsOpen]);
+
   const items: StatusItem[] = [
     {
       key: "sessions",
-      label: "열린 작업 세션",
-      current: status?.activeSessions ?? null,
-      maximum: status?.maxActiveSessions ?? null,
+      label: "연결된 화면",
+      current: status?.connectedScreens ?? null,
+      maximum: null,
     },
     {
       key: "responses",
@@ -112,39 +139,57 @@ export function ConcurrencyStatus() {
     },
   ];
   const statusLabel = items
-    .map((item) => `${item.label} ${displayedRatio(item.current, item.maximum)}`)
+    .map((item) => `${item.label} ${displayedStatus(item)}`)
     .concat(`대기열 세션 ${status?.queuedSessions ?? 0}, 응답 ${status?.queuedResponses ?? 0}`)
     .join(", ");
+  const usersLabel = `사용자 수 ${status?.activeUsers ?? "–"}명`;
   const queuedSessions = status?.queuedSessions ?? 0;
   const queuedResponses = status?.queuedResponses ?? 0;
+  const resources = metricsError ? null : metrics?.resources;
+  const memoryUsage = resources ? 100 * (1 - resources.availableMemoryBytes / resources.totalMemoryBytes) : null;
 
   return (
-    <span className="concurrency-status">
+    <span className="concurrency-status" data-details-open={detailsOpen}>
       <button
         className="header-icon-button concurrency-status-button"
         type="button"
         aria-describedby={tooltipId}
-        aria-label={`동시 사용 현황: ${statusLabel}`}
+        aria-label={`동시 사용 현황: ${usersLabel}, ${statusLabel}`}
+        aria-haspopup="dialog"
+        aria-expanded={detailsOpen}
+        onClick={() => setDetailsOpen(true)}
       >
         <CapacityIcon />
       </button>
       <span className="concurrency-status-tooltip" id={tooltipId} role="tooltip">
         <strong>동시 사용 현황</strong>
+        <span className="concurrency-status-row"><CapacityIcon /><span>서버 CPU</span><span className="concurrency-status-value">{metricsError ? "확인 불가" : percentLabel(metrics?.resources?.cpuPercent)}</span></span>
+        <span className="concurrency-status-row"><SessionsIcon /><span>서버 메모리</span><span className="concurrency-status-value concurrency-memory-value">{resources ? `${(resources.availableMemoryBytes / 1024 ** 3).toFixed(1)} / ${(resources.totalMemoryBytes / 1024 ** 3).toFixed(1)} GB · ${percentLabel(memoryUsage)}` : "확인 불가"}</span></span>
+        <span className="concurrency-status-row" data-status="users">
+          <svg aria-hidden="true" viewBox="0 0 20 20">
+            <circle cx="7" cy="6" r="2.5" />
+            <path d="M2.5 16v-2a4.5 4.5 0 0 1 9 0v2M13 3.5a2.5 2.5 0 0 1 0 5M14 11a3.5 3.5 0 0 1 3.5 3.5V16" />
+          </svg>
+          <span>사용자 수</span>
+          <span className="concurrency-status-value">{status?.activeUsers ?? "–"}명</span>
+        </span>
         {items.map((item) => (
           <span className="concurrency-status-row" data-status={item.key} key={item.key}>
             <StatusIcon item={item.key} />
             <span>{item.label}</span>
-            <span className="concurrency-status-value">{displayedRatio(item.current, item.maximum)}</span>
+            <span className="concurrency-status-value">{displayedStatus(item)}</span>
           </span>
         ))}
-        {queuedSessions || queuedResponses ? (
+        {(
           <span className="concurrency-status-row" data-status="queue">
             <CapacityIcon />
             <span>대기열</span>
             <span className="concurrency-status-value">세션 {queuedSessions} · 응답 {queuedResponses}</span>
           </span>
-        ) : null}
+        )}
+        <span className="concurrency-status-hint">클릭하면 서버 부하와 최근 추이 보기</span>
       </span>
+      {detailsOpen && <ServerMetricsPanel metrics={metrics} error={metricsError} onClose={closeDetails} />}
     </span>
   );
 }

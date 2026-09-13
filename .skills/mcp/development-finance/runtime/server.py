@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+from pydantic import Field
+
 import csv
 import io
 import json
@@ -22,6 +25,9 @@ from myharness.mcp.official_data import (
 
 ADB_KIDB_BASE_URL = "https://kidb.adb.org/api"
 SOURCES = {"adb_kidb": "Asian Development Bank Key Indicators Database"}
+
+Source = Annotated[str, Field(description="Source served by development-finance only", json_schema_extra={"enum": list(SOURCES)})]
+
 
 server = FastMCP("development-finance")
 attach_packaged_skill(server, __file__)
@@ -47,7 +53,7 @@ def _dataflow(value: str) -> str:
 
 
 @server.tool()
-def search_catalog(source: str, dataflow: str, query: str = "", limit: int = 100) -> str:
+def search_catalog(source: Source, dataflow: str, query: str = "", limit: int = 100) -> str:
     """List ADB KIDB indicators within an official dataflow."""
     selected = _source(source)
     flow = _dataflow(dataflow)
@@ -75,7 +81,7 @@ def search_catalog(source: str, dataflow: str, query: str = "", limit: int = 100
 
 @server.tool()
 def query_series(
-    source: str,
+    source: Source,
     dataflow: str,
     indicators: str,
     economies: str,
@@ -129,7 +135,7 @@ def query_series(
 
 
 @server.tool()
-def get_source_health(source: str) -> str:
+def get_source_health(source: Source) -> str:
     """Perform a small no-key query against the official ADB KIDB API."""
     selected = _source(source)
     return checked_health_envelope(

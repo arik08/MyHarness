@@ -14,6 +14,7 @@ export type StatusKind =
   | "connectionError";
 
 export type ChatMessage = {
+  restoredText?: string;
   id: string;
   role: TranscriptItem["role"];
   text: string;
@@ -57,6 +58,7 @@ export type LiveSessionView = {
 export type WorkflowEventStatus = "running" | "done" | "error" | "warning";
 
 export type WorkflowEvent = {
+  restored?: boolean;
   id: string;
   toolName: string;
   title: string;
@@ -85,6 +87,7 @@ export type ComposerState = {
 
 export type AppState = {
   sessionId: string | null;
+  sessionReplayKey: number;
   clientId: string;
   ready: boolean;
   busy: boolean;
@@ -157,6 +160,7 @@ export type AppState = {
   workflowStartedAtMs: number | null;
   composer: ComposerState;
   runtimePicker: RuntimePickerState;
+  runtimeChoicePending?: boolean;
 };
 
 export type AppSettings = {
@@ -186,7 +190,6 @@ export type RuntimePickerState = {
   models: RuntimePickerOption[];
   efforts: RuntimePickerOption[];
   selectedProvider: string;
-  agentScope: "main" | "sub";
   modelOpen: boolean;
   effortOpen: boolean;
 };

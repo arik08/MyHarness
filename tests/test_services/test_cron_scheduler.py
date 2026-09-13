@@ -201,12 +201,16 @@ class TestExecuteJob:
 
             # Need to mock create_subprocess_exec to return a mock process
             mock_process = AsyncMock()
+            mock_process._myharness_job = None
+            mock_process._myharness_process_group = None
+            mock_process._transport = None
+            mock_process.returncode = None
             mock_process.stdout = None
             mock_process.stderr = None
             mock_process.kill = Mock()
             mock_process.wait = AsyncMock()
             with patch(
-                "myharness.utils.shell.asyncio.create_subprocess_exec",
+                "myharness.services.cron_scheduler.create_shell_subprocess",
                 return_value=mock_process,
             ):
                 job = {"name": "slow-test", "command": "sleep 999", "cwd": "/tmp"}

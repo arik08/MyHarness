@@ -1,14 +1,9 @@
 import { useMemo, useState } from "react";
-import { sendBackendRequest, sendMessage } from "../api/messages";
+import { sendBackendRequest } from "../api/messages";
 import { useAppState } from "../state/app-state";
 import type { McpServerItem, PluginItem, SkillItem } from "../types/backend";
 import { Icon, type IconName } from "./ArtifactIcons";
 import { MarkdownMessage } from "./MarkdownMessage";
-
-type CommandEntry = {
-  name: string;
-  description: string;
-};
 
 type ToggleEntry = {
   name: string;
@@ -153,21 +148,6 @@ function splitCommandCatalog(text: string) {
     catalog: source.slice(index, skillIndex < 0 ? undefined : skillIndex).trim(),
     skills: skillIndex < 0 ? "" : source.slice(skillIndex).trim(),
   };
-}
-
-function parseCommandCatalog(text: string): CommandEntry[] {
-  const { catalog } = splitCommandCatalog(text);
-  const source = String(catalog || "").replace(/^(Available commands:|사용 가능한 명령어:)\s*/i, "").trim();
-  const matches = [...source.matchAll(/\/[a-z][a-z0-9-]*/g)];
-  return matches.map((match, index) => {
-    const next = matches[index + 1];
-    const start = (match.index || 0) + match[0].length;
-    const end = next?.index ?? source.length;
-    return {
-      name: match[0],
-      description: source.slice(start, end).trim(),
-    };
-  });
 }
 
 function splitNamedCatalog(text: string, marker: string) {
@@ -560,8 +540,6 @@ function helpSummaryIconName(label: string): IconName {
   if (label === "알아두면 좋은 기능") return "sparkles";
   if (label === "스킬") return "ai";
   if (label === "MCP") return "network";
-  if (label === "플러그인") return "plug";
-  if (label === "사용 가능한 명령어") return "terminal";
   return "comment";
 }
 
@@ -654,16 +632,13 @@ export function CommandHelpMessage({ text }: { text: string }) {
   const [toggleOverrides, setToggleOverrides] = useState<Record<string, boolean>>({});
   const parsed = useMemo(() => {
     const intro = splitCommandCatalog(text).intro;
-    const commands = parseCommandCatalog(text);
     return {
       introSections: parseHelpIntroSections(intro),
-      commands,
       skills: parseSkillCatalog(text),
       mcps: parseMcpCatalog(text),
       plugins: parsePluginCatalog(text),
       hasSkills: hasNamedCatalog(text, "Available skills:", "사용 가능한 스킬:"),
       hasMcps: hasNamedCatalog(text, "MCP servers:", "MCP 서버:"),
-      hasPlugins: hasNamedCatalog(text, "Plugins:", "플러그인:"),
     };
   }, [text]);
   const pluginItems = useMemo(
@@ -702,23 +677,6 @@ export function CommandHelpMessage({ text }: { text: string }) {
     () => groupSkillsByPlugin(skillItems, pluginItems, pluginToneByName),
     [pluginItems, pluginToneByName, skillItems],
   );
-
-  const describeCommand = (name: string, fallback: string) =>
-    state.commands.find((command) => command.name === name)?.description || fallback || "명령어를 실행합니다";
-
-  const runCommand = async (command: string) => {
-    if (!state.sessionId) return;
-    dispatch({ type: "set_busy", value: true });
-    try {
-      await sendMessage({ sessionId: state.sessionId, clientId: state.clientId, line: command, attachments: [] });
-    } catch (error) {
-      dispatch({ type: "set_busy", value: false });
-      dispatch({
-        type: "open_modal",
-        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    }
-  };
 
   const toggleItem = async (
     requestType: string,
@@ -807,31 +765,7 @@ export function CommandHelpMessage({ text }: { text: string }) {
           onToggle={(item) => void toggleItem(isSkillMcpItem(item) ? "set_skill_enabled" : "set_mcp_enabled", item.name, item.enabled)}
         />
       ) : null}
-      {parsed.hasPlugins ? (
-        <ToggleCatalog
-          label="플러그인"
-          items={pluginItems}
-          emptyText="발견된 플러그인이 없습니다"
-          toneForItem={(item) => pluginToneByName.get(item.name.toLowerCase())}
-          onToggle={(item) => void toggleItem("set_plugin_enabled", item.name, item.enabled)}
-        />
-      ) : null}
-      <details className="command-card">
-        <summary>
-          <HelpSummaryTitle label="사용 가능한 명령어" />
-          <span className="command-count">{parsed.commands.length ? `${parsed.commands.length}개` : "열기"}</span>
-        </summary>
-        <div className="command-grid">
-          {parsed.commands.length ? parsed.commands.map((command) => (
-            <button className="command-pill" type="button" key={command.name} onClick={() => void runCommand(command.name)}>
-              <strong>{command.name}</strong>
-              <span>{describeCommand(command.name, command.description)}</span>
-            </button>
-          )) : (
-            <MarkdownMessage text={text} />
-          )}
-        </div>
-      </details>
+
     </div>
   );
 }

@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $script:StopRequested = $false
 $script:CurrentServerProcess = $null
 $script:RestartCount = 0
@@ -182,7 +182,7 @@ function Stop-ServerProcess {
     $eventArgs.Cancel = $true
     $script:StopRequested = $true
     Write-Host ""
-    Write-Host "[INFO] Stop requested. Stopping server..."
+    Write-Host "[안내] 서버를 종료합니다..."
     Write-LauncherLog "stop_requested" @{ reason = "ctrl_c" }
 
     if ($script:CurrentServerProcess -and -not $script:CurrentServerProcess.HasExited) {
@@ -197,7 +197,6 @@ $script:LauncherLock = Open-LauncherLock -Port $serverPort
 
 while (-not $script:StopRequested) {
     Stop-ListeningPort -Port $serverPort
-    Write-Host "[INFO] Starting node server.mjs..."
     Write-LauncherLog "server_starting" @{ restart_count = $script:RestartCount }
     $process = Start-Process -FilePath "node.exe" -ArgumentList @("server.mjs") -WorkingDirectory $script:FrontendWebDirectory -NoNewWindow -PassThru
     $script:CurrentServerProcess = $process
@@ -214,8 +213,8 @@ while (-not $script:StopRequested) {
                     $key = Read-LauncherKey
                     if (Test-LauncherKey -Key $key -ExpectedKey R -Characters @("r", "R", ([string][char]0x3131))) {
                         $discardedKeys = Clear-ConsoleInputBuffer
-                        Write-Host ""
-                        Write-Host "[INFO] Full restart requested. Stopping server and clearing the port..."
+                        [Console]::WriteLine()
+                        Write-Host "[안내] 서버를 재시작합니다..."
                         Write-LauncherLog "hard_reset_requested" @{ reason = "keyboard_r"; child_pid = $process.Id; discarded_keys = $discardedKeys }
                         $hardResetRequested = $true
                         Stop-ServerProcess -Process $process
@@ -225,7 +224,7 @@ while (-not $script:StopRequested) {
                     if (Test-LauncherKey -Key $key -ExpectedKey Q) {
                         $discardedKeys = Clear-ConsoleInputBuffer
                         Write-Host ""
-                        Write-Host "[INFO] Stop requested. Stopping server..."
+                        Write-Host "[안내] 서버를 종료합니다..."
                         Write-LauncherLog "stop_requested" @{ reason = "keyboard_q"; child_pid = $process.Id; discarded_keys = $discardedKeys }
                         $script:StopRequested = $true
                         Stop-ServerProcess -Process $process
@@ -257,13 +256,12 @@ while (-not $script:StopRequested) {
 
     if ($hardResetRequested) {
         Clear-ConsoleInputBuffer | Out-Null
-        Write-Host "[INFO] Full restarting server..."
         continue
     }
 
     $exitCodeLabel = if ($null -eq $exitCode) { "unknown" } else { [string]$exitCode }
-    Write-Host "[WARN] Server process exited with code $exitCodeLabel."
-    Write-Host "[INFO] Keeping launcher alive; full restarting server in 3 seconds. Press Q or Ctrl+C to stop."
+    Write-Host "[주의] 서버 종료 감지 (코드 $exitCodeLabel)."
+    Write-Host "[안내] 3초 후 재시작합니다. Q / Ctrl+C: 종료"
     Write-LauncherLog "server_exited_unexpectedly" @{ child_pid = $process.Id; exit_code = $exitCodeLabel; restart_count = $script:RestartCount }
     Start-Sleep -Seconds 3
     Stop-ListeningPort -Port $serverPort

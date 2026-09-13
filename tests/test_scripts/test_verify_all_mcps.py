@@ -1,5 +1,6 @@
 """Guard against live audit false positives and running with the wrong settings."""
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -38,3 +39,19 @@ def test_audit_rejects_empty_samples_and_missing_penalty_body(audit_module):
 def test_audit_redacts_credential_in_query_and_path(audit_module):
     text = "https://example.test/private-value/json?api_key=private-value"
     assert "private-value" not in audit_module.redact(text, ["private-value"])
+
+
+@pytest.mark.asyncio
+async def test_audit_never_starts_dummy_integrations(audit_module, monkeypatch, tmp_path):
+    monkeypatch.setattr(audit_module, "load_web_environment", lambda root: None)
+    monkeypatch.setattr(audit_module, "load_settings", lambda: object())
+    monkeypatch.setattr(audit_module, "load_plugins", lambda *args, **kwargs: [])
+    monkeypatch.setattr(audit_module, "load_mcp_server_configs", lambda *args, **kwargs: {"posco-erp": object()})
+
+    def unexpected_start(*args, **kwargs):
+        pytest.fail("Dummy integration must not create a client")
+
+    monkeypatch.setattr(audit_module, "McpClientManager", unexpected_start)
+    output = tmp_path / "audit.json"
+    assert await audit_module.audit(tmp_path, output, []) == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["summary"] == {"PLACEHOLDER": 1}

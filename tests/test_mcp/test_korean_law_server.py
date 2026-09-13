@@ -15,12 +15,59 @@ from myharness.mcp.config import load_mcp_configs_from_dirs
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_prepare_runtime_installs_once_and_refreshes_changed_lock(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "bootstrap_prepare", ROOT / ".skills/mcp/korean-law/runtime/bootstrap.py"
+    )
+    bootstrap = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bootstrap)
+    lock = tmp_path / "package-lock.json"
+    lock.write_text("first", encoding="utf-8")
+    calls = []
+    def install(args, **kwargs):
+        calls.append((args, kwargs))
+        entry = tmp_path / "node_modules/korean-law-mcp/build/index.js"
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_text("", encoding="utf-8")
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda _: "npm")
+    monkeypatch.setattr(bootstrap.subprocess, "run", install)
+    monkeypatch.setattr(bootstrap, "apply_compatibility_patch", lambda runtime: None)
+    bootstrap.prepare_runtime(tmp_path)
+    bootstrap.prepare_runtime(tmp_path)
+    assert len(calls) == 1
+    assert calls[0][1]["cwd"] == tmp_path
+    assert calls[0][0][1] == "ci"
+    lock.write_text("changed", encoding="utf-8")
+    bootstrap.prepare_runtime(tmp_path)
+    assert len(calls) == 2
+
+
 def test_korean_law_runtime_uses_fixed_upstream_release() -> None:
     package = json.loads(
         (ROOT / ".skills/mcp/korean-law/runtime/package.json").read_text(encoding="utf-8")
     )
 
     assert package["dependencies"]["korean-law-mcp"] == "4.9.7"
+
+
+@pytest.mark.parametrize("absolute_cwd", ["C:/Users/someone/runtime", "/home/someone/runtime"])
+def test_package_validator_rejects_machine_paths(tmp_path, monkeypatch, absolute_cwd):
+    import shutil
+    spec = importlib.util.spec_from_file_location("package_check", ROOT / "scripts/verify_mcp_packages.py")
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    package = tmp_path / "korean-law"
+    skill_dir = package / "skills/korean-law"
+    skill_dir.mkdir(parents=True)
+    shutil.copy2(ROOT / ".skills/mcp/korean-law/skills/korean-law/SKILL.md", skill_dir / "SKILL.md")
+    config = {"mcpServers": {"korean-law": {
+        "type": "stdio", "command": "python", "args": ["runtime/bootstrap.py"],
+        "cwd": absolute_cwd, "auto_connect": False,
+    }}}
+    (package / "mcp.json").write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(validator, "PACKAGES_ROOT", tmp_path)
+    with pytest.raises(ValueError, match="must be relative"):
+        validator.verify_packages()
 
 
 def test_korean_law_bootstrap_patches_exact_name_selection(tmp_path: Path) -> None:

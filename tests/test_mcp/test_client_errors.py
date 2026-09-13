@@ -140,6 +140,33 @@ async def test_register_connected_session_tolerates_missing_resources_list():
 
 
 @pytest.mark.asyncio
+async def test_register_preserves_read_only_hints_and_configured_tool_allowlist():
+    from types import SimpleNamespace
+    manager = McpClientManager({})
+    session = AsyncMock()
+    session.initialize.return_value = None
+    session.list_tools.return_value.tools = [
+        SimpleNamespace(name=name, description="", inputSchema={}, annotations=hint)
+        for name, hint in (
+            ("hinted", SimpleNamespace(readOnlyHint=True)),
+            ("configured", None),
+            ("write", SimpleNamespace(readOnlyHint=False)),
+            ("unknown", None),
+        )
+    ]
+    session.list_resources.return_value.resources = []
+    stack = AsyncExitStack()
+    stack.enter_async_context = AsyncMock(return_value=session)
+    await manager._register_connected_session(
+        name="sample", config=McpStdioServerConfig(command="python", read_only_tools=["configured"]),
+        stack=stack, read_stream=object(), write_stream=object(), auth_configured=False,
+    )
+    assert {t.name: t.read_only for t in manager.list_tools()} == {
+        "hinted": True, "configured": True, "write": False, "unknown": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_connect_all_connects_servers_concurrently(monkeypatch):
     manager = McpClientManager(
         {

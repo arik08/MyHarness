@@ -11,7 +11,15 @@
         "ECOS_API_KEY": "IAY2CU4G4W24KJC0UHRM"
       },
       "cwd": ".",
-      "auto_connect": false
+      "auto_connect": false,
+      "read_only_tools": [
+        "get_exchange_rate",
+        "get_statistic_data",
+        "get_key_statistics",
+        "list_stat_tables",
+        "list_stat_items",
+        "check_connection"
+      ]
     }
   }
 }

@@ -15,7 +15,7 @@ Create browser-native visual deliverables that are polished enough to screenshot
 - For MyHarness single-file previews, keep CSS and app code in the HTML file when practical so the file card can open it directly; relative external files can break in `iframe srcdoc` previews.
 - If the user describes report length in tokens, including Korean forms such as `5000~8000 토큰`, `10000 토큰 수준`, `15000~20000 토큰 이상`, or `30000토큰 수준`, treat the number as an approximate output-size target that should be checked, not merely a style cue. Use the target to plan content depth, but do not crowd the page with walls of prose, cramped tables, or repetitive cards just to hit a length. Preserve visual rhythm with section summaries, charts, callouts, and source notes.
 - Use a short purpose-specific filename, not `index.html`, unless the user explicitly asks for it or an existing app requires it. Prefer concise readable Korean filenames with underscores for Korean-facing reports/previews; use English kebab-case or snake_case for code-heavy demos, games, or English-facing artifacts.
-- Keep dependencies purposeful. CDN libraries are optional, not mandatory: use React/ReactDOM via CDN only when repeated sections, controls, reusable state, or chart containers would materially benefit from component structure without a build step. Use plain static HTML/CSS/JS when it is sufficient for the artifact.
+- Keep dependencies purposeful. React/ReactDOM via CDN is optional: use it only when repeated sections, controls, reusable state, or chart containers would materially benefit from component structure without a build step. Plain HTML/CSS/JS can host ECharts directly; follow the quantitative chart default below independently of whether React is used.
 - Make the artifact readable in a constrained iframe and in a normal browser window.
 - Do not include secrets or unsanitized user-provided HTML.
 
@@ -113,13 +113,23 @@ quarterly trends, sources, or a report:
 ## Library choices
 
 - **React/ReactDOM via CDN**: optional for MyHarness HTML reports, dashboards, infographics, and interactive previews. Use it when repeated report sections, tabs, filters, search, chart panels, sortable/explorable tables, or reusable UI state would be clearer as component-driven browser JS inside a single HTML file. Skip it when plain static HTML/CSS/JS is simpler and sufficient. Prefer prewritten browser JS over in-browser JSX/Babel when practical to keep load time lower.
-- **ECharts**: multi-chart business dashboards/reports.
-- **Chart.js**: simple common charts.
+- **ECharts (required)**: whenever a chart can be rendered with ECharts in an HTML artifact, use ECharts. This includes single simple charts and supported non-quantitative chart types. Simplicity, chart count, static output, and an existing implementation in another library are not exceptions. When editing such a chart, migrate it to ECharts.
+- **Other chart libraries**: use only for chart types or essential capabilities ECharts cannot provide; identify the unsupported requirement before choosing another renderer.
 - **Lucide or similar icon sets**: restrained semantic icons for reports, dashboards, and visual summaries.
-- **SVG/CSS**: small bespoke static visuals, cards, fixed callouts, and simple timelines when Mermaid or ECharts would be heavier than the job.
+- **SVG/CSS**: non-chart visuals, KPI cards, and fixed callouts. Do not hand-draw a chart that ECharts can render.
+- The ECharts requirement takes precedence over the Mermaid and Three.js/D3/Leaflet guidance below wherever their chart capabilities overlap in HTML artifacts, including pie and Sankey charts. Use Mermaid for structured diagrams such as workflows and sequence diagrams when ECharts does not meet the diagram's requirements.
 - **Mermaid**: maintainable diagrams in the Mermaid.js family, not only flowcharts. Prefer Mermaid over hand-drawn SVG for structured diagrams when the visual type fits, because Mermaid is usually cleaner and easier to revise. In MyHarness chat or Markdown artifact previews, prefer fenced `mermaid` blocks for compact diagrams such as `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, `journey`, `gitGraph`, `timeline`, `mindmap`, `quadrantChart`, and `sankey`. Choose the type that fits the content instead of defaulting to flowchart. Use `quadrantChart` freely for 2x2 prioritization/positioning and use `sankey` for flow/allocation diagrams; MyHarness validates Mermaid before writing human-facing HTML/Markdown artifacts so syntax errors can be fixed before preview. Avoid Mermaid keyword-like flowchart class names such as `end`; use names like `finish` or `done`. If a requirement diagram is the right choice, quote user-defined `id`/`text` values and use canonical enum casing so MyHarness can render it reliably. In standalone HTML artifacts, include Mermaid via CDN only when the artifact needs those diagram types, and render from `<div class="mermaid">...</div>` blocks rather than showing Mermaid as code.
 - **Reveal.js**: full HTML slide decks.
 - **Three.js/D3/Leaflet**: only when 3D, advanced data visualization, or maps are central.
+
+## Quantitative chart correctness
+
+- Use actual ECharts initialization and data series, not just a script import or a chart-shaped placeholder. Load the library explicitly in standalone HTML; do not assume the parent MyHarness page exposes it inside the preview.
+- If offline/CSP/runtime restrictions prevent ECharts from loading, resolve the loading or packaging issue where possible. If it remains blocked, report the limitation and expose the data in a table; do not substitute another chart renderer or claim the requested chart is complete.
+- Normalize comparable values to one numeric unit before plotting, and label that unit. Derive mark sizes from the data and a common scale; never assign arbitrary pixel heights or percentages for visual balance. Use a zero baseline for bars. If different magnitudes make comparison unreadable, use labeled separate panels or KPI cards rather than distorting the scale.
+- Keep exact values and essential meaning visible without hover. Distinguish KPI cards, which do not encode magnitude geometrically, from charts, whose marks must preserve numeric relationships.
+- Give chart containers explicit height and responsive width, initialize after layout, and resize when the container changes. Preserve the minimum text sizes in axes, legends, labels, and tooltips.
+- Before delivery, verify the actual preview renders chart marks, values, units, and scale correctly at normal and narrow widths. Verify print output when requested. An HTML source check or successful library import alone does not prove chart rendering; disclose any runtime verification gap.
 
 ## Workflow
 

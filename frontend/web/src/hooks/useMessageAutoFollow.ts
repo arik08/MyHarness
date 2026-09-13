@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch } from "react";
 import type { AppAction } from "../state/reducer";
 import { isResponseVisiblyBusy } from "../state/selectors";
@@ -66,12 +66,14 @@ export function useMessageAutoFollow({
   activeWorkflowFollowSignature: string;
 }) {
   const messagesRef = useRef<HTMLElement | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const autoFollowRef = useRef(true);
   const animationFrameRef = useRef(0);
   const tailFollowActiveRef = useRef(false);
   const autoScrollUntilRef = useRef(0);
   const userScrollIntentUntilRef = useRef(0);
   const userScrollUpIntentUntilRef = useRef(0);
+  const questionNavigationUntilRef = useRef(0);
   const scrollSaveTimerRef = useRef(0);
   const wasLastAssistantStreamingRef = useRef(false);
   const wasActiveWorkflowGrowingRef = useRef(false);
@@ -87,6 +89,34 @@ export function useMessageAutoFollow({
 
   streamScrollDurationMsRef.current = Math.max(0, Number(state.appSettings.streamScrollDurationMs));
   streamFollowLeadPxRef.current = streamFollowLeadPx;
+
+  function updateJumpVisibility() {
+    const container = messagesRef.current;
+    setShowJumpToLatest(Boolean(container && !state.restoringHistory
+      && container.scrollHeight - container.clientHeight - container.scrollTop > 40));
+  }
+
+  useLayoutEffect(updateJumpVisibility);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateJumpVisibility);
+    observer.observe(container);
+    for (const child of container.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, [state.messages.length, state.restoringHistory, activeWorkflowFollowSignature]);
+
+  function jumpToLatest() {
+    autoFollowRef.current = true;
+    userScrollIntentUntilRef.current = 0;
+    userScrollUpIntentUntilRef.current = 0;
+    questionNavigationUntilRef.current = 0;
+    scrollMessagesToBottom({ smooth: false, duration: 0 });
+    resumeAutoFollow();
+    updateJumpVisibility();
+    scheduleScrollPositionSave();
+  }
 
   function stopAutoFollow(container = messagesRef.current) {
     if (animationFrameRef.current) {
@@ -340,14 +370,28 @@ export function useMessageAutoFollow({
 
   return {
     messagesRef,
+    showJumpToLatest,
+    jumpToLatest,
     autoFollowRef,
     isLastAssistantStreaming,
     shouldFollowGrowingTail,
+    handleQuestionNavigation() {
+      questionNavigationUntilRef.current = Date.now() + 900;
+      userScrollIntentUntilRef.current = Date.now() + 900;
+      userScrollUpIntentUntilRef.current = Date.now() + 900;
+      stopAutoFollow();
+    },
     handleScroll(container: HTMLElement) {
-      updateAutoFollowFromScroll(container);
+      updateJumpVisibility();
+      if (Date.now() < questionNavigationUntilRef.current) {
+        container.dataset.lastScrollTop = String(container.scrollTop);
+      } else {
+        updateAutoFollowFromScroll(container);
+      }
       scheduleScrollPositionSave();
     },
     handleWheel(container: HTMLElement, deltaY: number) {
+      questionNavigationUntilRef.current = 0;
       userScrollIntentUntilRef.current = Date.now() + 900;
       if (deltaY < 0) {
         userScrollUpIntentUntilRef.current = Date.now() + 900;

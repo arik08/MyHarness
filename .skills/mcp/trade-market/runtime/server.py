@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+from pydantic import Field
+
 import json
 import re
 from datetime import datetime
@@ -37,6 +40,9 @@ SOURCES = {
     "wto": "World Trade Organization Timeseries API",
     "eurostat_comext": "Eurostat COMEXT DS-045409",
 }
+
+Source = Annotated[str, Field(description="Source served by trade-market only", json_schema_extra={"enum": list(SOURCES)})]
+
 
 server = FastMCP("trade-market")
 attach_packaged_skill(server, __file__)
@@ -204,7 +210,7 @@ def _census_flow(flow: str) -> tuple[str, str, list[str]]:
 
 
 @server.tool()
-def search_catalog(source: str, query: str = "", limit: int = 50) -> str:
+def search_catalog(source: Source, query: str = "", limit: int = 50) -> str:
     """Inspect supported source variables, indicators, and fixed dataset identifiers."""
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=500)
@@ -276,7 +282,7 @@ def search_catalog(source: str, query: str = "", limit: int = 50) -> str:
 
 @server.tool()
 def query_trade(
-    source: str,
+    source: Source,
     flow: str,
     start_period: str,
     end_period: str | None = None,
@@ -455,7 +461,7 @@ def query_trade(
 
 
 @server.tool()
-def get_source_health(source: str) -> str:
+def get_source_health(source: Source) -> str:
     """Check a trade source or report that its required credential is not configured."""
     selected = _source(source)
     credential_names = {

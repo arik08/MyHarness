@@ -52,7 +52,6 @@ EXTRA_CASES = {
     "ecos": [("check_connection", {}), ("get_exchange_rate", {"currency": "USD", "start_date": "20250102", "end_date": "20250103", "limit": 2})],
     "eia": [("check_connection", {}), ("get_energy_price", {"alias": "wti", "length": 2})],
     "kosis": [("check_connection", {}), ("search_statistics", {"keyword": "인구", "limit": 2})],
-    "vector_db": [("store_status", {}), ("list_sources", {"limit": 2}), ("retrieve_context", {"query": "업무", "limit": 2})],
     "korean-law": [("legal_research", {"query": "개인정보 보호법", "task": "law_system"}), ("legal_research", {"query": "개인정보 보호법 과징금 부과 기준", "task": "action_basis", "scenario": "penalty"}), ("search_decisions", {"domain": "precedent", "query": "개인정보", "display": 2})],
     "national-assembly": [
         ("discover_apis", {"page_size": 2}),
@@ -132,6 +131,9 @@ async def audit(root: Path, output: Path, selected: list[str]) -> int:
 
     async def server_audit(name, config):
         async with semaphore:
+            if name in TOOLLESS_PLACEHOLDERS:
+                record(f"workflow:{name}", "PLACEHOLDER", "No business tools implemented; execution intentionally disabled")
+                return
             manager = McpClientManager({name: config})
             try:
                 # Keep connection and teardown in the same task (AnyIO cancel scopes).
@@ -147,9 +149,6 @@ async def audit(root: Path, output: Path, selected: list[str]) -> int:
                         result = await manager.read_resource(name, uri)
                         assert result.strip(), "empty resource"
                     await check(f"resource:{name}:{resource.uri}", read)
-                if name in TOOLLESS_PLACEHOLDERS:
-                    record(f"workflow:{name}", "PLACEHOLDER", "No business tools implemented")
-                    return
                 if name in SERVER_SOURCES:
                     verifier = LiveVerifier(manager)
                     workflow = {"company-disclosure": verifier.verify_company, "trade-market": verifier.verify_trade, "macro-finance": verifier.verify_macro, "legislation-regulation": verifier.verify_legislation, "patent-tech": verifier.verify_patent, "environment-industry": verifier.verify_environment, "development-finance": verifier.verify_development}[name]
@@ -196,7 +195,9 @@ async def audit(root: Path, output: Path, selected: list[str]) -> int:
     report["summary"] = counts
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(counts), flush=True)
-    return int(bool(counts.get("FAIL") or counts.get("UNVERIFIED")))
+    return int(any(count for status, count in counts.items() if status not in {
+        "PASS", "BLOCKED_NO_CREDENTIAL", "PLACEHOLDER",
+    }))
 
 
 if __name__ == "__main__":

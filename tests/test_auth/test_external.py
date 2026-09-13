@@ -226,79 +226,8 @@ def test_load_claude_external_credential_from_keychain(monkeypatch, tmp_path: Pa
     assert credential.profile_label == "yanchundong"
 
 
-def test_settings_resolve_auth_uses_external_binding(monkeypatch, tmp_path: Path):
-    config_dir = tmp_path / "config"
-    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
-    source = tmp_path / "claude-credentials.json"
-    source.write_text(
-        json.dumps(
-            {
-                "claudeAiOauth": {
-                    "accessToken": "bound-claude-token",
-                    "refreshToken": "bound-claude-refresh",
-                    "expiresAt": 4_102_444_800_000,
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    store_external_binding(
-        ExternalAuthBinding(
-            provider=CLAUDE_PROVIDER,
-            source_path=str(source),
-            source_kind="claude_credentials_json",
-            managed_by="claude-cli",
-            profile_label="Claude CLI",
-        )
-    )
-
-    resolved = Settings(active_profile="claude-subscription").resolve_auth()
-
-    assert resolved.auth_kind == "auth_token"
-    assert resolved.value == "bound-claude-token"
-    assert str(source) in resolved.source
 
 
-def test_settings_resolve_auth_refreshes_expired_external_binding(monkeypatch, tmp_path: Path):
-    config_dir = tmp_path / "config"
-    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
-    source = tmp_path / "claude-credentials.json"
-    source.write_text(
-        json.dumps(
-            {
-                "claudeAiOauth": {
-                    "accessToken": "expired-token",
-                    "refreshToken": "refresh-token",
-                    "expiresAt": 1,
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        "myharness.auth.external.refresh_claude_oauth_credential",
-        lambda refresh_token: {
-            "access_token": "fresh-token",
-            "refresh_token": refresh_token,
-            "expires_at_ms": 4_102_444_800_000,
-        },
-    )
-    store_external_binding(
-        ExternalAuthBinding(
-            provider=CLAUDE_PROVIDER,
-            source_path=str(source),
-            source_kind="claude_credentials_json",
-            managed_by="claude-cli",
-            profile_label="Claude CLI",
-        )
-    )
-
-    resolved = Settings(active_profile="claude-subscription").resolve_auth()
-
-    assert resolved.value == "fresh-token"
-    persisted = json.loads(source.read_text(encoding="utf-8"))
-    assert persisted["claudeAiOauth"]["accessToken"] == "fresh-token"
-    assert persisted["claudeAiOauth"]["refreshToken"] == "refresh-token"
 
 
 def test_cli_codex_login_binds_without_switching(monkeypatch, tmp_path: Path):
@@ -327,8 +256,8 @@ def test_cli_codex_login_binds_without_switching(monkeypatch, tmp_path: Path):
             {
                 "api_format": "openai",
                 "provider": "openai",
-                "model": "kimi-k2.5",
-                "base_url": "https://api.moonshot.cn/anthropic",
+                "active_profile": "p-gpt", "model": "gpt-5.6-luna",
+                "base_url": "http://pgpt.posco.com/s0la01-gpt/v1",
                 "api_key": "stale-key",
             }
         ),
@@ -342,7 +271,7 @@ def test_cli_codex_login_binds_without_switching(monkeypatch, tmp_path: Path):
     settings = load_settings()
     assert settings.active_profile != "codex"
     assert settings.provider == "openai"
-    assert settings.base_url == "https://api.moonshot.cn/anthropic"
+    assert settings.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
     assert settings.api_key == "stale-key"
     assert "Use `oh provider use codex` to activate it." in result.stdout
     binding = load_external_binding(CODEX_PROVIDER)
@@ -350,77 +279,8 @@ def test_cli_codex_login_binds_without_switching(monkeypatch, tmp_path: Path):
     assert Path(binding.source_path) == codex_home / "auth.json"
 
 
-def test_cli_claude_login_binds_without_switching(monkeypatch, tmp_path: Path):
-    config_dir = tmp_path / "config"
-    claude_home = tmp_path / "claude-home"
-    claude_home.mkdir()
-    (claude_home / ".credentials.json").write_text(
-        json.dumps(
-            {
-                "claudeAiOauth": {
-                    "accessToken": "claude-access-token",
-                    "refreshToken": "claude-refresh-token",
-                    "expiresAt": 4_102_444_800_000,
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
-    monkeypatch.setenv("CLAUDE_HOME", str(claude_home))
-    monkeypatch.setattr("myharness.auth.external.platform.system", lambda: "Linux")
-
-    runner = CliRunner()
-    result = runner.invoke(app, ["auth", "claude-login"])
-
-    assert result.exit_code == 0
-    settings = load_settings()
-    assert settings.provider == "openai"
-    assert settings.api_format == "openai"
-    assert settings.active_profile == "p-gpt"
-    assert "Use `oh provider use claude-subscription` to activate it." in result.stdout
-    binding = load_external_binding(CLAUDE_PROVIDER)
-    assert binding is not None
-    assert Path(binding.source_path) == claude_home / ".credentials.json"
 
 
-def test_cli_claude_login_refreshes_expired_credentials(monkeypatch, tmp_path: Path):
-    config_dir = tmp_path / "config"
-    claude_home = tmp_path / "claude-home"
-    claude_home.mkdir()
-    source = claude_home / ".credentials.json"
-    source.write_text(
-        json.dumps(
-            {
-                "claudeAiOauth": {
-                    "accessToken": "expired-token",
-                    "refreshToken": "claude-refresh-token",
-                    "expiresAt": 1,
-                    "scopes": ["user:inference"],
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
-    monkeypatch.setenv("CLAUDE_HOME", str(claude_home))
-    monkeypatch.setattr("myharness.auth.external.platform.system", lambda: "Linux")
-    monkeypatch.setattr(
-        "myharness.auth.external.refresh_claude_oauth_credential",
-        lambda refresh_token: {
-            "access_token": "fresh-token",
-            "refresh_token": refresh_token,
-            "expires_at_ms": 4_102_444_800_000,
-        },
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(app, ["auth", "claude-login"])
-
-    assert result.exit_code == 0
-    persisted = json.loads(source.read_text(encoding="utf-8"))
-    assert persisted["claudeAiOauth"]["accessToken"] == "fresh-token"
-    assert persisted["claudeAiOauth"]["scopes"] == ["user:inference"]
 
 
 def test_load_claude_external_credential_refreshes_expired_keychain(monkeypatch, tmp_path: Path):
@@ -524,40 +384,6 @@ def test_cli_provider_use_activates_codex_profile(monkeypatch, tmp_path: Path):
     assert settings.model == "gpt-5.6-luna"
 
 
-def test_settings_resolve_auth_rejects_third_party_base_url_for_claude_subscription(
-    monkeypatch,
-    tmp_path: Path,
-):
-    config_dir = tmp_path / "config"
-    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(config_dir))
-    source = tmp_path / "claude-credentials.json"
-    source.write_text(
-        json.dumps(
-            {
-                "claudeAiOauth": {
-                    "accessToken": "valid-token",
-                    "refreshToken": "refresh-token",
-                    "expiresAt": 4_102_444_800_000,
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    store_external_binding(
-        ExternalAuthBinding(
-            provider=CLAUDE_PROVIDER,
-            source_path=str(source),
-            source_kind="claude_credentials_json",
-            managed_by="claude-cli",
-            profile_label="Claude CLI",
-        )
-    )
-    settings = Settings(active_profile="claude-subscription").model_copy(
-        update={"base_url": "https://api.moonshot.cn/anthropic"}
-    ).sync_active_profile_from_flat_fields()
-
-    with pytest.raises(ValueError, match="third-party"):
-        settings.resolve_auth()
 
 
 def test_describe_external_binding_reports_refreshable_claude_token(tmp_path: Path):

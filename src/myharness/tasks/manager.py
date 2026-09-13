@@ -17,6 +17,7 @@ from uuid import uuid4
 from myharness.config.paths import get_tasks_dir
 from myharness.tasks.types import TaskRecord, TaskStatus, TaskType
 from myharness.utils.shell import create_shell_subprocess
+from myharness.utils.process_tree import kill_process_tree, terminate_process_tree
 
 log = logging.getLogger(__name__)
 TASK_PROGRESS_EVENT_PREFIX = "__MYHARNESS_TASK_UPDATE__"
@@ -175,12 +176,7 @@ class BackgroundTaskManager:
 
         task.status = "killed"
         task.ended_at = time.time()
-        process.terminate()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=3)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+        await terminate_process_tree(process)
         await _close_process_stdin(process)
 
         await self._notify_update_listeners(task)
@@ -467,11 +463,10 @@ class BackgroundTaskManager:
                     stdin.close()
                 except RuntimeError:
                     pass
-            if process.returncode is None:
-                try:
-                    process.kill()
-                except (ProcessLookupError, RuntimeError):
-                    pass
+            try:
+                kill_process_tree(process)
+            except (ProcessLookupError, RuntimeError):
+                pass
         self._processes.clear()
         self._last_output_notifications.clear()
 
@@ -481,22 +476,14 @@ class BackgroundTaskManager:
         waiters = list(self._waiters.values())
         notifications = list(self._notification_tasks)
 
+        await asyncio.gather(*(terminate_process_tree(process) for process in processes))
         for process in processes:
-            if process.returncode is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
             await _close_process_stdin(process)
 
-        for process in processes:
-            if process.returncode is None:
-                try:
-                    await process.wait()
-                except ProcessLookupError:
-                    pass
-
         if waiters:
+            _, pending = await asyncio.wait(waiters, timeout=2.0)
+            for waiter in pending:
+                waiter.cancel()
             await asyncio.gather(*waiters, return_exceptions=True)
         for notification in notifications:
             notification.cancel()
@@ -619,6 +606,6 @@ async def _close_process_stdin(process: asyncio.subprocess.Process) -> None:
         return
     stdin.close()
     try:
-        await stdin.wait_closed()
-    except (BrokenPipeError, ConnectionResetError):
+        await asyncio.wait_for(stdin.wait_closed(), timeout=2.0)
+    except (BrokenPipeError, ConnectionResetError, asyncio.TimeoutError):
         pass

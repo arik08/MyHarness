@@ -1,6 +1,6 @@
 ---
 name: posco-mih
-description: POSCO MIH의 시장·고객·수요·가격 정보를 조회하기 위한 연결형 MCP 라우팅입니다.
+description: MIH 시장·고객·제품별 수요·가격 정보 조회에 해당합니다. 현재 POSCO 연결 예정 MCP로 조회 도구가 없습니다. 실제 연결·도구가 확인된 경우 사용하며, 공개 웹 자료를 사내 조회 결과로 대체하지 않습니다.
 source: skill-mcp:posco-mih
 ---
 

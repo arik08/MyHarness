@@ -431,8 +431,10 @@ describe("Composer", () => {
     await user.click(firstButton);
 
     const input = screen.getByPlaceholderText("메시지를 입력하세요...") as HTMLTextAreaElement;
-    await waitFor(() => expect(input.value).toBe(expectedPrompt));
-    expect(document.activeElement).toBe(input);
+    await waitFor(() => {
+      expect(input.value).toBe(expectedPrompt);
+      expect(document.activeElement).toBe(input);
+    });
   });
 
   it("renders long pasted text with the legacy tray chip", () => {
@@ -636,7 +638,7 @@ describe("Composer", () => {
     expect(screen.getByRole("dialog", { name: "명령어" })).toBeTruthy();
     expect(screen.getByText("스킬")).toBeTruthy();
     expect(screen.getByText("MCP")).toBeTruthy();
-    expect(screen.getByText("플러그인")).toBeTruthy();
+    expect(screen.queryByText("플러그인")).toBeNull();
     await waitFor(() => expect(sendMessage).toHaveBeenCalledWith({
       sessionId: "session-1",
       clientId: "client-1",

@@ -1,0 +1,157 @@
+/* Removable opt-in layer. Never add unscoped changes to the existing UI here. */
+.settings-row.design-mode-toggle .design-mode-toggle-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.design-mode-toggle .design-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 22px;
+  padding: 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--sidebar-hover);
+}
+
+.design-mode-switch > span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 160ms ease-out;
+}
+
+.design-mode-toggle[aria-checked="true"] .design-mode-switch {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.design-mode-toggle[aria-checked="true"] .design-mode-switch > span {
+  background: var(--panel);
+  transform: translateX(14px);
+}
+
+.settings-row.design-mode-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* Keep theme colors independent; only the default light palette is refined. */
+:root[data-design-mode="improved"] {
+  --design-content-width: 804px;
+  --design-radius: 10px;
+  font-family: "Pretendard Variable", Pretendard, "Noto Sans KR", "Malgun Gothic", "Segoe UI", sans-serif;
+}
+
+:root[data-design-mode="improved"]:not([data-theme]) {
+  --app: oklch(98.6% 0.002 250);
+  --panel: oklch(99.7% 0.001 250);
+  --sidebar: oklch(97.2% 0.003 250);
+  --sidebar-hover: oklch(94.8% 0.004 250);
+  --history-active-bg: oklch(93.8% 0.016 250);
+  --history-active-open-bg: var(--history-active-bg);
+  --ink: oklch(27% 0.015 250);
+  --muted: oklch(48% 0.018 250);
+  --line: oklch(91% 0.005 250);
+  --line-strong: oklch(80% 0.009 250);
+  --user: oklch(96.3% 0.004 250);
+  --chat-bg: var(--panel);
+  --panel-raised: var(--panel);
+  --new-chat: var(--sidebar-hover);
+}
+
+:root[data-design-mode="improved"] .chat-header {
+  gap: 12px;
+  backdrop-filter: none;
+  padding-inline: 24px;
+}
+
+:root[data-design-mode="improved"] .chat-title { font-size: 15px; font-weight: 650; }
+:root[data-design-mode="improved"] .header-actions { gap: 4px; }
+:root[data-design-mode="improved"] .sidebar { border-right: 1px solid var(--line); }
+:root[data-design-mode="improved"] .brand-name { font-weight: 700; letter-spacing: -0.4px; }
+:root[data-design-mode="improved"] .history-item { border-radius: 6px; }
+:root[data-design-mode="improved"] .history-title { font-size: 14px; line-height: 1.45; font-weight: 400; }
+:root[data-design-mode="improved"] .history-item.active .history-title { font-weight: 400; }
+:root[data-design-mode="improved"] .runtime-copy { line-height: 1.45; }
+
+:root[data-design-mode="improved"] .message {
+  width: min(var(--design-content-width), calc(100% - 48px));
+}
+
+:root[data-design-mode="improved"] .messages { scrollbar-gutter: stable both-edges; }
+
+@media (min-width: 761px) {
+  :root[data-design-mode="improved"] .chat-panel:has(.question-navigator) .messages { padding-right: 46px; }
+}
+
+:root[data-design-mode="improved"] .bubble { font-size: 16px; line-height: 1.68; }
+:root[data-design-mode="improved"] .message.user .bubble {
+  padding: 12px 16px;
+  border-radius: var(--design-radius);
+  background: var(--user);
+}
+:root[data-design-mode="improved"] .bubble :is(th, td) { font-size: 14px; }
+:root[data-design-mode="improved"] .assistant-actions { gap: 4px; margin-top: 12px; }
+
+:root[data-design-mode="improved"] .welcome {
+  width: min(var(--design-content-width), calc(100% - 48px));
+  margin-top: clamp(40px, 12vh, 110px);
+  text-align: left;
+}
+:root[data-design-mode="improved"] .welcome h2 { font-size: 28px; font-weight: 650; line-height: 1.35; letter-spacing: -0.7px; }
+:root[data-design-mode="improved"] .welcome p { max-width: none; margin: 12px 0 0; font-size: 16px; line-height: 1.65; }
+:root[data-design-mode="improved"] .starter-prompts { margin-top: 24px; }
+:root[data-design-mode="improved"] .starter-prompt-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+:root[data-design-mode="improved"] .starter-prompt-button {
+  display: flex;
+  min-height: 38px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-color: transparent;
+  border-radius: 6px;
+  background: var(--user);
+  box-shadow: none;
+}
+:root[data-design-mode="improved"] .starter-prompt-button:hover { background: var(--sidebar-hover); transform: none; }
+:root[data-design-mode="improved"] .starter-prompt-title { font-size: 14px; font-weight: 550; }
+:root[data-design-mode="improved"] .starter-prompt-category { display: none; }
+:root[data-design-mode="improved"] .starter-prompt-icon { width: 20px; height: 20px; border: 0; border-radius: 0; background: transparent; color: var(--muted); }
+
+/* The composer intentionally keeps the shared classic styles in both modes. */
+
+:root[data-design-mode="improved"] .workflow-card { border-radius: 8px; box-shadow: none; background: transparent; }
+:root[data-design-mode="improved"] .workflow-card > summary { font-size: 14px; }
+:root[data-design-mode="improved"] .workflow-copy small { font-size: 13px; line-height: 1.5; }
+:root[data-design-mode="improved"] .workflow-output-body { font-family: inherit; }
+:root[data-design-mode="improved"] .artifact-panel-header { background: var(--panel); border-bottom: 1px solid var(--line); }
+:root[data-design-mode="improved"] .artifact-panel-title strong { font-size: 15px; }
+:root[data-design-mode="improved"] .artifact-cards { gap: 8px; }
+:root[data-design-mode="improved"] .artifact-card { border-radius: 8px; box-shadow: none; background: var(--panel); }
+:root[data-design-mode="improved"] .artifact-card-copy strong { font-size: 14px; }
+:root[data-design-mode="improved"] .artifact-card-copy small { font-size: 13px; }
+:root[data-design-mode="improved"] .modal-card { border-radius: 12px; }
+:root[data-design-mode="improved"] .system-settings-card .settings-row { min-height: 46px; border-radius: 7px; padding-block: 10px; }
+:root[data-design-mode="improved"] .system-settings-card .settings-row strong { font-size: 14px; }
+:root[data-design-mode="improved"] .system-settings-card .settings-row small { font-size: 13px; }
+
+@media (max-width: 700px) {
+  :root[data-design-mode="improved"] .chat-header { padding-inline: 12px; }
+  :root[data-design-mode="improved"] .message,
+  :root[data-design-mode="improved"] .welcome { width: calc(100% - 24px); }
+  :root[data-design-mode="improved"] .welcome { margin-top: 32px; }
+  :root[data-design-mode="improved"] .welcome h2 { font-size: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .design-mode-switch > span { transition: none; }
+}

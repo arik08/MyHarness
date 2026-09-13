@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import yaml
 
@@ -72,6 +72,9 @@ def verify_packages(*, require_runtime_deps: bool = False) -> list[str]:
 
         if config.get("type") == "stdio":
             args = config.get("args") or []
+            for value in [config.get("command", ""), config.get("cwd", ""), *args]:
+                if isinstance(value, str) and (PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()):
+                    raise ValueError(f"Packaged MCP launch paths must be relative: {server_name}")
             if args and isinstance(args[0], str) and not Path(args[0]).is_absolute():
                 entrypoint = package / str(config.get("cwd") or ".") / args[0]
                 try:
@@ -81,6 +84,10 @@ def verify_packages(*, require_runtime_deps: bool = False) -> list[str]:
                 if require_runtime_deps or "node_modules" not in entrypoint.parts:
                     if not entrypoint.resolve().is_file():
                         raise ValueError(f"MCP entrypoint is missing: {entrypoint}")
+            if require_runtime_deps and server_name == "korean-law":
+                dependency = package / "runtime/node_modules/korean-law-mcp/build/index.js"
+                if not dependency.is_file():
+                    raise ValueError("korean-law dependencies missing: run runtime/bootstrap.py --prepare")
         server_names.append(str(server_name))
 
     if len(set(server_names)) != len(server_names):
@@ -97,12 +104,17 @@ async def verify_connections(server_names: list[str]) -> None:
     manager = McpClientManager({name: configs[name] for name in server_names})
     try:
         for name in server_names:
+            if name in TOOLLESS_PLACEHOLDERS:
+                continue
             await manager.ensure_server_config(name, configs[name], force_connect=True)
         statuses = {status.name: status for status in manager.list_statuses()}
         failures: list[str] = []
         for package in sorted(path for path in PACKAGES_ROOT.iterdir() if (path / "mcp.json").is_file()):
             payload = json.loads((package / "mcp.json").read_text(encoding="utf-8"))
             server_name = next(iter(payload["mcpServers"]))
+            if server_name in TOOLLESS_PLACEHOLDERS:
+                print(f"SKIPPED {server_name}: placeholder")
+                continue
             status = statuses[server_name]
             if status.state != "connected":
                 failures.append(f"{server_name}: {status.detail}")
@@ -143,7 +155,8 @@ def main() -> int:
     print(f"Verified {len(servers)} self-contained MCP packages.")
     if args.connect:
         asyncio.run(verify_connections(servers))
-        print(f"Connected and inspected {len(servers)} MCP packages.")
+        implemented = len(set(servers) - TOOLLESS_PLACEHOLDERS)
+        print(f"Connected and inspected {implemented} MCP packages; placeholders skipped.")
     return 0
 
 

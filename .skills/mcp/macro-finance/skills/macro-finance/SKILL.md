@@ -1,6 +1,6 @@
 ---
 name: macro-finance
-description: FRED, ECB, BIS, NY Fed, OECD, 일본 e-Stat과 기존 ECOS·KOSIS의 금리·물가·환율·고용·산업생산·유동성·신용 시계열을 조회하는 MCP 라우팅입니다. 철강 수요 선행지표와 국가별 금융여건 비교에 사용합니다.
+description: 해외 금리·물가·고용·환율·산업생산·경기선행·신용 지표로 수요와 금융여건을 분석할 때 FRED·ECB·BIS·NY Fed·OECD·일본 e-Stat을 조회합니다. 한국은 ecos/kosis, 기업 재무는 company-disclosure를 사용합니다.
 source: skill-mcp:macro-finance
 ---
 
@@ -14,6 +14,7 @@ source: skill-mcp:macro-finance
 - 국가 간 선행지수·금융시장·산업지표는 `source="oecd"`, 일본 정부통계는 `source="estat_jp"`를 사용합니다.
 - 한국 환율·금리·통화지표는 기존 `ecos`, 국내 통계표는 기존 `kosis` MCP를 우선합니다.
 - 먼저 `search_catalog`로 시리즈·데이터셋을 찾고 `query_series`에 공식 ID를 전달합니다. SDMX 소스는 dataset과 차원 순서를 임의로 추측하지 않습니다.
+- 연결 확인용 소량 예시: ECB `dataset="EXR", series_id="D.USD.EUR.SP00.A"`; BIS `dataset="WS_LONG_CPI", series_id="A.DE.", start_period="2023", end_period="2024", limit=2`. 이는 환율·독일 CPI 예시이므로 다른 지표를 요청받으면 해당 카탈로그에서 ID를 새로 확인합니다.
 - 결과 비교 전 주기, 단위, 계절조정 여부, 기준연도와 개정시점을 확인합니다. ECB만으로 철강 수요를 직접 단정하지 않습니다.
 - 인증 또는 연결 문제는 `get_source_health`로 구분합니다.
 - FRED는 루트의 비공개 `API_KEY.env`의 `FRED_API_KEY`를 사용하며, 키 변경 후 서버를 재연결합니다. 예: `query_series(source="fred", series_id="DFF", start_period="2025-01-01", end_period="2025-01-03", limit=3)`.

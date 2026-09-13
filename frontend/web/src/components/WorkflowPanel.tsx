@@ -14,6 +14,7 @@ import {
 } from "../utils/artifacts";
 import { Icon } from "./ArtifactIcons";
 import { InlineMarkdown } from "./MarkdownMessage";
+import { toolDisplayName, toolResultSummary } from "../utils/toolPresentation";
 
 function statusLabel(status: string) {
   if (status === "running") return "진행 중";
@@ -943,6 +944,8 @@ function todoWorkflowDetail(status: WorkflowEvent["status"], detail: string) {
 }
 
 function workflowStepTitle(event: WorkflowEvent) {
+  const displayName = toolDisplayName(event.toolName);
+  if (displayName) return displayName;
   if (isTodoWorkflowTool(event.toolName, event.title)) {
     return "작업 목록 정리";
   }
@@ -1525,6 +1528,7 @@ function WorkflowStep({
   narration?: string;
 }) {
   const [entering, setEntering] = useState(animate);
+  const [rawExpanded, setRawExpanded] = useState(false);
   const showToolDetailLine = Boolean(detail) && (event.level === "child" || Boolean(event.toolName));
   const showCompactToolDetail = quietDone && event.status === "done" && Boolean(detail) && (event.level === "child" || Boolean(event.toolName));
   const showQuietParentDetail = quietDone && event.status === "done" && Boolean(detail) && event.level !== "child" && !event.toolName;
@@ -1533,9 +1537,10 @@ function WorkflowStep({
   const todoTool = isTodoWorkflowTool(event.toolName, event.title);
   const title = workflowStepTitle(event);
   const baseDetail = showCompactToolDetail ? compactToolDetail(rawDetail ?? detail) : detail;
-  const visibleDetail = todoTool
+  const resultSummary = toolResultSummary(event);
+  const visibleDetail = resultSummary ?? (todoTool
     ? todoWorkflowDetail(event.status, detail)
-    : compactWorkflowOutputDetail(event, baseDetail);
+    : compactWorkflowOutputDetail(event, baseDetail));
   const visibleGeneratedDetail = isGeneratedWorkflowDetail(visibleDetail);
   const parentStep = event.level !== "child" && !event.toolName;
   const keepGeneratedParentDetail = event.title === "요청 이해" || event.role === "planning";
@@ -1566,13 +1571,26 @@ function WorkflowStep({
       aria-level={event.level === "child" ? 2 : 1}
     >
       <span className="workflow-dot" aria-hidden="true" />
-      <span className="workflow-copy">
-        <strong>{title}</strong>
-        {shouldShowStatusDetail ? (
-          <small className={showToolDetailLine ? "workflow-tool-detail" : "workflow-status-detail"}>
-            {event.role === "reasoning" ? <InlineMarkdown text={statusDetailText} /> : statusDetailText}
-          </small>
-        ) : null}
+      <span className={`workflow-copy${resultSummary ? " has-tool-summary" : ""}`}>
+        {resultSummary ? (
+          <>
+            <button type="button" className="workflow-detail-toggle"
+              aria-label={`${title} 상세 실행 기록`} aria-expanded={rawExpanded}
+              onClick={() => setRawExpanded((expanded) => !expanded)}>
+              <strong>{title}</strong>
+              <small className="workflow-tool-detail">{statusDetailText}</small>
+              <span>{rawExpanded ? "접기" : "상세"}</span>
+            </button>
+            {rawExpanded ? <pre className="workflow-raw-output">{event.toolName}{"\n"}{event.output || rawDetail || event.detail}</pre> : null}
+          </>
+        ) : <>
+          <strong>{title}</strong>
+          {shouldShowStatusDetail ? (
+            <small className={showToolDetailLine ? "workflow-tool-detail" : "workflow-status-detail"}>
+              {event.role === "reasoning" ? <InlineMarkdown text={statusDetailText} /> : statusDetailText}
+            </small>
+          ) : null}
+        </>}
       </span>
     </div>
   );
@@ -1649,7 +1667,7 @@ function quietCompletedStep(event: WorkflowEvent, latestVisibleEventId: string) 
 }
 
 function isImmediateWorkflowEvent(event: WorkflowEvent) {
-  return !event.toolName && event.role !== "purpose" && event.role !== "planning";
+  return event.restored || (!event.toolName && event.role !== "purpose" && event.role !== "planning");
 }
 
 function visibleStaggeredWorkflowEvents(events: WorkflowEvent[], staggeredCount: number) {

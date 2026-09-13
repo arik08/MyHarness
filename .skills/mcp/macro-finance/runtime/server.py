@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+from pydantic import Field
+
 import csv
 import io
 import json
@@ -39,6 +42,9 @@ SOURCES = {
     "oecd": "OECD Data Explorer",
     "estat_jp": "Statistics Bureau of Japan e-Stat",
 }
+
+Source = Annotated[str, Field(description="Source served by macro-finance only", json_schema_extra={"enum": list(SOURCES)})]
+
 
 server = FastMCP("macro-finance")
 attach_packaged_skill(server, __file__)
@@ -142,7 +148,7 @@ def _period_bounds(
 
 
 @server.tool()
-def search_catalog(source: str, query: str = "", limit: int = 50) -> str:
+def search_catalog(source: Source, query: str = "", limit: int = 50) -> str:
     """Search series or datasets and return identifiers needed by query_series."""
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=500)
@@ -207,7 +213,7 @@ def search_catalog(source: str, query: str = "", limit: int = 50) -> str:
 
 @server.tool()
 def query_series(
-    source: str,
+    source: Source,
     series_id: str,
     start_period: str | None = None,
     end_period: str | None = None,
@@ -349,7 +355,7 @@ def query_series(
 
 
 @server.tool()
-def get_source_health(source: str) -> str:
+def get_source_health(source: Source) -> str:
     """Check a macro source or safely report its missing credential."""
     selected = _source(source)
     credentials = {

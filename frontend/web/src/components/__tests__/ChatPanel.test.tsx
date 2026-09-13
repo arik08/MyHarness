@@ -21,11 +21,6 @@ function ArtifactPanelState() {
   return <output aria-label="artifact panel state">{state.artifactPanelOpen ? "open" : "closed"}</output>;
 }
 
-function ModalState() {
-  const { state } = useAppState();
-  return <output aria-label="modal state">{state.modal?.kind === "backend" ? String(state.modal.payload?.output || "") : ""}</output>;
-}
-
 function SidebarState() {
   const { state } = useAppState();
   return <output aria-label="sidebar state">{state.sidebarCollapsed ? "collapsed" : "open"}</output>;
@@ -41,6 +36,8 @@ describe("ChatPanel", () => {
       maxBusySessionsPerClient: 3,
       idleSessionTimeoutMinutes: 30,
       activeSessions: 12,
+      connectedScreens: 1,
+      activeUsers: 3,
       busySessions: 5,
       busySessionsForClient: 2,
       queuedSessions: 2,
@@ -56,7 +53,7 @@ describe("ChatPanel", () => {
     );
 
     const statusButton = await screen.findByRole("button", {
-      name: "동시 사용 현황: 열린 작업 세션 12 / 20, 동시에 AI 응답을 생성하는 세션 5 / 8, 같은 브라우저의 동시 AI 응답 2 / 3, 대기열 세션 2, 응답 4",
+      name: "동시 사용 현황: 사용자 수 3명, 연결된 화면 1개, 동시에 AI 응답을 생성하는 세션 5 / 8, 같은 브라우저의 동시 AI 응답 2 / 3, 대기열 세션 2, 응답 4",
     });
     const tooltip = screen.getByRole("tooltip");
 
@@ -66,7 +63,9 @@ describe("ChatPanel", () => {
     expect(statusButton.querySelector('[data-icon="capacity"]')).toBeTruthy();
     expect(tooltip.querySelector('[data-status="responses"] [data-icon="responses"]')).toBeTruthy();
     expect(statusButton.getAttribute("aria-describedby")).toBe(tooltip.id);
-    expect(within(tooltip).getByText("12 / 20")).toBeTruthy();
+    expect(within(tooltip).getByText("1개")).toBeTruthy();
+    expect(within(tooltip).getByText("사용자 수")).toBeTruthy();
+    expect(within(tooltip).getByText("3명")).toBeTruthy();
     expect(within(tooltip).getByText("5 / 8")).toBeTruthy();
     expect(within(tooltip).getByText("2 / 3")).toBeTruthy();
     expect(within(tooltip).getByText("세션 2 · 응답 4")).toBeTruthy();
@@ -168,173 +167,14 @@ describe("ChatPanel", () => {
     expect(screen.getByLabelText("sidebar state").textContent).toBe("open");
   });
 
-  it("shows the AI team button in the top-right header and opens the popup from there", async () => {
+  it("does not expose the removed AI team feature", async () => {
     render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          swarmTeammates: [
-            {
-              id: "worker@office",
-              name: "worker",
-              role: "조사",
-              model: "gpt-5.4-mini",
-              prompt: "역할: 조사 담당\n목표: 산업 현황만 확인",
-              status: "running",
-              task: "데이터센터 산업 현황 조사",
-              startedAt: Date.now() - 5000,
-              lastOutput: "자료 수집 중",
-              taskId: "local_agent_1",
-            },
-          ],
-        }}
-      >
+      <AppStateProvider initialState={{ ...initialAppState, swarmTeammates: [{ id: "old-worker", name: "worker", status: "running" }] }}>
         <ChatPanel />
       </AppStateProvider>,
     );
-
-    const headerButton = screen.getByRole("button", { name: "AI 팀 열기" });
-    expect(headerButton.closest(".header-actions")).toBeTruthy();
-    expect(document.querySelector(".composer-box .swarm-command")).toBeNull();
-
-    await userEvent.click(headerButton);
-
-    expect(screen.getByRole("dialog", { name: "AI 팀" })).toBeTruthy();
-    expect(screen.getByText("작업 진행 현황")).toBeTruthy();
-    expect(screen.queryByText("사무 작업 진행 현황")).toBeNull();
-    expect(screen.getByText("조사")).toBeTruthy();
-    expect(screen.getByText("데이터센터 산업 현황 조사")).toBeTruthy();
-    expect(screen.getByLabelText("조사 최근 진행").textContent).toContain("자료 수집 중");
-    expect(screen.getByText("모델 gpt-5.4-mini")).toBeTruthy();
-    await userEvent.click(screen.getByText("프롬프트"));
-    expect(screen.getByText(/목표: 산업 현황만 확인/)).toBeTruthy();
-  });
-
-  it("sends swarm task output and stop requests from the header popup", async () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          sessionId: "session-1",
-          clientId: "client-1",
-          swarmTeammates: [
-            {
-              id: "research@office",
-              name: "research",
-              role: "조사",
-              status: "running",
-              task: "자료 수집",
-              taskId: "a123",
-            },
-          ],
-        }}
-      >
-        <ChatPanel />
-      </AppStateProvider>,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "AI 팀 열기" }));
-    await userEvent.click(screen.getByRole("button", { name: "a123 결과 보기" }));
-    await userEvent.click(screen.getByRole("button", { name: "a123 중단" }));
-
-    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
-      type: "task_output",
-      task_id: "a123",
-      max_bytes: 12000,
-    });
-    expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
-      type: "task_stop",
-      task_id: "a123",
-    });
-  });
-
-  it("opens cached swarm output when task output cannot be requested live", async () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          sessionId: null,
-          historyReadOnly: true,
-          swarmTeammates: [
-            {
-              id: "research@office",
-              name: "research",
-              role: "조사",
-              status: "completed",
-              task: "자료 수집",
-              taskId: "a123",
-              lastOutput: "조사 결과 ok",
-            },
-          ],
-        }}
-      >
-        <ChatPanel />
-        <ModalState />
-      </AppStateProvider>,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "AI 팀 열기" }));
-    await userEvent.click(screen.getByRole("button", { name: "a123 결과 보기" }));
-
-    expect(sendBackendRequest).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("modal state").textContent).toBe("조사 결과 ok");
-  });
-
-  it("uses the task end time for completed AI team elapsed time", async () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          swarmTeammates: [
-            {
-              id: "research@office",
-              name: "research",
-              role: "조사",
-              status: "completed",
-              task: "자료 수집",
-              startedAt: 1710000000000,
-              endedAt: 1710000031000,
-              taskId: "a123",
-            },
-          ],
-        }}
-      >
-        <ChatPanel />
-      </AppStateProvider>,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "AI 팀 열기" }));
-
-    expect(screen.getByText("완료")).toBeTruthy();
-    expect(screen.getByText("31초")).toBeTruthy();
-  });
-
-  it("hides stale progress percentages on completed AI team cards", async () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          swarmTeammates: [
-            {
-              id: "research@office",
-              name: "research",
-              role: "조사",
-              status: "completed",
-              task: "자료 수집",
-              taskId: "a123",
-              lastOutput: "50% · 조사 결과 정리 완료",
-            },
-          ],
-        }}
-      >
-        <ChatPanel />
-      </AppStateProvider>,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "AI 팀 열기" }));
-
-    expect(screen.getByLabelText("조사 최근 진행").textContent).toContain("조사 결과 정리 완료");
-    expect(screen.getByText("조사 결과 정리 완료")).toBeTruthy();
-    expect(screen.queryByText(/50%/)).toBeNull();
+    await screen.findByRole("button", { name: /동시 사용 현황: 사용자 수 3명/ });
+    expect(screen.queryByRole("button", { name: "AI 팀 열기" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "AI 팀" })).toBeNull();
   });
 });

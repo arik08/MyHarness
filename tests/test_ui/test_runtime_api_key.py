@@ -29,10 +29,10 @@ async def test_build_runtime_uses_missing_auth_client_when_auth_resolution_fails
 
     monkeypatch.setattr("myharness.config.settings.Settings.resolve_auth", fake_resolve_auth)
 
-    bundle = await build_runtime(active_profile="claude-api")
+    bundle = await build_runtime(active_profile="p-gpt")
 
     assert isinstance(bundle.api_client, MissingAuthClient)
-    with pytest.raises(AuthenticationFailure, match="API key|No credentials found"):
+    with pytest.raises(AuthenticationFailure, match="P-GPT"):
         async for _ in bundle.api_client.stream_message(
             ApiMessageRequest(model="claude-test", messages=[], system_prompt="")
         ):
@@ -41,14 +41,14 @@ async def test_build_runtime_uses_missing_auth_client_when_auth_resolution_fails
 
 @pytest.mark.asyncio
 async def test_build_runtime_uses_missing_auth_client_for_openai_format(monkeypatch):
-    """Same check for the openai-compatible path."""
+    """Same check for the Codex path."""
 
     def fake_resolve_auth(self):
         raise ValueError("No credentials found")
 
     monkeypatch.setattr("myharness.config.settings.Settings.resolve_auth", fake_resolve_auth)
 
-    bundle = await build_runtime(active_profile="openai-compatible", api_format="openai")
+    bundle = await build_runtime(active_profile="codex", api_format="openai")
 
     assert isinstance(bundle.api_client, MissingAuthClient)
 
@@ -82,16 +82,12 @@ async def test_build_runtime_enables_pgpt_raw_sse_with_env_flag(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_build_runtime_enables_openai_prompt_cache_options(monkeypatch):
+async def test_build_runtime_rejects_disabled_openai_provider(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.delenv("MYHARNESS_PROMPT_CACHE_RETENTION", raising=False)
 
-    bundle = await build_runtime(active_profile="openai-compatible")
-
-    assert isinstance(bundle.api_client, OpenAICompatibleClient)
-    assert getattr(bundle.api_client, "_enable_prompt_cache_options") is True
-    assert getattr(bundle.api_client, "_include_usage_with_tools") is True
-    assert getattr(bundle.api_client, "_prompt_cache_retention") == "24h"
+    with pytest.raises(ValueError, match="Disabled or unknown"):
+        await build_runtime(active_profile="openai-compatible")
 
 
 @pytest.mark.asyncio
