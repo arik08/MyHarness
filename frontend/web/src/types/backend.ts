@@ -128,7 +128,7 @@ export type BackendEvent =
   | { type: "swarm_status"; swarm_teammates?: SwarmTeammateSnapshot[] | null; swarm_notifications?: SwarmNotificationSnapshot[] | null }
   | { type: "plan_mode_change"; plan_mode?: string | null }
   | { type: "active_session"; value?: string | null }
-  | { type: "history_snapshot"; value?: string | null; message?: string | null; history_events?: Array<Record<string, unknown>> | null; compact_metadata?: Record<string, unknown> | null; preview_only?: boolean }
+  | { type: "history_snapshot"; value?: string | null; message?: string | null; history_events?: Array<Record<string, unknown>> | null; compact_metadata?: Record<string, unknown> | null; preview_only?: boolean; live_replay?: boolean }
   | { type: "status"; message?: string | null; value?: string | null; quiet?: boolean | null }
   | { type: "error"; message?: string | null }
   | { type: "shutdown"; message?: string | null }
@@ -147,6 +147,7 @@ export type LiveSessionItem = {
   title?: string;
   workspace?: Workspace;
   busy: boolean;
+  latestEventId?: number;
   createdAt: number;
 };
 
@@ -157,6 +158,7 @@ export type LiveSessionsResponse = {
 export type HistoryItem = {
   value: string;
   label: string;
+  messageCount?: number;
   description?: string;
   workspace?: Workspace | null;
   hidden?: boolean;

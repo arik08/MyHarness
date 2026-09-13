@@ -12,6 +12,9 @@ export function currentConversationTitle(state: Pick<AppState, "chatTitle">) {
 
 export function currentConversationHistoryTitle(state: Pick<AppState, "chatTitle" | "messages">) {
   const title = currentConversationTitle(state);
+  if (title === "새 대화") {
+    return firstUserMessageTitle(state.messages) || title;
+  }
   if (title !== defaultConversationTitle) {
     return title;
   }

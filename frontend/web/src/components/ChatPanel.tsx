@@ -2,7 +2,6 @@ import { Composer } from "./Composer";
 import { ConcurrencyStatus } from "./ConcurrencyStatus";
 import { MessageList } from "./MessageList";
 import { StatusPill } from "./StatusPill";
-import { SwarmButton } from "./SwarmButton";
 import { useAppState } from "../state/app-state";
 import { currentConversationTitle } from "../state/selectors";
 import { sendBackendRequest } from "../api/messages";
@@ -123,7 +122,6 @@ export function ChatPanel() {
         <div className="header-actions">
           <StatusPill />
           <ConcurrencyStatus />
-          <SwarmButton />
           <button
             className="header-icon-button"
             type="button"

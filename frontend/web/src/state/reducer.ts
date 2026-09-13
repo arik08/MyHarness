@@ -3,6 +3,7 @@ import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionVi
 import { artifactKind, artifactLabelForPath, artifactName, isKnownArtifactPath, normalizeArtifactPath } from "../utils/artifacts";
 import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
 import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
+import { isKnownLookupTool } from "../utils/toolPresentation";
 
 const clientSessionKey = "myharness:clientSessionId";
 const appSettingsKey = "myharness:appSettings";
@@ -23,8 +24,9 @@ const defaultAppSettings: AppSettings = {
 export type AppAction =
   | { type: "backend_event"; event: BackendEvent; sessionId?: string }
   | { type: "append_message"; message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>; skipHistory?: boolean }
-  | { type: "session_started"; sessionId: string; clientId?: string; busy?: boolean }
-  | { type: "session_replaced"; sessionId: string; workspace?: Workspace }
+  | { type: "session_started"; sessionId: string; clientId?: string; busy?: boolean; replay?: boolean; savedSessionId?: string }
+  | { type: "session_replaced"; sessionId: string; workspace?: Workspace; savedSessionId?: string }
+  | { type: "add_new_chat_history"; sessionId: string; workspace?: Workspace }
   | { type: "set_theme"; themeId: ThemeId }
   | { type: "set_sidebar_collapsed"; value: boolean; source?: Exclude<SidebarCollapseReason, null> }
   | { type: "release_sidebar_manual_open" }
@@ -68,7 +70,6 @@ export type AppAction =
   | { type: "close_runtime_picker" }
   | { type: "set_runtime_picker_error"; message: string }
   | { type: "select_runtime_provider"; value: string }
-  | { type: "select_runtime_agent_scope"; value: "main" | "sub" }
   | { type: "select_runtime_model"; value: string }
   | { type: "select_runtime_effort"; value: string }
   | { type: "toggle_todo_collapsed" }
@@ -269,6 +270,7 @@ const initialSidebarCollapsedValue = initialSidebarCollapsed();
 
 export const initialAppState: AppState = {
   sessionId: null,
+  sessionReplayKey: 0,
   clientId: initialClientSessionId(),
   ready: false,
   busy: false,
@@ -348,7 +350,6 @@ export const initialAppState: AppState = {
     models: [],
     efforts: [],
     selectedProvider: "",
-    agentScope: "main",
     modelOpen: false,
     effortOpen: false,
   },
@@ -1288,6 +1289,7 @@ function removeWorkflowEventsByRole(events: WorkflowEvent[], role: WorkflowEvent
 }
 
 function purposeForTool(toolName: string) {
+  if (isKnownLookupTool(toolName)) return "info" as const;
   const lower = toolName.toLowerCase();
   if (lower.includes("read") || lower.includes("grep") || lower.includes("glob") || lower.includes("web")) {
     return "info" as const;
@@ -1344,6 +1346,20 @@ function statusTextForProgressNote(events: WorkflowEvent[], detail: string, fall
 }
 
 function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
+  const updated = applyWorkflowStatusNote(events, detail);
+  const cleanDetail = truncateWorkflowDetail(detail, 220);
+  if (!cleanDetail || providerIdleLabel(cleanDetail) || updated === events) return updated;
+  // Status rows are reused and hidden after a tool starts. Keep user-facing
+  // progress separately so subsequent lifecycle events cannot erase it.
+  const latestMemo = [...updated].reverse().find((event) => event.role === "reasoning");
+  if (latestMemo?.detail === cleanDetail) return updated;
+  return appendWorkflowEvent(updated, {
+    toolName: "", title: "진행 메모", detail: cleanDetail,
+    status: "done", level: "parent", role: "reasoning",
+  });
+}
+
+function applyWorkflowStatusNote(events: WorkflowEvent[], detail: string) {
   const cleanDetail = truncateWorkflowDetail(detail, 220);
   if (!cleanDetail) {
     return events;
@@ -1830,6 +1846,11 @@ function normalizeChatTitle(value: string) {
   return value.trim() || "MyHarness";
 }
 
+function meaningfulHistoryTitle(value: string | undefined) {
+  const title = value?.trim() || "";
+  return title === "새 대화" || title === "MyHarness" ? "" : title;
+}
+
 function updateCurrentHistoryTitle(history: HistoryItem[], sessionId: string | null, title: string) {
   if (!sessionId) return history;
   return history.map((item) => (
@@ -1869,7 +1890,16 @@ function removeHiddenHistoryRows(state: AppState, history: HistoryItem[]) {
 }
 
 function visibleHistoryRows(state: AppState, history: HistoryItem[]) {
-  return removeLiveHistoryRowsForSession(removeHiddenHistoryRows(state, history), state.sessionId);
+  // Both HTTP refreshes and backend resume lists can lag restored snapshots.
+  const existingById = new Map(state.history.map((item) => [item.value, item]));
+  const resolvedHistory = history.map((item) => {
+    const existing = existingById.get(item.value);
+    return existing && !meaningfulHistoryTitle(item.description) && meaningfulHistoryTitle(existing.description)
+      ? { ...item, description: existing.description,
+          messageCount: Math.max(item.messageCount || 0, existing.messageCount || 0) }
+      : item;
+  });
+  return appendHistoryRows([], removeLiveHistoryRowsForSession(removeHiddenHistoryRows(state, resolvedHistory), state.sessionId));
 }
 
 function appendHistoryRows(existing: HistoryItem[], incoming: HistoryItem[]) {
@@ -1895,12 +1925,19 @@ function ensureLiveHistoryItem(state: AppState, userText: string) {
   const sessionId = state.activeHistoryId || state.sessionId;
   if (!sessionId) return state.history;
   if (!state.adminMode && isCurrentHistoryHidden(state, sessionId)) return state.history;
-  if (state.history.some((item) => item.value === sessionId)) {
-    return state.history;
-  }
-  const description = state.chatTitle !== "MyHarness"
+  const description = state.chatTitle !== "MyHarness" && state.chatTitle !== "새 대화"
     ? state.chatTitle
     : userText.trim().replace(/\s+/g, " ").slice(0, 50) || "새 채팅";
+  if (state.history.some((item) => item.value === sessionId)) {
+    return state.history.map((item) => item.value === sessionId
+      ? {
+          ...item,
+          description: item.description === "새 대화" || (!item.description && item.messageCount === 0)
+            ? description : item.description,
+          messageCount: Math.max(1, item.messageCount || 0),
+        }
+      : item);
+  }
   return [
     {
       value: sessionId,
@@ -1912,6 +1949,20 @@ function ensureLiveHistoryItem(state: AppState, userText: string) {
     },
     ...state.history,
   ];
+}
+
+function rememberBusyHistoryOnSessionSwitch(state: AppState, nextSessionId: string) {
+  const liveSessionId = state.sessionId;
+  if (!liveSessionId || liveSessionId === nextSessionId || !state.busy || state.historyReadOnly) {
+    return state.history;
+  }
+  const firstUserText = state.messages.find((message) => message.role === "user" && !message.kind)?.text || "";
+  const historyId = state.activeHistoryId || state.sessionId;
+  return ensureLiveHistoryItem(state, firstUserText).map((item) => (
+    item.value === historyId
+      ? { ...item, live: true, liveSessionId, busy: true }
+      : item
+  ));
 }
 
 function ensureSavedNewChatHistoryItem(state: AppState, sessionId: string) {
@@ -1926,6 +1977,7 @@ function ensureSavedNewChatHistoryItem(state: AppState, sessionId: string) {
       value: cleanSessionId,
       label: "진행 중인 채팅",
       description: "새 대화",
+      messageCount: 0,
       workspace: state.workspacePath || state.workspaceName
         ? { name: state.workspaceName, path: state.workspacePath, scope: state.workspaceScope }
         : null,
@@ -1944,6 +1996,7 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
   const runtimePicker = snapshot.runtime_options
     ? runtimePickerFromOptions(state, snapshot.runtime_options, state.runtimePicker.open)
     : state.runtimePicker;
+  const preserveRuntimeChoice = state.busy && state.runtimeChoicePending;
   return {
     ...state,
     ready: event.type === "ready" ? true : state.ready,
@@ -1962,6 +2015,15 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
     workspaceScope: snapshot.workspace?.scope || state.workspaceScope,
     sessionUsage: sessionUsage || state.sessionUsage,
     runtimePicker,
+    runtimeChoicePending: preserveRuntimeChoice || false,
+    ...(preserveRuntimeChoice ? {
+      provider: state.provider,
+      activeProfile: state.activeProfile,
+      providerLabel: state.providerLabel,
+      model: state.model,
+      effort: state.effort,
+      runtimePicker: state.runtimePicker,
+    } : {}),
   };
 }
 
@@ -1985,17 +2047,7 @@ function activeRuntimeOptions(options: Array<{ value: string; label: string; des
   return options.map((option, index) => ({ ...option, active: index === fallbackIndex }));
 }
 
-function runtimeModelValueForScope(state: AppState, scope = state.runtimePicker.agentScope) {
-  return scope === "sub" ? state.subagentModel : state.model;
-}
-
-function runtimeEffortValueForScope(state: AppState, scope = state.runtimePicker.agentScope) {
-  return scope === "sub" ? state.subagentEffort : state.effort;
-}
-
 function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string, unknown>, open = true) {
-  const subagentModel = String(runtimeOptions.subagent_model || state.subagentModel || "").trim() || state.subagentModel;
-  const subagentEffort = String(runtimeOptions.subagent_effort || state.subagentEffort || "").trim() || state.subagentEffort;
   const activeProviderProfile = String(state.activeProfile || state.provider || "").trim();
   const providers = activeRuntimeOptions(
     (Array.isArray(runtimeOptions.providers) ? runtimeOptions.providers : [])
@@ -2012,7 +2064,7 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
       (Array.isArray(options) ? options : [])
         .map((option) => normalizeRuntimeOption(option as Record<string, unknown>))
         .filter((option): option is NonNullable<typeof option> => Boolean(option)),
-      state.runtimePicker.agentScope === "sub" ? subagentModel : state.model,
+      state.model,
     ),
   ]));
   const selectedProvider = providers.find((option) => option.active)?.value
@@ -2025,7 +2077,7 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
     (Array.isArray(runtimeOptions.efforts) ? runtimeOptions.efforts : [])
       .map((option) => normalizeRuntimeOption(option as Record<string, unknown>))
       .filter((option): option is NonNullable<typeof option> => Boolean(option)),
-    runtimeEffortValueForScope({ ...state, subagentEffort }),
+    state.effort,
   );
   return {
     ...state.runtimePicker,
@@ -2037,7 +2089,6 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
     models,
     efforts,
     selectedProvider,
-    agentScope: state.runtimePicker.agentScope || "main",
     modelOpen: false,
     effortOpen: false,
   };
@@ -2169,7 +2220,27 @@ function liveSessionViewForSession(
   liveSessionViewsBySessionId: AppState["liveSessionViewsBySessionId"],
   sessionId: string,
 ) {
-  return liveSessionViewsBySessionId[sessionId] || null;
+  const view = liveSessionViewsBySessionId[sessionId];
+  return view ? { ...view, ...restoredPresentation(view) } : null;
+}
+
+function restoredPresentation(view: Pick<AppState, "messages" | "workflowEvents" | "workflowEventsByMessageId">) {
+  const arrays = new Map<WorkflowEvent[], WorkflowEvent[]>();
+  const restoreEvents = (events: WorkflowEvent[]) => {
+    let restored = arrays.get(events);
+    if (!restored) {
+      restored = events.map((event) => ({ ...event, restored: true }));
+      arrays.set(events, restored);
+    }
+    return restored;
+  };
+  return {
+    messages: view.messages.map((message) => ({ ...message, restoredText: message.text })),
+    workflowEvents: restoreEvents(view.workflowEvents),
+    workflowEventsByMessageId: Object.fromEntries(
+      Object.entries(view.workflowEventsByMessageId).map(([id, events]) => [id, restoreEvents(events)]),
+    ),
+  };
 }
 
 function isResumeSelectModal(modal: ModalState | null) {
@@ -2185,9 +2256,10 @@ function reduceHistoryRestoreEvent(
 ): AppState {
   const historyEvent = event as Extract<BackendEvent, { type: "history_snapshot" }>;
   const previewOnly = (historyEvent as typeof historyEvent & { preview_only?: boolean }).preview_only === true;
+  const liveReplay = historyEvent.live_replay === true;
   const historyId = String(historyEvent.value || state.pendingHistoryId || state.activeHistoryId || "").trim();
   if (
-    historyId
+    !liveReplay && historyId
     && state.historyReadOnly
     && !state.pendingHistoryId
     && state.activeHistoryId === historyId
@@ -2486,32 +2558,32 @@ function reduceHistoryRestoreEvent(
   const firstRestoredUserTitle = messages.find((message) => (
     message.role === "user" && !message.kind && !/^\/\S*/.test(message.text.trim())
   ))?.text.replace(/\s+/g, " ").trim() || "";
-  const titleCandidate = snapshotTitle || state.chatTitle;
-  const restoredTitle = titleCandidate === "새 대화"
-    ? historyListTitle || firstRestoredUserTitle || titleCandidate
-    : titleCandidate;
+  // A snapshot belongs to its own conversation, never the previously open one.
+  const restoredTitle = meaningfulHistoryTitle(snapshotTitle)
+    || meaningfulHistoryTitle(historyListTitle)
+    || firstRestoredUserTitle
+    || "새 대화";
   return {
     ...state,
     activeHistoryId: historyId || null,
     pendingHistoryId: null,
     chatTitle: normalizeChatTitle(restoredTitle),
-    messages,
+    history: updateCurrentHistoryTitle(state.history, historyId, restoredTitle),
+    ...restoredPresentation({ messages, workflowEvents: restoredWorkflowEvents, workflowEventsByMessageId }),
     workflowAnchorMessageId: restoredWorkflowAnchorMessageId,
-    workflowEventsByMessageId,
     workflowDurationSecondsByMessageId,
-    workflowEvents: restoredWorkflowEvents,
     workflowDurationSeconds: restoredWorkflowAnchorMessageId ? workflowDurationSecondsByMessageId[restoredWorkflowAnchorMessageId] ?? null : null,
     workflowStartedAtMs: null,
     swarmTeammates: restoredSwarmTeammates,
     swarmNotifications: restoredSwarmNotifications,
     sessionUsage: restoredSessionUsage,
-    restoringHistory: true,
-    historyReadOnly: true,
+    restoringHistory: !liveReplay,
+    historyReadOnly: !liveReplay,
     pendingFreshChat: false,
     preserveMessagesOnNextClearTranscript: previewOnly,
-    busy: false,
-    status: stillRestoring ? "processing" : "ready",
-    statusText: stillRestoring ? "대화 불러오는 중" : "준비됨",
+    busy: liveReplay ? state.busy : false,
+    status: liveReplay ? state.status : stillRestoring ? "processing" : "ready",
+    statusText: liveReplay ? state.statusText : stillRestoring ? "대화 불러오는 중" : "준비됨",
   };
 }
 
@@ -2752,12 +2824,22 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
       )),
     };
   }
-  if (state.historyReadOnly && event.type !== "history_snapshot") {
+  // A saved transcript is read-only; the connected runtime's metadata is not.
+  // Dropping these replies leaves the provider picker loading forever when
+  // history is restored before the startup snapshot arrives.
+  const runtimeMetadataEvent = event.type === "ready"
+    || event.type === "state_snapshot"
+    || event.type === "skills_snapshot"
+    || (event.type === "select_request" && recordOrNull(event.modal)?.command === "runtime-picker");
+  if (state.historyReadOnly && event.type !== "history_snapshot" && !runtimeMetadataEvent) {
     return state;
   }
 
   if (event.type === "ready" || event.type === "state_snapshot") {
-    const next = applyStateSnapshot(state, event as Extract<BackendEvent, { type: "ready" | "state_snapshot" }>);
+    const snapshotState = applyStateSnapshot(state, event as Extract<BackendEvent, { type: "ready" | "state_snapshot" }>);
+    const next = state.historyReadOnly
+      ? { ...snapshotState, sessionUsage: state.sessionUsage, status: state.status, statusText: state.statusText }
+      : snapshotState;
     if (event.type === "ready") {
       return {
         ...next,
@@ -2782,13 +2864,14 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
   }
 
   if (event.type === "clear_transcript") {
-    if (state.restoringHistory) {
+    const liveReplay = (event as { live_replay?: boolean }).live_replay === true;
+    if (state.restoringHistory && !liveReplay) {
       return {
         ...state,
         preserveMessagesOnNextClearTranscript: false,
       };
     }
-    if (state.preserveMessagesOnNextClearTranscript && state.busy && state.messages.length > 0) {
+    if (!liveReplay && state.preserveMessagesOnNextClearTranscript && state.busy && state.messages.length > 0) {
       return {
         ...state,
         preserveMessagesOnNextClearTranscript: false,
@@ -2871,13 +2954,21 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     const restoredUserTitle = state.messages.find((message) => (
       message.role === "user" && !message.kind && !/^\/\S*/.test(message.text.trim())
     ))?.text.replace(/\s+/g, " ").trim() || "";
-    const title = state.historyReadOnly && eventTitle === "새 대화"
-      ? normalizeChatTitle(restoredHistoryTitle || restoredUserTitle || eventTitle)
+    const title = eventTitle === "새 대화" && (state.historyReadOnly || restoredUserTitle)
+      ? normalizeChatTitle(
+          (restoredHistoryTitle !== "새 대화" ? restoredHistoryTitle : "") || restoredUserTitle || eventTitle,
+        )
       : eventTitle;
     return {
       ...state,
       chatTitle: title,
-      history: updateCurrentHistoryTitle(state.history, activeHistoryValue, title),
+      history: updateCurrentHistoryTitle(
+        title === "새 대화" && state.activeHistoryId && !state.historyReadOnly
+          ? ensureSavedNewChatHistoryItem(state, state.activeHistoryId)
+          : state.history,
+        activeHistoryValue,
+        title,
+      ),
     };
   }
 
@@ -2886,8 +2977,20 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
     if (state.restoringHistory && state.pendingHistoryId && activeHistoryId !== state.pendingHistoryId) {
       return state;
     }
+    const optimisticRow = activeHistoryId && activeHistoryId !== state.sessionId
+      ? state.history.find((item) => item.value === state.sessionId)
+      : undefined;
+    const savedRow = state.history.find((item) => item.value === activeHistoryId);
+    const history = optimisticRow
+      ? state.history.flatMap((item) => {
+          if (item === optimisticRow && savedRow) return [];
+          if (item !== optimisticRow && item !== savedRow) return [item];
+          return [{ ...optimisticRow, ...savedRow, value: activeHistoryId!, live: true, liveSessionId: state.sessionId!, busy: state.busy }];
+        })
+      : state.history;
     return {
       ...state,
+      history,
       activeHistoryId,
       pendingHistoryId: null,
       restoringHistory: false,
@@ -3252,7 +3355,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       {
         const backendModalsBySessionId = rememberCurrentBackendModal(state);
         const liveSessionViewsBySessionId = rememberCurrentLiveSessionView(state);
-        const historyBase = removeLiveHistoryRowsForSession(state.history, action.sessionId);
+        const historyBase = removeLiveHistoryRowsForSession(rememberBusyHistoryOnSessionSwitch(state, action.sessionId), action.sessionId);
         const pendingFirstUserText = state.pendingFreshChat
           ? state.messages.find((message) => message.role === "user" && !message.kind)?.text || ""
           : "";
@@ -3269,16 +3372,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         return {
         ...state,
         sessionId: action.sessionId,
+        sessionReplayKey: state.sessionReplayKey + (action.replay ? 1 : 0),
         clientId: action.clientId || state.clientId,
         modal: backendModalForSession(backendModalsBySessionId, action.sessionId),
         backendModalsBySessionId,
         liveSessionViewsBySessionId,
         swarmPopupOpen: false,
         history,
-        historyReadOnly: state.preserveMessagesOnNextClearTranscript && state.historyReadOnly,
+        historyReadOnly: !action.replay && !busy && state.preserveMessagesOnNextClearTranscript && state.historyReadOnly,
         pendingFreshChat: false,
-        preserveMessagesOnNextClearTranscript: restoredLiveView ? true : state.preserveMessagesOnNextClearTranscript,
-        activeHistoryId: restoredLiveView?.activeHistoryId ?? state.activeHistoryId,
+        preserveMessagesOnNextClearTranscript: action.replay ? false : restoredLiveView ? true : state.preserveMessagesOnNextClearTranscript,
+        activeHistoryId: action.replay ? action.savedSessionId || null : restoredLiveView?.activeHistoryId ?? state.activeHistoryId,
         chatTitle: restoredLiveView?.chatTitle ?? state.chatTitle,
         messages: restoredLiveView?.messages ?? state.messages,
         workflowAnchorMessageId: restoredLiveView?.workflowAnchorMessageId ?? state.workflowAnchorMessageId,
@@ -3349,7 +3453,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         workflowEventsByMessageId: {},
         workflowDurationSecondsByMessageId: {},
         workflowInputBuffers: {},
-        activeHistoryId: null,
+        activeHistoryId: action.savedSessionId || null,
         restoringHistory: false,
         historyReadOnly: false,
         pendingFreshChat: false,
@@ -3372,7 +3476,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         workflowEvents: [],
         workflowDurationSeconds: null,
         workflowStartedAtMs: null,
-        history: removeLiveHistoryRowsForSession(state.history, action.sessionId),
+        history: removeLiveHistoryRowsForSession(rememberBusyHistoryOnSessionSwitch(state, action.sessionId), action.sessionId),
         workspaceName: action.workspace?.name || state.workspaceName,
         workspacePath: action.workspace?.path || state.workspacePath,
         workspaceScope: action.workspace?.scope || state.workspaceScope,
@@ -3537,7 +3641,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         && !incomingSessionKeys.has(item.value)
         && !incomingSessionKeys.has(item.liveSessionId || "")
       ));
-      const history = visibleHistoryRows(state, [...cachedLiveRows, ...action.history]);
+      const pendingRows = state.history.filter((item) => (
+        item.pending === true
+        && !cachedLiveRows.includes(item)
+        && !incomingSessionKeys.has(item.value)
+        && (!item.workspace?.path || item.workspace.path === state.workspacePath)
+      ));
+      const history = visibleHistoryRows(state, [...pendingRows, ...cachedLiveRows, ...action.history]);
       return {
         ...state,
         history,
@@ -3618,6 +3728,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "set_history_loading_more":
       return { ...state, historyLoadingMore: action.value };
 
+    case "add_new_chat_history":
+      return {
+        ...state,
+        history: ensureSavedNewChatHistoryItem({
+          ...state,
+          workspacePath: action.workspace?.path || state.workspacePath,
+          workspaceName: action.workspace?.name || state.workspaceName,
+          workspaceScope: action.workspace?.scope || state.workspaceScope,
+        }, action.sessionId),
+      };
+
     case "begin_new_chat": {
       const savedSessionId = String(action.sessionId || "").trim();
       return {
@@ -3665,12 +3786,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         return {
           ...state,
           liveSessionViewsBySessionId,
+          history: rememberBusyHistoryOnSessionSwitch(state, action.sessionId),
           busy: false,
           status: "processing",
           statusText: "대화 불러오는 중",
           pendingHistoryId: action.sessionId,
           restoringHistory: true,
-          historyReadOnly: restoredView?.historyReadOnly === true,
+          historyReadOnly: true,
           pendingFreshChat: false,
           modal: null,
           artifactPanelOpen: false,
@@ -3802,10 +3924,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "select_runtime_provider": {
       const models = state.runtimePicker.modelsByProvider[action.value] || [];
-      const modelValue = runtimeModelValueForScope(state);
+      const modelValue = state.model;
       return {
         ...state,
         provider: action.value,
+        runtimeChoicePending: state.busy || state.runtimeChoicePending,
         activeProfile: action.value,
         providerLabel: state.runtimePicker.providers.find((option) => option.value === action.value)?.label || state.providerLabel,
         runtimePicker: {
@@ -3819,29 +3942,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "select_runtime_agent_scope": {
-      const models = state.runtimePicker.modelsByProvider[state.runtimePicker.selectedProvider] || state.runtimePicker.models;
-      return {
-        ...state,
-        runtimePicker: {
-          ...state.runtimePicker,
-          agentScope: action.value,
-          models: activeRuntimeOptions(models, action.value === "sub" ? state.subagentModel : state.model),
-          efforts: activeRuntimeOptions(state.runtimePicker.efforts, runtimeEffortValueForScope(state, action.value)),
-          modelOpen: true,
-          effortOpen: false,
-        },
-      };
-    }
-
     case "select_runtime_model":
       return {
         ...state,
-        ...(state.runtimePicker.agentScope === "sub" ? { subagentModel: action.value } : { model: action.value }),
+        model: action.value,
+        runtimeChoicePending: state.busy || state.runtimeChoicePending,
         runtimePicker: {
           ...state.runtimePicker,
           models: state.runtimePicker.models.map((option) => ({ ...option, active: option.value === action.value })),
-          efforts: activeRuntimeOptions(state.runtimePicker.efforts, runtimeEffortValueForScope(state)),
+          efforts: activeRuntimeOptions(state.runtimePicker.efforts, state.effort),
           effortOpen: true,
         },
       };
@@ -3849,7 +3958,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "select_runtime_effort":
       return {
         ...state,
-        ...(state.runtimePicker.agentScope === "sub" ? { subagentEffort: action.value } : { effort: action.value }),
+        effort: action.value,
+        runtimeChoicePending: state.busy || state.runtimeChoicePending,
         runtimePicker: {
           ...state.runtimePicker,
           efforts: state.runtimePicker.efforts.map((option) => ({ ...option, active: option.value === action.value })),

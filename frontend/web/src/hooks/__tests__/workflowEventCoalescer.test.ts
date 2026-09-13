@@ -3,6 +3,23 @@ import type { BackendEvent } from "../../types/backend";
 import { createWorkflowEventCoalescer } from "../workflowEventCoalescer";
 
 describe("createWorkflowEventCoalescer", () => {
+  it("bounds a burst of 1000 answer chunks without waiting for the next message", () => {
+    vi.useFakeTimers();
+    const emit = vi.fn();
+    const coalescer = createWorkflowEventCoalescer(emit);
+    for (let index = 0; index < 1000; index += 1) coalescer.push({ type: "assistant_delta", message: "가" });
+    expect(emit).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(120);
+    expect(emit).toHaveBeenCalledTimes(2);
+    expect(emit.mock.calls.map(([event]) => event.message).join("")).toBe("가".repeat(1000));
+    coalescer.push({ type: "assistant_delta", message: "끝" });
+    coalescer.push({ type: "assistant_delta", message: "!" });
+    coalescer.push({ type: "line_complete" });
+    expect(emit.mock.calls.slice(-2).map(([event]) => event)).toEqual([
+      { type: "assistant_delta", message: "!" }, { type: "line_complete" },
+    ]);
+    vi.useRealTimers();
+  });
   it("coalesces rapid tool input deltas on a timer", () => {
     vi.useFakeTimers();
     const emit = vi.fn();

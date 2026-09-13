@@ -16,6 +16,7 @@ import {
 import { canCopyPngToClipboard, copyPngToClipboard, copyTextToClipboard } from "../utils/clipboard";
 import { readLocalStorage, writeLocalStorage } from "../utils/storage";
 import { Icon, type IconName } from "./ArtifactIcons";
+import { ProjectFileIcon } from "./ProjectFileIcon";
 import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload, type ArtifactCaptureResult } from "./ArtifactPreview";
 import { showTooltipNowEvent } from "./TooltipLayer";
 import { WorkflowPanel } from "./WorkflowPanel";
@@ -1985,7 +1986,7 @@ function ProjectFileItem({
   return (
     <div className={`project-file-item${deleteReady ? " delete-ready" : ""}${deleting ? " deleting" : ""}`}>
       <div className={`project-file-main${editingName ? " project-file-main-editing" : ""}`}>
-        <span className={`artifact-card-icon artifact-card-icon-${badge.tone}`} aria-hidden="true">{badge.label}</span>
+        <ProjectFileIcon label={badge.label} tone={badge.tone} />
         {editingName ? (
           <span className="artifact-card-copy project-file-inline-rename">
             <input

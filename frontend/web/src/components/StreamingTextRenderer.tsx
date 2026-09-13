@@ -29,9 +29,12 @@ function useStreamingText(
   visuallyStreaming: boolean,
   startBufferMs: number,
   revealDurationMs: number,
+  restoredText?: string,
 ) {
   const [visibleText, setVisibleText] = useState(() => (
-    visuallyStreaming && Math.max(0, startBufferMs) > 0 ? "" : targetText
+    restoredText !== undefined && targetText.startsWith(restoredText)
+      ? restoredText
+      : visuallyStreaming && Math.max(0, startBufferMs) > 0 ? "" : targetText
   ));
   const visibleTextRef = useRef(visibleText);
   const pendingTextRef = useRef("");
@@ -42,7 +45,7 @@ function useStreamingText(
   const lastFrameAtRef = useRef<number | null>(null);
   const revealBudgetRef = useRef(0);
   const revealRateRef = useRef(0);
-  const displayStartedRef = useRef(false);
+  const displayStartedRef = useRef(Boolean(visibleText));
   const startBufferMsRef = useRef(startBufferMs);
   const revealDurationMsRef = useRef(revealDurationMs);
   const recentChunkSamplesRef = useRef<StreamingChunkSample[]>([]);
@@ -294,6 +297,13 @@ function useStreamingText(
   }, [startBufferMs, revealDurationMs]);
 
   useEffect(() => {
+    if (restoredText !== undefined && targetText.startsWith(restoredText)
+      && restoredText.length > visibleTextRef.current.length) {
+      resetRevealLoop();
+      visibleTextRef.current = restoredText;
+      displayStartedRef.current = true;
+      setVisibleText(restoredText);
+    }
     if (!visuallyStreaming) {
       const visibleText = visibleTextRef.current;
       const queuedText = `${visibleText}${pendingTextRef.current}`;
@@ -344,7 +354,7 @@ function useStreamingText(
     resetRevealLoop();
     visibleTextRef.current = targetText;
     setVisibleText(targetText);
-  }, [targetText, visuallyStreaming, startBufferMs, revealDurationMs]);
+  }, [targetText, visuallyStreaming, startBufferMs, revealDurationMs, restoredText]);
 
   const snapCompletedReplacement = !visuallyStreaming
     && visibleText !== targetText
@@ -811,6 +821,7 @@ function StreamingMarkdownMessage({
 
 export function StreamingTextRenderer({
   text,
+  restoredText,
   settings,
   streaming,
   onVisibleTextChange,
@@ -818,6 +829,7 @@ export function StreamingTextRenderer({
   promptTokenReferences,
 }: {
   text: string;
+  restoredText?: string;
   settings: Pick<AppSettings, "streamStartBufferMs" | "streamRevealDurationMs">;
   streaming: boolean;
   onVisibleTextChange?: () => void;
@@ -829,6 +841,7 @@ export function StreamingTextRenderer({
     streaming,
     settings.streamStartBufferMs,
     settings.streamRevealDurationMs,
+    restoredText,
   );
 
   useEffect(() => {

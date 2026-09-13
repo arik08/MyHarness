@@ -7,7 +7,7 @@ import { MarkdownMessage } from "../MarkdownMessage";
 import { StreamingAssistantMessage } from "../StreamingAssistantMessage";
 import { messageBottomFollowEvent } from "../../hooks/useMessageAutoFollow";
 import { AppStateProvider, useAppState } from "../../state/app-state";
-import { initialAppState } from "../../state/reducer";
+import { appReducer, initialAppState } from "../../state/reducer";
 import { sendBackendRequest } from "../../api/messages";
 
 vi.mock("../../api/messages", async (importOriginal) => ({
@@ -218,6 +218,47 @@ describe("MessageList", () => {
     Element.prototype.scrollTo = vi.fn();
     vi.restoreAllMocks();
     vi.mocked(sendBackendRequest).mockReset().mockResolvedValue({ ok: true });
+  });
+
+  it("shows starter prompts for a fresh conversation", () => {
+    render(<AppStateProvider initialState={initialAppState}><MessageList /></AppStateProvider>);
+    expect(screen.getByRole("heading", { name: "무엇을 도와드릴까요?" })).toBeTruthy();
+  });
+
+  it("shows starter prompts after creating a saved new conversation", () => {
+    const state = appReducer({
+      ...initialAppState,
+      sessionId: "previous-session",
+      messages: [{ id: "previous-message", role: "user", text: "이전 질문" }],
+    }, { type: "begin_new_chat", sessionId: "saved-new-chat" });
+    expect(state.activeHistoryId).toBe("saved-new-chat");
+    render(<AppStateProvider initialState={state}><MessageList /></AppStateProvider>);
+    expect(screen.getByRole("heading", { name: "무엇을 도와드릴까요?" })).toBeTruthy();
+  });
+
+  it("shows starter prompts for a restored empty conversation", () => {
+    render(
+      <AppStateProvider initialState={{ ...initialAppState, activeHistoryId: "empty-chat" }}>
+        <MessageList />
+      </AppStateProvider>,
+    );
+    expect(screen.getByRole("heading", { name: "무엇을 도와드릴까요?" })).toBeTruthy();
+  });
+
+  it.each([
+    { busy: true },
+    { pendingHistoryId: "opening-chat" },
+    { restoringHistory: true },
+    { workflowEvents: [{ id: "work", toolName: "write_file", title: "파일 작성", detail: "", status: "running" as const }] },
+  ])("does not show starter prompts for an empty transcript with activity: %j", (activity) => {
+    const { container } = render(
+      <AppStateProvider initialState={{ ...initialAppState, ...activity }}><MessageList /></AppStateProvider>,
+    );
+    expect(screen.queryByRole("heading", { name: "무엇을 도와드릴까요?" })).toBeNull();
+    expect(container.querySelector(".welcome")).toBeNull();
+    if ("workflowEvents" in activity) {
+      expect(screen.getByText("작업 진행")).toBeTruthy();
+    }
   });
 
   it("renders chat messages without visible role labels to match the legacy web UI", () => {
@@ -1134,7 +1175,7 @@ describe("MessageList", () => {
     );
 
     fireEvent.mouseEnter(screen.getByLabelText("토큰/비용 보기"));
-    expect(document.querySelector(".assistant-usage-popover")?.getAttribute("style")).toContain("width: 310px");
+    expect(document.querySelector(".assistant-usage-popover")?.getAttribute("style")).toContain("width: 360px");
     expect(screen.getByText("이번 답변")).toBeTruthy();
     expect(screen.getByText("GPT-5.4")).toBeTruthy();
     expect(screen.queryByText("세션 누적")).toBeNull();
@@ -1264,7 +1305,7 @@ describe("MessageList", () => {
     });
     fireEvent.focus(usageButton);
     expect(popover.getAttribute("data-placement")).toBe("above");
-    expect(popover.style.left).toBe("357px");
+    expect(popover.style.left).toBe("332px");
     await waitFor(() => expect(screen.queryByText(/환율/)).toBeNull());
   });
 
@@ -1322,7 +1363,7 @@ describe("MessageList", () => {
     );
 
     expect(document.querySelector(".workflow-message")).toBeNull();
-    expect(screen.getByText("사용 가능한 명령어")).toBeTruthy();
+    expect(screen.queryByText("사용 가능한 명령어")).toBeNull();
   });
 
   it("renders workflow purpose groups as explicit parent and child structure", () => {
@@ -1350,7 +1391,7 @@ describe("MessageList", () => {
     expect(group?.querySelector('[data-workflow-role="purpose"]')?.textContent).toContain("정보 수집");
     const childTitles = [...(group?.querySelectorAll(".workflow-children .workflow-step.child strong") || [])]
       .map((node) => node.textContent);
-    expect(childTitles).toEqual(["web_search", "web_fetch"]);
+    expect(childTitles).toEqual(["웹 검색", "웹 페이지 조회"]);
     expect(document.querySelector(".workflow-count")?.textContent).toBe("4개 기록 · 1개 실행 중");
   });
 
@@ -1421,9 +1462,8 @@ describe("MessageList", () => {
       vi.advanceTimersByTime(630);
     });
     expect(document.querySelectorAll(".workflow-step")).toHaveLength(5);
-    expect(document.body.textContent || "").toContain("web_searchfirst query");
-    expect(document.body.textContent || "").toContain("web_searchsecond query");
-    expect(document.body.textContent || "").toContain("example.com");
+    expect(screen.getAllByText("웹 검색")).toHaveLength(2);
+    expect(screen.getByText("웹 페이지 조회")).toBeTruthy();
   });
 
   it("reveals the initial planning step shortly after request understanding", () => {
@@ -3321,8 +3361,8 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-web-source-path")).toBeNull();
     expect(document.querySelector(".workflow-web-source-favicon")?.textContent).toBe("E");
     expect(document.querySelector(".workflow-web-source-favicon img")?.getAttribute("src")).toBe("https://example.com/favicon.ico");
-    expect(screen.getAllByText("myharness docs")).toHaveLength(2);
-    expect(screen.getByText("web_search")).toBeTruthy();
+    expect(screen.getAllByText("myharness docs")).toHaveLength(1);
+    expect(screen.getByText("웹 검색")).toBeTruthy();
     await user.click(screen.getByText(/문서에는 1분기 실적/));
     expect((document.querySelector(".answer-web-sources") as HTMLDetailsElement | null)?.open).toBe(false);
   });
@@ -4156,6 +4196,8 @@ describe("MessageList", () => {
     expect(articles).toHaveLength(1);
     expect(articles[0]?.textContent).toContain("first backend line");
     expect(articles[0]?.textContent).toContain("second backend line");
+    expect(screen.getByLabelText("실행 로그")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "입력 복사" })).toBeNull();
   });
 
   it("keeps log message boundaries when a normal chat message appears between them", () => {

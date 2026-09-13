@@ -12,7 +12,15 @@
         "UN_COMTRADE_SECONDARY_API_KEY": "c31f0aa100164237bf218e288bf79a03"
       },
       "cwd": ".",
-      "auto_connect": false
+      "auto_connect": false,
+      "read_only_tools": [
+        "preview_trade_data",
+        "get_trade_data",
+        "latest_common_annual_trade_data",
+        "list_reporters",
+        "search_reporters",
+        "check_connection"
+      ]
     }
   }
 }

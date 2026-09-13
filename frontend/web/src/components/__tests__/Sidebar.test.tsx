@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "../Sidebar";
+import { useBackendSession } from "../../hooks/useBackendSession";
+import { openBackendEvents } from "../../api/events";
 import { clampSidebarWidth } from "../../layout/sidebarLayout";
 import { Composer } from "../Composer";
 import { ModalHost } from "../ModalHost";
@@ -16,11 +18,19 @@ import type { Workspace } from "../../types/backend";
 import { historyVisibilityKey } from "../../utils/history";
 
 vi.mock("../../api/session", () => ({
+  capacityQueueStatusEvent: "myharness:capacity-queue-status",
   restartSession: vi.fn(),
   shutdownSession: vi.fn(),
   startSession: vi.fn(),
   listLiveSessions: vi.fn(),
 }));
+
+vi.mock("../../api/events", () => ({ openBackendEvents: vi.fn() }));
+
+function LiveChatProbe() {
+  useBackendSession();
+  return <ChatStateProbe />;
+}
 
 vi.mock("../../api/history", () => ({
   deleteHistory: vi.fn(),
@@ -68,6 +78,97 @@ function DispatchProbe({ onReady }: { onReady: (dispatch: ReturnType<typeof useA
 }
 
 describe("Sidebar", () => {
+  it("retains restored titles after repeated clicks and stale nonempty list refreshes", async () => {
+    const history = ["a", "b"].map((id) => ({
+      value: `saved-${id}`, label: "2 msg", description: "새 대화", messageCount: 2,
+    }));
+    vi.mocked(loadHistorySnapshot).mockImplementation(async ({ sessionId }) => ({
+      type: "history_snapshot", value: sessionId, message: "새 대화", preview_only: true,
+      history_events: [{ type: "user", text: `${sessionId} 질문` }],
+    }));
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "web-current", history }}>
+      <Sidebar /><ChatStateProbe /><DispatchProbe onReady={(value) => { dispatch = value; }} />
+    </AppStateProvider>);
+    for (const id of ["a", "b", "a", "b"]) {
+      const rows = document.querySelectorAll<HTMLButtonElement>(".history-open");
+      await userEvent.click(rows[id === "a" ? 0 : 1]);
+      await waitFor(() => expect(screen.getByTestId("active-history").textContent).toBe(`saved-${id}`));
+      await waitFor(() => expect(screen.getByTestId("pending-history").textContent).toBe(""));
+      act(() => dispatch({ type: "set_history", history }));
+      expect(document.querySelectorAll(".history-title")[id === "a" ? 0 : 1].textContent).toBe(`saved-${id} 질문`);
+      if (id === "b") {
+        expect(Array.from(document.querySelectorAll(".history-title"), (node) => node.textContent))
+          .toEqual(["saved-a 질문", "saved-b 질문"]);
+      }
+    }
+  });
+
+  it("renders one active row after repeated refreshes and a title change for a pending cached chat", () => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    render(
+      <AppStateProvider initialState={{
+        ...initialAppState, sessionId: "web-a", activeHistoryId: "saved-a", busy: true,
+        chatTitle: "MCP 수정", workspaceName: "Default", workspacePath: "C:/demo",
+        liveSessionViewsBySessionId: { "web-a": {} as any },
+        history: [{
+          value: "saved-a", label: "진행 중인 채팅", description: "MCP 수정",
+          pending: true, live: true, liveSessionId: "web-a", busy: true,
+        }],
+      }}>
+        <Sidebar />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
+      </AppStateProvider>,
+    );
+    for (let refresh = 0; refresh < 5; refresh += 1) {
+      act(() => dispatch({ type: "set_history", history: [] }));
+      expect(document.querySelectorAll(".history-item")).toHaveLength(1);
+      expect(document.querySelectorAll(".history-item.active")).toHaveLength(1);
+    }
+    act(() => {
+      dispatch({ type: "backend_event", event: { type: "session_title", message: "한국 2024년 무역 데이터 조회" } });
+      dispatch({ type: "set_busy", value: false });
+    });
+    expect(document.querySelectorAll(".history-item")).toHaveLength(1);
+    expect(document.querySelector(".history-title")?.textContent).toBe("한국 2024년 무역 데이터 조회");
+    expect(document.querySelectorAll(".history-item.busy")).toHaveLength(0);
+  });
+
+  it("keeps the first prompt visible through delayed empty-chat events and history refreshes", () => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    render(
+      <AppStateProvider initialState={{
+        ...initialAppState, sessionId: "web-current", activeHistoryId: "saved-current",
+        chatTitle: "새 대화", workspaceName: "Default", workspacePath: "C:/demo",
+        history: [{ value: "saved-current", label: "0 msg", description: "새 대화", messageCount: 0 }],
+      }}>
+        <Sidebar />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
+      </AppStateProvider>,
+    );
+    const expectPromptRow = () => {
+      const rows = document.querySelectorAll(".history-item");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].textContent).toContain("최신 최적화 알고리즘을 조사해줘");
+      expect(rows[0].textContent).not.toContain("새 대화");
+    };
+    act(() => {
+      dispatch({ type: "set_busy", value: true });
+      dispatch({ type: "append_message", message: { role: "user", text: "최신 최적화 알고리즘을 조사해줘" } });
+    });
+    expectPromptRow();
+    act(() => dispatch({ type: "backend_event", event: { type: "session_title", message: "새 대화" } }));
+    expectPromptRow();
+    act(() => dispatch({ type: "set_history", history: [
+      { value: "saved-current", label: "0 msg", description: "새 대화", messageCount: 0 },
+    ] }));
+    expectPromptRow();
+    act(() => dispatch({ type: "backend_event", event: { type: "line_complete" } }));
+    expectPromptRow();
+    act(() => dispatch({ type: "backend_event", event: { type: "session_title", message: "최적화 알고리즘 조사" } }));
+    expect(document.querySelector(".history-item")?.textContent).toContain("최적화 알고리즘 조사");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [] });
@@ -455,7 +556,7 @@ describe("Sidebar", () => {
     expect(clampSidebarWidth(420, 1440)).toBe(420);
   });
 
-  it("sends subagent_model when the runtime picker is scoped to Sub", async () => {
+  it.each([false, true])("selects the main model while busy=%s without exposing a Sub selector", async (busy) => {
     render(
       <AppStateProvider
         initialState={{
@@ -465,10 +566,11 @@ describe("Sidebar", () => {
           provider: "codex",
           providerLabel: "Codex Subscription",
           model: "gpt-5.5",
+          busy,
           subagentModel: "gpt-5.4-mini",
           runtimePicker: {
             ...initialAppState.runtimePicker,
-            open: true,
+            open: !busy,
             loading: false,
             selectedProvider: "codex",
             modelOpen: true,
@@ -490,17 +592,21 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "Sub" }));
+    expect(screen.queryByRole("tab", { name: "Sub" })).toBeNull();
+    if (busy) {
+      await userEvent.click(screen.getByRole("button", { name: "런타임 설정 열기" }));
+      expect(screen.queryByText("응답이 끝난 뒤 선택할 수 있습니다.")).toBeNull();
+    }
     await userEvent.click(screen.getByRole("button", { name: /gpt-5\.4-nano/ }));
 
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
       type: "apply_select_command",
-      command: "subagent_model",
+      command: "model",
       value: "gpt-5.4-nano",
     }));
   });
 
-  it("sends subagent_effort after choosing a Sub model", async () => {
+  it.each([false, true])("selects main model reasoning effort while busy=%s without a Sub selector", async (busy) => {
     render(
       <AppStateProvider
         initialState={{
@@ -512,6 +618,7 @@ describe("Sidebar", () => {
           model: "gpt-5.5",
           subagentModel: "gpt-5.4-mini",
           subagentEffort: "medium",
+          busy,
           runtimePicker: {
             ...initialAppState.runtimePicker,
             open: true,
@@ -540,15 +647,60 @@ describe("Sidebar", () => {
       </AppStateProvider>,
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "Sub" }));
+    expect(screen.queryByRole("tab", { name: "Sub" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /gpt-5\.4-nano/ }));
     await userEvent.click(screen.getByRole("button", { name: /High/ }));
 
     await waitFor(() => expect(sendBackendRequest).toHaveBeenLastCalledWith("session-active", "client-1", {
       type: "apply_select_command",
-      command: "subagent_effort",
+      command: "effort",
       value: "high",
     }));
+  });
+
+  it.each(["model", "effort"])("grows the %s picker upward when its content exceeds the provider panel", async (panelName) => {
+    const { container } = render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        runtimePicker: {
+          ...initialAppState.runtimePicker,
+          open: true,
+          loading: false,
+          modelOpen: true,
+          effortOpen: true,
+          providers: [{ value: "codex", label: "Codex Subscription", active: true }],
+          models: [{ value: "gpt-5.5", label: "gpt-5.5", active: true }],
+          efforts: [{ value: "medium", label: "Medium", active: true }],
+        },
+      }}>
+        <Sidebar />
+      </AppStateProvider>,
+    );
+    const anchor = screen.getByRole("button", { name: "런타임 설정 열기" });
+    let anchorTop = 500;
+    anchor.getBoundingClientRect = () => ({
+      x: 16, y: anchorTop, left: 16, top: anchorTop, right: 300,
+      bottom: anchorTop + 32, width: 284, height: 32, toJSON: () => ({}),
+    });
+    const picker = container.querySelector(".runtime-picker-layer") as HTMLElement;
+    for (const panel of picker.querySelectorAll(".runtime-picker-panel")) {
+      Object.defineProperty(panel.querySelector(".runtime-picker-header"), "offsetHeight", { configurable: true, value: 48 });
+      Object.defineProperty(panel.querySelector(".runtime-picker-list"), "scrollHeight", { configurable: true, value: 96 });
+    }
+    fireEvent(window, new Event("resize"));
+    const initialTop = Number.parseFloat(picker.style.top);
+    const list = picker.querySelector(`.runtime-picker-${panelName}-panel .runtime-picker-list`)!;
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 500 });
+    fireEvent(window, new Event("resize"));
+    expect(Number.parseFloat(picker.style.top)).toBeLessThan(initialTop);
+    expect(picker.style.top).toBe("132px");
+    expect(picker.style.getPropertyValue("--runtime-picker-panel-max-height")).toBe("360px");
+
+    // Reposition again when the available height shrinks; keep both edges visible.
+    anchorTop = 240;
+    fireEvent(window, new Event("resize"));
+    expect(picker.style.top).toBe("8px");
+    expect(picker.style.getPropertyValue("--runtime-picker-panel-max-height")).toBe("224px");
   });
 
   it("keeps the runtime picker inside narrow viewports", async () => {
@@ -628,6 +780,70 @@ describe("Sidebar", () => {
     );
 
     expect(screen.queryByRole("region", { name: "Provider 선택" })).toBeNull();
+  });
+
+  it.each([true, false])("keeps the streaming chat spinner after new chat (saved row: %s)", async (savedRow) => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    const { container } = render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        sessionId: "web-streaming",
+        activeHistoryId: "saved-streaming",
+        clientId: "client-1",
+        busy: true,
+        messages: [
+          { id: "question", role: "user", text: "진행 중인 질문" },
+          { id: "answer", role: "assistant", text: "작성 중", isComplete: false },
+        ],
+        history: savedRow ? [{ value: "saved-streaming", label: "진행 중인 질문" }] : [],
+      }}>
+        <Sidebar />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
+      </AppStateProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
+    await waitFor(() => expect(startSession).toHaveBeenCalled());
+    await waitFor(() => expect(container.querySelector(".history-item.busy:not(.active) .history-busy-spinner")).not.toBeNull());
+    act(() => dispatch({ type: "set_history", history: [{
+      value: "saved-streaming", label: "진행 중인 질문", live: true, liveSessionId: "web-streaming", busy: false,
+    }] }));
+    expect(container.querySelector(".history-busy-spinner")).toBeNull();
+  });
+
+  it("delays restore spinners and cancels them on completion or session changes", () => {
+    vi.useFakeTimers();
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    const { container, unmount } = render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        sessionId: "current",
+        history: [{ value: "first", label: "First" }, { value: "second", label: "Second" }],
+      }}>
+        <Sidebar />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
+      </AppStateProvider>,
+    );
+    const spinner = () => container.querySelector(".history-busy-spinner");
+    try {
+      act(() => dispatch({ type: "begin_history_restore", sessionId: "first" }));
+      act(() => vi.advanceTimersByTime(299));
+      expect(spinner()).toBeNull();
+      act(() => dispatch({ type: "finish_history_restore" }));
+      act(() => vi.advanceTimersByTime(300));
+      expect(spinner()).toBeNull();
+      act(() => dispatch({ type: "begin_history_restore", sessionId: "first" }));
+      act(() => vi.advanceTimersByTime(200));
+      act(() => dispatch({ type: "begin_history_restore", sessionId: "second" }));
+      act(() => vi.advanceTimersByTime(299));
+      expect(spinner()).toBeNull();
+      act(() => vi.advanceTimersByTime(1));
+      expect(spinner()?.parentElement?.textContent).toContain("Second");
+      act(() => dispatch({ type: "finish_history_restore" }));
+      expect(spinner()).toBeNull();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("shows the busy spinner in the left icon slot while the active answer is running", () => {
@@ -1170,7 +1386,12 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "전체 보기" }).getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("does not auto-load more history when the liked filter makes the list too short to scroll", async () => {
+  it("loads all liked history once without paging ordinary history on scroll", async () => {
+    vi.mocked(listHistory).mockResolvedValue({
+      options: [{ value: "old-liked", label: "오래된 별표 대화", liked: true }],
+      hasMore: false,
+      nextOffset: 1,
+    });
     render(
       <AppStateProvider
         initialState={{
@@ -1198,7 +1419,39 @@ describe("Sidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "좋아요만 보기" }));
 
     await waitFor(() => expect(screen.queryByText("일반 대화")).toBeNull());
-    expect(listHistory).not.toHaveBeenCalled();
+    expect(await screen.findByText("오래된 별표 대화")).toBeTruthy();
+    expect(listHistory).toHaveBeenCalledExactlyOnceWith({
+      workspacePath: "C:/demo", workspaceName: "Default", likedOnly: true,
+    });
+    fireEvent.scroll(historyList);
+    fireEvent.scroll(historyList);
+    expect(listHistory).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "제목 검색" }));
+    await userEvent.type(screen.getByRole("searchbox", { name: "채팅 세션 제목 검색" }), "오래된");
+    expect(screen.getByText("오래된 별표 대화")).toBeTruthy();
+    expect(screen.queryByText("좋아요 대화")).toBeNull();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect(listHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a late liked response after returning to ordinary history", async () => {
+    let resolveLiked!: (value: Awaited<ReturnType<typeof listHistory>>) => void;
+    vi.mocked(listHistory).mockReturnValue(new Promise((resolve) => { resolveLiked = resolve; }));
+    render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        history: [{ value: "plain", label: "일반 대화" }],
+      }}>
+        <Sidebar />
+      </AppStateProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "좋아요만 보기" }));
+    await waitFor(() => expect(listHistory).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("좋아요한 채팅을 불러오는 중...")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "전체 보기" }));
+    await act(async () => resolveLiked({ options: [{ value: "late", label: "늦은 별표", liked: true }] }));
+    expect(screen.getByText("일반 대화")).toBeTruthy();
+    expect(screen.queryByText("늦은 별표")).toBeNull();
   });
 
   it("shows the liked-filter empty state when no chat is liked", async () => {
@@ -1216,7 +1469,7 @@ describe("Sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "좋아요만 보기" }));
 
-    expect(screen.getByText("좋아요한 채팅이 없습니다.")).toBeTruthy();
+    expect(await screen.findByText("좋아요한 채팅이 없습니다.")).toBeTruthy();
   });
 
   it("pins a history item from the expanded right-side action", async () => {
@@ -1742,6 +1995,173 @@ describe("Sidebar", () => {
     expect(document.querySelectorAll(".history-item.busy")).toHaveLength(1);
   });
 
+  it.each(["new", "saved"])("reattaches streaming after visiting %s chat and replays without duplication", async (destination) => {
+    const streams: Array<{ session: string; handlers: Parameters<typeof openBackendEvents>[1]; close: ReturnType<typeof vi.fn> }> = [];
+    vi.mocked(openBackendEvents).mockImplementation((params, handlers) => {
+      const close = vi.fn();
+      streams.push({ session: params.get("session") || "", handlers, close });
+      return { close } as unknown as EventSource;
+    });
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{
+      sessionId: "web-a", savedSessionId: "saved-a", busy: true, createdAt: 1,
+      workspace: { name: "Default", path: "C:/demo" },
+    }] });
+    vi.mocked(loadHistorySnapshot).mockImplementation(async ({ sessionId }) => ({
+      type: "history_snapshot", value: sessionId, preview_only: true,
+      history_events: [{ type: "user", text: sessionId === "saved-a" ? "오래된 미리보기" : "다른 대화 내용" }],
+    }));
+    render(<AppStateProvider initialState={{
+      ...initialAppState, sessionId: "web-a", activeHistoryId: "saved-a", clientId: "client-1", busy: true,
+      workspaceName: "Default", workspacePath: "C:/demo",
+      messages: [{ id: "q", role: "user", text: "원래 질문" }, { id: "a", role: "assistant", text: "처음", isComplete: false }],
+      history: [{ value: "saved-a", label: "원래 대화" }, { value: "saved-b", label: "다른 대화" }],
+    }}><Sidebar /><LiveChatProbe /></AppStateProvider>);
+    const oldStream = streams[0];
+    await userEvent.click(screen.getByRole("button", { name: destination === "new" ? "새 대화" : "다른 대화" }));
+    if (destination === "saved") await waitFor(() => expect(screen.getByTestId("message-texts").textContent).toBe("다른 대화 내용"));
+    await userEvent.click(screen.getByRole("button", { name: "원래 대화" }));
+    await waitFor(() => expect(streams.length).toBeGreaterThan(destination === "new" ? 2 : 1));
+    const returned = streams.at(-1)!;
+    expect(returned.session).toBe("web-a");
+    expect(oldStream.close).toHaveBeenCalled();
+    act(() => {
+      returned.handlers.onEvent({ type: "clear_transcript", live_replay: true });
+      returned.handlers.onEvent({ type: "history_snapshot", live_replay: true, value: "saved-a", history_events: [{ type: "user", text: "원래 질문" }] });
+      returned.handlers.onEvent({ type: "assistant_delta", message: "처음부터 누적된 답변" });
+      oldStream.handlers.onEvent({ type: "assistant_delta", message: "폐기된 연결의 이벤트" });
+      returned.handlers.onEvent({ type: "assistant_delta", message: " 그리고 이어지는 답변" });
+    });
+    await waitFor(() => expect(screen.getByTestId("message-texts").textContent).toBe("원래 질문|처음부터 누적된 답변 그리고 이어지는 답변"));
+    expect(document.querySelector(".history-item.active.busy")).not.toBeNull();
+    act(() => {
+      returned.handlers.onEvent({ type: "assistant_complete", message: "처음부터 누적된 답변 그리고 이어지는 답변" });
+      returned.handlers.onEvent({ type: "line_complete" });
+    });
+    expect(screen.getByTestId("message-texts").textContent).toBe("원래 질문|처음부터 누적된 답변 그리고 이어지는 답변");
+    expect(document.querySelector(".history-item.active.busy")).toBeNull();
+    expect(sendBackendRequest).toHaveBeenCalledTimes(destination === "new" ? 1 : 0);
+  });
+
+  it.each([2, 3])("preserves live-only row order when switching among %s streaming chats", async (count) => {
+    const ids = ["a", "b", "c"].slice(0, count);
+    const history = ids.map((id) => ({ value: `web-${id}`, label: `${id} 대화`, live: true, liveSessionId: `web-${id}`, busy: true }));
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: ids.map((id) => ({ sessionId: `web-${id}`, savedSessionId: "", busy: true, createdAt: 1 })) });
+    vi.mocked(loadHistorySnapshot).mockImplementation(async ({ sessionId }) => ({
+      type: "history_snapshot", value: sessionId, message: `${sessionId.slice(-1)} 대화`, preview_only: true, history_events: [],
+    }));
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    render(<AppStateProvider initialState={{
+      ...initialAppState, sessionId: "web-a", clientId: "client-1", busy: true, chatTitle: "a 대화",
+      messages: [{ id: "qa", role: "user", text: "a 대화" }], history,
+    }}><Sidebar /><ChatStateProbe /><DispatchProbe onReady={(value) => { dispatch = value; }} /></AppStateProvider>);
+    const order = () => Array.from(document.querySelectorAll(".history-title")).map((item) => item.textContent);
+    const initialOrder = order();
+    expect(initialOrder).toEqual(ids.map((id) => `${id} 대화`));
+    for (const id of ["b", "a", "b"]) {
+      await userEvent.click(screen.getByRole("button", { name: `${id} 대화` }));
+      await waitFor(() => expect(screen.getByTestId("session").textContent).toBe(`web-${id}`));
+      expect(order()).toEqual(initialOrder);
+    }
+    act(() => dispatch({ type: "set_history", history: [...history].reverse() }));
+    expect(order()).toEqual(initialOrder);
+    act(() => {
+      dispatch({ type: "set_busy", value: false });
+      dispatch({ type: "set_history", history: [...history].reverse().map((item) => ({ ...item, live: item.value === "web-a", busy: item.value === "web-a" })) });
+    });
+    expect(order()).toEqual([...initialOrder].reverse());
+  });
+
+  it("keeps concurrent responses and their list order across repeated A-B switches", async () => {
+    const streams: Array<{ session: string; handlers: Parameters<typeof openBackendEvents>[1] }> = [];
+    vi.mocked(openBackendEvents).mockImplementation((params, handlers) => {
+      streams.push({ session: params.get("session") || "", handlers });
+      return { close: vi.fn() } as unknown as EventSource;
+    });
+    vi.mocked(startSession).mockResolvedValue({ sessionId: "web-b" });
+    vi.mocked(sendMessage).mockResolvedValue({ ok: true });
+    let savedB = "";
+    vi.mocked(listLiveSessions).mockImplementation(async () => ({ sessions: ["a", "b"].map((id) => ({
+      sessionId: `web-${id}`, savedSessionId: id === "b" ? savedB : "saved-a", busy: true, createdAt: 1,
+    })) }));
+    vi.mocked(loadHistorySnapshot).mockImplementation(async ({ sessionId }) => ({
+      type: "history_snapshot", value: sessionId, preview_only: true, history_events: [],
+    }));
+    render(<AppStateProvider initialState={{
+      ...initialAppState, sessionId: "web-a", activeHistoryId: "saved-a", clientId: "client-1", busy: true, ready: true,
+      messages: [{ id: "qa", role: "user", text: "A 질문" }, { id: "aa", role: "assistant", text: "A 초안", isComplete: false }],
+      history: [{ value: "saved-a", label: "A 대화" }],
+    }}><Sidebar /><LiveChatProbe /><Composer /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
+    await waitFor(() => expect(streams.at(-1)?.session).toBe("web-b"));
+    savedB = (vi.mocked(sendBackendRequest).mock.calls[0][2] as { value: string }).value;
+    act(() => streams.at(-1)!.handlers.onEvent({ type: "ready", state: {} }));
+    await userEvent.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "B 질문");
+    await userEvent.click(screen.getByRole("button", { name: "메시지 보내기" }));
+    await waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    act(() => {
+      streams.at(-1)!.handlers.onEvent({ type: "active_session", value: savedB });
+      streams.at(-1)!.handlers.onEvent({ type: "session_title", message: "B 질문" });
+      streams.at(-1)!.handlers.onEvent({ type: "assistant_delta", message: "B 초안" });
+    });
+    const historyOrder = () => Array.from(document.querySelectorAll(".history-item .history-title")).map((item) => item.textContent);
+    const initialOrder = historyOrder();
+    expect(initialOrder).toHaveLength(2);
+    for (const [id, title, text] of [["a", "A 대화", "A 누적 1"], ["b", "B 질문", "B 누적 2"], ["a", "A 대화", "A 누적 3"]]) {
+      const previous = streams.at(-1)!;
+      await userEvent.click(screen.getByRole("button", { name: title }));
+      await waitFor(() => expect(streams.at(-1)?.session).toBe(`web-${id}`));
+      const current = streams.at(-1)!;
+      act(() => {
+        current.handlers.onEvent({ type: "clear_transcript", live_replay: true });
+        current.handlers.onEvent({ type: "history_snapshot", live_replay: true, value: id === "b" ? savedB : "saved-a", message: id === "a" ? "A 대화" : "B 질문", history_events: [{ type: "user", text: `${id.toUpperCase()} 질문` }] });
+        current.handlers.onEvent({ type: "assistant_delta", message: text });
+        previous.handlers.onEvent({ type: "assistant_delta", message: "다른 세션 지연 이벤트" });
+        current.handlers.onEvent({ type: "assistant_delta", message: " 계속" });
+      });
+      await waitFor(() => expect(screen.getByTestId("message-texts").textContent).toBe(`${id.toUpperCase()} 질문|${text} 계속`));
+      expect(document.querySelectorAll(".history-item.busy")).toHaveLength(2);
+      expect(historyOrder()).toEqual(initialOrder);
+    }
+    expect(shutdownSession).not.toHaveBeenCalled();
+    expect(restartSession).not.toHaveBeenCalled();
+    expect(sendBackendRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an earlier live lookup after another history selection wins", async () => {
+    let resolveEarlier!: (value: Awaited<ReturnType<typeof listLiveSessions>>) => void;
+    vi.mocked(listLiveSessions).mockReturnValueOnce(new Promise((resolve) => { resolveEarlier = resolve; }));
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{ sessionId: "web-c", savedSessionId: "saved-c", busy: true, createdAt: 1 }] });
+    vi.mocked(loadHistorySnapshot).mockImplementation(async ({ sessionId }) => ({ type: "history_snapshot", value: sessionId, preview_only: true, history_events: [] }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "web-a", activeHistoryId: "saved-a", clientId: "client-1", history: [
+      { value: "saved-b", label: "대화 B" }, { value: "saved-c", label: "대화 C" },
+    ] }}><Sidebar /><ChatStateProbe /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "대화 B" }));
+    await waitFor(() => expect(listLiveSessions).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: "대화 C" }));
+    await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("web-c"));
+    await act(async () => resolveEarlier({ sessions: [{ sessionId: "web-b", savedSessionId: "saved-b", busy: true, createdAt: 1 }] }));
+    expect(screen.getByTestId("session").textContent).toBe("web-c");
+    expect(screen.getByTestId("active-history").textContent).toBe("saved-c");
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not let a delayed preview overwrite a newly opened chat", async () => {
+    let resolvePreview!: (value: Awaited<ReturnType<typeof loadHistorySnapshot>>) => void;
+    vi.mocked(loadHistorySnapshot).mockReturnValue(new Promise((resolve) => { resolvePreview = resolve; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "web-a", clientId: "client-1", busy: true, history: [
+      { value: "saved-b", label: "대화 B" },
+    ] }}><Sidebar /><ChatStateProbe /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "대화 B" }));
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
+    await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("session-restored"));
+    await act(async () => resolvePreview({ type: "history_snapshot", value: "saved-b", history_events: [{ type: "user", text: "늦은 이전 대화" }] }));
+    expect(screen.getByTestId("message-texts").textContent).toBe("");
+    expect(screen.getByTestId("active-history").textContent).toBe(
+      (vi.mocked(sendBackendRequest).mock.calls[0][2] as { value: string }).value,
+    );
+    expect(sendBackendRequest).toHaveBeenCalledTimes(1);
+  });
+
   it("shows a saved conversation before backend discovery finishes", async () => {
     vi.mocked(listLiveSessions).mockReturnValue(new Promise(() => {}));
     vi.mocked(loadHistorySnapshot).mockResolvedValue({
@@ -1778,7 +2198,7 @@ describe("Sidebar", () => {
     expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
-  it("keeps the composer in send mode and shows restore status immediately", async () => {
+  it("keeps the composer in send mode and initially hides restore status", async () => {
     render(
       <AppStateProvider
         initialState={{
@@ -1803,7 +2223,7 @@ describe("Sidebar", () => {
 
     expect(screen.getByRole("button", { name: "메시지 보내기" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "작업 중단" })).toBeNull();
-    expect(document.querySelector("#readyPill")?.textContent).toBe("대화 불러오는 중");
+    expect(document.querySelector("#readyPill")).toBeNull();
     await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
       type: "apply_select_command",
       command: "resume",
@@ -1844,11 +2264,7 @@ describe("Sidebar", () => {
       clientId: "client-1",
       workspacePath: "C:/demo",
     }));
-    expect(sendBackendRequest).toHaveBeenCalledWith("live-session-old", "client-1", {
-      type: "apply_select_command",
-      command: "resume",
-      value: "session-old",
-    });
+    expect(sendBackendRequest).not.toHaveBeenCalled();
     expect(startSession).not.toHaveBeenCalled();
   });
 
@@ -1977,6 +2393,78 @@ describe("Sidebar", () => {
     expect(restartSession).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { busy: true },
+    { historyReadOnly: true },
+    { restoringHistory: true, pendingHistoryId: "older" },
+    { sessionId: null },
+  ])("records and saves an empty new chat before any message: %j", async (overrides) => {
+    let resolveStart!: (value: { sessionId: string }) => void;
+    vi.mocked(startSession).mockReturnValueOnce(new Promise((resolve) => { resolveStart = resolve; }));
+    const { container } = render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        sessionId: "session-active",
+        clientId: "client-1",
+        ...overrides,
+      }}>
+        <Sidebar />
+        <ChatStateProbe />
+      </AppStateProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
+    expect(Array.from(container.querySelectorAll(".history-title")).some((item) => item.textContent === "새 대화")).toBe(true);
+    await act(async () => { resolveStart({ sessionId: "session-new" }); });
+    expect(sendBackendRequest).toHaveBeenCalledWith("session-new", "client-1", {
+      type: "start_new_session", value: expect.stringMatching(/^[0-9a-f]{12}$/),
+    });
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("새 대화");
+    expect(screen.getByTestId("message-count").textContent).toBe("0");
+  });
+
+  it("does not create duplicate empty chats on repeated clicks, including while saving", async () => {
+    let resolveSave!: () => void;
+    vi.mocked(sendBackendRequest).mockReturnValueOnce(new Promise((resolve) => {
+      resolveSave = () => resolve({ ok: true });
+    }));
+    const { container } = render(<AppStateProvider initialState={{
+      ...initialAppState, sessionId: "web-current", activeHistoryId: "saved-current", clientId: "client-1",
+      history: [{ value: "saved-current", label: "사용한 대화", messageCount: 2 }],
+      messages: [{ id: "q", role: "user", text: "질문" }],
+    }}><Sidebar /><ChatStateProbe /></AppStateProvider>);
+    const button = screen.getByRole("button", { name: "새 대화" });
+    await userEvent.click(button);
+    await userEvent.dblClick(button);
+    expect(sendBackendRequest).toHaveBeenCalledTimes(1);
+    await act(async () => resolveSave());
+    await userEvent.click(button);
+    expect(sendBackendRequest).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll(".history-title")).toHaveLength(2);
+  });
+
+  it.each([true, false])("reuses an unused chat only when it is the top row: %s", async (emptyFirst) => {
+    vi.mocked(loadHistorySnapshot).mockResolvedValue({
+      type: "history_snapshot", value: "saved-empty", preview_only: true, history_events: [],
+    });
+    const empty = { value: "saved-empty", label: "빈 대화", messageCount: 0 };
+    const used = { value: "saved-current", label: "사용한 대화", messageCount: 2 };
+    const { container } = render(<AppStateProvider initialState={{
+      ...initialAppState, sessionId: "web-current", activeHistoryId: "saved-current", clientId: "client-1",
+      history: emptyFirst ? [empty, used] : [used, empty],
+      messages: [{ id: "q", role: "user", text: "질문" }],
+    }}><Sidebar /><ChatStateProbe /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "새 대화" }));
+    if (emptyFirst) {
+      await waitFor(() => expect(screen.getByTestId("active-history").textContent).toBe("saved-empty"));
+      expect(sendBackendRequest).not.toHaveBeenCalled();
+      expect(container.querySelectorAll(".history-title")).toHaveLength(2);
+    } else {
+      expect(sendBackendRequest).toHaveBeenCalledWith("web-current", "client-1", expect.objectContaining({ type: "start_new_session" }));
+      expect(container.querySelectorAll(".history-title")).toHaveLength(3);
+    }
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
   it("saves an idle new chat immediately without restarting the backend", async () => {
     const { container } = render(
       <AppStateProvider
@@ -2039,6 +2527,29 @@ describe("Sidebar", () => {
     expect(screen.queryByText("Unknown session")).toBeNull();
   });
 
+  it.each(["history-first", "events-first"])("does not render the bootstrap session as a second empty chat (%s)", (order) => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    const savedChat = { value: "saved-initial", label: "0 msg", description: "새 대화", messageCount: 0 };
+    const { container } = render(
+      <AppStateProvider initialState={{ ...initialAppState, sessionId: "backend-process" }}>
+        <Sidebar />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
+      </AppStateProvider>,
+    );
+    const loadHistory = () => act(() => dispatch({ type: "set_history", history: [savedChat] }));
+    const emitActive = (value: string) => act(() => dispatch({ type: "backend_event", event: { type: "active_session", value } }));
+    if (order === "history-first") loadHistory();
+    // Backend startup announces a transient ID before start_new_session saves
+    // and announces the actual empty conversation. Render between SSE events.
+    emitActive("bootstrap-unsaved");
+    if (order === "events-first") loadHistory();
+    expect(container.querySelectorAll(".history-item")).toHaveLength(1);
+    emitActive("saved-initial");
+    act(() => dispatch({ type: "backend_event", event: { type: "session_title", message: "새 대화" } }));
+    expect(container.querySelectorAll(".history-item")).toHaveLength(1);
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("새 대화");
+  });
+
   it("shows the initial active empty chat as a history row", async () => {
     const { container } = render(
       <AppStateProvider
@@ -2046,6 +2557,7 @@ describe("Sidebar", () => {
           ...initialAppState,
           sessionId: "backend-process",
           activeHistoryId: "saved-initial",
+          chatTitle: "새 대화",
           clientId: "client-1",
           busy: false,
           workspaceName: "Default",

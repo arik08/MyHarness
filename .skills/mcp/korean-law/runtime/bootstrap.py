@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+import hashlib
+import shutil
 import sys
 from pathlib import Path
 
@@ -94,9 +96,36 @@ def apply_compatibility_patch(runtime: Path = RUNTIME) -> None:
     )
 
 
+def prepare_runtime(runtime: Path = RUNTIME) -> None:
+    """Install the locked, platform-specific dependencies before MCP startup."""
+    lock_hash = hashlib.sha256((runtime / "package-lock.json").read_bytes()).hexdigest()
+    marker = runtime / "node_modules" / ".myharness-lock-sha256"
+    entrypoint = runtime / "node_modules" / "korean-law-mcp" / "build" / "index.js"
+    if not entrypoint.is_file() or not marker.is_file() or marker.read_text() != lock_hash:
+        npm = shutil.which("npm.cmd") or shutil.which("npm")
+        if not npm:
+            raise RuntimeError("Node.js/npm is required to prepare korean-law MCP")
+        subprocess.run(
+            [npm, "ci", "--omit=dev", "--no-audit", "--no-fund"],
+            cwd=runtime, check=True, stdout=sys.stderr, stderr=sys.stderr, timeout=600,
+        )
+        apply_compatibility_patch(runtime)
+        marker.write_text(lock_hash, encoding="ascii")
+    else:
+        apply_compatibility_patch(runtime)
+
+
 def main() -> int:
-    apply_compatibility_patch()
+    if "--prepare" in sys.argv[1:]:
+        prepare_runtime()
+        return 0
     entrypoint = RUNTIME / "node_modules" / "korean-law-mcp" / "build" / "index.js"
+    if not entrypoint.is_file():
+        raise RuntimeError(
+            "korean-law dependencies are missing. Run Installer.bat or "
+            "python .skills/mcp/korean-law/runtime/bootstrap.py --prepare from the repository root."
+        )
+    apply_compatibility_patch()
     return subprocess.call(["node", str(entrypoint)])
 
 

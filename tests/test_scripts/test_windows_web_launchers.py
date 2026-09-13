@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import re
+import os
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,6 +61,34 @@ def test_dev_launcher_stops_and_verifies_all_tracked_processes() -> None:
     assert "Stop-MyHarnessProcessTrees" in stop_all
     assert "Wait-MyHarnessRuntimeStopped" in stop_all
     assert "HasExited" not in stop_all
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows launcher")
+def test_dev_stop_waits_for_proxy_before_stopping_backend() -> None:
+    body = _function_body(_read_launcher("run_myharness_web_dev.ps1"), "Stop-All")
+    script = '''
+$ErrorActionPreference = 'Stop'
+$script:calls = [System.Collections.Generic.List[string]]::new()
+$script:ViteProcess = @{ Id = 202 }
+$script:BackendProcess = @{ Id = 101 }
+$script:VitePort = 4274
+$backendPort = 4174
+function Stop-MyHarnessProcessTrees { param($RootProcessIds)
+    $script:calls.Add("stop:$($RootProcessIds -join ',')")
+    return $RootProcessIds
+}
+function Wait-MyHarnessRuntimeStopped { param($ProcessIds, $Ports)
+    $script:calls.Add("wait:$($ProcessIds -join ',')")
+}
+function Stop-All {
+''' + body + '''
+$ids = @(Stop-All -PassThru)
+if (($ids -join ',') -ne '202,101') { throw 'Lost tracked processes' }
+$script:calls -join '|'
+'''
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "stop:202|wait:202|stop:101|wait:202,101"
 
 
 def test_dev_launcher_uses_port_scoped_lock_before_reclaiming_ports() -> None:
@@ -130,8 +162,8 @@ def test_launchers_show_full_restart_shortcut_on_r_only() -> None:
     dev_script = _read_launcher("run_myharness_web_dev.ps1")
 
     assert "Press R in this window to full restart the server." in backend_batch
-    assert "Press R in this window to full restart both servers." in dev_batch
-    assert "Press R in this window to full restart both servers." in dev_script
+    assert "R: 전체 재시작 | Q / Ctrl+C: 종료" in dev_script
+    assert "Preferred React dev UI" not in dev_batch
     assert "Press T in this window" not in backend_batch
     assert "Press T in this window" not in dev_batch
     assert "Press T in this window" not in dev_script
@@ -150,10 +182,10 @@ def test_dev_restart_clears_backend_and_vite_ports() -> None:
 
 def test_dev_unexpected_exits_use_full_restart() -> None:
     script = _read_launcher("run_myharness_web_dev.ps1")
-    backend_exit_tail = script[script.index("Backend launcher exited") :]
-    vite_exit_tail = script[script.index("Vite dev server exited") :]
+    backend_exit_tail = script[script.index("서버 종료 감지") :]
+    vite_exit_tail = script[script.index("개발 화면 종료 감지") :]
 
-    assert "Full restarting in 2 seconds" in script
+    assert "2초 후 재시작합니다." in script
     assert "Restart-All" in backend_exit_tail[:300]
     assert "Restart-All" in vite_exit_tail[:300]
 
@@ -161,7 +193,7 @@ def test_dev_unexpected_exits_use_full_restart() -> None:
 def test_backend_unexpected_exit_clears_port_before_restart() -> None:
     script = _read_launcher("run_myharness_web_server.ps1")
 
-    assert "full restarting server in 3 seconds" in script
+    assert "3초 후 재시작합니다." in script
     assert "Stop-ListeningPort -Port $serverPort" in script[script.index("server_exited_unexpectedly") :]
     assert "$process.WaitForExit()" in script
     assert "$process.Refresh()" in script

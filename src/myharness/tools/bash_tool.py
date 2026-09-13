@@ -17,6 +17,7 @@ from myharness.skills import load_skill_registry
 from myharness.skills.loader import get_program_skills_dirs, get_user_skills_dir
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.utils.shell import create_shell_subprocess
+from myharness.utils.process_tree import terminate_process_tree
 
 _MAX_CAPTURE_BYTES = 1024 * 1024
 
@@ -77,14 +78,19 @@ class BashTool(BaseTool):
             return ToolResult(output=str(exc), is_error=True)
         except asyncio.CancelledError:
             if process is not None:
-                await _terminate_process(process, force=False)
+                await terminate_process_tree(process)
             raise
 
         output_task = asyncio.create_task(_collect_output(process.stdout))
+
+        async def wait_for_output() -> None:
+            await process.wait()
+            await asyncio.shield(output_task)
+
         try:
-            await asyncio.wait_for(process.wait(), timeout=arguments.timeout_seconds)
+            await asyncio.wait_for(wait_for_output(), timeout=arguments.timeout_seconds)
         except asyncio.TimeoutError:
-            await _terminate_process(process, force=True)
+            await terminate_process_tree(process)
             output_buffer = await _finish_output_collection(output_task)
             return ToolResult(
                 output=_format_timeout_output(
@@ -96,7 +102,7 @@ class BashTool(BaseTool):
                 metadata={"returncode": process.returncode, "timed_out": True},
             )
         except asyncio.CancelledError:
-            await _terminate_process(process, force=False)
+            await terminate_process_tree(process)
             output_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await output_task
@@ -117,21 +123,6 @@ class CmdTool(BashTool):
     name = "cmd"
     description = "Run a Windows shell command in the local repository. The configured shell defaults to PowerShell."
     input_model = CmdToolInput
-
-
-async def _terminate_process(process: asyncio.subprocess.Process, *, force: bool) -> None:
-    if process.returncode is not None:
-        return
-    if force:
-        process.kill()
-        await process.wait()
-        return
-    process.terminate()
-    try:
-        await asyncio.wait_for(process.wait(), timeout=2.0)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
 
 
 async def _collect_output(stream: asyncio.StreamReader | None) -> bytearray:

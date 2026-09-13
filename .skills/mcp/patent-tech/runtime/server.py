@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+from pydantic import Field
+
 import json
 import re
 import time
@@ -40,6 +43,9 @@ SOURCES = {
     "crossref": "Crossref REST API",
     "semantic_scholar": "Semantic Scholar Academic Graph API",
 }
+
+Source = Annotated[str, Field(description="Source served by patent-tech only", json_schema_extra={"enum": list(SOURCES)})]
+
 
 server = FastMCP("patent-tech")
 attach_packaged_skill(server, __file__)
@@ -153,8 +159,11 @@ def _crossref_params() -> dict[str, str]:
 
 
 def _semantic_headers() -> dict[str, str]:
-    key = first_env("SEMANTIC_SCHOLAR_API_KEY")
-    return {"x-api-key": key} if key else {}
+    key = _required_env(
+        "SEMANTIC_SCHOLAR_API_KEY is required. 기업용 API KEY 신청이 필요합니다.",
+        "SEMANTIC_SCHOLAR_API_KEY",
+    )
+    return {"x-api-key": key}
 
 
 def _year_range(start_year: int | None, end_year: int | None) -> tuple[int | None, int | None]:
@@ -169,7 +178,7 @@ def _year_range(start_year: int | None, end_year: int | None) -> tuple[int | Non
 
 
 @server.tool()
-def search_catalog(source: str, query: str = "", limit: int = 20) -> str:
+def search_catalog(source: Source, query: str = "", limit: int = 20) -> str:
     """Search source catalogs or return supported patent/research record types."""
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=100)
@@ -202,7 +211,7 @@ def search_catalog(source: str, query: str = "", limit: int = 20) -> str:
 
 @server.tool()
 def search_records(
-    source: str,
+    source: Source,
     query: str,
     limit: int = 20,
     start_year: int | None = None,
@@ -312,7 +321,7 @@ def search_records(
 
 
 @server.tool()
-def get_record(source: str, record_id: str, record_type: str = "detail") -> str:
+def get_record(source: Source, record_id: str, record_type: str = "detail") -> str:
     """Get one patent bibliography/family or scholarly-work metadata record."""
     selected = _source(source)
     kind = record_type.strip().lower()
@@ -401,7 +410,7 @@ def get_record(source: str, record_id: str, record_type: str = "detail") -> str:
 
 
 @server.tool()
-def get_source_health(source: str) -> str:
+def get_source_health(source: Source) -> str:
     """Perform a lightweight official endpoint check and safely report credential needs."""
     selected = _source(source)
     if selected == "kipris":
@@ -433,8 +442,8 @@ def get_source_health(source: str) -> str:
             params={"rows": 1, **_crossref_params()},
         )
     else:
-        credential = ()
-        detail = "Semantic Scholar public API is reachable; an API key is recommended for independent rate limits."
+        credential = ("SEMANTIC_SCHOLAR_API_KEY",)
+        detail = "Semantic Scholar API is reachable with the configured key."
 
         def probe() -> object:
             return request_json(

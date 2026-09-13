@@ -54,8 +54,16 @@ _UNSUPPORTED_OPTION_TERMS = (
 )
 DEFAULT_GPT56_COMPACT_THRESHOLD_TOKENS = 250_000
 CODEX_INSTRUCTIONS = (
-    "You are MyHarness. When the conversation is in Korean, "
-    "write reasoning summaries in Korean."
+    "사용자에게 보이는 진행 메모와 추론 요약은 제목과 본문 모두 한국어 존댓말로 작성하세요. "
+    "검색어와 원문이 영어여도 진행 안내는 한국어로 유지하세요. "
+    "You are MyHarness. Always write reasoning summaries in Korean. "
+    "This applies to every user-visible reasoning summary, including its headings "
+    "and body. Do not use English sentences or English section headings in summaries. "
+    "Keep model names, product names, code identifiers, and URLs in their original form. "
+    "Write brief user-facing work updates: what you are checking, an observed result, "
+    "or the next concrete step. Do not narrate internal reasoning, tool routing, "
+    "parameter corrections, or technical identifiers unless the user needs to act. "
+    "Never imply that an empty search proves no relevant information exists."
 )
 
 
@@ -230,6 +238,9 @@ def _convert_tools_to_codex(tools: list[dict[str, Any]]) -> list[dict[str, Any]]
             "name": tool["name"],
             "description": tool.get("description", ""),
             "parameters": tool.get("input_schema", {}),
+            # Keep optional MCP filters optional; Responses may otherwise
+            # normalize the schema to strict and require singleton enum fields.
+            **({"strict": False} if tool["name"].startswith("mcp__") else {}),
         }
         for tool in sorted(tools, key=lambda item: str(item.get("name", "")))
     ]
@@ -414,13 +425,12 @@ class CodexApiClient:
         ):
             body["prompt_cache_retention"] = self._prompt_cache_retention
         reasoning_effort = _normalize_reasoning_effort(request.reasoning_effort)
-        if reasoning_effort or _is_gpt_56_model(request.model):
-            reasoning: dict[str, Any] = {}
-            if reasoning_effort:
-                reasoning["effort"] = reasoning_effort
-            if _is_gpt_56_model(request.model):
-                reasoning["context"] = "all_turns"
-            body["reasoning"] = reasoning
+        reasoning: dict[str, Any] = {"summary": "auto"}
+        if reasoning_effort:
+            reasoning["effort"] = reasoning_effort
+        if _is_gpt_56_model(request.model):
+            reasoning["context"] = "all_turns"
+        body["reasoning"] = reasoning
         if _is_gpt_56_model(request.model):
             threshold = request.compact_threshold_tokens or DEFAULT_GPT56_COMPACT_THRESHOLD_TOKENS
             body["context_management"] = [

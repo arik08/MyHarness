@@ -181,6 +181,15 @@ export function updateSessionReplayState(state, event) {
   }
   if (type === "history_snapshot") {
     resetConversationReplay(state);
+    // A resume can replace the conversation without separate identity/title
+    // events. Replaying the old bootstrap metadata would recreate an empty row.
+    if (String(event.value || "").trim()) {
+      rememberLatestEvent(state, "active_session", { type: "active_session", value: event.value });
+      state.latestEvents.delete("session_title");
+      if (String(event.message || "").trim()) {
+        rememberLatestEvent(state, "session_title", { type: "session_title", message: event.message });
+      }
+    }
     pushStableEvent(state, event);
     return;
   }

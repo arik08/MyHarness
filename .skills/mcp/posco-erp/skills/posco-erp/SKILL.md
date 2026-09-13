@@ -1,6 +1,6 @@
 ---
 name: posco-erp
-description: POSCO ERP/POSPIA의 생산·구매·판매·출하·정산 데이터를 조회하기 위한 연결형 MCP 라우팅입니다.
+description: ERP/POSPIA 생산·구매·판매·출하·정산 업무 내역 조회에 해당합니다. 현재 POSCO 연결 예정 MCP로 조회 도구가 없습니다. 실제 연결·도구가 확인된 경우 사용하며, 공개 웹 자료를 사내 조회 결과로 대체하지 않습니다.
 source: skill-mcp:posco-erp
 ---
 

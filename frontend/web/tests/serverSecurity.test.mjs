@@ -159,7 +159,7 @@ async function startWebServer({ host = "127.0.0.1", env = {} } = {}) {
     function onData(chunk) {
       const text = chunk.toString();
       output.push(text);
-      if (text.includes("MyHarness web is ready")) {
+      if (text.includes("[준비] MyHarness 서버:")) {
         clearTimeout(timeout);
         resolve();
       }
@@ -358,6 +358,134 @@ test("bounds captured shell output before the command exits", async (t) => {
   assert.match(payload.stdout, /^x{128}\n\n\[output truncated\]$/);
 });
 
+test("concurrency status counts distinct active IPs across browsers and excludes closed sessions", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  t.after(() => app.stop());
+  const created = [];
+  for (const [clientId, ip] of [["ip-a", "10.0.0.7"], ["ip-b", "::ffff:10.0.0.7"], ["ip-c", "10.0.0.8"]]) {
+    const response = await fetch(`${app.baseUrl}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": ip },
+      body: JSON.stringify({ clientId }),
+    });
+    assert.equal(response.status, 200);
+    created.push({ clientId, sessionId: (await response.json()).sessionId });
+  }
+  const readStatus = async () => (await fetch(`${app.baseUrl}/api/settings/concurrency`)).json();
+  const status = await readStatus();
+  assert.equal(status.activeSessions, 3);
+  assert.equal(status.activeUsers, 2);
+  for (const [index, expectedUsers] of [[0, 2], [1, 1], [2, 0]]) {
+    const response = await fetch(`${app.baseUrl}/api/shutdown`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(created[index]),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await readStatus()).activeUsers, expectedUsers);
+  }
+});
+
+test("server metrics expose real resources and bounded history through a read-only API", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  let metrics;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await fetch(`${app.baseUrl}/api/server-metrics?history=1`);
+    assert.equal(response.status, 200);
+    metrics = await response.json();
+    if (metrics.resources) break;
+    await sleep(100);
+  }
+  assert.ok(metrics.resources?.appMemoryBytes > 0, JSON.stringify(metrics));
+  assert.equal(metrics.load.connectedScreens, 0);
+  assert.equal(metrics.load.retainedSessions, 0);
+  assert.equal(metrics.queueWait.p95Ms, null);
+  await fetch(`${app.baseUrl}/api/live-sessions?clientId=metrics-check`);
+  const observed = await (await fetch(`${app.baseUrl}/api/server-metrics`)).json();
+  assert.equal(observed.api.count, 1);
+  assert.ok(observed.api.p95Ms >= 0);
+  assert.ok(metrics.history.length >= 1 && metrics.history.length <= 181);
+  assert.equal((await (await fetch(`${app.baseUrl}/api/server-metrics`)).json()).history, undefined);
+  assert.equal((await fetch(`${app.baseUrl}/api/server-metrics`, { method: "POST" })).status, 405);
+});
+
+test("server metrics track queue wait until a retained session slot is released", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  const settings = await fetch(`${app.baseUrl}/api/settings/concurrency`, {
+    method: "POST", headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({ maxActiveSessions: 1, maxBusySessions: 1, maxBusySessionsPerClient: 1, idleSessionTimeoutMinutes: 5 }),
+  });
+  assert.equal(settings.status, 200);
+  async function start(clientId) {
+    return fetch(`${app.baseUrl}/api/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId }) });
+  }
+  const first = await start("metrics-first");
+  assert.equal(first.status, 200);
+  const { sessionId } = await first.json();
+  const second = await start("metrics-second");
+  assert.equal(second.status, 202);
+  await sleep(30);
+  const queued = await (await fetch(`${app.baseUrl}/api/server-metrics`)).json();
+  assert.equal(queued.load.queuedSessions, 1);
+  assert.ok(queued.load.oldestWaitMs >= 20);
+  assert.equal(queued.queueWait.count, 0);
+  await fetch(`${app.baseUrl}/api/shutdown`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, clientId: "metrics-first" }),
+  });
+  let started;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    started = await (await fetch(`${app.baseUrl}/api/server-metrics`)).json();
+    if (started.queueWait.count) break;
+    await sleep(100);
+  }
+  assert.equal(started.load.queuedSessions, 0);
+  assert.equal(started.queueWait.count, 1);
+  assert.ok(started.queueWait.p95Ms >= 20);
+});
+
+test("connected screens follow SSE connections without counting retained idle sessions", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  const clientId = "screen-count";
+  const response = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId }),
+  });
+  assert.equal(response.status, 200);
+  const { sessionId } = await response.json();
+  const readStatus = async () => (await fetch(`${app.baseUrl}/api/settings/concurrency`)).json();
+  assert.equal((await readStatus()).connectedScreens, 0);
+  const connections = [];
+  t.after(() => connections.forEach((connection) => connection.abort()));
+  for (let index = 0; index < 2; index += 1) {
+    const controller = new AbortController();
+    connections.push(controller);
+    const stream = await fetch(`${app.baseUrl}/api/events?session=${sessionId}&clientId=${clientId}`, {
+      signal: controller.signal,
+    });
+    assert.equal(stream.status, 200);
+    assert.equal((await readStatus()).connectedScreens, index + 1);
+  }
+  for (const expected of [1, 0]) {
+    connections.pop().abort();
+    let status;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      status = await readStatus();
+      if (status.connectedScreens === expected) break;
+      await sleep(20);
+    }
+    assert.equal(status.connectedScreens, expected);
+    assert.equal(status.activeSessions, 1, "idle backend remains available for reconnection");
+  }
+  const reconnect = new AbortController();
+  connections.push(reconnect);
+  await fetch(`${app.baseUrl}/api/events?session=${sessionId}&clientId=${clientId}`, { signal: reconnect.signal });
+  assert.equal((await readStatus()).connectedScreens, 1);
+});
+
 test("saves concurrency settings and applies the active-session limit immediately", async (t) => {
   const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
   t.after(() => app.stop());
@@ -365,11 +493,13 @@ test("saves concurrency settings and applies the active-session limit immediatel
   const defaultsResponse = await fetch(`${app.baseUrl}/api/settings/concurrency`);
   assert.equal(defaultsResponse.status, 200);
   assert.deepEqual(await defaultsResponse.json(), {
-    maxActiveSessions: 20,
-    maxBusySessions: 8,
+    maxActiveSessions: 40,
+    maxBusySessions: 20,
     maxBusySessionsPerClient: 3,
     idleSessionTimeoutMinutes: 30,
+    activeUsers: 0,
     activeSessions: 0,
+    connectedScreens: 0,
     busySessions: 0,
     busySessionsForClient: 0,
     queuedSessions: 0,
@@ -402,7 +532,9 @@ test("saves concurrency settings and applies the active-session limit immediatel
     maxBusySessions: 1,
     maxBusySessionsPerClient: 1,
     idleSessionTimeoutMinutes: 5,
+    activeUsers: 1,
     activeSessions: 1,
+    connectedScreens: 0,
     busySessions: 0,
     busySessionsForClient: 0,
     queuedSessions: 0,
@@ -526,6 +658,45 @@ test("queues an over-capacity response and starts it automatically when a slot o
     { timeoutMs: 10_000 },
   );
   assert.match(started.message, /AI 응답을 시작/);
+  const activity = app.output.join("");
+  assert.equal((activity.match(/메시지 접수/g) || []).length, 2);
+  assert.match(activity, /메시지 접수 · 응답 대기 중/);
+  assert.match(activity, /응답 완료/);
+  assert.match(activity, /\[\d{2}:\d{2}:\d{2}\] \[127\.0\.0\.1\] \[\d+\] \[새 대화\] 메시지 접수/);
+  assert.ok(!activity.includes("대기열 자동 시작 확인"));
+});
+
+test("logs connection and disconnection with time and IP without a title", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  t.after(() => app.stop());
+  const clientId = "connection-log";
+  const created = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId }),
+  });
+  assert.equal(created.status, 200);
+  const { sessionId } = await created.json();
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const stream = await fetch(
+    `${app.baseUrl}/api/events?session=${encodeURIComponent(sessionId)}&clientId=${clientId}`,
+    { signal: controller.signal },
+  );
+  assert.equal(stream.status, 200);
+  const reader = stream.body.getReader();
+  await reader.read();
+  controller.abort();
+  await reader.cancel().catch(() => {});
+  const deadline = Date.now() + 8000;
+  while (!app.output.join("").includes("접속 종료") && Date.now() < deadline) {
+    await sleep(100);
+  }
+  const activity = app.output.join("");
+  const prefix = "\\[\\d{2}:\\d{2}:\\d{2}\\] \\[127\\.0\\.0\\.1\\] \\[\\d+\\]";
+  assert.match(activity, new RegExp(`${prefix} 접속\\r?\\n`));
+  assert.match(activity, new RegExp(`${prefix} 접속 종료\\r?\\n`));
+  assert.equal((activity.match(/접속 종료/g) || []).length, 1);
 });
 
 test("rejects inconsistent concurrency settings", async (t) => {
@@ -1495,7 +1666,7 @@ test("persists history pins and likes while listing pinned chats first", async (
       created_at: 300,
       summary: "newer session",
       messages: [],
-      message_count: 1,
+      message_count: 0,
     }),
   );
   await writeFile(
@@ -1566,6 +1737,8 @@ test("persists history pins and likes while listing pinned chats first", async (
   const historyPayload = await historyResponse.json();
 
   assert.equal(historyResponse.status, 200);
+  assert.equal(historyPayload.options.find((item) => item.value === "newer")?.messageCount, 0);
+  assert.equal(historyPayload.options.find((item) => item.value === "zeta")?.messageCount, 1);
   assert.deepEqual(historyPayload.options.map((item) => item.value), ["alpha", "zeta", "newer"]);
   assert.equal(historyPayload.options[0].pinned, true);
   assert.equal(historyPayload.options[1].pinned, true);
@@ -1573,7 +1746,7 @@ test("persists history pins and likes while listing pinned chats first", async (
   assert.equal(historyPayload.options.find((item) => item.value === "newer")?.liked, false);
 });
 
-test("searches all saved history titles before paginating the matches", async (t) => {
+test("searches all saved history titles and returns liked history in one response", async (t) => {
   const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
   let workspacePath = "";
   t.after(async () => {
@@ -1599,6 +1772,7 @@ test("searches all saved history titles before paginating the matches", async (t
       session_id: sessionId,
       created_at: createdAt,
       summary,
+      liked: sessionId !== "newest",
       messages: [],
       message_count: 1,
     }));
@@ -1620,6 +1794,26 @@ test("searches all saved history titles before paginating the matches", async (t
   assert.equal(secondResponse.status, 200);
   assert.deepEqual(second.options.map((item) => item.value), ["match-older"]);
   assert.equal(second.hasMore, false);
+
+  for (const scope of [`workspacePath=${encodeURIComponent(workspacePath)}&`, ""]) {
+    const response = await fetch(`${app.baseUrl}/api/history?${scope}likedOnly=true&limit=1&offset=1`);
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    const matches = payload.options.filter((item) => item.workspace.path === workspacePath);
+    assert.deepEqual(matches.map((item) => item.value), ["match-newer", "match-older"]);
+    assert.ok(payload.options.every((item) => item.liked === true));
+    assert.equal(payload.hasMore, false);
+    assert.equal(payload.nextOffset, payload.options.length);
+  }
+
+  const unlike = await fetch(`${app.baseUrl}/api/history/like`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspacePath, sessionId: "match-older", liked: false }),
+  });
+  assert.equal(unlike.status, 200);
+  const refreshed = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspacePath)}&likedOnly=true`);
+  assert.deepEqual((await refreshed.json()).options.map((item) => item.value), ["match-newer"]);
 });
 
 test("moves a saved history session between workspaces with its metadata", async (t) => {
@@ -2098,10 +2292,21 @@ test("event streams disable proxy buffering and send heartbeats", async (t) => {
       buffer += decoder.decode(result.value, { stream: true });
     }
     assert.match(buffer, /: heartbeat/);
+    assert.match(buffer, /"type":"clear_transcript","live_replay":true/);
+    assert.match(buffer, /id: \d+\ndata: \{"type":"stream_checkpoint"\}/);
   } finally {
     controller.abort();
     await reader.cancel().catch(() => {});
   }
+  const cursor = buffer.match(/id: (\d+)\ndata: \{"type":"stream_checkpoint"\}/)[1];
+  const replayed = [];
+  await waitForSseEvent(
+    `${app.baseUrl}/api/events?session=${created.sessionId}&clientId=client-sse-headers&lastEventId=${cursor}`,
+    (event) => { replayed.push(event); return event.type === "stream_checkpoint"; },
+  );
+  assert.equal(replayed.some((event) => event.type === "clear_transcript"), false);
+  const live = await fetch(`${app.baseUrl}/api/live-sessions?clientId=client-sse-headers`).then((response) => response.json());
+  assert.ok(live.sessions.find((session) => session.sessionId === created.sessionId).latestEventId >= Number(cursor));
 });
 
 test("defaults to shared workspaces when listening on LAN interfaces", async (t) => {
@@ -2467,6 +2672,38 @@ test("rejects non-PNG clipboard payloads before invoking the Windows clipboard",
 
   assert.equal(response.status, 415);
   assert.match(payload.error, /올바른 PNG/);
+});
+
+test("design mode is persisted globally across IPs and writable only in admin mode", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "ip" } });
+  t.after(() => app.stop());
+  const url = `${app.baseUrl}/api/settings/design-mode`;
+  for (const ip of ["127.0.0.1", "203.0.113.10"]) {
+    const denied = await fetch(url, {
+      method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip },
+      body: JSON.stringify({ mode: "improved" }),
+    });
+    assert.equal(denied.status, 403);
+  }
+  for (const mode of ["improved", "classic"]) {
+    const saved = await fetch(url, {
+      method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.10", "x-myharness-admin-mode": "1" },
+      body: JSON.stringify({ mode }),
+    });
+    assert.equal(saved.status, 200);
+    for (const ip of ["203.0.113.20", "203.0.113.30"]) {
+      const response = await fetch(url, { headers: { "x-forwarded-for": ip } });
+      assert.deepEqual(await response.json(), { mode });
+    }
+    const settings = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+    assert.equal(settings.design_mode, mode);
+  }
+  const invalid = await fetch(url, {
+    method: "POST", headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({ mode: "invalid" }),
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await (await fetch(url)).json(), { mode: "classic" });
 });
 
 test("allows global settings writes from forwarded admin-mode clients", async (t) => {

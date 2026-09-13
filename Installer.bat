@@ -156,7 +156,7 @@ if errorlevel 1 (
 )
 
 echo [INFO] Installing packaged MCP runtime dependencies...
-call npm ci --prefix ".skills\mcp\korean-law\runtime" --no-audit --no-fund
+"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% ".skills\mcp\korean-law\runtime\bootstrap.py" --prepare
 if errorlevel 1 (
   echo.
   echo [ERROR] Packaged MCP runtime dependency installation failed.

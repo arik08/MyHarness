@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+from pydantic import Field
+
 import json
 import re
 from defusedxml import ElementTree as ET
@@ -38,6 +41,9 @@ SOURCES = {
     "uk_bills": "UK Parliament Bills API",
     "uk_legislation": "legislation.gov.uk",
 }
+
+Source = Annotated[str, Field(description="Source served by legislation-regulation only", json_schema_extra={"enum": list(SOURCES)})]
+
 
 server = FastMCP("legislation-regulation")
 attach_packaged_skill(server, __file__)
@@ -150,7 +156,7 @@ CONGRESS_WEB_BILL_TYPES = {
 
 
 @server.tool()
-def search_catalog(source: str, query: str = "", limit: int = 20) -> str:
+def search_catalog(source: Source, query: str = "", limit: int = 20) -> str:
     """Describe supported record types or list a small source-native catalog."""
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=100)
@@ -180,7 +186,7 @@ def search_catalog(source: str, query: str = "", limit: int = 20) -> str:
 
 @server.tool()
 def search_records(
-    source: str,
+    source: Source,
     query: str = "",
     limit: int = 20,
     congress: int | None = None,
@@ -297,7 +303,7 @@ def search_records(
 
 
 @server.tool()
-def get_record(source: str, record_id: str, record_type: str = "detail") -> str:
+def get_record(source: Source, record_id: str, record_type: str = "detail") -> str:
     """Get one record plus optional actions, events, stages, or publications."""
     selected = _source(source)
     kind = record_type.strip().lower()
@@ -388,7 +394,7 @@ def get_record(source: str, record_id: str, record_type: str = "detail") -> str:
 
 
 @server.tool()
-def get_document_link(source: str, record_id: str) -> str:
+def get_document_link(source: Source, record_id: str) -> str:
     """Return an official HTML viewer link; never download or OCR PDFs."""
     selected = _source(source)
     if selected == "congress":
@@ -427,7 +433,7 @@ def get_document_link(source: str, record_id: str) -> str:
 
 
 @server.tool()
-def get_source_health(source: str) -> str:
+def get_source_health(source: Source) -> str:
     """Perform a lightweight official endpoint check and report credential presence safely."""
     selected = _source(source)
     credential_env: tuple[str, ...] = ()

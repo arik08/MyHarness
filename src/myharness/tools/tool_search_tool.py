@@ -28,11 +28,14 @@ class ToolSearchTool(BaseTool):
         registry = context.metadata.get("tool_registry") if hasattr(context, "metadata") else None
         if registry is None:
             return ToolResult(output="Tool registry context not available", is_error=True)
-        query = arguments.query.lower()
+        terms = arguments.query.lower().split()
         matches = [
             tool for tool in registry.list_tools()
-            if query in tool.name.lower() or query in tool.description.lower()
+            if any(term in f"{tool.name} {tool.description}".lower() for term in terms)
         ]
+        matches.sort(key=lambda tool: (-sum(
+            term in f"{tool.name} {tool.description}".lower() for term in terms
+        ), tool.name))
         if not matches:
             return ToolResult(output="(no matches)")
         return ToolResult(output="\n".join(f"{tool.name}: {tool.description}" for tool in matches))

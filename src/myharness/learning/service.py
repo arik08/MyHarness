@@ -243,7 +243,7 @@ def _render_skill(candidate: LearningCandidate) -> str:
         f"- {candidate.trigger_description}\n\n"
         "## Process\n"
         "1. Read `references/learned-patterns.md` for the concrete observed pattern.\n"
-        "2. Apply the verified corrective path before retrying the failed approach.\n"
+        "2. Diagnose the current failure before reusing a corrective path. Resolve helpers from the active installation and inspect their current CLI; never replay stored absolute paths, sanitized user paths, temporary scripts, or historical output names.\n"
         "3. Keep new evidence concise and avoid storing raw transcripts or secrets.\n"
         "\n## Recommended Next Step\n"
         f"- {candidate.do_next_time}\n"

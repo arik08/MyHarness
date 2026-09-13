@@ -1539,6 +1539,57 @@ async def test_read_requests_handles_task_output_while_busy(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runtime_picker_reads_during_turn_but_changes_wait_before_follow_up(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    original_model = host._bundle.engine.model
+    original_effort = host._bundle.engine.reasoning_effort
+    host._busy = True
+    catalog_reads = []
+
+    async def read_catalog(command):
+        assert host._busy
+        catalog_reads.append(command)
+
+    requests = iter([
+        b'{"type":"select_command","command":"runtime-picker"}\n',
+        b'{"type":"apply_select_command","command":"model","value":"gpt-5.6-sol"}\n',
+        b'{"type":"apply_select_command","command":"effort","value":"high"}\n',
+        b'',
+    ])
+
+    class FakeStdin:
+        class buffer:
+            @staticmethod
+            def readline():
+                return next(requests)
+
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", FakeStdin())
+    host._handle_select_command = read_catalog
+    await host._read_requests()
+    assert catalog_reads == ["runtime-picker"]
+    assert host._busy
+    assert host._bundle.engine.model == original_model
+    assert host._bundle.engine.reasoning_effort == original_effort
+    model = host._request_queue.get_nowait()
+    effort = host._request_queue.get_nowait()
+    assert (model.command, model.value) == ("model", "gpt-5.6-sol")
+    assert (effort.command, effort.value) == ("effort", "high")
+    assert host._request_queue.get_nowait().type == "shutdown"
+    host._busy = False
+    try:
+        await host._apply_select_command(model.command, model.value)
+        await host._apply_select_command(effort.command, effort.value)
+        assert host._bundle.engine.model == "gpt-5.6-sol"
+        assert host._bundle.engine.reasoning_effort == "high"
+    finally:
+        await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
 async def test_backend_host_stops_task_and_emits_swarm_refresh(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     events: list[BackendEvent] = []
@@ -1969,8 +2020,8 @@ async def test_backend_host_emits_answer_and_session_usage_for_final_answer(tmp_
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     client = ToolThenAnswerApiClient()
-    host = ReactBackendHost(BackendHostConfig(api_client=client, model="gpt-5.4", api_format="openai", effort="high"))
-    host._bundle = await build_runtime(api_client=client, model="gpt-5.4", api_format="openai", effort="high")
+    host = ReactBackendHost(BackendHostConfig(api_client=client, model="gpt-5.6-terra", api_format="openai", effort="high"))
+    host._bundle = await build_runtime(api_client=client, model="gpt-5.6-terra", api_format="openai", effort="high")
     events = []
 
     async def _emit(event):
@@ -1992,12 +2043,12 @@ async def test_backend_host_emits_answer_and_session_usage_for_final_answer(tmp_
     assert complete.usage["input_tokens"] == 30
     assert complete.usage["output_tokens"] == 3
     assert complete.usage["cached_input_tokens"] == 10
-    assert complete.usage["model"] == "gpt-5.4"
+    assert complete.usage["model"] == "gpt-5.6-terra"
     assert complete.usage["effort"] == "high"
     assert complete.session_usage["total_tokens"] == 33
     assert complete.session_usage["cached_input_tokens"] == 10
     stored_answer = next(event for event in host._history_events if event.get("type") == "assistant")
-    assert stored_answer["usage"]["model"] == "gpt-5.4"
+    assert stored_answer["usage"]["model"] == "gpt-5.6-terra"
     assert stored_answer["usage"]["effort"] == "high"
 
 
@@ -3526,7 +3577,7 @@ async def test_backend_host_surfaces_query_errors(tmp_path, monkeypatch):
 async def test_backend_host_command_does_not_reset_cli_overrides(tmp_path, monkeypatch):
     """Regression: slash commands should not snap model/provider back to persisted defaults.
 
-    When the session is launched with CLI overrides (e.g. --provider openai -m 5.4),
+    When the session is launched with CLI overrides (e.g. --provider openai -m gpt-5.6-terra),
     issuing a command like /fast triggers a UI state refresh. That refresh must
     preserve the effective session settings, not reload ~/.myharness/settings.json
     verbatim.
@@ -3538,7 +3589,7 @@ async def test_backend_host_command_does_not_reset_cli_overrides(tmp_path, monke
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(
         api_client=StaticApiClient("unused"),
-        model="5.4",
+        model="gpt-5.6-terra",
         api_format="openai",
     )
     events = []
@@ -3550,15 +3601,15 @@ async def test_backend_host_command_does_not_reset_cli_overrides(tmp_path, monke
     await start_runtime(host._bundle)
     try:
         # Sanity: the initial session state reflects CLI overrides.
-        assert host._bundle.app_state.get().model == "5.4"
-        assert host._bundle.app_state.get().provider == "openai-compatible"
+        assert host._bundle.app_state.get().model == "gpt-5.6-terra"
+        assert host._bundle.app_state.get().provider == "pgpt"
 
         # Run a command that triggers sync_app_state.
         await host._process_line("/fast show")
 
         # CLI overrides should remain in effect.
-        assert host._bundle.app_state.get().model == "5.4"
-        assert host._bundle.app_state.get().provider == "openai-compatible"
+        assert host._bundle.app_state.get().model == "gpt-5.6-terra"
+        assert host._bundle.app_state.get().provider == "pgpt"
     finally:
         await close_runtime(host._bundle)
 
@@ -3674,7 +3725,7 @@ async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
-    host._bundle = await build_runtime(api_client=StaticApiClient("unused"), model="opus", api_format="anthropic")
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"), model="gpt-5.6-terra", api_format="openai")
     events = []
 
     async def _emit(event):
@@ -3689,8 +3740,8 @@ async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
 
     event = next(item for item in events if item.type == "select_request")
     assert event.modal["command"] == "model"
-    assert any(option["value"] == "opus" and option.get("active") for option in event.select_options)
-    assert any(option["value"] == "default" for option in event.select_options)
+    assert any(option["value"] == "gpt-5.6-terra" and option.get("active") for option in event.select_options)
+    assert {option["value"] for option in event.select_options} == {"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"}
 
 
 @pytest.mark.asyncio
@@ -3809,16 +3860,7 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
         "gpt-5.6-terra",
         "gpt-5.6-sol",
     ]
-    assert any(option["value"] == "gemini" for option in runtime_options["providers"])
-    gemini_models = [option["value"] for option in runtime_options["models_by_provider"]["gemini"]]
-    assert gemini_models == [
-        "gemini-3.5-flash",
-        "gemini-3.1-pro-preview",
-        "gemini-3-flash-preview",
-        "gemini-3.1-flash-lite",
-    ]
-    assert all(option["value"] != "gemini-compatible" for option in runtime_options["providers"])
-    assert "gemini-compatible" not in runtime_options["models_by_provider"]
+    assert {option["value"] for option in runtime_options["providers"]} == {"p-gpt", "codex"}
     assert runtime_options["subagent_model"] == "gpt-5.6-luna"
     assert runtime_options["subagent_effort"] == "medium"
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
@@ -3867,15 +3909,15 @@ async def test_backend_host_apply_provider_select_command_updates_runtime_withou
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
-        should_continue = await host._apply_select_command("provider", "claude-api")
+        should_continue = await host._apply_select_command("provider", "codex")
         metadata_profile = host._bundle.engine.tool_metadata["active_profile"]
         metadata_provider = host._bundle.engine.tool_metadata["provider"]
     finally:
         await close_runtime(host._bundle)
 
     assert should_continue is True
-    assert metadata_profile == "claude-api"
-    assert metadata_provider == "anthropic"
+    assert metadata_profile == "codex"
+    assert metadata_provider == "openai_codex"
     assert not any(item.type == "transcript_item" for item in events)
 
 
@@ -3906,7 +3948,7 @@ async def test_backend_host_apply_model_select_command_updates_runtime_without_t
 
 
 @pytest.mark.asyncio
-async def test_backend_host_apply_subagent_model_select_command_updates_tool_metadata(tmp_path, monkeypatch):
+async def test_backend_host_rejects_removed_subagent_model_selection(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
@@ -3921,6 +3963,7 @@ async def test_backend_host_apply_subagent_model_select_command_updates_tool_met
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
+        previous_model = host._bundle.app_state.get().subagent_model
         should_continue = await host._apply_select_command("subagent_model", "gpt-5.6-sol")
         state = host._bundle.app_state.get()
         metadata_model = host._bundle.engine.tool_metadata["subagent_model"]
@@ -3928,13 +3971,14 @@ async def test_backend_host_apply_subagent_model_select_command_updates_tool_met
         await close_runtime(host._bundle)
 
     assert should_continue is True
-    assert state.subagent_model == "gpt-5.6-sol"
-    assert metadata_model == "gpt-5.6-sol"
+    assert state.subagent_model == previous_model
+    assert metadata_model == previous_model
+    assert any(item.type == "error" for item in events)
     assert not any(item.type == "transcript_item" for item in events)
 
 
 @pytest.mark.asyncio
-async def test_backend_host_apply_subagent_effort_select_command_updates_tool_metadata(tmp_path, monkeypatch):
+async def test_backend_host_rejects_removed_subagent_effort_selection(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
@@ -3950,6 +3994,7 @@ async def test_backend_host_apply_subagent_effort_select_command_updates_tool_me
     await start_runtime(host._bundle)
     try:
         previous_effort = host._bundle.app_state.get().effort
+        previous_subagent_effort = host._bundle.app_state.get().subagent_effort
         should_continue = await host._apply_select_command("subagent_effort", "high")
         state = host._bundle.app_state.get()
         metadata_effort = host._bundle.engine.tool_metadata["subagent_effort"]
@@ -3957,9 +4002,10 @@ async def test_backend_host_apply_subagent_effort_select_command_updates_tool_me
         await close_runtime(host._bundle)
 
     assert should_continue is True
-    assert state.subagent_effort == "high"
+    assert state.subagent_effort == previous_subagent_effort
     assert state.effort == previous_effort
-    assert metadata_effort == "high"
+    assert metadata_effort == previous_subagent_effort
+    assert any(item.type == "error" for item in events)
     assert not any(item.type == "transcript_item" for item in events)
 
 
@@ -4072,7 +4118,7 @@ def test_mcp_snapshot_uses_packaged_description_for_disabled_servers(tmp_path):
 
     status = next(item for item in statuses if item.name == "vector_db")
     assert status.state == "disabled"
-    assert "GraphRAG" in status.description
+    assert status.description == settings.mcp_servers["vector_db"].description
     assert status.detail == "Disabled in settings."
 
 

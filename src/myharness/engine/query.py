@@ -414,7 +414,6 @@ async def _stream_provider_events_with_idle_status(
             await queue.put(exc)
         await queue.put(None)
 
-    task = asyncio.create_task(_produce())
     timeout = max(0.0, PROVIDER_STREAM_IDLE_FIRST_SECONDS)
     repeat = max(0.0, PROVIDER_STREAM_IDLE_REPEAT_SECONDS)
     max_idle = max(0.0, float(os.environ.get("MYHARNESS_PROVIDER_STREAM_IDLE_MAX_SECONDS") or PROVIDER_STREAM_IDLE_MAX_SECONDS))
@@ -427,6 +426,7 @@ async def _stream_provider_events_with_idle_status(
     )
     idle_started_at: float | None = None
     response_started = False
+    task = asyncio.create_task(_produce())
     try:
         while True:
             try:
@@ -1309,13 +1309,16 @@ async def _execute_tool_call(
             metadata={
                 "_shared_tool_metadata": context.tool_metadata or {},
                 "api_client": context.api_client,
-                "tool_registry": context.tool_registry,
                 "ask_user_prompt": context.ask_user_prompt,
                 "model": context.model,
                 "system_prompt": context.system_prompt,
                 "max_tokens": context.max_tokens,
                 "reasoning_effort": context.reasoning_effort,
                 **(context.tool_metadata or {}),
+                # A selected MCP turn can use a temporary registry. Shared
+                # metadata may still point at the original one; new skill tools
+                # must register where the next provider request reads schemas.
+                "tool_registry": context.tool_registry,
             },
             hook_executor=context.hook_executor,
         ),

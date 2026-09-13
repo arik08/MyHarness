@@ -11,6 +11,23 @@ import {
   updateSessionReplayState,
 } from "../modules/sessionReplay.js";
 
+test("restoring saved history replaces the bootstrap identity before replay", () => {
+  const state = createSessionReplayState();
+  updateSessionReplayState(state, { type: "active_session", value: "bootstrap" });
+  updateSessionReplayState(state, { type: "session_title", message: "새 대화" });
+  updateSessionReplayState(state, { type: "clear_transcript" });
+  updateSessionReplayState(state, {
+    type: "history_snapshot", value: "saved-history", message: "저장된 대화",
+    history_events: [{ type: "user", text: "원래 질문" }],
+  });
+  for (let visit = 0; visit < 3; visit += 1) {
+    const replay = replayEventsForState(state);
+    assert.equal(replay.some((event) => event.value === "bootstrap" || event.message === "새 대화"), false);
+    assert.equal(replay.find((event) => event.type === "active_session")?.value, "saved-history");
+    assert.equal(replay.find((event) => event.type === "session_title")?.message, "저장된 대화");
+  }
+});
+
 test("coalesces many assistant deltas into one live replay event", () => {
   const state = createSessionReplayState();
 

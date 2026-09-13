@@ -98,8 +98,17 @@ async def create_shell_subprocess(
     argv, cleanup_path = wrap_command_for_sandbox(argv, settings=resolved_settings)
     subprocess_env = _subprocess_env(env, platform_name=resolved_platform)
     hidden_window_kwargs = hidden_subprocess_kwargs(platform_name=resolved_platform)
-
+    job = None
+    process = None
     try:
+        if resolved_platform == "windows":
+            from myharness.utils.windows_job import WindowsJob
+
+            job = WindowsJob()
+            # CREATE_SUSPENDED: children cannot escape before job assignment.
+            hidden_window_kwargs["creationflags"] = hidden_window_kwargs.get("creationflags", 0) | 0x4
+        else:
+            hidden_window_kwargs["start_new_session"] = True
         process = await asyncio.create_subprocess_exec(
             *argv,
             cwd=str(Path(cwd).resolve()),
@@ -109,12 +118,23 @@ async def create_shell_subprocess(
             env=subprocess_env,
             **hidden_window_kwargs,
         )
-    except Exception:
+        if job is not None:
+            job.attach_and_resume(process.pid)
+            setattr(process, "_myharness_job", job)
+        else:
+            setattr(process, "_myharness_process_group", process.pid)
+    except BaseException:
+        if job is not None:
+            job.close()
+        if process is not None:
+            from myharness.utils.process_tree import terminate_process_tree
+
+            await terminate_process_tree(process)
         if cleanup_path is not None:
             cleanup_path.unlink(missing_ok=True)
         raise
 
-    if cleanup_path is not None:
+    if cleanup_path is not None or job is not None:
         cleanup_task = asyncio.create_task(_cleanup_after_exit(process, cleanup_path))
         _CLEANUP_TASKS.add(cleanup_task)
         cleanup_task.add_done_callback(_CLEANUP_TASKS.discard)
@@ -455,8 +475,14 @@ def _wrap_command_with_script(
     return None
 
 
-async def _cleanup_after_exit(process: asyncio.subprocess.Process, cleanup_path: Path) -> None:
+async def _cleanup_after_exit(
+    process: asyncio.subprocess.Process, cleanup_path: Path | None,
+) -> None:
     try:
         await process.wait()
     finally:
-        cleanup_path.unlink(missing_ok=True)
+        job = getattr(process, "_myharness_job", None)
+        if job is not None:
+            job.close()
+        if cleanup_path is not None:
+            cleanup_path.unlink(missing_ok=True)

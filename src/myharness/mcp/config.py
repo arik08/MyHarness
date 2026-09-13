@@ -103,7 +103,9 @@ def load_mcp_server_configs(
             servers.setdefault(f"{plugin.manifest.name}:{name}", config)
     if include_disabled:
         return servers
-    disabled = set(getattr(settings, "disabled_mcp_servers", set()) or set())
+    from myharness.mcp.types import DUMMY_MCP_SERVERS
+
+    disabled = set(getattr(settings, "disabled_mcp_servers", set()) or set()) | DUMMY_MCP_SERVERS
     if cwd is not None:
         disabled.update(_disabled_mcp_skill_servers(settings, cwd))
     if disabled:

@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { createActivityLog } from "./modules/activityLog.js";
+import { createResourceSampler, createServerMetrics } from "./modules/serverMetrics.js";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
@@ -31,6 +33,7 @@ import {
 } from "./modules/sessionReplay.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
+const activityLog = createActivityLog();
 const repoRoot = normalize(join(root, "../.."));
 const webRoot = normalize(root);
 const webDistRoot = normalize(join(root, "dist"));
@@ -215,8 +218,8 @@ const shellOutputMaxChars = Number.isFinite(configuredShellOutputMaxChars)
 const tokenCountMaxChars = 200_000;
 const modelOutputTokenDefault = 42_000;
 const composeTargetOutputTokenMax = 40_000;
-const defaultMaxActiveSessions = Math.min(500, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_ACTIVE_SESSIONS) || 20)));
-const defaultMaxBusySessions = Math.min(100, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS) || 8)));
+const defaultMaxActiveSessions = Math.min(500, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_ACTIVE_SESSIONS) || 40)));
+const defaultMaxBusySessions = Math.min(100, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS) || 20)));
 const defaultMaxBusySessionsPerClient = Math.min(20, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS_PER_CLIENT) || 3)));
 const defaultBackendIdleClientCloseMs = Math.max(
   10,
@@ -487,8 +490,9 @@ function resolvePath(url) {
 }
 
 function json(response, status, payload) {
+  // Keep the content type observable on finish for ordinary API latency metrics.
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(payload));
@@ -3079,8 +3083,18 @@ function currentConcurrencySettings() {
 function currentConcurrencyStatus(request) {
   const params = new URL(request.url, `http://localhost:${port}`).searchParams;
   const clientId = String(params.get("clientId") || "").trim();
+  // Each live SSE response represents an open screen. Retained backend
+  // sessions still count toward capacity, but are not connected screens.
+  const connectedScreens = [...sessions.values()]
+    .filter((session) => !session.shuttingDown)
+    .reduce((count, session) => count + [...session.clients]
+      .filter((client) => !client.destroyed && !client.writableEnded).length, 0);
   return {
     ...currentConcurrencySettings(),
+    connectedScreens,
+    activeUsers: new Set([...sessions.values()]
+      .filter((session) => !session.shuttingDown && session.clientAddress)
+      .map((session) => normalizeClientAddress(session.clientAddress))).size,
     activeSessions: countActiveSessions(),
     busySessions: countBusySessions(),
     busySessionsForClient: clientId ? countBusySessionsForClient(clientId) : 0,
@@ -4329,6 +4343,7 @@ function historyItemFromMetadata(data, info, fileName) {
   return {
     value: sessionId || fileName.replace(/^session-/, "").replace(/\.json$/i, ""),
     label: `${labelDate}  ${messageCount}msg  ${summary}`,
+    messageCount,
     description: summary,
     createdAt,
     lastAssistantAt,
@@ -5996,7 +6011,11 @@ function emitResponseQueuePositions() {
 
 function startSessionMessage(session, request) {
   const wasQueued = session.capacityQueued === true;
-  if (request.suppressUserTranscript && !request.line.startsWith("!")) {
+  // Regular questions must be emitted by the backend after any pending session
+  // reset. A replay-only optimistic entry can be erased by that late reset.
+  // The frontend already deduplicates the backend echo of its optimistic message.
+  const suppressUserTranscript = request.suppressUserTranscript && /^[!/]/.test(request.line);
+  if (suppressUserTranscript && !request.line.startsWith("!")) {
     rememberSuppressedUserTranscript(
       session.replayState,
       visibleSubmittedUserText(request.line, request.attachments, request.attachmentRefs),
@@ -6018,13 +6037,15 @@ function startSessionMessage(session, request) {
     line: request.line,
     attachments: request.attachments,
     attachment_refs: request.attachmentRefs,
-    suppress_user_transcript: request.suppressUserTranscript,
+    suppress_user_transcript: suppressUserTranscript,
   };
   if (request.composeOptions) {
     backendPayload.compose_options = request.composeOptions;
   }
   const ok = sendBackend(session, backendPayload);
+  if (ok && !wasQueued) activityLog.received(session);
   if (!ok) {
+    activityLog.event(session, "error");
     session.busy = false;
     emit(session, { type: "error", message: "대기 중이던 요청을 시작하지 못했습니다." });
     scheduleCapacityQueueDrain();
@@ -6033,9 +6054,11 @@ function startSessionMessage(session, request) {
 }
 
 function enqueueSessionMessage(session, request) {
+  activityLog.received(session, "메시지 접수 · 응답 대기 중");
   session.capacityQueued = true;
   responseCapacityQueue.push({
     id: crypto.randomUUID(),
+    queuedAt: Date.now(),
     type: "message",
     sessionId: session.id,
     request,
@@ -6053,6 +6076,7 @@ function waitForResponseCapacity(session) {
   return new Promise((resolve, reject) => {
     responseCapacityQueue.push({
       id: crypto.randomUUID(),
+      queuedAt: Date.now(),
       type: "gate",
       sessionId: session.id,
       resolve,
@@ -6083,6 +6107,7 @@ function cancelQueuedSessionMessage(session) {
 function enqueueSessionStart(options) {
   const entry = {
     id: crypto.randomUUID(),
+    queuedAt: Date.now(),
     clientId: String(options.clientId || "").trim(),
     options,
   };
@@ -6117,6 +6142,7 @@ async function drainCapacityQueues() {
         }
         if (!responseHasCapacity(session)) break;
         responseCapacityQueue.shift();
+        serverMetrics.recordQueueWait(entry.queuedAt);
         if (entry.type === "gate") {
           session.capacityQueued = false;
           session.busy = true;
@@ -6138,6 +6164,7 @@ async function drainCapacityQueues() {
         const entry = sessionCapacityQueue.shift();
         try {
           const session = await createBackendSession(entry.options);
+          serverMetrics.recordQueueWait(entry.queuedAt);
           rememberSessionCapacityResult(entry.id, {
             status: "ready",
             clientId: entry.clientId,
@@ -6170,6 +6197,7 @@ function updateSessionStateFromBackendEvent(session, event) {
   if (!event || typeof event !== "object") {
     return;
   }
+  activityLog.event(session, event.type);
   if (event.type === "ready") {
     session.ready = true;
   }
@@ -6185,6 +6213,10 @@ function updateSessionStateFromBackendEvent(session, event) {
   }
   if (event.type === "active_session") {
     session.savedSessionId = String(event.value || "").trim();
+  }
+  if (event.type === "history_snapshot" && String(event.value || "").trim()) {
+    session.savedSessionId = String(event.value).trim();
+    session.title = String(event.message || "").trim();
   }
   if (event.type === "session_title") {
     session.title = String(event.message ?? event.value ?? "").trim();
@@ -6214,12 +6246,32 @@ function liveSessionPayload(session) {
     title: session.title || "",
     workspace: session.workspace,
     busy: Boolean(session.busy || session.capacityQueued),
+    latestEventId: session.nextEventId - 1,
     createdAt: session.createdAt,
   };
 }
 
 const settingsAdminMessage = "Global settings can only be changed from the local MyHarness host";
+async function readDesignModeSettings() {
+  const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
+  return { mode: settings.design_mode === "improved" ? "improved" : "classic" };
+}
+
+async function saveDesignModeSettings(body) {
+  if (!["classic", "improved"].includes(body.mode)) throw new Error("Invalid design mode");
+  await mutateJsonFile(join(globalConfigDir(), "settings.json"), (settings) => {
+    settings.design_mode = body.mode;
+  });
+  return { mode: body.mode };
+}
+
 const settingsApiRoutes = {
+  "/api/settings/design-mode": {
+    read: () => readDesignModeSettings(),
+    write: (body) => saveDesignModeSettings(body),
+    readError: "Could not read design mode",
+    writeError: "Could not save design mode",
+  },
   "/api/settings/concurrency": {
     read: (request) => currentConcurrencyStatus(request),
     write: (body) => saveConcurrencySettings(body),
@@ -6281,7 +6333,13 @@ async function handleSettingsApi(request, response, pathname) {
 
   if (settingsRoute && request.method === "POST") {
     await writeApiJsonResult(response, async () => {
-      if (pathname !== "/api/settings/output-tokens") {
+      if (pathname === "/api/settings/design-mode") {
+        if (!hasAdminModeAccess(request)) {
+          const error = new Error("Design mode can only be changed in admin mode");
+          error.status = 403;
+          throw error;
+        }
+      } else if (pathname !== "/api/settings/output-tokens") {
         requireLocalAdminRequest(request, settingsAdminMessage);
       }
       const body = await readJson(request);
@@ -6303,6 +6361,14 @@ async function handleSettingsApi(request, response, pathname) {
 }
 
 async function handleApi(request, response, pathname) {
+  if (pathname === "/api/server-metrics") {
+    if (request.method !== "GET") {
+      json(response, 405, { error: "Read-only endpoint" });
+    } else {
+      json(response, 200, serverMetrics.snapshot(new URL(request.url, "http://localhost").searchParams.get("history") === "1"));
+    }
+    return true;
+  }
   const workspaceScope = workspaceScopeFromRequest(request);
   const clientAddress = normalizeClientAddress(forwardedAddressFromRequest(request));
   if (request.method === "POST" && pathname === "/api/visit") {
@@ -6427,10 +6493,11 @@ async function handleApi(request, response, pathname) {
       const workspaceName = params.get("workspaceName");
       const page = parseHistoryPageParams(params);
       const search = params.get("search");
+      const likedOnly = params.get("likedOnly") === "true";
       if (workspacePath || workspaceName) {
         const workspace = workspaceFromHistoryRequest({ workspacePath, workspaceName }, workspaceScope);
         const items = filterHistoryItemsByTitle(await listWorkspaceHistory(workspace), search);
-        const paged = paginateHistoryItems(items, page);
+        const paged = paginateHistoryItems(likedOnly ? items.filter((item) => item.liked === true) : items, likedOnly ? null : page);
         json(response, 200, {
           workspace,
           options: paged.options.map((item) => ({ ...item, workspace })),
@@ -6439,7 +6506,7 @@ async function handleApi(request, response, pathname) {
         });
       } else {
         const items = filterHistoryItemsByTitle(await listAllWorkspaceHistory(workspaceScope), search);
-        const paged = paginateHistoryItems(items, page);
+        const paged = paginateHistoryItems(likedOnly ? items.filter((item) => item.liked === true) : items, likedOnly ? null : page);
         json(response, 200, {
           workspace: null,
           options: paged.options,
@@ -6803,6 +6870,7 @@ async function handleApi(request, response, pathname) {
     response.socket?.setNoDelay?.(true);
     response.flushHeaders?.();
     session.clients.add(response);
+    const logClientDisconnect = activityLog.connected(session, clientAddress);
     cancelIdleClientClose(session);
     const heartbeat = setInterval(() => {
       if (!response.writableEnded && !response.destroyed) {
@@ -6817,17 +6885,21 @@ async function handleApi(request, response, pathname) {
         writeSseEvent(response, entry.event, entry.id);
       }
     } else {
-      writeSseEvent(response, { type: "clear_transcript" });
+      writeSseEvent(response, { type: "clear_transcript", live_replay: true });
       for (const event of replayEventsForState(session.replayState).filter(shouldReplayEvent)) {
-        writeSseEvent(response, event);
+        writeSseEvent(response, event.type === "history_snapshot" ? { ...event, live_replay: true } : event);
       }
     }
+    // A compact replay has no individual IDs. Commit its cursor only after the
+    // complete snapshot, so reconnects resume without redrawing the conversation.
+    writeSseEvent(response, { type: "stream_checkpoint" }, session.nextEventId - 1);
     const cleanupClient = () => {
       clearInterval(heartbeat);
       session.clients.delete(response);
+      logClientDisconnect();
       scheduleIdleClientClose(session);
     };
-    response.socket?.on("close", cleanupClient);
+    response.on("close", cleanupClient);
     response.on("error", cleanupClient);
     return true;
   }
@@ -7158,6 +7230,7 @@ async function handleApi(request, response, pathname) {
           request_id: String(body.requestId || body.request_id || "").trim() || null,
         });
         json(response, ok ? 200 : 409, { ok, queued, steering: !queued });
+        if (ok) activityLog.received(session, queued ? "추가 메시지 접수 · 예약됨" : "추가 메시지 접수 · 진행 중인 작업에 전달");
         return true;
       }
       if (session.capacityQueued) {
@@ -7266,10 +7339,12 @@ async function handleApi(request, response, pathname) {
         return true;
       }
       if (cancelQueuedSessionMessage(session)) {
+        activityLog.event(session, "cancel");
         json(response, 200, { ok: true, queued: true });
         return true;
       }
       const ok = sendBackend(session, { type: "cancel_current" });
+      if (ok) activityLog.event(session, "cancel");
       json(response, ok ? 200 : 409, { ok });
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not cancel session" });
@@ -7352,7 +7427,29 @@ async function handleRequest(request, response) {
   }
 }
 
+const resourceSampler = createResourceSampler(backendPythonCommand(), join(root, "scripts/resource_sample.py"));
+const serverMetrics = createServerMetrics({
+  sampleResources: () => resourceSampler.sample(),
+  readLoad: () => {
+    const live = [...sessions.values()].filter((session) => !session.shuttingDown);
+    const hasScreen = (session) => [...session.clients].some((client) => !client.destroyed && !client.writableEnded);
+    const queues = [...sessionCapacityQueue, ...responseCapacityQueue];
+    const oldest = queues.reduce((value, entry) => Math.min(value, entry.queuedAt ?? Date.now()), Date.now());
+    return {
+      connectedScreens: live.reduce((sum, session) => sum + [...session.clients].filter((client) => !client.destroyed && !client.writableEnded).length, 0),
+      retainedSessions: live.length,
+      detachedIdleSessions: live.filter((session) => !hasScreen(session) && !session.busy && !session.capacityQueued).length,
+      busySessions: countBusySessions(),
+      queuedSessions: sessionCapacityQueue.length,
+      queuedResponses: responseCapacityQueue.length,
+      oldestWaitMs: queues.length ? Math.max(0, Date.now() - oldest) : 0,
+      maxActiveSessions, maxBusySessions,
+    };
+  },
+});
+
 server = createServer((request, response) => {
+  serverMetrics.observeRequest(request, response);
   void handleRequest(request, response).catch((error) => {
     writeRuntimeLog("web_request_failed", {
       method: request.method || "",
@@ -7373,6 +7470,8 @@ server = createServer((request, response) => {
 });
 
 function stopServer(signal = "shutdown") {
+  serverMetrics.stop();
+  resourceSampler.stop();
   writeRuntimeLog("server_stop_requested", {
     signal,
     active_sessions: sessions.size,
@@ -7453,19 +7552,15 @@ server.on("error", (error) => {
 });
 
 server.listen(port, effectiveHost, () => {
+  serverMetrics.start();
   const localUrl = `http://localhost:${port}`;
   const lanUrl = getLanUrl();
-  if (isWildcardListenHost(effectiveHost)) {
-    console.log(`Listening on all network interfaces.`);
-  } else if (effectiveHost !== host) {
-    console.log(`Listening on ${effectiveHost} after network-interface bind fallback.`);
-  }
-  console.log("");
-  console.log("MyHarness web is ready:");
-  console.log(`  ${localUrl}`);
+  const colorUrl = (url) => process.stdout.isTTY && !('NO_COLOR' in process.env)
+    ? `\u001b[92m${url}\u001b[39m`
+    : url;
+  console.log(`[준비] MyHarness 서버: ${colorUrl(localUrl)}`);
   if (lanUrl) {
-    console.log(`  ${lanUrl}`);
+    console.log(`  다른 PC 접속: ${colorUrl(lanUrl)}`);
   }
-  console.log(`Workspace scope: ${workspaceScopeMode}`);
-  console.log(`Shell: ${shellPreference}`);
+  console.log('');
 });

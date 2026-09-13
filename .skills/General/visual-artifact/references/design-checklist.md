@@ -7,6 +7,9 @@ Use this checklist before final delivery of a visual HTML artifact.
 - The first screen communicates the purpose immediately.
 - Exact values are shown in tables or labels, not only visual marks.
 - Every chart has a title, units, and readable labels.
+- Every HTML chart that ECharts can render actually uses ECharts, including single simple charts and chart types also supported by Mermaid. Another renderer is used only for an identified requirement ECharts cannot provide; loading failures are disclosed rather than bypassed with substitute charts.
+- Comparable values use a common unit and scale, bar baselines start at zero, and mark sizes reflect the actual data rather than arbitrary CSS dimensions.
+- Charts render in the actual preview at normal and narrow widths, with exact values visible without hover; source inspection alone is not rendering verification.
 - The artifact has a clear ending: conclusion, recommendation, next steps, or source notes.
 
 ## Layout

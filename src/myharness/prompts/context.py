@@ -14,11 +14,12 @@ from myharness.config.settings import Settings
 from myharness.coordinator.agent_definitions import get_all_agent_definitions
 from myharness.coordinator.coordinator_mode import get_coordinator_system_prompt, is_coordinator_mode
 from myharness.memory import find_relevant_memories, load_memory_prompt
+from myharness.mcp.types import DUMMY_MCP_SERVERS
 from myharness.personalization.rules import load_local_rules
 from myharness.prompts.project_instructions import load_project_instructions_prompt
 from myharness.prompts.system_prompt import build_system_prompt
 from myharness.skills.loader import load_skill_registry
-from myharness.skills.routing import is_mcp_routed_skill
+from myharness.skills.routing import is_mcp_routed_skill, mcp_server_name_from_skill_source
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
 
 
@@ -49,7 +50,14 @@ def _build_skills_section(
         settings=settings,
     )
     skills = [skill for skill in registry.list_skills() if not is_mcp_routed_skill(skill)]
-    if not skills:
+    disabled_servers = set(getattr(settings, "disabled_mcp_servers", set()) or set())
+    disabled_servers.update(DUMMY_MCP_SERVERS)
+    mcp_skills = [
+        skill for skill in registry.list_skills()
+        if is_mcp_routed_skill(skill)
+        and mcp_server_name_from_skill_source(skill.source) not in disabled_servers
+    ]
+    if not skills and not mcp_skills:
         return None
     lines = [
         "# Available Skills",
@@ -61,6 +69,36 @@ def _build_skills_section(
     ]
     for skill in skills:
         lines.append(f"- **{skill.name}**: {_skill_routing_description(skill.description)}")
+    if mcp_skills:
+        lines.extend([
+            "",
+            "# Available MCP Integrations",
+            "",
+            "These integrations are activated through the `skill` tool, even when their MCP tools are not yet listed. "
+            "When the user's request matches an integration's source or domain, invoke its listed skill automatically "
+            "before generic web_search/web_fetch; the user does not need to name the skill or MCP. "
+            "Infer this need from the evidence required to complete each part of the task, not just literal keywords. "
+            "Reassess as new information needs arise. For a compound task, use complementary integrations where useful; "
+            "choose the most specific source for each need and avoid duplicate queries to overlapping services. "
+            "If an integration is marked as a placeholder without query tools, do not treat it as a working data source. "
+            "Loading the skill provides its instructions and connects its MCP tools on demand. "
+            "An output-format skill does not replace a matching data-source integration. "
+            "Use web research to supplement uncovered information or after an actual integration failure; "
+            "explain any fallback without claiming MCP data was retrieved. "
+            "If a required API key or OAuth client credential is confirmed missing, tell the user "
+            "'기업용 API KEY 신청이 필요합니다' and name the affected service. "
+            "Stop using that source until approved enterprise credentials are registered; "
+            "do not suggest personal/free/demo keys, apply on the user's behalf, request secrets in chat, "
+            "or bypass the requirement via anonymous calls or web scraping. "
+            "This missing-credential policy overrides fallback guidance; it does not block keyless sources "
+            "or classify unrelated network/rate-limit/authentication failures as missing credentials.",
+            "",
+        ])
+        for skill in mcp_skills:
+            lines.append(
+                f'- **{skill.name}** — `skill(name="{skill.name}")`: '
+                f"{_skill_routing_description(skill.description)}"
+            )
     return "\n".join(lines)
 
 
@@ -312,7 +350,7 @@ def build_runtime_system_prompt(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    if skills_section and not coordinator_mode and not task_worker:
+    if skills_section and not coordinator_mode:
         sections.append(skills_section)
 
     if task_worker:

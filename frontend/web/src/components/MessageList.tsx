@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import "./loading-skeleton.css";
+import { ConversationQuestionNavigator } from "./ConversationQuestionNavigator";
 import { sendBackendRequest } from "../api/messages";
 import { useMessageAutoFollow } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
@@ -272,6 +274,8 @@ export function MessageList() {
   );
   const {
     messagesRef,
+    showJumpToLatest,
+    jumpToLatest,
     isLastAssistantStreaming,
     shouldFollowGrowingTail,
     handleScroll,
@@ -279,6 +283,7 @@ export function MessageList() {
     handlePointerIntent,
     handleVisibleTextChange,
     handleVisibleWorkflowProgressChange,
+    handleQuestionNavigation,
   } = useMessageAutoFollow({
     state,
     dispatch,
@@ -301,21 +306,16 @@ export function MessageList() {
     return [];
   }
 
-  if (!state.messages.length) {
-    return (
-      <section className="messages" aria-live="polite" ref={messagesRef}>
-        <div className="welcome">
-          <span className="welcome-mark">MH</span>
-          <h2>무엇을 도와드릴까요?</h2>
-          <p>업무에 필요한 조사, 정리, 코드 작업을 도와드릴 준비가 되어 있습니다.</p>
-          <StarterPrompts />
-        </div>
-        <WorkflowPanel onVisibleProgressChange={handleVisibleWorkflowProgressChange} />
-      </section>
-    );
-  }
+  const showWelcome = !state.messages.length
+    && !state.busy
+    && !state.workflowEvents.length
+    && !state.pendingHistoryId
+    && !state.restoringHistory;
 
   return (
+    <>
+    <ConversationQuestionNavigator key={state.activeHistoryId || state.sessionId || "new"}
+      messages={state.messages} scrollContainerRef={messagesRef} onNavigateStart={handleQuestionNavigation} />
     <section
       className={`messages${shouldFollowGrowingTail ? " streaming-follow" : ""}`}
       aria-live="polite"
@@ -329,6 +329,24 @@ export function MessageList() {
       onPointerDown={(event) => handlePointerIntent(event.button)}
       onTouchStart={() => handlePointerIntent()}
     >
+      {showWelcome ? (
+        <div className="welcome">
+          <span className="welcome-mark">MH</span>
+          <h2>무엇을 도와드릴까요?</h2>
+          <p>업무에 필요한 조사, 정리, 코드 작업을 도와드릴 준비가 되어 있습니다.</p>
+          <StarterPrompts />
+        </div>
+      ) : null}
+      {!state.messages.length && (state.restoringHistory || state.pendingHistoryId) ? (
+        <div className="conversation-skeleton" role="status" aria-label="대화를 불러오는 중">
+          <span className="conversation-skeleton-question" />
+          <span /><span /><span />
+          <p>대화를 불러오는 중…</p>
+        </div>
+      ) : null}
+      {!state.messages.length ? (
+        <WorkflowPanel onVisibleProgressChange={handleVisibleWorkflowProgressChange} />
+      ) : null}
       {renderMessages.map(({ message, originalIndex }) => {
         const commandCatalog = isCommandCatalog(message.text);
         const kindBadge = message.role === "user" ? messageKindBadge(message.kind) : null;
@@ -370,6 +388,8 @@ export function MessageList() {
                   </>
                 ) : message.terminal ? (
                   <TerminalCommandMessage message={message} />
+                ) : message.role === "log" ? (
+                  <pre aria-label="실행 로그" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.text}</pre>
                 ) : (
                   <UserMessageText text={message.text} promptTokenReferences={promptTokenReferences} />
                 )}
@@ -398,5 +418,15 @@ export function MessageList() {
         );
       })}
     </section>
+    {showJumpToLatest ? (
+      <button className="message-jump-to-latest" type="button"
+        aria-label="최신 응답으로 이동"
+        onClick={jumpToLatest}>
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M12 5v14m-6-6 6 6 6-6" />
+        </svg>
+      </button>
+    ) : null}
+    </>
   );
 }

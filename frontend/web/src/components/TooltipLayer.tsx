@@ -143,7 +143,7 @@ export function TooltipLayer() {
         }
       });
       mutationObserverRef.current.observe(target, {
-        attributeFilter: ["aria-disabled", "data-tooltip", "data-tooltip-placement"],
+        attributeFilter: ["aria-disabled", "data-tooltip", "data-tooltip-placement", "data-tooltip-description"],
         attributes: true,
       });
     }
@@ -156,7 +156,7 @@ export function TooltipLayer() {
         setTooltip(null);
         return;
       }
-      if (immediate) {
+      if (immediate || target.dataset.tooltipImmediate === "true") {
         setTooltip(getTooltipState(target));
         return;
       }
@@ -323,7 +323,7 @@ export function TooltipLayer() {
   return createPortal(
     <div
       ref={tooltipRef}
-      className="tooltip-layer"
+      className={`tooltip-layer${tooltip.target.dataset.tooltipDescription ? " question-navigator-tooltip" : ""}`}
       role="tooltip"
       style={{
         left: tooltip.x,
@@ -336,7 +336,10 @@ export function TooltipLayer() {
             : "translate(-50%, 0)",
       }}
     >
-      {tooltip.text}
+      {tooltip.target.dataset.tooltipDescription ? <>
+        <strong>{tooltip.text}</strong>
+        <span>{tooltip.target.dataset.tooltipDescription}</span>
+      </> : tooltip.text}
     </div>,
     document.body,
   );

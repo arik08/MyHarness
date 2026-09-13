@@ -143,16 +143,16 @@ class TestSettings:
             s.resolve_api_key()
 
     def test_merge_cli_overrides(self):
-        s = Settings(active_profile="claude-api")
-        updated = s.merge_cli_overrides(model="claude-opus-4-20250514", verbose=True, api_key=None)
-        assert updated.model == "claude-opus-4-20250514"
+        s = Settings(active_profile="p-gpt")
+        updated = s.merge_cli_overrides(model="gpt-5.6-terra", verbose=True, api_key=None)
+        assert updated.model == "gpt-5.6-terra"
         assert updated.verbose is True
         # api_key=None should not override the default
         assert updated.api_key == ""
 
     def test_merge_cli_overrides_returns_new_instance(self):
-        s = Settings(active_profile="claude-api")
-        updated = s.merge_cli_overrides(model="claude-opus-4-20250514")
+        s = Settings(active_profile="p-gpt")
+        updated = s.merge_cli_overrides(model="gpt-5.6-terra")
         assert s.model != updated.model
         assert s is not updated
 
@@ -167,42 +167,8 @@ class TestSettings:
         assert updated.model == "gpt-5.6-sol"
         assert profile.last_model == "gpt-5.6-sol"
 
-    def test_resolve_auth_prefers_env_over_flat_api_key_for_openai(self, monkeypatch):
-        """When api_format=openai, resolve_auth() should use OPENAI_API_KEY
-        from the environment rather than the flat api_key field which may
-        contain an Anthropic key from settings.json."""
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-correct")
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.delenv("PGPT_API_KEY", raising=False)
-        s = Settings(api_key="sk-ant-wrong-provider", api_format="openai", active_profile="openai-compatible")
-        s = s.sync_active_profile_from_flat_fields()
-        auth = s.resolve_auth()
-        assert auth.value == "sk-openai-correct"
-        assert "OPENAI" in auth.source
 
-    def test_resolve_auth_falls_back_to_flat_api_key(self, monkeypatch):
-        """When no provider-specific env var is set, resolve_auth() should
-        still fall back to the flat api_key field."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.delenv("PGPT_API_KEY", raising=False)
-        s = Settings(api_key="sk-fallback-key", active_profile="claude-api")
-        s = s.sync_active_profile_from_flat_fields()
-        auth = s.resolve_auth()
-        assert auth.value == "sk-fallback-key"
 
-    def test_env_overrides_picks_up_openai_base_url(self, tmp_path: Path, monkeypatch):
-        """_apply_env_overrides should pick up OPENAI_BASE_URL for relay
-        providers that use OpenAI-compatible format."""
-        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
-        monkeypatch.delenv("MYHARNESS_BASE_URL", raising=False)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setenv("OPENAI_BASE_URL", "https://relay.example.com/v1")
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-relay-key")
-        path = tmp_path / "settings.json"
-        path.write_text(json.dumps({}))
-        s = load_settings(path)
-        assert s.base_url == "https://relay.example.com/v1"
 
     def test_env_overrides_pick_up_compact_threshold_settings(self, tmp_path: Path, monkeypatch):
         monkeypatch.setenv("MYHARNESS_CONTEXT_WINDOW_TOKENS", "123456")
@@ -213,15 +179,6 @@ class TestSettings:
         assert s.context_window_tokens == 123456
         assert s.auto_compact_threshold_tokens == 120000
 
-    def test_anthropic_base_url_takes_precedence_over_openai(self, tmp_path: Path, monkeypatch):
-        """ANTHROPIC_BASE_URL should take precedence over OPENAI_BASE_URL."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://anthropic-relay.example.com")
-        monkeypatch.setenv("OPENAI_BASE_URL", "https://openai-relay.example.com/v1")
-        path = tmp_path / "settings.json"
-        path.write_text(json.dumps({}))
-        s = load_settings(path)
-        assert s.base_url == "https://anthropic-relay.example.com"
 
 
 class TestLoadSaveSettings:
@@ -245,9 +202,9 @@ class TestLoadSaveSettings:
         monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
         monkeypatch.delenv("MYHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
-        path.write_text(json.dumps({"model": "claude-opus-4-20250514", "verbose": True, "fast_mode": True}))
+        path.write_text(json.dumps({"active_profile": "p-gpt", "api_format": "openai", "provider": "openai", "model": "gpt-5.6-terra", "profiles": {"p-gpt": {"label": "P-GPT", "provider": "openai", "api_format": "openai", "auth_source": "pgpt_api_key", "default_model": "gpt-5.6-luna", "last_model": "gpt-5.6-terra"}}, "verbose": True, "fast_mode": True}))
         s = load_settings(path)
-        assert s.model == "claude-opus-4-20250514"
+        assert s.model == "gpt-5.6-terra"
         assert s.verbose is True
         assert s.fast_mode is True
         assert s.api_key == ""  # default preserved
@@ -261,8 +218,8 @@ class TestLoadSaveSettings:
         monkeypatch.delenv("MYHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
         original = Settings(
-            api_key="sk-roundtrip",
-            model="claude-opus-4-20250514",
+            api_key="sk-roundtrip", active_profile="p-gpt", api_format="openai", provider="openai",
+            model="gpt-5.6-terra",
             verbose=True,
             web_concurrency={
                 "max_active_sessions": 24,
@@ -279,7 +236,7 @@ class TestLoadSaveSettings:
         assert loaded.verbose == original.verbose
         assert loaded.web_concurrency == original.web_concurrency
 
-    def test_load_migrates_flat_provider_settings_to_profile(self, tmp_path: Path):
+    def test_load_migrates_disabled_flat_provider_to_pgpt(self, tmp_path: Path):
         path = tmp_path / "settings.json"
         path.write_text(
             json.dumps(
@@ -296,11 +253,11 @@ class TestLoadSaveSettings:
         loaded = load_settings(path)
         profile_name, profile = loaded.resolve_profile()
 
-        assert profile_name == "anthropic"
-        assert profile.base_url == "https://api.moonshot.cn/anthropic"
-        assert profile.resolved_model == "kimi-k2.5"
-        assert loaded.base_url == "https://api.moonshot.cn/anthropic"
-        assert loaded.model == "kimi-k2.5"
+        assert profile_name == "p-gpt"
+        assert profile.auth_source == "pgpt_api_key"
+        assert profile.resolved_model == "gpt-5.6-luna"
+        assert loaded.base_url == profile.base_url
+        assert loaded.model == "gpt-5.6-luna"
 
     def test_materialize_active_profile_uses_profile_model(self):
         settings = Settings(
@@ -325,14 +282,14 @@ class TestLoadSaveSettings:
 
     def test_materialize_active_profile_projects_compact_threshold_settings(self):
         settings = Settings(
-            active_profile="openai-compatible",
+            active_profile="p-gpt",
             profiles={
-                "openai-compatible": ProviderProfile(
+                "p-gpt": ProviderProfile(
                     label="OpenAI-Compatible API",
                     provider="openai",
                     api_format="openai",
-                    auth_source="openai_api_key",
-                    default_model="gpt-5.5",
+                    auth_source="pgpt_api_key",
+                    default_model="gpt-5.6-luna",
                     context_window_tokens=100000,
                     auto_compact_threshold_tokens=90000,
                 )
@@ -384,28 +341,28 @@ class TestLoadSaveSettings:
 
     def test_merge_cli_active_profile_keeps_profile_compact_threshold_settings(self):
         settings = Settings(
-            active_profile="moonshot",
+            active_profile="codex",
             context_window_tokens=64000,
             auto_compact_threshold_tokens=60000,
             profiles={
-                "moonshot": ProviderProfile(
+                "codex": ProviderProfile(
                     label="Moonshot",
-                    provider="moonshot",
+                    provider="openai_codex",
                     api_format="openai",
-                    auth_source="moonshot_api_key",
-                    default_model="kimi-k2.5",
-                    last_model="kimi-k2.5",
+                    auth_source="codex_subscription",
+                    default_model="gpt-5.6-terra",
+                    last_model="gpt-5.6-terra",
                     base_url="https://api.moonshot.cn/v1",
                     context_window_tokens=64000,
                     auto_compact_threshold_tokens=60000,
                 ),
-                "openai-compatible": ProviderProfile(
+                "p-gpt": ProviderProfile(
                     label="OpenAI-Compatible API",
                     provider="openai",
                     api_format="openai",
-                    auth_source="openai_api_key",
-                    default_model="gpt-5.5",
-                    last_model="gpt-5.5",
+                    auth_source="pgpt_api_key",
+                    default_model="gpt-5.6-luna",
+                    last_model="gpt-5.6-luna",
                     base_url="https://relay.example.com/v1",
                     context_window_tokens=200000,
                     auto_compact_threshold_tokens=180000,
@@ -413,68 +370,14 @@ class TestLoadSaveSettings:
             },
         )
 
-        updated = settings.merge_cli_overrides(active_profile="openai-compatible")
+        updated = settings.merge_cli_overrides(active_profile="p-gpt")
 
         assert updated.base_url == "https://relay.example.com/v1"
         assert updated.context_window_tokens == 200000
         assert updated.auto_compact_threshold_tokens == 180000
 
-    def test_claude_profile_materializes_alias_to_concrete_model(self):
-        settings = Settings(
-            active_profile="claude-subscription",
-            profiles={
-                "claude-subscription": ProviderProfile(
-                    label="Claude Subscription",
-                    provider="anthropic_claude",
-                    api_format="anthropic",
-                    auth_source="claude_subscription",
-                    default_model="sonnet",
-                    last_model="opus",
-                )
-            },
-        )
 
-        materialized = settings.materialize_active_profile()
 
-        assert materialized.model == "claude-opus-4-6"
-
-    def test_claude_profile_normalizes_prefixed_model_name(self):
-        settings = Settings(
-            active_profile="claude-subscription",
-            profiles={
-                "claude-subscription": ProviderProfile(
-                    label="Claude Subscription",
-                    provider="anthropic_claude",
-                    api_format="anthropic",
-                    auth_source="claude_subscription",
-                    default_model="claude-sonnet-4-6",
-                    last_model="anthropic/claude-sonnet-4-20250514",
-                )
-            },
-        )
-
-        materialized = settings.materialize_active_profile()
-
-        assert materialized.model == "claude-sonnet-4-20250514"
-
-    def test_claude_profile_normalizes_dotted_model_name(self):
-        settings = Settings(
-            active_profile="claude-api",
-            profiles={
-                "claude-api": ProviderProfile(
-                    label="Claude API",
-                    provider="anthropic",
-                    api_format="anthropic",
-                    auth_source="anthropic_api_key",
-                    default_model="claude-sonnet-4-6",
-                    last_model="claude-opus-4.6",
-                )
-            },
-        )
-
-        materialized = settings.materialize_active_profile()
-
-        assert materialized.model == "claude-opus-4-6"
 
     def test_display_model_setting_uses_default_alias(self):
         profile = ProviderProfile(
@@ -488,49 +391,7 @@ class TestLoadSaveSettings:
 
         assert display_model_setting(profile) == "default"
 
-    def test_opusplan_resolves_by_permission_mode(self):
-        settings = Settings(
-            permission={"mode": "plan"},
-            active_profile="claude-api",
-            profiles={
-                "claude-api": ProviderProfile(
-                    label="Claude API",
-                    provider="anthropic",
-                    api_format="anthropic",
-                    auth_source="anthropic_api_key",
-                    default_model="claude-sonnet-4-6",
-                    last_model="opusplan",
-                )
-            },
-        )
 
-        materialized = settings.materialize_active_profile()
-
-        assert materialized.model == "claude-opus-4-6"
-
-    def test_resolve_auth_prefers_profile_scoped_credential_for_custom_compatible_profile(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path))
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-global-env")
-        store_credential("profile:kimi-anthropic", "api_key", "sk-profile-specific", use_keyring=False)
-        settings = Settings(
-            active_profile="kimi-anthropic",
-            profiles={
-                "kimi-anthropic": ProviderProfile(
-                    label="Kimi Anthropic",
-                    provider="anthropic",
-                    api_format="anthropic",
-                    auth_source="anthropic_api_key",
-                    default_model="kimi-k2.5",
-                    base_url="https://api.moonshot.cn/anthropic",
-                    credential_slot="kimi-anthropic",
-                )
-            },
-        )
-
-        resolved = settings.resolve_auth()
-
-        assert resolved.value == "sk-profile-specific"
-        assert resolved.source == "file:profile:kimi-anthropic"
 
 
 def test_normalize_anthropic_model_name_matches_hermes_behavior():
@@ -624,19 +485,13 @@ class TestAnsiEscapeSequences:
         # None should return None
         assert strip_ansi_escape_sequences(None) is None
 
-    def test_env_override_strips_ansi_from_model(self, monkeypatch):
-        """Test that ANSI escape sequences are stripped from ANTHROPIC_MODEL env var."""
-        monkeypatch.setenv("ANTHROPIC_MODEL", "\x1b[1mclaude-opus-4-6\x1b[0m")
-        s = Settings(active_profile="claude-api")
-        updated = _apply_env_overrides(s)
-        assert updated.model == "claude-opus-4-6"
 
     def test_env_override_strips_ansi_from_myharness_model(self, monkeypatch):
         """Test that ANSI escape sequences are stripped from MYHARNESS_MODEL env var."""
-        monkeypatch.setenv("MYHARNESS_MODEL", "\x1b[32mclaude-sonnet-4-6\x1b[0m")
-        s = Settings(active_profile="claude-api")
+        monkeypatch.setenv("MYHARNESS_MODEL", "\x1b[32mgpt-5.6-luna\x1b[0m")
+        s = Settings(active_profile="p-gpt")
         updated = _apply_env_overrides(s)
-        assert updated.model == "claude-sonnet-4-6"
+        assert updated.model == "gpt-5.6-luna"
 
     def test_env_override_rejects_model_outside_profile_policy(self, monkeypatch):
         monkeypatch.setenv("MYHARNESS_MODEL", "gpt-4o")
@@ -646,31 +501,14 @@ class TestAnsiEscapeSequences:
 
     def test_merge_cli_overrides_strips_ansi_from_model(self):
         """Test that ANSI escape sequences are stripped from CLI model override."""
-        s = Settings(active_profile="claude-api")
-        updated = s.merge_cli_overrides(model="\x1b[1mclaude-opus-4-6\x1b[0m")
-        assert updated.model == "claude-opus-4-6"
+        s = Settings(active_profile="p-gpt")
+        updated = s.merge_cli_overrides(model="\x1b[1mgpt-5.6-terra\x1b[0m")
+        assert updated.model == "gpt-5.6-terra"
 
 
 class TestGeminiProvider:
     """Tests for the Google Gemini OpenAI-compatible provider profile."""
 
-    def test_gemini_in_default_provider_profiles(self):
-        from myharness.config.settings import default_provider_profiles
-
-        profiles = default_provider_profiles()
-        assert "gemini" in profiles
-        profile = profiles["gemini"]
-        assert profile.provider == "gemini"
-        assert profile.api_format == "openai"
-        assert profile.auth_source == "gemini_api_key"
-        assert profile.default_model == "gemini-3.5-flash"
-        assert profile.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
-        assert profile.allowed_models == [
-            "gemini-3.5-flash",
-            "gemini-3.1-pro-preview",
-            "gemini-3-flash-preview",
-            "gemini-3.1-flash-lite",
-        ]
 
     def test_gemini_compatible_not_in_default_provider_profiles(self):
         from myharness.config.settings import default_provider_profiles
@@ -707,91 +545,14 @@ class TestGeminiProvider:
 
         assert default_auth_source_for_provider("gemini") == "gemini_api_key"
 
-    def test_resolve_auth_reads_gemini_api_key_env(self, monkeypatch):
-        monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
-        settings = Settings(active_profile="gemini")
 
-        resolved = settings.resolve_auth()
 
-        assert resolved.provider == "gemini"
-        assert resolved.value == "gemini-test-key"
-        assert "GEMINI_API_KEY" in resolved.source
 
-    def test_gemini_saved_builtin_profile_uses_current_allowed_models_only(self):
-        settings = Settings(
-            profiles={
-                "gemini": ProviderProfile(
-                    label="Google Gemini",
-                    provider="gemini",
-                    api_format="openai",
-                    auth_source="gemini_api_key",
-                    default_model="gemini-2.5-flash",
-                    base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-                    allowed_models=["gemini-2.5-flash"],
-                )
-            }
-        )
-
-        profile = settings.merged_profiles()["gemini"]
-
-        assert profile.default_model == "gemini-3.5-flash"
-        assert profile.allowed_models == [
-            "gemini-3.5-flash",
-            "gemini-3.1-pro-preview",
-            "gemini-3-flash-preview",
-            "gemini-3.1-flash-lite",
-        ]
-
-    def test_gemini_saved_builtin_profile_preserves_custom_base_url(self):
-        settings = Settings(
-            profiles={
-                "gemini": ProviderProfile(
-                    label="Google Gemini",
-                    provider="gemini",
-                    api_format="openai",
-                    auth_source="gemini_api_key",
-                    default_model="gemini-2.5-flash",
-                    base_url="https://proxy.example.com/gemini/v1",
-                    allowed_models=["gemini-2.5-flash"],
-                )
-            }
-        )
-
-        profile = settings.merged_profiles()["gemini"]
-
-        assert profile.base_url == "https://proxy.example.com/gemini/v1"
-        assert profile.default_model == "gemini-3.5-flash"
-        assert profile.allowed_models == [
-            "gemini-3.5-flash",
-            "gemini-3.1-pro-preview",
-            "gemini-3-flash-preview",
-            "gemini-3.1-flash-lite",
-        ]
-
-    def test_gemini_profile_materializes_default_model(self):
-        settings = Settings(active_profile="gemini")
-
-        materialized = settings.materialize_active_profile()
-
-        assert materialized.model == "gemini-3.5-flash"
-        assert materialized.provider == "gemini"
-        assert materialized.api_format == "openai"
 
 
 class TestMiniMaxProvider:
     """Tests for MiniMax provider profile and auth integration."""
 
-    def test_minimax_in_default_provider_profiles(self):
-        from myharness.config.settings import default_provider_profiles
-
-        profiles = default_provider_profiles()
-        assert "minimax" in profiles
-        profile = profiles["minimax"]
-        assert profile.provider == "minimax"
-        assert profile.api_format == "openai"
-        assert profile.auth_source == "minimax_api_key"
-        assert profile.default_model == "MiniMax-M2.7"
-        assert profile.base_url == "https://api.minimax.io/v1"
 
     def test_auth_source_provider_name_minimax(self):
         from myharness.config.settings import auth_source_provider_name
@@ -803,43 +564,7 @@ class TestMiniMaxProvider:
 
         assert default_auth_source_for_provider("minimax") == "minimax_api_key"
 
-    def test_resolve_auth_reads_minimax_api_key_env(self, monkeypatch):
-        monkeypatch.setenv("MINIMAX_API_KEY", "minimax-test-key")
-        settings = Settings(
-            active_profile="minimax",
-            profiles={
-                "minimax": ProviderProfile(
-                    label="MiniMax",
-                    provider="minimax",
-                    api_format="openai",
-                    auth_source="minimax_api_key",
-                    default_model="MiniMax-M2.7",
-                    base_url="https://api.minimax.io/v1",
-                )
-            },
-        )
-        resolved = settings.resolve_auth()
-        assert resolved.value == "minimax-test-key"
-        assert "MINIMAX_API_KEY" in resolved.source
 
-    def test_minimax_profile_materializes_default_model(self):
-        settings = Settings(
-            active_profile="minimax",
-            profiles={
-                "minimax": ProviderProfile(
-                    label="MiniMax",
-                    provider="minimax",
-                    api_format="openai",
-                    auth_source="minimax_api_key",
-                    default_model="MiniMax-M2.7",
-                    base_url="https://api.minimax.io/v1",
-                )
-            },
-        )
-        materialized = settings.materialize_active_profile()
-        assert materialized.model == "MiniMax-M2.7"
-        assert materialized.provider == "minimax"
-        assert materialized.api_format == "openai"
 
 
 class TestPgptOpenAICompatibleProvider:

@@ -1,6 +1,6 @@
 ---
 name: posco-datalake
-description: POSCO 경영·생산·재무 정형 데이터를 조회하기 위한 연결형 MCP 라우팅입니다.
+description: 사내 경영·생산·재무 데이터셋과 집계 지표 조회에 해당합니다. 현재 POSCO 연결 예정 MCP로 조회 도구가 없습니다. 실제 연결·도구가 확인된 경우 사용하며, 공개 웹 자료를 사내 조회 결과로 대체하지 않습니다.
 source: skill-mcp:posco-datalake
 ---
 

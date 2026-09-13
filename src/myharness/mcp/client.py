@@ -27,6 +27,7 @@ from myharness.mcp.types import (
     McpStdioServerConfig,
     McpToolInfo,
 )
+from myharness.mcp.types import is_dummy_mcp
 
 
 MCP_REQUEST_TIMEOUT_SECONDS = 120.0
@@ -77,6 +78,8 @@ class McpClientManager:
         """Connect all configured MCP servers supported by the current build."""
         connect_tasks: list[asyncio.Task[None]] = []
         for name, config in self._server_configs.items():
+            if self._block_dummy(name):
+                continue
             if getattr(config, "auto_connect", True) is False:
                 self._statuses[name] = McpConnectionStatus(
                     name=name,
@@ -91,6 +94,8 @@ class McpClientManager:
             await asyncio.gather(*connect_tasks)
 
     async def _connect_one(self, name: str, config: object) -> None:
+        if self._block_dummy(name):
+            return
         if isinstance(config, McpStdioServerConfig):
             await self._connect_stdio(name, config)
         elif isinstance(config, McpHttpServerConfig):
@@ -123,6 +128,8 @@ class McpClientManager:
 
     async def ensure_server_config(self, name: str, config: object, *, force_connect: bool = False) -> bool:
         """Add or refresh one server config and connect it if needed."""
+        if self._block_dummy(name):
+            return False
         existing = self._server_configs.get(name)
         status = self._statuses.get(name)
         if existing == config and status is not None:
@@ -161,6 +168,14 @@ class McpClientManager:
                 auth_configured=bool(getattr(config, "headers", None)),
                 detail=f"Unsupported MCP transport in current build: {getattr(config, 'type', 'unknown')}",
             )
+        return True
+
+    def _block_dummy(self, name: str) -> bool:
+        if not is_dummy_mcp(name):
+            return False
+        self._statuses[name] = McpConnectionStatus(
+            name=name, state="disabled", detail="Dummy MCP; execution is blocked.",
+        )
         return True
 
     async def remove_server_config(self, name: str) -> bool:
@@ -263,7 +278,7 @@ class McpClientManager:
                     StdioServerParameters(
                         command=config.command,
                         args=config.args,
-                        env={**os.environ, **(config.env or {})},
+                        env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", **(config.env or {})},
                         cwd=_stdio_cwd(config),
                     )
                 )
@@ -362,6 +377,10 @@ class McpClientManager:
                 name=tool.name,
                 description=tool.description or "",
                 input_schema=dict(tool.inputSchema or {"type": "object", "properties": {}}),
+                read_only=(
+                    getattr(getattr(tool, "annotations", None), "readOnlyHint", None) is True
+                    or tool.name in getattr(config, "read_only_tools", [])
+                ),
             )
             for tool in tool_result.tools
         ]

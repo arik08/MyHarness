@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
+from copy import deepcopy
 
 from pydantic import BaseModel, Field, create_model
 
@@ -25,18 +27,35 @@ class McpToolAdapter(BaseTool):
         self.description = tool_info.description or f"MCP tool {tool_info.name}"
         self.input_model = _input_model_from_schema(self.name, tool_info.input_schema)
 
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        return self._tool_info.read_only
+
+    def to_api_schema(self) -> dict:
+        # The execution model is deliberately permissive; it must not replace
+        # the server's enums, defaults, descriptions, nested items or $defs.
+        return {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": deepcopy(self._tool_info.input_schema),
+        }
+
     async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
         metadata = context.metadata
         shared_metadata = metadata.get("_shared_tool_metadata")
         if not isinstance(shared_metadata, dict):
             shared_metadata = metadata
         selected_server = str(metadata.get("selected_mcp_server") or "")
+        required = self._tool_info.input_schema.get("required", [])
+        supplied = {
+            key: value for key, value in arguments.model_dump(mode="json", exclude_unset=True).items()
+            if value is not None or key in required
+        }
         try:
             output = await asyncio.wait_for(
                 self._manager.call_tool(
                     self._tool_info.server_name,
                     self._tool_info.name,
-                    arguments.model_dump(mode="json", exclude_none=True),
+                    supplied,
                 ),
                 timeout=_mcp_tool_timeout_seconds(),
             )
@@ -52,6 +71,12 @@ class McpToolAdapter(BaseTool):
             return ToolResult(output=str(exc), is_error=True)
         except McpToolExecutionError as exc:
             return ToolResult(output=str(exc), is_error=True)
+        try:
+            payload = json.loads(output)
+        except (ValueError, TypeError):
+            payload = None
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            return ToolResult(output=output, is_error=True)
         if output.startswith("[NOT_FOUND]"):
             display_output = _strip_not_found_warning(output)
             model_output = display_output

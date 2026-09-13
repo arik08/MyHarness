@@ -10,6 +10,8 @@ const devPort = configuredDevPort(repoRoot, backendPort);
 const backendOrigin = `http://127.0.0.1:${backendPort}`;
 
 export default defineConfig({
+  logLevel: "warn",
+  clearScreen: false,
   plugins: [react()],
   build: {
     outDir: "dist",

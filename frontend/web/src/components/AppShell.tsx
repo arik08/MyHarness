@@ -12,6 +12,7 @@ import {
   sidebarCollapsedTrackWidthPx,
 } from "../layout/sidebarLayout";
 import { writeLocalStorage } from "../utils/storage";
+import { DesignModeProvider } from "../features/design-mode/DesignMode";
 
 const sidebarTransitionMs = 220;
 
@@ -133,13 +134,15 @@ export function AppShell() {
   }, [state.activeArtifact, state.artifactPanelWidth]);
 
   return (
-    <div className={className} data-react-webui="true" style={style}>
-      <Sidebar />
-      <ChatPanel />
-      <ArtifactPanel />
-      <ModalHost />
-      <TooltipLayer />
-    </div>
+    <DesignModeProvider>
+      <div className={className} data-react-webui="true" style={style}>
+        <Sidebar />
+        <ChatPanel />
+        <ArtifactPanel />
+        <ModalHost />
+        <TooltipLayer />
+      </div>
+    </DesignModeProvider>
   );
 }
 

@@ -1,10 +1,26 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { listProjectFiles } from "../api/artifacts";
 import { historyPageSize, listHistory } from "../api/history";
 import { listLiveSessions } from "../api/session";
 import { listWorkspaces } from "../api/workspaces";
 import { useAppState } from "../state/app-state";
 import type { HistoryItem, LiveSessionItem } from "../types/backend";
+import { readRecentData, writeRecentData } from "../utils/recentData";
+
+type WorkspaceData = Awaited<ReturnType<typeof listWorkspaces>>;
+type HistoryData = { history: HistoryItem[]; hasMore: boolean; nextOffset: number };
+function validWorkspaces(value: unknown): value is WorkspaceData {
+  const data = value as WorkspaceData | null;
+  return !!data && Array.isArray(data.workspaces)
+    && data.workspaces.every((item) => item && typeof item.name === "string" && typeof item.path === "string")
+    && !!data.scope && typeof data.scope.root === "string";
+}
+function validHistory(value: unknown): value is HistoryData {
+  const data = value as HistoryData | null;
+  return !!data && Array.isArray(data.history)
+    && data.history.every((item) => item && typeof item.value === "string" && typeof item.label === "string")
+    && typeof data.hasMore === "boolean" && Number.isInteger(data.nextOffset) && data.nextOffset >= 0;
+}
 
 const backgroundLiveSessionPollMs = 3000;
 
@@ -50,7 +66,10 @@ function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], 
       seen.add(value);
       continue;
     }
-    if (!session.busy && !String(session.title || "").trim()) {
+    const title = String(session.title || "").trim();
+    // Saved empty chats are already retained above. Default runtime titles alone
+    // are not evidence of an additional conversation missing from saved history.
+    if (!session.busy && (!title || title === "새 대화" || title === "MyHarness")) {
       continue;
     }
     if (seen.has(value)) {
@@ -72,6 +91,10 @@ function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], 
 
 export function useWorkspaceData() {
   const { state, dispatch } = useAppState();
+  const latestState = useRef(state);
+  latestState.current = state;
+  const currentSessionIdRef = useRef(state.sessionId);
+  currentSessionIdRef.current = state.sessionId;
   const backgroundBusySessionIds = state.history
     .filter((item) => (
       item.live === true
@@ -86,26 +109,35 @@ export function useWorkspaceData() {
   useEffect(() => {
     let cancelled = false;
 
+    function showWorkspaces(data: WorkspaceData) {
+      const current = latestState.current;
+      if (JSON.stringify([current.workspaces, current.workspaceScope]) !== JSON.stringify([data.workspaces, data.scope])) {
+        dispatch({ type: "set_workspaces", workspaces: data.workspaces, scope: data.scope });
+      }
+      if (!current.workspaceName) {
+        const selected = data.workspaces.find((workspace) => workspace.name === "Default") || data.workspaces[0];
+        if (selected) dispatch({ type: "set_workspace", workspace: selected });
+      }
+    }
+    const cached = readRecentData("workspaces", state.clientId, validWorkspaces);
+    if (cached && !state.workspaces.length) showWorkspaces(cached);
+
     async function load() {
       const data = await listWorkspaces();
       if (cancelled) return;
-      dispatch({ type: "set_workspaces", workspaces: data.workspaces, scope: data.scope });
-      if (!state.workspaceName) {
-        const selected = data.workspaces.find((workspace) => workspace.name === "Default") || data.workspaces[0];
-        if (selected) {
-          dispatch({ type: "set_workspace", workspace: selected });
-        }
-      }
+      writeRecentData("workspaces", state.clientId, data);
+      showWorkspaces(data);
     }
 
     void load().catch((error) => {
+      if (cancelled) return;
       dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
     });
 
     return () => {
       cancelled = true;
     };
-  }, [dispatch, state.workspaceName]);
+  }, [dispatch, state.clientId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,23 +154,40 @@ export function useWorkspaceData() {
       };
     }
 
-    dispatch({ type: "set_history_loading", value: true });
-    void Promise.all([
-      listHistory({ workspacePath: state.workspacePath, workspaceName: state.workspaceName, limit: historyPageSize, offset: 0 }),
-      state.clientId
+    const scope = JSON.stringify([state.clientId, state.workspacePath, state.workspaceName]);
+    const cached = readRecentData("history", scope, validHistory);
+    function showHistory(data: HistoryData) {
+      const current = latestState.current;
+      if (JSON.stringify([current.history, current.historyHasMore, current.historyNextOffset])
+        !== JSON.stringify([data.history, data.hasMore, data.nextOffset])) {
+        dispatch({ type: "set_history", ...data });
+      } else if (current.historyLoading) {
+        dispatch({ type: "set_history_loading", value: false });
+      }
+    }
+    if (cached && !state.history.length) showHistory(cached);
+    dispatch({ type: "set_history_loading", value: !cached });
+    // History is usable before the optional live-status lookup finishes.
+    const liveRequest = (state.clientId
         ? listLiveSessions({
           clientId: state.clientId,
           workspacePath: state.workspacePath || undefined,
         })
-        : Promise.resolve({ sessions: [] }),
-    ])
-      .then(([data, liveData]) => {
+        : Promise.resolve({ sessions: [] })).catch(() => ({ sessions: [] }));
+    void listHistory({ workspacePath: state.workspacePath, workspaceName: state.workspaceName, limit: historyPageSize, offset: 0 })
+      .then(async (data) => {
+        const history = Array.isArray(data.options) ? data.options : [];
+        const page = { history, hasMore: data.hasMore === true,
+          nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : history.length };
         if (!cancelled) {
-          const history = Array.isArray(data.options) ? data.options : [];
+          writeRecentData("history", scope, page);
+          showHistory(page);
+        }
+        const liveData = await liveRequest;
+        if (!cancelled) {
           const liveSessions = Array.isArray(liveData.sessions) ? liveData.sessions : [];
-          dispatch({
-            type: "set_history",
-            history: mergeLiveSessions(history, liveSessions, state.sessionId),
+          showHistory({
+            history: mergeLiveSessions(history, liveSessions, currentSessionIdRef.current),
             hasMore: data.hasMore === true,
             nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : history.length,
           });
@@ -146,7 +195,7 @@ export function useWorkspaceData() {
       })
       .catch((error) => {
         if (!cancelled) {
-          dispatch({ type: "set_history", history: [], hasMore: false, nextOffset: 0 });
+          dispatch({ type: "set_history_loading", value: false });
           dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
         }
       });

@@ -27,8 +27,15 @@
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.
 
 ## Evidence bb2ffbb64b9cd7cb
-- Confidence: 0.95
+- Confidence: low
 - Signature: `web-search-no-results`
-- Lesson: A repeated failure was observed and later verified as resolved: web_search input=NIST AI RMF generative AI profile agent governance official: 검색 결과가 없습니다.
-- Do next time: Start by applying the verified corrective path: Ran command python "C:\Users\[USER]\Desktop\Documents\Python\MyHarness\.skills\General\visual-review\scripts\check_render.py" "outputs\AI_Agent_Skill_거버넌스_심층분석.html" --width [{]
+- Lesson: A later local HTML validation command does not establish that a failed web search was fixed.
+- Do next time: Check the search query and source availability, broaden the query, and verify actual retrieved evidence. Resolve any separate visual validator through the installed skill, not a saved machine path.
+- Avoid next time: Do not treat unrelated local commands as verified search recovery.
+
+## Evidence ddaee9582e9e69ac
+- Confidence: 0.95
+- Signature: `web-fetch-401-reuters-com`
+- Lesson: A repeated failure was observed and later verified as resolved: web_fetch input=https://www.reuters.com/business/arcelormittal-posts-earnings-beat-european-safeguards-bear-fruit-2026-07-30/: web_fetch 실패: Client error '401 HTTP Forbidden' for url 'https://www.reuters.com/business/arc
+- Do next time: Start by applying the verified corrective path: Ran command python -c "from pathlib import Path; p=Path('outputs/포스코_해외경쟁사_2026_이슈분석.html'); s=p.read_text(encoding='utf-8'); print(len(s), s.count('<sup class=\"source-ref [20638 12 True]
 - Avoid next time: Do not repeat the failing command, tool input, or assumption without checking the verified fix first.

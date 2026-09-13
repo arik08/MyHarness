@@ -36,6 +36,8 @@ export type ConcurrencySettings = {
 };
 
 export type ConcurrencyStatus = ConcurrencySettings & {
+  connectedScreens: number;
+  activeUsers: number;
   activeSessions: number;
   busySessions: number;
   busySessionsForClient: number;

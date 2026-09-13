@@ -3247,7 +3247,7 @@ describe("ArtifactPanel", () => {
     expect(await screen.findByText("renamed-history-report.html")).toBeTruthy();
   });
 
-  it("shows extension-specific colored badges for project files", async () => {
+  it("shows extension-specific accessible icons for project files", async () => {
     vi.mocked(listProjectFiles).mockResolvedValueOnce({
       scope: "default",
       files: [
@@ -3286,17 +3286,17 @@ describe("ArtifactPanel", () => {
         item.querySelector(".artifact-card-icon"),
       ]),
     );
-    expect(badgeByFileName.get("report.html")?.textContent).toBe("HTML");
+    expect(badgeByFileName.get("report.html")?.getAttribute("aria-label")).toBe("HTML 파일");
     expect(badgeByFileName.get("report.html")?.classList.contains("artifact-card-icon-web")).toBe(true);
-    expect(badgeByFileName.get("notes.md")?.textContent).toBe("MD");
+    expect(badgeByFileName.get("notes.md")?.getAttribute("aria-label")).toBe("MD 파일");
     expect(badgeByFileName.get("notes.md")?.classList.contains("artifact-card-icon-markdown")).toBe(true);
-    expect(badgeByFileName.get("deck.pptx")?.textContent).toBe("PPTX");
+    expect(badgeByFileName.get("deck.pptx")?.getAttribute("aria-label")).toBe("PPTX 파일");
     expect(badgeByFileName.get("deck.pptx")?.classList.contains("artifact-card-icon-docs")).toBe(true);
-    expect(badgeByFileName.get("data.csv")?.textContent).toBe("CSV");
+    expect(badgeByFileName.get("data.csv")?.getAttribute("aria-label")).toBe("CSV 파일");
     expect(badgeByFileName.get("data.csv")?.classList.contains("artifact-card-icon-data")).toBe(true);
-    expect(badgeByFileName.get("script.py")?.textContent).toBe("PY");
+    expect(badgeByFileName.get("script.py")?.getAttribute("aria-label")).toBe("PY 파일");
     expect(badgeByFileName.get("script.py")?.classList.contains("artifact-card-icon-code")).toBe(true);
-    expect(badgeByFileName.get("chart.png")?.textContent).toBe("PNG");
+    expect(badgeByFileName.get("chart.png")?.getAttribute("aria-label")).toBe("PNG 파일");
     expect(badgeByFileName.get("chart.png")?.classList.contains("artifact-card-icon-image")).toBe(true);
   });
 
@@ -3405,7 +3405,7 @@ describe("ArtifactPanel", () => {
 
     await screen.findByText("evangelion-story-analysis-report.html");
     const item = document.querySelector(".project-file-item");
-    expect(item?.querySelector(".artifact-card-icon")?.textContent).toBe("HTML");
+    expect(item?.querySelector(".artifact-card-icon")?.getAttribute("data-tooltip")).toBe("HTML");
     expect(item?.querySelector(".artifact-card-size")?.textContent).toBe("21.0 KB");
     expect(item?.querySelector(".artifact-card-copy")?.textContent).not.toContain("HTML");
     expect(item?.querySelector(".project-file-open")?.getAttribute("data-tooltip")).toBe("evangelion-story-analysis-report.html");

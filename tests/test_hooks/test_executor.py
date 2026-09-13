@@ -2,19 +2,105 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import httpx
 import pytest
 
 import myharness.hooks.executor as hook_executor_module
-from myharness.api.client import ApiMessageCompleteEvent
+from myharness.api.client import ApiMessageCompleteEvent, ApiRetryEvent, ApiTextDeltaEvent
 from myharness.api.usage import UsageSnapshot
 from myharness.engine.messages import ConversationMessage, TextBlock
 from myharness.hooks import HookEvent, HookExecutionContext, HookExecutor
 from myharness.hooks.executor import _inject_arguments
 from myharness.hooks.loader import HookRegistry
-from myharness.hooks.schemas import CommandHookDefinition, HttpHookDefinition, PromptHookDefinition
+from myharness.hooks.schemas import (
+    AgentHookDefinition, CommandHookDefinition, HttpHookDefinition, PromptHookDefinition,
+)
+
+
+def make_model_hook_executor(tmp_path, client, definition, **kwargs):
+    registry = HookRegistry()
+    registry.register(HookEvent.PRE_TOOL_USE, definition(prompt="Check", **kwargs))
+    return HookExecutor(
+        registry,
+        HookExecutionContext(cwd=tmp_path, api_client=client, default_model="test"),
+    )
+
+
+@pytest.mark.parametrize("definition", [PromptHookDefinition, AgentHookDefinition])
+async def test_model_hook_accepts_retry_then_text(tmp_path, definition):
+    class Client:
+        async def stream_message(self, request):
+            yield ApiRetryEvent(message="retry", attempt=1, max_attempts=3, delay_seconds=0)
+            yield ApiTextDeltaEvent(text='{"ok": true}')
+
+    executor = make_model_hook_executor(tmp_path, Client(), definition)
+    result = await executor.execute(HookEvent.PRE_TOOL_USE, {})
+    assert result.results[0].success
+    assert result.results[0].output == '{"ok": true}'
+
+
+@pytest.mark.parametrize("definition", [PromptHookDefinition, AgentHookDefinition])
+@pytest.mark.parametrize("block", [True, False])
+async def test_model_hook_timeout_closes_stream(tmp_path, definition, block):
+    closed = asyncio.Event()
+
+    class Client:
+        async def stream_message(self, request):
+            try:
+                yield ApiTextDeltaEvent(text='{"ok":')
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+
+    executor = make_model_hook_executor(
+        tmp_path, Client(), definition, timeout_seconds=1, block_on_failure=block,
+    )
+    result = await asyncio.wait_for(executor.execute(HookEvent.PRE_TOOL_USE, {}), 3)
+    assert not result.results[0].success
+    assert result.blocked is block
+    assert "timed out after 1s" in result.results[0].reason
+    assert closed.is_set()
+
+
+@pytest.mark.parametrize("definition", [PromptHookDefinition, AgentHookDefinition])
+@pytest.mark.parametrize("block", [True, False])
+async def test_model_hook_provider_failure_is_a_hook_result(tmp_path, definition, block):
+    class Client:
+        async def stream_message(self, request):
+            yield ApiTextDeltaEvent(text="")
+            raise RuntimeError("provider unavailable")
+
+    executor = make_model_hook_executor(tmp_path, Client(), definition, block_on_failure=block)
+    result = await executor.execute(HookEvent.PRE_TOOL_USE, {})
+    assert not result.results[0].success
+    assert result.blocked is block
+    assert result.results[0].reason == "provider unavailable"
+
+
+@pytest.mark.parametrize("definition", [PromptHookDefinition, AgentHookDefinition])
+async def test_model_hook_preserves_user_cancellation(tmp_path, definition):
+    started = asyncio.Event()
+    closed = asyncio.Event()
+
+    class Client:
+        async def stream_message(self, request):
+            try:
+                started.set()
+                await asyncio.Event().wait()
+                yield ApiTextDeltaEvent(text="")
+            finally:
+                closed.set()
+
+    executor = make_model_hook_executor(tmp_path, Client(), definition)
+    task = asyncio.create_task(executor.execute(HookEvent.PRE_TOOL_USE, {}))
+    await asyncio.wait_for(started.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed.is_set()
 
 
 class FakeApiClient:

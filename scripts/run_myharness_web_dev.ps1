@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $script:StopRequested = $false
 $script:BackendProcess = $null
 $script:ViteProcess = $null
@@ -181,15 +181,18 @@ function Resolve-VitePort {
 function Stop-All {
     param([switch]$PassThru)
 
-    $rootProcessIds = @()
-    if ($script:BackendProcess) {
-        $rootProcessIds += [int]$script:BackendProcess.Id
-    }
+    $processIds = @()
+    # Close the proxy before its backend so planned restarts do not report
+    # ECONNRESET for still-open event streams.
     if ($script:ViteProcess) {
-        $rootProcessIds += [int]$script:ViteProcess.Id
+        $viteProcessIds = @(Stop-MyHarnessProcessTrees -RootProcessIds @([int]$script:ViteProcess.Id))
+        Wait-MyHarnessRuntimeStopped -ProcessIds $viteProcessIds -Ports @($script:VitePort)
+        $processIds += $viteProcessIds
+    }
+    if ($script:BackendProcess) {
+        $processIds += @(Stop-MyHarnessProcessTrees -RootProcessIds @([int]$script:BackendProcess.Id))
     }
 
-    $processIds = @(Stop-MyHarnessProcessTrees -RootProcessIds $rootProcessIds)
     $ports = @($backendPort)
     if ($script:VitePort) {
         $ports += [int]$script:VitePort
@@ -259,7 +262,6 @@ function Start-BackendLauncher {
         throw "A MyHarness backend supervisor already owns port $backendPort. Stop that launcher before starting the dev launcher."
     }
     Stop-ListeningPort -Port $backendPort -Label "backend"
-    Write-Host "[INFO] Starting MyHarness backend launcher on http://localhost:$env:PORT ..."
     $previousKeyHandling = $env:MYHARNESS_SERVER_KEY_HANDLING
     $previousDevUiRedirect = $env:MYHARNESS_DEV_UI_REDIRECT
     $previousDevUiPort = $env:MYHARNESS_DEV_UI_PORT
@@ -299,7 +301,6 @@ function Start-BackendLauncher {
 
 function Start-ViteServer {
     Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
-    Write-Host "[INFO] Starting Vite React dev server on http://0.0.0.0:$script:VitePort ..."
     $previousCi = $env:CI
     try {
         $env:CI = "true"
@@ -316,12 +317,12 @@ function Start-ViteServer {
 }
 
 function Restart-All {
-    Write-Host "[INFO] Cold reset requested. Fully stopping backend, Python/MCP children, and Vite..."
+    [Console]::WriteLine()
+    Write-Host "[안내] 전체 서버를 재시작합니다..."
     $previousProcessIds = @(Stop-All -PassThru)
     Stop-ListeningPort -Port $backendPort -Label "backend"
     Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
     Wait-MyHarnessRuntimeStopped -ProcessIds $previousProcessIds -Ports @($backendPort, $script:VitePort)
-    Write-Host "[INFO] Previous runtime fully stopped. Starting fresh processes so code changes are reloaded..."
     $script:BackendProcess = Start-BackendLauncher
     $script:ViteProcess = Start-ViteServer
 }
@@ -332,7 +333,7 @@ function Restart-All {
     $eventArgs.Cancel = $true
     $script:StopRequested = $true
     Write-Host ""
-    Write-Host "[INFO] Stop requested. Stopping backend and Vite dev server..."
+    Write-Host "[안내] 서버를 종료합니다..."
     Stop-All
 })
 
@@ -350,15 +351,9 @@ Start-Sleep -Seconds 2
 $script:ViteProcess = Start-ViteServer
 
 Write-Host ""
-Write-Host "MyHarness dev mode is ready:"
-Write-Host "  Local React dev UI: http://127.0.0.1:$script:VitePort"
-Write-Host "  Backend entry:      http://localhost:$env:PORT"
-Write-Host "  Network entry:      use http://<this PC IP>:$env:PORT from another PC"
-Write-Host ""
-Write-Host "Keep this window open while developing."
-Write-Host "If the backend or Vite exits unexpectedly, this launcher will full restart both servers."
-Write-Host "Press Q or Ctrl+C in this window to stop both servers."
-Write-Host "Press R in this window to full restart both servers."
+Write-Host "[접속] 개발 화면: " -NoNewline
+Write-Host "http://127.0.0.1:$script:VitePort" -ForegroundColor Cyan
+Write-Host "  R: 전체 재시작 | Q / Ctrl+C: 종료"
 Write-Host ""
 
 try {
@@ -372,12 +367,12 @@ try {
                 break
             }
 
-            Write-Host "[WARN] Backend launcher exited with code $($script:BackendProcess.ExitCode). Full restarting in 2 seconds..."
+            Write-Host "[주의] 서버 종료 감지 (코드 $($script:BackendProcess.ExitCode)) · 2초 후 재시작합니다."
             Start-Sleep -Seconds 2
             Restart-All
         }
         if ($script:ViteProcess.HasExited) {
-            Write-Host "[WARN] Vite dev server exited with code $($script:ViteProcess.ExitCode). Full restarting in 2 seconds..."
+            Write-Host "[주의] 개발 화면 종료 감지 (코드 $($script:ViteProcess.ExitCode)) · 2초 후 재시작합니다."
             Start-Sleep -Seconds 2
             Restart-All
         }
@@ -391,7 +386,7 @@ try {
         }
         if (Test-LauncherKey -Key $key -ExpectedKey Q) {
             $script:StopRequested = $true
-            Write-Host "[INFO] Stop requested. Stopping backend and Vite dev server..."
+            Write-Host "[안내] 서버를 종료합니다..."
             Stop-All | Out-Null
             break
         }
@@ -401,7 +396,7 @@ try {
     }
 }
 catch {
-    Write-Host "[ERROR] $_"
+    Write-Host "[오류] $_"
     Stop-All
     exit 1
 }

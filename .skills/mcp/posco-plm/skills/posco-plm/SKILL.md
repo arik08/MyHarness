@@ -1,6 +1,6 @@
 ---
 name: posco-plm
-description: POSCO 투자 과제·예산·승인·진행 현황을 조회하기 위한 연결형 MCP 라우팅입니다.
+description: 사내 투자 과제·예산·승인·집행·진행 현황 조회에 해당합니다. 현재 POSCO 연결 예정 MCP로 조회 도구가 없습니다. 실제 연결·도구가 확인된 경우 사용하며, 공개 웹 자료를 사내 조회 결과로 대체하지 않습니다.
 source: skill-mcp:posco-plm
 ---
 

@@ -20,6 +20,10 @@ class WebSearchToolInput(BaseModel):
     """Arguments for a web search."""
 
     query: str = Field(description="Search query")
+    progress_message: str | None = Field(
+        default=None,
+        description="도구명 옆에 표시할 짧은 한국어 존댓말 안내. 어떤 자료를 왜 검색하는지 한 문장으로 작성하세요. 아직 확인하지 않은 결과는 말하지 마세요. 검색어가 영어여도 이 안내는 한국어로 작성하세요.",
+    )
     max_results: int = Field(default=5, ge=1, le=10, description="Maximum number of results")
     search_url: str | None = Field(
         default=None,

@@ -142,7 +142,7 @@ def test_crossref_doi_is_encoded_as_one_path_segment(monkeypatch) -> None:
     assert urls[0].endswith("/10.1000%2Fa%2Fb")
 
 
-def test_semantic_scholar_tries_public_api_without_key(monkeypatch) -> None:
+def test_semantic_scholar_blocks_all_requests_without_key(monkeypatch) -> None:
     module = _load_server()
     monkeypatch.delenv("SEMANTIC_SCHOLAR_API_KEY", raising=False)
 
@@ -151,13 +151,16 @@ def test_semantic_scholar_tries_public_api_without_key(monkeypatch) -> None:
         calls.append(kwargs)
         return {"data": [{"paperId": "fixture"}]}
     monkeypatch.setattr(module, "request_json", public_response)
-    result = json.loads(module.search_records("semantic_scholar", "steel"))
-    assert result["data"][0]["paperId"] == "fixture"
-    assert calls[0]["headers"] == {}
+    with pytest.raises(ValueError, match="기업용 API KEY 신청이 필요합니다"):
+        module.search_records("semantic_scholar", "steel")
+    with pytest.raises(ValueError, match="기업용 API KEY 신청이 필요합니다"):
+        module.get_record("semantic_scholar", "fixture")
 
     health = json.loads(module.get_source_health("semantic_scholar"))
-    assert health["ok"] is True
-    assert health["credential"]["required"] is False
+    assert health["ok"] is False
+    assert health["credential"]["required"] is True
+    assert health["credential"]["configured"] is False
+    assert calls == []
 
 
 def test_patent_year_range_is_validated_before_network() -> None:

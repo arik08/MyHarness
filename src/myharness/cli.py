@@ -2318,6 +2318,25 @@ def main(
         settings.theme = theme
         save_settings(settings)
 
+    # Publish configured runtime choices before importing the engine and SDKs.
+    # Resume has its own model resolution below; leave its snapshot to the host.
+    if backend_only and not (continue_session or resume is not None or dry_run or task_worker or print_mode is not None):
+        from types import SimpleNamespace
+        from myharness.runtime_catalog import _initial_runtime_state_snapshot
+
+        try:
+            snapshot = _initial_runtime_state_snapshot(SimpleNamespace(
+                cwd=cwd, model=model, subagent_model=subagent_model,
+                subagent_effort=subagent_effort, max_turns=max_turns,
+                base_url=base_url, system_prompt=system_prompt, api_key=api_key,
+                api_format=api_format, active_profile=active_profile,
+                effort=effort, permission_mode=permission_mode,
+            ))
+            print("OHJSON:" + json.dumps({"type": "state_snapshot", "state": snapshot}, ensure_ascii=False), flush=True)
+        except Exception:
+            # Full startup retains the authoritative error and ready handling.
+            pass
+
     from myharness.ui.app import run_print_mode, run_repl, run_task_worker
 
     if dry_run and (continue_session or resume is not None):

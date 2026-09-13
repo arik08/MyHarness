@@ -128,6 +128,8 @@ def test_resolve_shell_command_linux_without_script_falls_back(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_shell_subprocess_defaults_stdin_to_devnull(monkeypatch, tmp_path: Path):
+    from unittest.mock import Mock
+    monkeypatch.setattr("myharness.utils.windows_job.WindowsJob", Mock())
     captured: dict[str, object] = {}
 
     async def fake_create_subprocess_exec(*args, **kwargs):
@@ -135,6 +137,7 @@ async def test_create_shell_subprocess_defaults_stdin_to_devnull(monkeypatch, tm
         captured["kwargs"] = kwargs
 
         class _FakeProcess:
+            pid = 123
             returncode = 0
 
             async def wait(self):
@@ -177,6 +180,9 @@ async def test_create_shell_subprocess_defaults_stdin_to_devnull(monkeypatch, tm
 
 @pytest.mark.asyncio
 async def test_create_shell_subprocess_hides_console_windows_on_windows(monkeypatch, tmp_path: Path):
+    from unittest.mock import Mock
+    job = Mock()
+    monkeypatch.setattr("myharness.utils.windows_job.WindowsJob", lambda: job)
     captured: dict[str, object] = {}
 
     async def fake_create_subprocess_exec(*args, **kwargs):
@@ -184,6 +190,7 @@ async def test_create_shell_subprocess_hides_console_windows_on_windows(monkeypa
         captured["kwargs"] = kwargs
 
         class _FakeProcess:
+            pid = 123
             returncode = 0
 
             async def wait(self):
@@ -213,16 +220,20 @@ async def test_create_shell_subprocess_hides_console_windows_on_windows(monkeypa
         settings=Settings(shell="cmd"),
     )
 
-    assert captured["kwargs"]["creationflags"] == 0x08000000
+    assert captured["kwargs"]["creationflags"] == 0x08000004
+    job.attach_and_resume.assert_called_once_with(123)
 
 
 @pytest.mark.asyncio
 async def test_create_shell_subprocess_retains_sandbox_cleanup_task(monkeypatch, tmp_path: Path):
+    from unittest.mock import Mock
+    monkeypatch.setattr("myharness.utils.windows_job.WindowsJob", Mock())
     cleanup_path = tmp_path / "sandbox-command.sh"
     cleanup_path.write_text("echo hi", encoding="utf-8")
     release = asyncio.Event()
 
     class _FakeProcess:
+        pid = 123
         returncode = None
 
         async def wait(self) -> int:

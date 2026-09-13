@@ -28,6 +28,10 @@ class WebFetchToolInput(BaseModel):
     """Arguments for fetching one web page."""
 
     url: str = Field(description="HTTP or HTTPS URL to fetch")
+    progress_message: str | None = Field(
+        default=None,
+        description="도구명 옆에 표시할 짧은 한국어 존댓말 안내. 이 페이지에서 무엇을 확인할지 한 문장으로 작성하세요. 읽기 전에 내용이나 결과를 단정하지 마세요. 원문이 영어여도 이 안내는 한국어로 작성하세요.",
+    )
     max_chars: int = Field(default=12000, ge=500, le=50000)
 
 

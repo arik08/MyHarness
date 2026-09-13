@@ -16,6 +16,7 @@ from myharness.api.client import (
 )
 from myharness.api.codex_client import (
     CodexApiClient,
+    OpenAIResponsesClient,
     _codex_cache_session_id,
     _convert_messages_to_codex,
     _format_codex_stream_error,
@@ -331,7 +332,7 @@ async def test_codex_client_streams_text(monkeypatch):
         "role": "developer",
         "content": [{"type": "input_text", "text": "Be helpful."}],
     }
-    assert sink["json"]["reasoning"] == {"effort": "high"}
+    assert sink["json"]["reasoning"] == {"effort": "high", "summary": "auto"}
     assert sink["json"]["prompt_cache_key"] == _prompt_cache_key_for_request(request)
     assert "prompt_cache_retention" not in sink["json"]
     assert list(sink["json"]).index("tools") < list(sink["json"]).index("input")
@@ -408,6 +409,25 @@ async def test_codex_client_stops_reading_when_response_incomplete_arrives(monke
     assert "session_id" not in sink["headers"]
 
 
+@pytest.mark.parametrize("model", ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
+@pytest.mark.parametrize("client_type", [CodexApiClient, OpenAIResponsesClient])
+def test_reasoning_summary_requested_without_explicit_effort(model, client_type):
+    client = client_type(_fake_codex_token())
+    request = ApiMessageRequest(
+        model=model,
+        messages=[ConversationMessage.from_user_text("Check the constraints.")],
+    )
+
+    body = client._request_body(request, request.messages)
+
+    assert body["reasoning"]["summary"] == "auto"
+    assert "Always write reasoning summaries in Korean" in body["instructions"]
+    assert "제목과 본문 모두 한국어 존댓말" in body["instructions"]
+    assert "including its headings and body" in body["instructions"]
+    assert "effort" not in body["reasoning"]
+    assert body["include"] == ["reasoning.encrypted_content"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
 async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypatch, model):
@@ -440,6 +460,7 @@ async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypat
 
     assert sink["json"]["reasoning"] == {
         "effort": "high",
+        "summary": "auto",
         "context": "all_turns",
     }
     assert sink["json"]["context_management"] == [
@@ -771,7 +792,7 @@ async def test_codex_client_emits_tool_use(monkeypatch):
     assert tool_use.id == "call_abc"
     assert tool_use.name == "glob"
     assert tool_use.input == {"pattern": "src/**/*.py"}
-    assert sink["json"]["reasoning"] == {"effort": "xhigh"}
+    assert sink["json"]["reasoning"] == {"effort": "xhigh", "summary": "auto"}
     assert sink["json"]["tools"][0]["name"] == "glob"
 
 

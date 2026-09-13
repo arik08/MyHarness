@@ -360,7 +360,7 @@ describe("ModalHost command help", () => {
     expect(document.querySelector(".command-help-layer")).toBeTruthy();
     expect(screen.getByText("스킬")).toBeTruthy();
     expect(screen.getByText("MCP")).toBeTruthy();
-    expect(screen.getByText("플러그인")).toBeTruthy();
+    expect(screen.queryByText("플러그인")).toBeNull();
     expect(screen.getByRole("button", { name: "닫기" })).toBeTruthy();
   });
 

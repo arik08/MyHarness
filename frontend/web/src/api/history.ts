@@ -14,13 +14,14 @@ export type HistorySnapshotResponse = Extract<BackendEvent, { type: "history_sna
 
 const historySnapshotRequests = new Map<string, Promise<HistorySnapshotResponse>>();
 
-export function listHistory(params: { workspacePath?: string; workspaceName?: string; limit?: number; offset?: number; search?: string } = {}) {
+export function listHistory(params: { workspacePath?: string; workspaceName?: string; limit?: number; offset?: number; search?: string; likedOnly?: boolean } = {}) {
   const query = new URLSearchParams();
   if (params.workspacePath) query.set("workspacePath", params.workspacePath);
   if (params.workspaceName) query.set("workspaceName", params.workspaceName);
   if (typeof params.limit === "number") query.set("limit", String(params.limit));
   if (typeof params.offset === "number") query.set("offset", String(params.offset));
   if (params.search) query.set("search", params.search);
+  if (params.likedOnly) query.set("likedOnly", "true");
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return getJson<HistoryListResponse>(`/api/history${suffix}`);
 }
@@ -33,9 +34,8 @@ export function loadHistorySnapshot(params: { sessionId: string; workspacePath?:
   const existing = historySnapshotRequests.get(key);
   if (existing) return existing;
   const request = getJson<HistorySnapshotResponse>(`/api/history/snapshot?${key}`)
-    .catch((error) => {
+    .finally(() => {
       historySnapshotRequests.delete(key);
-      throw error;
     });
   historySnapshotRequests.set(key, request);
   return request;
