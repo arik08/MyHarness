@@ -23,7 +23,7 @@ Use this checklist before final delivery of a visual HTML artifact.
 
 - Palette is limited and purposeful.
 - Typography uses a small scale: title, section heading, body, caption.
-- No rendered text is below `14px`, including captions, sources, metadata, KPI labels, and tooltips. Keep page titles `36px`, section headings `24px`, body `16px`, and presentation body `20px` (`18px` only for a verified readable dense layout).
+- No rendered text is below `15px`, including captions, sources, metadata, KPI labels, and tooltips. Keep page titles `36px`, section headings `24px`, body `17px`, and presentation body `20px` (`18px` only for a verified readable dense layout).
 - Narrow screens, dense tables, and constrained iframe previews reflow or split content instead of shrinking text below the lower bounds.
 - Chart-library, SVG, canvas, legend, and tooltip text follows the same lower bounds as equivalent HTML text.
 - Borders/shadows are subtle.
@@ -31,6 +31,8 @@ Use this checklist before final delivery of a visual HTML artifact.
 
 ## Export
 
+- Every raster image is converted to valid WebP and embedded in the HTML as a complete `data:image/webp;base64,...` URI, including CSS backgrounds and chart/diagram image assets. No image depends on an external URL, local/relative file, or temporary blob URL; inline vector icons/diagrams may remain SVG/HTML.
+- Embedded image payloads decode successfully, render in the actual preview without their original image sources, and preserve readable detail, aspect ratio, and any required transparency/animation. Content images have alt text and applicable source attribution.
 - Print/PDF styles preserve hierarchy and avoid awkward page breaks.
 - Important content is visible without relying on hover, animation, or collapsed panels.
 - Dark backgrounds print acceptably or switch to a print-safe theme.

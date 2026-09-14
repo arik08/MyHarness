@@ -19,6 +19,13 @@ Create browser-native visual deliverables that are polished enough to screenshot
 - Make the artifact readable in a constrained iframe and in a normal browser window.
 - Do not include secrets or unsanitized user-provided HTML.
 
+## Embedded Images
+
+- When an HTML artifact needs raster images, convert the actual image bytes to WebP, then Base64-encode the WebP bytes and embed them as `data:image/webp;base64,...` in the same HTML file. Apply this to image elements, CSS backgrounds, and image assets used by charts or diagrams. Do not leave external image URLs, relative/local file paths, or temporary blob URLs in the delivered artifact.
+- Use an available image conversion tool to produce real WebP bytes; changing a filename or MIME type is not conversion. Generate Base64 from the converted file programmatically, never invent or manually transcribe the payload. If conversion is unavailable, resolve the tool limitation or report it instead of claiming the image is embedded.
+- Resize images for their intended display dimensions and choose compression that preserves readable detail. Preserve aspect ratio, transparency, and animation when relevant; use lossless WebP for images whose text or fine lines would otherwise degrade. Keep semantic icons and vector diagrams inline as SVG/HTML rather than rasterizing them unnecessarily.
+- Include meaningful alt text for content images and retain source attribution where applicable. Before delivery, decode the embedded payloads to verify valid WebP images and inspect their rendering in the actual HTML preview. Verify that images still render without access to their original URLs or files; this image check does not establish offline availability of separately loaded script libraries.
+
 ## Decide the artifact type
 
 - **Executive/report page**: structured findings, tables, charts, recommendations, sources in a polished scrolling web report.
@@ -94,7 +101,7 @@ quarterly trends, sources, or a report:
 
 ## Minimum Type Sizes
 
-- All rendered text must be at least `14px`, including captions, sources, metadata, KPI labels, chart/SVG/canvas labels, legends, and tooltips. Keep body copy at least `16px`, section headings `24px`, and page titles `36px`.
+- All rendered text must be at least `15px`, including captions, sources, metadata, KPI labels, chart/SVG/canvas labels, legends, and tooltips. Keep body copy at least `17px`, section headings `24px`, and page titles `36px`.
 - For presentation or 16:9 artifacts, use body copy of at least `20px` (`18px` only for a verified readable dense layout).
 - Check final rendered sizes, including chart-library defaults and scaled diagrams. On narrow screens, in previews, and in print, wrap, reflow, or split content instead of shrinking text below these limits.
 
