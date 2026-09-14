@@ -20,6 +20,20 @@ function stylesheetBlock(selector: string) {
 }
 
 describe("WorkflowPanel", () => {
+  it.each(["provider-summary", "progress"] as const)("renders inline markdown in %s notes", (noteSource) => {
+    render(<AppStateProvider><WorkflowPanel events={[{
+      id: "markdown-note", toolName: "", title: "진행 메모", detail: "**Checking sources** and *comparing* `PPTX`", status: "done", role: "reasoning", noteSource,
+    }]} /></AppStateProvider>);
+    const note = document.querySelector(noteSource === "progress" ? ".workflow-progress-prose" : ".workflow-reasoning-preview")!;
+    expect(note.querySelector("strong")?.textContent).toBe("Checking sources");
+    expect(note.querySelector("em")?.textContent).toBe("comparing");
+    expect(note.querySelector("code")?.textContent).toBe("PPTX");
+    expect(note.textContent).not.toContain("**");
+    if (noteSource === "provider-summary") {
+      act(() => screen.getByRole("button", { name: "추론 요약 펼치기" }).click());
+      expect(document.querySelector(".workflow-reasoning-full strong")?.textContent).toBe("Checking sources");
+    }
+  });
   it.each([false, true])("keeps warning details inside disclosure without a summary alert (mixed: %s)", (mixed) => {
     const parent = { id: "warning-group", toolName: "", title: "조회", detail: "", status: "warning" as const, role: "purpose" as const, groupId: "warning-group" };
     const child = { id: "warning-child", toolName: "web_fetch", title: "웹 페이지 조회", detail: "접근 제한", status: "warning" as const, level: "child" as const, groupId: parent.groupId };
@@ -42,10 +56,10 @@ describe("WorkflowPanel", () => {
     expect(document.querySelectorAll(".workflow-reasoning-summary")).toHaveLength(1);
     expect(document.querySelector(".workflow-reasoning-full")).toBeNull();
     act(() => toggle.click());
-    expect(document.querySelector(".workflow-reasoning-full")?.textContent).toBe(note.detail);
+    expect(document.querySelector(".workflow-reasoning-full")?.textContent).toBe("Checking sources. · Comparing all available evidence.");
     rerender(<AppStateProvider><WorkflowPanel events={[{ ...note, detail: `${note.detail}\nUpdated.` }, parent]} /></AppStateProvider>);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector(".workflow-reasoning-full")?.textContent).toContain("Updated.");
+    expect(document.querySelector(".workflow-reasoning-full")?.textContent).toBe("Checking sources. · Comparing all available evidence. · Updated.");
     act(() => toggle.click());
     expect(document.querySelector(".workflow-reasoning-full")).toBeNull();
   });
@@ -118,7 +132,7 @@ describe("WorkflowPanel", () => {
     expect(screen.getAllByText("내부 추론")).toHaveLength(1);
     expect(screen.getAllByText("진행 메모")).toHaveLength(1);
     expect(screen.getByText("공식 자료를 먼저 검토합니다.").closest(".workflow-copy")?.textContent).toContain("내부 추론");
-    expect(screen.getByText("Checking the report.").classList.contains("workflow-progress-prose")).toBe(true);
+    expect(screen.getByText("Checking the report.").closest(".workflow-progress-prose")).toBeTruthy();
   });
   it("does not display per-step seconds even when timing is available", () => {
     const timed = { id: "timed", toolName: "mcp__company-disclosure__search_catalog", title: "search", detail: "response", status: "done" as const, startedAtMs: 1000, finishedAtMs: 4500 };

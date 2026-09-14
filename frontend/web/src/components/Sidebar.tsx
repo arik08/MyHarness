@@ -860,7 +860,7 @@ export function Sidebar() {
   }
 
   async function moveSelectedHistory(targetWorkspace: Workspace) {
-    if (historyBulkBusy || historyBulkIds.size === 0) return;
+    if (historyBulkBusy || historyBulkIds.size === 0 || !historyBulkCanMove) return;
     setHistoryBulkBusy(true);
     const succeeded: string[] = [];
     try {
@@ -1243,12 +1243,23 @@ export function Sidebar() {
     && (!likedHistoryOnly || item.liked === true)
     && (!hasHistorySearch || historyTitleMatches(titleForHistoryItem(item), historySearch))
   ));
-  const historyBulkSelectableItems = filteredRenderedHistory.filter((item) => (
+  const historyMovableItems = filteredRenderedHistory.filter((item) => (
     !item.pending
     && !item.live
     && !item.busy
     && !isLiveOnlyHistoryItem(item)
     && !isActiveHistoryItem(item, activeHistoryValue, state.sessionId)
+  ));
+  const historyMovableIds = new Set(historyMovableItems.map((item) => item.value));
+  const historyBulkCanMove = [...historyBulkIds].every((id) => historyMovableIds.has(id));
+  const historyBulkSelectableItems = filteredRenderedHistory.filter((item) => (
+    !isCurrentLiveHistoryItem(item, state.sessionId)
+    && item.value !== state.pendingHistoryId
+    && !(isActiveHistoryItem(item, activeHistoryValue, state.sessionId) && responseVisiblyBusy)
+    && !(item.live && item.busy && !isActiveHistoryItem(item, activeHistoryValue, state.sessionId)
+      && (item.liveSessionId && state.liveSessionViewsBySessionId[item.liveSessionId]?.messages
+        ? isConversationResponseVisiblyBusy(true, state.liveSessionViewsBySessionId[item.liveSessionId].messages)
+        : true))
   ));
   const historyBulkSelectableIds = new Set(historyBulkSelectableItems.map((item) => item.value));
   const historyBulkSelectableKey = [...historyBulkSelectableIds].join("\u0000");
@@ -1495,7 +1506,7 @@ export function Sidebar() {
                 type="button"
                 aria-label="선택한 세션 워크스페이스 변경"
                 data-tooltip="이동"
-                disabled={!historyBulkIds.size || historyBulkBusy || state.workspaces.length < 2}
+                disabled={!historyBulkIds.size || historyBulkBusy || !historyBulkCanMove || state.workspaces.length < 2}
                 onClick={() => setHistoryBulkMoveOpen((open) => !open)}
               >
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3Z" /><path d="m14 13 2 2 4-4" /></svg>
@@ -1853,7 +1864,7 @@ export function Sidebar() {
             type="button"
             role="menuitem"
             aria-expanded={historyMoveMenuOpen}
-            disabled={!historyBulkSelectableIds.has(openHistoryMenuItem.value) || state.workspaces.filter((workspace) => workspace.path !== (openHistoryMenuItem.workspace?.path || state.workspacePath)).length === 0}
+            disabled={!historyMovableIds.has(openHistoryMenuItem.value) || state.workspaces.filter((workspace) => workspace.path !== (openHistoryMenuItem.workspace?.path || state.workspacePath)).length === 0}
             onClick={() => {
               setHistoryDeleteArmedId("");
               setHistoryMoveMenuOpen((open) => !open);

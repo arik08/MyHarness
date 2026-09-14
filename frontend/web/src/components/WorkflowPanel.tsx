@@ -1641,19 +1641,23 @@ function WorkflowStep({
   }, [animate, event.id]);
 
   if (event.role === "reasoning" && event.noteSource === "progress") {
-    return <p className="workflow-progress-prose" data-workflow-role="progress">{detail}</p>;
+    return <p className="workflow-progress-prose" data-workflow-role="progress"><InlineMarkdown text={detail} /></p>;
   }
 
   if (event.role === "reasoning" && event.noteSource === "provider-summary") {
+    const summaryText = event.detail.split(/\r\n|[\n\r]/)
+      .map((part) => part.replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .join(" · ");
     return <div className="workflow-copy workflow-reasoning-summary" data-workflow-role="reasoning">
       <button type="button" className="workflow-reasoning-toggle" aria-expanded={rawExpanded}
         aria-label={rawExpanded ? "추론 요약 접기" : "추론 요약 펼치기"}
         onClick={() => setRawExpanded((expanded) => !expanded)}>
         <span aria-hidden="true">{rawExpanded ? "⌄" : "›"}</span>
         <span className="workflow-approach-label">내부 추론</span>
-        <span className="workflow-reasoning-preview">{event.detail.replace(/\s+/g, " ")}</span>
+        <span className="workflow-reasoning-preview"><InlineMarkdown text={summaryText} /></span>
       </button>
-      {rawExpanded ? <div className="workflow-reasoning-full"><InlineMarkdown text={event.detail} /></div> : null}
+      {rawExpanded ? <div className="workflow-reasoning-full"><InlineMarkdown text={summaryText} /></div> : null}
     </div>;
   }
 

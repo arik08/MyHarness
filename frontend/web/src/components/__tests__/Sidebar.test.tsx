@@ -353,6 +353,59 @@ describe("Sidebar", () => {
     expect(screen.queryByText("둘째 대화")).toBeNull();
   });
 
+  it.each([false, true])("bulk deletes the active pending conversation with other records (admin=%s)", async (adminMode) => {
+    render(<AppStateProvider initialState={{
+      ...initialAppState, adminMode, sessionId: "web-current", activeHistoryId: "saved-current",
+      clientId: "client-1", workspaceName: "Default", workspacePath: "C:/demo",
+      workspaces: [{ name: "Default", path: "C:/demo" }, { name: "Other", path: "C:/other" }],
+      history: [
+        { value: "saved-current", label: "현재 대화", pending: true },
+        { value: "saved-other", label: "다른 대화" },
+      ],
+    }}><Sidebar /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "채팅 세션 관리" }));
+    await userEvent.click(screen.getByRole("button", { name: "모든 세션 선택" }));
+    expect(screen.getByText("2개 선택")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "선택한 세션 워크스페이스 변경" }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 삭제" }));
+    expect(hideHistory).not.toHaveBeenCalled();
+    expect(deleteHistory).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 삭제 확인, 한 번 더 누르면 삭제" }));
+    if (adminMode) {
+      await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith("saved-other", "C:/demo", "Default"));
+      expect(sendBackendRequest).toHaveBeenCalledWith("web-current", "client-1", { type: "delete_session", value: "saved-current" });
+    } else {
+      await waitFor(() => expect(hideHistory).toHaveBeenCalledTimes(2));
+      expect(vi.mocked(hideHistory).mock.calls.map((call) => call[0])).toEqual(["saved-current", "saved-other"]);
+    }
+    expect(document.querySelectorAll(".history-bulk-row")).toHaveLength(0);
+  });
+
+  it("bulk removes idle live records and retains failed selections for retry", async () => {
+    vi.mocked(hideHistory).mockRejectedValueOnce(new Error("temporary failure"));
+    render(<AppStateProvider initialState={{
+      ...initialAppState, sessionId: "web-current", clientId: "client-1",
+      workspaceName: "Default", workspacePath: "C:/demo",
+      history: [
+        { value: "saved-live", label: "열린 대화", live: true, liveSessionId: "web-other" },
+        { value: "saved-retry", label: "재시도 대화" },
+        { value: "saved-ok", label: "일반 대화" },
+      ],
+    }}><Sidebar /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "채팅 세션 관리" }));
+    await userEvent.click(screen.getByRole("button", { name: "모든 세션 선택" }));
+    expect(screen.getByText("3개 선택")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 삭제" }));
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 삭제 확인, 한 번 더 누르면 삭제" }));
+    await waitFor(() => expect(screen.getByText("1개 선택")).toBeTruthy());
+    expect(shutdownSession).toHaveBeenCalledWith("web-other", "client-1");
+    expect(hideHistory).toHaveBeenCalledWith("saved-ok", "C:/demo", "Default");
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 삭제" }));
+    await userEvent.click(screen.getByRole("button", { name: "선택한 세션 삭제 확인, 한 번 더 누르면 삭제" }));
+    await waitFor(() => expect(document.querySelectorAll(".history-bulk-row")).toHaveLength(0));
+    expect(vi.mocked(hideHistory).mock.calls.map((call) => call[0])).toEqual(["saved-retry", "saved-ok", "saved-retry"]);
+  });
+
   it("requires a second confirmation before hiding multiple selected sessions", async () => {
     render(
       <AppStateProvider
