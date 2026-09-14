@@ -6,7 +6,7 @@ import hashlib
 import re
 import textwrap
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -19,7 +19,15 @@ MAX_TRACKED_FAILURES = 20
 MAX_TRACKED_LEARNED_SKILLS = 12
 MAX_EVIDENCE_BLOCKS_PER_SKILL = 8
 YOUTUBE_TRANSCRIPT_SIGNATURE = "youtube-transcript-yt-dlp"
-DEFAULT_LEARNING_SKILL_CATEGORY = "POSCO_Skill"
+DEFAULT_LEARNING_SKILL_CATEGORY = "General"
+
+LEARNING_SKILL_GROUPS = {
+    "web": ("learned-web-research-recovery", "web search and fetch failures"),
+    "command": ("learned-command-failures", "shell commands, tests and local helper failures"),
+    "mcp": ("learned-mcp-recovery", "MCP source routing, input validation and retrieval failures"),
+    "file": ("learned-file-recovery", "file read, write, edit and artifact validation failures"),
+    "tool": ("learned-tool-recovery", "other tool failures without a more specific recovery group"),
+}
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+"),
@@ -52,7 +60,7 @@ class LearningResult:
 
 
 def get_default_learning_skills_dir() -> Path:
-    """Return the program-local POSCO category used for learned skills."""
+    """Return the shared program-local category used for learned skills."""
 
     program_dirs = get_program_skills_dirs()
     if program_dirs:
@@ -189,7 +197,19 @@ def persist_learning_candidate(
 
         patterns_file.parent.mkdir(parents=True, exist_ok=True)
         if not skill_file.exists():
-            atomic_write_text(skill_file, _render_skill(candidate))
+            _, scope = LEARNING_SKILL_GROUPS[_candidate_learning_category(candidate)]
+            grouped = replace(
+                candidate,
+                skill_name=skill_dir.name,
+                trigger_description=f"Use for repeated {scope}; diagnose before retrying.",
+                do_next_time=(
+                    "Diagnose the current failure and consult the relevant evidence only. "
+                    "Use an available reusable helper and verify the failed operation succeeds; "
+                    "loading a skill or inspecting an unrelated artifact is not recovery proof."
+                ),
+                avoid_next_time="Do not replay historical inputs without diagnosing the current failure.",
+            )
+            atomic_write_text(skill_file, _render_skill(grouped))
             action = "created"
         else:
             action = "updated"
@@ -253,69 +273,12 @@ def _render_skill(candidate: LearningCandidate) -> str:
 
 
 def _select_learning_skill_dir(root: Path, candidate: LearningCandidate) -> Path:
-    exact_dir = root / candidate.skill_name
-    if (exact_dir / "SKILL.md").exists():
-        return exact_dir
-
-    preferred_name = _preferred_existing_learned_skill_name(candidate)
-    if preferred_name:
-        preferred_dir = root / preferred_name
-        if (preferred_dir / "SKILL.md").exists():
-            return preferred_dir
-
-    compatible_dir = _find_compatible_existing_learned_skill(root, candidate)
-    if compatible_dir is not None:
-        return compatible_dir
-
-    return exact_dir
+    # Stable group names also apply on a fresh installation and to unseen tools.
+    name, _ = LEARNING_SKILL_GROUPS[_candidate_learning_category(candidate)]
+    return root / name
 
 
-def _preferred_existing_learned_skill_name(candidate: LearningCandidate) -> str | None:
-    signature = candidate.failure_signature
-    skill_name = candidate.skill_name
-    if (
-        signature.startswith(("web-fetch-", "web-search-"))
-        or skill_name.startswith(("learned-web-fetch-", "learned-web-search-"))
-    ):
-        return "learned-web-research-recovery"
-    if (
-        signature == YOUTUBE_TRANSCRIPT_SIGNATURE
-        or skill_name.startswith("learned-cmd-")
-        or skill_name.startswith("learned-category-bash")
-        or signature.startswith(("cmd-", "bash-", "shell-", "npm-", "python-", "yt-dlp-"))
-    ):
-        return "learned-command-failures"
-    return None
-
-
-def _find_compatible_existing_learned_skill(
-    root: Path,
-    candidate: LearningCandidate,
-) -> Path | None:
-    if not root.exists():
-        return None
-    category = _candidate_learning_category(candidate)
-    if category is None:
-        return None
-    for skill_dir in sorted(root.glob("learned-*")):
-        skill_file = skill_dir / "SKILL.md"
-        if not skill_file.exists():
-            continue
-        text = _redact(skill_file.read_text(encoding="utf-8", errors="replace").lower())
-        if category == "web" and any(
-            keyword in text
-            for keyword in ("web search", "web_search", "web fetch", "web_fetch", "source-backed")
-        ):
-            return skill_dir
-        if category == "command" and any(
-            keyword in text
-            for keyword in ("command", "shell", "cmd", "npm", "python", "yt-dlp", "test command")
-        ):
-            return skill_dir
-    return None
-
-
-def _candidate_learning_category(candidate: LearningCandidate) -> str | None:
+def _candidate_learning_category(candidate: LearningCandidate) -> str:
     signature = candidate.failure_signature
     skill_name = candidate.skill_name
     if signature.startswith(("web-fetch-", "web-search-")) or skill_name.startswith(
@@ -328,7 +291,11 @@ def _candidate_learning_category(candidate: LearningCandidate) -> str | None:
         or signature.startswith(("cmd-", "bash-", "shell-", "npm-", "python-", "yt-dlp-"))
     ):
         return "command"
-    return None
+    if signature.startswith("mcp-") or skill_name.startswith("learned-mcp-"):
+        return "mcp"
+    if signature.startswith(("read-file-", "write-file-", "edit-file-", "apply-patch-")):
+        return "file"
+    return "tool"
 
 
 def _render_pattern(candidate: LearningCandidate) -> str:

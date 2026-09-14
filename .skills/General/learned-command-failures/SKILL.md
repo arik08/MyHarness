@@ -29,3 +29,8 @@ Automatically consolidated guidance from prior `learned-cmd-*` and shell failure
 - Do not retry the exact command just because it appears in old evidence.
 - Do not treat setup banners or partial stdout as the root cause.
 - Do not open a historical file unless the current failure points to that file.
+
+## Learning evidence
+- Add new observations to this common failure-class skill, not a new skill per command, source, identifier or error message.
+- Consult [recent patterns](references/learned-patterns.md) only for the current failure. Verify that the recorded correction actually applies before retrying.
+- [Historical evidence](references/historical-evidence.md) preserves previous observations, including weak or unrelated claimed fixes. It is provenance, not an executable recovery procedure.

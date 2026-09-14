@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from myharness.learning.service import (
     LearningCandidate,
     analyze_learning_candidate,
@@ -13,13 +15,13 @@ from myharness.learning.service import (
 from myharness.skills import load_skill_registry
 
 
-def test_default_learning_skills_dir_is_posco_category(tmp_path: Path, monkeypatch):
+def test_default_learning_skills_dir_is_general_category(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "myharness.learning.service.get_program_skills_dirs",
         lambda: [tmp_path / ".skills"],
     )
 
-    assert get_default_learning_skills_dir() == tmp_path / ".skills" / "POSCO_Skill"
+    assert get_default_learning_skills_dir() == tmp_path / ".skills" / "General"
 
 
 def test_repeated_verified_failure_creates_program_local_skill(tmp_path: Path):
@@ -43,11 +45,11 @@ def test_repeated_verified_failure_creates_program_local_skill(tmp_path: Path):
     assert (result.skill_path.parent / ".learning.lock").exists()
     learned = metadata.get("recent_learned_skills")
     assert isinstance(learned, list)
-    assert learned[-1]["skill"] == result.candidate.skill_name
+    assert learned[-1]["skill"] == result.skill_path.parent.name
     assert metadata["skill_registry_dirty"] is True
 
     registry = load_skill_registry(tmp_path, extra_skill_dirs=[tmp_path / ".skills"])
-    assert registry.get(result.candidate.skill_name) is not None
+    assert registry.get(result.skill_path.parent.name) is not None
 
 
 def test_single_failure_does_not_create_candidate():
@@ -307,4 +309,56 @@ def test_persist_caps_evidence_and_skips_duplicate_signature_lesson(tmp_path: Pa
     assert "hash0000" not in patterns
     assert "hash0001" not in patterns
     assert "hash0011" in patterns
+
+
+@pytest.mark.parametrize(("signatures", "name"), [
+    (("web-search-no-results", "web-fetch-403-new-example"), "learned-web-research-recovery"),
+    (("cmd-new-command-error", "python-unseen-helper-error"), "learned-command-failures"),
+    (("mcp-new-provider-invalid-id", "mcp-another-provider-timeout"), "learned-mcp-recovery"),
+    (("write-file-new-chart-rejected", "read-file-missing-input"), "learned-file-recovery"),
+    (("unregistered-tool-failure", "another-new-operation-error"), "learned-tool-recovery"),
+])
+def test_new_failures_share_common_group_on_fresh_install(tmp_path, monkeypatch, signatures, name):
+    program_skills = tmp_path / ".skills"
+    monkeypatch.setattr("myharness.learning.service.get_program_skills_dirs", lambda: [program_skills])
+    monkeypatch.setattr("myharness.skills.loader.get_program_skills_dirs", lambda: [program_skills])
+    for index, signature in enumerate(signatures):
+        candidate = LearningCandidate(
+            skill_name=f"learned-{signature}", trigger_description="One specific failure",
+            lesson=f"Observed failure {index}", do_next_time="One specific correction",
+            avoid_next_time="One specific input", evidence_hash=f"new-evidence-{index}",
+            confidence=0.85, failure_signature=signature,
+        )
+        result = persist_learning_candidate(candidate)
+        assert result.skill_path == program_skills / "General" / name / "SKILL.md"
+        assert result.action == ("created" if index == 0 else "updated")
+    assert len(list(program_skills.rglob("SKILL.md"))) == 1
+    assert not (program_skills / "POSCO_Skill").exists()
+    registry = load_skill_registry(tmp_path, extra_skill_dirs=[program_skills])
+    assert registry.get(name) is not None
+    assert "One specific failure" not in result.skill_path.read_text(encoding="utf-8")
+    evidence = result.skill_path.parent / "references" / "learned-patterns.md"
+    assert evidence.read_text(encoding="utf-8").count("## Evidence") == 2
+
+
+def test_learning_keeps_curated_guidance_and_historical_evidence(tmp_path):
+    root = tmp_path / "General"
+    folder = root / "learned-mcp-recovery"
+    refs = folder / "references"
+    refs.mkdir(parents=True)
+    instructions = "---\nname: learned-mcp-recovery\ndescription: MCP recovery\n---\nCurated instructions\n"
+    (folder / "SKILL.md").write_text(instructions, encoding="utf-8")
+    archive = refs / "historical-evidence.md"
+    archive.write_text("Preserved historical evidence", encoding="utf-8")
+    for index in range(10):
+        candidate = LearningCandidate(
+            skill_name=f"learned-mcp-provider-{index}", trigger_description="MCP failure",
+            lesson=f"Correction {index}", do_next_time="Retry corrected request",
+            avoid_next_time="Invalid input", evidence_hash=f"mcp-{index}",
+            confidence=0.85, failure_signature=f"mcp-provider-{index}-invalid",
+        )
+        persist_learning_candidate(candidate, skills_dir=root)
+    assert (folder / "SKILL.md").read_text(encoding="utf-8") == instructions
+    assert archive.read_text(encoding="utf-8") == "Preserved historical evidence"
+    assert len(list(root.glob("*/SKILL.md"))) == 1
 

@@ -31,3 +31,8 @@ Automatically consolidated guidance from prior `learned-web-*` and web-fetch fai
 - Do not answer from a generated local report as if it were the primary source.
 - Do not conclude absence from one no-result query.
 - Do not keep chasing near-identical blocked URLs.
+
+## Learning evidence
+- Add new observations to this common failure-class skill, not a new skill per command, source, identifier or error message.
+- Consult [recent patterns](references/learned-patterns.md) only for the current failure. Verify that the recorded correction actually applies before retrying.
+- [Historical evidence](references/historical-evidence.md) preserves previous observations, including weak or unrelated claimed fixes. It is provenance, not an executable recovery procedure.

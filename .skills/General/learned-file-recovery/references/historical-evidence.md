@@ -1,3 +1,9 @@
+# Historical learning evidence
+
+Preserved for provenance only. Historical confidence and claimed fixes are unverified here. Loading a skill, inspecting an unrelated file, or fetching a different claim is not proof of recovery. Do not replay old commands or paths.
+
+## Original skill: learned-write-file-outputs-샘플-mermaid-보고서-html-mermaid-prefl
+
 ## Evidence 8e89261a18292253
 - Confidence: 0.95
 - Signature: `write-file-outputs-샘플-mermaid-보고서-html-mermaid-preflight-failed-샘플-mermaid-보고서-h`

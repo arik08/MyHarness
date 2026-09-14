@@ -80,7 +80,9 @@ class SaveSkillTool(BaseTool):
         "You must first load skill-creator with the skill tool in the current conversation session; "
         "this tool rejects direct calls that skip those instructions. "
         "Use this instead of running skill-creator Python scripts and then reading or editing a template. "
-        "New skills are saved under the program-local .skills/POSCO_Skill category, independent of "
+        "New skills are saved under the program-local .skills/POSCO_Skill category; learned-* recovery "
+        "skills belong in the common .skills/General category. Reuse existing failure-class skills "
+        "instead of creating one per error. Both locations are independent of "
         "the current chat workspace. The tool writes UTF-8 SKILL.md, agents/openai.yaml, and optional "
         "supporting_files under scripts/, references/, or assets/. Put reusable executable Python in a "
         "scripts/*.py supporting file so its creation is visible in the workflow. The tool normalizes UI "
@@ -153,7 +155,9 @@ class SaveSkillTool(BaseTool):
                     output=f"Skill '{name}' already exists. Use mode='update' to replace it intentionally.",
                     is_error=True,
                 )
-            skill_dir = get_default_learning_skills_dir().resolve() / name
+            learning_root = get_default_learning_skills_dir().resolve()
+            category_root = learning_root if name.startswith("learned-") else learning_root.parent / "POSCO_Skill"
+            skill_dir = category_root / name
             action = "Created"
         else:
             if existing is None or not existing.path:

@@ -7,6 +7,23 @@ from myharness.tools.save_skill_tool import SaveSkillTool, SaveSkillToolInput
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("name", "category"), [
+    ("learned-mcp-recovery", "General"), ("ordinary-new-skill", "POSCO_Skill"),
+])
+async def test_save_skill_routes_learning_to_common_category(tmp_path, monkeypatch, name, category):
+    root = tmp_path / "program" / ".skills"
+    monkeypatch.setattr(save_skill_module, "get_default_learning_skills_dir", lambda: root / "General")
+    monkeypatch.setattr(save_skill_module, "load_skill_registry", lambda *args, **kwargs: {})
+    result = await SaveSkillTool().execute(
+        SaveSkillToolInput(name=name, description="Reusable workflow guidance.", instructions="# Guidance\n\nCheck the current inputs."),
+        ToolExecutionContext(cwd=tmp_path, metadata={"invoked_skills": ["skill-creator"]}),
+    )
+    assert not result.is_error
+    assert (root / category / name / "SKILL.md").exists()
+    assert len(list(root.rglob("SKILL.md"))) == 1
+
+
+@pytest.mark.asyncio
 async def test_save_skill_creates_complete_skill_with_supporting_script(tmp_path, monkeypatch):
     target_root = tmp_path / "program" / ".skills" / "POSCO_Skill"
     monkeypatch.setattr(save_skill_module, "get_default_learning_skills_dir", lambda: target_root)
