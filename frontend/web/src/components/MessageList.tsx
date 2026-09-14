@@ -187,7 +187,7 @@ function isNoisyBackendLogMessage(message: ChatMessage) {
   }
   return (
     /\bProcessing request of type\b/.test(text)
-    || /^(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py:\d+)(?:\s+(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py:\d+))*$/.test(text)
+    || /^(?=.*(?:[A-Za-z][A-Za-z0-9]*Request|INFO|server\.py|:))(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py(?::\d*)?|:\d*|\d+)(?:\s+(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py(?::\d*)?|:\d*|\d+))*$/.test(text)
   );
 }
 
@@ -422,9 +422,15 @@ export function MessageList() {
       <button className="message-jump-to-latest" type="button"
         aria-label="최신 응답으로 이동"
         onClick={jumpToLatest}>
+        {shouldFollowGrowingTail ? (
+          <span className="message-jump-streaming-dots" aria-hidden="true">
+            <span /><span /><span />
+          </span>
+        ) : (
         <svg aria-hidden="true" viewBox="0 0 24 24">
           <path d="M12 5v14m-6-6 6 6 6-6" />
         </svg>
+        )}
       </button>
     ) : null}
     </>

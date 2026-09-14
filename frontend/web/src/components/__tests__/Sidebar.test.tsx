@@ -2268,6 +2268,25 @@ describe("Sidebar", () => {
     expect(startSession).not.toHaveBeenCalled();
   });
 
+  it("does not attach saved history to a runtime reused for another conversation", async () => {
+    vi.mocked(loadHistorySnapshot).mockResolvedValue({
+      type: "history_snapshot", value: "saved-original", preview_only: true,
+      history_events: [{ type: "user", text: "original question" }],
+    });
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{
+      sessionId: "reused-runtime", savedSessionId: "saved-new", busy: false, createdAt: 1,
+    }] });
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      sessionId: "current-runtime", clientId: "client-1", workspaceName: "Default", workspacePath: "C:/demo",
+      history: [{ value: "saved-original", label: "Original conversation", live: true, liveSessionId: "reused-runtime" }],
+    }}><Sidebar /><ChatStateProbe /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "Original conversation" }));
+    await waitFor(() => expect(listLiveSessions).toHaveBeenCalled());
+    expect(screen.getByTestId("session").textContent).toBe("current-runtime");
+    expect(screen.getByTestId("active-history").textContent).toBe("saved-original");
+    expect(screen.getByTestId("message-texts").textContent).toContain("original question");
+  });
+
   it("reattaches to an unsaved live backend session by web session id", async () => {
     vi.mocked(listLiveSessions).mockResolvedValue({
       sessions: [{

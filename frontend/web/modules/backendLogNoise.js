@@ -14,6 +14,6 @@ export function isNoisyBackendLogLine(line) {
   }
   return (
     /\bProcessing request of type\b/.test(text)
-    || /^(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py:\d+)(?:\s+(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py:\d+))*$/.test(text)
+    || /^(?=.*(?:[A-Za-z][A-Za-z0-9]*Request|INFO|server\.py|:))(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py(?::\d*)?|:\d*|\d+)(?:\s+(?:(?:[A-Za-z][A-Za-z0-9]*Request)|INFO|server\.py(?::\d*)?|:\d*|\d+))*$/.test(text)
   );
 }

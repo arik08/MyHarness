@@ -15,6 +15,7 @@ from myharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
     ApiRetryEvent,
+    ApiReasoningSummaryEvent,
     ApiStreamEvent,
     ApiTextDeltaEvent,
     ApiToolCallDeltaEvent,
@@ -28,6 +29,7 @@ from myharness.engine.stream_events import (
     CompactProgressEvent,
     ErrorEvent,
     StatusEvent,
+    ReasoningSummaryEvent,
     StreamEvent,
     ToolExecutionCompleted,
     ToolExecutionStarted,
@@ -977,6 +979,9 @@ async def run_query(
                     continue
                 if isinstance(event, ApiTextDeltaEvent):
                     yield AssistantTextDelta(text=event.text), None
+                    continue
+                if isinstance(event, ApiReasoningSummaryEvent):
+                    yield ReasoningSummaryEvent(text=event.text), None
                     continue
                 if isinstance(event, ApiToolCallDeltaEvent):
                     yield ToolInputDelta(

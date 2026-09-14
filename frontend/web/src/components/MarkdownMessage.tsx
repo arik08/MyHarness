@@ -245,11 +245,12 @@ function isSourceOnlyParagraph(paragraph: Element) {
   return paragraphText === chipText;
 }
 
-function inlineSourceAttachTarget(element: Element) {
-  if (element.matches("p, li, td, th")) {
-    return element;
+function inlineSourceAttachTarget(element: Element): Element {
+  const last = element.lastElementChild;
+  if (last?.matches("p, li, ul, ol, blockquote, td, th, tr, tbody, thead, table")) {
+    return inlineSourceAttachTarget(last);
   }
-  return element.querySelector("p:last-child, li:last-child, td:last-child, th:last-child") || element;
+  return element;
 }
 
 function attachSourceOnlyParagraphs(root: DocumentFragment) {
@@ -270,9 +271,17 @@ function attachSourceOnlyParagraphs(root: DocumentFragment) {
 }
 
 function trimWhitespaceBeforeInlineSource(link: HTMLAnchorElement) {
-  const previous = link.previousSibling;
-  if (previous?.nodeType === Node.TEXT_NODE && previous.textContent) {
-    previous.textContent = previous.textContent.replace(/\s+$/u, "");
+  let previous = link.previousSibling;
+  while (previous) {
+    if (previous.nodeType === Node.TEXT_NODE) {
+      previous.textContent = (previous.textContent || "").replace(/\s+$/u, "");
+      if (previous.textContent) break;
+    } else if (!(previous instanceof Element && previous.matches("br"))) {
+      break;
+    }
+    const next = previous.previousSibling;
+    previous.parentNode?.removeChild(previous);
+    previous = next;
   }
 }
 

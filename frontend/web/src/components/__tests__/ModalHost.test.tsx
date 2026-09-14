@@ -49,8 +49,8 @@ describe("ModalHost download settings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(readConcurrencySettings).mockResolvedValue({
-      maxActiveSessions: 20,
-      maxBusySessions: 8,
+      maxCpuPercent: 95,
+      maxMemoryPercent: 98,
       maxBusySessionsPerClient: 3,
       idleSessionTimeoutMinutes: 30,
     });
@@ -154,7 +154,7 @@ describe("ModalHost download settings", () => {
     expect(screen.queryByText("숨긴 히스토리와 완전 삭제 권한")).toBeNull();
     expect(screen.queryByRole("button", { name: /명령어 셀/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Yolo 모드/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /동시 사용 제한/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /서버 부하 및 대기 설정/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /작업공간 범위/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /자동학습 스킬 표시/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /P-GPT API 키/ })).toBeNull();
@@ -167,7 +167,7 @@ describe("ModalHost download settings", () => {
     expect(screen.getByText("관리자 모드 적용 중")).toBeTruthy();
     expect(screen.getByRole("button", { name: /명령어 셀/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Yolo 모드/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /동시 사용 제한/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /서버 부하 및 대기 설정/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /작업공간 범위/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /자동학습 스킬 표시/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /P-GPT API 키/ })).toBeTruthy();
@@ -182,7 +182,7 @@ describe("ModalHost download settings", () => {
     expect(localStorage.getItem("myharness:adminMode")).toBe("0");
     expect(screen.queryByText("숨긴 히스토리와 완전 삭제 권한")).toBeNull();
     expect(screen.queryByRole("button", { name: /명령어 셀/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /동시 사용 제한/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /서버 부하 및 대기 설정/ })).toBeNull();
     expect(screen.queryByText("Admin mode에서 변경")).toBeNull();
   });
 
@@ -192,22 +192,22 @@ describe("ModalHost download settings", () => {
     await userEvent.click(screen.getByRole("button", { name: /Admin mode/ }));
     await userEvent.type(screen.getByLabelText("Admin mode 비밀번호"), "1");
     await userEvent.click(screen.getByRole("button", { name: "Admin mode 진입" }));
-    await userEvent.click(screen.getByRole("button", { name: /동시 사용 제한/ }));
+    await userEvent.click(screen.getByRole("button", { name: /서버 부하 및 대기 설정/ }));
 
-    const activeSessions = await screen.findByRole("spinbutton", { name: "열린 작업 세션" });
-    expect((activeSessions as HTMLInputElement).value).toBe("20");
-    expect((screen.getByRole("spinbutton", { name: "동시 AI 응답" }) as HTMLInputElement).value).toBe("8");
+    const activeSessions = await screen.findByRole("spinbutton", { name: "CPU 사용률 기준 (%)" });
+    expect((activeSessions as HTMLInputElement).value).toBe("95");
+    expect((screen.getByRole("spinbutton", { name: "메모리 사용률 기준 (%)" }) as HTMLInputElement).value).toBe("98");
     expect((screen.getByRole("spinbutton", { name: "브라우저당 동시 AI 응답" }) as HTMLInputElement).value).toBe("3");
     expect((screen.getByRole("spinbutton", { name: "유휴 세션 종료 (분)" }) as HTMLInputElement).value).toBe("30");
-    expect(screen.getByText(/상한을 넘은 새 세션과 응답은 순서가 표시되는 대기열/)).toBeTruthy();
+    expect(screen.getByText(/대기 인원과 내 순번을 표시/)).toBeTruthy();
 
     await userEvent.clear(activeSessions);
-    await userEvent.type(activeSessions, "24");
+    await userEvent.type(activeSessions, "90");
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
 
     await waitFor(() => expect(saveConcurrencySettings).toHaveBeenCalledWith({
-      maxActiveSessions: 24,
-      maxBusySessions: 8,
+      maxCpuPercent: 90,
+      maxMemoryPercent: 98,
       maxBusySessionsPerClient: 3,
       idleSessionTimeoutMinutes: 30,
     }));

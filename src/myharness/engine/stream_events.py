@@ -64,6 +64,13 @@ class ErrorEvent:
 
 
 @dataclass(frozen=True)
+class ReasoningSummaryEvent:
+    """Public provider summary for the workflow view."""
+
+    text: str
+
+
+@dataclass(frozen=True)
 class StatusEvent:
     """A transient system status message shown to the user."""
 
@@ -100,5 +107,6 @@ StreamEvent = (
     | ToolExecutionCompleted
     | ErrorEvent
     | StatusEvent
+    | ReasoningSummaryEvent
     | CompactProgressEvent
 )

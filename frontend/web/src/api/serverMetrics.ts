@@ -16,8 +16,8 @@ export type ServerLoad = {
   queuedSessions: number;
   queuedResponses: number;
   oldestWaitMs: number;
-  maxActiveSessions: number;
-  maxBusySessions: number;
+  maxCpuPercent: number;
+  maxMemoryPercent: number;
 };
 export type ServerMetricPoint = {
   at: number;

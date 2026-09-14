@@ -17,6 +17,7 @@ from myharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
     ApiRetryEvent,
+    ApiReasoningSummaryEvent,
     ApiStreamEvent,
     ApiTextDeltaEvent,
     ApiToolCallDeltaEvent,
@@ -59,6 +60,17 @@ CODEX_INSTRUCTIONS = (
     "You are MyHarness. Always write reasoning summaries in Korean. "
     "This applies to every user-visible reasoning summary, including its headings "
     "and body. Do not use English sentences or English section headings in summaries. "
+    "Before emitting a summary, rewrite any English draft into natural polite Korean "
+    "within this same response. Emit plain sentences without headings or bold formatting. "
+    "Do not make any additional model, translation, or tool calls for these updates. "
+    "The UI displays automatic reasoning summaries separately from work updates. "
+    "For nontrivial analysis, comparison, research or "
+    "multi-step work, emit a brief Korean progress sentence using "
+    "<myharness-progress>{\"message\":\"한국어 진행 문장\"}</myharness-progress> "
+    "on its own line in the same response before the final answer or a lookup tool. "
+    "Describe the actual task and constraints, not generic filler. Extra output tokens "
+    "for this are allowed; never start a separate request for progress. Do not emit "
+    "these markers immediately before file-writing tools or for trivial answers. "
     "Keep model names, product names, code identifiers, and URLs in their original form. "
     "Write brief user-facing work updates: what you are checking, an observed result, "
     "or the next concrete step. Do not narrate internal reasoning, tool routing, "
@@ -516,6 +528,16 @@ class CodexApiClient:
                         item_type = item.get("type")
                         if item_type in {"reasoning", "compaction"}:
                             content.append(ResponsesStateBlock(item=item))
+                            if item_type == "reasoning":
+                                summary = "\n\n".join(
+                                    part["text"] for part in (item.get("summary") or [])
+                                    if isinstance(part, dict)
+                                    and part.get("type") == "summary_text"
+                                    and isinstance(part.get("text"), str)
+                                    and part["text"].strip()
+                                )
+                                if summary:
+                                    yield ApiReasoningSummaryEvent(text=summary)
                         elif item_type == "message":
                             text = ""
                             raw_content = item.get("content")

@@ -58,6 +58,8 @@ export type LiveSessionView = {
 export type WorkflowEventStatus = "running" | "done" | "error" | "warning";
 
 export type WorkflowEvent = {
+  startedAtMs?: number;
+  finishedAtMs?: number;
   restored?: boolean;
   id: string;
   toolName: string;
@@ -67,6 +69,7 @@ export type WorkflowEvent = {
   status: WorkflowEventStatus;
   level?: "parent" | "child";
   role?: "planning" | "reasoning" | "purpose" | "activity" | "final" | "waiting";
+  noteSource?: "provider-summary" | "progress";
   purpose?: "info" | "action" | "verification";
   groupId?: string;
   toolCallId?: string | null;

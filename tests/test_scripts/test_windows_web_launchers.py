@@ -316,11 +316,42 @@ def test_installer_verifies_bundled_national_assembly_mcp() -> None:
 
     assert "Node.js 20.19 or newer is required." in installer
     assert 'if not exist ".skills\\mcp\\national-assembly\\runtime\\index.js"' in installer
-    assert 'if not exist ".skills\\mcp\\national-assembly\\runtime\\244.index.js"' in installer
+    assert 'if not exist ".skills\\mcp\\national-assembly\\runtime\\*.index.js"' in installer
     assert 'node --check ".skills\\mcp\\national-assembly\\runtime\\index.js"' in installer
-    assert 'node --check ".skills\\mcp\\national-assembly\\runtime\\244.index.js"' in installer
+    assert 'for %%F in (".skills\\mcp\\national-assembly\\runtime\\*.index.js") do (' in installer
+    assert 'node --check "%%~fF"' in installer
+    assert not re.search(r"\d+\.index\.js", installer)
     assert "git clone" not in installer
     assert 'pushd ".skills\\mcp\\national-assembly\\runtime"' not in installer
+
+
+@pytest.mark.parametrize("name", ["Installer.bat", "run_myharness_web.bat", "run_myharness_web_dev.bat"])
+def test_batch_launchers_use_crlf_and_valid_paths(name: str) -> None:
+    raw = (ROOT / name).read_bytes()
+    assert b"\r\n" in raw
+    assert b"\n" not in raw.replace(b"\r\n", b"")
+    assert b"\r" not in raw.replace(b"\r\n", b"")
+    for path in (br"frontend\web\node_modules", br".skills\mcp\national-assembly", br".skills\pptx-writer\node-runtime"):
+        broken = path.replace(br"\n", br"\r\n")
+        assert broken not in raw
+        assert path.replace(br"\n", b"\r\n") not in raw
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows cmd.exe")
+@pytest.mark.parametrize("chunks, expected", [({"859": "const ok = 1;", "123": "const next = 2;"}, 0), ({"859": "const ok = 1;", "123": "const = ;"}, 1), ({}, 1)])
+def test_installer_checks_all_runtime_chunks(tmp_path: Path, chunks: dict[str, str], expected: int) -> None:
+    installer = (ROOT / "Installer.bat").read_text(encoding="utf-8")
+    block = installer.split("echo [INFO] Verifying bundled National Assembly MCP...", 1)[1].split("echo [INFO] Installing packaged MCP runtime dependencies...", 1)[0]
+    runtime = tmp_path / ".skills/mcp/national-assembly/runtime"
+    runtime.mkdir(parents=True)
+    for name in ("index.js", "package.json", "UPSTREAM_LICENSE.txt", "licenses.txt"):
+        (runtime / name).write_text("{}" if name == "package.json" else "", encoding="utf-8")
+    for number, source in chunks.items():
+        (runtime / f"{number}.index.js").write_text(source, encoding="utf-8")
+    batch = tmp_path / "check.bat"
+    batch.write_bytes(("@echo off\n" + block + "\nexit /b 0\n").replace("\n", "\r\n").encode("utf-8"))
+    result = subprocess.run(["cmd.exe", "/d", "/c", str(batch)], cwd=tmp_path, input=b"", capture_output=True, timeout=20)
+    assert result.returncode == expected, (result.stdout, result.stderr)
 
 
 def test_installer_updates_existing_web_dependencies_without_npm_ci() -> None:

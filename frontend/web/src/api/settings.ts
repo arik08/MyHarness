@@ -29,8 +29,8 @@ export function saveOutputTokenSettings(values: Record<string, number>) {
 }
 
 export type ConcurrencySettings = {
-  maxActiveSessions: number;
-  maxBusySessions: number;
+  maxCpuPercent: number;
+  maxMemoryPercent: number;
   maxBusySessionsPerClient: number;
   idleSessionTimeoutMinutes: number;
 };
@@ -43,6 +43,8 @@ export type ConcurrencyStatus = ConcurrencySettings & {
   busySessionsForClient: number;
   queuedSessions?: number;
   queuedResponses?: number;
+  queuedSessionUsers?: number;
+  queuedResponseUsers?: number;
 };
 
 export const concurrencySettingsChangedEvent = "myharness:concurrency-settings-changed";

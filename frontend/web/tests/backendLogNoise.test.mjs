@@ -17,3 +17,12 @@ test("keeps warnings and errors visible", () => {
   assert.equal(isNoisyBackendLogLine("WARNING MCP server disconnected"), false);
   assert.equal(isNoisyBackendLogLine("ERROR ListResourcesRequest failed"), false);
 });
+
+test("filters wrapped source locations and arbitrary MCP request names", () => {
+  for (const line of [":", "733         CallToolRequest", ": 733 CallToolRequest", "server.py:", "912 NewProtocolRequest", "\u001b[2m: 733\u001b[0m CallToolRequest"]) {
+    assert.equal(isNoisyBackendLogLine(line), true, line);
+  }
+  for (const line of ["733", "Result: 733", "ERROR : 733 CallToolRequest", "WARNING NewProtocolRequest failed", "CallToolRequest failed"]) {
+    assert.equal(isNoisyBackendLogLine(line), false, line);
+  }
+});

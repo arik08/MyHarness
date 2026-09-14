@@ -5,6 +5,17 @@ import { historyVisibilityKey } from "../../utils/history";
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
 
 describe("appReducer", () => {
+  it.each(["set_history", "append_history"] as const)("%s replaces runtime aliases without merging saved conversations", (type) => {
+    const temporary = { value: "runtime", label: "same title", pending: true };
+    const saved = { value: "saved", label: "same title", live: true, liveSessionId: "runtime", liked: true };
+    const other = { value: "other", label: "same title" };
+    let state: typeof initialAppState = { ...initialAppState, history: [temporary] };
+    for (let refresh = 0; refresh < 3; refresh += 1) {
+      state = appReducer(state, { type, history: [saved, other] }) as typeof state;
+      expect(state.history.map((item) => item.value)).toEqual(["saved", "other"]);
+      expect(state.history[0].liked).toBe(true);
+    }
+  });
   it("repairs duplicate history IDs while preserving distinct conversations with the same title", () => {
     const first = { value: "saved-a", label: "같은 제목", pinned: true, liked: true };
     const second = { value: "saved-b", label: "같은 제목" };
@@ -3117,6 +3128,18 @@ describe("appReducer", () => {
     expect(shellEvent?.status).toBe("done");
     expect(shellEvent?.detail).toContain("pass");
     expect(completed.artifactRefreshKey).toBe(progressed.artifactRefreshKey);
+  });
+
+  it.each(["skill", "todo_write", "mcp__new__operation"])("preserves the model phase description through %s lifecycle", (toolName) => {
+    let state = appReducer(initialAppState, { type: "append_message", message: { role: "user", text: "보고서를 준비해줘" } });
+    const message = "보고서의 작업 순서와 적용할 지침을 정리합니다.";
+    state = appReducer(state, { type: "backend_event", event: { type: "status", message } });
+    state = appReducer(state, { type: "backend_event", event: { type: "tool_started", tool_name: toolName, tool_input: {} } });
+    expect(state.workflowEvents.filter((event) => event.role === "purpose").at(-1)?.detail).toBe(message);
+    state = appReducer(state, { type: "backend_event", event: { type: "tool_completed", tool_name: toolName, output: "ok" } });
+    expect(state.workflowEvents.filter((event) => event.role === "purpose").at(-1)?.detail).toBe(message);
+    state = appReducer(state, { type: "backend_event", event: { type: "tool_started", tool_name: toolName, tool_input: {} } });
+    expect(state.workflowEvents.filter((event) => event.role === "purpose").at(-1)?.detail).toBe(message);
   });
 
   it("keeps multiline tool outputs as a one-line workflow detail", () => {

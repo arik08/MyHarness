@@ -41,7 +41,7 @@ def main():
         try:
             value = sample(root)
             if first:
-                value["cpuPercent"] = None  # No meaningful interval on the first sample.
+                value["cpuPercent"] = psutil.cpu_percent(interval=0.1)
             first = False
             print(json.dumps(value), flush=True)
         except psutil.Error:

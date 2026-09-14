@@ -33,6 +33,7 @@ from myharness.engine.stream_events import (
     CompactProgressEvent,
     ErrorEvent,
     StatusEvent,
+    ReasoningSummaryEvent,
     StreamEvent,
     ToolExecutionCompleted,
     ToolExecutionStarted,
@@ -41,7 +42,6 @@ from myharness.engine.stream_events import (
 from myharness.engine.messages import (
     ConversationMessage,
     ImageBlock,
-    ResponsesStateBlock,
     TextBlock,
     ToolResultBlock,
     sanitize_conversation_messages,
@@ -1152,27 +1152,6 @@ def _format_question_answer_transcript(question: str, answer: str, choices: list
     if choice_label:
         parts.extend(["", "선택지 표시", choice_label])
     return "\n".join(parts)
-
-
-def _reasoning_summary_text(message: ConversationMessage) -> str:
-    """Return visible summary text from opaque Responses reasoning state."""
-    parts: list[str] = []
-    for block in message.content:
-        if not isinstance(block, ResponsesStateBlock):
-            continue
-        item = block.item
-        if item.get("type") != "reasoning":
-            continue
-        summaries = item.get("summary")
-        if not isinstance(summaries, list):
-            continue
-        for summary in summaries:
-            if not isinstance(summary, dict) or summary.get("type") != "summary_text":
-                continue
-            text = summary.get("text")
-            if isinstance(text, str) and text.strip():
-                parts.append(text.strip())
-    return "\n\n".join(parts)
 
 
 @dataclass(frozen=True)
@@ -2289,14 +2268,9 @@ class ReactBackendHost:
                     await _cancel_assistant_delta_flush_task()
                     assistant_delta_buffer.clear()
                 is_final_answer = not bool(event.message.tool_uses)
-                reasoning_summary = _reasoning_summary_text(event.message)
-                if reasoning_summary:
-                    await self._emit(
-                        BackendEvent(
-                            type="reasoning_summary",
-                            message=reasoning_summary,
-                        )
-                    )
+                # Provider-generated summaries may ignore output-language instructions.
+                # Public progress comes from same-stream markers above; keep opaque
+                # reasoning state in the conversation solely for provider continuity.
                 usage_payload = None
                 session_usage_payload = None
                 if is_final_answer:
@@ -2395,6 +2369,10 @@ class ReactBackendHost:
             if isinstance(event, StatusEvent):
                 await _flush_buffered_assistant_delta()
                 await self._emit(BackendEvent(type="status", message=event.message))
+                return
+            if isinstance(event, ReasoningSummaryEvent):
+                await _flush_buffered_assistant_delta()
+                await self._emit(BackendEvent(type="reasoning_summary", message=event.text))
                 return
 
         async def _clear_output() -> None:

@@ -1388,11 +1388,11 @@ describe("MessageList", () => {
     const group = document.querySelector('[data-workflow-group-id="group-info"]');
     expect(group).toBeTruthy();
     expect(group?.querySelector('[data-workflow-role="purpose"]')?.textContent || "").not.toContain("판단 근거를 모으고 있습니다");
-    expect(group?.querySelector('[data-workflow-role="purpose"]')?.textContent).toContain("정보 수집");
+    expect(group?.querySelector(".workflow-narrative-toggle")?.textContent).toContain("웹 검색");
     const childTitles = [...(group?.querySelectorAll(".workflow-children .workflow-step.child strong") || [])]
       .map((node) => node.textContent);
     expect(childTitles).toEqual(["웹 검색", "웹 페이지 조회"]);
-    expect(document.querySelector(".workflow-count")?.textContent).toBe("4개 기록 · 1개 실행 중");
+    expect(document.querySelector(".workflow-count")).toBeNull();
   });
 
   it("does not invent natural workflow narration for active verification work", () => {
@@ -1420,8 +1420,8 @@ describe("MessageList", () => {
       vi.advanceTimersByTime(90);
     });
 
-    const narration = document.querySelector('[data-workflow-role="purpose"]')?.textContent || "";
-    expect(narration).toContain("결과 검증");
+    const narration = document.querySelector(".workflow-narrative-toggle")?.textContent || "";
+    expect(narration).not.toContain("결과를 확인하고 있습니다");
     expect(narration).not.toContain("방금");
     expect(narration).not.toContain("오류나 깨진 화면이 없는지 검증");
   });
@@ -1448,22 +1448,22 @@ describe("MessageList", () => {
       </AppStateProvider>,
     );
 
-    expect(document.querySelectorAll(".workflow-step")).toHaveLength(1);
+    expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(1);
     expect(screen.queryByText("정보 수집")).toBeNull();
 
     act(() => {
       vi.advanceTimersByTime(90);
     });
-    expect(document.querySelectorAll(".workflow-step")).toHaveLength(2);
-    expect(screen.getByText("정보 수집")).toBeTruthy();
+    expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(2);
+    expect(document.querySelector(".workflow-narrative-toggle")).toBeTruthy();
     expect(document.body.textContent || "").not.toContain("first query");
 
     act(() => {
       vi.advanceTimersByTime(630);
     });
-    expect(document.querySelectorAll(".workflow-step")).toHaveLength(5);
+    expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(5);
     expect(screen.getAllByText("웹 검색")).toHaveLength(2);
-    expect(screen.getByText("웹 페이지 조회")).toBeTruthy();
+    expect(screen.getAllByText("웹 페이지 조회").length).toBeGreaterThan(0);
   });
 
   it("reveals the initial planning step shortly after request understanding", () => {
@@ -1565,9 +1565,9 @@ describe("MessageList", () => {
     const workflowText = document.querySelector(".workflow-message")?.textContent || "";
     expect(workflowText).toContain("작업 계획 수립");
     expect(workflowText).not.toContain("작업 계획 수립요청을 기준으로");
-    expect(workflowText).toContain("정보 수집");
+    expect(workflowText).not.toContain("정보 수집");
     expect(workflowText).not.toContain("필요한 파일과 실행 결과를 훑으면서");
-    expect(workflowText).toContain("작업 실행");
+    expect(workflowText).not.toContain("작업 실행을 마쳤습니다");
     expect(workflowText).not.toContain("확인한 맥락을 바탕으로 실제 작업을 진행");
     expect(workflowText).not.toContain("방금");
     expect(workflowText).not.toContain("이제 작업 결과를 정리");
@@ -1603,8 +1603,8 @@ describe("MessageList", () => {
     const workflowText = document.querySelector(".workflow-message")?.textContent || "";
     expect(workflowText.match(/정보 수집:/g) || []).toHaveLength(0);
     expect(workflowText.match(/작업 실행:/g) || []).toHaveLength(0);
-    expect(workflowText.match(/정보 수집/g) || []).toHaveLength(2);
-    expect(workflowText.match(/작업 실행/g) || []).toHaveLength(2);
+    expect(document.querySelectorAll(".workflow-narrative-toggle")).toHaveLength(4);
+    expect(workflowText.match(/작업 실행/g) || []).toHaveLength(0);
     expect(workflowText.match(/필요한 파일과 실행 결과를 훑으면서/g) || []).toHaveLength(0);
     expect(workflowText.match(/확인한 맥락을 바탕으로 실제 작업을 진행/g) || []).toHaveLength(0);
   });
@@ -1749,7 +1749,7 @@ describe("MessageList", () => {
     expect(workflowText).not.toContain("할 일을 정리했습니다.");
   });
 
-  it("renders the total workflow duration beside the record count", () => {
+  it("renders the total workflow duration without record counts", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -1778,9 +1778,9 @@ describe("MessageList", () => {
 
     const workflowArticle = [...document.querySelectorAll("article.message")]
       .map((node) => node.textContent || "")
-      .find((text) => text.includes("작업 진행")) || "";
+      .find((text) => text.includes("동안 작업")) || "";
 
-    expect(workflowArticle).toContain("5개 기록 (42초)");
+    expect(workflowArticle).toContain("42초 동안 작업");
   });
 
   it("updates the active workflow total duration every second", () => {
@@ -1814,9 +1814,9 @@ describe("MessageList", () => {
 
     const workflowArticle = [...document.querySelectorAll("article.message")]
       .map((node) => node.textContent || "")
-      .find((text) => text.includes("작업 진행")) || "";
+      .find((text) => text.includes("동안 작업")) || "";
 
-    expect(workflowArticle).toContain("2개 기록 (1초)");
+    expect(workflowArticle).toContain("1초 동안 작업");
   });
 
   it("renders restored workflow records under each user turn", () => {
@@ -3358,7 +3358,7 @@ describe("MessageList", () => {
       "workflow-web-source-index",
       "workflow-web-source-favicon",
     ]);
-    expect(document.querySelector(".workflow-web-source-path")).toBeNull();
+    expect([...document.querySelectorAll(".workflow-web-source-path")].map((node) => node.textContent)).toEqual(["/docs", "/example/myharness"]);
     expect(document.querySelector(".workflow-web-source-favicon")?.textContent).toBe("E");
     expect(document.querySelector(".workflow-web-source-favicon img")?.getAttribute("src")).toBe("https://example.com/favicon.ico");
     expect(screen.getAllByText("myharness docs")).toHaveLength(1);
@@ -4164,6 +4164,9 @@ describe("MessageList", () => {
             { id: "log-ansi-2", role: "log", text: "\u001b[2;36mListResourcesRequest\u001b[0m" },
             { id: "log-interleaved-1", role: "log", text: "ListResourcesRequest INFO" },
             { id: "log-interleaved-2", role: "log", text: "Processing request of type server.py:625" },
+            { id: "log-colon", role: "log", text: ":" },
+            { id: "log-wrapped", role: "log", text: "733         CallToolRequest" },
+            { id: "log-new-request", role: "log", text: ": 912 NewProtocolRequest" },
             { id: "log-4", role: "log", text: "real backend warning" },
           ],
         }}
@@ -6064,7 +6067,7 @@ describe("MessageList", () => {
       configurable: true,
       get() {
         if (this.classList?.contains("messages")) {
-          const visibleStepCount = document.querySelectorAll(".workflow-step").length;
+          const visibleStepCount = document.querySelectorAll(".workflow-step, .workflow-narrative").length;
           return 220 + visibleStepCount * 120;
         }
         return originalScrollHeight?.get?.call(this) ?? 0;
@@ -6112,20 +6115,20 @@ describe("MessageList", () => {
       );
 
       const messages = document.querySelector(".messages") as HTMLElement;
-      expect(document.querySelectorAll(".workflow-step")).toHaveLength(1);
+      expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(1);
 
       act(() => {
         vi.advanceTimersByTime(90);
       });
 
-      expect(document.querySelectorAll(".workflow-step")).toHaveLength(2);
+      expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(2);
       expect(messages.scrollTop).toBe(460);
 
       act(() => {
         vi.advanceTimersByTime(90);
       });
 
-      expect(document.querySelectorAll(".workflow-step")).toHaveLength(3);
+      expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(3);
       expect(messages.scrollTop).toBe(580);
     } finally {
       vi.useRealTimers();

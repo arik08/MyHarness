@@ -11,6 +11,7 @@ from myharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
     ApiRetryEvent,
+    ApiReasoningSummaryEvent,
     ApiTextDeltaEvent,
     ApiToolCallDeltaEvent,
 )
@@ -476,6 +477,7 @@ async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypat
     assert state_items[0]["summary"] == [
         {"type": "summary_text", "text": "Checked the constraints."}
     ]
+    assert [event.text for event in events if isinstance(event, ApiReasoningSummaryEvent)] == ["Checked the constraints."]
     assert complete.message.text == "done"
 
 

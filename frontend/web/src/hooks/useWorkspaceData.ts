@@ -24,7 +24,7 @@ function validHistory(value: unknown): value is HistoryData {
 
 const backgroundLiveSessionPollMs = 3000;
 
-function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], currentSessionId: string | null): HistoryItem[] {
+export function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], currentSessionId: string | null): HistoryItem[] {
   const liveSessionIds = new Set(sessions.map((session) => session.sessionId));
   const mergedHistory = history.flatMap<HistoryItem>((item) => {
     if (
@@ -44,28 +44,32 @@ function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], 
   const seen = new Set(mergedHistory.map((item) => item.value).filter(Boolean));
   const liveItems: HistoryItem[] = [];
   for (const session of sessions) {
-    if (session.sessionId === currentSessionId) {
-      continue;
-    }
     const value = session.savedSessionId || session.sessionId;
     if (!value) {
       continue;
     }
-    const liveItemIndex = mergedHistory.findIndex((item) => (
-      item.liveSessionId === session.sessionId
+    const matches = mergedHistory.filter((item) => (
+      item.value === session.sessionId
       || (session.savedSessionId && item.value === session.savedSessionId)
     ));
-    if (liveItemIndex >= 0) {
+    if (matches.length) {
+      const preferred = matches.find((item) => item.value === value) || matches[0];
+      const liveItemIndex = mergedHistory.indexOf(matches[0]);
       mergedHistory[liveItemIndex] = {
-        ...mergedHistory[liveItemIndex],
-        workspace: mergedHistory[liveItemIndex].workspace || session.workspace || null,
+        ...preferred,
+        value,
+        workspace: preferred.workspace || session.workspace || null,
         live: true,
         liveSessionId: session.sessionId,
         busy: session.busy,
       };
+      for (let index = mergedHistory.length - 1; index > liveItemIndex; index -= 1) {
+        if (matches.includes(mergedHistory[index])) mergedHistory.splice(index, 1);
+      }
       seen.add(value);
       continue;
     }
+    if (session.sessionId === currentSessionId) continue;
     const title = String(session.title || "").trim();
     // Saved empty chats are already retained above. Default runtime titles alone
     // are not evidence of an additional conversation missing from saved history.

@@ -6,7 +6,7 @@ import { listLiveSessions } from "../../api/session";
 import { listWorkspaces } from "../../api/workspaces";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { useWorkspaceData } from "../useWorkspaceData";
+import { mergeLiveSessions, useWorkspaceData } from "../useWorkspaceData";
 
 vi.mock("../../api/artifacts", () => ({
   listProjectFiles: vi.fn(),
@@ -46,6 +46,21 @@ function Probe() {
 }
 
 describe("useWorkspaceData", () => {
+  it.each([null, "runtime"])("reconciles runtime aliases with saved rows for current session %s", (current) => {
+    const temporary = { value: "runtime", label: "live", live: true, liveSessionId: "runtime", busy: true };
+    const saved = { value: "saved", label: "saved title", pinned: true, liked: true };
+    const other = { value: "other", label: "saved title", liveSessionId: "runtime" };
+    const sessions = [{ sessionId: "runtime", savedSessionId: "saved", busy: false, createdAt: 1 }];
+    for (const rows of [[temporary, saved, other], [saved, temporary, other]]) {
+      let merged = mergeLiveSessions(rows, sessions, current);
+      for (let refresh = 0; refresh < 3; refresh += 1) {
+        merged = mergeLiveSessions(merged, sessions, current);
+        expect(merged.map((item) => item.value)).toEqual(["saved", "other"]);
+        expect(merged[0]).toMatchObject({ pinned: true, liked: true, busy: false });
+      }
+    }
+    expect(mergeLiveSessions([temporary], sessions, current)[0].value).toBe("saved");
+  });
   beforeEach(() => {
     sessionStorage.clear();
     vi.clearAllMocks();

@@ -53,7 +53,7 @@ export function createResourceSampler(python, script) {
   };
 }
 
-export function createServerMetrics({ sampleResources, readLoad, now = Date.now, intervalMs = 5_000 }) {
+export function createServerMetrics({ sampleResources, readLoad, onSample = () => {}, now = Date.now, intervalMs = 5_000 }) {
   const history = [];
   const api = [];
   const waits = [];
@@ -101,13 +101,15 @@ export function createServerMetrics({ sampleResources, readLoad, now = Date.now,
       // Bounded even if the clock moves backwards or sample() is invoked manually.
       if (history.length > 181) history.splice(0, history.length - 181);
       sampling = false;
+      onSample();
     }
   }
   return {
     snapshot, sample,
     start() {
       if (timer) return;
-      void sample();
+      // Startup may already have collected a meaningful CPU interval.
+      if (resourceSampledAt == null) void sample();
       timer = setInterval(() => void sample(), intervalMs);
       timer.unref?.();
     },

@@ -222,8 +222,8 @@ class TestLoadSaveSettings:
             model="gpt-5.6-terra",
             verbose=True,
             web_concurrency={
-                "max_active_sessions": 24,
-                "max_busy_sessions": 10,
+                "max_cpu_percent": 90,
+                "max_memory_percent": 98,
                 "max_busy_sessions_per_client": 4,
                 "idle_session_timeout_minutes": 45,
             },

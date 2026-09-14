@@ -1,5 +1,26 @@
 import type { HistoryItem } from "../types/backend";
 
+export function uniqueHistoryItems(items: HistoryItem[]): HistoryItem[] {
+  // Runtime IDs are temporary aliases, never a reason to merge two saved IDs:
+  // one runtime can be reused for several conversations.
+  const savedByRuntime = new Map<string, HistoryItem>();
+  for (const item of items) {
+    if (item.liveSessionId && item.value !== item.liveSessionId) {
+      savedByRuntime.set(item.liveSessionId, item);
+    }
+  }
+  const seen = new Set<string>();
+  const result: HistoryItem[] = [];
+  for (const item of items) {
+    const resolved = savedByRuntime.get(item.value) || item;
+    const value = resolved.value.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(resolved);
+  }
+  return result;
+}
+
 function normalizeHistoryKeyPart(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }

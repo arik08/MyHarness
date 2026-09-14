@@ -20,6 +20,143 @@ function stylesheetBlock(selector: string) {
 }
 
 describe("WorkflowPanel", () => {
+  it.each([false, true])("keeps warning details inside disclosure without a summary alert (mixed: %s)", (mixed) => {
+    const parent = { id: "warning-group", toolName: "", title: "조회", detail: "", status: "warning" as const, role: "purpose" as const, groupId: "warning-group" };
+    const child = { id: "warning-child", toolName: "web_fetch", title: "웹 페이지 조회", detail: "접근 제한", status: "warning" as const, level: "child" as const, groupId: parent.groupId };
+    render(<AppStateProvider><WorkflowPanel events={[parent, child, ...(mixed ? [{ ...child, id: "success-child", status: "done" as const }] : [])]} /></AppStateProvider>);
+    const toggle = document.querySelector<HTMLButtonElement>(".workflow-narrative-toggle")!;
+    expect(toggle.querySelector(".workflow-narrative-meta")).toBeNull();
+    expect(toggle.querySelector(".workflow-narrative-alert")).toBeNull();
+    const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(panel.hidden).toBe(true);
+    act(() => toggle.click());
+    expect(panel.hidden).toBe(false);
+    expect(panel.querySelector(".workflow-step.warning")).toBeTruthy();
+  });
+  it.each([false, true])("discloses full provider summaries independently of tools (%s)", (restored) => {
+    const note = { id: "summary", toolName: "", title: "진행 메모", detail: "Checking sources.\n\nComparing all available evidence.", status: "done" as const, role: "reasoning" as const, noteSource: "provider-summary" as const, groupId: "g", restored };
+    const parent = { id: "g", toolName: "", title: "작업", detail: "", status: "done" as const, role: "purpose" as const, groupId: "g" };
+    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[note, parent]} /></AppStateProvider>);
+    const toggle = screen.getByRole("button", { name: "추론 요약 펼치기" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelectorAll(".workflow-reasoning-summary")).toHaveLength(1);
+    expect(document.querySelector(".workflow-reasoning-full")).toBeNull();
+    act(() => toggle.click());
+    expect(document.querySelector(".workflow-reasoning-full")?.textContent).toBe(note.detail);
+    rerender(<AppStateProvider><WorkflowPanel events={[{ ...note, detail: `${note.detail}\nUpdated.` }, parent]} /></AppStateProvider>);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector(".workflow-reasoning-full")?.textContent).toContain("Updated.");
+    act(() => toggle.click());
+    expect(document.querySelector(".workflow-reasoning-full")).toBeNull();
+  });
+  it.each([false, true])("shows planning narration once, including restored history (%s)", (restored) => {
+    const detail = "공식 지표를 확인하고 부문별로 비교하겠습니다.";
+    const plan = { id: "plan", toolName: "", title: "작업 계획 수립", detail, status: "done" as const, role: "planning" as const, restored };
+    const note = { id: "progress", toolName: "", title: "진행 메모", detail: `  ${detail}\n`, status: "done" as const, role: "reasoning" as const, noteSource: "progress" as const, restored };
+    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[note, plan]} /></AppStateProvider>);
+    expect(document.body.textContent?.split(detail)).toHaveLength(2);
+    expect(document.querySelector(".workflow-progress-prose")).toBeNull();
+    rerender(<AppStateProvider><WorkflowPanel events={[plan, { ...note, detail: "추가 자료가 필요합니다." }]} /></AppStateProvider>);
+    expect(screen.getByText("추가 자료가 필요합니다.")).toBeTruthy();
+    rerender(<AppStateProvider><WorkflowPanel events={[plan, { ...note, status: "error" }]} /></AppStateProvider>);
+    expect(document.querySelector(".workflow-progress-prose")?.textContent).toBe(detail);
+  });
+  it("shows every tool count and distinct skill names directly in the summary", () => {
+    const parent = { id: "mixed", toolName: "", title: "작업", detail: "", status: "done" as const, role: "purpose" as const, groupId: "mixed" };
+    const child = { status: "done" as const, level: "child" as const, groupId: "mixed", detail: "", title: "" };
+    render(<AppStateProvider><WorkflowPanel events={[parent,
+      ...Array.from({ length: 8 }, (_, i) => ({ ...child, id: `search-${i}`, toolName: "web_search" })),
+      ...Array.from({ length: 3 }, (_, i) => ({ ...child, id: `fetch-${i}`, toolName: "web_fetch" })),
+      { ...child, id: "skill-1", toolName: "skill", toolInput: { name: "visual-artifact" } },
+      { ...child, id: "skill-2", toolName: "skill", toolInput: { name: "visual-artifact" } },
+      { ...child, id: "skill-3", toolName: "skill", output: "Skill: new-research-skill\nDescription: research", restored: true },
+    ]} /></AppStateProvider>);
+    const summary = document.querySelector(".workflow-narrative-sentence")?.textContent;
+    expect(summary).toBe("웹 검색 8회 · 웹 페이지 조회 3회 · 스킬 · visual-artifact, new-research-skill");
+  });
+  it("counts actual calls per tool in the collapsed summary including restored and failed calls", () => {
+    const parent = { id: "counts", toolName: "", title: "정보 수집", detail: "", status: "done" as const, role: "purpose" as const, groupId: "counts" };
+    const searches = Array.from({ length: 8 }, (_, i) => ({ id: `search-${i}`, toolCallId: `call-${i}`, toolName: "web_search", title: "웹 검색", detail: `query ${i}`, status: "done" as const, level: "child" as const, groupId: "counts", restored: true }));
+    const extra = { id: "other", toolName: "mcp__new__lookup", title: "조회", detail: "failed", status: "error" as const, level: "child" as const, groupId: "counts", restored: true };
+    render(<AppStateProvider><WorkflowPanel events={[parent, ...searches, { ...searches[0], id: "same-call-update" }, extra, { id: "note", toolName: "", title: "진행 메모", detail: "자료를 비교합니다.", status: "done", role: "reasoning", noteSource: "progress" }]} /></AppStateProvider>);
+    const toggle = document.querySelector<HTMLButtonElement>(".workflow-narrative-toggle")!;
+    expect(toggle.textContent).toContain("웹 검색 8회");
+    expect(toggle.textContent).toContain("mcp · new · lookup 1회");
+    expect(toggle.textContent).not.toContain("작업 9회");
+    const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(panel.hidden).toBe(true);
+    act(() => toggle.click());
+    expect(panel.hidden).toBe(false);
+    expect(toggle.closest("section")?.classList.contains("warning")).toBe(true);
+    expect(toggle.querySelector(".workflow-narrative-meta")).toBeNull();
+    expect(toggle.querySelector(".workflow-narrative-alert")).toBeNull();
+    expect(toggle.querySelector(".workflow-narrative-status")?.textContent).toBe("›");
+  });
+  it("keeps narrative visible outside the disclosure and preserves error status", () => {
+    const parent = { id: "group", toolName: "", title: "정보 수집", detail: "필요한 정보를 확인했습니다.", status: "done" as const, level: "parent" as const, role: "purpose" as const, groupId: "group" };
+    const child = { id: "child", toolName: "mcp__new__lookup", title: "조회", detail: "response", status: "done" as const, level: "child" as const, groupId: "group" };
+    const note = { id: "note", toolName: "", title: "진행 메모", detail: "공개 자료에서 확인한 조직의 역할을 중심으로 보고서 범위를 정리합니다.", status: "done" as const, role: "reasoning" as const, noteSource: "progress" as const };
+    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[note, parent, child]} /></AppStateProvider>);
+    expect(document.querySelector(".workflow-progress-prose")?.textContent).toBe(note.detail);
+    expect(screen.getByText(note.detail).closest("button")).toBeNull();
+    expect(screen.getAllByText(note.detail)).toHaveLength(1);
+    expect(screen.queryByText(parent.detail)).toBeNull();
+    rerender(<AppStateProvider><WorkflowPanel events={[note, parent, { ...child, status: "error" }]} /></AppStateProvider>);
+    expect(document.querySelector(".workflow-narrative")?.classList.contains("error")).toBe(true);
+    expect(document.querySelector(".workflow-progress-prose")?.textContent).toBe(note.detail);
+    expect(screen.getByText(note.detail).closest("button")).toBeNull();
+    rerender(<AppStateProvider><WorkflowPanel events={[{ ...note, noteSource: "provider-summary" }, parent, child]} /></AppStateProvider>);
+    expect(document.querySelector(".workflow-progress-prose")).toBeNull();
+  });
+  it("labels notes by provenance rather than language and keeps unknown notes neutral", () => {
+    const base = { toolName: "", title: "진행 메모", status: "done" as const, level: "parent" as const, role: "reasoning" as const };
+    render(<AppStateProvider><WorkflowPanel events={[
+      { ...base, id: "provider", detail: "공식 자료를 먼저 검토합니다.", noteSource: "provider-summary" },
+      { ...base, id: "progress", detail: "Checking the report.", noteSource: "progress" },
+      { ...base, id: "legacy", detail: "Historical note." },
+    ]} /></AppStateProvider>);
+    expect(screen.getAllByText("내부 추론")).toHaveLength(1);
+    expect(screen.getAllByText("진행 메모")).toHaveLength(1);
+    expect(screen.getByText("공식 자료를 먼저 검토합니다.").closest(".workflow-copy")?.textContent).toContain("내부 추론");
+    expect(screen.getByText("Checking the report.").classList.contains("workflow-progress-prose")).toBe(true);
+  });
+  it("does not display per-step seconds even when timing is available", () => {
+    const timed = { id: "timed", toolName: "mcp__company-disclosure__search_catalog", title: "search", detail: "response", status: "done" as const, startedAtMs: 1000, finishedAtMs: 4500 };
+    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[timed]} /></AppStateProvider>);
+    expect(screen.queryByText("3초")).toBeNull();
+    rerender(<AppStateProvider><WorkflowPanel events={[{ ...timed, startedAtMs: undefined, finishedAtMs: undefined }]} /></AppStateProvider>);
+    expect(document.querySelector(".workflow-elapsed")).toBeNull();
+  });
+  it("discloses narrative actions, retains expansion on updates, and surfaces child failures", () => {
+    const parent = { id: "narrative", toolName: "", title: "작업 실행", detail: "최근 공시를 확인합니다.", status: "done" as const, level: "parent" as const, role: "purpose" as const, groupId: "narrative" };
+    const child = { id: "new-tool", toolName: "mcp__new_server__new_action", title: "new_action", detail: "opaque response", status: "done" as const, level: "child" as const, groupId: "narrative" };
+    const note = { ...parent, id: "note", role: "reasoning" as const, groupId: undefined };
+    const view = (events: typeof parent[] | Array<typeof parent | typeof child | typeof note>) => <AppStateProvider><WorkflowPanel events={events} /></AppStateProvider>;
+    const { rerender } = render(view([note, parent, child]));
+    const toggle = document.querySelector<HTMLButtonElement>(".workflow-narrative-toggle")!;
+    const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(toggle.textContent).toContain("new_action");
+    expect(toggle.textContent).not.toContain(parent.detail);
+    expect(screen.getAllByText(parent.detail)).toHaveLength(1);
+    expect(panel.hidden).toBe(true);
+    act(() => toggle.click());
+    expect(panel.hidden).toBe(false);
+    rerender(<AppStateProvider><WorkflowPanel events={[note, parent, { ...child, status: "error" }]} /></AppStateProvider>);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.closest("section")?.classList.contains("error")).toBe(true);
+    act(() => toggle.click());
+    expect(panel.hidden).toBe(true);
+    expect(toggle.textContent).toContain("new_action 1회");
+    expect(document.body.textContent).not.toContain("응답을 받았습니다");
+  });
+  it("replaces generic historical MCP titles with the actual server and action", () => {
+    render(<AppStateProvider><WorkflowPanel events={[{
+      id: "unlisted-mcp", toolName: "mcp__sqlite_analysis__list_tables",
+      title: "외부 도구 작업", detail: "tables: signals", status: "done", level: "child",
+    }]} /></AppStateProvider>);
+    expect(screen.getByText("mcp · sqlite_analysis · list_tables")).toBeTruthy();
+    expect(screen.queryByText("외부 도구 작업")).toBeNull();
+  });
   it("keeps a Korean work note beside its web tool after completion", () => {
     const input = { query: "POSCO", progress_message: "포스코의 최근 언론 동향을 검색하고 있습니다." };
     const running = { id: "web", toolName: "web_search", title: "web_search", detail: "query: POSCO", toolInput: input, status: "running" as const, level: "child" as const };
@@ -28,7 +165,7 @@ describe("WorkflowPanel", () => {
     rerender(<AppStateProvider><WorkflowPanel events={[{ ...running, status: "done", output: "검색 결과: POSCO\n1. article\nURL: https://example.com" }]} /></AppStateProvider>);
     const step = screen.getByText("웹 검색").closest(".workflow-step")!;
     expect(step.querySelector("small")?.textContent).toContain(input.progress_message);
-    expect(step.querySelector("small")?.textContent).toContain("조회 완료");
+    expect(step.querySelector("small")?.textContent).not.toContain("조회 완료");
     expect(step.querySelector("small")?.textContent).not.toContain("URL:");
     expect(step.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
   });
@@ -39,7 +176,7 @@ describe("WorkflowPanel", () => {
       title: "mcp__national-assembly__assembly_bill", detail: output.slice(0, 20),
       output, status: "done", level: "child",
     }]} /></AppStateProvider>);
-    const step = screen.getByText("국회 법안 검색").closest(".workflow-step")!;
+    const step = screen.getByText("mcp · national-assembly · assembly_bill").closest(".workflow-step")!;
     expect(step.querySelector("small")?.textContent).toContain("조회 결과 5건 · 철강산업 특별법");
     expect(step.querySelector("small")?.textContent).not.toContain('{"total"');
     const toggle = step.querySelector("button")!;
@@ -60,7 +197,7 @@ describe("WorkflowPanel", () => {
       title: "mcp__national-assembly__bill_detail", detail: "invalid bill_id",
       output: "invalid bill_id", status: "error", level: "child",
     }]} /></AppStateProvider>);
-    const step = screen.getByText("법안 상세 조회").closest(".workflow-step")!;
+    const step = screen.getByText("mcp · national-assembly · bill_detail").closest(".workflow-step")!;
     expect(step.querySelector("small")?.textContent).toContain("실패했습니다");
     expect(step.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
   });
@@ -163,7 +300,9 @@ describe("WorkflowPanel", () => {
     expect(emphasized.tagName).toBe("STRONG");
     const step = emphasized.closest(".workflow-step")!;
     expect(step.querySelector("details")).toBeNull();
-    expect(step.querySelector(".workflow-status-detail")?.textContent).toBe("완료 · 포스코 관련 기사와 출처를 확인하고 있습니다.");
+    expect(step.querySelector(".workflow-status-detail")?.textContent).toBe("포스코 관련 기사와 출처를 확인하고 있습니다.");
+    expect(step.querySelector(".workflow-dot")).toBeNull();
+    expect(screen.getByText("진행 메모")).toBeTruthy();
     expect(screen.queryByText("내부 진행 기록")).toBeNull();
   });
 
@@ -183,10 +322,10 @@ describe("WorkflowPanel", () => {
 
     const list = document.querySelector(".workflow-list");
     const activity = document.querySelector(".workflow-activity-status");
-    expect(document.querySelectorAll(".workflow-step")).toHaveLength(3);
+    expect(document.querySelectorAll(".workflow-step")).toHaveLength(2);
     expect(activity?.textContent || "").toContain("다음 단계 검토 중");
     expect(list?.lastElementChild).toBe(activity);
-    expect((list?.textContent || "").indexOf("정보 수집")).toBeLessThan((list?.textContent || "").indexOf("다음 단계 검토 중"));
+    expect((list?.textContent || "").indexOf("근거 확인 중")).toBeLessThan((list?.textContent || "").indexOf("다음 단계 검토 중"));
   });
 
   it("removes the activity status once final response starts", () => {

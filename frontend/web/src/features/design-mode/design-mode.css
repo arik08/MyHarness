@@ -131,7 +131,7 @@
 
 :root[data-design-mode="improved"] .workflow-card { border-radius: 8px; box-shadow: none; background: transparent; }
 :root[data-design-mode="improved"] .workflow-card > summary { font-size: 14px; }
-:root[data-design-mode="improved"] .workflow-copy small { font-size: 13px; line-height: 1.5; }
+:root[data-design-mode="improved"] .workflow-copy small { font-size: 14px; line-height: 1.5; }
 :root[data-design-mode="improved"] .workflow-output-body { font-family: inherit; }
 :root[data-design-mode="improved"] .artifact-panel-header { background: var(--panel); border-bottom: 1px solid var(--line); }
 :root[data-design-mode="improved"] .artifact-panel-title strong { font-size: 15px; }

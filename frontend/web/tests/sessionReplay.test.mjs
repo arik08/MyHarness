@@ -28,6 +28,22 @@ test("restoring saved history replaces the bootstrap identity before replay", ()
   }
 });
 
+for (const replacement of [
+  { type: "clear_transcript" },
+  { type: "history_snapshot", value: "another-chat", history_events: [{ type: "user", text: "another question" }] },
+]) {
+  test(`${replacement.type} does not replay the previous conversation's todo list`, () => {
+    const state = createSessionReplayState();
+    updateSessionReplayState(state, { type: "ready", state: { model: "test-model" } });
+    updateSessionReplayState(state, { type: "todo_update", todo_markdown: "- [ ] old task" });
+    updateSessionReplayState(state, replacement);
+    assert.equal(replayEventsForState(state).some((event) => event.type === "todo_update"), false);
+    assert.equal(replayEventsForState(state).some((event) => event.type === "ready"), true);
+    updateSessionReplayState(state, { type: "todo_update", todo_markdown: "- [ ] new task" });
+    assert.equal(replayEventsForState(state).find((event) => event.type === "todo_update")?.todo_markdown, "- [ ] new task");
+  });
+}
+
 test("coalesces many assistant deltas into one live replay event", () => {
   const state = createSessionReplayState();
 

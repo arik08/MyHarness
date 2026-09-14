@@ -11,7 +11,7 @@ import { useAppState } from "../state/app-state";
 const refreshIntervalMs = 5_000;
 
 type StatusItem = {
-  key: "sessions" | "responses" | "browser";
+  key: "sessions" | "capacity" | "responses" | "browser";
   label: string;
   current: number | null;
   maximum: number | null;
@@ -57,7 +57,7 @@ function BrowserIcon() {
 }
 
 function StatusIcon({ item }: { item: StatusItem["key"] }) {
-  if (item === "sessions") return <SessionsIcon />;
+  if (item === "sessions" || item === "capacity") return <SessionsIcon />;
   if (item === "responses") return <ResponsesIcon />;
   return <BrowserIcon />;
 }
@@ -67,7 +67,7 @@ function displayedRatio(current: number | null, maximum: number | null) {
 }
 
 function displayedStatus(item: StatusItem) {
-  return item.key === "sessions" ? `${item.current ?? "–"}개` : displayedRatio(item.current, item.maximum);
+  return item.key !== "browser" ? `${item.current ?? "–"}개` : displayedRatio(item.current, item.maximum);
 }
 
 export function ConcurrencyStatus() {
@@ -126,10 +126,16 @@ export function ConcurrencyStatus() {
       maximum: null,
     },
     {
+      key: "capacity",
+      label: "열린 작업 세션",
+      current: status?.activeSessions ?? null,
+      maximum: null,
+    },
+    {
       key: "responses",
       label: "동시에 AI 응답을 생성하는 세션",
       current: status?.busySessions ?? null,
-      maximum: status?.maxBusySessions ?? null,
+      maximum: null,
     },
     {
       key: "browser",
@@ -164,7 +170,7 @@ export function ConcurrencyStatus() {
       <span className="concurrency-status-tooltip" id={tooltipId} role="tooltip">
         <strong>동시 사용 현황</strong>
         <span className="concurrency-status-row"><CapacityIcon /><span>서버 CPU</span><span className="concurrency-status-value">{metricsError ? "확인 불가" : percentLabel(metrics?.resources?.cpuPercent)}</span></span>
-        <span className="concurrency-status-row"><SessionsIcon /><span>서버 메모리</span><span className="concurrency-status-value concurrency-memory-value">{resources ? `${(resources.availableMemoryBytes / 1024 ** 3).toFixed(1)} / ${(resources.totalMemoryBytes / 1024 ** 3).toFixed(1)} GB · ${percentLabel(memoryUsage)}` : "확인 불가"}</span></span>
+        <span className="concurrency-status-row"><SessionsIcon /><span>서버 메모리</span><span className="concurrency-status-value concurrency-memory-value">{resources ? `${((resources.totalMemoryBytes - resources.availableMemoryBytes) / 1024 ** 3).toFixed(1)} / ${(resources.totalMemoryBytes / 1024 ** 3).toFixed(1)} GB · ${percentLabel(memoryUsage)}` : "확인 불가"}</span></span>
         <span className="concurrency-status-row" data-status="users">
           <svg aria-hidden="true" viewBox="0 0 20 20">
             <circle cx="7" cy="6" r="2.5" />
@@ -187,7 +193,7 @@ export function ConcurrencyStatus() {
             <span className="concurrency-status-value">세션 {queuedSessions} · 응답 {queuedResponses}</span>
           </span>
         )}
-        <span className="concurrency-status-hint">클릭하면 서버 부하와 최근 추이 보기</span>
+        <span className="concurrency-status-hint">CPU {status?.maxCpuPercent ?? "–"}% · 메모리 {status?.maxMemoryPercent ?? "–"}% 이상 시 대기</span>
       </span>
       {detailsOpen && <ServerMetricsPanel metrics={metrics} error={metricsError} onClose={closeDetails} />}
     </span>

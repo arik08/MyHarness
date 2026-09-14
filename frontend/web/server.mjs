@@ -1,3 +1,4 @@
+import { resourceAdmissionReason } from "./modules/resourceAdmission.js";
 import { createServer } from "node:http";
 import { createActivityLog } from "./modules/activityLog.js";
 import { createResourceSampler, createServerMetrics } from "./modules/serverMetrics.js";
@@ -218,8 +219,8 @@ const shellOutputMaxChars = Number.isFinite(configuredShellOutputMaxChars)
 const tokenCountMaxChars = 200_000;
 const modelOutputTokenDefault = 42_000;
 const composeTargetOutputTokenMax = 40_000;
-const defaultMaxActiveSessions = Math.min(500, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_ACTIVE_SESSIONS) || 40)));
-const defaultMaxBusySessions = Math.min(100, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS) || 20)));
+const defaultMaxCpuPercent = Math.min(100, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_CPU_PERCENT) || 95)));
+const defaultMaxMemoryPercent = Math.min(100, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_MEMORY_PERCENT) || 98)));
 const defaultMaxBusySessionsPerClient = Math.min(20, Math.max(1, Math.floor(Number(process.env.MYHARNESS_MAX_BUSY_SESSIONS_PER_CLIENT) || 3)));
 const defaultBackendIdleClientCloseMs = Math.max(
   10,
@@ -229,8 +230,8 @@ const defaultIdleSessionTimeoutMinutes = Math.min(1440, Math.max(
   1,
   Math.round(defaultBackendIdleClientCloseMs / 60_000),
 ));
-let maxActiveSessions = defaultMaxActiveSessions;
-let maxBusySessions = defaultMaxBusySessions;
+let maxCpuPercent = defaultMaxCpuPercent;
+let maxMemoryPercent = defaultMaxMemoryPercent;
 let maxBusySessionsPerClient = defaultMaxBusySessionsPerClient;
 const currentSessionBusyMessage = "현재 대화가 응답 중입니다. 답변이 끝난 뒤 다시 시도하거나 텍스트로 이어서 지시하세요.";
 const modelOutputTokenCaps = Object.freeze({
@@ -2995,8 +2996,8 @@ async function saveWorkspaceScopeSettings(body = {}, request = null) {
 }
 
 const concurrencySettingBounds = Object.freeze({
-  maxActiveSessions: { min: 1, max: 500, label: "열린 작업 세션" },
-  maxBusySessions: { min: 1, max: 100, label: "동시 AI 응답" },
+  maxCpuPercent: { min: 1, max: 100, label: "CPU 사용률 기준 (%)" },
+  maxMemoryPercent: { min: 1, max: 100, label: "메모리 사용률 기준 (%)" },
   maxBusySessionsPerClient: { min: 1, max: 20, label: "브라우저당 동시 AI 응답" },
   idleSessionTimeoutMinutes: { min: 1, max: 1440, label: "유휴 세션 종료 시간" },
 });
@@ -3012,14 +3013,14 @@ function validatedConcurrencyInteger(value, key) {
 
 function normalizedConcurrencySettings(raw = {}, { strict = false } = {}) {
   const defaults = {
-    maxActiveSessions: defaultMaxActiveSessions,
-    maxBusySessions: defaultMaxBusySessions,
+    maxCpuPercent: defaultMaxCpuPercent,
+    maxMemoryPercent: defaultMaxMemoryPercent,
     maxBusySessionsPerClient: defaultMaxBusySessionsPerClient,
     idleSessionTimeoutMinutes: defaultIdleSessionTimeoutMinutes,
   };
   const source = {
-    maxActiveSessions: raw.maxActiveSessions ?? raw.max_active_sessions,
-    maxBusySessions: raw.maxBusySessions ?? raw.max_busy_sessions,
+    maxCpuPercent: raw.maxCpuPercent ?? raw.max_cpu_percent,
+    maxMemoryPercent: raw.maxMemoryPercent ?? raw.max_memory_percent,
     maxBusySessionsPerClient: raw.maxBusySessionsPerClient ?? raw.max_busy_sessions_per_client,
     idleSessionTimeoutMinutes: raw.idleSessionTimeoutMinutes ?? raw.idle_session_timeout_minutes,
   };
@@ -3032,20 +3033,12 @@ function normalizedConcurrencySettings(raw = {}, { strict = false } = {}) {
       values[key] = validatedConcurrencyInteger(defaults[key], key);
     }
   }
-  if (values.maxBusySessions > values.maxActiveSessions) {
-    if (strict) throw httpError(400, "동시 AI 응답 수는 열린 작업 세션 수보다 클 수 없습니다.");
-    values.maxBusySessions = Math.min(values.maxBusySessions, values.maxActiveSessions);
-  }
-  if (values.maxBusySessionsPerClient > values.maxBusySessions) {
-    if (strict) throw httpError(400, "브라우저당 동시 AI 응답 수는 전체 동시 AI 응답 수보다 클 수 없습니다.");
-    values.maxBusySessionsPerClient = Math.min(values.maxBusySessionsPerClient, values.maxBusySessions);
-  }
   return values;
 }
 
 function applyConcurrencySettings(values, { rescheduleIdleSessions = false } = {}) {
-  maxActiveSessions = values.maxActiveSessions;
-  maxBusySessions = values.maxBusySessions;
+  maxCpuPercent = values.maxCpuPercent;
+  maxMemoryPercent = values.maxMemoryPercent;
   maxBusySessionsPerClient = values.maxBusySessionsPerClient;
   backendIdleClientCloseMs = values.idleSessionTimeoutMinutes * 60_000;
   if (!rescheduleIdleSessions) return;
@@ -3073,8 +3066,8 @@ async function withWorkspacePairMutation(firstWorkspacePath, secondWorkspacePath
 
 function currentConcurrencySettings() {
   return {
-    maxActiveSessions,
-    maxBusySessions,
+    maxCpuPercent,
+    maxMemoryPercent,
     maxBusySessionsPerClient,
     idleSessionTimeoutMinutes: backendIdleClientCloseMs / 60_000,
   };
@@ -3100,6 +3093,8 @@ function currentConcurrencyStatus(request) {
     busySessionsForClient: clientId ? countBusySessionsForClient(clientId) : 0,
     queuedSessions: sessionCapacityQueue.length,
     queuedResponses: responseCapacityQueue.length,
+    queuedSessionUsers: capacityQueueStats("session").waitingUsers,
+    queuedResponseUsers: capacityQueueStats("response").waitingUsers,
   };
 }
 
@@ -3118,8 +3113,8 @@ async function saveConcurrencySettings(body = {}) {
   const settingsPath = join(globalConfigDir(), "settings.json");
   await mutateJsonFile(settingsPath, (settings) => {
     settings.web_concurrency = {
-      max_active_sessions: values.maxActiveSessions,
-      max_busy_sessions: values.maxBusySessions,
+      max_cpu_percent: values.maxCpuPercent,
+      max_memory_percent: values.maxMemoryPercent,
       max_busy_sessions_per_client: values.maxBusySessionsPerClient,
       idle_session_timeout_minutes: values.idleSessionTimeoutMinutes,
     };
@@ -5801,13 +5796,13 @@ function getLanUrl() {
   return "";
 }
 
-async function createBackendSession(options = {}) {
+async function createBackendSession(options = {}, { fromQueue = false } = {}) {
   const id = crypto.randomUUID();
   const workspace = await resolveSessionWorkspace(options);
   const clientId = String(options.clientId || "").trim();
   const clientAddress = normalizeClientAddress(options.clientAddress || "");
-  if (!sessionHasCapacity()) {
-    throw httpError(429, "작업 세션을 시작할 수 있는 자리가 아직 없습니다.");
+  if (!sessionHasCapacity() || (!fromQueue && sessionCapacityQueue.length)) {
+    throw httpError(429, "서버 CPU·메모리 여유를 기다리는 중입니다.");
   }
   const python = backendPythonCommand();
   const args = [...python.args, "-m", "myharness", "--backend-only", "--cwd", workspace.path];
@@ -5976,7 +5971,7 @@ function countActiveSessions() {
 }
 
 function sessionHasCapacity() {
-  return countActiveSessions() < maxActiveSessions;
+  return !resourceAdmissionReason(serverMetrics.snapshot(), currentConcurrencySettings());
 }
 
 function responseHasCapacity(session) {
@@ -5985,14 +5980,24 @@ function responseHasCapacity(session) {
     && !session.shuttingDown
     && !session.busy
     && (!session.clientId || countBusySessionsForClient(session.clientId) < maxBusySessionsPerClient)
-    && countBusySessions() < maxBusySessions,
+    && sessionHasCapacity(),
   );
 }
 
+function capacityQueueStats(kind) {
+  const entries = kind === "session" ? sessionCapacityQueue : responseCapacityQueue;
+  const people = new Set(entries.map((entry) => {
+    const owner = kind === "session" ? entry.options : sessions.get(entry.sessionId);
+    return owner?.clientAddress || owner?.clientId || entry.id;
+  }));
+  return { waitingUsers: people.size, waitingRequests: entries.length };
+}
+
 function capacityQueueMessage(kind, position) {
-  return kind === "session"
-    ? `접속 대기열 ${position}번째 · 작업 세션 자리를 기다리는 중`
-    : `응답 대기열 ${position}번째 · AI 응답 자리를 기다리는 중`;
+  const { waitingUsers, waitingRequests } = capacityQueueStats(kind);
+  const reason = resourceAdmissionReason(serverMetrics.snapshot(), currentConcurrencySettings())
+    || (kind === "session" ? "앞선 접속 요청을 기다리는 중" : "브라우저 응답 여유를 기다리는 중");
+  return `${kind === "session" ? "접속" : "응답"} 대기열 · 대기 ${waitingUsers}명 · ${waitingRequests}건 · 내 순번 ${position}번째 · ${reason}`;
 }
 
 function emitResponseQueuePositions() {
@@ -6004,6 +6009,7 @@ function emitResponseQueuePositions() {
       kind: "response",
       status: "waiting",
       position: index + 1,
+      ...capacityQueueStats("response"),
       message: capacityQueueMessage("response", index + 1),
     });
   });
@@ -6108,18 +6114,27 @@ function enqueueSessionStart(options) {
   const entry = {
     id: crypto.randomUUID(),
     queuedAt: Date.now(),
+    lastPolledAt: Date.now(),
     clientId: String(options.clientId || "").trim(),
     options,
   };
   sessionCapacityQueue.push(entry);
   scheduleCapacityQueueDrain();
-  return { queueId: entry.id, position: sessionCapacityQueue.length };
+  return { queueId: entry.id, position: sessionCapacityQueue.length, ...capacityQueueStats("session") };
 }
 
 function rememberSessionCapacityResult(queueId, result) {
   sessionCapacityResults.set(queueId, result);
   const timer = setTimeout(() => sessionCapacityResults.delete(queueId), 60_000);
   timer.unref?.();
+}
+
+function pruneAbandonedSessionRequests() {
+  // Browsers poll while waiting. A closed tab must not occupy a place forever.
+  const cutoff = Date.now() - 60_000;
+  for (let index = sessionCapacityQueue.length - 1; index >= 0; index--) {
+    if (sessionCapacityQueue[index].lastPolledAt < cutoff) sessionCapacityQueue.splice(index, 1);
+  }
 }
 
 async function drainCapacityQueues() {
@@ -6129,6 +6144,7 @@ async function drainCapacityQueues() {
   }
   capacityQueueDrainRunning = true;
   try {
+    pruneAbandonedSessionRequests();
     do {
       capacityQueueDrainPending = false;
       while (responseCapacityQueue.length) {
@@ -6161,9 +6177,10 @@ async function drainCapacityQueues() {
       emitResponseQueuePositions();
 
       while (sessionCapacityQueue.length && sessionHasCapacity()) {
-        const entry = sessionCapacityQueue.shift();
+        const entry = sessionCapacityQueue[0];
         try {
-          const session = await createBackendSession(entry.options);
+          const session = await createBackendSession(entry.options, { fromQueue: true });
+          sessionCapacityQueue.shift();
           serverMetrics.recordQueueWait(entry.queuedAt);
           rememberSessionCapacityResult(entry.id, {
             status: "ready",
@@ -6173,9 +6190,9 @@ async function drainCapacityQueues() {
           });
         } catch (error) {
           if (error.status === 429) {
-            sessionCapacityQueue.unshift(entry);
             break;
           }
+          sessionCapacityQueue.shift();
           rememberSessionCapacityResult(entry.id, {
             status: "error",
             clientId: entry.clientId,
@@ -6714,10 +6731,12 @@ async function handleApi(request, response, pathname) {
       json(response, 404, { error: "Unknown queued session" });
       return true;
     }
+    sessionCapacityQueue[index].lastPolledAt = Date.now();
     json(response, 200, {
       status: "waiting",
       queueId,
       position: index + 1,
+      ...capacityQueueStats("session"),
       message: capacityQueueMessage("session", index + 1),
     });
     return true;
@@ -7430,6 +7449,7 @@ async function handleRequest(request, response) {
 const resourceSampler = createResourceSampler(backendPythonCommand(), join(root, "scripts/resource_sample.py"));
 const serverMetrics = createServerMetrics({
   sampleResources: () => resourceSampler.sample(),
+  onSample: scheduleCapacityQueueDrain,
   readLoad: () => {
     const live = [...sessions.values()].filter((session) => !session.shuttingDown);
     const hasScreen = (session) => [...session.clients].some((client) => !client.destroyed && !client.writableEnded);
@@ -7443,7 +7463,7 @@ const serverMetrics = createServerMetrics({
       queuedSessions: sessionCapacityQueue.length,
       queuedResponses: responseCapacityQueue.length,
       oldestWaitMs: queues.length ? Math.max(0, Date.now() - oldest) : 0,
-      maxActiveSessions, maxBusySessions,
+      maxCpuPercent, maxMemoryPercent,
     };
   },
 });
@@ -7551,7 +7571,8 @@ server.on("error", (error) => {
   throw error;
 });
 
-server.listen(port, effectiveHost, () => {
+server.listen(port, effectiveHost, async () => {
+  await serverMetrics.sample();
   serverMetrics.start();
   const localUrl = `http://localhost:${port}`;
   const lanUrl = getLanUrl();

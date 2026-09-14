@@ -1,5 +1,43 @@
 import type { WorkflowEvent } from "../types/ui";
 
+// Explicit display categories: do not infer intent from arbitrary MCP names or shell text.
+const toolCategories: Record<string, string> = {
+  web_search: "검색", grep: "검색", glob: "검색",
+  tool_search: "검색", conversation_history_search: "검색",
+  web_fetch: "페이지 확인",
+  read_file: "파일 확인",
+  write_file: "파일 작성", edit_file: "파일 수정",
+  "mcp__national-assembly__assembly_bill": "검색",
+  "mcp__national-assembly__bill_detail": "자료 확인",
+};
+
+export function workflowActionSummary(events: WorkflowEvent[]): string {
+  const calls = new Map<string, WorkflowEvent>();
+  for (const event of events) {
+    if (!event.toolName || event.role === "reasoning" || event.role === "purpose") continue;
+    // Old records lack call IDs; their event IDs still identify individual calls.
+    calls.set(event.toolCallId ? `call:${event.toolCallId}` : `event:${event.id}`, event);
+  }
+  if (!calls.size) return "처리 내역";
+  const categories = new Map<string, number>();
+  for (const event of calls.values()) {
+    const category = toolCategories[event.toolName];
+    if (!category) return `작업 ${calls.size}회`;
+    categories.set(category, (categories.get(category) || 0) + 1);
+  }
+  if (categories.size > 2) return `작업 ${calls.size}회`;
+  return [...categories].map(([label, count]) => `${label} ${count}회`).join(" · ");
+}
+
+export function workflowGroupStatus(events: WorkflowEvent[]): WorkflowEvent["status"] {
+  const actions = events.filter((event) => event.role !== "reasoning");
+  if (actions.some((event) => event.status === "running")) return "running";
+  if (actions.some((event) => event.status === "error")) {
+    return actions.some((event) => event.status === "done" || event.status === "warning") ? "warning" : "error";
+  }
+  return actions.some((event) => event.status === "warning") ? "warning" : "done";
+}
+
 // Display metadata only; never use names to authorize or execute a tool.
 const toolLabels: Record<string, string> = {
   web_search: "웹 검색",
@@ -9,7 +47,9 @@ const toolLabels: Record<string, string> = {
 };
 
 export function toolDisplayName(name: string) {
-  return toolLabels[name] || (name.startsWith("mcp__") ? "외부 도구 작업" : "");
+  if (!name.startsWith("mcp__")) return toolLabels[name] || "";
+  const [server, ...tool] = name.slice("mcp__".length).split("__");
+  return ["mcp", server, tool.join("__")].filter(Boolean).join(" · ");
 }
 
 export function isKnownLookupTool(name: string) {
@@ -38,21 +78,21 @@ export function toolResultSummary(event: WorkflowEvent): string | null {
       ? "이 검색 조건에서는 결과가 없습니다."
       : event.status === "error" ? "조회 실패 · 상세 실행 기록을 확인해 주세요."
       : event.status === "warning" ? "확인 필요 · 상세 실행 기록을 확인해 주세요."
-      : event.status === "done" ? "조회 완료" : "진행 중";
-    return `${provided || fallback} · ${status}`;
+      : event.status === "done" ? "" : "진행 중";
+    return [provided || fallback, status].filter(Boolean).join(" · ");
   }
   if (!event.toolName.startsWith("mcp__")) return null;
-  if (event.status === "running") return "요청한 작업을 진행하고 있습니다.";
+  if (event.status === "running") return "진행 중";
   if (event.status === "error") return "도구 작업에 실패했습니다. 상세 실행 기록에서 원인을 확인할 수 있습니다.";
   if (event.status === "warning") return "작업 결과를 확인해야 합니다. 상세 실행 기록을 확인해 주세요.";
   let value: unknown;
   try {
     value = JSON.parse(event.output || event.detail);
   } catch {
-    return "응답을 받았습니다. 상세 실행 기록에서 내용을 확인할 수 있습니다.";
+    return "응답 수신";
   }
   const root = record(value);
-  if (!root) return "응답을 받았습니다. 상세 실행 기록에서 내용을 확인할 수 있습니다.";
+  if (!root) return "응답 수신";
   if (root.error || root.isError === true || root.is_error === true) {
     return "응답에 오류가 포함되어 있습니다. 상세 실행 기록을 확인해 주세요.";
   }
@@ -72,5 +112,5 @@ export function toolResultSummary(event: WorkflowEvent): string | null {
     return [count, ...titles, items.length > 3 ? `외 ${items.length - 3}건은 상세 실행 기록에서 확인` : ""].filter(Boolean).join(" · ");
   }
   const title = titleOf(data);
-  return title ? `상세 정보 확인 · ${title}` : "응답을 받았습니다. 상세 실행 기록에서 내용을 확인할 수 있습니다.";
+  return title ? `상세 정보 확인 · ${title}` : "응답 수신";
 }

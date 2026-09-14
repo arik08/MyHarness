@@ -14,7 +14,7 @@ import {
 } from "../utils/artifacts";
 import { Icon } from "./ArtifactIcons";
 import { InlineMarkdown } from "./MarkdownMessage";
-import { toolDisplayName, toolResultSummary } from "../utils/toolPresentation";
+import { toolDisplayName, toolResultSummary, workflowGroupStatus } from "../utils/toolPresentation";
 
 function statusLabel(status: string) {
   if (status === "running") return "진행 중";
@@ -1436,7 +1436,7 @@ function workflowRows(events: WorkflowEvent[]): WorkflowRow[] {
   );
   const childrenByGroupId = new Map<string, WorkflowEvent[]>();
   for (const event of events) {
-    if (!event.groupId || event.role === "purpose" || !purposeGroupIds.has(event.groupId)) {
+    if (!event.groupId || event.role === "purpose" || event.noteSource === "progress" || event.noteSource === "provider-summary" || !purposeGroupIds.has(event.groupId)) {
       continue;
     }
     const children = childrenByGroupId.get(event.groupId) || [];
@@ -1450,12 +1450,89 @@ function workflowRows(events: WorkflowEvent[]): WorkflowRow[] {
       rows.push({ type: "group", parent: event, children: childrenByGroupId.get(event.groupId) || [] });
       continue;
     }
-    if (event.groupId && purposeGroupIds.has(event.groupId)) {
+    if (event.groupId && purposeGroupIds.has(event.groupId) && event.noteSource !== "progress" && event.noteSource !== "provider-summary") {
       continue;
     }
     rows.push({ type: "event", event });
   }
-  return rows;
+  // Keep internal notes with the work they describe, rather than interleaving
+  // them with the user-facing narrative. Preserve all originals on disclosure.
+  const narrativeRows: WorkflowRow[] = [];
+  let notes: WorkflowEvent[] = [];
+  for (const row of rows) {
+    if (row.type === "event" && row.event.role === "reasoning" && row.event.noteSource !== "progress" && row.event.noteSource !== "provider-summary") {
+      notes.push(row.event);
+      continue;
+    }
+    if (row.type === "group") {
+      narrativeRows.push({ ...row, children: [...notes, ...row.children] });
+      notes = [];
+    } else {
+      narrativeRows.push(row);
+    }
+  }
+  if (notes.length) {
+    const lastGroup = [...narrativeRows].reverse().find((row) => row.type === "group");
+    if (lastGroup?.type === "group") lastGroup.children.push(...notes);
+    else narrativeRows.push(...notes.map((event): WorkflowRow => ({ type: "event", event })));
+  }
+  return narrativeRows;
+}
+
+function WorkflowNarrativeGroup({ parent, children, animate, eventDetail }: {
+  parent: WorkflowEvent; children: WorkflowEvent[]; animate: boolean; eventDetail: (event: WorkflowEvent) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const actions = children.filter((event) => event.role !== "reasoning");
+  const status = workflowGroupStatus(actions.length ? actions : [parent]);
+  const calls = new Map<string, WorkflowEvent>();
+  for (const event of actions) {
+    if (!event.toolName || event.role === "purpose") continue;
+    calls.set(event.toolCallId ? `call:${event.toolCallId}` : `event:${event.id}`, event);
+  }
+  const tools = new Map<string, { label: string; count: number; skills?: Set<string> }>();
+  for (const event of calls.values()) {
+    if (event.toolName === "skill") {
+      const entry = tools.get("skill") || { label: "스킬", count: 0, skills: new Set<string>() };
+      const inputName = event.toolInput?.name;
+      const name = (typeof inputName === "string" ? inputName.trim() : "")
+        || event.output?.match(/^Skill:\s*(.+)$/m)?.[1]?.trim();
+      if (name) entry.skills!.add(name);
+      entry.count += 1;
+      tools.set("skill", entry);
+      continue;
+    }
+    const entry = tools.get(event.toolName);
+    if (entry) entry.count += 1;
+    else tools.set(event.toolName, { label: workflowStepTitle(event), count: 1 });
+  }
+  const sentence = tools.size
+    ? [...tools.values()].map(({ label, count, skills }) => skills
+      ? `${label} · ${skills.size ? [...skills].join(", ") : "이름 확인 필요"}`
+      : `${label} ${count}회`).join(" · ")
+    : "실행 기록";
+  const panelId = `workflow-actions-${parent.id}`;
+  const visibleChildren = children;
+  return <section className={`workflow-group workflow-narrative ${status}`} data-workflow-group-id={parent.groupId}>
+    <button type="button" className="workflow-narrative-toggle" aria-expanded={expanded} aria-controls={panelId}
+      onClick={() => {
+        if (!window.getSelection()?.toString()) setExpanded((value) => !value);
+      }}>
+      <span className="workflow-narrative-status" aria-hidden="true">›</span>
+      <span className="workflow-narrative-sentence">{sentence}</span>
+      {status === "running" || status === "error" ? (
+        <span className="workflow-narrative-meta">
+          {status === "error" ? <span className="workflow-narrative-alert" aria-hidden="true">!</span> : null}
+          {statusLabel(status)}
+        </span>
+      ) : null}
+    </button>
+    <div id={panelId} hidden={!expanded}>
+      <div className="workflow-children" role="group" aria-label={`${parent.title} 하위 단계`}>
+        {visibleChildren.map((child) => <WorkflowStep key={child.id} event={child} detail={eventDetail(child)} rawDetail={child.detail} animate={animate} quietDone />)}
+      </div>
+    </div>
+  </section>;
 }
 
 function isWorkflowActivityEvent(event: WorkflowEvent) {
@@ -1545,7 +1622,7 @@ function WorkflowStep({
   const parentStep = event.level !== "child" && !event.toolName;
   const keepGeneratedParentDetail = event.title === "요청 이해" || event.role === "planning";
   const renderedDetail = parentStep && visibleGeneratedDetail && !keepGeneratedParentDetail ? "" : visibleDetail;
-  const statusDetailText = showNarration
+  const statusDetailText = event.role === "reasoning" ? renderedDetail : showNarration
     ? narration || ""
     : showCompactToolDetail || showQuietParentDetail
       ? renderedDetail
@@ -1563,6 +1640,23 @@ function WorkflowStep({
     return () => window.cancelAnimationFrame(frame);
   }, [animate, event.id]);
 
+  if (event.role === "reasoning" && event.noteSource === "progress") {
+    return <p className="workflow-progress-prose" data-workflow-role="progress">{detail}</p>;
+  }
+
+  if (event.role === "reasoning" && event.noteSource === "provider-summary") {
+    return <div className="workflow-copy workflow-reasoning-summary" data-workflow-role="reasoning">
+      <button type="button" className="workflow-reasoning-toggle" aria-expanded={rawExpanded}
+        aria-label={rawExpanded ? "추론 요약 접기" : "추론 요약 펼치기"}
+        onClick={() => setRawExpanded((expanded) => !expanded)}>
+        <span aria-hidden="true">{rawExpanded ? "⌄" : "›"}</span>
+        <span className="workflow-approach-label">내부 추론</span>
+        <span className="workflow-reasoning-preview">{event.detail.replace(/\s+/g, " ")}</span>
+      </button>
+      {rawExpanded ? <div className="workflow-reasoning-full"><InlineMarkdown text={event.detail} /></div> : null}
+    </div>;
+  }
+
   return (
     <div
       className={`workflow-step ${event.level || "child"} ${event.status}${entering ? " entering" : ""}`}
@@ -1570,7 +1664,7 @@ function WorkflowStep({
       data-workflow-group-id={event.groupId}
       aria-level={event.level === "child" ? 2 : 1}
     >
-      <span className="workflow-dot" aria-hidden="true" />
+      {event.role !== "reasoning" ? <span className="workflow-dot" aria-hidden="true" /> : null}
       <span className={`workflow-copy${resultSummary ? " has-tool-summary" : ""}`}>
         {resultSummary ? (
           <>
@@ -1584,7 +1678,7 @@ function WorkflowStep({
             {rawExpanded ? <pre className="workflow-raw-output">{event.toolName}{"\n"}{event.output || rawDetail || event.detail}</pre> : null}
           </>
         ) : <>
-          <strong>{title}</strong>
+          {event.role !== "reasoning" ? <strong>{title}</strong> : <span className="workflow-approach-label">{event.noteSource === "provider-summary" ? "내부 추론" : "진행 메모"}</span>}
           {shouldShowStatusDetail ? (
             <small className={showToolDetailLine ? "workflow-tool-detail" : "workflow-status-detail"}>
               {event.role === "reasoning" ? <InlineMarkdown text={statusDetailText} /> : statusDetailText}
@@ -1882,7 +1976,12 @@ export function WebInvestigationSources({ sources, queries }: { sources: WebInve
                         ) : null}
                       </span>
                     </span>
-                    <span className="workflow-web-source-label">{source.label}</span>
+                    <span className="workflow-web-source-label">
+                      <span className="workflow-web-source-domain">{source.domain || source.label}</span>
+                      {source.path && source.path !== "/" ? (
+                        <span className="workflow-web-source-path">{source.path}</span>
+                      ) : null}
+                    </span>
                   </a>
                 </li>
               );
@@ -1905,7 +2004,18 @@ export function WorkflowPanel({
 } = {}) {
   const { state } = useAppState();
   const rawEvents = eventOverride || state.workflowEvents;
-  const events = useMemo(() => dedupeWorkflowOutputEvents(rawEvents), [rawEvents]);
+  const events = useMemo(() => {
+    const anchor = state.messages.findIndex((message) => message.id === state.workflowAnchorMessageId);
+    const visibleAssistantText = new Set(state.messages.slice(Math.max(0, anchor)).filter((message) => message.role === "assistant").map((message) => compactDetail(message.text)));
+    const planningText = new Set(rawEvents
+      .filter((event) => event.role === "planning" && !event.toolName && event.status !== "error" && event.status !== "warning")
+      .map((event) => compactDetail(event.detail)));
+    return dedupeWorkflowOutputEvents(rawEvents).filter((event) => (
+      event.noteSource !== "progress"
+      || event.status === "error" || event.status === "warning"
+      || !(visibleAssistantText.has(compactDetail(event.detail)) || planningText.has(compactDetail(event.detail)))
+    ));
+  }, [rawEvents, state.messages, state.workflowAnchorMessageId]);
   const isActiveWorkflow = !eventOverride || eventOverride === state.workflowEvents;
   const responseVisiblyBusy = isResponseVisiblyBusy(state);
   const animateActiveWorkflow = responseVisiblyBusy && !state.restoringHistory && isActiveWorkflow;
@@ -2005,11 +2115,6 @@ export function WorkflowPanel({
   const hasMeaningfulCardEvents = cardEvents.some((event) => !isCompactOnlyScaffoldEvent(event));
   const showWorkflowCard = (rows.length > 0 || Boolean(latestVisibleActivityEvent))
     && (hasMeaningfulCardEvents || !hasCompactProgressEvent);
-  const countLabel = [
-    `${cardEvents.length}개 기록`,
-    displayedDurationSeconds !== null ? `(${formatDuration(displayedDurationSeconds)})` : "",
-    cardRunningCount ? `· ${cardRunningCount}개 실행 중` : "",
-  ].filter(Boolean).join(" ");
 
   useLayoutEffect(() => {
     onVisibleProgressChangeRef.current = onVisibleProgressChange;
@@ -2048,10 +2153,7 @@ export function WorkflowPanel({
       {showWorkflowCard || hasOutputPreview || hasLongReportOutline ? (
         <details className="workflow-card" open={!eventOverride && responseVisiblyBusy || cardRunningCount > 0 || hasOutputPreview || hasLongReportOutline}>
           <summary>
-            <span className="workflow-title">작업 진행</span>
-            <span className="workflow-count">
-              {countLabel}
-            </span>
+            <span className="workflow-title">{displayedDurationSeconds !== null ? `${formatDuration(displayedDurationSeconds)} 동안 작업${cardRunningCount ? " 중" : "함"}` : "작업 진행"}</span>
           </summary>
           <div className="workflow-body">
             {showWorkflowCard ? (
@@ -2059,32 +2161,7 @@ export function WorkflowPanel({
                 {rows.map((row) => (
                   <Fragment key={row.type === "group" ? row.parent.id : row.event.id}>
                     {row.type === "group" ? (
-                      <div
-                        className={`workflow-group ${row.parent.status}`}
-                        data-workflow-group-id={row.parent.groupId}
-                      >
-                        <WorkflowStep
-                          event={row.parent}
-                          detail={eventDetail(row.parent)}
-                          rawDetail={row.parent.detail}
-                          animate={animateActiveWorkflow}
-                          quietDone={quietCompletedStep(row.parent, latestVisibleEventId)}
-                        />
-                        {row.children.length ? (
-                          <div className="workflow-children" role="group" aria-label={`${row.parent.title} 하위 단계`}>
-                            {row.children.map((child) => (
-                              <WorkflowStep
-                                event={child}
-                                detail={eventDetail(child)}
-                                rawDetail={child.detail}
-                                animate={animateActiveWorkflow}
-                                quietDone={quietCompletedStep(child, latestVisibleEventId)}
-                                key={child.id}
-                              />
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
+                      <WorkflowNarrativeGroup parent={row.parent} children={row.children} animate={animateActiveWorkflow} eventDetail={eventDetail} />
                     ) : (
                       <WorkflowStep
                         event={row.event}

@@ -58,7 +58,7 @@ test("resource sampler measures this process tree and shuts down cleanly", async
   const sampler = createResourceSampler({ file: "python", args: [] }, fileURLToPath(new URL("../scripts/resource_sample.py", import.meta.url)));
   t.after(() => sampler.stop());
   const first = await sampler.sample();
-  assert.equal(first.cpuPercent, null);
+  assert.ok(Number.isFinite(first.cpuPercent) && first.cpuPercent >= 0 && first.cpuPercent <= 100);
   assert.ok(first.appMemoryBytes > 0);
   assert.ok(first.availableMemoryBytes > 0);
   assert.ok(first.totalMemoryBytes >= first.availableMemoryBytes);

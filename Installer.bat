@@ -122,7 +122,7 @@ if not exist ".skills\mcp\national-assembly\runtime\index.js" (
   pause
   exit /b 1
 )
-if not exist ".skills\mcp\national-assembly\runtime\244.index.js" (
+if not exist ".skills\mcp\national-assembly\runtime\*.index.js" (
   echo [ERROR] Bundled National Assembly MCP runtime chunk is missing.
   pause
   exit /b 1
@@ -148,11 +148,13 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-node --check ".skills\mcp\national-assembly\runtime\244.index.js"
-if errorlevel 1 (
-  echo [ERROR] Bundled National Assembly MCP runtime chunk has a syntax error.
-  pause
-  exit /b 1
+for %%F in (".skills\mcp\national-assembly\runtime\*.index.js") do (
+  node --check "%%~fF"
+  if errorlevel 1 (
+    echo [ERROR] Bundled National Assembly MCP runtime chunk has a syntax error: %%~nxF
+    pause
+    exit /b 1
+  )
 )
 
 echo [INFO] Installing packaged MCP runtime dependencies...

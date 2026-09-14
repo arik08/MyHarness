@@ -31,8 +31,8 @@ describe("ChatPanel", () => {
     Element.prototype.scrollTo = vi.fn();
     vi.mocked(sendBackendRequest).mockClear();
     vi.mocked(readConcurrencyStatus).mockReset().mockResolvedValue({
-      maxActiveSessions: 20,
-      maxBusySessions: 8,
+      maxCpuPercent: 95,
+      maxMemoryPercent: 98,
       maxBusySessionsPerClient: 3,
       idleSessionTimeoutMinutes: 30,
       activeSessions: 12,
@@ -53,7 +53,7 @@ describe("ChatPanel", () => {
     );
 
     const statusButton = await screen.findByRole("button", {
-      name: "동시 사용 현황: 사용자 수 3명, 연결된 화면 1개, 동시에 AI 응답을 생성하는 세션 5 / 8, 같은 브라우저의 동시 AI 응답 2 / 3, 대기열 세션 2, 응답 4",
+      name: "동시 사용 현황: 사용자 수 3명, 연결된 화면 1개, 열린 작업 세션 12개, 동시에 AI 응답을 생성하는 세션 5개, 같은 브라우저의 동시 AI 응답 2 / 3, 대기열 세션 2, 응답 4",
     });
     const tooltip = screen.getByRole("tooltip");
 
@@ -64,9 +64,11 @@ describe("ChatPanel", () => {
     expect(tooltip.querySelector('[data-status="responses"] [data-icon="responses"]')).toBeTruthy();
     expect(statusButton.getAttribute("aria-describedby")).toBe(tooltip.id);
     expect(within(tooltip).getByText("1개")).toBeTruthy();
+    expect(within(tooltip).getByText("열린 작업 세션")).toBeTruthy();
+    expect(within(tooltip).getByText("12개")).toBeTruthy();
     expect(within(tooltip).getByText("사용자 수")).toBeTruthy();
     expect(within(tooltip).getByText("3명")).toBeTruthy();
-    expect(within(tooltip).getByText("5 / 8")).toBeTruthy();
+    expect(within(tooltip).getByText("5개")).toBeTruthy();
     expect(within(tooltip).getByText("2 / 3")).toBeTruthy();
     expect(within(tooltip).getByText("세션 2 · 응답 4")).toBeTruthy();
   });

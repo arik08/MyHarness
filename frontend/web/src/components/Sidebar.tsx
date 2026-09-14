@@ -12,7 +12,7 @@ import type { RuntimePickerOption } from "../types/ui";
 import type { ThemeId } from "../types/ui";
 import { clampSidebarWidth, sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 import { frontendHelpText } from "../utils/helpText";
-import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
+import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem, uniqueHistoryItems } from "../utils/history";
 import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { writeLocalStorage } from "../utils/storage";
 
@@ -390,7 +390,6 @@ export function Sidebar() {
         sessions.find((session) => (
           session.savedSessionId === nextHistoryId
           || session.sessionId === nextHistoryId
-          || (item.liveSessionId && session.sessionId === item.liveSessionId)
         ))
       );
       const liveSessions = await listLiveSessions({
@@ -1165,7 +1164,7 @@ export function Sidebar() {
   const activeHistoryValue = state.activeHistoryId || state.sessionId || "";
   const activeHistoryHiddenKey = historyVisibilityKey(activeHistoryValue, state.workspacePath, state.workspaceName);
   const activeHistoryDeleted = Boolean(!state.adminMode && activeHistoryHiddenKey && state.hiddenHistoryKeys.includes(activeHistoryHiddenKey));
-  const visibleHistory = state.history.filter((item) => (
+  const visibleHistory = uniqueHistoryItems(state.history).filter((item) => (
     !isCurrentLiveHistoryItem(item, state.sessionId)
     && !optimisticallyHiddenHistoryIds.has(item.value)
   ));
@@ -2005,12 +2004,7 @@ function historyTitleMatches(title: string, query: string) {
 }
 
 function appendUniqueHistoryItems(current: HistoryItem[], incoming: HistoryItem[]) {
-  const seen = new Set(current.map((item) => item.value));
-  return [...current, ...incoming.filter((item) => {
-    if (!item.value || seen.has(item.value)) return false;
-    seen.add(item.value);
-    return true;
-  })];
+  return uniqueHistoryItems([...current, ...incoming]);
 }
 
 function compareHistoryTitle(left: HistoryItem, right: HistoryItem) {

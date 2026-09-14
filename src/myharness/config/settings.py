@@ -71,8 +71,8 @@ class MemorySettings(BaseModel):
 class WebConcurrencySettings(BaseModel):
     """Web server concurrency limits persisted by the admin settings UI."""
 
-    max_active_sessions: int = Field(default=40, ge=1, le=500)
-    max_busy_sessions: int = Field(default=20, ge=1, le=100)
+    max_cpu_percent: int = Field(default=95, ge=1, le=100)
+    max_memory_percent: int = Field(default=98, ge=1, le=100)
     max_busy_sessions_per_client: int = Field(default=3, ge=1, le=20)
     idle_session_timeout_minutes: int = Field(default=30, ge=1, le=1440)
 

@@ -6,10 +6,33 @@
 }
 .history-skeleton span,
 .conversation-skeleton span {
+  position: relative;
+  overflow: hidden;
   display: block;
   height: 12px;
   border-radius: 4px;
   background: var(--line);
+}
+.history-skeleton span::after,
+.conversation-skeleton span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 15%, rgb(248 250 252 / 55%) 50%, transparent 85%);
+  transform: translateX(-100%);
+  animation: loading-skeleton-shimmer 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes loading-skeleton-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .history-skeleton span::after,
+  .conversation-skeleton span::after {
+    animation: none;
+    content: none;
+  }
 }
 .history-skeleton span:nth-child(even) { width: 70%; }
 .conversation-skeleton { width: min(100%, 760px); margin: 16px auto; }

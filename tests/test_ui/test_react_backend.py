@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from myharness.api.client import ApiMessageCompleteEvent, ApiTextDeltaEvent
+from myharness.api.client import ApiMessageCompleteEvent, ApiTextDeltaEvent, ApiReasoningSummaryEvent
 from myharness.api.usage import UsageSnapshot
 from myharness.config.settings import Settings, save_settings
 from myharness.engine.stream_events import (
@@ -46,7 +46,6 @@ from myharness.ui.backend_host import (
     _long_report_progress_usage_input,
     _progress_preview_content,
     _read_progress_preview_content,
-    _reasoning_summary_text,
     _tool_progress_delays,
     _tool_progress_message,
     run_backend_host,
@@ -70,25 +69,37 @@ class StaticApiClient:
         )
 
 
-def test_reasoning_summary_text_extracts_visible_summary_items():
-    message = ConversationMessage(
-        role="assistant",
-        content=[
-            ResponsesStateBlock(
-                item={
-                    "type": "reasoning",
-                    "summary": [
-                        {"type": "summary_text", "text": "First check."},
-                        {"type": "other", "text": "hidden"},
-                        {"type": "summary_text", "text": "Second check."},
-                    ],
-                }
-            ),
-            TextBlock(text="Done."),
-        ],
-    )
+@pytest.mark.asyncio
+async def test_provider_summary_reaches_workflow_without_entering_answer(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
 
-    assert _reasoning_summary_text(message) == "First check.\n\nSecond check."
+    class SummaryClient(StaticApiClient):
+        async def stream_message(self, request):
+            yield ApiReasoningSummaryEvent(text="Checking sources.\n\nComparing evidence.")
+            async for event in super().stream_message(request):
+                yield event
+
+    client = SummaryClient("검토 완료했습니다.")
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+
+    async def capture(event):
+        host._record_history_event(event)
+        events.append(event)
+
+    host._emit = capture
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line("자료를 검토해주세요")
+    finally:
+        await close_runtime(host._bundle)
+    assert [event.message for event in events if event.type == "reasoning_summary"] == [
+        "Checking sources.\n\nComparing evidence."
+    ]
+    assert next(event.message for event in events if event.type == "assistant_complete") == "검토 완료했습니다."
 
 
 class SequencedApiClient:
@@ -2394,7 +2405,12 @@ async def test_backend_host_extracts_same_stream_progress_json(tmp_path, monkeyp
             AssistantTurnComplete(
                 message=ConversationMessage(
                     role="assistant",
-                    content=[TextBlock(text=f"답변 앞\n{marker}\n답변 뒤")],
+                    content=[
+                        ResponsesStateBlock(item={"type": "reasoning", "summary": [
+                            {"type": "summary_text", "text": "Planning source retrieval"},
+                        ]}),
+                        TextBlock(text=f"답변 앞\n{marker}\n답변 뒤"),
+                    ],
                 ),
                 usage=UsageSnapshot(input_tokens=2, output_tokens=3),
             )
@@ -2414,6 +2430,7 @@ async def test_backend_host_extracts_same_stream_progress_json(tmp_path, monkeyp
     complete = next(event for event in events if event.type == "assistant_complete")
 
     assert statuses.count("검색 결과에서 포스코와 경쟁사 후보를 추려보고 있습니다.") == 1
+    assert not any(event.type == "reasoning_summary" for event in events)
     assert assistant_text == "답변 앞\n\n답변 뒤"
     assert "<myharness-progress>" not in (complete.message or "")
     assert complete.message == "답변 앞\n\n답변 뒤"

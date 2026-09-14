@@ -410,12 +410,12 @@ test("server metrics expose real resources and bounded history through a read-on
   assert.equal((await fetch(`${app.baseUrl}/api/server-metrics`, { method: "POST" })).status, 405);
 });
 
-test("server metrics track queue wait until a retained session slot is released", async (t) => {
+test("server metrics track resource queue wait until the resource threshold is raised", async (t) => {
   const app = await startWebServer();
   t.after(() => app.stop());
   const settings = await fetch(`${app.baseUrl}/api/settings/concurrency`, {
     method: "POST", headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
-    body: JSON.stringify({ maxActiveSessions: 1, maxBusySessions: 1, maxBusySessionsPerClient: 1, idleSessionTimeoutMinutes: 5 }),
+    body: JSON.stringify({ maxCpuPercent: 100, maxMemoryPercent: 100, maxBusySessionsPerClient: 1, idleSessionTimeoutMinutes: 5 }),
   });
   assert.equal(settings.status, 200);
   async function start(clientId) {
@@ -424,6 +424,10 @@ test("server metrics track queue wait until a retained session slot is released"
   const first = await start("metrics-first");
   assert.equal(first.status, 200);
   const { sessionId } = await first.json();
+  await fetch(`${app.baseUrl}/api/settings/concurrency`, {
+    method: "POST", headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({ maxCpuPercent: 100, maxMemoryPercent: 1 }),
+  });
   const second = await start("metrics-second");
   assert.equal(second.status, 202);
   await sleep(30);
@@ -433,6 +437,10 @@ test("server metrics track queue wait until a retained session slot is released"
   assert.equal(queued.queueWait.count, 0);
   await fetch(`${app.baseUrl}/api/shutdown`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, clientId: "metrics-first" }),
+  });
+  await fetch(`${app.baseUrl}/api/settings/concurrency`, {
+    method: "POST", headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({ maxCpuPercent: 100, maxMemoryPercent: 100 }),
   });
   let started;
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -486,107 +494,49 @@ test("connected screens follow SSE connections without counting retained idle se
   assert.equal((await readStatus()).connectedScreens, 1);
 });
 
-test("saves concurrency settings and applies the active-session limit immediately", async (t) => {
-  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+test("migrates count limits to resource settings, exposes queue population, and resumes", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared", MYHARNESS_MAX_ACTIVE_SESSIONS: "1", MYHARNESS_MAX_BUSY_SESSIONS: "1" } });
   t.after(() => app.stop());
-
-  const defaultsResponse = await fetch(`${app.baseUrl}/api/settings/concurrency`);
-  assert.equal(defaultsResponse.status, 200);
-  assert.deepEqual(await defaultsResponse.json(), {
-    maxActiveSessions: 40,
-    maxBusySessions: 20,
-    maxBusySessionsPerClient: 3,
-    idleSessionTimeoutMinutes: 30,
-    activeUsers: 0,
-    activeSessions: 0,
-    connectedScreens: 0,
-    busySessions: 0,
-    busySessionsForClient: 0,
-    queuedSessions: 0,
-    queuedResponses: 0,
+  const headers = { "content-type": "application/json", "x-myharness-admin-mode": "1" };
+  const save = (body) => fetch(`${app.baseUrl}/api/settings/concurrency`, { method: "POST", headers, body: JSON.stringify(body) });
+  const start = (clientId, ip) => fetch(`${app.baseUrl}/api/session`, {
+    method: "POST", headers: { ...headers, "x-forwarded-for": ip }, body: JSON.stringify({ clientId }),
   });
-
-  const savedResponse = await fetch(`${app.baseUrl}/api/settings/concurrency`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
-    body: JSON.stringify({
-      maxActiveSessions: 1,
-      maxBusySessions: 1,
-      maxBusySessionsPerClient: 1,
-      idleSessionTimeoutMinutes: 5,
-    }),
-  });
-  assert.equal(savedResponse.status, 200);
-
-  const firstResponse = await fetch(`${app.baseUrl}/api/session`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ clientId: "limit-a" }),
-  });
-  assert.equal(firstResponse.status, 200);
-  const firstPayload = await firstResponse.json();
-
-  const statusResponse = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=limit-a`);
-  assert.deepEqual(await statusResponse.json(), {
-    maxActiveSessions: 1,
-    maxBusySessions: 1,
-    maxBusySessionsPerClient: 1,
-    idleSessionTimeoutMinutes: 5,
-    activeUsers: 1,
-    activeSessions: 1,
-    connectedScreens: 0,
-    busySessions: 0,
-    busySessionsForClient: 0,
-    queuedSessions: 0,
-    queuedResponses: 0,
-  });
-
-  const secondResponse = await fetch(`${app.baseUrl}/api/session`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ clientId: "limit-b" }),
-  });
-  const secondPayload = await secondResponse.json();
-
-  assert.equal(secondResponse.status, 202);
-  assert.equal(secondPayload.status, "waiting");
-  assert.equal(secondPayload.position, 1);
-
-  const queuedStatusResponse = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=limit-b`);
-  const queuedStatus = await queuedStatusResponse.json();
-  assert.equal(queuedStatus.queuedSessions, 1);
-
-  const shutdownResponse = await fetch(`${app.baseUrl}/api/shutdown`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId: firstPayload.sessionId, clientId: "limit-a" }),
-  });
-  assert.equal(shutdownResponse.status, 200);
-
-  let queuedSession;
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    const queueResponse = await fetch(
-      `${app.baseUrl}/api/session/queue?queueId=${encodeURIComponent(secondPayload.queueId)}&clientId=limit-b`,
-    );
-    if (queueResponse.status === 200) {
-      const payload = await queueResponse.json();
-      if (payload.status === "ready") {
-        queuedSession = payload;
-        break;
-      }
-    }
+  const defaults = await (await fetch(`${app.baseUrl}/api/settings/concurrency`)).json();
+  assert.equal(defaults.maxCpuPercent, 95);
+  assert.equal(defaults.maxMemoryPercent, 98);
+  assert.equal(defaults.maxActiveSessions, undefined);
+  assert.equal(defaults.maxBusySessions, undefined);
+  assert.equal((await save({ maxCpuPercent: 100, maxMemoryPercent: 100, maxActiveSessions: 1, maxBusySessions: 1 })).status, 200);
+  for (const id of ["free-a", "free-b", "free-c"]) assert.equal((await start(id, "10.0.0.1")).status, 200);
+  await save({ maxCpuPercent: 100, maxMemoryPercent: 1 });
+  const first = await start("wait-a", "10.0.0.2");
+  assert.equal(first.status, 202);
+  const queued = await first.json();
+  assert.equal(queued.waitingUsers, 1);
+  assert.equal((await start("wait-b", "10.0.0.3")).status, 202);
+  assert.equal((await start("wait-c", "10.0.0.3")).status, 202);
+  const queueUrl = `${app.baseUrl}/api/session/queue?queueId=${queued.queueId}&clientId=wait-a`;
+  const position = await (await fetch(queueUrl)).json();
+  assert.equal(position.position, 1);
+  assert.equal(position.waitingUsers, 2);
+  assert.equal(position.waitingRequests, 3);
+  assert.match(position.message, /대기 2명.*3건.*내 순번 1번째.*메모리/);
+  assert.equal((await fetch(queueUrl.replace("wait-a", "stranger"))).status, 404);
+  // Lowering the threshold leaves existing sessions intact.
+  const status = await (await fetch(`${app.baseUrl}/api/settings/concurrency`)).json();
+  assert.equal(status.activeSessions, 3);
+  assert.equal(status.queuedSessionUsers, 2);
+  await save({ maxCpuPercent: 100, maxMemoryPercent: 100, maxBusySessionsPerClient: 3, idleSessionTimeoutMinutes: 5 });
+  let ready;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    ready = await (await fetch(queueUrl)).json();
+    if (ready.status === "ready") break;
     await sleep(100);
   }
-  assert.ok(queuedSession?.sessionId);
-
+  assert.ok(ready.sessionId);
   const stored = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
-  assert.deepEqual(stored.web_concurrency, {
-    max_active_sessions: 1,
-    max_busy_sessions: 1,
-    max_busy_sessions_per_client: 1,
-    idle_session_timeout_minutes: 5,
-  });
+  assert.deepEqual(stored.web_concurrency, { max_cpu_percent: 100, max_memory_percent: 100, max_busy_sessions_per_client: 3, idle_session_timeout_minutes: 5 });
 });
 
 test("queues an over-capacity response and starts it automatically when a slot opens", async (t) => {
@@ -597,8 +547,8 @@ test("queues an over-capacity response and starts it automatically when a slot o
     method: "POST",
     headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
     body: JSON.stringify({
-      maxActiveSessions: 2,
-      maxBusySessions: 1,
+      maxCpuPercent: 100,
+      maxMemoryPercent: 100,
       maxBusySessionsPerClient: 1,
       idleSessionTimeoutMinutes: 5,
     }),
@@ -616,14 +566,14 @@ test("queues an over-capacity response and starts it automatically when a slot o
   }
 
   const first = await createSession("response-a");
-  const second = await createSession("response-b");
+  const second = await createSession("response-a");
   await waitForSseEvent(
     `${app.baseUrl}/api/events?session=${encodeURIComponent(first.sessionId)}&clientId=response-a`,
     (event) => event.type === "ready",
     { timeoutMs: 10_000 },
   );
   await waitForSseEvent(
-    `${app.baseUrl}/api/events?session=${encodeURIComponent(second.sessionId)}&clientId=response-b`,
+    `${app.baseUrl}/api/events?session=${encodeURIComponent(second.sessionId)}&clientId=response-a`,
     (event) => event.type === "ready",
     { timeoutMs: 10_000 },
   );
@@ -642,18 +592,18 @@ test("queues an over-capacity response and starts it automatically when a slot o
   const secondMessage = await fetch(`${app.baseUrl}/api/message`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId: second.sessionId, clientId: "response-b", line: "대기열 자동 시작 확인" }),
+    body: JSON.stringify({ sessionId: second.sessionId, clientId: "response-a", line: "대기열 자동 시작 확인" }),
   });
   const secondMessagePayload = await secondMessage.json();
   assert.equal(secondMessage.status, 202);
   assert.equal(secondMessagePayload.queued, true);
   assert.equal(secondMessagePayload.queuePosition, 1);
 
-  const queuedStatusResponse = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=response-b`);
+  const queuedStatusResponse = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=response-a`);
   assert.equal((await queuedStatusResponse.json()).queuedResponses, 1);
 
   const started = await waitForSseEvent(
-    `${app.baseUrl}/api/events?session=${encodeURIComponent(second.sessionId)}&clientId=response-b`,
+    `${app.baseUrl}/api/events?session=${encodeURIComponent(second.sessionId)}&clientId=response-a`,
     (event) => event.type === "capacity_queue_status" && event.status === "started",
     { timeoutMs: 10_000 },
   );
@@ -699,7 +649,7 @@ test("logs connection and disconnection with time and IP without a title", async
   assert.equal((activity.match(/접속 종료/g) || []).length, 1);
 });
 
-test("rejects inconsistent concurrency settings", async (t) => {
+test("rejects invalid resource percentages", async (t) => {
   const app = await startWebServer();
   t.after(() => app.stop());
 
@@ -707,8 +657,8 @@ test("rejects inconsistent concurrency settings", async (t) => {
     method: "POST",
     headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
     body: JSON.stringify({
-      maxActiveSessions: 4,
-      maxBusySessions: 5,
+      maxCpuPercent: 101,
+      maxMemoryPercent: 98,
       maxBusySessionsPerClient: 2,
       idleSessionTimeoutMinutes: 30,
     }),
@@ -716,7 +666,7 @@ test("rejects inconsistent concurrency settings", async (t) => {
   const payload = await response.json();
 
   assert.equal(response.status, 400);
-  assert.match(payload.error, /열린 작업 세션 수보다 클 수 없습니다/);
+  assert.match(payload.error, /CPU 사용률 기준/);
 });
 
 test("keeps runtime choices client-scoped across shared workspace sessions", async (t) => {

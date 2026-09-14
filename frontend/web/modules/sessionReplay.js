@@ -31,6 +31,7 @@ function resetActiveStreams(state) {
 
 function resetConversationReplay(state) {
   state.stableEvents = [];
+  state.latestEvents.delete("todo_update");
   resetActiveStreams(state);
 }
 

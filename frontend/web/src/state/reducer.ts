@@ -1,9 +1,9 @@
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, UsageCostSummary, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { artifactKind, artifactLabelForPath, artifactName, isKnownArtifactPath, normalizeArtifactPath } from "../utils/artifacts";
-import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem } from "../utils/history";
+import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem, uniqueHistoryItems } from "../utils/history";
 import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
-import { isKnownLookupTool } from "../utils/toolPresentation";
+import { isKnownLookupTool, workflowGroupStatus } from "../utils/toolPresentation";
 
 const clientSessionKey = "myharness:clientSessionId";
 const appSettingsKey = "myharness:appSettings";
@@ -1355,7 +1355,7 @@ function applyWorkflowProgressNote(events: WorkflowEvent[], detail: string) {
   if (latestMemo?.detail === cleanDetail) return updated;
   return appendWorkflowEvent(updated, {
     toolName: "", title: "진행 메모", detail: cleanDetail,
-    status: "done", level: "parent", role: "reasoning",
+    status: "done", level: "parent", role: "reasoning", noteSource: "progress",
   });
 }
 
@@ -1449,13 +1449,16 @@ function ensurePurposeEvent(events: WorkflowEvent[], toolName: string): { events
   const purpose = purposeForTool(toolName);
   const latestPurposeIndex = lastMatchingIndex(events, (event) => event.role === "purpose");
   const latestPurpose = events[latestPurposeIndex];
+  const phaseNote = events.slice(latestPurposeIndex + 1).reverse().find((event) => (
+    event.role === "reasoning" && event.noteSource === "progress" && compactWorkflowDetail(event.detail)
+  ));
   const hasLaterReasoningSummary = latestPurposeIndex !== -1 && events
     .slice(latestPurposeIndex + 1)
     .some((event) => event.role === "reasoning");
   if (latestPurpose?.purpose === purpose && latestPurpose.groupId && !hasLaterReasoningSummary) {
     const copy = purposeCopy(purpose);
     return {
-      events: events.map((event) => event.id === latestPurpose.id ? { ...event, status: "running", detail: copy.running } : event),
+      events: events.map((event) => event.id === latestPurpose.id ? { ...event, status: "running", detail: isAutoPurposeSummary(event.detail, purpose) ? copy.running : event.detail } : event),
       groupId: latestPurpose.groupId,
     };
   }
@@ -1465,7 +1468,7 @@ function ensurePurposeEvent(events: WorkflowEvent[], toolName: string): { events
     events: appendWorkflowEvent(events, {
       toolName: "",
       title: copy.title,
-      detail: copy.running,
+      detail: phaseNote ? phaseNote.detail : copy.running,
       status: "running",
       level: "parent",
       role: "purpose",
@@ -1491,10 +1494,7 @@ function refreshPurposeEvents(events: WorkflowEvent[]) {
     if (event.role !== "purpose" || !event.groupId) return event;
     const children = childrenByGroup.get(event.groupId) || [];
     if (!children.length) return event;
-    const hasRunning = children.some((item) => item.status === "running");
-    const hasError = children.some((item) => item.status === "error");
-    const hasWarning = children.some((item) => item.status === "warning");
-    const status = hasError ? "error" as const : hasRunning ? "running" as const : hasWarning ? "warning" as const : "done" as const;
+    const status = workflowGroupStatus(children);
     const currentDetail = compactWorkflowDetail(event.detail);
     return {
       ...event,
@@ -1903,17 +1903,7 @@ function visibleHistoryRows(state: AppState, history: HistoryItem[]) {
 }
 
 function appendHistoryRows(existing: HistoryItem[], incoming: HistoryItem[]) {
-  const seen = new Set<string>();
-  const merged: HistoryItem[] = [];
-  for (const item of [...existing, ...incoming]) {
-    const value = String(item.value || "").trim();
-    if (!value || seen.has(value)) {
-      continue;
-    }
-    seen.add(value);
-    merged.push(item);
-  }
-  return merged;
+  return uniqueHistoryItems([...existing, ...incoming]);
 }
 
 function isCurrentHistoryHidden(state: AppState, sessionId: string) {
@@ -2361,6 +2351,7 @@ function reduceHistoryRestoreEvent(
             status: "done",
             level: "parent",
             role: "reasoning",
+            noteSource: "provider-summary",
           },
         );
       }
@@ -2789,6 +2780,25 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
 }
 
 function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: "backend_event" }>): AppState {
+  const next = reduceBackendEventValue(state, action);
+  if (next.restoringHistory || next.historyReadOnly || next.workflowEvents === state.workflowEvents) return next;
+  const now = Date.now();
+  const previous = new Map(state.workflowEvents.map((event) => [event.id, event]));
+  const workflowEvents = next.workflowEvents.map((event) => {
+    if (event.restored) return event;
+    const old = previous.get(event.id);
+    const startedAtMs = event.startedAtMs ?? old?.startedAtMs ?? (event.status === "running" ? now : undefined);
+    const finishedAtMs = event.status === "running" ? undefined
+      : event.finishedAtMs ?? old?.finishedAtMs ?? (startedAtMs !== undefined ? now : undefined);
+    return { ...event, startedAtMs, finishedAtMs };
+  });
+  return { ...next, workflowEvents,
+    workflowEventsByMessageId: next.workflowAnchorMessageId && next.workflowEventsByMessageId[next.workflowAnchorMessageId] === next.workflowEvents
+      ? { ...next.workflowEventsByMessageId, [next.workflowAnchorMessageId]: workflowEvents }
+      : next.workflowEventsByMessageId };
+}
+
+function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { type: "backend_event" }>): AppState {
   if (action.sessionId && action.sessionId !== state.sessionId) {
     return state;
   }
@@ -2929,6 +2939,7 @@ function reduceBackendEvent(state: AppState, action: Extract<AppAction, { type: 
           status: "done",
           level: "parent",
           role: "reasoning",
+          noteSource: "provider-summary",
         },
       ),
     };

@@ -8,15 +8,15 @@ import { readServerMetrics, type ServerMetrics } from "../../api/serverMetrics";
 
 vi.mock("../../api/settings", () => ({
   concurrencySettingsChangedEvent: "settings-changed",
-  readConcurrencyStatus: vi.fn().mockResolvedValue({ activeUsers: 1, connectedScreens: 1, busySessions: 2, maxBusySessions: 8 }),
+  readConcurrencyStatus: vi.fn().mockResolvedValue({ activeUsers: 1, connectedScreens: 1, busySessions: 2, maxMemoryPercent: 98 }),
 }));
 vi.mock("../../api/serverMetrics", () => ({ readServerMetrics: vi.fn() }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const metrics: ServerMetrics = {
   startedAt: Date.now(), sampledAt: Date.now(), intervalMs: 5000, windowMs: 900000,
-  resources: { cpuPercent: 12.3, totalMemoryBytes: 32 * 1024 ** 3, availableMemoryBytes: 16 * 1024 ** 3, appMemoryBytes: 1024 ** 3, processCount: 6, partial: false },
+  resources: { cpuPercent: 12.3, totalMemoryBytes: 32 * 1024 ** 3, availableMemoryBytes: 20 * 1024 ** 3, appMemoryBytes: 1024 ** 3, processCount: 6, partial: false },
   resourceError: null,
-  load: { connectedScreens: 1, retainedSessions: 4, detachedIdleSessions: 2, busySessions: 2, queuedSessions: 0, queuedResponses: 1, oldestWaitMs: 2345, maxActiveSessions: 20, maxBusySessions: 8 },
+  load: { connectedScreens: 1, retainedSessions: 4, detachedIdleSessions: 2, busySessions: 2, queuedSessions: 0, queuedResponses: 1, oldestWaitMs: 2345, maxCpuPercent: 95, maxMemoryPercent: 98 },
   api: { count: 20, p95Ms: 120 }, queueWait: { count: 0, p95Ms: null }, history: [],
 };
 
@@ -27,14 +27,15 @@ describe("server load panel", () => {
     const user = userEvent.setup();
     const button = await screen.findByRole("button", { name: /동시 사용 현황/ });
     const tooltip = screen.getByRole("tooltip");
-    expect(await within(tooltip).findByText("16.0 / 32.0 GB · 50.0%")).toBeTruthy();
+    expect(await within(tooltip).findByText("12.0 / 32.0 GB · 37.5%")).toBeTruthy();
+    expect(within(tooltip).getByText("서버 메모리")).toBeTruthy();
     await user.click(button);
     const dialog = await screen.findByRole("dialog", { name: "서버 부하" });
     expect(readServerMetrics).toHaveBeenCalledWith(true);
     expect(within(dialog).getByText("12.3%")).toBeTruthy();
     expect(within(dialog).getByText("1.00 GB")).toBeTruthy();
     expect(within(dialog).getAllByText("표본 없음").length).toBeGreaterThan(0);
-    expect(within(dialog).getByText("4 / 20")).toBeTruthy();
+    expect(within(dialog).getByText("4개")).toBeTruthy();
     expect(within(dialog).getByText("2.3초")).toBeTruthy();
     expect(within(dialog).queryByText(/429|Provider별/)).toBeNull();
     const close = within(dialog).getByRole("button", { name: "서버 부하 닫기" });

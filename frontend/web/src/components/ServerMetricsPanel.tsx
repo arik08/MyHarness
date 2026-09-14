@@ -86,14 +86,14 @@ export function ServerMetricsPanel({ metrics, error, onClose }: {
           <Trend points={points} label="서버 CPU" value={(p) => p.resources?.cpuPercent ?? null} format={percentLabel} ceiling={100} />
           <Trend points={points} label="가용 메모리" value={(p) => p.resources?.availableMemoryBytes ?? null} format={memoryLabel} ceiling={resource?.totalMemoryBytes} />
           <Trend points={points} label="MyHarness 메모리" value={(p) => p.resources?.appMemoryBytes ?? null} format={memoryLabel} />
-          <Trend points={points} label="실행 중 AI 작업" value={(p) => p.load.busySessions} format={(n) => n == null ? "–" : `${n}개`} ceiling={load?.maxBusySessions} />
+          <Trend points={points} label="실행 중 AI 작업" value={(p) => p.load.busySessions} format={(n) => n == null ? "–" : `${n}개`} />
         </div>
         <h3>작업과 대기</h3>
         <dl className="server-metrics-rows">
           <div><dt>연결된 화면</dt><dd>{load?.connectedScreens}개</dd></div>
-          <div><dt>보유 세션 / 한도 <small>메모리를 사용하는 전체 세션</small></dt><dd>{load?.retainedSessions} / {load?.maxActiveSessions}</dd></div>
+          <div><dt>보유 세션 <small>메모리를 사용하는 전체 세션</small></dt><dd>{load?.retainedSessions}개</dd></div>
           <div><dt>화면 없는 유휴 세션</dt><dd>{load?.detachedIdleSessions}개</dd></div>
-          <div><dt>실행 중 AI 작업 / 한도</dt><dd>{load?.busySessions} / {load?.maxBusySessions}</dd></div>
+          <div><dt>실행 중 AI 작업</dt><dd>{load?.busySessions}개</dd></div>
           <div><dt>현재 대기</dt><dd>세션 {load?.queuedSessions} · 응답 {load?.queuedResponses}</dd></div>
           <div><dt>현재 가장 오래 기다린 시간</dt><dd>{timeLabel(load?.oldestWaitMs)}</dd></div>
           <div><dt>대기 후 시작한 작업의 대기시간 p95 <small>{metrics.queueWait.count}개 표본</small></dt><dd>{timeLabel(metrics.queueWait.p95Ms)}</dd></div>
@@ -104,7 +104,7 @@ export function ServerMetricsPanel({ metrics, error, onClose }: {
           <Trend points={points} label="일반 API 응답시간 p95" value={(p) => p.apiP95Ms} format={timeLabel} />
         </div>
         <details className="server-metrics-notes"><summary>측정 기준과 한도 조정 참고</summary>
-          <p>대기가 지속되면서 CPU·메모리에 여유가 있고 API 지연이 안정적이면 동시 작업 한도를 조금씩 높여 비교하세요. 작업을 늘린 뒤 지연이 커지거나 가용 메모리가 줄어들면 한도를 낮추거나 유휴 세션 보유 시간을 줄이세요.</p>
+          <p>CPU {load?.maxCpuPercent}% 또는 메모리 {load?.maxMemoryPercent}% 이상이면 새 세션과 응답이 대기하며, 기준 미만으로 내려가면 자동 재개됩니다. 자원은 5초마다 측정합니다. 진행 중인 작업은 중단하지 않으므로 실제 사용률은 기준을 넘을 수 있습니다. 세션 수와 서버 전체 응답 수에는 고정 한도가 없습니다. 대기 인원은 접속 IP 기준으로 집계합니다.</p>
           <p>MyHarness 메모리는 웹 서버와 하위 Python·도구·수집기 프로세스의 RSS 합계입니다. 공유 메모리가 중복될 수 있어 컴퓨터 전체 사용량과 같지 않습니다. 분리 실행되어 부모 관계가 끊긴 프로세스는 포함되지 않습니다.</p>
           <p>p95는 표본의 95%가 해당 시간 이내라는 뜻입니다. 최근 15분의 최대 10,000개 표본을 사용합니다. 대기시간은 취소된 작업을 제외하며, API 지연에는 AI 실행·스트리밍·지표 조회가 포함되지 않습니다. 배경 탭도 연결이 유지되면 화면 수에 포함합니다.</p>
         </details>

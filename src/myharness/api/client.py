@@ -87,7 +87,14 @@ class ApiRetryEvent:
     delay_seconds: float
 
 
-ApiStreamEvent = ApiTextDeltaEvent | ApiToolCallDeltaEvent | ApiMessageCompleteEvent | ApiRetryEvent
+@dataclass(frozen=True)
+class ApiReasoningSummaryEvent:
+    """A provider's public reasoning summary, separate from answer text."""
+
+    text: str
+
+
+ApiStreamEvent = ApiTextDeltaEvent | ApiToolCallDeltaEvent | ApiMessageCompleteEvent | ApiRetryEvent | ApiReasoningSummaryEvent
 
 
 class SupportsStreamingMessages(Protocol):
