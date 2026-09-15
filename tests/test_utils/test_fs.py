@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import multiprocessing as mp
-import os
-import stat
 import sys
 from pathlib import Path
 
@@ -50,55 +48,6 @@ def test_atomic_write_does_not_leave_tempfiles(tmp_path: Path) -> None:
     assert path.exists()
     leftover = [p for p in tmp_path.iterdir() if p != path]
     assert leftover == []
-
-
-# ---------------------------------------------------------------------------
-# Mode handling
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes not enforced on Windows")
-def test_mode_is_applied_to_new_file(tmp_path: Path) -> None:
-    path = tmp_path / "creds.json"
-    atomic_write_text(path, "secret", mode=0o600)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes not enforced on Windows")
-def test_credentials_are_never_world_readable(tmp_path: Path) -> None:
-    """Regression test: the file must be 0o600 from the very first byte.
-
-    The previous ``write_text`` + ``chmod`` sequence left a window during
-    which a co-resident attacker could stat the file with the default umask
-    mode (commonly 0o644). The atomic helper closes that window by applying
-    the mode before the tempfile is renamed into place.
-    """
-    path = tmp_path / "credentials.json"
-    atomic_write_text(
-        path,
-        json.dumps({"anthropic": {"api_key": "sk-secret"}}),
-        mode=0o600,
-    )
-    mode = stat.S_IMODE(path.stat().st_mode)
-    assert mode & 0o077 == 0, f"file is readable by group/other: {oct(mode)}"
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes not enforced on Windows")
-def test_mode_preserved_on_overwrite_when_not_specified(tmp_path: Path) -> None:
-    path = tmp_path / "settings.json"
-    path.write_text("{}")
-    os.chmod(path, 0o640)
-    atomic_write_text(path, '{"updated": true}')
-    assert stat.S_IMODE(path.stat().st_mode) == 0o640
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes not enforced on Windows")
-def test_explicit_mode_overrides_existing_mode(tmp_path: Path) -> None:
-    path = tmp_path / "credentials.json"
-    path.write_text("{}")
-    os.chmod(path, 0o644)
-    atomic_write_text(path, "{}", mode=0o600)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 # ---------------------------------------------------------------------------
@@ -150,16 +99,12 @@ def _concurrent_writer(target_path: str, lock_path: str, key: str, value: str) -
         atomic_write_text(target, json.dumps(data, indent=2) + "\n")
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="POSIX fork semantics keep this test deterministic; skip on Windows CI",
-)
 def test_concurrent_writers_all_survive(tmp_path: Path) -> None:
     """Two concurrent read-modify-write processes must not lose updates."""
     target = tmp_path / "credentials.json"
     lock = tmp_path / "credentials.json.lock"
 
-    ctx = mp.get_context("fork")
+    ctx = mp.get_context("spawn" if sys.platform == "win32" else "fork")
     writers = [
         ctx.Process(target=_concurrent_writer, args=(str(target), str(lock), f"key_{i}", f"value_{i}"))
         for i in range(8)

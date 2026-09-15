@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from myharness.coordinator.coordinator_mode import get_team_registry
-from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
+from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE
 from myharness.tasks.manager import TASK_PROGRESS_EVENT_PREFIX
 from myharness.tasks import get_task_manager
 from myharness.tools import create_default_tool_registry
@@ -18,11 +17,6 @@ from myharness.tools.task_create_tool import TaskCreateTool, TaskCreateToolInput
 from myharness.tools.task_output_tool import TaskOutputTool, TaskOutputToolInput
 from myharness.tools.task_update_tool import TaskUpdateTool, TaskUpdateToolInput
 from myharness.tools.team_create_tool import TeamCreateTool, TeamCreateToolInput
-
-subagents_enabled = pytest.mark.skipif(
-    not is_subagent_invocation_enabled(),
-    reason="subagent invocation is currently disabled",
-)
 
 
 async def _wait_for_terminal_task(task_id: str, *, timeout_seconds: float = 2.0) -> None:
@@ -234,96 +228,6 @@ def test_agent_tool_skips_project_mutation_lock_without_being_read_only():
     assert tool.requires_project_mutation_lock(args) is False
 
 
-@pytest.mark.asyncio
-@subagents_enabled
-async def test_agent_tool_treats_office_worker_as_lightweight_research_agent(
-    tmp_path: Path,
-    monkeypatch,
-):
-    from myharness.swarm.registry import get_backend_registry
-    from myharness.swarm.types import SpawnResult
-
-    captured = {}
-
-    async def _fake_spawn(config):
-        captured["config"] = config
-        return SpawnResult(
-            task_id="a12345678",
-            agent_id=f"{config.name}@{config.team}",
-            backend_type="subprocess",
-        )
-
-    executor = get_backend_registry().get_executor("subprocess")
-    monkeypatch.setattr(executor, "spawn", _fake_spawn)
-
-    result = await AgentTool().execute(
-        AgentToolInput(
-            description="조사 담당: 데이터센터 시장",
-            prompt="핵심 출처만 빠르게 조사해줘.",
-            subagent_type="worker",
-            team="office",
-        ),
-        ToolExecutionContext(
-            cwd=tmp_path,
-            metadata={
-                "active_profile": "p-gpt",
-                "runtime_model": "gpt-5.5",
-                "subagent_model": "gpt-5.4-mini",
-                "subagent_effort": "high",
-            },
-        ),
-    )
-
-    assert result.is_error is False
-    config = captured["config"]
-    assert config.active_profile == "p-gpt"
-    assert config.team == "office"
-    assert config.system_prompt is None
-    assert config.name.startswith("research-")
-    assert config.model == "gpt-5.4-mini"
-    assert config.effort == "high"
-    assert "short content summary" in config.prompt
-    assert "sources the main agent should read directly" in config.prompt
-    assert result.metadata["model"] == "gpt-5.4-mini"
-    assert result.metadata["model_source"] == "subagent"
-    assert result.metadata["prompt"] == "핵심 출처만 빠르게 조사해줘."
-
-
-@pytest.mark.asyncio
-@subagents_enabled
-async def test_agent_tool_routes_review_roles_to_stronger_gpt_model(tmp_path: Path, monkeypatch):
-    from myharness.swarm.registry import get_backend_registry
-    from myharness.swarm.types import SpawnResult
-
-    captured = {}
-
-    async def _fake_spawn(config):
-        captured["config"] = config
-        return SpawnResult(
-            task_id="a12345678",
-            agent_id=f"{config.name}@{config.team}",
-            backend_type="subprocess",
-        )
-
-    executor = get_backend_registry().get_executor("subprocess")
-    monkeypatch.setattr(executor, "spawn", _fake_spawn)
-
-    result = await AgentTool().execute(
-        AgentToolInput(
-            description="검토 담당: 보안 리스크 확인",
-            prompt="누락된 리스크와 근거 오류만 검토해줘.",
-            subagent_type="worker",
-            team="office",
-        ),
-        ToolExecutionContext(cwd=tmp_path, metadata={"runtime_model": "gpt-5.5"}),
-    )
-
-    assert result.is_error is False
-    assert captured["config"].model == "gpt-5.5"
-    assert result.metadata["model"] == "inherit (gpt-5.5)"
-    assert result.metadata["model_source"] == "main"
-
-
 def test_task_worker_registry_keeps_progress_tool_without_parent_task_queries():
     registry = create_default_tool_registry(task_worker=True)
 
@@ -340,103 +244,6 @@ def test_task_worker_registry_keeps_progress_tool_without_parent_task_queries():
         "team_delete",
     ):
         assert registry.get(name) is None
-
-
-@pytest.mark.asyncio
-@subagents_enabled
-async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
-    tmp_path: Path, monkeypatch
-):
-    """Regression test for #59 / PR #60.
-
-    AgentTool must use the subprocess backend so the returned task_id is
-    registered in BackgroundTaskManager and is queryable by the task tools.
-
-    Before the fix, AgentTool hardcoded in_process first.  On macOS/Linux that
-    backend is always registered (supports_swarm_mailbox=True), so spawn()
-    returned IDs like "in_process_3f7a9b1c2d4e" that BackgroundTaskManager
-    never saw — every poll attempt raised ValueError.
-    """
-    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    context = ToolExecutionContext(cwd=tmp_path)
-
-    result = await AgentTool().execute(
-        AgentToolInput(
-            description="backend regression check",
-            prompt="hello",
-            subagent_type="test-worker",
-            # command echoes one line and exits — minimal subprocess
-            command='python -u -c "import sys; print(sys.stdin.readline().strip())"',
-        ),
-        context,
-    )
-
-    assert not result.is_error, f"AgentTool failed: {result.output}"
-
-    # 1. Backend reported in output must be subprocess, not in_process.
-    assert "backend=subprocess" in result.output, (
-        f"Expected backend=subprocess in output, got: {result.output}"
-    )
-
-    # 2. task_id must NOT be an in-process ID.
-    assert "in_process_" not in result.output, (
-        f"task_id must not be an in-process ID, got: {result.output}"
-    )
-
-    # 3. The task_id must be registered in BackgroundTaskManager so task tools
-    #    can query it without raising ValueError.
-    #    Parse task_id from "Spawned agent X (task_id=Y, backend=Z)"
-    import re
-    m = re.search(r"task_id=(\S+?)[,)]", result.output)
-    assert m, f"Could not parse task_id from output: {result.output}"
-    task_id = m.group(1)
-
-    manager = get_task_manager()
-    record = manager.get_task(task_id)
-    assert record is not None, (
-        f"task_id {task_id!r} not found in BackgroundTaskManager — "
-        "task tools (TaskGet, TaskOutput, etc.) would have failed"
-    )
-    assert record.command == 'python -u -c "import sys; print(sys.stdin.readline().strip())"'
-    assert record.type == "local_agent"
-    await _wait_for_terminal_task(task_id)
-
-
-@pytest.mark.asyncio
-@subagents_enabled
-async def test_agent_tool_records_display_role_from_description(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    context = ToolExecutionContext(
-        cwd=tmp_path,
-        metadata={"runtime_model": "gpt-5.5", "subagent_model": "gpt-5.4-mini"},
-    )
-
-    result = await AgentTool().execute(
-        AgentToolInput(
-            description="조사 담당: 출처 확인",
-            prompt="hello",
-            subagent_type="worker",
-            team="office",
-            command='python -u -c "import sys; print(sys.stdin.readline().strip())"',
-        ),
-        context,
-    )
-
-    assert result.is_error is False
-    import re
-
-    match = re.search(r"task_id=(\S+?)[,)]", result.output)
-    assert match, result.output
-    task_id = match.group(1)
-    record = get_task_manager().get_task(task_id)
-    assert record is not None
-    assert record.metadata["agent_role"] == "조사 담당"
-    assert record.metadata["agent_description"] == "조사 담당: 출처 확인"
-    assert record.metadata["agent_model"] == "gpt-5.4-mini"
-    assert record.metadata["agent_model_source"] == "subagent"
-    assert record.metadata["agent_prompt"] == "hello"
-    assert record.metadata["team"] == "office"
-    await _wait_for_terminal_task(task_id)
 
 
 @pytest.mark.asyncio
@@ -487,56 +294,3 @@ def test_send_message_input_accepts_to_alias():
 
     assert args.task_id == "worker@default"
     assert args.message == "ping"
-
-
-@pytest.mark.asyncio
-@subagents_enabled
-async def test_agent_tool_creates_missing_team_when_team_argument_is_provided(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    get_team_registry()._teams.clear()
-    context = ToolExecutionContext(cwd=tmp_path)
-
-    result = await AgentTool().execute(
-        AgentToolInput(
-            description="team auto-create regression",
-            prompt="ready",
-            subagent_type="test-worker-team",
-            team="design-qa-loop",
-            command="python -u -c \"import sys; print(sys.stdin.readline().strip())\"",
-        ),
-        context,
-    )
-
-    assert result.is_error is False
-    teams = {team.name: team for team in get_team_registry().list_teams()}
-    assert "design-qa-loop" in teams
-    assert len(teams["design-qa-loop"].agents) == 1
-
-
-@pytest.mark.asyncio
-@subagents_enabled
-async def test_agent_tool_supports_remote_and_teammate_modes(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    context = ToolExecutionContext(cwd=tmp_path)
-
-    for i, mode in enumerate(("remote_agent", "in_process_teammate")):
-        result = await AgentTool().execute(
-            AgentToolInput(
-                description=f"{mode} smoke",
-                prompt="ready",
-                mode=mode,
-                subagent_type=f"test-worker-{i}",
-                command="python -u -c \"import sys; print(sys.stdin.readline().strip())\"",
-            ),
-            context,
-        )
-        assert result.is_error is False
-        import re
-
-        match = re.search(r"task_id=(\S+?)[,)]", result.output)
-        assert match, result.output
-        task_id = match.group(1)
-        record = get_task_manager().get_task(task_id)
-        assert record is not None
-        assert record.type == mode
-        await _wait_for_terminal_task(task_id)

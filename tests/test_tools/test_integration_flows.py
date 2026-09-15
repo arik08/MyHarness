@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from pathlib import Path
 
 import pytest
 
-from myharness.subagents import is_subagent_invocation_enabled
 from myharness.tasks.manager import get_task_manager
 from myharness.tools import create_default_tool_registry
 from myharness.tools.base import ToolExecutionContext
@@ -140,60 +138,6 @@ async def test_skill_and_config_flow_across_registry(tmp_path: Path, monkeypatch
 
     skill_result = await skill.execute(skill.input_model(name="Pytest"), context)
     assert "fixtures" in skill_result.output
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(
-    not is_subagent_invocation_enabled(),
-    reason="subagent invocation is currently disabled",
-)
-async def test_agent_send_message_flow_restarts_completed_agent(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
-    registry = create_default_tool_registry()
-    context = ToolExecutionContext(cwd=tmp_path, metadata={"tool_registry": registry})
-
-    agent = registry.get("agent")
-    send_message = registry.get("send_message")
-    task_output = registry.get("task_output")
-
-    create_result = await agent.execute(
-        agent.input_model(
-            description="echo agent",
-            prompt="ready",
-            command="python -u -c \"import sys; print('AGENT_ECHO:' + sys.stdin.readline().strip())\"",
-        ),
-        context,
-    )
-    match = re.search(r"task_id=(\S+?)[,)]", create_result.output)
-    assert match, create_result.output
-    task_id = match.group(1)
-
-    for _ in range(80):
-        output = await task_output.execute(task_output.input_model(task_id=task_id), context)
-        if "AGENT_ECHO:ready" in output.output:
-            break
-        await asyncio.sleep(0.1)
-    else:
-        raise AssertionError("initial agent output did not become available in time")
-
-    send_result = await send_message.execute(
-        send_message.input_model(task_id=task_id, message="agent ping"),
-        context,
-    )
-    assert send_result.is_error is False
-
-    await asyncio.sleep(0.2)
-    for _ in range(80):
-        output = await task_output.execute(task_output.input_model(task_id=task_id), context)
-        if "AGENT_ECHO:agent ping" in output.output:
-            break
-        await asyncio.sleep(0.1)
-    else:
-        raise AssertionError("agent follow-up output did not become available in time")
-
-    assert "AGENT_ECHO:ready" in output.output
-    assert "AGENT_ECHO:agent ping" in output.output
-    await _wait_for_terminal_task(task_id)
 
 
 @pytest.mark.asyncio

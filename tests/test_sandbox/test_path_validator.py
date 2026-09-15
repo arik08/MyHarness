@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
-import pytest
 
 from myharness.sandbox.path_validator import validate_sandbox_path
 
@@ -56,10 +56,14 @@ def test_symlink_escape_blocked(tmp_path):
     link = cwd / "link.txt"
     try:
         link.symlink_to(secret)
-    except OSError as exc:
-        if os.name == "nt":
-            pytest.skip(f"symlink creation requires Windows developer mode or privileges: {exc}")
-        raise
+    except OSError:
+        if os.name != "nt":
+            raise
+        # Directory junctions exercise the same reparse-point escape on Windows
+        # without requiring Developer Mode or administrator privileges.
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(secret.parent)],
+                       check=True, capture_output=True)
+        link = link / secret.name
 
     allowed, reason = validate_sandbox_path(link, cwd)
     assert allowed is False
