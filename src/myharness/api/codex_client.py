@@ -14,6 +14,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from myharness.api.client import (
+    ApiCompactionEvent,
     ApiMessageCompleteEvent,
     ApiMessageRequest,
     ApiRetryEvent,
@@ -53,7 +54,6 @@ _UNSUPPORTED_OPTION_TERMS = (
     "extra inputs",
     "not permitted",
 )
-DEFAULT_GPT56_COMPACT_THRESHOLD_TOKENS = 250_000
 CODEX_INSTRUCTIONS = (
     "사용자에게 보이는 진행 메모와 추론 요약은 제목과 본문 모두 한국어 존댓말로 작성하세요. "
     "검색어와 원문이 영어여도 진행 안내는 한국어로 유지하세요. "
@@ -61,7 +61,9 @@ CODEX_INSTRUCTIONS = (
     "This applies to every user-visible reasoning summary, including its headings "
     "and body. Do not use English sentences or English section headings in summaries. "
     "Before emitting a summary, rewrite any English draft into natural polite Korean "
-    "within this same response. Emit plain sentences without headings or bold formatting. "
+    "within this same response. Emit a detailed summary body in multiple sentences, "
+    "covering the approach, relevant evidence and remaining uncertainty when applicable. "
+    "Do not emit a short heading-only summary. Use paragraphs without headings or bold formatting. "
     "Do not make any additional model, translation, or tool calls for these updates. "
     "The UI displays automatic reasoning summaries separately from work updates. "
     "For nontrivial analysis, comparison, research or "
@@ -437,14 +439,17 @@ class CodexApiClient:
         ):
             body["prompt_cache_retention"] = self._prompt_cache_retention
         reasoning_effort = _normalize_reasoning_effort(request.reasoning_effort)
-        reasoning: dict[str, Any] = {"summary": "auto"}
+        reasoning: dict[str, Any] = {"summary": "detailed"}
         if reasoning_effort:
             reasoning["effort"] = reasoning_effort
         if _is_gpt_56_model(request.model):
             reasoning["context"] = "all_turns"
         body["reasoning"] = reasoning
         if _is_gpt_56_model(request.model):
-            threshold = request.compact_threshold_tokens or DEFAULT_GPT56_COMPACT_THRESHOLD_TOKENS
+            from myharness.context_policy import get_long_context_policy_threshold
+
+            threshold = request.compact_threshold_tokens or get_long_context_policy_threshold(request.model, "cost-saver")
+            assert threshold is not None
             body["context_management"] = [
                 {"type": "compaction", "compact_threshold": int(threshold)}
             ]
@@ -498,6 +503,9 @@ class CodexApiClient:
                             yield ApiTextDeltaEvent(text=delta)
                     elif event_type == "response.output_item.added":
                         item = event.get("item")
+                        if isinstance(item, dict) and item.get("type") == "compaction":
+                            yield ApiCompactionEvent(phase="compact_start")
+                            continue
                         if not isinstance(item, dict) or item.get("type") != "function_call":
                             continue
                         name = item.get("name")
@@ -528,6 +536,8 @@ class CodexApiClient:
                         item_type = item.get("type")
                         if item_type in {"reasoning", "compaction"}:
                             content.append(ResponsesStateBlock(item=item))
+                            if item_type == "compaction":
+                                yield ApiCompactionEvent(phase="compact_end")
                             if item_type == "reasoning":
                                 summary = "\n\n".join(
                                     part["text"] for part in (item.get("summary") or [])

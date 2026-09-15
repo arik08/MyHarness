@@ -9,6 +9,7 @@ source: skill-mcp:legislation-regulation
 미국·EU·영국의 법안, 입법 진행, 행정규정과 확정 법령에는 `legislation-regulation` MCP를 사용합니다.
 
 - 미국 법안·발의자·위원회·Action·텍스트 버전은 `source="congress"`를 사용합니다. `record_id`는 `119/hr/1` 형식이며, 세부 내역은 `record_type="actions"`, `committees`, `cosponsors`, `subjects`, `summaries`, `text` 중 하나를 사용합니다.
+- Congress `search_records`에서 bill_type을 지정하면 congress도 함께 지정합니다. 반환된 `congress`, `type`, `number`로 상세 ID를 조합합니다. query는 최근 한 페이지의 제목 필터이며 전체 법안 전문 검색이 아닙니다. start_date/end_date는 최종 갱신일 조건이므로 발의일·의결일로 해석하지 않습니다. summaries·cosponsors 등이 비어 있는 법안도 정상이므로 다른 ID로 반복해 채우지 않습니다.
 - 미국 행정명령·관세·제재·무역규정·예고는 `source="federal_register"`를 사용합니다.
 - EU 입법절차와 단계별 이벤트는 `source="europarl"`을 우선합니다. `process_id`를 얻은 뒤 `record_type="events"`로 진행 이력을 확인합니다.
 - CELEX 번호를 이미 알거나 EU 법령 원문·개정·식별자를 확인할 때만 `source="eurlex"`를 사용합니다. 제목 검색은 유럽의회 절차 또는 EUR-Lex 웹 검색으로 CELEX를 먼저 확보합니다.

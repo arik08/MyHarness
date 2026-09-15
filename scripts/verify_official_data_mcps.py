@@ -190,6 +190,24 @@ class LiveVerifier:
         )
 
     async def verify_trade(self, healthy: dict[tuple[str, str], bool]) -> None:
+        if healthy[("trade-market", "wto")]:
+            await self.call(
+                "wto:indicators", "trade-market", "search_catalog",
+                {"source": "wto", "query": "ITS_MTV_AX", "limit": 2}, require_data=True,
+            )
+            payload = await self.call(
+                "wto:trade-values", "trade-market", "query_trade",
+                {"source": "wto", "flow": "exports", "reporter": "410",
+                 "indicator": "ITS_MTV_AX", "product": "MAIS", "start_period": "2023", "end_period": "2024", "limit": 5},
+                require_data=True,
+            )
+            if not all(isinstance(row.get("Value"), (int, float)) for row in payload["data"]):
+                raise AssertionError("WTO trade response has no numeric values")
+            if {row.get("Year") for row in payload["data"]} != {2023, 2024} or not all(
+                row.get("ReportingEconomyCode") == "410" and row.get("ProductOrSectorCode") == "MAIS"
+                for row in payload["data"]
+            ):
+                raise AssertionError("WTO did not preserve reporter, product, or period filters")
         if healthy[("trade-market", "eurostat_comext")]:
             await self.call(
                 "comext:bilateral-month",

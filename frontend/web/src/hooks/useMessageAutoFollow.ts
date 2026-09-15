@@ -290,7 +290,7 @@ export function useMessageAutoFollow({
     container.dataset.lastScrollTop = String(currentTop);
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = messagesRef.current;
     if (!container || state.historyReadOnly) {
       wasLastAssistantStreamingRef.current = isLastAssistantStreaming;
@@ -316,7 +316,7 @@ export function useMessageAutoFollow({
     container.style.setProperty("--stream-follow-lead", `${streamFollowLeadPx}px`);
     container.classList.toggle("streaming-follow", Boolean(shouldFollowGrowingTail));
     scrollMessagesToBottom({
-      smooth: true,
+      smooth: shouldFollowGrowingTail,
       duration: streamScrollDurationMsRef.current,
       continuous: shouldFollowGrowingTail,
     });
@@ -412,9 +412,9 @@ export function useMessageAutoFollow({
         return;
       }
       scrollMessagesToBottom({
-        smooth: true,
+        smooth: shouldFollowGrowingTail,
         duration: streamScrollDurationMsRef.current,
-        continuous: true,
+        continuous: shouldFollowGrowingTail,
       });
     },
     handleVisibleWorkflowProgressChange() {

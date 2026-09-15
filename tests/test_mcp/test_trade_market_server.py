@@ -109,13 +109,66 @@ def test_wto_query_sends_subscription_key_in_header(monkeypatch) -> None:
         "wto",
         "exports",
         "2024",
-        reporter="KOR",
+        reporter="410",
         indicator="ITS_MTV_AX",
     )
 
     assert calls[0]["headers"]["Ocp-Apim-Subscription-Key"] == "test-wto-key"
     assert calls[0]["params"]["i"] == "ITS_MTV_AX"
+    assert calls[0]["url"].endswith("/data")
+    assert calls[0]["params"]["ps"] == "2024"
+    assert "pe" not in calls[0]["params"]
+    assert json.loads(result_text)["data"][0]["Value"] == 1
     assert "test-wto-key" not in result_text
+
+
+@pytest.mark.parametrize("start,end,period", [
+    ("2023", "2024", "2023-2024"),
+    ("2025-01", "2025-02", "202501-202502"),
+    ("2024Q1", "2024Q2", "2024Q1-2024Q2"),
+])
+def test_wto_preserves_period_product_and_partner(monkeypatch, start, end, period):
+    module = _load_server()
+    monkeypatch.setenv("WTO_API_KEY", "test-key")
+    def fake_json(source, url, **kwargs):
+        assert url.endswith("/data")
+        params = kwargs["params"]
+        assert params["ps"] == period
+        assert params["pc"] == "72"
+        assert params["p"] == "840"
+        assert params["head"] == "M"
+        return {"Dataset": []}
+    monkeypatch.setattr(module, "request_json", fake_json)
+    result = json.loads(module.query_trade("wto", "imports", start, end,
+                        reporter="410", partner="840", product="72", indicator="NEW_INDICATOR"))
+    assert result["data"] == []
+
+
+@pytest.mark.parametrize("start,end", [("2024", "2023"), ("2024", "202401"), ("202513", "202513"), ("all", "all")])
+def test_wto_rejects_invalid_period_before_network(monkeypatch, start, end):
+    module = _load_server()
+    monkeypatch.setattr(module, "request_json", lambda *a, **k: pytest.fail("unexpected network"))
+    with pytest.raises(ValueError):
+        module.query_trade("wto", "exports", start, end, reporter="410", indicator="ITS_MTV_AX")
+
+
+def test_wto_catalog_and_health_use_official_plural_endpoint(monkeypatch):
+    module = _load_server()
+    monkeypatch.setenv("WTO_API_KEY", "test-key")
+    def fake_json(source, url, **kwargs):
+        assert url.endswith("/indicators")
+        return [{"code": "NEW_CODE", "name": "New indicator"}]
+    monkeypatch.setattr(module, "request_json", fake_json)
+    assert json.loads(module.search_catalog("wto", "new"))["data"][0]["code"] == "NEW_CODE"
+    assert json.loads(module.get_source_health("wto"))["ok"] is True
+
+
+def test_wto_rejects_error_payload_instead_of_reporting_data(monkeypatch):
+    module = _load_server()
+    monkeypatch.setenv("WTO_API_KEY", "test-key")
+    monkeypatch.setattr(module, "request_json", lambda *a, **k: {"message": "bad query"})
+    with pytest.raises(ValueError, match="response shape"):
+        module.query_trade("wto", "exports", "2024", reporter="410", indicator="ITS_MTV_AX")
 
 
 def test_eurostat_query_is_strictly_filtered(monkeypatch) -> None:
@@ -163,10 +216,13 @@ def test_health_reports_missing_credentials_without_calling_network(monkeypatch)
     assert health["credential"]["environment_names"] == ["CENSUS_API_KEY"]
 
 
-def test_trade_market_config_is_loaded_without_embedded_credentials() -> None:
+def test_trade_market_config_is_loaded_without_embedded_credentials(tmp_path) -> None:
     mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
+    payload = json.loads((mcp_dir / "trade-market" / "mcp.json").read_text(encoding="utf-8"))
+    payload["mcpServers"]["trade-market"].pop("env", None)
+    (tmp_path / "mcp.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    configs = load_mcp_configs_from_dirs([mcp_dir])
+    configs = load_mcp_configs_from_dirs([tmp_path])
 
     config = configs["trade-market"]
     assert isinstance(config, McpStdioServerConfig)

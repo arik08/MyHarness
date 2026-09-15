@@ -116,9 +116,12 @@ def test_congress_requires_key_without_exposing_it(monkeypatch) -> None:
     assert "secret-test-key" not in output
 
 
-def test_config_is_loaded_without_credentials() -> None:
+def test_config_is_loaded_without_credentials(tmp_path) -> None:
     mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
-    config = load_mcp_configs_from_dirs([mcp_dir])["legislation-regulation"]
+    payload = json.loads((mcp_dir / "legislation-regulation" / "mcp.json").read_text(encoding="utf-8"))
+    payload["mcpServers"]["legislation-regulation"].pop("env", None)
+    (tmp_path / "mcp.json").write_text(json.dumps(payload), encoding="utf-8")
+    config = load_mcp_configs_from_dirs([tmp_path])["legislation-regulation"]
 
     assert isinstance(config, McpStdioServerConfig)
     assert config.env is None
@@ -172,6 +175,17 @@ def test_legislation_health_converts_probe_failure_to_health_json(monkeypatch) -
 
     assert result["ok"] is False
     assert "RuntimeError" in result["detail"]
+
+
+def test_congress_preserves_update_date_bounds_and_caps_api_limit(monkeypatch):
+    module = _load_server()
+    calls = []
+    def fetch(path, params=None):
+        calls.append(params)
+        return {"bills": []}
+    monkeypatch.setattr(module, "_congress_json", fetch)
+    module.search_records("congress", congress=119, start_date="2025-01-01", end_date="2025-01-31", limit=100)
+    assert calls[0] == {"limit": 250, "fromDateTime": "2025-01-01T00:00:00Z", "toDateTime": "2025-01-31T23:59:59Z"}
 
 
 def test_congress_catalog_and_search_apply_local_filter(monkeypatch) -> None:

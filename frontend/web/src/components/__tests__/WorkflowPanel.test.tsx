@@ -1,718 +1,251 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { act, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AppStateProvider } from "../../state/app-state";
+import { appReducer, initialAppState } from "../../state/reducer";
+import type { WorkflowEvent } from "../../types/ui";
 import { WorkflowPanel } from "../WorkflowPanel";
+import { asideTimelineRows, workflowSafeText } from "../AsideWorkflowTimeline";
 
-function readStylesheet() {
-  return readFileSync(resolve(__dirname, "../../../styles.css"), "utf8").replace(/\r\n/g, "\n");
+const note = (id: string, detail: string): WorkflowEvent => ({ id, detail, toolName: "", title: "진행 메모", status: "done", role: "reasoning", noteSource: "progress" });
+const call = (id: string, toolName = "cmd", extra: Partial<WorkflowEvent> = {}): WorkflowEvent => ({ id, toolCallId: id, toolName, title: toolName, detail: "", status: "done", toolInput: { command: `echo ${id}` }, output: `output ${id}`, ...extra });
+function panel(events: WorkflowEvent[]) {
+  return <AppStateProvider><WorkflowPanel events={events} persistenceKey="test-turn" durationSeconds={83} /></AppStateProvider>;
 }
-
-function stylesheetBlock(selector: string) {
-  const stylesheet = readStylesheet();
-  const start = stylesheet.indexOf(`${selector} {`);
-  if (start < 0) {
-    throw new Error(`Stylesheet selector not found: ${selector}`);
-  }
-  const end = stylesheet.indexOf("\n}", start);
-  return stylesheet.slice(start, end + 2);
+function openActivity() {
+  const toggle = document.querySelector<HTMLButtonElement>(".aside-activity > .aside-toggle")!;
+  fireEvent.click(toggle);
+  return toggle;
 }
+beforeEach(() => sessionStorage.clear());
+afterEach(cleanup);
 
-describe("WorkflowPanel", () => {
-  it.each(["provider-summary", "progress"] as const)("renders inline markdown in %s notes", (noteSource) => {
-    render(<AppStateProvider><WorkflowPanel events={[{
-      id: "markdown-note", toolName: "", title: "진행 메모", detail: "**Checking sources** and *comparing* `PPTX`", status: "done", role: "reasoning", noteSource,
-    }]} /></AppStateProvider>);
-    const note = document.querySelector(noteSource === "progress" ? ".workflow-progress-prose" : ".workflow-reasoning-preview")!;
-    expect(note.querySelector("strong")?.textContent).toBe("Checking sources");
-    expect(note.querySelector("em")?.textContent).toBe("comparing");
-    expect(note.querySelector("code")?.textContent).toBe("PPTX");
-    expect(note.textContent).not.toContain("**");
-    if (noteSource === "provider-summary") {
-      act(() => screen.getByRole("button", { name: "추론 요약 펼치기" }).click());
-      expect(document.querySelector(".workflow-reasoning-full strong")?.textContent).toBe("Checking sources");
-    }
-  });
-  it.each([false, true])("keeps warning details inside disclosure without a summary alert (mixed: %s)", (mixed) => {
-    const parent = { id: "warning-group", toolName: "", title: "조회", detail: "", status: "warning" as const, role: "purpose" as const, groupId: "warning-group" };
-    const child = { id: "warning-child", toolName: "web_fetch", title: "웹 페이지 조회", detail: "접근 제한", status: "warning" as const, level: "child" as const, groupId: parent.groupId };
-    render(<AppStateProvider><WorkflowPanel events={[parent, child, ...(mixed ? [{ ...child, id: "success-child", status: "done" as const }] : [])]} /></AppStateProvider>);
-    const toggle = document.querySelector<HTMLButtonElement>(".workflow-narrative-toggle")!;
-    expect(toggle.querySelector(".workflow-narrative-meta")).toBeNull();
-    expect(toggle.querySelector(".workflow-narrative-alert")).toBeNull();
-    const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
-    expect(panel.hidden).toBe(true);
-    act(() => toggle.click());
-    expect(panel.hidden).toBe(false);
-    expect(panel.querySelector(".workflow-step.warning")).toBeTruthy();
-  });
-  it.each([false, true])("discloses full provider summaries independently of tools (%s)", (restored) => {
-    const note = { id: "summary", toolName: "", title: "진행 메모", detail: "Checking sources.\n\nComparing all available evidence.", status: "done" as const, role: "reasoning" as const, noteSource: "provider-summary" as const, groupId: "g", restored };
-    const parent = { id: "g", toolName: "", title: "작업", detail: "", status: "done" as const, role: "purpose" as const, groupId: "g" };
-    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[note, parent]} /></AppStateProvider>);
-    const toggle = screen.getByRole("button", { name: "추론 요약 펼치기" });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(document.querySelectorAll(".workflow-reasoning-summary")).toHaveLength(1);
-    expect(document.querySelector(".workflow-reasoning-full")).toBeNull();
-    act(() => toggle.click());
-    expect(document.querySelector(".workflow-reasoning-full")?.textContent).toBe("Checking sources. · Comparing all available evidence.");
-    rerender(<AppStateProvider><WorkflowPanel events={[{ ...note, detail: `${note.detail}\nUpdated.` }, parent]} /></AppStateProvider>);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector(".workflow-reasoning-full")?.textContent).toBe("Checking sources. · Comparing all available evidence. · Updated.");
-    act(() => toggle.click());
-    expect(document.querySelector(".workflow-reasoning-full")).toBeNull();
-  });
-  it.each([false, true])("shows planning narration once, including restored history (%s)", (restored) => {
-    const detail = "공식 지표를 확인하고 부문별로 비교하겠습니다.";
-    const plan = { id: "plan", toolName: "", title: "작업 계획 수립", detail, status: "done" as const, role: "planning" as const, restored };
-    const note = { id: "progress", toolName: "", title: "진행 메모", detail: `  ${detail}\n`, status: "done" as const, role: "reasoning" as const, noteSource: "progress" as const, restored };
-    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[note, plan]} /></AppStateProvider>);
-    expect(document.body.textContent?.split(detail)).toHaveLength(2);
-    expect(document.querySelector(".workflow-progress-prose")).toBeNull();
-    rerender(<AppStateProvider><WorkflowPanel events={[plan, { ...note, detail: "추가 자료가 필요합니다." }]} /></AppStateProvider>);
-    expect(screen.getByText("추가 자료가 필요합니다.")).toBeTruthy();
-    rerender(<AppStateProvider><WorkflowPanel events={[plan, { ...note, status: "error" }]} /></AppStateProvider>);
-    expect(document.querySelector(".workflow-progress-prose")?.textContent).toBe(detail);
-  });
-  it("shows every tool count and distinct skill names directly in the summary", () => {
-    const parent = { id: "mixed", toolName: "", title: "작업", detail: "", status: "done" as const, role: "purpose" as const, groupId: "mixed" };
-    const child = { status: "done" as const, level: "child" as const, groupId: "mixed", detail: "", title: "" };
-    render(<AppStateProvider><WorkflowPanel events={[parent,
-      ...Array.from({ length: 8 }, (_, i) => ({ ...child, id: `search-${i}`, toolName: "web_search" })),
-      ...Array.from({ length: 3 }, (_, i) => ({ ...child, id: `fetch-${i}`, toolName: "web_fetch" })),
-      { ...child, id: "skill-1", toolName: "skill", toolInput: { name: "visual-artifact" } },
-      { ...child, id: "skill-2", toolName: "skill", toolInput: { name: "visual-artifact" } },
-      { ...child, id: "skill-3", toolName: "skill", output: "Skill: new-research-skill\nDescription: research", restored: true },
-    ]} /></AppStateProvider>);
-    const summary = document.querySelector(".workflow-narrative-sentence")?.textContent;
-    expect(summary).toBe("웹 검색 8회 · 웹 페이지 조회 3회 · 스킬 · visual-artifact, new-research-skill");
-  });
-  it("counts actual calls per tool in the collapsed summary including restored and failed calls", () => {
-    const parent = { id: "counts", toolName: "", title: "정보 수집", detail: "", status: "done" as const, role: "purpose" as const, groupId: "counts" };
-    const searches = Array.from({ length: 8 }, (_, i) => ({ id: `search-${i}`, toolCallId: `call-${i}`, toolName: "web_search", title: "웹 검색", detail: `query ${i}`, status: "done" as const, level: "child" as const, groupId: "counts", restored: true }));
-    const extra = { id: "other", toolName: "mcp__new__lookup", title: "조회", detail: "failed", status: "error" as const, level: "child" as const, groupId: "counts", restored: true };
-    render(<AppStateProvider><WorkflowPanel events={[parent, ...searches, { ...searches[0], id: "same-call-update" }, extra, { id: "note", toolName: "", title: "진행 메모", detail: "자료를 비교합니다.", status: "done", role: "reasoning", noteSource: "progress" }]} /></AppStateProvider>);
-    const toggle = document.querySelector<HTMLButtonElement>(".workflow-narrative-toggle")!;
-    expect(toggle.textContent).toContain("웹 검색 8회");
-    expect(toggle.textContent).toContain("mcp · new · lookup 1회");
-    expect(toggle.textContent).not.toContain("작업 9회");
-    const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
-    expect(panel.hidden).toBe(true);
-    act(() => toggle.click());
-    expect(panel.hidden).toBe(false);
-    expect(toggle.closest("section")?.classList.contains("warning")).toBe(true);
-    expect(toggle.querySelector(".workflow-narrative-meta")).toBeNull();
-    expect(toggle.querySelector(".workflow-narrative-alert")).toBeNull();
-    expect(toggle.querySelector(".workflow-narrative-status")?.textContent).toBe("›");
-  });
-  it("keeps narrative visible outside the disclosure and preserves error status", () => {
-    const parent = { id: "group", toolName: "", title: "정보 수집", detail: "필요한 정보를 확인했습니다.", status: "done" as const, level: "parent" as const, role: "purpose" as const, groupId: "group" };
-    const child = { id: "child", toolName: "mcp__new__lookup", title: "조회", detail: "response", status: "done" as const, level: "child" as const, groupId: "group" };
-    const note = { id: "note", toolName: "", title: "진행 메모", detail: "공개 자료에서 확인한 조직의 역할을 중심으로 보고서 범위를 정리합니다.", status: "done" as const, role: "reasoning" as const, noteSource: "progress" as const };
-    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[note, parent, child]} /></AppStateProvider>);
-    expect(document.querySelector(".workflow-progress-prose")?.textContent).toBe(note.detail);
-    expect(screen.getByText(note.detail).closest("button")).toBeNull();
-    expect(screen.getAllByText(note.detail)).toHaveLength(1);
-    expect(screen.queryByText(parent.detail)).toBeNull();
-    rerender(<AppStateProvider><WorkflowPanel events={[note, parent, { ...child, status: "error" }]} /></AppStateProvider>);
-    expect(document.querySelector(".workflow-narrative")?.classList.contains("error")).toBe(true);
-    expect(document.querySelector(".workflow-progress-prose")?.textContent).toBe(note.detail);
-    expect(screen.getByText(note.detail).closest("button")).toBeNull();
-    rerender(<AppStateProvider><WorkflowPanel events={[{ ...note, noteSource: "provider-summary" }, parent, child]} /></AppStateProvider>);
-    expect(document.querySelector(".workflow-progress-prose")).toBeNull();
-  });
-  it("labels notes by provenance rather than language and keeps unknown notes neutral", () => {
-    const base = { toolName: "", title: "진행 메모", status: "done" as const, level: "parent" as const, role: "reasoning" as const };
-    render(<AppStateProvider><WorkflowPanel events={[
-      { ...base, id: "provider", detail: "공식 자료를 먼저 검토합니다.", noteSource: "provider-summary" },
-      { ...base, id: "progress", detail: "Checking the report.", noteSource: "progress" },
-      { ...base, id: "legacy", detail: "Historical note." },
-    ]} /></AppStateProvider>);
-    expect(screen.getAllByText("내부 추론")).toHaveLength(1);
-    expect(screen.getAllByText("진행 메모")).toHaveLength(1);
-    expect(screen.getByText("공식 자료를 먼저 검토합니다.").closest(".workflow-copy")?.textContent).toContain("내부 추론");
-    expect(screen.getByText("Checking the report.").closest(".workflow-progress-prose")).toBeTruthy();
-  });
-  it("does not display per-step seconds even when timing is available", () => {
-    const timed = { id: "timed", toolName: "mcp__company-disclosure__search_catalog", title: "search", detail: "response", status: "done" as const, startedAtMs: 1000, finishedAtMs: 4500 };
-    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[timed]} /></AppStateProvider>);
-    expect(screen.queryByText("3초")).toBeNull();
-    rerender(<AppStateProvider><WorkflowPanel events={[{ ...timed, startedAtMs: undefined, finishedAtMs: undefined }]} /></AppStateProvider>);
-    expect(document.querySelector(".workflow-elapsed")).toBeNull();
-  });
-  it("discloses narrative actions, retains expansion on updates, and surfaces child failures", () => {
-    const parent = { id: "narrative", toolName: "", title: "작업 실행", detail: "최근 공시를 확인합니다.", status: "done" as const, level: "parent" as const, role: "purpose" as const, groupId: "narrative" };
-    const child = { id: "new-tool", toolName: "mcp__new_server__new_action", title: "new_action", detail: "opaque response", status: "done" as const, level: "child" as const, groupId: "narrative" };
-    const note = { ...parent, id: "note", role: "reasoning" as const, groupId: undefined };
-    const view = (events: typeof parent[] | Array<typeof parent | typeof child | typeof note>) => <AppStateProvider><WorkflowPanel events={events} /></AppStateProvider>;
-    const { rerender } = render(view([note, parent, child]));
-    const toggle = document.querySelector<HTMLButtonElement>(".workflow-narrative-toggle")!;
-    const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
-    expect(toggle.textContent).toContain("new_action");
-    expect(toggle.textContent).not.toContain(parent.detail);
-    expect(screen.getAllByText(parent.detail)).toHaveLength(1);
-    expect(panel.hidden).toBe(true);
-    act(() => toggle.click());
-    expect(panel.hidden).toBe(false);
-    rerender(<AppStateProvider><WorkflowPanel events={[note, parent, { ...child, status: "error" }]} /></AppStateProvider>);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(toggle.closest("section")?.classList.contains("error")).toBe(true);
-    act(() => toggle.click());
-    expect(panel.hidden).toBe(true);
-    expect(toggle.textContent).toContain("new_action 1회");
-    expect(document.body.textContent).not.toContain("응답을 받았습니다");
-  });
-  it("replaces generic historical MCP titles with the actual server and action", () => {
-    render(<AppStateProvider><WorkflowPanel events={[{
-      id: "unlisted-mcp", toolName: "mcp__sqlite_analysis__list_tables",
-      title: "외부 도구 작업", detail: "tables: signals", status: "done", level: "child",
-    }]} /></AppStateProvider>);
-    expect(screen.getByText("mcp · sqlite_analysis · list_tables")).toBeTruthy();
-    expect(screen.queryByText("외부 도구 작업")).toBeNull();
-  });
-  it("keeps a Korean work note beside its web tool after completion", () => {
-    const input = { query: "POSCO", progress_message: "포스코의 최근 언론 동향을 검색하고 있습니다." };
-    const running = { id: "web", toolName: "web_search", title: "web_search", detail: "query: POSCO", toolInput: input, status: "running" as const, level: "child" as const };
-    const { rerender } = render(<AppStateProvider><WorkflowPanel events={[running]} /></AppStateProvider>);
-    expect(screen.getByText("웹 검색").closest(".workflow-step")?.querySelector("small")?.textContent).toContain(input.progress_message);
-    rerender(<AppStateProvider><WorkflowPanel events={[{ ...running, status: "done", output: "검색 결과: POSCO\n1. article\nURL: https://example.com" }]} /></AppStateProvider>);
-    const step = screen.getByText("웹 검색").closest(".workflow-step")!;
-    expect(step.querySelector("small")?.textContent).toContain(input.progress_message);
-    expect(step.querySelector("small")?.textContent).not.toContain("조회 완료");
-    expect(step.querySelector("small")?.textContent).not.toContain("URL:");
-    expect(step.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
-  });
-  it("shows readable MCP results with the original output in a closed disclosure", () => {
-    const output = JSON.stringify({ total: 5, items: [{ billName: "철강산업 특별법" }] });
-    render(<AppStateProvider><WorkflowPanel events={[{
-      id: "bill-result", toolName: "mcp__national-assembly__assembly_bill",
-      title: "mcp__national-assembly__assembly_bill", detail: output.slice(0, 20),
-      output, status: "done", level: "child",
-    }]} /></AppStateProvider>);
-    const step = screen.getByText("mcp · national-assembly · assembly_bill").closest(".workflow-step")!;
-    expect(step.querySelector("small")?.textContent).toContain("조회 결과 5건 · 철강산업 특별법");
-    expect(step.querySelector("small")?.textContent).not.toContain('{"total"');
-    const toggle = step.querySelector("button")!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(step.querySelector("pre")).toBeNull();
-    act(() => { toggle.querySelector("strong")!.click(); });
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(step.querySelector("pre")?.textContent).toContain(output);
-    act(() => { step.querySelector("pre")!.click(); });
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    act(() => { toggle.querySelector("small")!.click(); });
-    expect(step.querySelector("pre")).toBeNull();
+describe("Aside work history", () => {
+  it("shows compaction quantities and window percentages on the status line", () => {
+    const event = call("compact", "context_compaction", { title: "컨텍스트 자동 압축", executionMetadata: {
+      pre_compact_tokens: 180000, post_compact_tokens: 40000, context_window_tokens: 200000, tokens_estimated: true,
+    } });
+    const view = render(panel([event]));
+    expect(document.querySelector(".aside-system-event")?.textContent).toBe("컨텍스트 자동 압축 · 완료 · 약 180,000 토큰 (90%) → 40,000 토큰 (20%)");
+    view.rerender(panel([{ ...event, status: "running" }]));
+    expect(document.querySelector(".aside-system-event")?.textContent).toContain("180,000 토큰 (90%) → 압축 중");
+    view.rerender(panel([{ ...event, status: "error" }]));
+    expect(document.querySelector(".aside-system-event")?.textContent).toContain("→ 확인 불가");
   });
 
-  it("keeps MCP failures visible even when raw output is collapsed", () => {
-    render(<AppStateProvider><WorkflowPanel events={[{
-      id: "bill-error", toolName: "mcp__national-assembly__bill_detail",
-      title: "mcp__national-assembly__bill_detail", detail: "invalid bill_id",
-      output: "invalid bill_id", status: "error", level: "child",
-    }]} /></AppStateProvider>);
-    const step = screen.getByText("mcp · national-assembly · bill_detail").closest(".workflow-step")!;
-    expect(step.querySelector("small")?.textContent).toContain("실패했습니다");
-    expect(step.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+  it.each([null, -1, NaN, Infinity, "100"])("does not fabricate compaction percentages from invalid usage %s", (invalid) => {
+    render(panel([call("compact", "context_compaction", { executionMetadata: {
+      source: "provider", pre_compact_tokens: invalid, post_compact_tokens: invalid, context_window_tokens: 200000,
+    } })]));
+    expect(document.querySelector(".aside-system-event")?.textContent).toContain("전·후 사용량 미제공");
+    expect(document.querySelector(".aside-system-event")?.textContent).not.toContain("%");
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  it("keeps valid zero usage and displays over-limit percentages without capping them", () => {
+    render(panel([call("compact", "context_compaction", { executionMetadata: {
+      pre_compact_tokens: 220000, post_compact_tokens: 0, context_window_tokens: 200000,
+    } })]));
+    expect(document.querySelector(".aside-system-event")?.textContent).toContain("220,000 토큰 (110%) → 0 토큰 (0%)");
+  });
+  it.each(["write_file", "future_write_document"])("keeps %s content streaming outside collapsed call details", (toolName) => {
+    const writing = call("writing", toolName, { status: "running", toolInput: { path: "report.html", content: "first chunk" } });
+    const view = render(panel([call("search", "web_search"), writing]));
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk");
+    expect(screen.getAllByRole("button", { name: /상세 실행 기록/, expanded: false })).toHaveLength(2);
+    view.rerender(panel([call("search", "web_search"), { ...writing, toolInput: { path: "report.html", content: "first chunk second chunk" } }]));
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk second chunk");
+    view.rerender(panel([call("search", "web_search"), { ...writing, status: "error", toolInput: { path: "report.html", content: "first chunk second chunk" } }]));
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk second chunk");
   });
 
-  it("shows the full reasoning progress memo instead of clamping it to two lines", () => {
-    const memoStyles = stylesheetBlock(".workflow-copy small");
-
-    expect(memoStyles).toContain("display: block;");
-    expect(memoStyles).toContain("white-space: normal;");
-    expect(memoStyles).not.toContain("max-height");
-    expect(memoStyles).not.toContain("line-clamp");
-    expect(memoStyles).not.toContain("overflow: hidden");
-  });
-
-  it("does not append a second elapsed timer when the detail already contains elapsed text", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(59_000);
-
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            {
-              id: "waiting",
-              toolName: "",
-              title: "streaming 이벤트 지연",
-              detail: "report_v1.html 작업 요청은 전달됐습니다. 58초 경과입니다. 첫 streaming 이벤트가 늦어지고 있어 계속 대기 중입니다.",
-              status: "running",
-              level: "parent",
-              role: "waiting",
-            },
-          ]}
-          durationSeconds={58}
-        />
-      </AppStateProvider>,
-    );
-
-    act(() => {
-      vi.advanceTimersByTime(1_000);
-    });
-
-    const step = screen.getByText("streaming 이벤트 지연").closest(".workflow-step");
-    const elapsedMatches = step?.textContent?.match(/(?:\d+분(?: \d+초)?|\d+초) 경과/g) || [];
-    expect(elapsedMatches).toEqual(["58초 경과"]);
-  });
-
-  it("keeps previous workflow details out of the compact status line", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            {
-              id: "judging",
-              toolName: "",
-              title: "다음 단계 검토 중",
-              detail: "다음 작업을 정했습니다.",
-              detailLog: ["도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다."],
-              status: "done",
-              level: "parent",
-              role: "activity",
-            },
-          ]}
-        />
-      </AppStateProvider>,
-    );
-
-    expect(screen.getByText("다음 작업을 정했습니다.")).toBeTruthy();
-    expect(document.querySelector(".workflow-activity-status")?.textContent || "").toContain("다음 단계 결정 완료");
-    expect(document.querySelector(".workflow-activity-status")?.textContent || "").toContain("다음 작업을 정했습니다.");
-    expect(document.querySelector(".workflow-activity-spinner")).toBeTruthy();
-    expect(document.querySelector(".workflow-activity-dot")).toBeNull();
-    expect(screen.getByText("다음 단계 결정 완료").closest(".workflow-step")).toBeNull();
-    expect(screen.queryByText("도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.")).toBeNull();
-  });
-
-  it("shows progress memo inline without requiring a separate disclosure", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            {
-              id: "reasoning",
-              toolName: "",
-              title: "진행 메모",
-              detail: "**포스코 관련 기사와 출처를 확인하고 있습니다.**",
-              status: "done",
-              level: "parent",
-              role: "reasoning",
-            },
-          ]}
-        />
-      </AppStateProvider>,
-    );
-
-    const emphasized = screen.getByText("포스코 관련 기사와 출처를 확인하고 있습니다.");
-    expect(emphasized.tagName).toBe("STRONG");
-    const step = emphasized.closest(".workflow-step")!;
-    expect(step.querySelector("details")).toBeNull();
-    expect(step.querySelector(".workflow-status-detail")?.textContent).toBe("포스코 관련 기사와 출처를 확인하고 있습니다.");
-    expect(step.querySelector(".workflow-dot")).toBeNull();
-    expect(screen.getByText("진행 메모")).toBeTruthy();
-    expect(screen.queryByText("내부 진행 기록")).toBeNull();
-  });
-
-  it("pins activity status below accumulating workflow records", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            { id: "request", toolName: "", title: "요청 이해", detail: "요청 확인", status: "done", level: "parent" },
-            { id: "judging", toolName: "", title: "다음 단계 검토 중", detail: "다음 단계를 판단하고 있습니다.", status: "running", level: "parent", role: "activity" },
-            { id: "info", toolName: "", title: "정보 수집", detail: "근거 확인 중", status: "running", level: "parent", role: "purpose", purpose: "info", groupId: "group-info" },
-            { id: "file", toolName: "read_file", title: "파일 확인", detail: "a.ts", status: "done", level: "child", groupId: "group-info" },
-          ]}
-        />
-      </AppStateProvider>,
-    );
-
-    const list = document.querySelector(".workflow-list");
-    const activity = document.querySelector(".workflow-activity-status");
-    expect(document.querySelectorAll(".workflow-step")).toHaveLength(2);
-    expect(activity?.textContent || "").toContain("다음 단계 검토 중");
-    expect(list?.lastElementChild).toBe(activity);
-    expect((list?.textContent || "").indexOf("근거 확인 중")).toBeLessThan((list?.textContent || "").indexOf("다음 단계 검토 중"));
-  });
-
-  it("removes the activity status once final response starts", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            { id: "request", toolName: "", title: "요청 이해", detail: "요청 확인", status: "done", level: "parent" },
-            { id: "judging", toolName: "", title: "다음 단계 검토 중", detail: "최종 답변 작성으로 넘어갑니다.", status: "done", level: "parent", role: "activity" },
-            { id: "final", toolName: "", title: "응답 작성", detail: "답변 본문을 작성하고 있습니다.", status: "running", level: "parent", role: "final" },
-          ]}
-        />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelector(".workflow-activity-status")).toBeNull();
-    expect(screen.getByText("응답 작성")).toBeTruthy();
-  });
-
-  it("does not keep a completed activity status active while a file write is still running", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            {
-              id: "judging",
-              toolName: "",
-              title: "다음 단계 검토 중",
-              detail: "다음 작업을 정했습니다.",
-              status: "done",
-              level: "parent",
-              role: "activity",
-            },
-            {
-              id: "write",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "outputs/report.html",
-              status: "running",
-              level: "child",
-              toolInput: {
-                path: "outputs/report.html",
-                content: "<html><body>작성 중</body></html>",
-              },
-            },
-          ]}
-        />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelector(".workflow-activity-status")).toBeNull();
-    expect(screen.getByText("작성 중인 결과물 - report.html")).toBeTruthy();
-  });
-
-  it("shows the generated SKILL.md content for save_skill", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            {
-              id: "save-skill",
-              toolName: "save_skill",
-              title: "save_skill",
-              detail: "hai-prefix",
-              status: "running",
-              level: "child",
-              toolInput: {
-                name: "hai-prefix",
-                description: "응답 시작에 하이!를 붙입니다.",
-                instructions: "# 하이 접두사\n\n`scripts/prefix.py`를 실행해 접두사를 만드세요.",
-                supporting_files: [
-                  {
-                    path: "scripts/prefix.py",
-                    content: "print('하이!')\n",
-                  },
-                ],
-                mode: "create",
-              },
-            },
-          ]}
-        />
-      </AppStateProvider>,
-    );
-
-    expect(screen.getByText("스킬 파일 작성")).toBeTruthy();
-    expect(screen.getByText("작성 중인 결과물 - SKILL.md")).toBeTruthy();
-    expect(screen.getByText("작성 중인 결과물 - prefix.py")).toBeTruthy();
-    const previews = [...document.querySelectorAll(".workflow-output-body")].map((element) => element.textContent);
-    expect(previews[0]).toContain("name: hai-prefix");
-    expect(previews[0]).toContain("scripts/prefix.py");
-    expect(previews[1]).toContain("print('하이!')");
-  });
-
-  it("does not keep a stale running activity status active after later concrete work starts", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            {
-              id: "judging",
-              toolName: "",
-              title: "다음 단계 검토 중",
-              detail: "도구 결과를 읽고 다음 작업이나 최종 답변을 결정하고 있습니다.",
-              status: "running",
-              level: "parent",
-              role: "activity",
-            },
-            {
-              id: "write",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "outputs/report.html",
-              status: "running",
-              level: "child",
-              toolInput: {
-                path: "outputs/report.html",
-                content: "<html><body>작성 중</body></html>",
-              },
-            },
-          ]}
-        />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelector(".workflow-activity-status")).toBeNull();
-    expect(screen.getByText("작성 중인 결과물 - report.html")).toBeTruthy();
-  });
-
-  it("buffers continued running output preview updates before scheduling the next frame", () => {
-    vi.useFakeTimers();
-    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
-    const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame");
-
-    const runningWriteEvent = (content: string) => ({
-      id: "write",
-      toolName: "write_file",
-      title: "write_file",
-      detail: "outputs/report.html",
-      status: "running" as const,
-      level: "child" as const,
-      toolInput: {
-        path: "outputs/report.html",
-        content,
-      },
-    });
-
-    const { rerender } = render(
-      <AppStateProvider>
-        <WorkflowPanel events={[runningWriteEvent("first")]} />
-      </AppStateProvider>,
-    );
-
-    setTimeoutSpy.mockClear();
-    requestAnimationFrameSpy.mockClear();
-
-    rerender(
-      <AppStateProvider>
-        <WorkflowPanel events={[runningWriteEvent("first second")]} />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("2 토큰");
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").not.toContain("4 토큰");
-    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
-
-    const visualBufferDelays = setTimeoutSpy.mock.calls
-      .map(([, timeout]) => Number(timeout))
-      .filter((timeout) => Number.isFinite(timeout));
-    expect(visualBufferDelays).toContain(50);
-
-    act(() => {
-      vi.advanceTimersByTime(49);
-    });
-    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(1);
-    });
-    expect(requestAnimationFrameSpy).toHaveBeenCalled();
-  });
-
-  it("uses recent small chunk cadence to pace workflow output preview chunks", () => {
-    vi.useFakeTimers();
-
-    const runningWriteEvent = (content: string) => ({
-      id: "write",
-      toolName: "write_file",
-      title: "write_file",
-      detail: "outputs/report.html",
-      status: "running" as const,
-      level: "child" as const,
-      toolInput: {
-        path: "outputs/report.html",
-        content,
-      },
-    });
-
-    const { rerender } = render(
-      <AppStateProvider>
-        <WorkflowPanel events={[runningWriteEvent("aa")]} />
-      </AppStateProvider>,
-    );
-
-    rerender(
-      <AppStateProvider>
-        <WorkflowPanel events={[runningWriteEvent("aabb")]} />
-      </AppStateProvider>,
-    );
-    act(() => {
-      vi.advanceTimersByTime(120);
-    });
-
-    rerender(
-      <AppStateProvider>
-        <WorkflowPanel events={[runningWriteEvent("aabbcc")]} />
-      </AppStateProvider>,
-    );
-    act(() => {
-      vi.advanceTimersByTime(64);
-    });
-
-    expect(document.querySelector(".workflow-output-body")?.textContent || "").toBe("aabb");
-
-    act(() => {
-      vi.advanceTimersByTime(40);
-    });
-
-    const pacedText = document.querySelector(".workflow-output-body")?.textContent || "";
-    expect(pacedText.length).toBeGreaterThan(4);
-    expect(pacedText.length).toBeLessThan(6);
-  });
-
-  it("paces the running workflow output token counter with the revealed content", () => {
-    vi.useFakeTimers();
-
-    const runningWriteEvent = (content: string) => ({
-      id: "write",
-      toolName: "write_file",
-      title: "write_file",
-      detail: "outputs/report.html",
-      status: "running" as const,
-      level: "child" as const,
-      toolInput: {
-        path: "outputs/report.html",
-        content,
-      },
-    });
-
-    const { rerender } = render(
-      <AppStateProvider>
-        <WorkflowPanel events={[runningWriteEvent("가".repeat(20))]} />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("20 토큰");
-
-    rerender(
-      <AppStateProvider>
-        <WorkflowPanel events={[runningWriteEvent("가".repeat(100))]} />
-      </AppStateProvider>,
-    );
-
-    act(() => {
-      vi.advanceTimersByTime(49);
-    });
-
-    expect(document.querySelector(".workflow-output-body")?.textContent?.length || 0).toBe(20);
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("20 토큰");
-
-    act(() => {
-      vi.advanceTimersByTime(17);
-    });
-
-    const firstVisibleLength = document.querySelector(".workflow-output-body")?.textContent?.length || 0;
-    const firstCount = document.querySelector(".workflow-output-line-count")?.textContent || "";
-    expect(firstVisibleLength).toBeGreaterThan(20);
-    expect(firstVisibleLength).toBeLessThan(100);
-    expect(firstCount).toContain(`${firstVisibleLength.toLocaleString()} 토큰`);
-
-    act(() => {
-      vi.advanceTimersByTime(3_500);
-    });
-
-    expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("100 토큰");
-  });
-
-  it("continues the running workflow output token counter when the tab is hidden", () => {
-    vi.useFakeTimers();
-    const hiddenDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "hidden")
-      || Object.getOwnPropertyDescriptor(document, "hidden");
-    Object.defineProperty(document, "hidden", { configurable: true, value: true });
-
-    const runningWriteEvent = (content: string) => ({
-      id: "write",
-      toolName: "write_file",
-      title: "write_file",
-      detail: "outputs/report.html",
-      status: "running" as const,
-      level: "child" as const,
-      toolInput: {
-        path: "outputs/report.html",
-        content,
-      },
-    });
-
-    try {
-      const { rerender } = render(
-        <AppStateProvider>
-          <WorkflowPanel events={[runningWriteEvent("가".repeat(20))]} />
-        </AppStateProvider>,
-      );
-
-      rerender(
-        <AppStateProvider>
-          <WorkflowPanel events={[runningWriteEvent("가".repeat(100))]} />
-        </AppStateProvider>,
-      );
-
-      expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("20 토큰");
-
-      act(() => {
-        vi.advanceTimersByTime(180);
-      });
-
-      const hiddenTabCount = document.querySelector(".workflow-output-line-count")?.textContent || "";
-      expect(hiddenTabCount).not.toContain("20 토큰");
-    } finally {
-      if (hiddenDescriptor) {
-        Object.defineProperty(document, "hidden", hiddenDescriptor);
-      } else {
-        delete (document as { hidden?: boolean }).hidden;
-      }
+  it.each(["web_search", "write_file", "mcp__future__lookup"])("shows a running indicator for %s and removes it on completion", (toolName) => {
+    const event = call("active", toolName, { status: "running" });
+    const view = render(panel([event]));
+    expect(document.querySelectorAll(".aside-running-spinner")).toHaveLength(1);
+    expect(screen.getByText("실행 중")).toBeTruthy();
+    for (const status of ["done", "error", "warning"] as const) {
+      view.rerender(panel([{ ...event, status }]));
+      expect(document.querySelector(".aside-running-spinner")).toBeNull();
     }
   });
 
-  it("shows request and planning detail text on parent rows", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            { id: "request", toolName: "", title: "요청 이해", detail: "요청 확인 · 경쟁사 이슈를 조사합니다.", status: "done", level: "parent" },
-            { id: "plan", toolName: "", title: "작업 계획 수립", detail: "글로벌 철강 생산량과 저탄소 전환 기준으로 보겠습니다.", status: "done", level: "parent", role: "planning" },
-            { id: "final", toolName: "", title: "응답 작성", detail: "답변 본문을 작성하고 있습니다.", status: "running", level: "parent", role: "final" },
-          ]}
-        />
-      </AppStateProvider>,
-    );
-
-    expect(screen.getByText("요청 확인 · 경쟁사 이슈를 조사합니다.")).toBeTruthy();
-    expect(screen.getByText("글로벌 철강 생산량과 저탄소 전환 기준으로 보겠습니다.")).toBeTruthy();
+  it("keeps a collapsed group spinning while any call runs, including after another call fails", () => {
+    const events = [call("failed", "web_search", { status: "error" }), call("active", "web_fetch", { status: "running" })];
+    const view = render(panel(events));
+    expect(document.querySelectorAll(".aside-running-spinner")).toHaveLength(1);
+    openActivity();
+    expect(document.querySelectorAll(".aside-running-spinner")).toHaveLength(2);
+    view.rerender(panel([events[0], { ...events[1], status: "done" }]));
+    expect(document.querySelector(".aside-running-spinner")).toBeNull();
+    expect(screen.getByText("확인 필요")).toBeTruthy();
   });
 
-  it("renders context compaction progress as a centered divider", () => {
-    render(
-      <AppStateProvider>
-        <WorkflowPanel
-          events={[
-            {
-              id: "compact",
-              toolName: "context_compaction",
-              title: "컨텍스트 자동 압축",
-              detail: "컨텍스트 초과를 막기 위해 이전 대화를 자동 압축하고 있습니다.",
-              status: "running",
-              level: "parent",
-            },
-          ]}
-        />
-      </AppStateProvider>,
-    );
+  it("keeps short-answer lifecycle history available after completion and remount", () => {
+    const events: WorkflowEvent[] = [{ id: "start", toolName: "", title: "요청 확인", detail: "사용자 요청을 확인했습니다.", status: "done", role: "planning" }];
+    const view = render(panel(events));
+    fireEvent.click(screen.getByRole("button", { name: "진행 기록" }));
+    expect(screen.getByText("사용자 요청을 확인했습니다.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    view.unmount();
+    render(panel(events));
+    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    expect(screen.getByText("사용자 요청을 확인했습니다.")).toBeTruthy();
+  });
 
-    expect(screen.getByText("컨텍스트 자동 압축 중")).toBeTruthy();
-    expect(document.querySelector(".workflow-context-compact-divider")).toBeTruthy();
+  it("retains a disclosure when a provider supplied only a heading", () => {
+    render(panel([{ ...note("heading", "**Thinking**"), noteSource: "provider-summary" }]));
+    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" })).toBeTruthy();
+    expect(screen.getByText("이 답변에 기록된 상세 진행 내용이 없습니다.")).toBeTruthy();
+  });
+
+  it("keeps prose between groups and opens actual calls, then their input and output", () => {
+    render(panel([note("start", "설정과 실행 경로를 확인하겠습니다."), call("one"), call("two", "mcp__new-server__lookup", { toolInput: { query: "new data" } }), note("next", "응답에서 오류를 확인했습니다."), call("three")]));
+    expect(screen.getByText("설정과 실행 경로를 확인하겠습니다.")).toBeTruthy();
+    expect(screen.queryByText("output one")).toBeNull();
+    const group = openActivity();
+    expect(group.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "echo one 상세 실행 기록" }));
+    expect(screen.getByText("output one")).toBeTruthy();
+    expect(screen.getByText(/"command": "echo one"/)).toBeTruthy();
+    expect(document.querySelector(".aside-timeline")?.children[2].textContent).toBe("응답에서 오류를 확인했습니다.");
+    fireEvent.click(group);
+    expect(screen.queryByText("output one")).toBeNull();
+    expect(screen.getByText("응답에서 오류를 확인했습니다.")).toBeTruthy();
     expect(document.querySelector(".workflow-card")).toBeNull();
-    expect(document.querySelector(".workflow-step")).toBeNull();
+    expect(document.body.textContent).not.toContain("도구 3개");
+    expect(document.body.textContent).not.toContain("⌄");
+  });
+
+  it("does not merge distinct calls to the same path or move calls across prose", () => {
+    const events = [call("a", "write_file", { groupId: "g", toolInput: { path: "same.txt", content: "first" } }), note("n", "추가 내용을 반영합니다."), call("b", "write_file", { groupId: "g", toolInput: { path: "same.txt", content: "second" } })];
+    const rows = asideTimelineRows(events);
+    expect(rows.map((row) => row.kind)).toEqual(["actions", "note", "actions"]);
+    expect(rows.filter((row) => row.kind === "actions").flatMap((row) => row.events).map((event) => event.toolCallId)).toEqual(["a", "b"]);
+    expect(asideTimelineRows([...events, { ...events[0], output: "updated" }])).toHaveLength(3);
+    expect(events[0].output).toBe("output a");
+  });
+
+  it("retains open call details when more calls arrive, on completion, collapse and remount", () => {
+    const first = call("one", "cmd", { status: "running", output: "first chunk" });
+    const view = render(panel([first]));
+    fireEvent.click(screen.getByRole("button", { name: "echo one 상세 실행 기록" }));
+    view.rerender(panel([{ ...first, output: "first chunk\nsecond chunk" }, call("two")]));
+    expect(screen.getByText(/second chunk/)).toBeTruthy();
+    view.rerender(panel([{ ...first, status: "done", output: "completed" }, call("two")]));
+    expect(screen.getByText("completed")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    expect(screen.queryByText("completed")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    expect(screen.getByText("completed")).toBeTruthy();
+    view.unmount();
+    render(panel([{ ...first, id: "restored-one", status: "done", output: "completed", restored: true }, call("two")]));
+    expect(screen.getByText("completed")).toBeTruthy();
+  });
+
+  it("renders provider summaries separately and preserves their full original text", () => {
+    render(panel([note("n", "한국어 진행 설명입니다."), { ...note("r", "Checking sources.\nComparing evidence."), noteSource: "provider-summary" }]));
+    expect(screen.queryByText(/Checking sources/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "추론 요약" }));
+    expect(screen.getByText("Checking sources. Comparing evidence.")).toBeTruthy();
+    expect(screen.getByText("한국어 진행 설명입니다.")).toBeTruthy();
+  });
+
+  it("shows failures for unknown tools and exposes credential-safe actual data", () => {
+    render(panel([call("unknown", "mcp__future__custom", { status: "error", toolInput: { api_key: "never-show", nested: { password: "hidden" }, query: "valid query" }, output: 'authorization=secret-value\nHTTP 403' })]));
+    expect(screen.getByText("실패")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /상세 실행 기록/ }));
+    expect(document.body.textContent).toContain("HTTP 403");
+    expect(document.body.textContent).toContain("valid query");
+    for (const secret of ["never-show", "hidden", "secret-value"]) expect(document.body.textContent).not.toContain(secret);
+    expect(workflowSafeText({ api_key: "never-show" })).toContain("[가림]");
+    expect(workflowSafeText("Authorization: Bearer secret-token-value")).not.toContain("secret-token-value");
+  });
+
+  it("preserves an empty successful output and missing metadata without inventing values", () => {
+    render(panel([call("empty", "new_tool", { toolInput: null, output: "", detail: "" })]));
+    fireEvent.click(screen.getByRole("button", { name: /상세 실행 기록/ }));
+    expect(screen.getByText("상세 출력 없음")).toBeTruthy();
+    expect(screen.queryByText("종료 코드")).toBeNull();
+  });
+
+  it("shows captured exit code, cwd, time and expandable long output", () => {
+    render(panel([call("long", "cmd", { startedAtMs: 1000, finishedAtMs: 2500, executionMetadata: { returncode: 7, cwd: "C:/work" }, output: "x".repeat(17000) + "END" })]));
+    fireEvent.click(screen.getByRole("button", { name: /상세 실행 기록/ }));
+    expect(screen.getByText("7")).toBeTruthy();
+    expect(screen.getByText("C:/work")).toBeTruthy();
+    expect(screen.getByText("완료 · 1.5초")).toBeTruthy();
+    expect(document.querySelector(".aside-output")?.textContent).not.toContain("END");
+    fireEvent.click(screen.getByRole("button", { name: /전체 출력 보기/ }));
+    expect(document.body.textContent).toContain("END");
+  });
+
+  it("shows saved file content and real edit diffs without opening call details", () => {
+    render(panel([call("write", "write_file", { toolInput: { path: "report.html", content: "<h1>Report</h1>" } }), call("edit", "edit_file", { toolInput: { path: "report.html", old_string: "Report", new_string: "Updated" } })]));
+    expect(document.querySelector(".workflow-output-body")?.textContent).toContain("Report");
+    expect(document.querySelector(".workflow-output-body.diff")?.textContent).toContain("Updated");
+  });
+
+  it("shows agent work at its recorded position with separate details", () => {
+    render(panel([note("start", "역할을 나누어 검증합니다."), { id: "agents", toolName: "", title: "", detail: "", status: "done", role: "agents", agents: [{ id: "a", task: "검색 검증", model: "test-model", status: "completed", lastOutput: "실제 조회 성공", prompt: "검색을 검증하세요" }] }, note("end", "결과를 정리합니다.")]));
+    fireEvent.click(screen.getByRole("button", { name: "서브에이전트 1개 사용" }));
+    fireEvent.click(screen.getByRole("button", { name: /검색 검증/ }));
+    expect(screen.getByText("검색을 검증하세요")).toBeTruthy();
+    expect(screen.getAllByText("실제 조회 성공").length).toBeGreaterThan(0);
+    expect(screen.getByText("결과를 정리합니다.")).toBeTruthy();
+  });
+
+  it("restores public progress, distinct same-path parallel calls and execution metadata", () => {
+    let state = appReducer(initialAppState, { type: "backend_event", event: { type: "history_snapshot", value: "restored", history_events: [
+      { type: "user", text: "검증" },
+      { type: "progress_note", message: "병렬로 확인합니다." },
+      { type: "tool_started", tool_name: "write_file", tool_call_id: "a", tool_call_index: 0, tool_input: { path: "same.txt" }, timestamp: 1700000000000 },
+      { type: "tool_started", tool_name: "write_file", tool_call_id: "b", tool_call_index: 1, tool_input: { path: "same.txt" }, timestamp: 1700000000100 },
+      { type: "tool_completed", tool_name: "write_file", tool_call_id: "b", output: "second", timestamp: 1700000000200 },
+      { type: "tool_completed", tool_name: "write_file", tool_call_id: "a", output: "first", execution_metadata: { returncode: 0 }, timestamp: 1700000000300 },
+      { type: "assistant", text: "완료", has_tool_uses: false },
+    ] } });
+    expect(state.workflowEvents.filter((event) => event.toolName === "write_file").map((event) => event.output)).toEqual(["first", "second"]);
+    expect(state.workflowEvents.find((event) => event.toolCallId === "a")?.executionMetadata?.returncode).toBe(0);
+    render(<AppStateProvider initialState={state}><WorkflowPanel persistenceKey="restore" /></AppStateProvider>);
+    expect(screen.getByText("병렬로 확인합니다.")).toBeTruthy();
+  });
+
+  it("keeps duplicate completion replay idempotent without reopening or losing other calls", () => {
+    let state = initialAppState;
+    const emit = (event: any) => { state = appReducer(state, { type: "backend_event", event }); };
+    emit({ type: "tool_started", tool_name: "cmd", tool_call_id: "a", tool_call_index: 0, tool_input: { command: "one" } });
+    emit({ type: "tool_started", tool_name: "cmd", tool_call_id: "b", tool_call_index: 0, tool_input: { command: "two" } });
+    emit({ type: "tool_completed", tool_name: "cmd", tool_call_id: "a", output: "done" });
+    emit({ type: "tool_completed", tool_name: "cmd", tool_call_id: "a", output: "done" });
+    emit({ type: "tool_started", tool_name: "cmd", tool_call_id: "a", tool_input: { command: "one" } });
+    const calls = state.workflowEvents.filter((event) => event.toolName === "cmd");
+    expect(calls).toHaveLength(2);
+    expect(calls.find((event) => event.toolCallId === "a")?.status).toBe("done");
+    expect(calls.find((event) => event.toolCallId === "b")?.status).toBe("running");
+  });
+
+  it("hides heading-only summaries and shows the complete detailed body on restore", () => {
+    const first = "여러 출처의 발표 시점과 근거를 비교했습니다. 서로 다른 조건의 수치를 구분했습니다.";
+    const last = "확인되지 않은 내용은 별도로 표시합니다. 최종 비교에는 확인된 자료를 사용합니다.";
+    render(panel([
+      { ...note("short", "**Planning segmented web fetching for full texts**"), noteSource: "provider-summary", restored: true },
+      { ...note("long", `## 자료 검토\n\n${first}\n\n**검토 결과**\n\n${last}`), noteSource: "provider-summary", restored: true },
+    ]));
+    expect(screen.getAllByRole("button", { name: "추론 요약" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "추론 요약" }));
+    expect(screen.getByText(first)).toBeTruthy();
+    expect(screen.getByText(last)).toBeTruthy();
+    expect(screen.queryByText("자료 검토")).toBeNull();
+    expect(screen.queryByText("검토 결과")).toBeNull();
+    expect(document.querySelectorAll(".aside-note-detail p")).toHaveLength(2);
+  });
+
+  it("restores partial command output while the recorded call is still running", () => {
+    const state = appReducer(initialAppState, { type: "backend_event", event: { type: "history_snapshot", value: "partial", history_events: [
+      { type: "user", text: "검증" },
+      { type: "tool_started", tool_name: "cmd", tool_call_id: "partial", tool_input: { command: "echo output" } },
+      { type: "tool_progress", tool_name: "cmd", tool_call_id: "partial", output: "first chunk", execution_metadata: { cwd: "C:/work" } },
+    ] } });
+    expect(state.workflowEvents.find((event) => event.toolCallId === "partial")).toMatchObject({ output: "first chunk", executionMetadata: { cwd: "C:/work" } });
   });
 });

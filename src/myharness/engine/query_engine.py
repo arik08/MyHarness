@@ -142,6 +142,14 @@ class QueryEngine:
         """Update the active model for future turns."""
         self._model = model
 
+    def set_auto_compact_threshold(self, tokens: int | None) -> None:
+        """Apply the compaction policy to future turns without clearing history."""
+        self._auto_compact_threshold_tokens = tokens
+
+    def set_context_window(self, tokens: int | None) -> None:
+        """Keep future requests aligned with the active model's context capacity."""
+        self._context_window_tokens = tokens
+
     def set_api_client(self, api_client: SupportsStreamingMessages) -> None:
         """Update the active API client for future turns."""
         self._api_client = api_client

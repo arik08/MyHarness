@@ -89,6 +89,7 @@ class RuntimeBundle:
     extra_skill_dirs: tuple[str, ...] = ()
     extra_plugin_roots: tuple[str, ...] = ()
     task_worker: bool = False
+    gpt56_context_mode: str | None = None
     prefix_cache_warmup_task: asyncio.Task[None] | None = None
 
     def current_settings(self):
@@ -404,7 +405,11 @@ async def build_runtime(
 
     from myharness.services.compact import get_long_context_policy_threshold
 
-    policy_threshold = get_long_context_policy_threshold(settings.model, gpt56_context_mode)
+    policy_threshold = get_long_context_policy_threshold(
+        settings.model, gpt56_context_mode,
+        context_window_tokens=settings.context_window_tokens or settings.memory.context_window_tokens,
+        auto_compact_threshold_tokens=settings.auto_compact_threshold_tokens or settings.memory.auto_compact_threshold_tokens,
+    )
     engine = QueryEngine(
         api_client=resolved_api_client,
         tool_registry=tool_registry,
@@ -477,6 +482,7 @@ async def build_runtime(
             ]
         ),
         external_api_client=api_client is not None,
+        gpt56_context_mode=gpt56_context_mode,
         enforce_max_turns=enforce_max_turns or max_turns is not None,
         session_id=session_id,
         settings_overrides=settings_overrides,
@@ -774,6 +780,16 @@ async def refresh_runtime_client(bundle: RuntimeBundle) -> None:
         )
         await _close_api_client(previous_client)
     bundle.engine.set_model(settings.model)
+    bundle.engine.set_context_window(settings.context_window_tokens or settings.memory.context_window_tokens)
+    from myharness.context_policy import get_long_context_policy_threshold
+
+    bundle.engine.set_auto_compact_threshold(
+        get_long_context_policy_threshold(
+            settings.model, bundle.gpt56_context_mode,
+            context_window_tokens=settings.context_window_tokens or settings.memory.context_window_tokens,
+            auto_compact_threshold_tokens=settings.auto_compact_threshold_tokens or settings.memory.auto_compact_threshold_tokens,
+        ) or settings.auto_compact_threshold_tokens or settings.memory.auto_compact_threshold_tokens
+    )
     bundle.engine.set_max_tokens(settings.effective_max_tokens())
     bundle.engine.set_system_prompt(
         build_runtime_system_prompt(
@@ -817,6 +833,11 @@ async def handle_line(
         sync_app_state(bundle)
         return True
 
+    settings = bundle.current_settings()
+    profile_name, profile = settings.resolve_profile()
+    if profile_name in settings.enabled_models_by_profile and not profile.allows_model(bundle.engine.model):
+        await refresh_runtime_client(bundle)
+        bundle.engine.tool_metadata.update(active_profile=profile_name, provider=settings.provider, runtime_model=settings.model)
     parsed = None if has_attachments else bundle.commands.lookup(line_text)
     if parsed is not None:
         command, args = parsed

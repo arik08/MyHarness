@@ -8,8 +8,13 @@ import os
 import re
 import ssl
 import time
+import threading
+import hashlib
+import sqlite3
+from pathlib import Path
 from datetime import UTC, datetime
 from collections.abc import Callable
+from contextlib import closing, contextmanager
 from typing import Any
 
 import httpx
@@ -17,6 +22,56 @@ import httpx
 
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 MAX_REQUEST_ATTEMPTS = 3
+_REQUEST_SLOT_LOCK = threading.Lock()
+_REQUEST_SLOTS: dict[str, float] = {}
+_REQUEST_SOURCE_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _wait_shared_request_slot(source: str, headers: dict[str, str] | None, interval: float) -> None:
+    """Share a credential's request budget across MCP processes on this host."""
+    if interval <= 0 or not headers:
+        return
+    identity = hashlib.sha256(json.dumps([source, sorted(headers.items())]).encode()).hexdigest()
+    folder = Path(os.environ.get("MYHARNESS_CONFIG_DIR") or Path.home() / ".myharness")
+    folder.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(folder / "mcp-rate-limits.sqlite3", timeout=15)) as connection, connection:
+        connection.execute("CREATE TABLE IF NOT EXISTS request_slots (id TEXT PRIMARY KEY, next_at REAL NOT NULL)")
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute("SELECT next_at FROM request_slots WHERE id=?", (identity,)).fetchone()
+        now = time.time()
+        slot = max(now, row[0] if row else now)
+        connection.execute("INSERT OR REPLACE INTO request_slots VALUES (?, ?)", (identity, slot + interval))
+    if slot > now:
+        time.sleep(slot - now)
+
+
+def _wait_request_slot(source: str, minimum_interval: float) -> None:
+    if minimum_interval <= 0:
+        return
+    with _REQUEST_SLOT_LOCK:
+        now = time.monotonic()
+        slot = max(now, _REQUEST_SLOTS.get(source, now))
+        _REQUEST_SLOTS[source] = slot + minimum_interval
+    if slot > now:
+        time.sleep(slot - now)
+
+
+@contextmanager
+def _paced_request(source: str, minimum_interval: float):
+    if minimum_interval <= 0:
+        yield
+        return
+    with _REQUEST_SLOT_LOCK:
+        lock = _REQUEST_SOURCE_LOCKS.setdefault(source, threading.Lock())
+    with lock:
+        _wait_request_slot(source, minimum_interval)
+        try:
+            yield
+        finally:
+            # Space completed requests as well as starts; concurrent tool calls
+            # must not burst against a single API key after a slow response.
+            with _REQUEST_SLOT_LOCK:
+                _REQUEST_SLOTS[source] = time.monotonic() + minimum_interval
 
 # httpx logs the fully rendered request URL at INFO level. Several official APIs
 # put credentials in the query string, so allowing that log would disclose keys.
@@ -78,21 +133,26 @@ def request(
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     timeout: float = 45,
+    minimum_interval: float = 0,
 ) -> httpx.Response:
     """Issue a retrying GET without leaking query parameters in raised messages."""
     last_error: BaseException | None = None
     for attempt in range(1, MAX_REQUEST_ATTEMPTS + 1):
         try:
-            response = httpx.get(
-                url,
-                params={key: value for key, value in (params or {}).items() if value is not None},
-                headers=headers,
-                timeout=timeout,
-                verify=httpx_verify_argument(),
-                follow_redirects=True,
-            )
+            with _paced_request(source, minimum_interval):
+                _wait_shared_request_slot(source, headers, minimum_interval)
+                response = httpx.get(
+                    url,
+                    params={key: value for key, value in (params or {}).items() if value is not None},
+                    headers=headers,
+                    timeout=timeout,
+                    verify=httpx_verify_argument(),
+                    follow_redirects=True,
+                )
             if response.status_code in TRANSIENT_STATUS_CODES and attempt < MAX_REQUEST_ATTEMPTS:
-                time.sleep(min(0.25 * attempt, 1.0))
+                retry_after = response.headers.get("Retry-After", "")
+                delay = min(float(retry_after), 60) if re.fullmatch(r"\d+(\.\d+)?", retry_after) else min(0.25 * attempt, 1.0)
+                time.sleep(delay)
                 continue
             response.raise_for_status()
             return response
@@ -113,8 +173,9 @@ def request(
             if not retryable or attempt == MAX_REQUEST_ATTEMPTS:
                 break
             time.sleep(min(0.25 * attempt, 1.0))
+    status = last_error.response.status_code if isinstance(last_error, httpx.HTTPStatusError) else None
     raise RuntimeError(
-        f"{source} request failed. Check the credential, service status, corporate proxy, "
+        f"{source} request failed{f' (HTTP {status})' if status else ''}. Check the credential, service status, corporate proxy, "
         "HTTPS_PROXY, and SSL_CERT_FILE settings."
     ) from last_error
 
@@ -126,11 +187,21 @@ def request_json(
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     timeout: float = 45,
+    fallback_encoding: str | None = None,
+    empty_status_codes: tuple[int, ...] = (),
+    minimum_interval: float = 0,
 ) -> object:
     """Fetch a JSON response and emit a bounded content diagnostic on parse failure."""
-    response = request(source, url, params=params, headers=headers, timeout=timeout)
+    response = request(source, url, params=params, headers=headers, timeout=timeout, minimum_interval=minimum_interval)
+    if response.status_code in empty_status_codes:
+        return []
     try:
-        return response.json()
+        try:
+            return response.json()
+        except UnicodeDecodeError:
+            if fallback_encoding is None:
+                raise
+            return json.loads(response.content.decode(fallback_encoding))
     except ValueError as exc:
         content_type = response.headers.get("content-type", "")
         raise RuntimeError(
@@ -213,6 +284,7 @@ def health_envelope(
     source: str,
     ok: bool,
     credential_env: tuple[str, ...] = (),
+    require_all_credentials: bool = False,
     detail: str,
 ) -> str:
     """Return connection state while exposing only credential presence, never values."""
@@ -223,7 +295,10 @@ def health_envelope(
             "retrieved_at": datetime.now(UTC).isoformat(),
             "credential": {
                 "required": bool(credential_env),
-                "configured": any(bool(os.environ.get(name)) for name in credential_env),
+                "configured": bool(credential_env) and (
+                    all(first_env(name) for name in credential_env)
+                    if require_all_credentials else bool(first_env(*credential_env))
+                ),
                 "environment_names": list(credential_env),
             },
             "detail": detail,
@@ -239,14 +314,20 @@ def checked_health_envelope(
     probe: Callable[[], object],
     success_detail: str,
     credential_env: tuple[str, ...] = (),
+    require_all_credentials: bool = False,
     missing_detail: str = "Official API adapter is installed but its credential is not configured.",
 ) -> str:
     """Run one health probe and always return a secret-safe health envelope."""
-    if credential_env and not first_env(*credential_env):
+    configured = (
+        all(first_env(name) for name in credential_env)
+        if require_all_credentials else bool(first_env(*credential_env))
+    )
+    if credential_env and not configured:
         return health_envelope(
             source=source,
             ok=False,
             credential_env=credential_env,
+            require_all_credentials=require_all_credentials,
             detail=missing_detail,
         )
     try:
@@ -264,11 +345,13 @@ def checked_health_envelope(
             source=source,
             ok=False,
             credential_env=credential_env,
+            require_all_credentials=require_all_credentials,
             detail=f"Official endpoint probe failed ({failure}).",
         )
     return health_envelope(
         source=source,
         ok=True,
         credential_env=credential_env,
+        require_all_credentials=require_all_credentials,
         detail=success_detail,
     )

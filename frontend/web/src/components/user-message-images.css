@@ -1,0 +1,37 @@
+.user-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+  gap: 7px;
+  margin-bottom: 1px;
+}
+
+.user-message-images .user-image-attachment {
+  display: block;
+  flex: 0 0 40px;
+  overflow: hidden;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  cursor: zoom-in;
+}
+
+.user-image-attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 140ms ease;
+}
+
+.user-image-attachment:hover img { transform: scale(1.04); }
+.user-image-attachment:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.user-message-images .image-unavailable { cursor: default; color: var(--muted); font-size: 17px; }
+@media (prefers-reduced-motion: reduce) {
+  .user-image-attachment img { transition: none; }
+  .user-image-attachment:hover img { transform: none; }
+}

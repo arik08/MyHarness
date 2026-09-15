@@ -517,7 +517,9 @@ function mergeSkillState(
     });
     existingNames.add(name.toLowerCase());
   }
-  return merged;
+  // Live snapshots also contain internal skills that /help deliberately omits.
+  // Apply the same boundary after merging, including restored help messages.
+  return merged.filter((item) => item.source.trim().toLowerCase() !== "bundled");
 }
 
 function catalogTooltip(item: ToggleEntry, fallback: string) {

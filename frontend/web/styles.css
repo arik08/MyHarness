@@ -34,7 +34,7 @@
   --chat-bg: #ffffff;
   --new-chat: #e7ecf2;
   --new-chat-hover: #dbe3eb;
-  --composer-bg: rgba(255, 255, 255, 0.94);
+  --composer-bg: rgb(255, 255, 255);
   --composer-border: rgba(196, 206, 217, 0.9);
   --composer-shadow: 0 16px 42px rgba(23, 32, 44, 0.09), 0 3px 10px rgba(23, 32, 44, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.94);
   --composer-fade: rgba(255, 255, 255, 1);
@@ -106,7 +106,7 @@
   --chat-bg: #ffffff;
   --new-chat: #eeeeeb;
   --new-chat-hover: #e4e2dd;
-  --composer-bg: rgba(255, 255, 255, 0.94);
+  --composer-bg: rgb(255, 255, 255);
   --composer-border: rgba(201, 197, 189, 0.86);
   --composer-shadow: 0 16px 42px rgba(44, 42, 38, 0.1), 0 3px 10px rgba(44, 42, 38, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.92);
   --composer-fade: rgba(255, 255, 255, 1);
@@ -170,7 +170,7 @@
   --chat-bg: #0a1624;
   --new-chat: #12263b;
   --new-chat-hover: #1a3652;
-  --composer-bg: rgba(13, 28, 43, 0.94);
+  --composer-bg: rgb(13, 28, 43);
   --composer-border: rgba(64, 93, 123, 0.92);
   --composer-shadow: 0 18px 52px rgba(0, 0, 0, 0.36), 0 2px 10px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.07);
   --composer-fade: rgba(10, 22, 36, 1);
@@ -234,7 +234,7 @@
   --chat-bg: #000500;
   --new-chat: #041904;
   --new-chat-hover: #082b08;
-  --composer-bg: rgba(1, 9, 1, 0.98);
+  --composer-bg: rgb(1, 9, 1);
   --composer-border: rgba(0, 217, 34, 0.88);
   --composer-shadow: 0 18px 60px rgba(0, 0, 0, 0.62), 0 0 34px rgba(0, 255, 36, 0.12), inset 0 1px 0 rgba(200, 255, 208, 0.12);
   --composer-fade: rgba(0, 5, 0, 1);
@@ -298,7 +298,7 @@
   --chat-bg: #070100;
   --new-chat: #210700;
   --new-chat-hover: #3a0f00;
-  --composer-bg: rgba(12, 2, 0, 0.98);
+  --composer-bg: rgb(12, 2, 0);
   --composer-border: rgba(255, 143, 31, 0.9);
   --composer-shadow: 0 18px 60px rgba(0, 0, 0, 0.64), 0 0 28px rgba(255, 143, 31, 0.12), inset 0 1px 0 rgba(255, 184, 77, 0.14);
   --composer-fade: rgba(7, 1, 0, 1);
@@ -4189,9 +4189,9 @@ a:focus-visible {
 }
 
 .assistant-action-time {
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 72%, var(--app));
   font-size: 14px;
-  font-weight: 560;
+  font-weight: 400;
   line-height: 1;
   white-space: nowrap;
 }
@@ -5780,7 +5780,7 @@ a:focus-visible {
 .todo-activity-list {
   grid-column: 2;
   display: grid;
-  gap: 3px;
+  gap: 6px;
   margin: -1px 0 1px;
   padding: 0;
   color: var(--muted);
@@ -5791,7 +5791,7 @@ a:focus-visible {
 
 .todo-activity-line {
   display: grid;
-  grid-template-columns: 8px minmax(0, 1fr);
+  grid-template-columns: 4em minmax(0, 1fr);
   align-items: start;
   gap: 5px;
   min-width: 0;
@@ -5800,14 +5800,20 @@ a:focus-visible {
   word-break: break-word;
 }
 
-.todo-activity-line::before {
-  content: "";
-  width: 4px;
-  height: 4px;
-  margin-top: 6px;
-  background: color-mix(in srgb, var(--accent) 66%, var(--muted));
-  border-radius: 999px;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+.todo-activity-order {
+  font-size: 0.92em;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+.todo-activity-line.latest {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.todo-activity-line.latest .todo-activity-order {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .workflow-card {
@@ -6496,7 +6502,7 @@ a:focus-visible {
 .workflow-long-report-files {
   margin-top: 10px;
   padding: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: color-mix(in srgb, var(--panel) 74%, transparent);
 }
@@ -6535,7 +6541,7 @@ a:focus-visible {
   gap: 2px;
   min-width: 0;
   padding: 7px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--surface);
 }
@@ -8605,10 +8611,10 @@ a:focus-visible {
 .composer {
   position: absolute;
   right: 0;
-  bottom: 6px;
+  bottom: 0;
   left: 0;
-  padding: 0 18px 6px;
-  background: transparent;
+  padding: 0 18px 12px;
+  background: var(--composer-fade);
   z-index: 2;
   pointer-events: none;
 }
@@ -9625,21 +9631,18 @@ a:focus-visible {
 
 .composer-box {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) 30px;
   column-gap: 8px;
   row-gap: 6px;
   align-items: center;
   width: min(804px, 100%);
   min-height: 40px;
   margin: 0 auto;
-  padding: 4px 5px 4px 14px;
+  padding: 4px 4px 4px 20px;
   background: var(--composer-bg);
   border: 1px solid var(--composer-border);
   border-radius: 999px;
-  box-shadow:
-    var(--composer-shadow),
-    0 0 5px 3px color-mix(in srgb, var(--composer-fade) 58%, transparent);
-  backdrop-filter: blur(8px) saturate(1.02);
+  box-shadow: none;
   overflow: hidden;
   pointer-events: auto;
   --composer-input-max-height: 192px;
@@ -9652,8 +9655,8 @@ a:focus-visible {
 }
 
 .composer-box.multiline {
-  border-radius: 22px;
-  padding: 6px 4px 5px 16px;
+  border-radius: 24px;
+  padding: 4px 8px 4px 20px;
 }
 
 .composer-box:has(.attachment-tray:not(.hidden)) {
@@ -9728,7 +9731,7 @@ a:focus-visible {
 }
 
 .composer textarea {
-  grid-column: 2;
+  grid-column: 1;
   align-self: center;
   box-sizing: border-box;
   width: 100%;
@@ -9798,8 +9801,8 @@ a:focus-visible {
   display: grid;
   place-items: center;
   align-self: end;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   margin-bottom: 0;
   padding: 0;
   background: var(--send-button-bg);
@@ -9810,7 +9813,7 @@ a:focus-visible {
 }
 
 .composer-box > #sendButton {
-  grid-column: 5;
+  grid-column: 2;
 }
 
 .composer-box > #sendButton.is-stop {
@@ -9821,8 +9824,8 @@ a:focus-visible {
 
 .composer-box > #sendButton.is-stop svg {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   fill: currentColor;
   stroke: none;
   transform-origin: center;
@@ -9830,8 +9833,8 @@ a:focus-visible {
 }
 
 .composer-box > #sendButton svg {
-  width: 19px;
-  height: 19px;
+  width: 17px;
+  height: 17px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
@@ -12178,3 +12181,157 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 .workflow-reasoning-toggle:hover { opacity: .8; }
 .workflow-reasoning-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .workflow-reasoning-full { padding: 4px 0 6px 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Text and send/stop share the pill; supporting controls sit below. */
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  width: min(804px, 100%);
+  margin: 5px auto 0;
+  padding: 0 4px;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+.composer-box,
+.composer-toolbar {
+  width: var(--composer-aligned-width, min(804px, 100%));
+  margin-left: var(--composer-aligned-left, auto);
+}
+.composer-tools-left, .composer-tools-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 2px;
+}
+.composer-tools-right { margin-left: auto; }
+.composer-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 28px;
+  min-height: 30px;
+  max-width: 200px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.composer-tool > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-tool svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.composer-tool:hover, .composer-tool[aria-expanded="true"] { background: var(--sidebar-hover); color: var(--ink); }
+.composer-tool:disabled { opacity: .45; cursor: not-allowed; }
+.composer-tool.context-usage-trigger { display: grid; width: 31px; min-width: 31px; place-items: center; padding: 0; color: var(--muted); }
+.composer-tool.context-usage-trigger.is-maximum { background: color-mix(in srgb, var(--warning) 9%, var(--panel)); color: var(--warning); }
+.composer-tool.context-usage-trigger svg { width: 18px; height: 18px; overflow: visible; transform: rotate(-90deg); }
+.context-usage-trigger circle { fill: none; stroke-width: 2.4; }
+.context-usage-track { stroke: var(--line-strong); }
+.context-usage-progress { stroke: currentColor; stroke-linecap: round; transition: stroke-dashoffset 160ms ease-out; }
+.tooltip-layer.context-usage-popover { display: grid; min-width: 184px; gap: 4px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); box-shadow: 0 6px 16px rgba(31, 39, 51, .14), 0 1px 3px rgba(31, 39, 51, .08); text-align: center; font-weight: 400; }
+.context-usage-popover > span { color: var(--muted); font-size: 13px; }
+.context-usage-popover > strong { color: var(--ink); font-size: 13px; font-weight: 680; }
+.context-usage-popover > small { color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+.context-usage-popover > .context-usage-warning { margin-top: 3px; padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--warning) 35%, var(--line-strong)); color: var(--warning); font-weight: 650; }
+@media (prefers-reduced-motion: reduce) { .context-usage-progress { transition: none; } }
+.composer-tool:focus-visible, .composer-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.composer-box:focus-within { border-color: color-mix(in srgb, var(--muted) 60%, var(--composer-border)); }
+.composer > .attachment-tray { width: min(780px, 100%); margin: 0 auto 8px; }
+.composer-popover {
+  position: fixed;
+  z-index: 12000;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+.composer-popover-compact { width: 160px; padding: 5px; border-radius: 7px; }
+.composer-popover-compact .composer-menu-heading { padding: 4px 7px 5px; }
+.composer-popover-compact .composer-choice { padding: 4px 7px; line-height: 20px; }
+.composer-model-provider { display: block; padding: 7px 7px 3px; color: var(--muted); font-size: 12px; }
+.model-availability-menu { position: fixed; z-index: 12000; width: 320px; max-width: calc(100vw - 16px); box-sizing: border-box; overflow-y: auto; padding: 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--ink); box-shadow: var(--shadow); font-size: 13px; }
+.model-availability-heading { display: flex; justify-content: space-between; align-items: center; padding: 3px 5px; }
+.model-availability-heading > span { color: var(--muted); font-size: 11px; }
+.model-availability-hint { margin: 4px 5px 7px; color: var(--muted); font-size: 12px; }
+.model-availability-provider { display: flex; gap: 8px; align-items: center; width: 100%; padding: 7px 5px; border: 0; border-radius: 4px; background: none; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.model-availability-provider > strong { flex: 1; }
+.model-availability-provider > span { color: var(--muted); }
+.model-availability-list { padding: 0 2px 5px 10px; }
+.model-availability-option { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 4px; cursor: pointer; line-height: 20px; }
+.model-availability-option > span { overflow-wrap: anywhere; min-width: 0; }
+.model-availability-option > input { margin: 0; width: 14px; height: 14px; flex-shrink: 0; accent-color: var(--accent); }
+.model-availability-option:hover, .model-availability-provider:hover { background: var(--sidebar-hover); }
+.model-availability-option:focus-within, .model-availability-provider:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.model-availability-error { margin: 6px 5px; color: var(--warning); font-size: 12px; }
+.sidebar-footer:disabled { cursor: default; opacity: 1; }
+.composer-menu-heading { display: block; padding: 2px 6px 8px; font-size: 14px; }
+.composer-menu-description { display: block; margin: 4px 6px 10px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.composer-choice { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
+.composer-choice small { display: block; margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.composer-choice:hover, .composer-choice[aria-pressed="true"] { background: var(--sidebar-hover); }
+.composer-choice:disabled { opacity: .45; cursor: not-allowed; }
+.composer-check { display: flex; align-items: center; gap: 8px; padding: 6px; }
+.composer-enhance-instruction { width: 100%; min-height: 66px; box-sizing: border-box; margin: 8px 0; padding: 8px; resize: vertical; background: var(--composer-bg); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; font: inherit; font-size: 13px; }
+.composer-apply { width: 100%; padding: 7px; border: 0; border-radius: 5px; background: var(--send-button-bg); color: var(--send-button-ink); cursor: pointer; }
+.composer-popover .composer-control-panel { width: 100%; margin: 0; padding: 0; border: 0; background: none; border-radius: 0; box-shadow: none; backdrop-filter: none; animation: none; }
+.composer-popover .composer-panel-controls { display: grid; gap: 14px; overflow: visible; margin: 0; }
+.composer-popover .composer-control-group { display: grid; gap: 6px; }
+.composer-popover .composer-segment { flex-wrap: wrap; }
+.composer-popover:has(.composer-length-segment) { width: 220px; }
+.composer-popover .composer-length-divider { flex-basis: 100%; width: 0; height: 0; margin: 0; }
+.composer-feedback { width: min(796px, 100%); margin: 4px auto; color: var(--muted); font-size: 13px; pointer-events: auto; }
+.composer-feedback button { border: 0; background: transparent; color: var(--muted); text-decoration: underline; cursor: pointer; }
+.composer-runtime-error { max-width: 180px; font-size: 12px; color: var(--ink); }
+@media (max-width: 600px) {
+  .composer-toolbar { gap: 3px; }
+  .composer-tools-left, .composer-tools-right { gap: 1px; }
+  .composer-tools-right .composer-tool { max-width: 150px; }
+  .composer-box { padding: 4px 4px 4px 16px; }
+}
+
+/* Neutral Aside-style composer chrome, independent of the dark theme's blue accents. */
+:root[data-theme="dark"] .composer {
+  --composer-bg: #2c2c2c;
+  --composer-border: #3c3c3c;
+  --send-button-bg: #929290;
+  --send-button-ink: #30302f;
+}
+:root[data-theme="dark"] .composer textarea { color: #d0d0d0; }
+:root[data-theme="dark"] .composer textarea::placeholder { color: #929292; }
+:root[data-theme="dark"] .composer-tool,
+:root[data-theme="dark"] .composer-panel-attach { color: #aaa; }
+:root[data-theme="dark"] .composer-tools-right .composer-tool { color: #a0a0a0; }
+:root[data-theme="dark"] .composer-box:focus-within { border-color: #505050; }
+.composer-box > #sendButton { align-self: end; box-shadow: none; }
+.composer-box > #sendButton:disabled { opacity: .72; }
+.composer-toolbar { margin-top: 4px; }
+.composer-tools-right { gap: 0; padding-right: 5px; }
+.composer-tools-right .composer-tool { font-size: 13px; font-weight: 400; gap: 6px; padding-inline: 4px; }
+.composer-tool .composer-chevron { width: 12px; height: 12px; opacity: .65; }
+
+.composer-tools-left .composer-tool > .composer-auto-label {
+  font-size: 12px;
+  font-weight: 400;
+  opacity: .72;
+}
+
+.composer-tools-right .composer-tool > span { opacity: .8; }
+
+.model-availability-provider-row { display: flex; align-items: center; gap: 5px; padding-left: 5px; }
+.model-availability-provider-row > input { margin: 0; width: 14px; height: 14px; flex-shrink: 0; accent-color: var(--accent); cursor: pointer; }
+.model-availability-provider-row > .model-availability-provider { flex: 1; min-width: 0; }

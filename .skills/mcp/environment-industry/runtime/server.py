@@ -57,6 +57,17 @@ def _ers_key() -> str:
     return key
 
 
+def _ers_rows(payload: object) -> list:
+    """ARMS returns rows inside a status/data envelope, not always a bare list."""
+    if isinstance(payload, dict):
+        if payload.get("errors"):
+            raise ValueError("USDA ERS rejected the query; check catalog IDs and filters.")
+        payload = payload.get("data")
+    if not isinstance(payload, list):
+        raise ValueError("USDA ERS returned an unexpected data response shape.")
+    return payload
+
+
 def _json_object(raw: dict[str, Any] | str | None, *, name: str) -> dict[str, Any]:
     if not raw:
         return {}
@@ -96,7 +107,7 @@ def search_catalog(source: Source, query: str = "", limit: int = 50) -> str:
             f"{USDA_ERS_BASE_URL}/variable",
             params={"api_key": _ers_key(), "keyword": query or None},
         )
-        data: object = payload[:safe_limit] if isinstance(payload, list) else payload
+        data: object = _ers_rows(payload)[:safe_limit]
         source_id = "variable"
     else:
         catalog = {
@@ -133,7 +144,12 @@ def query_industry(
     filters_json: dict[str, Any] | str | None = None,
     limit: int = 100,
 ) -> str:
-    """Query filtered PRODCOM JSON-stat or USDA ERS ARMS survey data."""
+    """PRODCOM requires reporter/product/time in filters_json. USDA ERS requires
+    filters_json={year: YYYY, variable: catalog id} or year + report; other filters
+    include state, farmtype, category/category_value, category2/category2_value.
+    Use catalog IDs, scalar values (comma-separated if multiple), not arrays.
+    limit caps returned rows. Missing/suppressed estimates must not become zero.
+    """
     selected = _source(source)
     filters = _json_object(filters_json, name="filters_json")
     safe_limit = clean_limit(limit, maximum=1000)
@@ -188,8 +204,7 @@ def query_industry(
             params={"api_key": _ers_key(), **filters},
             timeout=60,
         )
-        if isinstance(payload, list):
-            payload = payload[:safe_limit]
+        payload = _ers_rows(payload)[:safe_limit]
         source_id = "surveydata"
         revision = "latest_returned_by_api"
     else:

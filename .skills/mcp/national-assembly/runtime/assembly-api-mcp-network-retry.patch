@@ -4,7 +4,7 @@ index 0d65ef2..85b6d4f 100644
 +++ b/src/api/client.ts
 @@ -129,7 +129,10 @@ export function createApiClient(config: AppConfig) {
 
-    const promise = doFetchInner(apiCode, queryParams, cacheKey, cacheable);
+     const promise = doFetchInner(apiCode, queryParams, cacheKey, cacheable);
      inflight.set(dedupeKey, promise);
 -    promise.finally(() => { inflight.delete(dedupeKey); });
 +    void promise.then(
@@ -27,7 +27,7 @@ index 0d65ef2..85b6d4f 100644
 @@ -345,22 +345,30 @@ async function fetchWithErrorHandling(url: string): Promise<unknown> {
    }
 
-  let response: Response;
+   let response: Response;
 -  try {
 -    response = await fetch(url, {
 -      signal: controller.signal,
@@ -69,7 +69,420 @@ index 0d65ef2..85b6d4f 100644
 -    clearTimeout(timer);
    }
 
-  if (!response.ok) {
+   if (!response.ok) {
+diff --git a/src/api/nabo.ts b/src/api/nabo.ts
+index 7e35513..58508c9 100644
+--- a/src/api/nabo.ts
++++ b/src/api/nabo.ts
+@@ -1,10 +1,8 @@
+ /**
+  * nabo.go.kr REST API 클라이언트
+  *
+- *国会예산정책처(NABO) nabo.go.kr의 3개 API:
++ *国会예산정책처(NABO) nabo.go.kr의 보고서 API:
+  * - /api/v1/report.do       — 보고서 자료 검색
+- * - /api/v1/periodical.do   — 정기간행물
+- * - /api/v1/recruitments.do — 채용정보
+  *
+  * Base URL: https://www.nabo.go.kr
+  * 인증: key 파라미터 (정보공개 서비스 신청 ID)
+@@ -26,7 +24,7 @@ const parser = new XMLParser({
+ // Types
+ // ---------------------------------------------------------------------------
+
+-/** NABO 3개 API 공통 응답 필드 */
++/** NABO 보고서 API 공통 응답 필드 */
+ export interface NaboItem {
+   readonly subj: string;      // 게시물 제목
+   readonly cdNm: string;      // 작성자/작성부서
+@@ -54,13 +52,11 @@ export interface NaboApiResult {
+ }
+
+ /** NABO API 타입 */
+-export type NaboApiType = "report" | "periodical" | "recruitments";
++export type NaboApiType = "report";
+
+ /** NABO API 엔드포인트 매핑 */
+ const NABO_ENDPOINTS: Record<NaboApiType, string> = {
+   report: "/api/v1/report.do",
+-  periodical: "/api/v1/periodical.do",
+-  recruitments: "/api/v1/recruitments.do",
+ };
+
+ // ---------------------------------------------------------------------------
+@@ -69,6 +65,7 @@ const NABO_ENDPOINTS: Record<NaboApiType, string> = {
+
+ export function createNaboClient(config: AppConfig) {
+   const apiKey = config.apiKeys.naboApiKey;
++  const authFailures = new Map<string, string>();
+
+   /**
+    * NABO API 호출 (XML → JSON)
+@@ -80,6 +77,8 @@ export function createNaboClient(config: AppConfig) {
+     endpoint: string,
+     params: Record<string, string | number | undefined> = {},
+   ): Promise<NaboListResponse> {
++    const blocked = authFailures.get(endpoint);
++    if (blocked) throw new Error(blocked);
+     if (!apiKey) {
+       throw new Error(
+         "NABO_API_KEY가 설정되지 않았습니다.\n" +
+@@ -102,7 +101,7 @@ export function createNaboClient(config: AppConfig) {
+       .join("&");
+     const url = `${API_BASE_URLS.nabo}${endpoint}?${entries}`;
+
+-    mcpLogger.log("debug", "nabo", `API 호출: ${endpoint}?${entries.slice(0, 80)}…`);
++    mcpLogger.log("debug", "nabo", `API 호출: ${endpoint}`);
+
+     let response: Response;
+     try {
+@@ -117,6 +116,11 @@ export function createNaboClient(config: AppConfig) {
+     }
+
+     if (!response.ok) {
++      if (response.status === 401 || response.status === 403) {
++        const message = `BLOCKED_CREDENTIAL_SCOPE: NABO ${endpoint} HTTP ${response.status}. 현재 키의 해당 기능 승인을 확인하세요. 다른 유형의 성공이 이 기능의 권한을 보장하지 않습니다. 키/승인 갱신 후 MCP를 재연결하며, 그 전에는 조건을 바꾸어 재시도하지 마세요.`;
++        authFailures.set(endpoint, message);
++        throw new Error(message);
++      }
+       throw new Error(`NABO API HTTP 오류: ${response.status} ${response.statusText}`);
+     }
+
+@@ -199,68 +203,9 @@ export function createNaboClient(config: AppConfig) {
+     return normalizeResponse(raw);
+   }
+
+-  /**
+-   * 정기간행물 조회
+-   *
+-   * @param params.page      — 페이지 번호 (기본: 1)
+-   * @param params.size      — 페이지 사이즈 (기본: 20)
+-   * @param params.scSort    — 정렬: pubDt(게시일) 또는 subj(제목)
+-   * @param params.scOrder   — asc 또는 desc (기본: desc)
+-   * @param params.scSw      — 검색어
+-   */
+-  async function searchPeriodicals(
+-    params: {
+-      page?: number;
+-      size?: number;
+-      scSort?: string;
+-      scOrder?: string;
+-      scSw?: string;
+-    } = {},
+-  ): Promise<NaboApiResult> {
+-    const queryParams: Record<string, string | number | undefined> = {};
+-    if (params.page) queryParams.page = params.page;
+-    if (params.size) queryParams.size = params.size;
+-    if (params.scSort) queryParams.scSort = params.scSort;
+-    if (params.scOrder) queryParams.scOrder = params.scOrder;
+-    if (params.scSw) queryParams.scSw = params.scSw;
+-
+-    const raw = await fetchNabo(NABO_ENDPOINTS.periodical, queryParams);
+-    return normalizeResponse(raw);
+-  }
+-
+-  /**
+-   * 채용정보 조회
+-   *
+-   * @param params.page      — 페이지 번호 (기본: 1)
+-   * @param params.size      — 페이지 사이즈 (기본: 20)
+-   * @param params.scSort    — 정렬: pubDt(게시일) 또는 subj(제목)
+-   * @param params.scOrder   — asc 또는 desc (기본: desc)
+-   * @param params.scSw      — 검색어
+-   */
+-  async function searchRecruitments(
+-    params: {
+-      page?: number;
+-      size?: number;
+-      scSort?: string;
+-      scOrder?: string;
+-      scSw?: string;
+-    } = {},
+-  ): Promise<NaboApiResult> {
+-    const queryParams: Record<string, string | number | undefined> = {};
+-    if (params.page) queryParams.page = params.page;
+-    if (params.size) queryParams.size = params.size;
+-    if (params.scSort) queryParams.scSort = params.scSort;
+-    if (params.scOrder) queryParams.scOrder = params.scOrder;
+-    if (params.scSw) queryParams.scSw = params.scSw;
+-
+-    const raw = await fetchNabo(NABO_ENDPOINTS.recruitments, queryParams);
+-    return normalizeResponse(raw);
+-  }
+
+   return {
+     searchReports,
+-    searchPeriodicals,
+-    searchRecruitments,
+   };
+ }
+
+diff --git a/src/cli.ts b/src/cli.ts
+index 483ae4f..3bb0623 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -304,7 +304,7 @@ async function cmdLawmaking(flags: Record<string, string>): Promise<void> {
+ // NABO CLI
+ // ---------------------------------------------------------------------------
+
+-type NaboCliType = "report" | "periodical" | "recruitments";
++type NaboCliType = "report";
+
+ async function cmdNabo(flags: Record<string, string>): Promise<void> {
+   const type = (flags.type ?? "report") as NaboCliType;
+@@ -318,12 +318,6 @@ async function cmdNabo(flags: Record<string, string>): Promise<void> {
+     case "report":
+       result = await getNabo().searchReports({ page, size: pageSize, scSw: key });
+       break;
+-    case "periodical":
+-      result = await getNabo().searchPeriodicals({ page, size: pageSize, scSw: key });
+-      break;
+-    case "recruitments":
+-      result = await getNabo().searchRecruitments({ page, size: pageSize, scSw: key });
+-      break;
+     default:
+       console.error(`알 수 없는 타입: ${type}`);
+       process.exit(1);
+@@ -506,7 +500,7 @@ function printHelp(): void {
+     --searchType <유형>  검색구분 (opinion: caseNm|caseNo|reqOrgNm)
+
+   nabo               国会예산정책처 NABO API
+-    --type <type>      report(기본)|periodical|recruitments
++    --type <type>      report(기본)
+     --key <검색어>      검색어
+     --page <숫자>       페이지 번호 (기본: 1)
+     --size <숫자>       결과 수 (기본: 20)
+diff --git a/src/openapi/handlers.ts b/src/openapi/handlers.ts
+index cd7b3d8..786fbfe 100644
+--- a/src/openapi/handlers.ts
++++ b/src/openapi/handlers.ts
+@@ -624,8 +624,8 @@ import { createNaboClient, type NaboApiType, type NaboItem } from "../api/nabo.j
+ export const getNabo: RouteHandler = async (ctx, params) => {
+   try {
+     const type = (params.type ?? "report") as NaboApiType;
+-    if (!["report", "periodical", "recruitments"].includes(type)) {
+-      return error(400, "type은 report, periodical, recruitments 중 하나여야 합니다.");
++    if (!["report"].includes(type)) {
++      return error(400, "type은 report만 지원합니다.");
+     }
+
+     const nabo = createNaboClient(ctx.config);
+@@ -638,17 +638,8 @@ export const getNabo: RouteHandler = async (ctx, params) => {
+       scSw: params.sc_sw,
+     };
+
+-    let result: { page: number; size: number; total: number; items: NaboItem[] };
+-    if (type === "report") {
+-      const res = await nabo.searchReports(searchParams);
+-      result = { page: res.page, size: res.size, total: res.total, items: [...res.items] };
+-    } else if (type === "periodical") {
+-      const res = await nabo.searchPeriodicals(searchParams);
+-      result = { page: res.page, size: res.size, total: res.total, items: [...res.items] };
+-    } else {
+-      const res = await nabo.searchRecruitments(searchParams);
+-      result = { page: res.page, size: res.size, total: res.total, items: [...res.items] };
+-    }
++    const res = await nabo.searchReports(searchParams);
++    const result = { page: res.page, size: res.size, total: res.total, items: [...res.items] };
+
+     const formatted = result.items.map((item) => ({
+       제목: item.subj,
+diff --git a/src/tools/discover.ts b/src/tools/discover.ts
+index cdc1b56..f995bbf 100644
+--- a/src/tools/discover.ts
++++ b/src/tools/discover.ts
+@@ -30,10 +30,20 @@ function matchesKeyword(
+   row: Record<string, unknown>,
+   keyword: string,
+ ): boolean {
+-  const lower = keyword.toLowerCase();
+-  const name = String(row.INF_NM ?? "").toLowerCase();
+-  const description = String(row.INF_EXP ?? "").toLowerCase();
+-  return name.includes(lower) || description.includes(lower);
++  const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
++  const aliases: Readonly<Record<string, string>> = {
++    "법안": "의안",
++    "bill": "의안",
++    "statistics": "통계",
++  };
++  const terms = keyword.trim().split(/\s+/).flatMap((term) => [term, aliases[term.toLowerCase()]]).filter(Boolean);
++  const haystack = normalize([
++    row.INF_NM,
++    row.INF_EXP,
++    row.CATE_NM,
++    row.ORG_NM,
++  ].map((value) => String(value ?? "")).join(" "));
++  return terms.every((term) => haystack.includes(normalize(term)));
+ }
+
+ function matchesCategory(
+@@ -82,10 +92,7 @@ export function registerDiscoverTools(
+     async (params) => {
+       try {
+         // Fetch full API catalog via OPENSRVAPI meta API
+-        const pageSize = Math.min(
+-          params.page_size ?? 300,
+-          300,
+-        );
++        const pageSize = 300;
+         const result: ApiResult = await api.fetchOpenAssembly(
+           API_CODES.META_API_LIST,
+           { pSize: pageSize },
+diff --git a/src/tools/full/committee-detail.ts b/src/tools/full/committee-detail.ts
+index 6b168dc..b9bc860 100644
+--- a/src/tools/full/committee-detail.ts
++++ b/src/tools/full/committee-detail.ts
+@@ -42,9 +42,14 @@ export function registerCommitteeDetailTool(
+         let committees = committeeResult.rows;
+
+         if (params.committee_name) {
+-          const nameLower = params.committee_name.toLowerCase();
++          const aliases: Readonly<Record<string, string>> = {
++            "기획재정위원회": "재정경제기획위원회",
++          };
++          const nameLower = (aliases[params.committee_name] ?? params.committee_name)
++            .replace(/\s+/g, "")
++            .toLowerCase();
+           committees = committees.filter((row) =>
+-            String(row.COMMITTEE_NAME ?? "").toLowerCase().includes(nameLower),
++            String(row.COMMITTEE_NAME ?? "").replace(/\s+/g, "").toLowerCase().includes(nameLower),
+           );
+         }
+
+@@ -71,7 +76,7 @@ export function registerCommitteeDetailTool(
+           // 위원 명단
+           if (shouldIncludeMembers) {
+             parallelFetches.push(
+-              api.fetchOpenAssembly(API_CODES.COMMITTEE_MEMBERS, { pSize }),
++              api.fetchOpenAssembly(API_CODES.COMMITTEE_MEMBERS, { pSize: 600 }),
+             );
+           } else {
+             parallelFetches.push(Promise.resolve({ rows: [] }));
+@@ -90,10 +95,10 @@ export function registerCommitteeDetailTool(
+               committees.map((c) => String(c.COMMITTEE_NAME ?? "")),
+             );
+             const filteredMembers = memberResult.value.rows.filter((row) =>
+-              committeeNames.has(String(row.COMMITTEE_NAME ?? "")),
++              committeeNames.has(String(row.DEPT_NM ?? row.COMMITTEE_NAME ?? "")),
+             );
+             members = filteredMembers.map((row) => ({
+-              위원회: row.COMMITTEE_NAME,
++              위원회: row.DEPT_NM ?? row.COMMITTEE_NAME,
+               이름: row.HG_NM,
+               정당: row.POLY_NM,
+               선거구: row.ORIG_NM,
+diff --git a/src/tools/lite/assembly-org.ts b/src/tools/lite/assembly-org.ts
+index 13f2fba..954047e 100644
+--- a/src/tools/lite/assembly-org.ts
++++ b/src/tools/lite/assembly-org.ts
+@@ -101,17 +101,21 @@ async function handleCommittee(
+ ) {
+   const queryParams: Record<string, string | number> = {};
+   if (params.page) queryParams.pIndex = params.page;
+-  if (params.page_size) queryParams.pSize = Math.min(params.page_size, maxPageSize);
++  const requestedPageSize = Math.min(params.page_size ?? 20, maxPageSize);
++  queryParams.pSize = params.committee_name ? maxPageSize : requestedPageSize;
+
+   const committeeApiCode = params.lang === "en" ? "ENCMITINFO" : API_CODES.COMMITTEE_INFO;
+   const result = await api.fetchOpenAssembly(committeeApiCode, queryParams);
+   let rows = result.rows;
+
+   if (params.committee_name) {
+-    const kw = params.committee_name.toLowerCase();
++    const aliases: Readonly<Record<string, string>> = {
++      "기획재정위원회": "재정경제기획위원회",
++    };
++    const kw = (aliases[params.committee_name] ?? params.committee_name).replace(/\s+/g, "").toLowerCase();
+     rows = rows.filter((row) =>
+-      String(row.COMMITTEE_NAME ?? "").toLowerCase().includes(kw),
+-    );
++      String(row.COMMITTEE_NAME ?? "").replace(/\s+/g, "").toLowerCase().includes(kw),
++    ).slice(0, requestedPageSize);
+   }
+
+   let membersMap: ReadonlyMap<string, readonly Record<string, unknown>[]> = new Map();
+diff --git a/src/tools/nabo.ts b/src/tools/nabo.ts
+index fa9d905..05c7275 100644
+--- a/src/tools/nabo.ts
++++ b/src/tools/nabo.ts
+@@ -1,8 +1,8 @@
+ /**
+- * NABO 도구 —国会예산정책처 보고서/정기간행물/채용정보 조회
++ * NABO 도구 —国会예산정책처 보고서 조회
+  *
+  * MCP 도구:
+- * - get_nabo: 보고서/정기간행물/채용정보 통합 검색 (Full 프로필)
++ * - get_nabo: 보고서 통합 검색 (Full 프로필)
+  *
+  * REST API: GET /api/nabo?type=report&sc_sw=예산&page=1&page_size=20
+  */
+@@ -19,22 +19,20 @@ export function registerNaboTools(
+   const nabo = createNaboClient(config);
+
+   /**
+-   * get_nabo — NABO 보고서/정기간행물/채용정보 검색
++   * get_nabo — NABO 보고서 검색
+    *
+    * type별 검색:
+    * - report: NABO 분석보고서 (경제전망, 세제분석, 예산분석 등 1,687건+)
+-   * - periodical: NABO 정기간행물
+-   * - recruitments:nabO 채용공고
+    */
+   server.tool(
+     "get_nabo",
+-    "국회예산정책처(NABO) 보고서/정기간행물/채용정보를 검색합니다. type으로 대상을 선택하고, 검색어로 필터링할 수 있습니다.",
++    "국회예산정책처(NABO) 보고서를 조회하거나 키워드로 검색합니다.",
+     {
+       type: z
+-        .enum(["report", "periodical", "recruitments"])
++        .enum(["report"])
+         .optional()
+         .default("report")
+-        .describe("검색 대상: report(보고서), periodical(정기간행물), recruitments(채용정보)"),
++        .describe("검색 대상: report(보고서)"),
+       keyword: z
+         .string()
+         .optional()
+@@ -64,32 +62,13 @@ export function registerNaboTools(
+       const apiType = (params.type ?? "report") as NaboApiType;
+
+       try {
+-        let result: Awaited<ReturnType<typeof nabo.searchReports>>;
+-        if (apiType === "report") {
+-          result = await nabo.searchReports({
+-            page: params.page,
+-            size: Math.min(params.page_size, 100),
+-            scSort: params.sc_sort,
+-            scOrder: params.sc_order,
+-            scSw: params.keyword,
+-          });
+-        } else if (apiType === "periodical") {
+-          result = await nabo.searchPeriodicals({
+-            page: params.page,
+-            size: Math.min(params.page_size, 100),
+-            scSort: params.sc_sort,
+-            scOrder: params.sc_order,
+-            scSw: params.keyword,
+-          });
+-        } else {
+-          result = await nabo.searchRecruitments({
+-            page: params.page,
+-            size: Math.min(params.page_size, 100),
+-            scSort: params.sc_sort,
+-            scOrder: params.sc_order,
+-            scSw: params.keyword,
+-          });
+-        }
++        const result = await nabo.searchReports({
++          page: params.page,
++          size: Math.min(params.page_size, 100),
++          scSort: params.sc_sort,
++          scOrder: params.sc_order,
++          scSw: params.keyword,
++        });
+
+         const formatted = result.items.map((item) => ({
+           제목: item.subj,
 diff --git a/tests/unit/client.test.ts b/tests/unit/client.test.ts
 index 6bcb19f..dd32552 100644
 --- a/tests/unit/client.test.ts
@@ -77,7 +490,7 @@ index 6bcb19f..dd32552 100644
 @@ -77,7 +77,7 @@ describe("createApiClient", () => {
      });
 
-    it("네트워크 오류를 처리한다", async () => {
+     it("네트워크 오류를 처리한다", async () => {
 -      vi.spyOn(globalThis, "fetch").mockRejectedValue(
 +      const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(
          new Error("Connection refused"),
@@ -115,108 +528,41 @@ index 6bcb19f..dd32552 100644
 +      expect(fetchMock).toHaveBeenCalledTimes(2);
      });
 
-    it("XML 응답을 에러로 처리한다", async () => {
-diff --git a/src/tools/discover.ts b/src/tools/discover.ts
---- a/src/tools/discover.ts
-+++ b/src/tools/discover.ts
-@@ -30,8 +30,18 @@ function matchesKeyword(
-   row: Record<string, unknown>,
-   keyword: string,
- ): boolean {
--  const lower = keyword.toLowerCase();
--  const name = String(row.INF_NM ?? "").toLowerCase();
--  const description = String(row.INF_EXP ?? "").toLowerCase();
--  return name.includes(lower) || description.includes(lower);
-+  const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-+  const aliases: Readonly<Record<string, string>> = {
-+    "법안": "의안",
-+    "bill": "의안",
-+    "statistics": "통계",
-+  };
-+  const terms = keyword.trim().split(/\s+/).flatMap((term) => [term, aliases[term.toLowerCase()]]).filter(Boolean);
-+  const haystack = normalize([
-+    row.INF_NM,
-+    row.INF_EXP,
-+    row.CATE_NM,
-+    row.ORG_NM,
-+  ].map((value) => String(value ?? "")).join(" "));
-+  return terms.every((term) => haystack.includes(normalize(term)));
- }
-@@ -83,9 +93,6 @@ export function registerDiscoverTools(
-       try {
-         // Fetch full API catalog via OPENSRVAPI meta API
--        const pageSize = Math.min(
--          params.page_size ?? 300,
--          300,
--        );
-+        const pageSize = 300;
-         const result: ApiResult = await api.fetchOpenAssembly(
-           API_CODES.META_API_LIST,
-           { pSize: pageSize },
-diff --git a/src/tools/full/committee-detail.ts b/src/tools/full/committee-detail.ts
---- a/src/tools/full/committee-detail.ts
-+++ b/src/tools/full/committee-detail.ts
-@@ -42,8 +42,13 @@ export function registerCommitteeDetailTool(
-         let committees = committeeResult.rows;
-
-         if (params.committee_name) {
--          const nameLower = params.committee_name.toLowerCase();
-+          const aliases: Readonly<Record<string, string>> = {
-+            "기획재정위원회": "재정경제기획위원회",
-+          };
-+          const nameLower = (aliases[params.committee_name] ?? params.committee_name)
-+            .replace(/\s+/g, "")
-+            .toLowerCase();
-           committees = committees.filter((row) =>
--            String(row.COMMITTEE_NAME ?? "").toLowerCase().includes(nameLower),
-+            String(row.COMMITTEE_NAME ?? "").replace(/\s+/g, "").toLowerCase().includes(nameLower),
-           );
-         }
-@@ -74,7 +79,7 @@ export function registerCommitteeDetailTool(
-           // 위원 명단
-           if (shouldIncludeMembers) {
-             parallelFetches.push(
--              api.fetchOpenAssembly(API_CODES.COMMITTEE_MEMBERS, { pSize }),
-+              api.fetchOpenAssembly(API_CODES.COMMITTEE_MEMBERS, { pSize: 600 }),
-             );
-           } else {
-             parallelFetches.push(Promise.resolve({ rows: [] }));
-@@ -90,9 +95,9 @@ export function registerCommitteeDetailTool(
-               committees.map((c) => String(c.COMMITTEE_NAME ?? "")),
-             );
-             const filteredMembers = memberResult.value.rows.filter((row) =>
--              committeeNames.has(String(row.COMMITTEE_NAME ?? "")),
-+              committeeNames.has(String(row.DEPT_NM ?? row.COMMITTEE_NAME ?? "")),
-             );
-             members = filteredMembers.map((row) => ({
--              위원회: row.COMMITTEE_NAME,
-+              위원회: row.DEPT_NM ?? row.COMMITTEE_NAME,
-               이름: row.HG_NM,
-               정당: row.POLY_NM,
-diff --git a/src/tools/lite/assembly-org.ts b/src/tools/lite/assembly-org.ts
---- a/src/tools/lite/assembly-org.ts
-+++ b/src/tools/lite/assembly-org.ts
-@@ -101,15 +101,19 @@ async function handleCommittee(
- ) {
-   const queryParams: Record<string, string | number> = {};
-   if (params.page) queryParams.pIndex = params.page;
--  if (params.page_size) queryParams.pSize = Math.min(params.page_size, maxPageSize);
-+  const requestedPageSize = Math.min(params.page_size ?? 20, maxPageSize);
-+  queryParams.pSize = params.committee_name ? maxPageSize : requestedPageSize;
-
-   const committeeApiCode = params.lang === "en" ? "ENCMITINFO" : API_CODES.COMMITTEE_INFO;
-   const result = await api.fetchOpenAssembly(committeeApiCode, queryParams);
-   let rows = result.rows;
-
-   if (params.committee_name) {
--    const kw = params.committee_name.toLowerCase();
-+    const aliases: Readonly<Record<string, string>> = {
-+      "기획재정위원회": "재정경제기획위원회",
-+    };
-+    const kw = (aliases[params.committee_name] ?? params.committee_name).replace(/\s+/g, "").toLowerCase();
-     rows = rows.filter((row) =>
--      String(row.COMMITTEE_NAME ?? "").toLowerCase().includes(kw),
--    );
-+      String(row.COMMITTEE_NAME ?? "").replace(/\s+/g, "").toLowerCase().includes(kw),
-+    ).slice(0, requestedPageSize);
-   }
+     it("XML 응답을 에러로 처리한다", async () => {
+diff --git a/tests/unit/nabo-auth.test.ts b/tests/unit/nabo-auth.test.ts
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/nabo-auth.test.ts
+@@ -0,0 +1,32 @@
++import { afterEach, expect, it, vi } from "vitest";
++import { createNaboClient } from "../../src/api/nabo.js";
++import { type AppConfig } from "../../src/config.js";
++
++afterEach(() => vi.unstubAllGlobals());
++
++it("exposes only reports and rejects removed and unknown types before HTTP", async () => {
++  const { registerNaboTools } = await import("../../src/tools/nabo.js");
++  const { z } = await import("zod");
++  const fetch = vi.fn();
++  vi.stubGlobal("fetch", fetch);
++  let schema: any;
++  registerNaboTools({ tool: (_name: string, _description: string, shape: any) => { schema = z.object(shape); } } as any,
++    { apiKeys: { naboApiKey: "unit-secret" } } as AppConfig);
++  expect(schema.parse({}).type).toBe("report");
++  for (const type of ["periodical", "recruitments", "unknown"]) {
++    expect(schema.safeParse({ type }).success).toBe(false);
++  }
++  expect(fetch).not.toHaveBeenCalled();
++  expect(Object.keys(createNaboClient({ apiKeys: {} } as AppConfig))).toEqual(["searchReports"]);
++});
++
++it("does not retry a denied report request", async () => {
++  const fetch = vi.fn()
++    .mockResolvedValueOnce(new Response('{"code":"INVALID_KEY"}', { status: 401 }))
++    .mockResolvedValueOnce(new Response('{"list":[{"subj":"report"}],"total":1}'));
++  vi.stubGlobal("fetch", fetch);
++  const client = createNaboClient({ apiKeys: { naboApiKey: "unit-secret" } } as AppConfig);
++  await expect(client.searchReports()).rejects.toThrow("BLOCKED_CREDENTIAL_SCOPE");
++  await expect(client.searchReports({ scSw: "different" })).rejects.toThrow("BLOCKED_CREDENTIAL_SCOPE");
++  expect(fetch).toHaveBeenCalledTimes(1);
++});

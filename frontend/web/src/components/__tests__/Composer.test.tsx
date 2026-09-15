@@ -8,10 +8,11 @@ import { MessageList } from "../MessageList";
 import { ModalHost } from "../ModalHost";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
-import { cancelMessage, sendBackendRequest, sendMessage, uploadClientAttachments } from "../../api/messages";
+import { cancelMessage, enhancePrompt, sendBackendRequest, sendMessage, uploadClientAttachments } from "../../api/messages";
 import { startSession } from "../../api/session";
 
 vi.mock("../../api/messages", () => ({
+  enhancePrompt: vi.fn().mockResolvedValue({ text: "개선한 요청" }),
   cancelMessage: vi.fn().mockResolvedValue({ ok: true }),
   sendBackendRequest: vi.fn().mockResolvedValue({ ok: true }),
   sendMessage: vi.fn().mockResolvedValue({ ok: true }),
@@ -31,8 +32,17 @@ function BusyProbe() {
   return <output data-testid="busy-state">{String(state.busy)}</output>;
 }
 
+function AttachmentEchoProbe() {
+  const { dispatch } = useAppState();
+  return <button onClick={() => dispatch({ type: "backend_event", event: {
+    type: "transcript_item", item: { role: "user", text: "[image attachments: 1]" },
+  } })}>Replay attachment echo</button>;
+}
+
 describe("Composer", () => {
   beforeEach(() => {
+    vi.mocked(enhancePrompt).mockReset();
+    vi.mocked(enhancePrompt).mockResolvedValue({ text: "개선한 요청" });
     vi.mocked(cancelMessage).mockClear();
     vi.mocked(sendMessage).mockClear();
     vi.mocked(sendBackendRequest).mockClear();
@@ -58,6 +68,74 @@ describe("Composer", () => {
     expect(send?.disabled).toBe(true);
   });
 
+  it("sends analysis scope and answer length independently of output mode", async () => {
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c" }}><Composer /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "분석 범위" }));
+    await userEvent.click(screen.getByRole("button", { name: /심층/ }));
+    await userEvent.click(screen.getByRole("button", { name: "채팅 답변 분량" }));
+    await userEvent.click(screen.getByRole("button", { name: "짧게" }));
+    await userEvent.type(screen.getByRole("textbox"), "근거를 비교해줘");
+    await userEvent.click(screen.getByRole("button", { name: "메시지 보내기" }));
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ composeOptions: { analysis_depth: "deep", answer_length: "brief" } }));
+  });
+
+  it("improves only the draft and restores the original without sending a message", async () => {
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c" }}><Composer /></AppStateProvider>);
+    await userEvent.type(screen.getByRole("textbox"), "원문 요청");
+    await userEvent.click(screen.getByRole("button", { name: "요청 개선" }));
+    await userEvent.click(screen.getByRole("button", { name: "요청 개선하기" }));
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("개선한 요청"));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(enhancePrompt).toHaveBeenCalledWith(expect.objectContaining({ text: "원문 요청", options: ["structure", "evidence", "missing_context", "output_format"] }));
+    await userEvent.click(screen.getByRole("button", { name: "개선 전 원문 복원" }));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("원문 요청");
+  });
+
+  it("does not overwrite typing that happens while improvement is in flight", async () => {
+    let finish!: (value: { text: string }) => void;
+    vi.mocked(enhancePrompt).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c" }}><Composer /></AppStateProvider>);
+    await userEvent.type(screen.getByRole("textbox"), "원문");
+    await userEvent.click(screen.getByRole("button", { name: "요청 개선" }));
+    await userEvent.click(screen.getByRole("button", { name: "요청 개선하기" }));
+    expect((screen.getByRole("button", { name: "메시지 보내기" }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.type(screen.getByRole("textbox"), " 추가");
+    await act(async () => finish({ text: "늦은 결과" }));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("원문 추가");
+    expect(screen.getByRole("alert").textContent).toContain("입력 내용이 변경되어");
+  });
+
+  it("keeps the original draft when improvement fails", async () => {
+    vi.mocked(enhancePrompt).mockRejectedValueOnce(new Error("연결 실패"));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c" }}><Composer /></AppStateProvider>);
+    await userEvent.type(screen.getByRole("textbox"), "원문");
+    await userEvent.click(screen.getByRole("button", { name: "요청 개선" }));
+    await userEvent.click(screen.getByRole("button", { name: "요청 개선하기" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("연결 실패"));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("원문");
+  });
+
+  it("uses the runtime catalog for new model and effort choices below the pill", async () => {
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c", model: "model-old", runtimePicker: { ...initialAppState.runtimePicker, providers: [{ value: "future-provider", label: "Future provider" }], modelsByProvider: { "future-provider": [{ value: "model-new", label: "New model" }] }, models: [{ value: "model-new", label: "New model" }], efforts: [{ value: "high", label: "High" }] } }}><Composer /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "모델 선택" }));
+    await userEvent.click(screen.getByRole("button", { name: "New model" }));
+    expect(sendBackendRequest).toHaveBeenCalledWith("s", "c", { type: "apply_select_command", command: "runtime_model", value: JSON.stringify({ profile: "future-provider", model: "model-new" }) });
+    await userEvent.click(screen.getByRole("button", { name: "추론 노력도" }));
+    await userEvent.click(screen.getByRole("button", { name: "High" }));
+    expect(sendBackendRequest).toHaveBeenCalledWith("s", "c", { type: "apply_select_command", command: "effort", value: "high" });
+  });
+
+  it("inserts context and skill triggers at the caret from the outside toolbar", async () => {
+    render(<AppStateProvider><Composer /></AppStateProvider>);
+    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await userEvent.type(input, "비교해줘");
+    await userEvent.click(screen.getByRole("button", { name: "참고자료 연결" }));
+    await waitFor(() => expect(input.value).toBe("비교해줘 @"));
+    await userEvent.clear(input);
+    await userEvent.click(screen.getByRole("button", { name: "Skill 및 MCP 호출" }));
+    await waitFor(() => expect(input.value).toBe("$"));
+  });
+
   it("uses POSCO Blue for the default theme send button", () => {
     const stylesheet = readStylesheet();
 
@@ -75,55 +153,18 @@ describe("Composer", () => {
     expect(screen.queryByRole("button", { name: "이미지 첨부" })).toBeNull();
   });
 
-  it("opens the attached composer panel without native title tooltips", async () => {
-    const user = userEvent.setup();
-    const stylesheet = readStylesheet();
-    render(
-      <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
-        <Composer />
-      </AppStateProvider>,
-    );
-
-    const toggle = screen.getByRole("button", { name: "입력 옵션 열기" });
-    expect(toggle.getAttribute("title")).toBeNull();
-    expect(toggle.getAttribute("data-tooltip")).toBeNull();
-    expect(toggle.getAttribute("data-tooltip-placement")).toBeNull();
-
-    await user.click(toggle);
-
-    expect(screen.getByLabelText("입력 옵션").classList.contains("hidden")).toBe(false);
-    expect(screen.getByLabelText("입력 옵션").getAttribute("data-tooltip-top-boundary")).toBe("true");
-    expect(document.querySelector(".composer-box")?.classList.contains("with-panel")).toBe(true);
-    const attachButton = screen.getByRole("button", { name: "파일첨부" });
-    expect(attachButton.getAttribute("title")).toBeNull();
-    expect(attachButton.getAttribute("data-tooltip")).toBe("파일첨부");
-    expect(attachButton.getAttribute("data-tooltip-placement")).toBe("top");
-    expect(attachButton.textContent).toBe("");
-    const controlLabels = Array.from(document.querySelectorAll<HTMLElement>(".composer-control-label"));
-    expect(controlLabels.map((node) => node.textContent)).toEqual(["출력", "모드", "출력한도"]);
-    expect(controlLabels.map((node) => node.getAttribute("data-tooltip-placement"))).toEqual(["top", "top", "top"]);
-    expect(controlLabels.map((node) => node.getAttribute("data-tooltip"))).toEqual([
-      "답변을 채팅에 표시할지 파일로 만들지 정합니다. 자동은 요청에 맞춰 판단합니다.",
-      "파일을 만들 때 새로 생성할지 기존 파일을 수정할지 정합니다.",
-      "파일 생성 시 목표 분량입니다. 단위는 출력 토큰이며, 채팅 답변 길이에는 적용하지 않습니다.",
-    ]);
-    expect(Array.from(screen.getByLabelText("파일 작업").querySelectorAll("button")).every((button) => !button.disabled)).toBe(true);
-    expect(screen.getByLabelText("출력 위치").querySelector("button")?.textContent).toBe("자동");
-    expect(screen.getByLabelText("출력 길이").querySelector("button")?.textContent).toBe("자동");
-    expect(screen.queryByRole("button", { name: "8k" })).toBeNull();
-    expect(screen.getByRole("button", { name: "16k" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "~20k" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "초장문" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "직접" })).toBeNull();
-    expect(screen.getByRole("button", { name: "~24k" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "~32k" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "~40k" })).toBeTruthy();
-    expect(stylesheet).toContain(".composer-expand-button.active {\n  color: var(--muted);");
-    expect(stylesheet).toContain("stroke-width: 2.45;");
-    expect(stylesheet).toContain(".composer-expand-button.active svg {\n  transform: translateY(-1px);");
-    expect(stylesheet).not.toContain(".composer-expand-button.active svg {\n  transform: rotate(45deg);");
-    expect(stylesheet).toContain("border-radius: 14px 14px 0 0;");
-    expect(stylesheet).not.toContain("0 -9px 26px color-mix(in srgb, var(--inverse) 7%, transparent)");
+  it("keeps text and send inside the pill and supporting tools below", async () => {
+    render(<AppStateProvider><Composer /></AppStateProvider>);
+    const pill = document.querySelector(".composer-box")!;
+    expect(pill.children).toHaveLength(2);
+    expect(pill.firstElementChild?.tagName).toBe("TEXTAREA");
+    expect(document.querySelector("#sendButton")?.closest(".composer-box")).toBe(pill);
+    expect(pill.querySelectorAll("button")).toHaveLength(1);
+    expect(document.querySelector(".composer-toolbar [title]")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
+    expect(screen.getByRole("dialog", { name: "출력 방식 및 파일 분량" })).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("keeps the send payload unchanged when the panel is opened but not edited", async () => {
@@ -135,7 +176,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "기본 동작 확인");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
 
@@ -151,7 +192,7 @@ describe("Composer", () => {
     }));
   });
 
-  it("resets expanded panel options when the panel is closed", async () => {
+  it("preserves output options when the popover is closed", async () => {
     const user = userEvent.setup();
     render(
       <AppStateProvider initialState={{ ...initialAppState, sessionId: "session-1", clientId: "client-1" }}>
@@ -160,16 +201,16 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.click(screen.getByRole("button", { name: "파일" }));
     await user.click(screen.getByRole("button", { name: "수정" }));
     await user.click(screen.getByRole("button", { name: "16k" }));
-    await user.click(screen.getByRole("button", { name: "입력 옵션 닫기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "접은 뒤에는 자동으로 보내줘");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
 
-    expect(sendMessage).toHaveBeenCalledWith(expect.not.objectContaining({
-      composeOptions: expect.anything(),
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      composeOptions: expect.objectContaining({ output_surface: "artifact", artifact_action: "edit", target_output_tokens: 16000 }),
     }));
   });
 
@@ -188,7 +229,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.click(screen.getByRole("button", { name: "파일" }));
     await user.click(screen.getByRole("button", { name: "수정" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "현재 보고서 다듬어줘");
@@ -236,7 +277,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.click(screen.getByRole("button", { name: "~40k" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "대보고서 작성");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
@@ -257,7 +298,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.click(screen.getByRole("button", { name: "생성" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "필요하면 새 산출물로 만들어줘");
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
@@ -277,7 +318,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.click(screen.getByRole("button", { name: "파일" }));
     await user.click(screen.getByRole("button", { name: "~40k" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "대보고서 작성");
@@ -301,7 +342,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.click(screen.getByRole("button", { name: "파일" }));
     await user.click(screen.getByRole("button", { name: "16k" }));
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "16k 정도로 답변해줘");
@@ -325,7 +366,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     await user.click(screen.getByRole("button", { name: "16k" }));
     await user.click(screen.getByRole("button", { name: "생성" }));
     await user.click(screen.getByRole("button", { name: "채팅" }));
@@ -359,7 +400,7 @@ describe("Composer", () => {
       </AppStateProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "입력 옵션 열기" }));
+    await user.click(screen.getByRole("button", { name: "출력 방식 및 파일 분량" }));
     const fileInput = document.querySelector<HTMLInputElement>(".composer-file-input");
     expect(fileInput).toBeTruthy();
 
@@ -521,6 +562,7 @@ describe("Composer", () => {
       >
         <MessageList />
         <Composer />
+        <AttachmentEchoProbe />
       </AppStateProvider>,
     );
 
@@ -534,7 +576,11 @@ describe("Composer", () => {
     await screen.findByRole("button", { name: "quarter-plan.png" });
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
 
-    expect(screen.getByText("[quarter-plan.png]")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "quarter-plan.png 이미지 크게 보기" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Replay attachment echo" }));
+    expect(screen.getAllByRole("button", { name: "quarter-plan.png 이미지 크게 보기" })).toHaveLength(1);
+    expect(screen.queryByText("[quarter-plan.png]")).toBeNull();
+    expect(screen.queryByText("[image attachments: 1]")).toBeNull();
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       attachments: [expect.objectContaining({ name: "quarter-plan.png" })],
       line: "",
@@ -1473,9 +1519,6 @@ describe("Composer", () => {
     await user.type(input, "작성 중");
     await user.keyboard("{Shift>}{Tab}{/Shift}");
 
-    const planModeButton = screen.getByRole<HTMLButtonElement>("button", { name: "계획모드 전환" });
-    expect(planModeButton.getAttribute("aria-pressed")).toBe("true");
-    expect(planModeButton.classList.contains("hidden")).toBe(false);
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "메시지 보내기" }).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "작업 중단" })).toBeNull();
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
@@ -1512,7 +1555,7 @@ describe("Composer", () => {
     expect(cancelMessage).toHaveBeenCalledWith("session-1", "client-1");
   });
 
-  it("shows a compact todo icon inside the composer when the checklist is collapsed", async () => {
+  it("shows a compact todo icon above the input when the checklist is collapsed", async () => {
     const user = userEvent.setup();
     render(
       <AppStateProvider
@@ -1527,7 +1570,7 @@ describe("Composer", () => {
     );
 
     const todoButton = screen.getByRole("button", { name: "작업 목록 펼치기 1/2" });
-    expect(todoButton.closest(".composer-box")).toBeTruthy();
+    expect(todoButton.closest(".composer-task-toggle")).toBeTruthy();
     expect(document.querySelector(".todo-checklist-dock")).toBeNull();
 
     await user.click(todoButton);
@@ -1839,9 +1882,9 @@ describe("Composer", () => {
     const activityLines = [...document.querySelectorAll(".todo-activity-line")]
       .map((line) => line.textContent);
     expect(activityLines).toEqual([
-      "포스코 업무 시나리오별 법무·규제 활용 구조화",
-      "시각 구성·표·우선순위 매트릭스 설계",
-      "파일 작업 중",
+      "최신파일 작업 중",
+      "이전 1시각 구성·표·우선순위 매트릭스 설계",
+      "이전 2포스코 업무 시나리오별 법무·규제 활용 구조화",
     ]);
   });
 
@@ -2023,7 +2066,7 @@ describe("Composer", () => {
     const card = document.querySelector(".inline-question-card");
     const composerBox = document.querySelector(".composer-box");
     expect(card).toBeTruthy();
-    expect(card?.nextElementSibling).toBe(composerBox);
+    expect(Boolean(card && composerBox && (card.compareDocumentPosition(composerBox) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
     expect(screen.queryByRole("dialog", { name: "질문" })).toBeNull();
     expect(screen.getByText("Q1")).toBeTruthy();
 

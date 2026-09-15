@@ -18,12 +18,14 @@ source: skill-mcp:national-assembly
 - 사용자가 국회의원, 의안, 국회 회의, 표결, 위원회, 청원, 입법예고, 행정예고, 법령해석례, 의견제시사례를 물으면 이 MCP를 우선 사용합니다.
 - 먼저 `discover_apis` 또는 도메인 통합 도구로 적절한 API와 파라미터를 확인한 뒤 조회합니다.
 - 검색 결과에서 실제 반환된 식별자(`BILL_ID`, 청원 ID, 회의록·법령해석례·의견제시사례 ID 등)를 받은 뒤 그 값을 상세 도구에 그대로 연결합니다. 예시나 추측으로 만든 ID를 상세 도구에 넣지 않습니다.
+- `assembly_bill` 목록은 `items[].의안ID`로 정규화된 식별자를 반환할 수 있습니다. 해당 값을 `bill_detail(bill_id=...)`에 전달합니다. 원시 조회의 `BILL_ID`와 구분하고, `의안번호`/`BILL_NO`를 ID 대신 쓰지 않습니다. 최신 의안은 아직 심사 이력이 없어 `history=[]`일 수 있으므로 상세정보의 ID·제목과 이력 유무를 따로 확인합니다.
 - 위원회명은 회기·조직 개편으로 바뀔 수 있습니다. 구 명칭으로 조회했을 때 응답이 현재 위원회명 alias를 제시하면 그 현재 명칭으로 상세 조회하고, 답변에는 구 명칭과 현재 명칭의 대응을 밝힙니다.
 - 청원은 사용자가 원하는 상태에 맞춰 `status`(예: 진행·계류·종료)를 명시합니다. 국회 연구자료는 `research_data`의 `source`를 먼저 카탈로그/발견 결과에서 선택하며, 통계 검색어를 모든 source에 임의로 반복하지 않습니다.
 - 결과가 비어 있으면 즉시 API 장애로 단정하지 않습니다. `discover_apis`나 통합 검색의 카탈로그에서 현재 지원되는 API·상태·source를 확인하고, 의미가 같은 최신 또는 통합 source를 한 번 확인합니다. 그래도 비어 있으면 조회 조건과 빈 결과를 그대로 보고하며 무작위 파라미터 반복이나 결과 추정은 하지 않습니다.
 - 특정 API 코드를 알고 있거나 도구가 포괄하지 않는 데이터는 `query_assembly`로 직접 호출합니다.
 - 국민참여입법센터 데이터는 `assembly_org`의 `type=lawmaking` 흐름을 사용합니다.
 - 답변에는 사용한 데이터 소스와 조회 조건을 짧게 밝혀 사용자가 근거를 확인할 수 있게 합니다.
+- NABO는 보고서만 제공합니다. `get_nabo(type="report", keyword=..., page_size=...)`로 목록 조회와 키워드 검색을 수행합니다.
 
 ## 입법예고 필수 조회 경로
 
@@ -44,4 +46,4 @@ source: skill-mcp:national-assembly
 - 국민참여입법센터 정보공개 서비스 신청 ID: `LAWMKING_OC`
 - 기본 프로필: `MCP_PROFILE=full`
 
-초기 실행 시 upstream `hollobit/assembly-api-mcp` 저장소를 `.myharness/mcp-cache/assembly-api-mcp`에 내려받아 빌드합니다. 이미 별도 위치에 빌드해 둔 경우 `NATIONAL_ASSEMBLY_MCP_DIR`로 해당 경로를 지정할 수 있습니다.
+기본 실행은 저장소에 포함된 번들을 사용하며 실행 중 설치·빌드하지 않습니다. 개발자가 별도 소스를 사용할 때만 `NATIONAL_ASSEMBLY_MCP_DIR`를 지정합니다. NABO는 `NABO_API_KEY`의 기능별 승인 상태를 확인하고, 키 변경 후에는 MCP를 재연결합니다.

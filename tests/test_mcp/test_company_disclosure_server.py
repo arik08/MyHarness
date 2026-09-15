@@ -194,10 +194,13 @@ def test_document_tool_returns_links_without_downloading() -> None:
     assert result["completeness"] == "link_only_no_document_download"
 
 
-def test_company_disclosure_config_is_loaded_without_embedded_credentials() -> None:
+def test_company_disclosure_config_is_loaded_without_embedded_credentials(tmp_path) -> None:
     mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
+    payload = json.loads((mcp_dir / "company-disclosure" / "mcp.json").read_text(encoding="utf-8"))
+    payload["mcpServers"]["company-disclosure"].pop("env", None)
+    (tmp_path / "mcp.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    configs = load_mcp_configs_from_dirs([mcp_dir])
+    configs = load_mcp_configs_from_dirs([tmp_path])
 
     config = configs["company-disclosure"]
     assert isinstance(config, McpStdioServerConfig)
@@ -326,6 +329,19 @@ def test_sec_submissions_profile_is_bounded(monkeypatch) -> None:
     assert len(result["data"]["recent_filings"]) == 2
     with pytest.raises(ValueError, match="record_type"):
         module.get_record("sec", "1", "unknown")
+
+
+def test_companies_house_officers_obey_row_limit(monkeypatch):
+    module = _load_server()
+    calls = []
+    def fetch(path, params=None):
+        calls.append((path, params))
+        return {"items": [{"name": "A"}, {"name": "B"}], "total_results": 20}
+    monkeypatch.setattr(module, "_companies_house_json", fetch)
+    data = json.loads(module.get_record("companies_house", "00000006", "officers", limit=1))["data"]
+    assert data["items"] == [{"name": "A"}]
+    assert data["total_results"] == 20
+    assert calls[0][1] == {"items_per_page": 1}
 
 
 def test_companies_house_search_filings_profile_and_officers(monkeypatch) -> None:

@@ -214,5 +214,15 @@
     "effort": "low",
     "pgpt_available": true
   },
-  "design_mode": "improved"
+  "design_mode": "classic",
+  "enabled_models_by_profile": {
+    "p-gpt": [
+      "gpt-5.6-sol"
+    ],
+    "codex": [
+      "gpt-5.6-luna",
+      "gpt-5.6-terra",
+      "gpt-5.6-sol"
+    ]
+  }
 }

@@ -54,6 +54,20 @@ class _FakeProcess:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("root", ["missing", "src/*.py", "gone/file.txt"])
+async def test_grep_invalid_root_returns_actionable_error_without_spawning(tmp_path, monkeypatch, root):
+    async def unexpected_spawn(*args, **kwargs):
+        pytest.fail("invalid root must not spawn ripgrep")
+    monkeypatch.setattr("myharness.tools.grep_tool._start_rg_process", unexpected_spawn)
+    result = await GrepTool().execute(
+        GrepToolInput(pattern="example", root=root), type("Ctx", (), {"cwd": tmp_path})(),
+    )
+    assert result.is_error
+    assert "Search path does not exist" in result.output
+    assert "file_glob" in result.output
+
+
+@pytest.mark.asyncio
 async def test_grep_tool_returns_timeout_error(monkeypatch, tmp_path: Path):
     tool = GrepTool()
     monkeypatch.setattr("myharness.tools.grep_tool.shutil.which", lambda _: "/usr/bin/rg")

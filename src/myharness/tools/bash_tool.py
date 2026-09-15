@@ -81,7 +81,14 @@ class BashTool(BaseTool):
                 await terminate_process_tree(process)
             raise
 
-        output_task = asyncio.create_task(_collect_output(process.stdout))
+        async def report_output(output: bytearray) -> None:
+            callback = context.metadata.get("execution_output_callback")
+            if callable(callback):
+                # A disconnected display must not stop draining the command pipe.
+                with contextlib.suppress(Exception):
+                    await callback(self.name, context.metadata.get("tool_call_id"), _decode_output(output).replace("\r\n", "\n"), {"cwd": str(cwd)})
+
+        output_task = asyncio.create_task(_collect_output(process.stdout, report_output))
 
         async def wait_for_output() -> None:
             await process.wait()
@@ -110,6 +117,10 @@ class BashTool(BaseTool):
 
         output_buffer = await _finish_output_collection(output_task)
         text = _format_output(output_buffer)
+        callback = context.metadata.get("execution_output_callback")
+        if callable(callback):
+            with contextlib.suppress(Exception):
+                await callback(self.name, context.metadata.get("tool_call_id"), _decode_output(output_buffer).replace("\r\n", "\n"), {"cwd": str(cwd), "returncode": process.returncode})
         return ToolResult(
             output=text,
             is_error=process.returncode != 0,
@@ -125,17 +136,24 @@ class CmdTool(BashTool):
     input_model = CmdToolInput
 
 
-async def _collect_output(stream: asyncio.StreamReader | None) -> bytearray:
+async def _collect_output(stream: asyncio.StreamReader | None, on_output=None) -> bytearray:
     output_buffer = bytearray()
     if stream is None:
         return output_buffer
+    last_report = 0.0
     while True:
         chunk = await stream.read(65536)
         if not chunk:
+            if on_output is not None and output_buffer:
+                await on_output(output_buffer)
             return output_buffer
         remaining = _MAX_CAPTURE_BYTES - len(output_buffer)
         if remaining > 0:
             output_buffer.extend(chunk[:remaining])
+            now = asyncio.get_running_loop().time()
+            if on_output is not None and now - last_report >= 0.15:
+                await on_output(output_buffer)
+                last_report = now
 
 
 async def _finish_output_collection(output_task: asyncio.Task[bytearray]) -> bytearray:

@@ -725,7 +725,7 @@ test("keeps runtime choices client-scoped across shared workspace sessions", asy
     body: JSON.stringify({
       sessionId: admin.sessionId,
       clientId: "runtime-admin",
-      payload: { type: "apply_select_command", command: "effort", value: "xhigh" },
+      payload: { type: "apply_select_command", command: "effort", value: "medium" },
     }),
   });
   assert.equal(effortResponse.status, 200);
@@ -757,7 +757,7 @@ test("keeps runtime choices client-scoped across shared workspace sessions", asy
     .find((option) => option.active)?.value;
 
   assert.equal(activeModel(adminPicker), "gpt-5.6-terra");
-  assert.equal(activeEffort(adminPicker), "xhigh");
+  assert.equal(activeEffort(adminPicker), "medium");
   assert.equal(activeModel(peerPicker), "gpt-5.6-sol");
   assert.equal(activeEffort(peerPicker), "high");
 
@@ -766,11 +766,11 @@ test("keeps runtime choices client-scoped across shared workspace sessions", asy
 
   const newcomer = await createRuntimeSession("runtime-newcomer", {
     model: "gpt-5.6-terra",
-    effort: "xhigh",
+    effort: "medium",
   });
   assert.equal(newcomer.ready.state.active_profile, "p-gpt");
   assert.equal(newcomer.ready.state.model, "gpt-5.6-terra");
-  assert.equal(newcomer.ready.state.effort, "xhigh");
+  assert.equal(newcomer.ready.state.effort, "medium");
 });
 
 test("honors explicit client runtime choices when pgpt credentials are available", async (t) => {
@@ -2973,4 +2973,38 @@ test("branches a saved conversation through the selected answer without changing
   assert.equal((await post({ answerIndex: 99 })).status, 400);
   assert.equal((await post({ answerText: "stale answer" })).status, 400);
   assert.equal((await post({ workspacePath: tmpdir() })).status, 400);
+});
+
+
+test("model availability requires ADMIN and persists across catalog reloads", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  const url = `${app.baseUrl}/api/settings/models`;
+  const initialResponse = await fetch(url);
+  assert.equal(initialResponse.status, 200);
+  const initial = await initialResponse.json();
+  const profile = initial.providers[0].value;
+  const models = initial.all_models_by_provider[profile];
+  assert.ok(models.length > 1);
+  const model = models[0].value;
+  for (const ip of ["127.0.0.1", "203.0.113.9"]) {
+    const denied = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip }, body: JSON.stringify({ profile, model, enabled: false }) });
+    assert.equal(denied.status, 403);
+  }
+  const write = (body) => fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" }, body: JSON.stringify(body) });
+  assert.equal((await write({ profile, model, enabled: false })).status, 200);
+  const reloaded = await (await fetch(url)).json();
+  assert.equal(reloaded.all_models_by_provider[profile].find(item => item.value === model).enabled, false);
+  assert.ok(!reloaded.models_by_provider[profile].some(item => item.value === model));
+  const saved = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+  assert.ok(!saved.enabled_models_by_profile[profile].includes(model));
+  assert.equal((await write({ profile, model: "unknown-future-model", enabled: true })).status, 400);
+  for (const item of models.slice(1, -1)) assert.equal((await write({ profile, model: item.value, enabled: false })).status, 200);
+  assert.equal((await write({ profile, model: models.at(-1).value, enabled: false })).status, 200);
+  for (const provider of initial.providers) assert.equal((await write({ profile: provider.value, enabled: false })).status, 200);
+  const empty = await (await fetch(url)).json();
+  assert.ok(Object.values(empty.models_by_provider).every(models => models.length === 0));
+  assert.equal((await write({ profile, enabled: true })).status, 200);
+  assert.equal((await (await fetch(url)).json()).models_by_provider[profile].length, models.length);
+  assert.equal((await write({ profile, model, enabled: true })).status, 200);
 });

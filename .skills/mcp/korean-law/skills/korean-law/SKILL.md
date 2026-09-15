@@ -19,5 +19,7 @@ CLI에서 직접 실행할 때는 저장소 루트에서 `python .skills/mcp/kor
 - 복합 조사에는 `legal_research`를 사용하고 의도에 맞는 `task`를 지정합니다: 법체계=`law_system`, 처분 근거=`action_basis`, 종합 수집=`full_research`. 과징금·과태료·영업정지 기준은 `task="action_basis", scenario="penalty"`로 호출합니다.
 - 판례·결정례를 직접 검색할 때 `search_decisions`의 `domain`을 반드시 지정합니다. 일반 판례는 `precedent`, 법령해석례는 `interpretation`, 개인정보보호위원회 결정은 `pipc`입니다. 여러 종류가 필요하면 각각 호출하거나 `legal_research(task="full_research")`로 종합합니다.
 - 법령명을 아는 경우 `search_law`의 정확 일치 결과를 우선하고 식별자를 넘겨 `get_law_text`를 호출합니다. 관련도 낮은 첫 결과를 임의의 기본 법령으로 채택하지 않습니다.
+- 자치법규는 `discover_tools(intent="자치법규")`로 도구를 찾고 `execute_tool(tool_name="search_ordinance", params={"query": "요청한 조례명"})`으로 먼저 검색합니다. 제목·지자체·시행일이 요청과 일치하는 결과의 `[번호]`를 `ordinance_radar(ordinSeq="...")` 또는 발견한 `get_ordinance`에 전달합니다. `ordinanceName`/`query`로 radar를 바로 호출하면 부분 검색의 첫 결과가 선택될 수 있으므로 사용하지 않습니다. 검색 결과가 다른 자치구이거나 정확한 대상이 없으면 그 조례로 대체 분석하지 않습니다.
+- `NO_PARENT`는 선택한 조례에서 근거 상위법 인용을 추출하지 못했다는 뜻입니다. API 키 오류나 상위법이 없다는 법적 결론으로 해석하지 말고, 같은 ID의 조례 본문을 확인한 뒤 자동 분석 한계를 밝힙니다. 검색·발견·목록 조회 성공과 원문·상위법 분석 성공을 구분합니다.
 - 법률적 결론을 추정하지 말고 조회된 원문·메타데이터와 해석을 구분합니다.
 - 답변에 사용한 데이터 종류, 식별자, 기준일과 법제처 출처를 밝힙니다.

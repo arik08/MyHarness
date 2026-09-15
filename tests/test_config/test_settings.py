@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from myharness.auth.storage import store_credential
 from myharness.config.settings import (
     ProviderProfile,
     Settings,
@@ -32,7 +31,8 @@ def test_checked_in_project_settings_default_to_pgpt():
     assert settings.provider == "openai"
     assert settings.api_format == "openai"
     assert settings.resolve_profile()[0] == "p-gpt"
-    assert settings.model == "gpt-5.6-luna"
+    assert settings.model == settings.resolve_profile()[1].default_model
+    assert settings.resolve_profile()[1].allows_model(settings.model)
     assert settings.effort == "low"
 
 

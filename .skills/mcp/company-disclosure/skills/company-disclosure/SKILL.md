@@ -13,6 +13,7 @@ source: skill-mcp:company-disclosure
 - 공시 목록은 `search_records`, 회사 개황이나 구조화 재무는 `get_record`를 사용합니다.
 - OpenDART 전체 재무제표는 `record_type="financials"`와 사업연도, 보고서 코드, `CFS` 또는 `OFS`를 지정합니다.
 - SEC는 회사 연락처·제출 이력에 `record_type="company"`, XBRL facts에 `record_type="companyfacts"`를 사용합니다.
+- SEC 상세 ID에는 검색 결과의 `cik_str`를 사용하며 AAPL 같은 종목코드를 직접 넣지 않습니다. 공시 링크에는 `record_id=accessionNumber`, `auxiliary_id=CIK`를 전달합니다. Companies House는 `company_number`의 선행 0을 보존하고 `record_type="company"` 또는 `"officers"`만 사용합니다. 영국 재무제표를 DART의 `financials` 형식으로 요청하지 않습니다.
 - PDF 원문을 내려받거나 OCR하지 않습니다. 근거 원문이 필요하면 `get_document_link`의 공식 HTML 링크를 제공합니다.
 - 인증 오류와 서비스 장애를 구분하려면 `get_source_health`를 사용합니다. 응답이나 보고서에 API 키를 적지 않습니다.
 - DART 인증은 MyHarness 루트의 비공개 `API_KEY.env`에 저장한 `DART_API_KEY`(대체 이름 `OPENDART_API_KEY`)를 사용합니다. 웹 실행기는 이를 환경변수로 읽습니다. 키 변경 후 이미 연결된 서버는 재연결합니다. 다른 기업공시 소스의 키로 재사용하지 않습니다.

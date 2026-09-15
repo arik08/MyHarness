@@ -10,10 +10,14 @@ source: skill-mcp:patent-tech
 
 - 한국 특허·실용신안 키워드 검색과 출원번호별 서지는 `source="kipris"`를 사용합니다.
 - 유럽·국제 특허 서지와 패밀리는 `source="epo_ops"`를 사용합니다. 검색어는 EPO OPS CQL이며, 패밀리는 `record_type="family"`입니다.
+- EPO 검색 결과의 `record_id`를 그대로 상세 조회에 전달합니다. `publication`은 해당 공개공보의 국가·번호·종류·공개일입니다. 공개번호 하나에 A1/B1 등 여러 공보가 반환될 수 있으므로 `publication.kind`와 날짜를 함께 구분합니다. XML 계층을 보존한 `bibliographic-data`의 `application-reference`·`priority-claims`는 출원·우선권 정보이며 공개정보와 섞지 않습니다. `_attributes`에는 언어·문서번호 형식·패밀리 ID·법적 이벤트 속성이, `_text`에는 속성이 있는 요소의 본문이 들어갑니다. 패밀리의 각 행은 `family-member` 한 건이며 서지가 없는 법적 이벤트 전용 구성원도 포함합니다. 법적 이벤트 이력을 현재 유효한 권리 상태로 단정하지 않습니다.
 - 연구 주제·기관·저자·인용 관계는 `source="openalex"`, DOI 등록 메타데이터 확인은 `source="crossref"`, 초록·인용·참고문헌 탐색은 `source="semantic_scholar"`를 사용합니다.
 - OpenAlex는 `OPENALEX_API_KEY`가 없으면 검색하지 않고 “기업용 API KEY 신청이 필요합니다”라고 안내합니다. Crossref는 키 없이 사용할 수 있으며 연락용 `CROSSREF_MAILTO` 설정을 권장합니다.
 - 동일 기술은 특허와 논문을 분리 검색한 뒤 공개일·출원일·우선일을 구분합니다. 검색 건수만으로 기술우위를 단정하지 않습니다.
 - 먼저 `search_catalog` 또는 `search_records`로 ID를 확보하고 `get_record`로 상세 메타데이터를 확인합니다.
+- KIPRIS·Semantic Scholar의 `search_catalog`는 지원 기능 목록입니다. 주제 검색은 바로 `search_records`를 사용합니다. KIPRIS 상세에는 `applicationNumber`를 전달하며 등록번호와 혼동하지 않습니다. 연도 필터는 출원일 기준이고, 런타임이 `getAdvancedSearch`의 날짜 범위로 변환합니다. 논문 연도는 출판연도입니다.
+- OpenAlex 상세에는 검색에서 반환된 `id`, Semantic Scholar에는 `paperId`, Crossref에는 `DOI`를 그대로 전달합니다. 일반 논문 상세는 `record_type="detail"`이며 `family`는 EPO에만 사용합니다. 인용 횟수와 실제 인용 논문 목록은 구분하며 이 도구에 없는 목록·PDF 기능을 요청하지 않습니다.
+- Semantic Scholar는 같은 PC의 MyHarness MCP 프로세스 사이에서도 동일 키의 호출 간격을 제어합니다. 성공한 상세조회는 같은 키·ID에 한해 60초간 재사용하며 응답 metadata에 cache_hit와 cache_age_seconds를 표시합니다. health를 매 검색 전에 호출하지 말고 정상 응답 후에는 바로 그 결과의 ID를 사용합니다. 429가 남으면 키 누락으로 판단하거나 검색어·ID를 바꾸어 우회하지 않고 호출량 제한으로 보고합니다. 외부 앱과 같은 키를 공유하면 이 MCP 밖의 호출까지 제어할 수 없습니다.
 - Semantic Scholar는 기업용으로 승인된 `SEMANTIC_SCHOLAR_API_KEY` 등록 후 조회합니다. 키가 없으면 “기업용 API KEY 신청이 필요합니다”라고 안내하고 무인증 호출하지 않습니다. 키가 등록된 상태의 HTTP 429는 키 누락이 아닌 호출량 제한으로 구분합니다.
 - PDF·도면·전문을 내려받거나 OCR하지 않습니다. 이 MCP는 구조화된 서지·초록·패밀리 메타데이터만 반환합니다.
 - WIPO PATENTSCOPE 웹서비스는 일반 공개 API가 아니라 구독·사용조건·호출제한이 있는 별도 상품이므로 이 MCP에 포함하지 않습니다. 국제 특허는 EPO OPS 패밀리로 대체합니다.

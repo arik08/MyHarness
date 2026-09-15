@@ -38,6 +38,10 @@ class GrepTool(BaseTool):
 
     async def execute(self, arguments: GrepToolInput, context: ToolExecutionContext) -> ToolResult:
         root = _resolve_path(context.cwd, arguments.root) if arguments.root else context.cwd
+        if not root.exists():
+            return ToolResult(output=f"Search path does not exist: {root}. Use an existing file or directory as root; put file patterns in file_glob.", is_error=True)
+        if not root.is_file() and not root.is_dir():
+            return ToolResult(output=f"Search path is not a file or directory: {root}", is_error=True)
         if root.is_file():
             display_base = _display_base(root, context.cwd)
             matches = await _rg_grep_file(

@@ -16,6 +16,9 @@
         "get_source_health"
       ],
       "env": {
+        "SEMANTIC_SCHOLAR_API_KEY": "s2k-k30JIHFv9hxUYRzRW2YcXIWvjJ0aUz1ugNHSv7IF",
+        "KIPRIS_API_KEY": "qFT/SBe0VLXbqV05TjhPF16477IBexONV2s7rO=Zjqg=",
+        "OPENALEX_API_KEY": "yr4fc1ztTGLiKAH3kAVgEi",
         "EPO_OPS_CLIENT_ID": "SqOGW0HIvpdl1mw8Mi3rIH29aXLmDAPcSDBRvJDDarZfdYoD",
         "EPO_OPS_CLIENT_SECRET": "owDP2qK0gmPBdNA9Y6XIpUGeCpogQ2jY9nm2To2SOx8LQ9A4M71Y72E42I4h6NIX"
       }

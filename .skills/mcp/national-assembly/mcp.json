@@ -11,7 +11,8 @@
         "ASSEMBLY_API_KEY": "8b90dd60d8484b0eb9d369ee8a324149",
         "LAWMKING_OC": "arik08",
         "MCP_PROFILE": "full",
-        "MCP_TRANSPORT": "stdio"
+        "MCP_TRANSPORT": "stdio",
+        "NABO_API_KEY": "GIvs1ObkkKrmZtXi"
       },
       "cwd": ".",
       "auto_connect": false,

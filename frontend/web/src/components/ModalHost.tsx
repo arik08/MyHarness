@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { sendBackendRequest } from "../api/messages";
 import { restartSession } from "../api/session";
 import { createWorkspace, deleteWorkspace } from "../api/workspaces";
@@ -27,6 +27,27 @@ export function ModalHost() {
   const [workspaceError, setWorkspaceError] = useState("");
   const [deletingWorkspace, setDeletingWorkspace] = useState("");
   const [pendingDeleteWorkspace, setPendingDeleteWorkspace] = useState("");
+
+  useEffect(() => {
+    if (state.modal?.kind !== "imagePreview") return;
+    const previousFocus = document.activeElement;
+    const closeButton = document.querySelector<HTMLButtonElement>('[data-modal-kind="image-preview"] .modal-close');
+    closeButton?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dispatch({ type: "close_modal" });
+      } else if (event.key === "Tab") {
+        event.preventDefault();
+        closeButton?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, [state.modal?.kind, dispatch]);
 
   if (!state.modal) {
     return null;

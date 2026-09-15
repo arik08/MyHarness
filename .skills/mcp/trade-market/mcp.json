@@ -13,7 +13,11 @@
         "search_catalog",
         "query_trade",
         "get_source_health"
-      ]
+      ],
+      "env": {
+        "WTO_API_KEY": "b3a9ac32bbe24ab5844b2e15d2326461",
+        "CENSUS_API_KEY": "1c9dafa67df311eb5f5e93714d72b25e3eb991ee"
+      }
     }
   }
 }

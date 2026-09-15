@@ -158,10 +158,13 @@ def test_health_reports_missing_fred_key(monkeypatch) -> None:
     assert result["credential"]["environment_names"] == ["FRED_API_KEY"]
 
 
-def test_macro_finance_config_is_loaded_without_credentials() -> None:
+def test_macro_finance_config_is_loaded_without_credentials(tmp_path) -> None:
     mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
+    payload = json.loads((mcp_dir / "macro-finance" / "mcp.json").read_text(encoding="utf-8"))
+    payload["mcpServers"]["macro-finance"].pop("env", None)
+    (tmp_path / "mcp.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    config = load_mcp_configs_from_dirs([mcp_dir])["macro-finance"]
+    config = load_mcp_configs_from_dirs([tmp_path])["macro-finance"]
 
     assert isinstance(config, McpStdioServerConfig)
     assert config.args == ["runtime/server.py"]
@@ -240,6 +243,24 @@ def test_macro_catalogs_cover_remote_and_curated_sources(monkeypatch) -> None:
     assert ecb["data"][0]["id"] == "EXR"
     assert nyfed["data"][0]["id"] == "RRP"
     assert "DF_CLI" in oecd["data"][0]["id"]
+
+
+def test_estat_does_not_silently_ignore_iso_dates(monkeypatch):
+    module = _load_server()
+    monkeypatch.setattr(module, "_estat_json", lambda *a, **k: pytest.fail("unexpected network"))
+    with pytest.raises(ValueError, match="cdTime"):
+        module.query_series("estat_jp", "0001", start_period="2025-01-01")
+
+
+def test_estat_single_row_responses_remain_lists(monkeypatch):
+    module = _load_server()
+    def fetch(path, params):
+        if path == "getStatsList":
+            return {"GET_STATS_LIST": {"DATALIST_INF": {"TABLE_INF": {"@id": "0001"}}}}
+        return {"GET_STATS_DATA": {"STATISTICAL_DATA": {"DATA_INF": {"VALUE": {"@time": "2020000000", "$": "5"}}}}}
+    monkeypatch.setattr(module, "_estat_json", fetch)
+    assert json.loads(module.search_catalog("estat_jp", limit=1))["data"] == [{"@id": "0001"}]
+    assert json.loads(module.query_series("estat_jp", "0001", limit=1))["data"]["DATA_INF"]["VALUE"] == [{"@time": "2020000000", "$": "5"}]
 
 
 def test_estat_accepts_object_filters_and_rejects_non_objects(monkeypatch) -> None:

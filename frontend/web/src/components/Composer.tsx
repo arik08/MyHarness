@@ -1,17 +1,21 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
-import { cancelMessage, sendBackendRequest, sendMessage, uploadClientAttachments } from "../api/messages";
+import { cancelMessage, enhancePrompt, sendBackendRequest, sendMessage, uploadClientAttachments } from "../api/messages";
 import type { ClientAttachmentRef, ComposeOptions } from "../api/messages";
 import { isUnknownSessionError } from "../api/http";
 import { startSession } from "../api/session";
+import { listProjectFiles } from "../api/artifacts";
 import { messageBottomFollowEvent } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
 import type { ArtifactSummary, Attachment, CommandItem, McpServerItem, SkillItem } from "../types/backend";
 import { artifactDisplayName } from "../utils/artifacts";
 import { frontendHelpText } from "../utils/helpText";
+import { submittedTranscriptTexts } from "../utils/userTranscript";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { InlineQuestion } from "./InlineQuestion";
 import { TodoDock } from "./TodoDock";
+import { ComposerChoice, ComposerIcon, ComposerMenu } from "./ComposerMenu";
+import { ComposerRuntimeControls } from "./ComposerRuntimeControls";
 
 const longPastedTextLineThreshold = 20;
 const maxImageBytes = 10 * 1024 * 1024;
@@ -209,8 +213,17 @@ export function Composer() {
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [isMultiline, setIsMultiline] = useState(false);
   const [cursorOffset, setCursorOffset] = useState(0);
-  const [expandedPanelOpen, setExpandedPanelOpen] = useState(false);
+  const [analysisDepth, setAnalysisDepth] = useState<"auto" | "brief" | "standard" | "deep">("auto");
+  const [answerLength, setAnswerLength] = useState<"auto" | "brief" | "standard" | "detailed">("auto");
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhancementError, setEnhancementError] = useState("");
+  const [originalPrompt, setOriginalPrompt] = useState<string | null>(null);
+  const [enhancementOptions, setEnhancementOptions] = useState(["structure", "evidence", "missing_context", "output_format"]);
+  const [enhancementInstruction, setEnhancementInstruction] = useState("");
+  const enhancementGeneration = useRef(0);
+  const latestDraft = useRef("");
   const [uploadedAttachments, setUploadedAttachments] = useState<UploadedClientAttachment[]>([]);
+  const [referenceFiles, setReferenceFiles] = useState<ArtifactSummary[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [outputSurface, setOutputSurface] = useState<OutputSurface>("default");
   const [artifactAction, setArtifactAction] = useState<ArtifactAction>("auto");
@@ -228,9 +241,10 @@ export function Composer() {
   const chatPanelMetricFrameRef = useRef(0);
   const submittingRef = useRef(false);
   const draft = state.composer.draft;
+  latestDraft.current = draft;
   const hasPayload = Boolean(draft.trim() || state.composer.attachments.length || uploadedAttachments.length || state.composer.pastedTexts.length);
   const hasAnyAttachment = Boolean(state.composer.attachments.length || uploadedAttachments.length);
-  const canSend = Boolean(state.sessionId && hasPayload && !state.busy && !uploadingFiles);
+  const canSend = Boolean(state.sessionId && hasPayload && !state.busy && !uploadingFiles && !enhancing);
   const canSteer = Boolean(state.sessionId && state.busy && fullLine().trim() && !hasAnyAttachment);
   const showStop = Boolean(state.busy && !canSteer);
   const suggestionToken = useMemo(() => activeSuggestionToken(draft, cursorOffset), [draft, cursorOffset]);
@@ -243,10 +257,26 @@ export function Composer() {
         ...mcpSuggestions(state.mcpServers, state.skills, suggestionToken.query),
       ];
     }
-    if (suggestionToken.trigger === "@") return fileSuggestions(state.artifacts, suggestionToken.query);
+    if (suggestionToken.trigger === "@") {
+      const files = new Map([...referenceFiles, ...state.artifacts].map((file) => [file.path, file]));
+      return fileSuggestions([...files.values()], suggestionToken.query);
+    }
     return [];
-  }, [state.artifacts, state.commands, state.mcpServers, state.skills, suggestionToken]);
+  }, [referenceFiles, state.artifacts, state.commands, state.mcpServers, state.skills, suggestionToken]);
   const activeSuggestionIndex = suggestions.length ? Math.min(selectedSuggestionIndex, suggestions.length - 1) : 0;
+
+  useEffect(() => {
+    setReferenceFiles([]);
+  }, [state.workspacePath, state.sessionId]);
+
+  useEffect(() => {
+    if (suggestionToken?.trigger !== "@" || !state.sessionId) return;
+    let cancelled = false;
+    void listProjectFiles({ sessionId: state.sessionId, clientId: state.clientId, workspacePath: state.workspacePath }).then(({ files }) => {
+      if (!cancelled) setReferenceFiles(files);
+    }).catch(() => { /* Existing artifact references remain available offline. */ });
+    return () => { cancelled = true; };
+  }, [suggestionToken?.trigger, state.sessionId, state.clientId, state.workspacePath]);
 
   useEffect(() => {
     setSelectedSuggestionIndex(0);
@@ -271,8 +301,22 @@ export function Composer() {
   }, []);
 
   useEffect(() => {
-    resetExpandedPanel({ keepOpen: false });
+    resetExpandedPanel();
+    setAnalysisDepth("auto");
+    setAnswerLength("auto");
+    setOriginalPrompt(null);
+    setEnhancementError("");
+    setEnhancing(false);
+    enhancementGeneration.current += 1;
   }, [state.activeHistoryId]);
+
+  useEffect(() => {
+    enhancementGeneration.current += 1;
+    setEnhancing(false);
+    setOriginalPrompt(null);
+    setEnhancementError("");
+    return () => { enhancementGeneration.current += 1; };
+  }, [state.sessionId, state.workspacePath]);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -363,7 +407,6 @@ export function Composer() {
       }
     };
   }, [
-    expandedPanelOpen,
     isMultiline,
     lengthPreset,
     state.composer.attachments.length,
@@ -375,12 +418,29 @@ export function Composer() {
 
   useLayoutEffect(() => {
     function updateChatPanelMetrics() {
-      const rect = composerRef.current?.closest(".chat-panel")?.getBoundingClientRect();
+      const chatPanel = composerRef.current?.closest(".chat-panel");
+      const rect = chatPanel?.getBoundingClientRect();
       if (!rect) {
         return;
       }
       document.documentElement.style.setProperty("--chat-panel-left", `${Math.round(rect.left)}px`);
       document.documentElement.style.setProperty("--chat-panel-width", `${Math.round(rect.width)}px`);
+      const content = chatPanel?.querySelector<HTMLElement>(".message");
+      const box = composerBoxRef.current;
+      const composer = composerRef.current;
+      if (content && box && composer) {
+        // Let both rounded ends extend past the message column by half a single-line height.
+        const contentRect = content.getBoundingClientRect();
+        const halfHeight = (Number.parseFloat(window.getComputedStyle(box).minHeight) || 40) / 2;
+        const overhang = Math.max(0, Math.min(halfHeight, contentRect.left - rect.left - 4, rect.right - contentRect.right - 4));
+        const padding = Number.parseFloat(window.getComputedStyle(composer).paddingLeft) || 0;
+        const inset = contentRect.left - overhang - composer.getBoundingClientRect().left - padding;
+        composer.style.setProperty("--composer-aligned-left", `${inset}px`);
+        composer.style.setProperty("--composer-aligned-width", `${contentRect.width + overhang * 2}px`);
+      } else {
+        composer?.style.removeProperty("--composer-aligned-left");
+        composer?.style.removeProperty("--composer-aligned-width");
+      }
     }
 
     function scheduleChatPanelMetricsUpdate() {
@@ -409,6 +469,10 @@ export function Composer() {
 
     const observer = new ResizeObserver(scheduleChatPanelMetricsUpdate);
     observer.observe(chatPanel);
+    const messages = chatPanel.querySelector(".messages");
+    const content = chatPanel.querySelector(".message");
+    if (messages) observer.observe(messages);
+    if (content) observer.observe(content);
     return () => {
       observer.disconnect();
       if (chatPanelMetricFrameRef.current) {
@@ -416,14 +480,14 @@ export function Composer() {
         chatPanelMetricFrameRef.current = 0;
       }
     };
-  }, [state.artifactPanelOpen]);
+  }, [state.artifactPanelOpen, state.activeHistoryId, state.messages.length, state.workflowEvents.length]);
 
   function fullLine() {
     const pasted = state.composer.pastedTexts.map((text, index) => `[붙여넣은 텍스트 ${index + 1}]\n${text}`).join("\n\n");
     return [draft.trim(), pasted].filter(Boolean).join("\n\n");
   }
 
-  function resetExpandedPanel(options: { keepOpen?: boolean } = {}) {
+  function resetExpandedPanel() {
     for (const attachment of uploadedAttachments) {
       if (attachment.previewUrl) {
         URL.revokeObjectURL(attachment.previewUrl);
@@ -435,17 +499,40 @@ export function Composer() {
     setArtifactAction("auto");
     setLengthPreset("default");
     setExtraLongTarget(24_000);
-    if (!options.keepOpen) {
-      setExpandedPanelOpen(false);
-    }
   }
 
-  function toggleExpandedPanel() {
-    if (expandedPanelOpen) {
-      resetExpandedPanel();
-      return;
+  function insertTrigger(trigger: "@" | "$") {
+    const offset = inputRef.current?.selectionStart ?? draft.length;
+    const prefix = draft.slice(0, offset);
+    const inserted = `${prefix && !/\s$/.test(prefix) ? " " : ""}${trigger}`;
+    dispatch({ type: "set_draft", value: prefix + inserted + draft.slice(offset) });
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(offset + inserted.length, offset + inserted.length);
+      setCursorOffset(offset + inserted.length);
+    });
+  }
+
+  async function improvePrompt() {
+    if (!state.sessionId || enhancing || state.busy || !draft.trim()) return;
+    const generation = ++enhancementGeneration.current;
+    const original = draft;
+    setEnhancing(true);
+    setEnhancementError("");
+    try {
+      const result = await enhancePrompt({ sessionId: state.sessionId, clientId: state.clientId, text: original, options: enhancementOptions, instruction: enhancementInstruction });
+      if (generation !== enhancementGeneration.current) return;
+      if (latestDraft.current !== original) {
+        setEnhancementError("입력 내용이 변경되어 개선 결과를 적용하지 않았습니다. 다시 시도해 주세요.");
+        return;
+      }
+      setOriginalPrompt(original);
+      dispatch({ type: "set_draft", value: result.text });
+    } catch (error) {
+      if (generation === enhancementGeneration.current) setEnhancementError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (generation === enhancementGeneration.current) setEnhancing(false);
     }
-    setExpandedPanelOpen(true);
   }
 
   function resolvedTargetOutputTokens() {
@@ -460,6 +547,8 @@ export function Composer() {
 
   function composeOptionsPayload(): ComposeOptions | undefined {
     const options: ComposeOptions = {};
+    if (analysisDepth !== "auto") options.analysis_depth = analysisDepth;
+    if (answerLength !== "auto") options.answer_length = answerLength;
     if (outputSurface !== "default") {
       options.output_surface = outputSurface;
     }
@@ -508,7 +597,6 @@ export function Composer() {
         return previewUrl ? { ...attachment, previewUrl } : attachment;
       });
       setUploadedAttachments((current) => [...current, ...nextAttachments]);
-      setExpandedPanelOpen(true);
     } catch (error) {
       dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
     } finally {
@@ -640,6 +728,7 @@ export function Composer() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (enhancing || uploadingFiles) return;
     const line = fullLine();
     const quietHelpCommand = /^\/help(?:\s|$)/i.test(line.trim()) && !hasAnyAttachment;
     if (quietHelpCommand) {
@@ -703,11 +792,21 @@ export function Composer() {
           toolName: "shell-shortcut",
           terminal: { command: line.trim().slice(1).trim(), status: "running" as const },
         }
-      : { role: "user" as const, text: visibleText || "(파일 첨부)" };
+      : {
+          role: "user" as const,
+          text: visibleText || "(파일 첨부)",
+          transcriptTexts: submittedTranscriptTexts(line, attachments, attachmentRefs),
+          displayText: visibleUserMessageText(line, [], attachmentRefs.filter((file) => !file.media_type?.startsWith("image/"))),
+          images: [
+            ...attachments.map((image, index) => ({ name: image.name || `이미지 ${index + 1}`, media_type: image.media_type, src: attachmentSrc(image) })),
+            ...attachmentRefs.filter((file) => file.media_type?.startsWith("image/")).map((file) => ({ name: file.name, media_type: file.media_type!, path: file.path })),
+          ],
+        };
     dispatch({ type: "set_busy", value: true });
     dispatch({ type: "append_message", message: userMessage, skipHistory: state.pendingFreshChat });
     dispatch({ type: "clear_composer" });
     resetExpandedPanel();
+    setOriginalPrompt(null);
 
     try {
       if (state.historyReadOnly && state.activeHistoryId) {
@@ -807,6 +906,7 @@ export function Composer() {
         line,
         attachments: [],
         mode,
+        composeOptions: composeOptionsPayload(),
         suppressUserTranscript: true,
         requestId,
       });
@@ -914,6 +1014,7 @@ export function Composer() {
 
   return (
     <form className="composer" id="composer" ref={composerRef} onSubmit={handleSubmit}>
+      <div className="composer-task-toggle"><TodoDock variant="composerButton" /></div>
       <TodoDock variant="dock" />
       {state.statusText.includes("대기열") && state.statusText.includes("번째") ? (
         <div className="capacity-queue-notice" role="status" aria-live="polite">
@@ -932,8 +1033,6 @@ export function Composer() {
         ))}
       </div>
       <InlineQuestion />
-      {expandedPanelOpen ? (
-        <>
           <input
             ref={clientFileInputRef}
             className="composer-file-input"
@@ -973,8 +1072,71 @@ export function Composer() {
               ))}
             </div>
           ) : null}
-          <div className="composer-control-panel" aria-label="입력 옵션" data-tooltip-top-boundary="true">
-            <div className="composer-panel-controls">
+
+        <div className={`attachment-tray${state.composer.attachments.length ? "" : " hidden"}`} id="attachmentTray" aria-label="첨부한 이미지">
+          {state.composer.attachments.map((attachment, index) => (
+            <div className="attachment-chip" key={`${attachment.name}-${index}`}>
+              <img
+                src={attachmentSrc(attachment)}
+                alt={attachment.name || "첨부 이미지"}
+                role="button"
+                tabIndex={0}
+                onClick={() => showAttachmentPreview(attachment)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    showAttachmentPreview(attachment);
+                  }
+                }}
+              />
+              <span onClick={() => showAttachmentPreview(attachment)}>{attachment.name || "이미지"}</span>
+              <button className="attachment-remove" type="button" aria-label="첨부 이미지 삭제" onClick={() => dispatch({ type: "remove_attachment", index })}>
+                x
+              </button>
+            </div>
+          ))}
+        </div>
+      <div className={`composer-box${isMultiline ? " multiline" : ""}`} ref={composerBoxRef} onMouseDown={handleComposerBoxMouseDown}>
+        <textarea
+          id="promptInput"
+          ref={inputRef}
+          rows={1}
+          placeholder="메시지를 입력하세요..."
+          autoComplete="off"
+          spellCheck={false}
+          value={draft}
+          onChange={(event) => {
+            syncCursorFromInput(event.currentTarget);
+            dispatch({ type: "set_draft", value: event.currentTarget.value });
+          }}
+          onClick={(event) => syncCursorFromInput(event.currentTarget)}
+          onKeyDown={handleKeyDown}
+          onKeyUp={(event) => syncCursorFromInput(event.currentTarget)}
+          onPaste={handlePaste}
+          onSelect={(event) => syncCursorFromInput(event.currentTarget)}
+        />
+        <button
+          id="sendButton"
+          className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}
+          type="submit"
+          disabled={state.busy ? !showStop && !canSteer : !canSend}
+          aria-label={showStop ? "작업 중단" : canSteer ? "스티어링 보내기" : "메시지 보내기"}
+        >
+          {showStop ? (
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M15.5 8.5 8.5 15.5" />
+              <path d="m8.5 8.5 7 7" />
+            </svg>
+          ) : (
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 19V5m-6 6 6-6 6 6" />
+            </svg>
+          )}
+        </button>
+      </div>
+      <div className="composer-toolbar" aria-label="입력 기능">
+        <div className="composer-tools-left">
               <div className="composer-control-group composer-attach-group">
                 <button
                   className="composer-panel-attach"
@@ -990,6 +1152,25 @@ export function Composer() {
                   </svg>
                 </button>
               </div>
+          <button className="composer-tool" type="button" aria-label="참고자료 연결" data-tooltip="참고자료 연결" onClick={() => insertTrigger("@")}><ComposerIcon name="context" /></button>
+          <button className="composer-tool" type="button" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertTrigger("$")}><ComposerIcon name="skill" /></button>
+          <ComposerMenu label="요청 개선" icon={<ComposerIcon name="enhance" />} text={enhancing ? "개선 중…" : undefined} disabled={enhancing || state.busy || !state.sessionId || !draft.trim()}>
+            {(close) => <>
+              <p className="composer-menu-description">요청을 실행하기 전에 문장을 다듬습니다.</p>
+              {([ ["structure", "요청 구조화"], ["evidence", "근거 기준 보강"], ["missing_context", "누락 조건 보완"], ["output_format", "출력 형식 구체화"] ] as const).map(([value, label]) => <label className="composer-check" key={value}><input type="checkbox" checked={enhancementOptions.includes(value)} onChange={(event) => setEnhancementOptions((current) => event.target.checked ? [...current, value] : current.filter((key) => key !== value))} />{label}</label>)}
+              <textarea className="composer-enhance-instruction" aria-label="요청 개선 추가 지시" placeholder="추가 지시 (선택)" maxLength={4000} value={enhancementInstruction} onChange={(event) => setEnhancementInstruction(event.target.value)} />
+              <button className="composer-apply" type="button" disabled={!enhancementOptions.length && !enhancementInstruction.trim()} onClick={() => { close(); void improvePrompt(); }}>요청 개선하기</button>
+            </>}
+          </ComposerMenu>
+          <ComposerMenu label="분석 범위" icon={<ComposerIcon name="search" />} text={({ auto: "Auto", brief: "간단", standard: "충분", deep: "심층" })[analysisDepth]}>
+            {(close) => <>{([ ["auto", "자동", "요청에 맞춰 분석 범위를 결정합니다."], ["brief", "간단", "핵심 사실을 빠르게 확인합니다."], ["standard", "충분", "필요한 근거와 예외를 확인합니다."], ["deep", "심층", "다양한 근거와 반례를 폭넓게 검증합니다."] ] as const).map(([value, label, description]) => <ComposerChoice key={value} label={label} description={description} selected={analysisDepth === value} onClick={() => { setAnalysisDepth(value); close(); }} />)}</>}
+          </ComposerMenu>
+          <ComposerMenu label="채팅 답변 분량" icon={<ComposerIcon name="length" />} text={({ auto: "Auto", brief: "짧게", standard: "보통", detailed: "상세" })[answerLength]}>
+            {(close) => <>{([ ["auto", "자동"], ["brief", "짧게"], ["standard", "보통"], ["detailed", "상세"] ] as const).map(([value, label]) => <ComposerChoice key={value} label={label} selected={answerLength === value} onClick={() => { setAnswerLength(value); close(); }} />)}<p className="composer-menu-description">채팅 답변 분량입니다. 생성 파일의 분량에는 적용하지 않습니다.</p></>}
+          </ComposerMenu>
+          <ComposerMenu label="출력 방식 및 파일 분량" icon={<ComposerIcon name="file" />} text={({ default: "Auto", chat: "채팅", artifact: "파일" })[outputSurface]}>
+          <div className="composer-control-panel" aria-label="입력 옵션" data-tooltip-top-boundary="true">
+            <div className="composer-panel-controls">
               <div className="composer-control-group">
                 <span
                   className="composer-control-label"
@@ -1086,101 +1267,15 @@ export function Composer() {
               </div>
             </div>
           </div>
-        </>
-      ) : null}
-      <div className={`composer-box${isMultiline ? " multiline" : ""}${expandedPanelOpen ? " with-panel" : ""}`} ref={composerBoxRef} onMouseDown={handleComposerBoxMouseDown}>
-        <div className={`attachment-tray${state.composer.attachments.length ? "" : " hidden"}`} id="attachmentTray" aria-label="첨부한 이미지">
-          {state.composer.attachments.map((attachment, index) => (
-            <div className="attachment-chip" key={`${attachment.name}-${index}`}>
-              <img
-                src={attachmentSrc(attachment)}
-                alt={attachment.name || "첨부 이미지"}
-                role="button"
-                tabIndex={0}
-                onClick={() => showAttachmentPreview(attachment)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    showAttachmentPreview(attachment);
-                  }
-                }}
-              />
-              <span onClick={() => showAttachmentPreview(attachment)}>{attachment.name || "이미지"}</span>
-              <button className="attachment-remove" type="button" aria-label="첨부 이미지 삭제" onClick={() => dispatch({ type: "remove_attachment", index })}>
-                x
-              </button>
-            </div>
-          ))}
+          </ComposerMenu>
         </div>
-        <button
-          className={`composer-expand-button${expandedPanelOpen ? " active" : ""}`}
-          type="button"
-          aria-label={expandedPanelOpen ? "입력 옵션 닫기" : "입력 옵션 열기"}
-          aria-expanded={expandedPanelOpen}
-          onClick={toggleExpandedPanel}
-        >
-          <svg aria-hidden="true" viewBox="0 0 24 24">
-            <path d="M12 5v14" />
-            <path d="M5 12h14" />
-          </svg>
-        </button>
-        <textarea
-          id="promptInput"
-          ref={inputRef}
-          rows={1}
-          placeholder="메시지를 입력하세요..."
-          autoComplete="off"
-          spellCheck={false}
-          value={draft}
-          onChange={(event) => {
-            syncCursorFromInput(event.currentTarget);
-            dispatch({ type: "set_draft", value: event.currentTarget.value });
-          }}
-          onClick={(event) => syncCursorFromInput(event.currentTarget)}
-          onKeyDown={handleKeyDown}
-          onKeyUp={(event) => syncCursorFromInput(event.currentTarget)}
-          onPaste={handlePaste}
-          onSelect={(event) => syncCursorFromInput(event.currentTarget)}
-        />
-        <button
-          className={`plan-mode-indicator${isPlanMode(state.permissionMode) ? "" : " hidden"}`}
-          type="button"
-          aria-label="계획모드 전환"
-          aria-pressed={isPlanMode(state.permissionMode)}
-          onClick={() => void togglePlanMode()}
-        >
-          <svg aria-hidden="true" viewBox="0 0 24 24">
-            <path d="M9 6h11" />
-            <path d="M9 12h11" />
-            <path d="M9 18h11" />
-            <path d="M4 6h.01" />
-            <path d="M4 12h.01" />
-            <path d="M4 18h.01" />
-          </svg>
-          <span>계획모드</span>
-        </button>
-        <TodoDock variant="composerButton" />
-        <button
-          id="sendButton"
-          className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}
-          type="submit"
-          disabled={state.busy ? !showStop && !canSteer : !canSend}
-          aria-label={showStop ? "작업 중단" : canSteer ? "스티어링 보내기" : "메시지 보내기"}
-        >
-          {showStop ? (
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="8.5" />
-              <path d="M15.5 8.5 8.5 15.5" />
-              <path d="m8.5 8.5 7 7" />
-            </svg>
-          ) : (
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <path d="m22 2-7 20-4-9-9-4Z" />
-              <path d="M22 2 11 13" />
-            </svg>
-          )}
-        </button>
+        <div className="composer-tools-right">
+          <ComposerRuntimeControls />
+
+        </div>
       </div>
+      {enhancementError && <div className="composer-feedback" role="alert">{enhancementError}</div>}
+      {originalPrompt !== null && <div className="composer-feedback"><button type="button" onClick={() => { dispatch({ type: "set_draft", value: originalPrompt }); setOriginalPrompt(null); }}>개선 전 원문 복원</button></div>}
       <div className={`slash-menu${suggestions.length ? "" : " hidden"}`} id="slashMenu" role="listbox" aria-label="명령어와 스킬">
         {suggestions.map((suggestion, index) => (
           <button

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from myharness.api.client import (
+    ApiCompactionEvent,
     ApiMessageCompleteEvent,
     ApiMessageRequest,
     ApiRetryEvent,
@@ -145,13 +146,17 @@ class FastStreamingApiClient:
 
 
 class PromptTooLongThenSuccessApiClient:
-    def __init__(self) -> None:
+    def __init__(self, server_compaction: bool = False) -> None:
         self._calls = 0
+        self.server_compaction = server_compaction
+
+    def supports_server_compaction(self, model: str) -> bool:
+        return self.server_compaction
 
     async def stream_message(self, request):
         self._calls += 1
         if self._calls == 1:
-            raise RequestFailure("prompt too long")
+            raise RequestFailure("context_length_exceeded" if self.server_compaction else "prompt too long")
         if self._calls == 2:
             yield ApiMessageCompleteEvent(
                 message=ConversationMessage(role="assistant", content=[TextBlock(text="<summary>compressed</summary>")]),
@@ -285,6 +290,35 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
     assert engine.total_usage.input_tokens == 10
     assert engine.total_usage.output_tokens == 5
     assert len(engine.messages) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed", [False, True])
+async def test_provider_compaction_reaches_workflow(tmp_path, monkeypatch, failed):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+
+    class CompactingClient:
+        async def stream_message(self, request):
+            yield ApiCompactionEvent(phase="compact_start")
+            if failed:
+                raise RequestFailure("compaction interrupted")
+            yield ApiCompactionEvent(phase="compact_end")
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage.from_assistant_text("continued"),
+                usage=UsageSnapshot(),
+            )
+
+    engine = QueryEngine(
+        api_client=CompactingClient(), tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path, model="test-model", system_prompt="system",
+    )
+    events = [event async for event in engine.submit_message("continue")]
+    progress = [event for event in events if isinstance(event, CompactProgressEvent)]
+    assert [event.phase for event in progress] == [
+        "compact_start", "compact_failed" if failed else "compact_end",
+    ]
+    assert all(event.metadata == {"source": "provider"} for event in progress)
 
 
 @pytest.mark.asyncio
@@ -1018,6 +1052,12 @@ async def test_query_engine_emits_compact_progress_before_reply(tmp_path: Path, 
     events = [event async for event in engine.submit_message("hello")]
 
     hooks_start_index = next(i for i, event in enumerate(events) if isinstance(event, CompactProgressEvent) and event.phase == "hooks_start")
+    from myharness.services.compact import get_context_window
+    compact_events = [event for event in events if isinstance(event, CompactProgressEvent)]
+    assert all(event.metadata["context_window_tokens"] == get_context_window(engine.model) for event in compact_events)
+    assert all(event.metadata["tokens_estimated"] is True for event in compact_events)
+    finished = next(event for event in compact_events if event.phase == "compact_end")
+    assert finished.metadata["pre_compact_tokens"] > finished.metadata["post_compact_tokens"] >= 0
     compact_start_index = next(i for i, event in enumerate(events) if isinstance(event, CompactProgressEvent) and event.phase == "compact_start")
     final_index = next(i for i, event in enumerate(events) if isinstance(event, AssistantTurnComplete))
     assert hooks_start_index < compact_start_index
@@ -1070,11 +1110,12 @@ async def test_query_engine_cancels_compaction_when_stream_closes(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_query_engine_reactive_compacts_after_prompt_too_long(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("server_compaction", [False, True])
+async def test_query_engine_reactive_compacts_after_prompt_too_long(tmp_path: Path, monkeypatch, server_compaction):
     monkeypatch.setattr("myharness.services.compact.try_session_memory_compaction", lambda *args, **kwargs: None)
     monkeypatch.setattr("myharness.services.compact.should_autocompact", lambda *args, **kwargs: False)
     engine = QueryEngine(
-        api_client=PromptTooLongThenSuccessApiClient(),
+        api_client=PromptTooLongThenSuccessApiClient(server_compaction),
         tool_registry=create_default_tool_registry(),
         permission_checker=PermissionChecker(PermissionSettings()),
         cwd=tmp_path,

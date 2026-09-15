@@ -23,6 +23,7 @@ function validHistory(value: unknown): value is HistoryData {
 }
 
 const backgroundLiveSessionPollMs = 3000;
+const historyPollMs = 7000;
 
 export function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], currentSessionId: string | null): HistoryItem[] {
   const liveSessionIds = new Set(sessions.map((session) => session.sessionId));
@@ -217,6 +218,48 @@ export function useWorkspaceData() {
     state.workspaceName,
     state.workspacePath,
   ]);
+
+  useEffect(() => {
+    if (
+      !state.workspaceName && !state.workspacePath
+      || state.historyReadOnly
+      || (state.restoringHistory && state.pendingHistoryId)
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | undefined;
+
+    async function refreshHistory() {
+      try {
+        const data = await listHistory({
+          workspacePath: state.workspacePath,
+          workspaceName: state.workspaceName,
+          limit: historyPageSize,
+          offset: 0,
+        });
+        if (cancelled) return;
+        const history = Array.isArray(data.options) ? data.options : [];
+        dispatch({
+          type: "set_history",
+          history,
+          hasMore: data.hasMore === true,
+          nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : history.length,
+        });
+      } catch {
+        // Keep the current list visible and retry at the next interval.
+      } finally {
+        if (!cancelled) timer = window.setTimeout(refreshHistory, historyPollMs);
+      }
+    }
+
+    timer = window.setTimeout(refreshHistory, historyPollMs);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [dispatch, state.historyReadOnly, state.pendingHistoryId, state.restoringHistory, state.workspaceName, state.workspacePath]);
 
   useEffect(() => {
     if (

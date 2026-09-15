@@ -1,6 +1,6 @@
 # MyHarness MCP API 자격증명 발급 안내서
 
-작성 기준: 2026-08-12 20:50 KST
+최신화 기준: 2026-09-15 KST (현재 체크아웃 설정 및 공식 신청 페이지 재확인)
 
 대상: MyHarness 공식 데이터 MCP를 실제 운영하려는 사용자
 
@@ -8,39 +8,55 @@
 
 ## 0. 결론부터 보기
 
-현재 실검증 결과는 다음과 같다.
+현재 웹 런처 환경에서 관세청과 FRED 키는 등록되어 있습니다. 과거의 “새로 발급할 9개” 목록을 그대로 사용하지 마세요. 등록 여부는 승인·만료·실호출 성공을 뜻하지 않습니다.
 
-- 공식 데이터 검증기: `PASS 60 / BLOCKED_NO_CREDENTIAL 8 / FAIL 0`
-- 전체 MCP 함수 검증에서 추가 확인된 차단: NABO `get_nabo` 1개
-- 새로 발급하거나 신청해야 하는 자격증명 묶음: **9개**
-- API 키 이외의 코드·연결·파싱 실패: **0개**
+### 현재 준비할 자격증명
 
-### 지금 발급받을 목록
+| 기관·데이터 | 설정 이름 | 준비할 내용 |
+|---|---|---|
+| Companies House | `COMPANIES_HOUSE_API_KEY` | live application의 API key |
+| WTO | `WTO_API_KEY` | 구독 키. 포털의 현재 상품·한도 확인 |
+| 일본 e-Stat | `ESTAT_JP_APP_ID` | 계정의 Application ID |
+| 국회예산정책처 NABO | `NABO_API_KEY` | 담당자 승인 후 발급 |
+| Semantic Scholar | `SEMANTIC_SCHOLAR_API_KEY` | 기업 내부 이용 목적을 명시해 신청. 현재 MyHarness에서 필수 |
+| EPO OPS | `EPO_OPS_CLIENT_ID`, `EPO_OPS_CLIENT_SECRET` | OAuth 자격증명 한 쌍 |
+| KIPRISPlus | `KIPRIS_API_KEY` 또는 `KIPRIS_PLUS_API_KEY` | 필요한 검색·서지 상품 승인 |
+| Congress.gov / USDA ERS | `DATA_GOV_API_KEY` | 두 서비스가 공통 사용. 개별 대체 이름은 `CONGRESS_API_KEY`, `USDA_ERS_API_KEY` |
+| U.S. Census | `CENSUS_API_KEY` | 미국 Census 전용 키 |
+| OpenAlex | `OPENALEX_API_KEY` | OpenAlex 계정 API 키 |
+| SEC EDGAR | `SEC_USER_AGENT` | 키 발급 없이 실제 조직명과 담당자 이메일 설정 |
 
-| 우선순위 | 기관·데이터 | MyHarness 설정 이름 | 난도 | 비용·승인 | 권고 |
-|---:|---|---|---|---|---|
-| 1 | 관세청 수출입무역통계 | `KCS_TRADE_API_KEY` 또는 `DATA_GO_KR_API_KEY` | 쉬움 | 무료, 개발계정 자동승인 | 바로 신청 |
-| 2 | FRED | `FRED_API_KEY` | 쉬움 | 무료 계정 | 바로 신청 |
-| 3 | 국회예산정책처 NABO | `NABO_API_KEY` | 쉬움~보통 | SNS 인증 후 담당자 승인 | 바로 신청 |
-| 4 | Companies House | `COMPANIES_HOUSE_API_KEY` | 쉬움 | 계정·앱 생성 | 영국 기업 분석 시 필수 |
-| 5 | WTO Timeseries | `WTO_API_KEY` | 보통 | Standard 무료 구독 | 국제 무역·관세 분석 시 권장 |
-| 6 | 일본 e-Stat | `ESTAT_JP_APP_ID` | 보통 | 무료, 계정 필요 | 일본 통계 수요가 있으면 신청 |
-| 7 | Semantic Scholar | `SEMANTIC_SCHOLAR_API_KEY` | 보통 | 신청·이메일 발급, 심사 가능 | 논문 분석 안정성에 권장 |
-| 8 | EPO OPS | `EPO_OPS_CLIENT_ID`, `EPO_OPS_CLIENT_SECRET` | 보통~높음 | 주 4GB까지 무료, 초과 유료 | 특허 분석 수요 확인 후 신청 |
-| 9 | KIPRISPlus | `KIPRIS_API_KEY` 또는 `KIPRIS_PLUS_API_KEY` | 높음 | 상품 승인, 무료량 초과 시 유료 | 가장 나중에 신청 |
+즉, 현재 로컬 환경 기준 **API 자격증명 10묶음과 SEC 식별자 1개**를 준비 대상으로 확인했습니다. 아래 실호출 결과와 함께 판단하세요.
 
-### 이미 정상이라 새로 받을 필요가 없는 항목
+### 등록이 확인된 항목
 
-2026-08-12 실호출에서 다음 자격증명 경로는 이미 정상 동작했다. 키 값을 다시 만들거나 이 문서에 적을 필요가 없다.
+- 웹 런처 환경: 관세청 `KCS_TRADE_API_KEY`, FRED `FRED_API_KEY`, OpenDART `DART_API_KEY`, KOSIS `KOSIS_API_KEY`, ECOS `ECOS_API_KEY`, EIA `EIA_API_KEY`, Comtrade `UN_COMTRADE_API_KEY` 및 보조 키.
+- 패키지 설정에도 열린국회정보 `ASSEMBLY_API_KEY`, 법령 `LAW_OC` 및 `LAWMKING_OC` 설정이 있습니다. 값 존재만으로 현재 유효성이나 다른 PC에서의 이용 권한을 보장하지 않습니다.
+- 이 목록은 이 체크아웃의 스냅샷입니다. 새 PC에서는 각 기관의 본인·조직 자격증명을 준비하세요.
 
-- OpenDART: `DART_API_KEY` 또는 `OPENDART_API_KEY`
-- SEC EDGAR: `SEC_USER_AGENT` — API 키가 아니라 실제 조직명·연락 이메일 식별자
-- U.S. Census: `CENSUS_API_KEY`
-- Congress.gov·USDA ERS 공통: `DATA_GOV_API_KEY`
-- OpenAlex: `OPENALEX_API_KEY`
-- 기존 Comtrade·ECOS·EIA·KOSIS·열린국회정보 자격증명
+### 추가된 신청 경로
 
-Eurostat, ECB, BIS, NY Fed, OECD, Federal Register, 유럽의회, EUR-Lex, UK Bills, legislation.gov.uk, Crossref, EPA ECHO, ADB, World Bank는 현재 MyHarness 사용 범위에서 별도 키 없이 통과했다.
+- **Congress.gov / USDA ERS**: [api.data.gov 신청](https://api.data.gov/signup/)에서 발급받아 `DATA_GOV_API_KEY`로 등록합니다. 한국의 `DATA_GO_KR_API_KEY`와 다릅니다.
+- **Census**: [공식 개발자 안내](https://www.census.gov/data/developers/guidance/api-user-guide.Help_&_Contact_Us.html)의 Request an API Key를 이용합니다.
+- **OpenAlex**: [공식 도움말](https://help.openalex.org/)의 Access 안내와 계정 설정에서 키를 확인합니다. 현재 요금·호출량은 계정의 이용 조건을 확인합니다.
+- **SEC**: [공식 EDGAR 접근 안내](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data)에 따라 실제 조직명과 담당자 이메일을 User-Agent에 넣습니다. 예시 이메일을 그대로 쓰지 않습니다.
+
+### 2026-09-15 실제 MCP 검증 결과
+
+실행: `python scripts/verify_all_mcps.py --root . --output .myharness/ui-checks/mcp-credential-refresh-20260915.json`
+
+| 구분 | 건수 | 해석 |
+|---|---:|---|
+| PASS | 109 | 시작 14, 리소스 29, health 17, 도구·데이터 호출 49. 호출에는 연결 확인도 포함 |
+| BLOCKED_NO_CREDENTIAL | 12 | 위 준비 목록과 일치. 미국 공통 키가 2개 source를 담당하므로 준비 항목 수와 다름 |
+| PLACEHOLDER | 9 | POSCO 업무 MCP 자리표시자. API 키 발급만으로 해결되지 않음 |
+| FAIL | 0 | 이번 검증기가 실행한 범위에서 실패 없음 |
+
+로컬 근거: `.myharness/ui-checks/mcp-credential-refresh-20260915.json` (원문 응답·키 값 없이 상태 메타데이터 저장).
+
+이 검사는 구현된 대표 호출에 대한 검증이며 모든 도구·모든 입력을 검증한 결과는 아닙니다. 관세청·FRED의 health는 통과했지만 이번 검증기의 개별 데이터 조회 fixture에는 포함되지 않았으므로 두 source의 검색·수치 데이터 성공까지 주장하지 않습니다. 미설정 source의 실제 검색·상세 호출은 키 등록 후 확인해야 합니다. NABO 미설정 오류 메시지에는 한글 표시 깨짐이 있었으며 문서 갱신 범위에서 런타임은 수정하지 않았습니다.
+
+공식 신청 페이지 확인 범위: 관세청, FRED, NABO, Companies House, e-Stat, Semantic Scholar, KIPRISPlus 및 추가된 미국 데이터·SEC 안내. WTO 상품 상세·현재 호출 한도와 EPO 유료 구독 금액은 확인하지 못했으므로 확정값으로 안내하지 않습니다.
 
 ## 1. 신청 전에 알아둘 보안 원칙
 
@@ -53,7 +69,7 @@ Eurostat, ECB, BIS, NY Fed, OECD, Federal Register, 유럽의회, EUR-Lex, UK Bi
 - 테스트 파일과 스크린샷
 - Git에 추적되는 설정 파일
 
-현재 이 체크아웃의 `myharness.local.env`는 Git 추적 대상이다. 따라서 **현 상태에서는 여기에 비밀키를 넣지 않는다.** 대신 Git에서 무시되는 로컬 파일 `API_KEY.env`를 사용할 수 있다. `run_myharness_web.bat`와 `run_myharness_web_dev.bat`가 이 파일을 `myharness.local.env` 다음에 읽어 MCP 프로세스에 전달한다. 파일은 저장소에 커밋하지 않는다.
+현재 이 체크아웃의 `myharness.local.env`는 Git 추적 대상이다. 따라서 **현 상태에서는 여기에 비밀키를 넣지 않는다.** **현재 `API_KEY.env`도 Git 추적 대상이므로 여기에 비밀키를 추가하지 않는다.** `.gitignore`에 이름이 있어도 이미 추적된 파일에는 적용되지 않는다. 현재는 아래 Windows 사용자 환경변수 등록 방법을 사용하되, 같은 이름의 로컬 파일 값이 이를 덮어쓸 수 있음을 확인한다. `run_myharness_web.bat`와 `run_myharness_web_dev.bat`가 이 파일을 `myharness.local.env` 다음에 읽어 MCP 프로세스에 전달한다. 파일은 저장소에 커밋하지 않는다.
 
 ### 키를 화면이나 명령 기록에 노출하지 않고 저장하기
 
@@ -92,17 +108,11 @@ Set-MyHarnessUserSecret EPO_OPS_CLIENT_SECRET
 
 등록 후에는 MyHarness를 완전히 종료하고 다시 실행해야 새 환경변수가 반영된다.
 
-### 선택 사항: 로컬 `API_KEY.env` 파일
+### 로컬 파일과 환경변수 우선순위
 
-저장소 루트의 [API_KEY.env](/C:/Users/user/Desktop/Documents/Python/MyHarness/API_KEY.env)에 발급받은 값을 직접 넣을 수 있다. 이 파일은 `.gitignore`에 등록되어 있으며 현재는 빈 템플릿이다.
+웹 런처는 상속된 환경변수 위에 `myharness.local.env`, 이어서 `API_KEY.env` 값을 적용합니다. 뒤 파일의 빈 값도 앞의 설정을 덮어쓸 수 있습니다. 사용자 환경변수에 등록한 뒤에는 같은 이름의 파일 항목과 충돌하지 않는지 값 노출 없이 확인하세요.
 
-전체 변수 이름만 확인하려면 추적 가능한 [.env.example](/C:/Users/user/Desktop/Documents/Python/MyHarness/.env.example)을 참고한다. `.env.example`은 예시 파일이므로 런처가 읽지 않는다.
-
-```text
-KCS_TRADE_API_KEY=새로_발급받은_관세청_일반인증키
-```
-
-URL 인코딩된 키를 그대로 한 줄에 넣고, 키 값 앞뒤에 따옴표를 붙이지 않는다. 기존 채팅에 노출된 키는 재사용하지 말고 포털에서 재발급한다.
+변수 이름 템플릿은 [`.env.example`](../.env.example)입니다. 이 파일은 런처가 읽지 않습니다. 현재 추적 중인 두 로컬 설정 파일의 저장 구조 변경은 이번 문서 갱신에서 수행하지 않았습니다.
 
 ### 값은 출력하지 않고 등록 여부만 확인하기
 
@@ -238,8 +248,8 @@ FRED는 애플리케이션별 별도 키를 권고한다. 다른 프로그램 �
 - 설정 이름: `WTO_API_KEY`
 - 공식 포털: [WTO API Developer Portal](https://apiportal.wto.org/)
 - 공식 상품: [WTO API Products](https://apiportal.wto.org/products)
-- Standard 구독: 무료
-- 공식 한도: 일반 10회/초·10,000회/시간, time-series `data`·`data_count`는 1회/초
+- Standard 구독: 기존 안내상 무료. 2026-09-15 공개 상품 페이지에서 상세 내용이 표시되지 않아 현재 조건은 로그인 후 재확인 필요
+- 기존 한도 안내: 일반 10회/초·10,000회/시간, time-series `data`·`data_count`는 1회/초. 이번 재확인에서는 한도 본문을 확인하지 못했으므로 확정 수치로 사용하지 않는다
 
 신청 절차:
 
@@ -297,7 +307,7 @@ FRED는 애플리케이션별 별도 키를 권고한다. 다른 프로그램 �
 - 공식 안내·등록: [EPO Open Patent Services](https://www.epo.org/en/searching-for-patents/data/web-services/ops)
 - 인증: OAuth consumer key + consumer secret
 - 무료 범위: 주 4GB까지
-- 초과 요금: 연 EUR 2,800 구독 — 신청 시점의 최신 가격을 다시 확인
+- 초과 요금: 유료 연간 구독. 고정 금액은 최신 요금표에서 확인한다. [EPO 공식 이용 정책](https://www.epo.org/en/service-support/ordering/fair-use)에서 주 4GB 무료 범위를 재확인했다
 
 신청 절차:
 
@@ -319,7 +329,7 @@ MyHarness 용도에는 검색·서지·패밀리 XML이면 충분하다. 이미�
 - 공식 수수료: [KIPRISPlus 서비스 수수료](https://plus.kipris.or.kr/portal/use/paymentMmg.do?menuNo=210112)
 - 공식 개발자료: [KIPRISPlus Open API 개발 가이드](https://plus.kipris.or.kr/portal/bbs/view.do?bbsId=B0000001&nttId=1060)
 
-2026-08-12 공식 수수료 페이지 기준:
+2026-09-15 공식 수수료 페이지 재확인:
 
 - 월 1,000회까지 무료
 - 유료 이용 시 일 5,320원, 365일 기준 연 1,941,800원(VAT 포함)
@@ -348,7 +358,7 @@ MyHarness에는 검색과 서지 상세가 필요하다. 도면, 전문 PDF, Bul
 
 Windows 사용자 환경변수를 새로 등록한 후 기존 MyHarness 프로세스를 종료하고 런처로 다시 시작한다.
 
-### 5.2 전체 공식 데이터 검증
+### 5.2 공식 데이터 검증
 
 저장소 루트에서 실행한다.
 
@@ -356,15 +366,15 @@ Windows 사용자 환경변수를 새로 등록한 후 기존 MyHarness 프로�
 python scripts/verify_official_data_mcps.py --root .
 ```
 
-현재 기준선:
+과거 2026-08-12 기준선 (현재 결과가 아님):
 
 ```text
 SUMMARY pass=60 blocked_no_credential=8 fail=0
 ```
 
-새 키가 정상이라면 해당 source의 `BLOCKED_NO_CREDENTIAL`이 줄고 `PASS`가 증가해야 한다. 총합만 보지 말고 해당 `health:<mcp>:<source>` 행을 확인한다.
+새 키가 정상이라면 해당 source의 `BLOCKED_NO_CREDENTIAL`이 줄고 `PASS`가 증가해야 한다. 총합만 보지 말고 해당 `health:<mcp>:<source>` 행과 실제 데이터 호출 행을 각각 확인한다. health 성공만으로 데이터 조회 성공을 판단하지 않는다.
 
-NABO는 현재 위 검증기 집계에 포함되지 않으므로 `national-assembly`의 `get_nabo`를 별도로 실제 호출한다.
+NABO는 위 `verify_official_data_mcps.py` 집계에 포함되지 않는다. 상단의 `verify_all_mcps.py`를 사용하면 `national-assembly`의 `get_nabo`도 함께 검증한다.
 
 ### 5.3 완료 판정
 
@@ -390,41 +400,22 @@ NABO는 현재 위 검증기 집계에 포함되지 않으므로 `national-assem
 | 429 | 호출 한도 초과 | 재시도 폭주 금지, source 한도에 맞춰 속도 제한 |
 | 200이지만 0건 | 자격증명 성공일 수 있음 | 현실적인 조건·카탈로그로 한 번 대조하고 원 조건 0건은 그대로 보고 |
 
-## 6. 추천 신청 순서
+## 6. 신청·등록 체크리스트
 
-한 번에 아홉 곳을 모두 신청할 필요는 없다.
-
-### 1차: 당일 처리 가능성이 높은 무료 키
-
-1. 관세청 공공데이터포털
-2. FRED
-3. Companies House
-4. WTO Standard
-5. e-Stat
-
-### 2차: 승인 대기 가능
-
-6. NABO
-7. Semantic Scholar
-
-### 3차: 비용·계약 판단 필요
-
-8. EPO OPS — 무료 4GB/주 범위만 우선
-9. KIPRISPlus — 월 1,000회 무료 범위와 필요한 상품을 확인한 뒤 신청
-
-## 7. 발급 완료 체크리스트
+관세청과 FRED는 이미 등록되어 있으므로 재발급보다 실제 호출 결과부터 확인합니다. 나머지는 업무에 필요한 기관부터 신청합니다. 비용·상품 승인이 필요한 EPO와 KIPRISPlus는 내부 이용 범위를 먼저 정합니다.
 
 ```text
-[ ] KCS_TRADE_API_KEY
-[ ] FRED_API_KEY
-[ ] NABO_API_KEY
 [ ] COMPANIES_HOUSE_API_KEY
 [ ] WTO_API_KEY
 [ ] ESTAT_JP_APP_ID
+[ ] NABO_API_KEY
 [ ] SEMANTIC_SCHOLAR_API_KEY
-[ ] EPO_OPS_CLIENT_ID
-[ ] EPO_OPS_CLIENT_SECRET
+[ ] EPO_OPS_CLIENT_ID + EPO_OPS_CLIENT_SECRET
 [ ] KIPRIS_API_KEY
+[ ] DATA_GOV_API_KEY
+[ ] CENSUS_API_KEY
+[ ] OPENALEX_API_KEY
+[ ] SEC_USER_AGENT (조직명·담당자 이메일)
 ```
 
 키를 전달하거나 검증을 요청할 때는 채팅·문서에 값을 붙이지 않는다. 사용자 환경변수에 직접 등록한 뒤 “어떤 이름을 등록했는지”만 알려주면 MyHarness에서 값 노출 없이 실호출 검증할 수 있다.

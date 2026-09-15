@@ -13,7 +13,10 @@
         "search_catalog",
         "query_series",
         "get_source_health"
-      ]
+      ],
+      "env": {
+        "ESTAT_JP_APP_ID": "d1f0a2110bcd6945807cb5f8176fb8c4ce5106c8"
+      }
     }
   }
 }

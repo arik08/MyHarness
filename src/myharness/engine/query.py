@@ -7,11 +7,12 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from myharness.api.client import (
+    ApiCompactionEvent,
     ApiMessageCompleteEvent,
     ApiMessageRequest,
     ApiRetryEvent,
@@ -871,6 +872,7 @@ async def run_query(
     from myharness.services.compact import (
         AutoCompactState,
         auto_compact_if_needed,
+        get_context_window,
     )
 
     compact_state = AutoCompactState()
@@ -888,7 +890,13 @@ async def run_query(
         )
 
         async def _progress(event: CompactProgressEvent) -> None:
-            await progress_queue.put(event)
+            await progress_queue.put(replace(event, metadata={
+                **(event.metadata or {}),
+                "context_window_tokens": get_context_window(
+                    context.model, context_window_tokens=context.context_window_tokens,
+                ),
+                "tokens_estimated": True,
+            }))
 
         task = asyncio.create_task(
             auto_compact_if_needed(
@@ -957,6 +965,7 @@ async def run_query(
         final_message: ConversationMessage | None = None
         usage = UsageSnapshot()
         stop_reason: str | None = None
+        provider_compacting = False
 
         try:
             request = ApiMessageRequest(
@@ -983,6 +992,14 @@ async def run_query(
                 if isinstance(event, ApiReasoningSummaryEvent):
                     yield ReasoningSummaryEvent(text=event.text), None
                     continue
+                if isinstance(event, ApiCompactionEvent):
+                    provider_compacting = event.phase == "compact_start"
+                    yield CompactProgressEvent(
+                        phase=event.phase,
+                        trigger="auto",
+                        metadata={"source": "provider"},
+                    ), None
+                    continue
                 if isinstance(event, ApiToolCallDeltaEvent):
                     yield ToolInputDelta(
                         index=event.index,
@@ -1006,6 +1023,11 @@ async def run_query(
                     stop_reason = event.stop_reason
         except Exception as exc:
             error_msg = str(exc)
+            if provider_compacting:
+                yield CompactProgressEvent(
+                    phase="compact_failed", trigger="auto", message=error_msg,
+                    metadata={"source": "provider"},
+                ), None
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
                 reactive_compact_attempted = True
                 yield StatusEvent(message=REACTIVE_COMPACT_STATUS_MESSAGE), None
@@ -1324,6 +1346,8 @@ async def _execute_tool_call(
                 # metadata may still point at the original one; new skill tools
                 # must register where the next provider request reads schemas.
                 "tool_registry": context.tool_registry,
+                "tool_call_id": tool_use_id,
+                "executing_tool_name": tool_name,
             },
             hook_executor=context.hook_executor,
         ),

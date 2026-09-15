@@ -484,7 +484,11 @@ def get_record(
     financial_statement: str = "CFS",
     limit: int = 1000,
 ) -> str:
-    """Get one company profile, filing collection, or structured financial statement."""
+    """Get company data using the ID returned by search_catalog.
+    opendart: 8-digit corp_code; record_type company or financials (business_year required).
+    sec: cik_str/CIK; company/submissions or companyfacts; not a ticker symbol.
+    companies_house: company_number (preserve leading zeros); company or officers.
+    """
     selected = _source(source)
     kind = record_type.strip().lower()
     if selected == "opendart":
@@ -586,7 +590,11 @@ def get_record(
     path = (
         f"company/{company_number}/officers" if kind == "officers" else f"company/{company_number}"
     )
-    payload = _companies_house_json(path)
+    payload = _companies_house_json(
+        path, {"items_per_page": clean_limit(limit, maximum=100)} if kind == "officers" else None
+    )
+    if kind == "officers" and isinstance(payload, dict) and isinstance(payload.get("items"), list):
+        payload = {**payload, "items": payload["items"][:clean_limit(limit, maximum=100)]}
     return result_envelope(
         source=SOURCES[selected],
         source_id=path,

@@ -15,7 +15,11 @@
         "get_record",
         "get_document_link",
         "get_source_health"
-      ]
+      ],
+      "env": {
+        "COMPANIES_HOUSE_API_KEY": "dcb8aca6-431c-4bf9-9401-8e7dd9cf2c28",
+        "SEC_USER_AGENT": "POSCO MYEONGCHEOL OH arik1988@gmail.com"
+      }
     }
   }
 }

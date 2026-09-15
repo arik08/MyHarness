@@ -305,8 +305,11 @@ export function TodoDock({ variant = "dock" }: TodoDockProps) {
               <span className="todo-label">{item.done ? `(완료) ${item.label}` : item.label}</span>
               {index === runningIndex && activityLines.length ? (
                 <ul className="todo-activity-list" aria-label="현재 작업 진행">
-                  {activityLines.map((line) => (
-                    <li className="todo-activity-line" key={line}>{line}</li>
+                  {[...activityLines].reverse().map((line, activityIndex) => (
+                    <li className={`todo-activity-line${activityIndex === 0 ? " latest" : ""}`} key={`${activityIndex}-${line}`}>
+                      <span className="todo-activity-order">{activityIndex === 0 ? "최신" : `이전 ${activityIndex}`}</span>
+                      <span>{line}</span>
+                    </li>
                   ))}
                 </ul>
               ) : null}

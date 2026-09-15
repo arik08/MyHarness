@@ -85,9 +85,12 @@ def test_usda_ers_key_is_not_returned(monkeypatch) -> None:
     assert "test-key" not in output
 
 
-def test_config_loads_without_credentials() -> None:
+def test_config_loads_without_credentials(tmp_path) -> None:
     mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
-    config = load_mcp_configs_from_dirs([mcp_dir])["environment-industry"]
+    payload = json.loads((mcp_dir / "environment-industry" / "mcp.json").read_text(encoding="utf-8"))
+    payload["mcpServers"]["environment-industry"].pop("env", None)
+    (tmp_path / "mcp.json").write_text(json.dumps(payload), encoding="utf-8")
+    config = load_mcp_configs_from_dirs([tmp_path])["environment-industry"]
 
     assert config.env is None
     assert config.args == ["runtime/server.py"]
@@ -235,6 +238,17 @@ def test_epa_cannot_be_routed_through_industry_query() -> None:
 
     with pytest.raises(ValueError, match="search_facilities"):
         module.query_industry("epa_echo")
+
+
+def test_usda_nested_envelope_is_limited_and_errors_rejected(monkeypatch):
+    module = _load_server()
+    monkeypatch.setenv("USDA_ERS_API_KEY", "unit-key")
+    monkeypatch.setattr(module, "request_json", lambda *a, **k: {"status": "success", "data": [{"id": "a"}, {"id": "b"}], "errors": []})
+    assert len(json.loads(module.search_catalog("usda_ers", limit=1))["data"]) == 1
+    assert len(json.loads(module.query_industry("usda_ers", filters_json={"year": 2023, "variable": "a"}, limit=1))["data"]) == 1
+    with pytest.raises(ValueError, match="rejected"):
+        module._ers_rows({"errors": ["private error"]})
+    assert module._ers_rows({"data": []}) == []
 
 
 @pytest.mark.parametrize("source", ["eurostat_prodcom", "epa_echo", "usda_ers"])

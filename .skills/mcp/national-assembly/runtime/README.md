@@ -4,9 +4,11 @@ This directory contains the repository-bundled runtime for
 [`hollobit/assembly-api-mcp`](https://github.com/hollobit/assembly-api-mcp) at
 commit `f74c6b452c59d87e2fa7265fd985b90e4057a8ef`.
 
-`index.js` and `859.index.js` were produced with `@vercel/ncc` 0.38.4 after
+`index.js` and its generated `*.index.js` chunk were produced with `@vercel/ncc` 0.38.4 after
 applying `assembly-api-mcp-network-retry.patch`. The compatibility patch also
-normalizes API discovery terms and current/former committee names. Runtime dependencies are
+normalizes API discovery terms and current/former committee names. NABO exposes report lookup and keyword search only; unused publication and recruitment APIs are removed from the client and tool schema. NABO authorization
+failures are scoped to each endpoint and are not retried until reconnect; request logs
+omit credential query strings. Runtime dependencies are
 included in the bundle, so a normal MyHarness installation does not clone the
 upstream repository or run `npm install` for this MCP.
 

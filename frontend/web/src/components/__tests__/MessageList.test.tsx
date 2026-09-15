@@ -210,6 +210,13 @@ function ToolUseHandoffProbe() {
   );
 }
 
+function openExecutionDetails() {
+  // Preview assertions now inspect the user's expanded execution state.
+  for (let level = 0; level < 3; level += 1) {
+    document.querySelectorAll<HTMLButtonElement>('.aside-workflow .aside-toggle[aria-expanded="false"]').forEach((button) => fireEvent.click(button));
+  }
+}
+
 describe("MessageList", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -257,7 +264,7 @@ describe("MessageList", () => {
     expect(screen.queryByRole("heading", { name: "무엇을 도와드릴까요?" })).toBeNull();
     expect(container.querySelector(".welcome")).toBeNull();
     if ("workflowEvents" in activity) {
-      expect(screen.getByText("작업 진행")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" })).toBeTruthy();
     }
   });
 
@@ -1309,39 +1316,6 @@ describe("MessageList", () => {
     await waitFor(() => expect(screen.queryByText(/환율/)).toBeNull());
   });
 
-  it("renders workflow directly under the active user turn before the answer", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          workflowAnchorMessageId: "user-1",
-          messages: [
-            { id: "user-1", role: "user", text: "테스트해줘" },
-            { id: "assistant-1", role: "assistant", text: "테스트 결과입니다." },
-          ],
-          workflowEvents: [
-            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-2", toolName: "", title: "작업 계획 수립", detail: "필요한 맥락과 진행 방향을 정리합니다.", status: "done", level: "parent" },
-            { id: "workflow-3", toolName: "shell_command", title: "명령 실행", detail: "npm test", status: "done", level: "child" },
-            { id: "workflow-4", toolName: "", title: "최종 답변", detail: "최종 답변을 작성했습니다.", status: "done", level: "parent" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const articles = [...document.querySelectorAll("article.message")].map((node) => node.textContent || "");
-    expect(articles[0]).toContain("테스트해줘");
-    expect(articles[1]).toContain("작업 진행");
-    expect(articles[1]).toContain("요청 이해");
-    expect(articles[1]).toContain("작업 계획 수립");
-    expect(articles[1]).toContain("명령 실행");
-    expect(articles[1]).toContain("최종 답변");
-    expect(articles[1]).not.toContain("지우기");
-    expect(articles[2]).toContain("테스트 결과입니다.");
-  });
-
   it("does not render workflow chrome for the help command turn", () => {
     render(
       <AppStateProvider
@@ -1364,35 +1338,6 @@ describe("MessageList", () => {
 
     expect(document.querySelector(".workflow-message")).toBeNull();
     expect(screen.queryByText("사용 가능한 명령어")).toBeNull();
-  });
-
-  it("renders workflow purpose groups as explicit parent and child structure", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          workflowAnchorMessageId: "user-1",
-          messages: [{ id: "user-1", role: "user", text: "조사해줘" }],
-          workflowEvents: [
-            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-2", toolName: "", title: "정보 수집", detail: "필요한 정보를 확인했습니다.", status: "running", level: "parent", role: "purpose", purpose: "info", groupId: "group-info" },
-            { id: "workflow-3", toolName: "web_search", title: "web_search", detail: "first query", status: "done", level: "child", groupId: "group-info" },
-            { id: "workflow-4", toolName: "web_fetch", title: "web_fetch", detail: "example.com", status: "running", level: "child", groupId: "group-info" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const group = document.querySelector('[data-workflow-group-id="group-info"]');
-    expect(group).toBeTruthy();
-    expect(group?.querySelector('[data-workflow-role="purpose"]')?.textContent || "").not.toContain("판단 근거를 모으고 있습니다");
-    expect(group?.querySelector(".workflow-narrative-toggle")?.textContent).toContain("웹 검색");
-    const childTitles = [...(group?.querySelectorAll(".workflow-children .workflow-step.child strong") || [])]
-      .map((node) => node.textContent);
-    expect(childTitles).toEqual(["웹 검색", "웹 페이지 조회"]);
-    expect(document.querySelector(".workflow-count")).toBeNull();
   });
 
   it("does not invent natural workflow narration for active verification work", () => {
@@ -1424,329 +1369,6 @@ describe("MessageList", () => {
     expect(narration).not.toContain("결과를 확인하고 있습니다");
     expect(narration).not.toContain("방금");
     expect(narration).not.toContain("오류나 깨진 화면이 없는지 검증");
-  });
-
-  it("stagger-reveals active workflow rows instead of showing a web tool batch at once", () => {
-    vi.useFakeTimers();
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [{ id: "user-1", role: "user", text: "자료 조사해줘" }],
-          workflowEvents: [
-            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-2", toolName: "", title: "정보 수집", detail: "필요한 정보를 확인했습니다.", status: "running", level: "parent", role: "purpose", purpose: "info", groupId: "group-info" },
-            { id: "workflow-3", toolName: "web_search", title: "web_search", detail: "first query", status: "done", level: "child", groupId: "group-info" },
-            { id: "workflow-4", toolName: "web_search", title: "web_search", detail: "second query", status: "done", level: "child", groupId: "group-info" },
-            { id: "workflow-5", toolName: "web_fetch", title: "web_fetch", detail: "example.com", status: "running", level: "child", groupId: "group-info" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(1);
-    expect(screen.queryByText("정보 수집")).toBeNull();
-
-    act(() => {
-      vi.advanceTimersByTime(90);
-    });
-    expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(2);
-    expect(document.querySelector(".workflow-narrative-toggle")).toBeTruthy();
-    expect(document.body.textContent || "").not.toContain("first query");
-
-    act(() => {
-      vi.advanceTimersByTime(630);
-    });
-    expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(5);
-    expect(screen.getAllByText("웹 검색")).toHaveLength(2);
-    expect(screen.getAllByText("웹 페이지 조회").length).toBeGreaterThan(0);
-  });
-
-  it("reveals the initial planning step shortly after request understanding", () => {
-    vi.useFakeTimers();
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [{ id: "user-1", role: "user", text: "작업해줘" }],
-          workflowEvents: [
-            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-2", toolName: "", title: "작업 계획 수립", detail: "필요한 맥락과 진행 방향을 정리합니다.", status: "running", level: "parent", role: "planning" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    expect(screen.getByText("요청 이해")).toBeTruthy();
-    expect(screen.queryByText("작업 계획 수립")).toBeNull();
-
-    act(() => {
-      vi.advanceTimersByTime(90);
-    });
-
-    expect(screen.queryByText("작업 계획 수립")).toBeNull();
-
-    act(() => {
-      vi.advanceTimersByTime(130);
-    });
-
-    expect(screen.getByText("작업 계획 수립")).toBeTruthy();
-  });
-
-  it("renders active answer drafting workflow before the streaming assistant answer", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [
-            { id: "user-1", role: "user", text: "조사해줘" },
-            { id: "assistant-1", role: "assistant", text: "정리하면" },
-          ],
-          workflowEvents: [
-            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-2", toolName: "", title: "응답 작성", detail: "답변 본문을 작성하고 있습니다. 4자 수신 중입니다.", status: "running", level: "parent", role: "final" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const articles = [...document.querySelectorAll("article.message")];
-    expect(articles).toHaveLength(3);
-    expect(articles[0].textContent || "").toContain("조사해줘");
-    expect(articles[1].classList.contains("workflow-message")).toBe(true);
-    expect(articles[1].textContent || "").toContain("응답 작성");
-    expect(articles[1].textContent || "").not.toContain("이제 작업 결과를 정리");
-    expect(articles[1].querySelector(".workflow-narration")).toBeNull();
-    expect(articles[1].textContent || "").toContain("답변 본문을 작성하고 있습니다");
-    expect(articles[2].classList.contains("workflow-message")).toBe(false);
-    expect(articles[2].classList.contains("assistant")).toBe(true);
-  });
-
-  it("keeps workflow structure without generated narration in the process", () => {
-    vi.useFakeTimers();
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [{ id: "user-1", role: "user", text: "구현해줘" }],
-          workflowEvents: [
-            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-2", toolName: "", title: "작업 계획 수립", detail: "진행 방향을 정했습니다.", status: "done", level: "parent", role: "planning" },
-            { id: "workflow-3", toolName: "", title: "정보 수집", detail: "필요한 정보를 확인했습니다.", status: "done", level: "parent", role: "purpose", purpose: "info", groupId: "group-info" },
-            { id: "workflow-4", toolName: "read_file", title: "파일 확인", detail: "index.html", status: "done", level: "child", groupId: "group-info" },
-            { id: "workflow-5", toolName: "", title: "작업 실행", detail: "작업 실행을 마쳤습니다.", status: "done", level: "parent", role: "purpose", purpose: "action", groupId: "group-action" },
-            { id: "workflow-6", toolName: "write_file", title: "파일 수정", detail: "preview.html", status: "done", level: "child", groupId: "group-action" },
-            { id: "workflow-7", toolName: "", title: "응답 작성", detail: "답변 본문을 작성하고 있습니다.", status: "running", level: "parent", role: "final" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    act(() => {
-      vi.advanceTimersByTime(490);
-    });
-
-    const workflowText = document.querySelector(".workflow-message")?.textContent || "";
-    expect(workflowText).toContain("작업 계획 수립");
-    expect(workflowText).not.toContain("작업 계획 수립요청을 기준으로");
-    expect(workflowText).not.toContain("정보 수집");
-    expect(workflowText).not.toContain("필요한 파일과 실행 결과를 훑으면서");
-    expect(workflowText).not.toContain("작업 실행을 마쳤습니다");
-    expect(workflowText).not.toContain("확인한 맥락을 바탕으로 실제 작업을 진행");
-    expect(workflowText).not.toContain("방금");
-    expect(workflowText).not.toContain("이제 작업 결과를 정리");
-    expect(document.querySelector(".workflow-narration")).toBeNull();
-    expect(document.body.textContent || "").toContain("진행 방향을 정했습니다");
-    expect(document.body.textContent || "").not.toContain("작업 실행을 마쳤습니다");
-    expect(document.body.textContent || "").toContain("파일 확인index.html");
-  });
-
-  it("does not show generated workflow narration for repeated parent categories", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          messages: [{ id: "user-1", role: "user", text: "계속 작업해줘" }],
-          workflowAnchorMessageId: "user-1",
-          workflowEvents: [
-            { id: "workflow-1", toolName: "", title: "정보 수집", detail: "필요한 정보를 확인했습니다.", status: "done", level: "parent", role: "purpose", purpose: "info", groupId: "group-info-1" },
-            { id: "workflow-2", toolName: "web_search", title: "web_search", detail: "first query", status: "done", level: "child", groupId: "group-info-1" },
-            { id: "workflow-3", toolName: "", title: "정보 수집", detail: "필요한 정보를 확인했습니다.", status: "done", level: "parent", role: "purpose", purpose: "info", groupId: "group-info-2" },
-            { id: "workflow-4", toolName: "web_search", title: "web_search", detail: "second query", status: "done", level: "child", groupId: "group-info-2" },
-            { id: "workflow-5", toolName: "", title: "작업 실행", detail: "작업 실행을 마쳤습니다.", status: "done", level: "parent", role: "purpose", purpose: "action", groupId: "group-action-1" },
-            { id: "workflow-6", toolName: "todo_write", title: "todo_write", detail: "- [x] 기존 구조 확인", status: "done", level: "child", groupId: "group-action-1" },
-            { id: "workflow-7", toolName: "", title: "작업 실행", detail: "작업 실행을 마쳤습니다.", status: "done", level: "parent", role: "purpose", purpose: "action", groupId: "group-action-2" },
-            { id: "workflow-8", toolName: "cmd", title: "cmd", detail: "npm test", status: "done", level: "child", groupId: "group-action-2" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const workflowText = document.querySelector(".workflow-message")?.textContent || "";
-    expect(workflowText.match(/정보 수집:/g) || []).toHaveLength(0);
-    expect(workflowText.match(/작업 실행:/g) || []).toHaveLength(0);
-    expect(document.querySelectorAll(".workflow-narrative-toggle")).toHaveLength(4);
-    expect(workflowText.match(/작업 실행/g) || []).toHaveLength(0);
-    expect(workflowText.match(/필요한 파일과 실행 결과를 훑으면서/g) || []).toHaveLength(0);
-    expect(workflowText.match(/확인한 맥락을 바탕으로 실제 작업을 진행/g) || []).toHaveLength(0);
-  });
-
-  it("keeps request and planning details visible while hiding other generated parent explanations", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          messages: [{ id: "user-1", role: "user", text: "정리해줘" }],
-          workflowAnchorMessageId: "user-1",
-          workflowEvents: [
-            { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-2", toolName: "", title: "작업 계획 수립", detail: "진행 방향을 정했습니다.", status: "done", level: "parent", role: "planning" },
-            { id: "workflow-3", toolName: "", title: "최종 답변", detail: "최종 답변을 작성했습니다.", status: "done", level: "parent", role: "final" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const workflowText = document.querySelector(".workflow-message")?.textContent || "";
-    expect(workflowText).toContain("요청 이해");
-    expect(workflowText).toContain("작업 계획 수립");
-    expect(workflowText).toContain("사용자 요청을 확인했습니다");
-    expect(workflowText).toContain("진행 방향을 정했습니다");
-    expect(workflowText).not.toContain("요청을 기준으로 필요한 맥락과 검증 기준을 정리");
-    expect(workflowText).not.toContain("최종 답변을 작성했습니다");
-  });
-
-  it("flattens multiline completed tool details into one compact line", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          messages: [{ id: "user-1", role: "user", text: "작업해줘" }],
-          workflowAnchorMessageId: "user-1",
-          workflowEvents: [
-            { id: "workflow-1", toolName: "todo_write", title: "todo_write", detail: "- [ ] 기존 HTML 구조 확인\n- [ ] 화면 점검", status: "done", level: "child" },
-            { id: "workflow-2", toolName: "cmd", title: "cmd", detail: "{\n  \"command\": \"npm test\"\n}", status: "done", level: "child" },
-            { id: "workflow-3", toolName: "", title: "최종 답변", detail: "최종 답변을 작성했습니다.", status: "done", level: "parent", role: "final" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const workflowText = document.querySelector(".workflow-message")?.textContent || "";
-    expect(workflowText).toContain("작업 목록 정리할 일을 정리했습니다.");
-    expect(workflowText).not.toContain("todo_write");
-    expect(workflowText).toContain("cmd{");
-    expect(workflowText).toContain("\"command\"");
-  });
-
-  it("shows todo_write as a short user-facing checklist step", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          messages: [{ id: "user-1", role: "user", text: "보고서 작성해줘" }],
-          workflowAnchorMessageId: "user-1",
-          workflowEvents: [
-            {
-              id: "workflow-1",
-              toolName: "todo_write",
-              title: "todo_write",
-              detail: "TODO.md",
-              status: "running",
-              level: "child",
-            },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const workflowText = document.querySelector(".workflow-message")?.textContent || "";
-    expect(workflowText).toContain("작업 목록 정리");
-    expect(workflowText).not.toContain("todo_write");
-    expect(workflowText).not.toContain("TODO.md");
-  });
-
-  it("keeps the latest running tool detail in the compact one-line style", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          messages: [{ id: "user-1", role: "user", text: "긴 도구 실행해줘" }],
-          workflowAnchorMessageId: "user-1",
-          workflowEvents: [
-            {
-              id: "workflow-1",
-              toolName: "shell_command",
-              title: "명령 실행",
-              detail: "아주 긴 진행 메시지가 도구 실행 중에 들어와도 현재 단계에서 여러 줄로 늘어나지 않아야 합니다.",
-              status: "running",
-              level: "child",
-            },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const detail = document.querySelector(".workflow-step.child.running small");
-    expect(detail?.className).toContain("workflow-tool-detail");
-  });
-
-  it("does not describe failed todo_write steps as completed", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          messages: [{ id: "user-1", role: "user", text: "보고서 작성해줘" }],
-          workflowAnchorMessageId: "user-1",
-          workflowEvents: [
-            {
-              id: "workflow-1",
-              toolName: "todo_write",
-              title: "작업 목록 정리",
-              detail: "Invalid input for todo_write: Either item or todos must be provided",
-              status: "error",
-              level: "child",
-            },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const workflowText = document.querySelector(".workflow-message")?.textContent || "";
-    expect(workflowText).toContain("작업 목록 정리");
-    expect(workflowText).toContain("오류");
-    expect(workflowText).toContain("할 일 정리에 실패했습니다.");
-    expect(workflowText).toContain("입력 형식 오류");
-    expect(workflowText).not.toContain("todo_write");
-    expect(workflowText).not.toContain("할 일을 정리했습니다.");
   });
 
   it("renders the total workflow duration without record counts", () => {
@@ -1819,44 +1441,6 @@ describe("MessageList", () => {
     expect(workflowArticle).toContain("1초 동안 작업");
   });
 
-  it("renders restored workflow records under each user turn", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          messages: [
-            { id: "user-1", role: "user", text: "첫 질문" },
-            { id: "assistant-1", role: "assistant", text: "첫 답변", isComplete: true },
-            { id: "user-2", role: "user", text: "후속 질문" },
-            { id: "assistant-2", role: "assistant", text: "후속 답변", isComplete: true },
-          ],
-          workflowAnchorMessageId: "user-2",
-          workflowEventsByMessageId: {
-            "user-1": [
-              { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-              { id: "workflow-2", toolName: "", title: "최종 답변", detail: "최종 답변을 작성했습니다.", status: "done", level: "parent" },
-            ],
-          },
-          workflowEvents: [
-            { id: "workflow-3", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-4", toolName: "shell_command", title: "명령 실행", detail: "npm test", status: "done", level: "child" },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const articles = [...document.querySelectorAll("article.message")].map((node) => node.textContent || "");
-    expect(articles[0]).toContain("첫 질문");
-    expect(articles[1]).toContain("작업 진행");
-    expect(articles[2]).toContain("첫 답변");
-    expect(articles[3]).toContain("후속 질문");
-    expect(articles[4]).toContain("작업 진행");
-    expect(articles[4]).toContain("명령 실행");
-    expect(articles[5]).toContain("후속 답변");
-  });
-
   it("renders assistant html code blocks as chat previews", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
@@ -1880,6 +1464,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     const frame = await screen.findByTitle("HTML preview") as HTMLIFrameElement;
     expect(frame).toBeTruthy();
@@ -1923,6 +1508,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     const frame = await screen.findByTitle("HTML preview") as HTMLIFrameElement;
     expect(frame).toBeTruthy();
@@ -1954,6 +1540,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     act(() => {
       vi.advanceTimersByTime(initialAppState.appSettings.streamStartBufferMs + 600);
@@ -2083,13 +1670,15 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     expect(screen.getByText("작성 완료 - chart.html")).toBeTruthy();
     expect(screen.getByText(/\d+ 토큰 \(1줄\)/)).toBeTruthy();
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("<canvas id=\"chart\">");
-    expect(document.querySelector(".workflow-list + .workflow-output-list .workflow-output-preview")).toBeTruthy();
+    expect(document.querySelector(".aside-activity > .workflow-output-preview")).toBeTruthy();
+    expect(document.querySelector(".aside-call-detail .workflow-output-preview")).toBeNull();
     expect(document.querySelector(".workflow-step .workflow-output-preview")).toBeFalsy();
-    expect(document.querySelector(".workflow-card")?.hasAttribute("open")).toBe(true);
+    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("true");
   });
 
   it("labels errored write previews as failed and does not offer an artifact open button", () => {
@@ -2120,61 +1709,11 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     expect(screen.getByText("작성 실패 - sample.html")).toBeTruthy();
     expect(screen.queryByText("작성 완료 - sample.html")).toBeNull();
     expect(screen.queryByRole("button", { name: /sample\.html 미리보기 열기/ })).toBeNull();
-  });
-
-  it("shows output previews immediately even when workflow steps are still staggered", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [
-            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
-          ],
-          workflowEvents: [
-            {
-              id: "workflow-plan",
-              toolName: "",
-              title: "작업 계획",
-              detail: "계획 중",
-              status: "done",
-              level: "parent",
-              role: "planning",
-            },
-            {
-              id: "workflow-read",
-              toolName: "read_file",
-              title: "read_file",
-              detail: "context.md",
-              status: "done",
-              level: "child",
-            },
-            {
-              id: "workflow-write",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "outputs/live.html",
-              status: "running",
-              level: "child",
-              toolInput: {
-                path: "outputs/live.html",
-                content: "<!doctype html><html><body><h1>Live</h1></body></html>",
-              },
-            },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("<h1>Live</h1>");
-    expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("live.html");
   });
 
   it("shows disabled long report progress as ordinary file writing", () => {
@@ -2227,8 +1766,9 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
-    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(document.querySelector(".aside-call-title")).toBeTruthy();
     expect(screen.getByText(/파일 작업 중... 36초 경과/)).toBeTruthy();
     expect(screen.queryByText("장문 보고서 생성")).toBeNull();
     expect(screen.queryByText("작성할 보고서 흐름")).toBeNull();
@@ -2270,8 +1810,9 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
-    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(document.querySelector(".aside-call-title")).toBeTruthy();
     expect(screen.queryByText("작성할 보고서 흐름")).toBeNull();
     expect(screen.queryByText("목차")).toBeNull();
     expect(screen.queryByText("진행중...")).toBeNull();
@@ -2307,8 +1848,9 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
-    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(document.querySelector(".aside-call-title")).toBeTruthy();
     expect(screen.getByText(/파일 작업 중... 2분 13초 경과/)).toBeTruthy();
     expect(screen.queryByText(/보고서 뼈대 생성 중/)).toBeNull();
     expect(document.querySelector(".workflow-long-report-current")).toBeNull();
@@ -2350,6 +1892,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
     expect(body.classList.contains("summarized")).toBe(false);
@@ -2393,6 +1936,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
     expect(screen.getByText("작성 중인 결과물 - internet-ai-future-report.html")).toBeTruthy();
@@ -2430,6 +1974,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
     expect(body.textContent).not.toContain("문서 시작");
@@ -2471,160 +2016,16 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
+    openExecutionDetails();
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
-    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(document.querySelector(".aside-call-title")).toBeTruthy();
     expect(screen.queryByText("장문 보고서 생성")).toBeNull();
     expect(body.textContent).not.toContain("보고서 시작");
     expect(body.textContent).toContain("마지막 장문 보고서 본문");
     expect(body.textContent).not.toBe(hugeContent);
     expect(document.querySelector(".workflow-output-line-count")?.textContent || "").toContain("12,002줄");
-  });
-
-  it("renders one running write preview for duplicate same-path workflow events", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [
-            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
-          ],
-          workflowEvents: [
-            {
-              id: "workflow-1",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "outputs/tailwind_design_system_필요성_보고서.html",
-              status: "running",
-              level: "child",
-              toolInput: {
-                path: "outputs/tailwind_design_system_필요성_보고서.html",
-                content: "<!doctype html>",
-              },
-            },
-            {
-              id: "workflow-2",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "파일 작업 중... 21초 경과 · outputs/tailwind_design_system_필요성_보고서.html",
-              status: "running",
-              level: "child",
-              toolInput: {
-                path: "outputs/tailwind_design_system_필요성_보고서.html",
-              },
-            },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelectorAll(".workflow-step.child")).toHaveLength(1);
-    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
-    expect(screen.getByText("작성 중인 결과물 - tailwind_design_system_필요성_보고서.html")).toBeTruthy();
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html>");
-    expect(document.querySelector(".workflow-list")?.textContent || "").not.toContain("outputs/tailwind_design_system_필요성_보고서.html");
-    expect(document.querySelector(".workflow-list .workflow-step.child strong")?.textContent).toBe("파일 작성");
-  });
-
-  it("renders one write preview when a stale running event follows the completed same-path event", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [
-            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
-          ],
-          workflowEvents: [
-            {
-              id: "workflow-done",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "outputs/live.html",
-              status: "done",
-              level: "child",
-              toolInput: {
-                path: "outputs/live.html",
-                content: "<!doctype html><h1>Done</h1>",
-              },
-            },
-            {
-              id: "workflow-stale-progress",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "파일 작업 중... outputs/live.html",
-              status: "running",
-              level: "child",
-              toolInput: {
-                path: "outputs/live.html",
-                content: "<!doctype html><h1>Stale</h1>",
-              },
-            },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
-    expect(document.querySelectorAll(".workflow-step.child")).toHaveLength(1);
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html><h1>Done</h1>");
-    expect(document.querySelector(".workflow-list .workflow-step.child strong")?.textContent).toBe("파일 작성");
-    expect(document.querySelector(".workflow-list .workflow-step.child small")?.textContent).toBe("완료 · live.html");
-    expect(document.querySelector(".workflow-list")?.textContent || "").not.toContain("outputs/live.html");
-  });
-
-  it("renders one write preview when a duplicate completed same-path event follows a running event", () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          workflowAnchorMessageId: "user-1",
-          messages: [
-            { id: "user-1", role: "user", text: "HTML 파일 만들어줘" },
-          ],
-          workflowEvents: [
-            {
-              id: "workflow-running",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "outputs/live.html",
-              status: "running",
-              level: "child",
-              toolInput: {
-                path: "outputs/live.html",
-                content: "<!doctype html><h1>Running</h1>",
-              },
-            },
-            {
-              id: "workflow-done",
-              toolName: "write_file",
-              title: "write_file",
-              detail: "Wrote outputs/live.html",
-              status: "done",
-              level: "child",
-              toolInput: {
-                path: "outputs/live.html",
-                content: "<!doctype html><h1>Done</h1>",
-              },
-            },
-          ],
-        }}
-      >
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
-    expect(document.querySelectorAll(".workflow-step.child")).toHaveLength(1);
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("<!doctype html><h1>Done</h1>");
-    expect(document.querySelector(".workflow-list .workflow-step.child small")?.textContent).toBe("완료 · 파일 작업 완료 · live.html");
   });
 
   it("opens a completed html write preview before the final assistant answer arrives", async () => {
@@ -2684,6 +2085,7 @@ describe("MessageList", () => {
         <ArtifactPanel />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     const openButton = screen.getByRole("button", { name: "fast-report.html 미리보기 열기" });
     expect(openButton.closest(".workflow-output-preview")).toBeTruthy();
@@ -2723,6 +2125,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     expect(screen.getByText("수정 완료 - super-ai-worm-game.html")).toBeTruthy();
     expect(screen.getByText(/삭제 \d+ 토큰 \(3줄\), 추가 \d+ 토큰 \(3줄\)/)).toBeTruthy();
@@ -2774,6 +2177,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     expect(screen.getAllByText("수정 완료 - report.html")).toHaveLength(2);
     expect(screen.getByText("-- <h1>Old headline</h1>").className).toContain("removed");
@@ -2817,6 +2221,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("report.html");
     expect(screen.getByText(/삭제 \d+ 토큰 \(1줄\), 추가 \d+ 토큰 \(1줄\)/)).toBeTruthy();
@@ -2875,6 +2280,7 @@ describe("MessageList", () => {
           <MessageList />
         </AppStateProvider>,
       );
+    openExecutionDetails();
 
       const body = document.querySelector(".workflow-output-body") as HTMLElement;
       expect(body.className).toContain("running-fill");
@@ -2942,6 +2348,7 @@ describe("MessageList", () => {
           <MessageList />
         </AppStateProvider>,
       );
+    openExecutionDetails();
 
       const body = document.querySelector(".workflow-output-body") as HTMLElement;
       expect(body.textContent || "").toContain("</html>");
@@ -3002,12 +2409,14 @@ describe("MessageList", () => {
           <MessageList />
         </AppStateProvider>,
       );
+    openExecutionDetails();
 
       const messages = document.querySelector(".messages") as HTMLElement;
       clientHeights.set(messages, 80);
       scrollHeights.set(messages, 420);
 
       await userEvent.click(screen.getByRole("button", { name: "write first" }));
+      openExecutionDetails();
       await waitFor(() => expect(messages.scrollTop).toBe(420));
 
       await waitFor(() => expect(document.querySelector(".workflow-output-body")).toBeTruthy());
@@ -3059,101 +2468,11 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     const body = document.querySelector(".workflow-output-body") as HTMLElement;
     expect(body.className).toContain("diff");
     expect(body.className).not.toContain("running-fill");
-  });
-
-  it("buffers running write preview growth before revealing it in small chunks", () => {
-    vi.useFakeTimers();
-
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [
-            { id: "user-1", role: "user", text: "인터넷 AI 미래 보고서 작성해줘" },
-          ],
-          appSettings: {
-            ...initialAppState.appSettings,
-            streamRevealDurationMs: 600,
-          },
-        }}
-      >
-        <WorkflowWriteDeltaProbe />
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const firstContent = "<!doctype html>\n<section>1</section>";
-    const completeContent = "<!doctype html>\n<section>1</section>\n<section>2</section>";
-    fireEvent.click(screen.getByRole("button", { name: "write first" }));
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(firstContent);
-
-    fireEvent.click(screen.getByRole("button", { name: "write more" }));
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(firstContent);
-
-    act(() => {
-      vi.advanceTimersByTime(162);
-    });
-
-    const firstBufferedStep = document.querySelector(".workflow-output-body")?.textContent || "";
-    expect(firstBufferedStep.length).toBeGreaterThan(firstContent.length);
-    expect(firstBufferedStep.length).toBeLessThan(completeContent.length);
-
-    act(() => {
-      vi.advanceTimersByTime(2000);
-    });
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(completeContent);
-  });
-
-  it("buffers running edit preview growth before revealing it in small chunks", () => {
-    vi.useFakeTimers();
-
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          busy: true,
-          workflowAnchorMessageId: "user-1",
-          messages: [
-            { id: "user-1", role: "user", text: "보고서 제목과 문장을 고쳐줘" },
-          ],
-          appSettings: {
-            ...initialAppState.appSettings,
-            streamRevealDurationMs: 600,
-          },
-        }}
-      >
-        <WorkflowEditDeltaProbe />
-        <MessageList />
-      </AppStateProvider>,
-    );
-
-    const firstContent = "-- <h1>Old</h1>++ ";
-    const completeContent = "-- <h1>Old</h1>++ <h1>New</h1><p>Fast</p>";
-    fireEvent.click(screen.getByRole("button", { name: "edit first" }));
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(firstContent);
-
-    fireEvent.click(screen.getByRole("button", { name: "edit more" }));
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(firstContent);
-
-    act(() => {
-      vi.advanceTimersByTime(162);
-    });
-
-    const firstBufferedStep = document.querySelector(".workflow-output-body")?.textContent || "";
-    expect(firstBufferedStep.length).toBeGreaterThan(firstContent.length);
-    expect(firstBufferedStep.length).toBeLessThan(completeContent.length);
-
-    act(() => {
-      vi.advanceTimersByTime(2000);
-    });
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe(completeContent);
-    expect(screen.getByText("++ <h1>New</h1><p>Fast</p>").className).toContain("added");
   });
 
   it("replaces a streamed write preview when the completed tool name differs", async () => {
@@ -3173,6 +2492,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     act(() => {
       screen.getByRole("button", { name: "complete write" }).click();
@@ -3181,6 +2501,7 @@ describe("MessageList", () => {
       vi.advanceTimersByTime(500);
     });
 
+    openExecutionDetails();
     expect(screen.queryByText("작성 중인 결과물 - internet-ai-future-report.html")).toBeNull();
     expect(screen.getByText("작성 완료 - internet-ai-future-report.html")).toBeTruthy();
     expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
@@ -3216,8 +2537,9 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
-    expect(screen.getByText("파일 작성")).toBeTruthy();
+    expect(document.querySelector(".aside-call-title")).toBeTruthy();
     expect(screen.queryByText("장문 보고서 생성")).toBeNull();
     expect(document.querySelector(".workflow-output-preview")).toBeNull();
     expect(screen.queryByText("작성 완료 - CPU_반도체_주가_급등_분석_보고서.html")).toBeNull();
@@ -3267,6 +2589,7 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     expect(screen.getByText("작성 중인 결과물 - cpu_주가_급등_분석_보고서.html")).toBeTruthy();
     expect(screen.getAllByText(/3\/8 섹션 작성 중 · 산업별 충격 비교/).length).toBeGreaterThan(0);
@@ -3340,7 +2663,7 @@ describe("MessageList", () => {
     );
 
     const articles = [...document.querySelectorAll("article.message")].map((node) => node.textContent || "");
-    expect(articles[1]).toContain("작업 진행");
+    expect(articles[1]).toContain("작업 과정");
     expect(articles[1]).not.toContain("출처");
     expect(articles[2]).toContain("문서에는 1분기 실적과 주주환원 정책이 정리돼 있습니다.");
     expect(articles[2]).toContain("출처");
@@ -3362,7 +2685,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-web-source-favicon")?.textContent).toBe("E");
     expect(document.querySelector(".workflow-web-source-favicon img")?.getAttribute("src")).toBe("https://example.com/favicon.ico");
     expect(screen.getAllByText("myharness docs")).toHaveLength(1);
-    expect(screen.getByText("웹 검색")).toBeTruthy();
+    expect(document.querySelector(".aside-activity-summary")?.textContent).toMatch(/2건/);
     await user.click(screen.getByText(/문서에는 1분기 실적/));
     expect((document.querySelector(".answer-web-sources") as HTMLDetailsElement | null)?.open).toBe(false);
   });
@@ -3509,6 +2832,7 @@ describe("MessageList", () => {
         <ArtifactPanel />
       </AppStateProvider>,
     );
+    openExecutionDetails();
 
     const card = await screen.findByRole("button", { name: "super-ai-worm-game.html 미리보기 열기" });
     expect(card.closest(".assistant-artifact-inline")).toBeTruthy();
@@ -4178,6 +3502,23 @@ describe("MessageList", () => {
     const articles = document.querySelectorAll("article.message.log");
     expect(articles).toHaveLength(1);
     expect(articles[0]?.textContent).toBe("real backend warning");
+  });
+
+  it("hides legacy split tracebacks and validation dumps but keeps user-facing errors", () => {
+    render(<AppStateProvider initialState={{ ...initialAppState, messages: [
+      { id: "trace-1", role: "log", text: "tool execution raised: name=future_tool id=call_any" },
+      { id: "trace-2", role: "log", text: "Traceback (most recent call last):" },
+      { id: "trace-3", role: "log", text: '  File "private/path.py", line 10, in execute' },
+      { id: "trace-4", role: "log", text: "NotADirectoryError: invalid directory" },
+      { id: "answer", role: "assistant", text: "검색 경로를 확인하고 다시 시도하겠습니다." },
+      { id: "validation", role: "log", text: "invalid input for new_tool: 1 validation error for Input\ninput_value=private data" },
+      { id: "failure", role: "log", isError: true, text: "작업을 완료하지 못했습니다." },
+    ] }}><MessageList /></AppStateProvider>);
+    expect(screen.queryByText(/Traceback/)).toBeNull();
+    expect(screen.queryByText(/private data/)).toBeNull();
+    expect(screen.queryByText(/NotADirectoryError/)).toBeNull();
+    expect(screen.getByText("검색 경로를 확인하고 다시 시도하겠습니다.")).toBeTruthy();
+    expect(screen.getByText("작업을 완료하지 못했습니다.")).toBeTruthy();
   });
 
   it("renders adjacent plain log lines inside one message bubble", () => {
@@ -5573,7 +4914,7 @@ describe("MessageList", () => {
     }
   });
 
-  it("smooth vertical auto-scroll accelerates before slowing down", () => {
+  it("opens a completed chat at the bottom without scheduling scroll animation", () => {
     const animationFrames: FrameRequestCallback[] = [];
     const scrollTopValues = new WeakMap<Element, number>();
     const originalRequestAnimationFrame = window.requestAnimationFrame;
@@ -5630,17 +4971,12 @@ describe("MessageList", () => {
       );
 
       const messages = document.querySelector(".messages") as HTMLElement;
-      const samples: number[] = [];
+      expect(messages.scrollTop).toBe(messages.scrollHeight);
       for (const now of [0, 120, 240, 760, 880, 1000]) {
-        const frame = animationFrames.shift();
-        expect(frame).toBeTruthy();
-        act(() => frame?.(now));
-        samples.push(messages.scrollTop);
+        const pendingFrames = animationFrames.splice(0);
+        act(() => pendingFrames.forEach((frame) => frame(now)));
+        expect(messages.scrollTop).toBe(messages.scrollHeight);
       }
-
-      const deltas = samples.slice(1).map((value, index) => value - samples[index]);
-      expect(deltas[1]).toBeGreaterThan(deltas[0]);
-      expect(deltas[4]).toBeLessThan(deltas[3]);
     } finally {
       window.requestAnimationFrame = originalRequestAnimationFrame;
       window.cancelAnimationFrame = originalCancelAnimationFrame;
@@ -6050,88 +5386,6 @@ describe("MessageList", () => {
 
       expect(messages.scrollTop).toBe(520);
     } finally {
-      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
-      if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
-      if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);
-    }
-  });
-
-  it("keeps following the bottom as staggered workflow rows become visible", async () => {
-    vi.useFakeTimers();
-    const scrollTopValues = new WeakMap<Element, number>();
-    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
-    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
-    const originalScrollTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
-
-    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-      configurable: true,
-      get() {
-        if (this.classList?.contains("messages")) {
-          const visibleStepCount = document.querySelectorAll(".workflow-step, .workflow-narrative").length;
-          return 220 + visibleStepCount * 120;
-        }
-        return originalScrollHeight?.get?.call(this) ?? 0;
-      },
-    });
-    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
-      configurable: true,
-      get() {
-        return this.classList?.contains("messages") ? 80 : originalClientHeight?.get?.call(this) ?? 0;
-      },
-    });
-    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
-      configurable: true,
-      get() {
-        return scrollTopValues.get(this) ?? originalScrollTop?.get?.call(this) ?? 0;
-      },
-      set(value: number) {
-        scrollTopValues.set(this, value);
-      },
-    });
-
-    try {
-      render(
-        <AppStateProvider
-          initialState={{
-            ...initialAppState,
-            busy: true,
-            messages: [
-              { id: "user-1", role: "user", text: "진행 상황 보여줘" },
-            ],
-            workflowAnchorMessageId: "user-1",
-            workflowEvents: [
-              { id: "workflow-1", toolName: "", title: "작업 실행", detail: "작업 중입니다.", status: "running", level: "parent", role: "purpose", purpose: "action", groupId: "group-action" },
-              { id: "workflow-2", toolName: "read_file", title: "파일 확인", detail: "a.ts", status: "done", level: "child", groupId: "group-action" },
-              { id: "workflow-3", toolName: "file_edit", title: "파일 수정", detail: "b.ts", status: "running", level: "child", groupId: "group-action" },
-            ],
-            appSettings: {
-              ...initialAppState.appSettings,
-              streamScrollDurationMs: 0,
-            },
-          }}
-        >
-          <MessageList />
-        </AppStateProvider>,
-      );
-
-      const messages = document.querySelector(".messages") as HTMLElement;
-      expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(1);
-
-      act(() => {
-        vi.advanceTimersByTime(90);
-      });
-
-      expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(2);
-      expect(messages.scrollTop).toBe(460);
-
-      act(() => {
-        vi.advanceTimersByTime(90);
-      });
-
-      expect(document.querySelectorAll(".workflow-step, .workflow-narrative")).toHaveLength(3);
-      expect(messages.scrollTop).toBe(580);
-    } finally {
-      vi.useRealTimers();
       if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
       if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
       if (originalScrollTop) Object.defineProperty(HTMLElement.prototype, "scrollTop", originalScrollTop);

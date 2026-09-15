@@ -668,8 +668,9 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
         ToolExecutionContext(cwd=tmp_path),
     )
     assert skill_result.output.startswith("스킬: Pytest\n설명: Helpful pytest notes.")
-    assert "Skill file:" not in skill_result.output
-    assert "Skill directory:" not in skill_result.output
+    assert f"Skill file: {(pytest_dir / 'SKILL.md').resolve()}" in skill_result.output
+    assert f"Skill directory (<skill>): {pytest_dir.resolve()}" in skill_result.output
+    assert f"Task working directory: {tmp_path.resolve()}" in skill_result.output
     assert "Helpful pytest notes." in skill_result.output
 
     source_result = await SkillTool().execute(

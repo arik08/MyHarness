@@ -98,6 +98,18 @@ def _wto_headers() -> dict[str, str]:
     }
 
 
+def _wto_period(value: str) -> str:
+    token = value.strip().upper()
+    if re.fullmatch(r"\d{4}-\d{2}", token):
+        token = token.replace("-", "")
+    if re.fullmatch(r"\d{4}", token) or re.fullmatch(r"\d{4}Q[1-4]", token):
+        return token
+    if re.fullmatch(r"\d{6}", token):
+        datetime.strptime(token, "%Y%m")
+        return token
+    raise ValueError("WTO periods must be YYYY, YYYYQ1-YYYYQ4, or YYYYMM/ YYYY-MM.")
+
+
 def _month(value: str, *, field_name: str) -> str:
     token = value.replace("-", "").strip()
     if not re.fullmatch(r"\d{6}", token):
@@ -167,6 +179,8 @@ def _xml_rows(content: bytes) -> tuple[list[dict[str, str]], dict[str, str]]:
 
 
 def _rows_from_census(payload: object, limit: int) -> list[dict[str, str]]:
+    if payload == []:
+        return []
     if not isinstance(payload, list) or not payload or not isinstance(payload[0], list):
         raise ValueError("U.S. Census returned an unexpected response shape.")
     headers = [str(value) for value in payload[0]]
@@ -247,7 +261,7 @@ def search_catalog(source: Source, query: str = "", limit: int = 50) -> str:
     elif selected == "wto":
         payload = request_json(
             "WTO Timeseries API",
-            f"{WTO_BASE_URL}/indicator",
+            f"{WTO_BASE_URL}/indicators",
             params={"lang": 1},
             headers=_wto_headers(),
         )
@@ -261,7 +275,7 @@ def search_catalog(source: Source, query: str = "", limit: int = 50) -> str:
         if isinstance(rows, list) and needle:
             rows = [row for row in rows if needle in json.dumps(row, ensure_ascii=False).casefold()]
         data = rows[:safe_limit] if isinstance(rows, list) else rows
-        source_id = "indicator"
+        source_id = "indicators"
     else:
         data = {
             "dataset": "DS-045409",
@@ -293,7 +307,10 @@ def query_trade(
     indicator: str | None = None,
     limit: int = 100,
 ) -> str:
-    """Query bilateral or reporter trade values using source-native official classifications."""
+    """Query trade with source-native codes. WTO uses numeric economy codes (e.g. 410),
+    and the indicator determines flow/frequency; use its product classification.
+    WTO TOTAL uses the indicator's default products, not a synthetic aggregate.
+    """
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=5000)
     end_value = end_period or start_period
@@ -353,6 +370,7 @@ def query_trade(
                 "U.S. Census International Trade",
                 f"{CENSUS_BASE_URL}/{endpoint}",
                 params={**base_params, "time": f"{period[:4]}-{period[4:]}"},
+                empty_status_codes=(204,),
             )
             for row in _rows_from_census(payload, safe_limit - len(rows)):
                 row.setdefault("time", f"{period[:4]}-{period[4:]}")
@@ -372,37 +390,50 @@ def query_trade(
     if selected == "wto":
         if not indicator:
             raise ValueError("indicator is required for WTO queries; use search_catalog first.")
-        reporter_code = (
-            safe_identifier(reporter.upper(), field_name="reporter", pattern=r"[A-Z0-9_+]+")
-            if reporter
-            else None
-        )
+        if not reporter:
+            raise ValueError("reporter numeric WTO economy code is required.")
+        reporter_code = safe_identifier(reporter, field_name="WTO reporter", pattern=r"\d{3}(,\d{3})*")
         partner_code = (
-            safe_identifier(partner.upper(), field_name="partner", pattern=r"[A-Z0-9_+]+")
+            safe_identifier(partner, field_name="WTO partner", pattern=r"\d{3}(,\d{3})*")
             if partner
-            else None
+            else "default"
         )
+        start = _wto_period(start_period)
+        end = _wto_period(end_value)
+        if len(start) != len(end) or end < start:
+            raise ValueError("WTO period bounds must have the same granularity and end >= start.")
         payload = request_json(
             "WTO Timeseries API",
-            f"{WTO_BASE_URL}/indicator",
+            f"{WTO_BASE_URL}/data",
             params={
                 "i": safe_identifier(indicator, field_name="indicator", pattern=r"[A-Za-z0-9_]+"),
                 "r": reporter_code,
                 "p": partner_code,
-                "ps": start_period,
-                "pe": end_value,
+                "ps": start if start == end else f"{start}-{end}",
+                "pc": "default" if product.upper() == "TOTAL" else safe_identifier(
+                    product, field_name="WTO product", pattern=r"[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*"
+                ),
+                "spc": "false",
                 "fmt": "json",
+                "head": "M",
                 "max": safe_limit,
             },
             headers=_wto_headers(),
+            # WTO streams Windows-1252 punctuation without a charset header.
+            # Prefer normal JSON decoding, falling back only on invalid Unicode.
+            fallback_encoding="cp1252",
         )
+        rows = payload.get("Dataset") if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            raise ValueError("WTO returned an unexpected data response shape.")
         return result_envelope(
             source=SOURCES[selected],
             source_id=indicator,
-            data=payload,
+            data=rows[:safe_limit],
             as_of=end_value,
             completeness="api_limit_applied",
             license_name="WTO statistical data terms",
+            metadata={"flow_and_frequency": "determined_by_indicator", "product": product},
         )
     freq = frequency.upper()
     if freq not in {"A", "M"}:
@@ -499,7 +530,7 @@ def get_source_health(source: Source) -> str:
         def probe() -> object:
             return request_json(
                 "WTO Timeseries API",
-                f"{WTO_BASE_URL}/indicator",
+                f"{WTO_BASE_URL}/indicators",
                 params={"lang": 1},
                 headers=_wto_headers(),
             )

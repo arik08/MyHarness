@@ -171,6 +171,19 @@ async def test_bash_tool_timeout_returns_partial_output_for_real_command(tmp_pat
     assert result.metadata["timed_out"] is True
 
 
+@pytest.mark.asyncio
+async def test_display_disconnect_does_not_break_real_command(tmp_path: Path):
+    async def disconnected(*args):
+        raise RuntimeError("display disconnected")
+
+    result = await BashTool().execute(
+        BashToolInput(command="python -u -c \"print('command completed')\""),
+        ToolExecutionContext(cwd=tmp_path, metadata={"execution_output_callback": disconnected}),
+    )
+    assert result.is_error is False
+    assert "command completed" in result.output
+
+
 def test_bash_tool_timeout_omits_empty_partial_output_block():
     output = _format_timeout_output(
         bytearray(),

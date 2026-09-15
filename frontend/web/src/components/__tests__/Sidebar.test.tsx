@@ -502,7 +502,7 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "프로젝트 선택" }).getAttribute("data-tooltip-placement")).toBe("right");
     expect(screen.getByRole("button", { name: "새 대화" }).getAttribute("data-tooltip")).toBe("새 대화");
     expect(screen.getByRole("button", { name: "새 대화" }).getAttribute("data-tooltip-placement")).toBe("right");
-    expect(screen.getByRole("button", { name: "런타임 설정 열기" }).getAttribute("data-tooltip-placement")).toBe("right");
+    expect(screen.getByRole("button", { name: "사용 가능한 모델 관리" }).getAttribute("data-tooltip-placement")).toBe("right");
   });
 
   it("links the header marketplace control to the skill catalog", () => {
@@ -609,230 +609,20 @@ describe("Sidebar", () => {
     expect(clampSidebarWidth(420, 1440)).toBe(420);
   });
 
-  it.each([false, true])("selects the main model while busy=%s without exposing a Sub selector", async (busy) => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          sessionId: "session-active",
-          clientId: "client-1",
-          provider: "codex",
-          providerLabel: "Codex Subscription",
-          model: "gpt-5.5",
-          busy,
-          subagentModel: "gpt-5.4-mini",
-          runtimePicker: {
-            ...initialAppState.runtimePicker,
-            open: !busy,
-            loading: false,
-            selectedProvider: "codex",
-            modelOpen: true,
-            providers: [{ value: "codex", label: "Codex Subscription", active: true }],
-            modelsByProvider: {
-              codex: [
-                { value: "gpt-5.5", label: "gpt-5.5", active: true },
-                { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
-              ],
-            },
-            models: [
-              { value: "gpt-5.5", label: "gpt-5.5", active: true },
-              { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
-            ],
-          },
-        }}
-      >
-        <Sidebar />
-      </AppStateProvider>,
-    );
-
-    expect(screen.queryByRole("tab", { name: "Sub" })).toBeNull();
-    if (busy) {
-      await userEvent.click(screen.getByRole("button", { name: "런타임 설정 열기" }));
-      expect(screen.queryByText("응답이 끝난 뒤 선택할 수 있습니다.")).toBeNull();
-    }
-    await userEvent.click(screen.getByRole("button", { name: /gpt-5\.4-nano/ }));
-
-    await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session-active", "client-1", {
-      type: "apply_select_command",
-      command: "model",
-      value: "gpt-5.4-nano",
-    }));
+  it.each([false, true])("only opens model availability management in admin mode=%s", async (adminMode) => {
+    render(<AppStateProvider initialState={{ ...initialAppState, adminMode }}><Sidebar /></AppStateProvider>);
+    const trigger = screen.getByRole("button", { name: "사용 가능한 모델 관리" });
+    expect((trigger as HTMLButtonElement).disabled).toBe(!adminMode);
+    await userEvent.click(trigger);
+    expect(Boolean(screen.queryByRole("dialog", { name: "사용 가능한 모델 관리" }))).toBe(adminMode);
+    expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])("selects main model reasoning effort while busy=%s without a Sub selector", async (busy) => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          sessionId: "session-active",
-          clientId: "client-1",
-          provider: "codex",
-          providerLabel: "Codex Subscription",
-          model: "gpt-5.5",
-          subagentModel: "gpt-5.4-mini",
-          subagentEffort: "medium",
-          busy,
-          runtimePicker: {
-            ...initialAppState.runtimePicker,
-            open: true,
-            loading: false,
-            selectedProvider: "codex",
-            modelOpen: true,
-            providers: [{ value: "codex", label: "Codex Subscription", active: true }],
-            efforts: [
-              { value: "medium", label: "Medium", active: true },
-              { value: "high", label: "High" },
-            ],
-            modelsByProvider: {
-              codex: [
-                { value: "gpt-5.4-mini", label: "gpt-5.4-mini", active: true },
-                { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
-              ],
-            },
-            models: [
-              { value: "gpt-5.4-mini", label: "gpt-5.4-mini", active: true },
-              { value: "gpt-5.4-nano", label: "gpt-5.4-nano" },
-            ],
-          },
-        }}
-      >
-        <Sidebar />
-      </AppStateProvider>,
-    );
-
-    expect(screen.queryByRole("tab", { name: "Sub" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: /gpt-5\.4-nano/ }));
-    await userEvent.click(screen.getByRole("button", { name: /High/ }));
-
-    await waitFor(() => expect(sendBackendRequest).toHaveBeenLastCalledWith("session-active", "client-1", {
-      type: "apply_select_command",
-      command: "effort",
-      value: "high",
-    }));
-  });
-
-  it.each(["model", "effort"])("grows the %s picker upward when its content exceeds the provider panel", async (panelName) => {
-    const { container } = render(
-      <AppStateProvider initialState={{
-        ...initialAppState,
-        runtimePicker: {
-          ...initialAppState.runtimePicker,
-          open: true,
-          loading: false,
-          modelOpen: true,
-          effortOpen: true,
-          providers: [{ value: "codex", label: "Codex Subscription", active: true }],
-          models: [{ value: "gpt-5.5", label: "gpt-5.5", active: true }],
-          efforts: [{ value: "medium", label: "Medium", active: true }],
-        },
-      }}>
-        <Sidebar />
-      </AppStateProvider>,
-    );
-    const anchor = screen.getByRole("button", { name: "런타임 설정 열기" });
-    let anchorTop = 500;
-    anchor.getBoundingClientRect = () => ({
-      x: 16, y: anchorTop, left: 16, top: anchorTop, right: 300,
-      bottom: anchorTop + 32, width: 284, height: 32, toJSON: () => ({}),
-    });
-    const picker = container.querySelector(".runtime-picker-layer") as HTMLElement;
-    for (const panel of picker.querySelectorAll(".runtime-picker-panel")) {
-      Object.defineProperty(panel.querySelector(".runtime-picker-header"), "offsetHeight", { configurable: true, value: 48 });
-      Object.defineProperty(panel.querySelector(".runtime-picker-list"), "scrollHeight", { configurable: true, value: 96 });
-    }
-    fireEvent(window, new Event("resize"));
-    const initialTop = Number.parseFloat(picker.style.top);
-    const list = picker.querySelector(`.runtime-picker-${panelName}-panel .runtime-picker-list`)!;
-    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 500 });
-    fireEvent(window, new Event("resize"));
-    expect(Number.parseFloat(picker.style.top)).toBeLessThan(initialTop);
-    expect(picker.style.top).toBe("132px");
-    expect(picker.style.getPropertyValue("--runtime-picker-panel-max-height")).toBe("360px");
-
-    // Reposition again when the available height shrinks; keep both edges visible.
-    anchorTop = 240;
-    fireEvent(window, new Event("resize"));
-    expect(picker.style.top).toBe("8px");
-    expect(picker.style.getPropertyValue("--runtime-picker-panel-max-height")).toBe("224px");
-  });
-
-  it("keeps the runtime picker inside narrow viewports", async () => {
-    const originalInnerWidth = window.innerWidth;
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 360 });
-
-    try {
-      const { container } = render(
-        <AppStateProvider
-          initialState={{
-            ...initialAppState,
-            sessionId: "session-active",
-            clientId: "client-1",
-            providerLabel: "Codex Subscription",
-            model: "gpt-5.5",
-            subagentModel: "gpt-5.4-mini",
-            runtimePicker: {
-              ...initialAppState.runtimePicker,
-              open: true,
-              loading: false,
-              selectedProvider: "codex",
-              modelOpen: true,
-              effortOpen: true,
-              providers: [{ value: "codex", label: "Codex Subscription", active: true }],
-              models: [{ value: "gpt-5.5", label: "gpt-5.5", active: true }],
-              efforts: [{ value: "medium", label: "Medium", active: true }],
-            },
-          }}
-        >
-          <Sidebar />
-        </AppStateProvider>,
-      );
-
-      const button = screen.getByRole("button", { name: "런타임 설정 열기" });
-      button.getBoundingClientRect = () => ({
-        x: 340,
-        y: 500,
-        left: 340,
-        top: 500,
-        right: 356,
-        bottom: 532,
-        width: 16,
-        height: 32,
-        toJSON: () => ({}),
-      });
-
-      const picker = container.querySelector(".runtime-picker-layer") as HTMLElement;
-      Object.defineProperty(picker, "scrollWidth", { configurable: true, value: 620 });
-      Object.defineProperty(picker, "scrollHeight", { configurable: true, value: 420 });
-      Object.defineProperty(picker, "offsetHeight", { configurable: true, value: 420 });
-
-      fireEvent(window, new Event("resize"));
-
-      await waitFor(() => expect(Number.parseFloat(picker.style.left)).toBeLessThanOrEqual(32));
-      expect(picker.style.getPropertyValue("--runtime-picker-panel-max-height")).toBeTruthy();
-    } finally {
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
-    }
-  });
-
-  it("does not leave the runtime picker floating when the sidebar is collapsed", async () => {
-    render(
-      <AppStateProvider
-        initialState={{
-          ...initialAppState,
-          sidebarCollapsed: true,
-          runtimePicker: {
-            ...initialAppState.runtimePicker,
-            open: true,
-            loading: false,
-            providers: [{ value: "codex", label: "Codex Subscription", active: true }],
-          },
-        }}
-      >
-        <Sidebar />
-      </AppStateProvider>,
-    );
-
-    expect(screen.queryByRole("region", { name: "Provider 선택" })).toBeNull();
+  it("hides model management when the sidebar is collapsed", () => {
+    render(<AppStateProvider initialState={{ ...initialAppState, adminMode: true, sidebarCollapsed: true,
+      runtimePicker: { ...initialAppState.runtimePicker, open: true },
+    }}><Sidebar /></AppStateProvider>);
+    expect(screen.queryByRole("dialog", { name: "사용 가능한 모델 관리" })).toBeNull();
   });
 
   it.each([true, false])("keeps the streaming chat spinner after new chat (saved row: %s)", async (savedRow) => {

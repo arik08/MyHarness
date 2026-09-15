@@ -1,4 +1,5 @@
 import { resourceAdmissionReason } from "./modules/resourceAdmission.js";
+import { applyModelAvailability, changeModelAvailability } from "./modules/modelAvailability.js";
 import { createServer } from "node:http";
 import { createActivityLog } from "./modules/activityLog.js";
 import { createResourceSampler, createServerMetrics } from "./modules/serverMetrics.js";
@@ -5576,6 +5577,13 @@ function normalizeComposeOptions(value) {
   }
   const options = {};
   const outputSurface = String(value.output_surface || value.outputSurface || "").trim().toLowerCase();
+  for (const [key, alias, allowed] of [
+    ["analysis_depth", "analysisDepth", ["brief", "standard", "deep"]],
+    ["answer_length", "answerLength", ["brief", "standard", "detailed"]],
+  ]) {
+    const selected = String(value[key] || value[alias] || "").trim().toLowerCase();
+    if (allowed.includes(selected)) options[key] = selected;
+  }
   if (outputSurface === "chat" || outputSurface === "artifact") {
     options.output_surface = outputSurface;
   }
@@ -5695,6 +5703,11 @@ function writeSseEvent(client, event, id = null) {
 }
 
 function emit(session, event) {
+  if (event.type === "prompt_enhanced") {
+    const pending = session.promptEnhancement;
+    if (pending?.id === event.request_id) pending.complete(event);
+    return;
+  }
   updateSessionReplayState(session.replayState, event);
   const eventId = session.nextEventId;
   session.nextEventId += 1;
@@ -5894,7 +5907,7 @@ async function createBackendSession(options = {}, { fromQueue = false } = {}) {
       if (isNoisyBackendLogLine(line)) {
         return;
       }
-      emit(session, { type: "transcript_item", item: { role: "log", text: line } });
+      writeRuntimeLog("backend_diagnostic", { session_id: session.id, stream: "stdout", message: line });
       return;
     }
     try {
@@ -5912,7 +5925,7 @@ async function createBackendSession(options = {}, { fromQueue = false } = {}) {
     if (isNoisyBackendLogLine(line)) {
       return;
     }
-    emit(session, { type: "transcript_item", item: { role: "log", text: line } });
+    writeRuntimeLog("backend_diagnostic", { session_id: session.id, stream: "stderr", message: line });
   });
 
   child.on("error", (error) => {
@@ -6214,6 +6227,7 @@ function updateSessionStateFromBackendEvent(session, event) {
   if (!event || typeof event !== "object") {
     return;
   }
+  if (event.state?.runtime_options) session.runtimeOptions = event.state.runtime_options;
   activityLog.event(session, event.type);
   if (event.type === "ready") {
     session.ready = true;
@@ -6223,6 +6237,8 @@ function updateSessionStateFromBackendEvent(session, event) {
   }
   if ((event.type === "ready" || event.type === "state_snapshot") && event.state && typeof event.state === "object") {
     session.runtimePreferences = {
+      ...session.runtimePreferences,
+      gpt56ContextMode: event.state.runtime_options?.context_mode || session.runtimePreferences?.gpt56ContextMode || "cost-saver",
       activeProfile: cleanRuntimePreference(event.state.active_profile || session.runtimePreferences?.activeProfile),
       model: cleanRuntimePreference(event.state.model || session.runtimePreferences?.model),
       effort: normalizeRuntimeEffortValue(event.state.effort || session.runtimePreferences?.effort),
@@ -6282,7 +6298,55 @@ async function saveDesignModeSettings(body) {
   return { mode: body.mode };
 }
 
+async function readModelAvailability() {
+  const python = backendPythonCommand();
+  return new Promise((resolve, reject) => {
+    const child = spawn(python.file, [...python.args, "-c",
+      "import json; from myharness.config.settings import load_settings; from myharness.runtime_catalog import _runtime_picker_options; print(json.dumps(_runtime_picker_options(load_settings(apply_model_policy=False))))"], {
+      cwd: repoRoot, windowsHide: true,
+      env: { ...process.env, PYTHONPATH: [join(repoRoot, "src"), process.env.PYTHONPATH].filter(Boolean).join(delimiter), PYTHONIOENCODING: "utf-8" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    const timer = setTimeout(() => { child.kill(); reject(new Error("모델 목록 조회 시간이 초과되었습니다.")); }, 15000);
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
+    child.stderr.resume();
+    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("close", async (code) => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error("모델 목록을 불러오지 못했습니다."));
+      try {
+        const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
+        resolve(applyModelAvailability(JSON.parse(output), settings.enabled_models_by_profile || {}));
+      } catch (error) { reject(error); }
+    });
+  });
+}
+
+async function saveModelAvailability(body) {
+  const catalog = await readModelAvailability();
+  let enabled;
+  await mutateJsonFile(join(globalConfigDir(), "settings.json"), (settings) => {
+    enabled = changeModelAvailability(catalog, settings.enabled_models_by_profile || {}, body);
+    settings.enabled_models_by_profile = enabled;
+  });
+  for (const session of sessions.values()) {
+    if (!session.shuttingDown) {
+      const options = applyModelAvailability(session.runtimeOptions || catalog, enabled);
+      session.runtimeOptions = options;
+      emit(session, { type: "state_snapshot", state: { runtime_options: options } });
+    }
+  }
+  return applyModelAvailability(catalog, enabled);
+}
+
 const settingsApiRoutes = {
+  "/api/settings/models": {
+    read: () => readModelAvailability(),
+    write: (body) => saveModelAvailability(body),
+    readError: "모델 목록을 불러오지 못했습니다.",
+    writeError: "모델 허용 설정을 저장하지 못했습니다.",
+  },
   "/api/settings/design-mode": {
     read: () => readDesignModeSettings(),
     write: (body) => saveDesignModeSettings(body),
@@ -6350,9 +6414,9 @@ async function handleSettingsApi(request, response, pathname) {
 
   if (settingsRoute && request.method === "POST") {
     await writeApiJsonResult(response, async () => {
-      if (pathname === "/api/settings/design-mode") {
+      if (pathname === "/api/settings/design-mode" || pathname === "/api/settings/models") {
         if (!hasAdminModeAccess(request)) {
-          const error = new Error("Design mode can only be changed in admin mode");
+          const error = new Error(pathname === "/api/settings/models" ? "ADMIN 모드에서만 변경할 수 있습니다." : "Design mode can only be changed in admin mode");
           error.status = 403;
           throw error;
         }
@@ -7246,6 +7310,7 @@ async function handleApi(request, response, pathname) {
         const ok = sendBackend(session, {
           type: queued ? "queue_line" : "steer_line",
           line,
+          compose_options: composeOptions,
           request_id: String(body.requestId || body.request_id || "").trim() || null,
         });
         json(response, ok ? 200 : 409, { ok, queued, steering: !queued });
@@ -7322,6 +7387,42 @@ async function handleApi(request, response, pathname) {
       } else if (!response.writableEnded) {
         response.end();
       }
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/composer/enhance") {
+    const body = await readJson(request);
+    try {
+      const session = sessionFromIdForClient(body.sessionId, body.clientId);
+      if (!session) throw httpError(404, "Unknown session");
+      if (session.busy || session.promptEnhancement) throw httpError(409, "작업이 끝난 뒤 요청을 개선해 주세요.");
+      const text = String(body.text || "").trim();
+      if (!text || text.length > 100_000) throw httpError(400, "개선할 요청은 1~100,000자여야 합니다.");
+      const allowed = ["structure", "evidence", "missing_context", "output_format"];
+      const options = Array.isArray(body.options) ? body.options.filter((key) => allowed.includes(key)) : allowed;
+      const instruction = String(body.instruction || "");
+      if (instruction.length > 4000) throw httpError(400, "추가 지시는 4,000자 이내로 입력해 주세요.");
+      const result = await new Promise((resolve, reject) => {
+        const id = crypto.randomUUID();
+        const timer = setTimeout(() => finish(new Error("요청 개선 시간이 초과되었습니다.")), 65_000);
+        const finish = (error, event) => {
+          clearTimeout(timer);
+          session.promptEnhancement = null;
+          if (error) reject(error);
+          else resolve(event);
+        };
+        session.promptEnhancement = {
+          id,
+          complete: (event) => finish(event.is_error ? new Error(event.message) : null, event),
+        };
+        if (!sendBackend(session, { type: "enhance_prompt", request_id: id, line: text, enhancement_options: options, enhancement_instruction: instruction })) {
+          finish(httpError(409, "세션에 연결할 수 없습니다."));
+        }
+      });
+      json(response, 200, { text: result.message });
+    } catch (error) {
+      json(response, error.status || 400, { error: error.message || "요청을 개선하지 못했습니다." });
     }
     return true;
   }

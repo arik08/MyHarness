@@ -41,12 +41,11 @@ def test_national_assembly_config_is_loaded_as_stdio_server() -> None:
     assert server.args == ["runtime/bootstrap.py"]
     assert server.cwd == "."
     assert server.auto_connect is False
-    assert server.env == {
-        "ASSEMBLY_API_KEY": "8b90dd60d8484b0eb9d369ee8a324149",
-        "LAWMKING_OC": "arik08",
-        "MCP_PROFILE": "full",
-        "MCP_TRANSPORT": "stdio",
-    }
+    assert server.env is not None
+    for name in ("ASSEMBLY_API_KEY", "LAWMKING_OC", "NABO_API_KEY"):
+        assert bool(server.env.get(name)), f"Missing packaged credential: {name}"
+    assert server.env["MCP_PROFILE"] == "full"
+    assert server.env["MCP_TRANSPORT"] == "stdio"
 
 
 def test_national_assembly_skill_is_mcp_routed() -> None:
@@ -84,7 +83,11 @@ def test_national_assembly_runtime_is_bundled_with_licenses(monkeypatch) -> None
     monkeypatch.delenv("NATIONAL_ASSEMBLY_MCP_DIR", raising=False)
 
     assert bootstrap._server_index() == runtime_dir / "index.js"
-    assert (runtime_dir / "859.index.js").is_file()
+    chunks = list(runtime_dir.glob("*.index.js"))
+    assert chunks
+    bundle = (runtime_dir / "index.js").read_text(encoding="utf-8")
+    assert ".index.js" in bundle
+    assert all(chunk.stat().st_size > 0 for chunk in chunks)
     assert (runtime_dir / "package.json").is_file()
     assert (runtime_dir / "UPSTREAM_LICENSE.txt").is_file()
     assert (runtime_dir / "licenses.txt").is_file()

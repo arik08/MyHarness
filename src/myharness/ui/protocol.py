@@ -30,6 +30,9 @@ class FrontendComposeOptions(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    analysis_depth: Literal["brief", "standard", "deep"] | None = None
+    answer_length: Literal["brief", "standard", "detailed"] | None = None
+
     output_surface: Literal["chat", "artifact"] | None = Field(
         default=None,
         validation_alias=AliasChoices("output_surface", "outputSurface"),
@@ -59,6 +62,7 @@ class FrontendRequest(BaseModel):
 
     type: Literal[
         "submit_line",
+        "enhance_prompt",
         "steer_line",
         "queue_line",
         "cancel_queued_line",
@@ -96,6 +100,8 @@ class FrontendRequest(BaseModel):
     compose_options: FrontendComposeOptions | None = None
     suppress_user_transcript: bool = False
     isolated_context: bool = False
+    enhancement_options: list[Literal["structure", "evidence", "missing_context", "output_format"]] = Field(default_factory=list)
+    enhancement_instruction: str = Field(default="", max_length=4000)
 
 
 class TranscriptItem(BaseModel):
@@ -103,6 +109,8 @@ class TranscriptItem(BaseModel):
 
     role: Literal["system", "user", "assistant", "tool", "tool_result", "log"]
     text: str
+    images: list[dict[str, str]] = Field(default_factory=list)
+    display_text: str | None = None
     kind: Literal["steering", "queued", "question_answer"] | None = None
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None
@@ -155,8 +163,12 @@ class PluginSnapshot(BaseModel):
 class BackendEvent(BaseModel):
     """One event sent from the Python backend to the React frontend."""
 
+    timestamp_ms: int | None = None
+    progress_source: str | None = None
+
     type: Literal[
         "ready",
+        "prompt_enhanced",
         "state_snapshot",
         "tasks_snapshot",
         "skills_snapshot",
@@ -203,6 +215,7 @@ class BackendEvent(BaseModel):
     has_tool_uses: bool | None = None
     arguments_delta: str | None = None
     tool_input: dict[str, Any] | None = None
+    execution_metadata: dict[str, Any] | None = None
     output: str | None = None
     artifacts: list[dict[str, Any]] | None = None
     usage: dict[str, Any] | None = None

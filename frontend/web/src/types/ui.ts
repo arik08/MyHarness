@@ -14,10 +14,14 @@ export type StatusKind =
   | "connectionError";
 
 export type ChatMessage = {
+  responsePhase?: "commentary" | "final";
   restoredText?: string;
   id: string;
   role: TranscriptItem["role"];
   text: string;
+  transcriptTexts?: string[];
+  images?: TranscriptItem["images"];
+  displayText?: string;
   createdAt?: number;
   kind?: TranscriptItem["kind"];
   pendingRequestId?: string;
@@ -68,13 +72,15 @@ export type WorkflowEvent = {
   detailLog?: string[];
   status: WorkflowEventStatus;
   level?: "parent" | "child";
-  role?: "planning" | "reasoning" | "purpose" | "activity" | "final" | "waiting";
+  role?: "planning" | "reasoning" | "purpose" | "activity" | "final" | "waiting" | "agents";
+  agents?: SwarmTeammateSnapshot[];
   noteSource?: "provider-summary" | "progress";
   purpose?: "info" | "action" | "verification";
   groupId?: string;
   toolCallId?: string | null;
   toolCallIndex?: number | null;
   toolInput?: Record<string, unknown> | null;
+  executionMetadata?: Record<string, unknown> | null;
   output?: string;
 };
 
@@ -185,6 +191,9 @@ export type RuntimePickerOption = {
 };
 
 export type RuntimePickerState = {
+  contextWindow?: number;
+  standardContextWindow?: number;
+  contextModeAvailable?: boolean;
   open: boolean;
   loading: boolean;
   error: string;

@@ -9,12 +9,18 @@ export type ClientAttachmentRef = {
 };
 
 export type ComposeOptions = {
+  analysis_depth?: "brief" | "standard" | "deep";
+  answer_length?: "brief" | "standard" | "detailed";
   output_surface?: "chat" | "artifact";
   artifact_action?: "auto" | "create" | "edit";
   target_output_tokens?: number;
   length_preset?: "default" | "long" | "very_long" | "extended" | "extra_long";
   active_artifact_path?: string;
 };
+
+export function enhancePrompt(payload: { sessionId: string; clientId: string; text: string; options: string[]; instruction: string }) {
+  return postJson<{ text: string }>("/api/composer/enhance", payload);
+}
 
 export type SendMessagePayload = {
   sessionId: string;

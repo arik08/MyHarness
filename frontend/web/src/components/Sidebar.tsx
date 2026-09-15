@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode, RefObject, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { useAppState } from "../state/app-state";
 import { deleteHistory, hideHistory, historyPageSize, listHistory, loadHistorySnapshot, moveHistory, restoreHistory, toggleHistoryLike, toggleHistoryPin, updateHistoryTitle } from "../api/history";
@@ -8,12 +8,12 @@ import { listLiveSessions, restartSession, shutdownSession, startSession } from 
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import { currentConversationHistoryTitle, currentConversationTitle, isConversationResponseVisiblyBusy, isResponseVisiblyBusy } from "../state/selectors";
 import type { HistoryItem, Workspace } from "../types/backend";
-import type { RuntimePickerOption } from "../types/ui";
+import { ModelAvailabilityMenu } from "./ModelAvailabilityMenu";
 import type { ThemeId } from "../types/ui";
 import { clampSidebarWidth, sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 import { frontendHelpText } from "../utils/helpText";
 import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem, uniqueHistoryItems } from "../utils/history";
-import { rememberRuntimeChoice, runtimePreferencesFromState } from "../utils/runtimePreferences";
+import { runtimePreferencesFromState } from "../utils/runtimePreferences";
 import { writeLocalStorage } from "../utils/storage";
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
@@ -72,7 +72,6 @@ function createSavedSessionId() {
 
 export function Sidebar() {
   const { state, dispatch } = useAppState();
-  const runtimePickerRef = useRef<HTMLDivElement | null>(null);
   const runtimeFooterRef = useRef<HTMLButtonElement | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
@@ -119,11 +118,7 @@ export function Sidebar() {
   const historyLoadingMoreRequestRef = useRef<object | null>(null);
   const historySearchRequestRef = useRef<object | null>(null);
   historyScopeRef.current = historyScope;
-  const [runtimePickerGeometry, setRuntimePickerGeometry] = useState<RuntimePickerGeometry>({
-    left: null,
-    top: null,
-    panelMaxHeight: null,
-  });
+
 
   useEffect(() => {
     if (previousHistoryScopeRef.current === historyScope) {
@@ -976,166 +971,10 @@ export function Sidebar() {
     window.addEventListener("blur", finishResize);
   }
 
-  async function toggleRuntimePicker() {
-    if (state.runtimePicker.open) {
-      dispatch({ type: "close_runtime_picker" });
-      return;
-    }
-    dispatch({ type: "open_runtime_picker" });
-    if (!state.sessionId) {
-      dispatch({ type: "set_runtime_picker_error", message: "세션이 준비되면 선택할 수 있습니다." });
-      return;
-    }
-    if (state.busy && state.runtimePicker.providers.length) return;
-    try {
-      await sendBackendRequest(state.sessionId, state.clientId, { type: "select_command", command: "runtime-picker" });
-    } catch (error) {
-      dispatch({
-        type: "set_runtime_picker_error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
+  function toggleRuntimePicker() {
+    if (!state.adminMode) return;
+    dispatch({ type: state.runtimePicker.open ? "close_runtime_picker" : "open_runtime_picker" });
   }
-
-  async function applyRuntimeChoice(command: "provider" | "model" | "effort", option: RuntimePickerOption) {
-    if (!state.sessionId) return;
-    const backendCommand = command;
-    if (command === "provider") {
-      dispatch({ type: "select_runtime_provider", value: option.value });
-    } else if (command === "model") {
-      dispatch({ type: "select_runtime_model", value: option.value });
-    } else {
-      dispatch({ type: "select_runtime_effort", value: option.value });
-    }
-    rememberRuntimeChoice(backendCommand, option);
-    try {
-      await sendBackendRequest(state.sessionId, state.clientId, {
-        type: "apply_select_command",
-        command: backendCommand,
-        value: option.value,
-      });
-    } catch (error) {
-      dispatch({
-        type: "set_runtime_picker_error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  useEffect(() => {
-    if (!state.runtimePicker.open) return;
-    function handlePointerDown(event: MouseEvent) {
-      const target = event.target as Node | null;
-      if (target && (runtimePickerRef.current?.contains(target) || runtimeFooterRef.current?.contains(target))) {
-        return;
-      }
-      dispatch({ type: "close_runtime_picker" });
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        dispatch({ type: "close_runtime_picker" });
-      }
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [dispatch, state.runtimePicker.open]);
-
-  useLayoutEffect(() => {
-    if (!state.runtimePicker.open) {
-      setRuntimePickerGeometry({ left: null, top: null, panelMaxHeight: null });
-      return;
-    }
-
-    function runtimePickerNaturalPanelHeight(panel: Element | null) {
-      if (!(panel instanceof HTMLElement)) {
-        return 0;
-      }
-      const header = panel.querySelector(".runtime-picker-header");
-      const list = panel.querySelector(".runtime-picker-list");
-      const styles = getComputedStyle(panel);
-      const borderY = parseFloat(styles.borderTopWidth || "0") + parseFloat(styles.borderBottomWidth || "0");
-      return (
-        (header instanceof HTMLElement ? header.offsetHeight : 0)
-        + (list instanceof HTMLElement ? list.scrollHeight : 0)
-        + borderY
-      );
-    }
-
-    function positionRuntimePicker() {
-      const root = runtimePickerRef.current;
-      const anchor = runtimeFooterRef.current;
-      if (!root || !anchor) return;
-
-      const rect = anchor.getBoundingClientRect();
-      const gap = 8;
-      const viewportPad = 8;
-      const bottomLimit = Math.max(viewportPad, Math.min(rect.top - gap, window.innerHeight - viewportPad));
-      const narrowViewport = window.innerWidth < 680;
-      // Measure unclipped content so opening a taller model/effort panel can grow upward.
-      const tallestPanelHeight = Math.max(
-        96,
-        ...Array.from(root.querySelectorAll(".runtime-picker-panel"), runtimePickerNaturalPanelHeight),
-      );
-
-      const openPanelCount = 1 + (state.runtimePicker.modelOpen ? 1 : 0) + (state.runtimePicker.effortOpen ? 1 : 0);
-      const naturalLayerHeight = Math.max(96, root.scrollHeight || root.offsetHeight);
-      const top = Math.max(
-        viewportPad,
-        narrowViewport
-          ? bottomLimit - Math.min(naturalLayerHeight, Math.max(96, bottomLimit - viewportPad))
-          : bottomLimit - Math.min(360, tallestPanelHeight),
-      );
-      const panelMaxHeight = narrowViewport
-        ? Math.max(
-          96,
-          Math.min(
-            220,
-            Math.floor((Math.max(96, bottomLimit - top) - Math.max(0, openPanelCount - 1) * 6) / openPanelCount),
-          ),
-        )
-        : Math.max(96, Math.min(360, bottomLimit - top));
-      const estimatedWidth = narrowViewport
-        ? Math.min(320, Math.max(0, window.innerWidth - viewportPad * 2))
-        : Math.min(
-          Math.max(214, root.scrollWidth || root.offsetWidth),
-          Math.max(0, window.innerWidth - viewportPad * 2),
-        );
-      const left = Math.min(
-        Math.max(viewportPad, rect.left + 4),
-        Math.max(viewportPad, window.innerWidth - estimatedWidth - viewportPad),
-      );
-
-      setRuntimePickerGeometry((current) => {
-        if (current.left === left && current.top === top && current.panelMaxHeight === panelMaxHeight) {
-          return current;
-        }
-        return { left, top, panelMaxHeight };
-      });
-    }
-
-    positionRuntimePicker();
-    const frame = window.requestAnimationFrame(positionRuntimePicker);
-    window.addEventListener("resize", positionRuntimePicker);
-    window.addEventListener("scroll", positionRuntimePicker, true);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", positionRuntimePicker);
-      window.removeEventListener("scroll", positionRuntimePicker, true);
-    };
-  }, [
-    state.runtimePicker.error,
-    state.runtimePicker.loading,
-    state.runtimePicker.open,
-    state.runtimePicker.modelOpen,
-    state.runtimePicker.effortOpen,
-    state.runtimePicker.providers,
-    state.runtimePicker.models,
-    state.runtimePicker.efforts,
-  ]);
 
   useEffect(() => {
     if (!workspaceDropdownOpen) return;
@@ -1171,7 +1010,7 @@ export function Sidebar() {
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
   const conversationTitle = currentConversationTitle(state);
   const activeHistoryDescription = currentConversationHistoryTitle(state);
-  const showRuntimePicker = state.runtimePicker.open && !state.sidebarCollapsed;
+  const showRuntimePicker = state.adminMode && state.runtimePicker.open && !state.sidebarCollapsed;
   const responseVisiblyBusy = isResponseVisiblyBusy(state);
   // Startup emits an unsaved bootstrap ID before the real conversation ID.
   // An ID alone is not enough to add a row alongside fetched saved history.
@@ -1939,25 +1778,18 @@ export function Sidebar() {
       ) : null}
 
       {showRuntimePicker ? (
-        <RuntimePicker
-          refNode={runtimePickerRef}
-          picker={state.runtimePicker}
-          providerLabel={state.providerLabel || state.provider}
-          model={state.model}
-          effort={state.effort}
-          busy={state.busy}
-          geometry={runtimePickerGeometry}
-          onApply={applyRuntimeChoice}
-        />
+        <ModelAvailabilityMenu anchorRef={runtimeFooterRef} onClose={() => dispatch({ type: "close_runtime_picker" })} />
       ) : null}
 
       <button
         ref={runtimeFooterRef}
         className="sidebar-footer"
         type="button"
-        aria-label="런타임 설정 열기"
+        aria-label="사용 가능한 모델 관리"
+        disabled={!state.adminMode}
+        aria-haspopup="dialog"
         aria-expanded={state.runtimePicker.open}
-        data-tooltip="프로바이더, 모델, 추론 강도"
+        data-tooltip={state.adminMode ? "사용 가능한 모델 관리" : "모델 허용 목록은 ADMIN 모드에서 관리합니다."}
         data-tooltip-placement="right"
         onClick={() => void toggleRuntimePicker()}
       >
@@ -2036,100 +1868,6 @@ function sortPinnedHistory(items: HistoryItem[]) {
   });
 }
 
-function RuntimePicker({
-  refNode,
-  picker,
-  providerLabel,
-  model,
-  effort,
-  busy,
-  geometry,
-  onApply,
-}: {
-  refNode: RefObject<HTMLDivElement | null>;
-  picker: ReturnType<typeof useAppState>["state"]["runtimePicker"];
-  providerLabel: string;
-  model: string;
-  effort: string;
-  busy: boolean;
-  geometry: RuntimePickerGeometry;
-  onApply: (command: "provider" | "model" | "effort", option: RuntimePickerOption) => Promise<void>;
-}) {
-  const style: RuntimePickerStyle = {};
-  if (geometry.left !== null) {
-    style.left = geometry.left;
-  }
-  if (geometry.top !== null) {
-    style.top = geometry.top;
-    style.bottom = "auto";
-  }
-  if (geometry.panelMaxHeight !== null) {
-    style["--runtime-picker-panel-max-height"] = `${geometry.panelMaxHeight}px`;
-  }
-
-  return (
-    <div className="runtime-picker-layer react-runtime-picker" data-runtime-picker="true" ref={refNode} style={style}>
-      <RuntimePanel
-        title="Provider"
-        value={providerLabel}
-        className="runtime-picker-provider-panel"
-
-      >
-        {busy ? <p className="runtime-picker-empty">변경한 설정은 다음 질문이나 새 세션부터 적용됩니다.</p> : null}
-        {picker.error ? <p className="runtime-picker-empty">{picker.error}</p> : null}
-        {!picker.error && picker.loading ? <p className="runtime-picker-empty">불러오는 중...</p> : null}
-        {!picker.error && !picker.loading && picker.providers.map((option) => (
-          <RuntimeOption
-            key={option.value}
-            command="provider"
-            option={option}
-            suffix="›"
-            disabled={false}
-            onClick={() => onApply("provider", option)}
-          />
-        ))}
-      </RuntimePanel>
-      {picker.modelOpen ? (
-        <RuntimePanel title="모델" value={model} className="runtime-picker-model-panel">
-          {picker.models.length ? picker.models.map((option) => (
-            <RuntimeOption
-              key={option.value}
-              command="model"
-              option={option}
-              suffix="›"
-              disabled={false}
-              onClick={() => onApply("model", option)}
-            />
-          )) : <p className="runtime-picker-empty">선택 가능한 모델이 없습니다.</p>}
-        </RuntimePanel>
-      ) : null}
-      {picker.effortOpen ? (
-        <RuntimePanel title="추론 노력" value={effort || "-"} className="runtime-picker-effort-panel">
-          {picker.efforts.length ? picker.efforts.map((option) => (
-            <RuntimeOption
-              key={option.value || option.label}
-              command="effort"
-              option={option}
-              disabled={false}
-              onClick={() => onApply("effort", option)}
-            />
-          )) : <p className="runtime-picker-empty">선택 가능한 값이 없습니다.</p>}
-        </RuntimePanel>
-      ) : null}
-    </div>
-  );
-}
-
-type RuntimePickerGeometry = {
-  left: number | null;
-  top: number | null;
-  panelMaxHeight: number | null;
-};
-
-type RuntimePickerStyle = CSSProperties & {
-  "--runtime-picker-panel-max-height"?: string;
-};
-
 function isActiveHistoryItem(item: HistoryItem, activeHistoryValue: string, sessionId: string | null) {
   if (!item.value) {
     return false;
@@ -2139,60 +1877,4 @@ function isActiveHistoryItem(item: HistoryItem, activeHistoryValue: string, sess
 
 function isCurrentLiveHistoryItem(item: HistoryItem, sessionId: string | null) {
   return isLiveOnlyHistoryItem(item, sessionId);
-}
-
-function RuntimePanel({
-  title,
-  value,
-  className = "",
-  headerAction = null,
-  children,
-}: {
-  title: string;
-  value: string;
-  className?: string;
-  headerAction?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className={`runtime-picker-panel ${className}`.trim()} aria-label={`${title} 선택`}>
-      <div className="runtime-picker-header">
-        <div>
-          <strong>{title}</strong>
-          <small>{value || "-"}</small>
-        </div>
-        {headerAction}
-      </div>
-      <div className="runtime-picker-list">{children}</div>
-    </section>
-  );
-}
-
-function RuntimeOption({
-  command,
-  option,
-  suffix = "",
-  disabled,
-  onClick,
-}: {
-  command: "provider" | "model" | "effort";
-  option: RuntimePickerOption;
-  suffix?: string;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`runtime-picker-option runtime-picker-option-${command}${option.active ? " active" : ""}`}
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-    >
-      <span>
-        <strong>{option.label || option.value}</strong>
-        {option.description ? <small>{option.description}</small> : null}
-      </span>
-      <span className="select-check" aria-hidden="true">{option.active ? "✓" : suffix}</span>
-    </button>
-  );
 }

@@ -194,7 +194,11 @@ def search_records(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> str:
-    """Search official legislative or regulatory records using source-native filters."""
+    """Search records. Congress: congress is required with bill_type (hr/s/etc.);
+    query is a local title filter over one recent API page, not full-text search.
+    start_date/end_date filter last update time, not introduction/enactment dates.
+    Use returned congress/type/number to build get_record ID, e.g. 119/hr/1.
+    """
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=100)
     start_date = _iso_date(start_date, field_name="start_date")
@@ -213,7 +217,12 @@ def search_records(
                 )
         elif bill_type:
             raise ValueError("congress is required when bill_type is supplied.")
-        payload = _congress_json(path, {"limit": safe_limit * 5})
+        params = {"limit": min(safe_limit * 5, 250)}
+        if start_date:
+            params["fromDateTime"] = f"{start_date}T00:00:00Z"
+        if end_date:
+            params["toDateTime"] = f"{end_date}T23:59:59Z"
+        payload = _congress_json(path, params)
         rows = payload.get("bills", []) if isinstance(payload, dict) else []
         needle = query.casefold().strip()
         data: object = [

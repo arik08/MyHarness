@@ -2275,7 +2275,7 @@ describe("ArtifactPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
 
-    expect(document.querySelector(".artifact-ai-progress .workflow-message")).toBeTruthy();
+    expect(document.querySelector(".artifact-ai-progress .aside-workflow")).toBeTruthy();
     expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("AI 편집 요청");
     expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("첫 streaming 이벤트 대기");
     expect(document.querySelector(".artifact-ai-progress")?.textContent || "").toContain("report_v1.html");
@@ -2312,7 +2312,7 @@ describe("ArtifactPanel", () => {
       });
     });
 
-    await waitFor(() => expect(document.querySelector(".artifact-ai-progress .workflow-message")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".artifact-ai-progress .aside-workflow")).toBeTruthy());
     expect(document.querySelector(".artifact-ai-progress .workflow-output-preview")?.textContent || "").toContain("report.html");
     expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("Old headline");
     expect(document.querySelector(".artifact-ai-progress .workflow-output-body")?.textContent || "").toContain("New headline");
@@ -2702,7 +2702,7 @@ describe("ArtifactPanel", () => {
     await user.click(screen.getByRole("button", { name: "AI 수정 패널 접기" }));
     await user.click(screen.getByRole("button", { name: "AI 수정 패널 다시 펼치기" }));
 
-    const waitingStep = [...document.querySelectorAll(".workflow-step")]
+    const waitingStep = [...document.querySelectorAll(".aside-note-detail")]
       .find((item) => (item.textContent || "").includes("streaming 이벤트 지연"));
     const elapsedMatches = waitingStep?.textContent?.match(/(?:\d+분(?: \d+초)?|\d+초) 경과/g) || [];
     expect(elapsedMatches).toEqual(["58초 경과"]);

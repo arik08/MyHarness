@@ -143,7 +143,7 @@ export function TooltipLayer() {
         }
       });
       mutationObserverRef.current.observe(target, {
-        attributeFilter: ["aria-disabled", "data-tooltip", "data-tooltip-placement", "data-tooltip-description"],
+        attributeFilter: ["aria-disabled", "data-tooltip", "data-tooltip-placement", "data-tooltip-description", "data-context-usage", "data-context-warning"],
         attributes: true,
       });
     }
@@ -323,7 +323,7 @@ export function TooltipLayer() {
   return createPortal(
     <div
       ref={tooltipRef}
-      className={`tooltip-layer${tooltip.target.dataset.tooltipDescription ? " question-navigator-tooltip" : ""}`}
+      className={`tooltip-layer${tooltip.target.dataset.contextUsage ? " context-usage-popover" : tooltip.target.dataset.tooltipDescription ? " question-navigator-tooltip" : ""}`}
       role="tooltip"
       style={{
         left: tooltip.x,
@@ -336,7 +336,12 @@ export function TooltipLayer() {
             : "translate(-50%, 0)",
       }}
     >
-      {tooltip.target.dataset.tooltipDescription ? <>
+      {tooltip.target.dataset.contextUsage ? <>
+        <span>{tooltip.text}</span>
+        <strong>{tooltip.target.dataset.contextUsage}</strong>
+        <small>{tooltip.target.dataset.tooltipDescription}</small>
+        {tooltip.target.dataset.contextWarning && <span className="context-usage-warning">{tooltip.target.dataset.contextWarning}</span>}
+      </> : tooltip.target.dataset.tooltipDescription ? <>
         <strong>{tooltip.text}</strong>
         <span>{tooltip.target.dataset.tooltipDescription}</span>
       </> : tooltip.text}

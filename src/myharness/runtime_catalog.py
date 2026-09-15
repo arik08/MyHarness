@@ -29,11 +29,10 @@ def _provider_select_options(settings: Settings) -> list[dict[str, object]]:
 
 def _effort_select_options(settings: Settings) -> list[dict[str, object]]:
     return [
-        {"value": "none", "label": "None", "description": "Disable explicit reasoning effort", "active": settings.effort in {"none", "auto", ""}},
+        {"value": "none", "label": "Auto", "description": "Use the model's default reasoning effort", "active": settings.effort in {"none", "auto", ""}},
         {"value": "low", "label": "Low", "description": "Fastest responses", "active": settings.effort == "low"},
         {"value": "medium", "label": "Medium", "description": "Balanced reasoning", "active": settings.effort == "medium"},
         {"value": "high", "label": "High", "description": "Deepest reasoning", "active": settings.effort == "high"},
-        {"value": "xhigh", "label": "XHigh", "description": "Maximum reasoning", "active": settings.effort in {"xhigh", "max"}},
     ]
 
 
@@ -167,19 +166,31 @@ def _model_option_description(provider_name: str, model: str) -> str:
 
 def _runtime_picker_options(settings: Settings) -> dict[str, object]:
     """Build the provider/model choices shared by startup and live refreshes."""
+    from myharness.context_policy import get_context_window, get_long_context_policy_threshold
+    from myharness.api.pricing import LONG_CONTEXT_INPUT_TOKEN_THRESHOLD
+
+    window = get_context_window(settings.model, context_window_tokens=settings.context_window_tokens or settings.memory.context_window_tokens)
+    standard = get_long_context_policy_threshold(settings.model, "cost-saver", context_window_tokens=window)
     provider_options = _provider_select_options(settings)
     profiles = AuthManager(settings).list_profiles()
+    catalog = {
+        str(option["value"]): _model_select_options(
+            settings.model, profiles[str(option["value"])].provider,
+            profiles[str(option["value"])].allowed_models,
+        )
+        for option in provider_options if str(option["value"]) in profiles
+    }
+    for profile, models in catalog.items():
+        enabled = settings.enabled_models_by_profile.get(profile)
+        for model in models:
+            model["enabled"] = enabled is None or model["value"] in enabled
     return {
         "providers": provider_options,
-        "models_by_provider": {
-            str(option["value"]): _model_select_options(
-                settings.model,
-                profiles[str(option["value"])].provider,
-                profiles[str(option["value"])].allowed_models,
-            )
-            for option in provider_options
-            if str(option["value"]) in profiles
-        },
+        "context_window": window,
+        "standard_context_window": min(window, LONG_CONTEXT_INPUT_TOKEN_THRESHOLD) if standard else window,
+        "context_mode_available": standard is not None and window > standard,
+        "all_models_by_provider": catalog,
+        "models_by_provider": {profile: [model for model in models if model["enabled"]] for profile, models in catalog.items()},
         "subagent_model": settings.subagent_model,
         "subagent_effort": settings.subagent_effort,
         "efforts": _effort_select_options(settings),

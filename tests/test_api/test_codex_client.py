@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from myharness.api.client import (
+    ApiCompactionEvent,
     ApiMessageCompleteEvent,
     ApiMessageRequest,
     ApiRetryEvent,
@@ -333,7 +334,7 @@ async def test_codex_client_streams_text(monkeypatch):
         "role": "developer",
         "content": [{"type": "input_text", "text": "Be helpful."}],
     }
-    assert sink["json"]["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert sink["json"]["reasoning"] == {"effort": "high", "summary": "detailed"}
     assert sink["json"]["prompt_cache_key"] == _prompt_cache_key_for_request(request)
     assert "prompt_cache_retention" not in sink["json"]
     assert list(sink["json"]).index("tools") < list(sink["json"]).index("input")
@@ -412,16 +413,18 @@ async def test_codex_client_stops_reading_when_response_incomplete_arrives(monke
 
 @pytest.mark.parametrize("model", ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
 @pytest.mark.parametrize("client_type", [CodexApiClient, OpenAIResponsesClient])
-def test_reasoning_summary_requested_without_explicit_effort(model, client_type):
+@pytest.mark.parametrize("effort", [None, "", "none", "auto"])
+def test_reasoning_summary_requested_without_explicit_effort(model, client_type, effort):
     client = client_type(_fake_codex_token())
     request = ApiMessageRequest(
         model=model,
         messages=[ConversationMessage.from_user_text("Check the constraints.")],
+        reasoning_effort=effort,
     )
 
     body = client._request_body(request, request.messages)
 
-    assert body["reasoning"]["summary"] == "auto"
+    assert body["reasoning"]["summary"] == "detailed"
     assert "Always write reasoning summaries in Korean" in body["instructions"]
     assert "제목과 본문 모두 한국어 존댓말" in body["instructions"]
     assert "including its headings and body" in body["instructions"]
@@ -431,10 +434,13 @@ def test_reasoning_summary_requested_without_explicit_effort(model, client_type)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
-async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypatch, model):
+@pytest.mark.parametrize("threshold,expected", [(None, 231_200), (1_000_000, 1_000_000)])
+async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypatch, model, threshold, expected):
     sink: dict[str, Any] = {}
     response = _FakeStreamResponse(
         lines=[
+            'data: {"type":"response.output_item.added","item":{"id":"cmp_1","type":"compaction"}}',
+            "",
             'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"opaque-reasoning","summary":[{"type":"summary_text","text":"Checked the constraints."}]}}',
             "",
             'data: {"type":"response.output_item.done","item":{"id":"cmp_1","type":"compaction","encrypted_content":"opaque-compaction"}}',
@@ -455,17 +461,21 @@ async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypat
         model=model,
         messages=[ConversationMessage.from_user_text("continue")],
         reasoning_effort="high",
-        compact_threshold_tokens=900_000,
+        compact_threshold_tokens=threshold,
     )
     events = [event async for event in client.stream_message(request)]
 
+    assert [event.phase for event in events if isinstance(event, ApiCompactionEvent)] == [
+        "compact_start", "compact_end",
+    ]
+
     assert sink["json"]["reasoning"] == {
         "effort": "high",
-        "summary": "auto",
+        "summary": "detailed",
         "context": "all_turns",
     }
     assert sink["json"]["context_management"] == [
-        {"type": "compaction", "compact_threshold": 900_000}
+        {"type": "compaction", "compact_threshold": expected}
     ]
     complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
     state_items = [
@@ -794,7 +804,7 @@ async def test_codex_client_emits_tool_use(monkeypatch):
     assert tool_use.id == "call_abc"
     assert tool_use.name == "glob"
     assert tool_use.input == {"pattern": "src/**/*.py"}
-    assert sink["json"]["reasoning"] == {"effort": "xhigh", "summary": "auto"}
+    assert sink["json"]["reasoning"] == {"effort": "xhigh", "summary": "detailed"}
     assert sink["json"]["tools"][0]["name"] == "glob"
 
 

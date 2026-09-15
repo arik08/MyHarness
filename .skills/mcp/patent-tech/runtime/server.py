@@ -6,11 +6,13 @@ from typing import Annotated
 from pydantic import Field
 
 import json
+import httpx
 import re
 import time
 from defusedxml import ElementTree as ET
 from datetime import UTC, datetime
 from functools import partial
+from collections import OrderedDict
 from typing import Any
 from urllib.parse import quote
 
@@ -50,6 +52,7 @@ Source = Annotated[str, Field(description="Source served by patent-tech only", j
 server = FastMCP("patent-tech")
 attach_packaged_skill(server, __file__)
 _EPO_TOKEN: tuple[str, float] | None = None
+_SEMANTIC_RECORDS: OrderedDict[tuple[str, str], tuple[float, object]] = OrderedDict()
 
 
 def _source(source: str) -> str:
@@ -82,6 +85,10 @@ def _xml_local_name(tag: str) -> str:
 
 def _xml_rows(content: bytes, *, limit: int) -> list[dict[str, Any]]:
     root = ET.fromstring(content)
+    status_fields = {_xml_local_name(e.tag): (e.text or "").strip() for e in root.iter()
+                     if _xml_local_name(e.tag) in {"successYN", "resultCode"}}
+    if status_fields.get("successYN") == "N":
+        raise ValueError(f"KIPRISPlus API error {status_fields.get('resultCode', 'unknown')}; check request parameters and product authorization.")
     rows: list[dict[str, Any]] = []
     for element in root.iter():
         if _xml_local_name(element.tag).lower() not in {"item", "exchange-document"}:
@@ -94,8 +101,9 @@ def _xml_rows(content: bytes, *, limit: int) -> list[dict[str, Any]]:
                 current = row.get(key)
                 if current is None:
                     row[key] = text
-                elif isinstance(current, list) and text not in current:
-                    current.append(text)
+                elif isinstance(current, list):
+                    if text not in current:
+                        current.append(text)
                 elif current != text:
                     row[key] = [current, text]
         if row:
@@ -104,6 +112,8 @@ def _xml_rows(content: bytes, *, limit: int) -> list[dict[str, Any]]:
             break
     if rows:
         return rows
+    if status_fields or any(_xml_local_name(e.tag) == "items" for e in root.iter()):
+        return []
     summary: dict[str, Any] = {}
     for element in root.iter():
         text = (element.text or "").strip()
@@ -112,6 +122,72 @@ def _xml_rows(content: bytes, *, limit: int) -> list[dict[str, Any]]:
         if len(summary) >= 250:
             break
     return [summary] if summary else []
+
+
+def _xml_object(element: Any) -> object:
+    """Preserve XML ancestry, attributes and repeated siblings without flattening."""
+    result: dict[str, Any] = {}
+    if element.attrib:
+        result["_attributes"] = dict(element.attrib)
+    text = (element.text or "").strip()
+    if text:
+        result["_text"] = text
+    tail = (element.tail or "").strip()
+    if tail:
+        result["_tail"] = tail
+    groups: dict[str, list[object]] = {}
+    for child in element:
+        groups.setdefault(_xml_local_name(child.tag), []).append(_xml_object(child))
+    for name, values in groups.items():
+        result[name] = values[0] if len(values) == 1 else values
+    if set(result) == {"_text"}:
+        return result["_text"]
+    return result
+
+
+def _epo_rows(content: bytes, *, limit: int) -> list[dict[str, Any]]:
+    root = ET.fromstring(content)
+    members = list(root.iterfind(".//{*}family-member"))
+    documents = members or list(root.iterfind(".//{*}exchange-document"))
+    if _xml_local_name(root.tag) in {"family-member", "exchange-document"}:
+        documents = [root]
+    if not documents:
+        search = root.find(".//{*}biblio-search")
+        if search is not None and search.get("total-result-count") == "0":
+            return []
+        raise ValueError("EPO OPS returned XML without patent records or an explicit empty search result.")
+    rows = []
+    for document in documents[:limit]:
+        # Family members may contain legal data only; their own publication
+        # reference remains authoritative even when no exchange-document exists.
+        reference = document.find("./{*}publication-reference")
+        if reference is None:
+            reference = document.find("./{*}bibliographic-data/{*}publication-reference")
+        if reference is None:
+            raise ValueError("EPO OPS record is missing its publication reference.")
+        identifiers = {}
+        for identifier in reference.findall("./{*}document-id"):
+            identifiers[identifier.get("document-id-type", "")] = {
+                _xml_local_name(child.tag): (child.text or "").strip()
+                for child in identifier
+            }
+        docdb = identifiers.get("docdb", {})
+        epodoc = identifiers.get("epodoc", {})
+        record_id = epodoc.get("doc-number") or (
+            docdb.get("country", "") + docdb.get("doc-number", "")
+        )
+        if not record_id:
+            raise ValueError("EPO OPS record is missing its publication identifier.")
+        row = _xml_object(document)
+        row["record_id"] = record_id
+        row["publication"] = {
+            "country": docdb.get("country", ""),
+            "number": docdb.get("doc-number", ""),
+            "kind": docdb.get("kind", ""),
+            "date": docdb.get("date") or epodoc.get("date", ""),
+        }
+        rows.append(row)
+    return rows
 
 
 def _epo_token() -> str:
@@ -147,6 +223,23 @@ def _epo_request(path: str, *, params: dict[str, Any] | None = None) -> bytes:
     return response.content
 
 
+def _epo_search(cql: str, limit: int) -> list[dict[str, Any]]:
+    try:
+        content = _epo_request("published-data/search/biblio", params={"q": cql, "Range": f"1-{limit}"})
+    except RuntimeError as exc:
+        cause = exc.__cause__
+        if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 404:
+            try:
+                fault = ET.fromstring(cause.response.content)
+            except ET.ParseError:
+                raise exc
+            if (_xml_local_name(fault.tag) == "fault"
+                    and fault.findtext("./{*}code") == "SERVER.EntityNotFound"):
+                return []
+        raise
+    return _epo_rows(content, limit=limit)
+
+
 def _openalex_params() -> dict[str, str]:
     return {
         "api_key": _required_env("OPENALEX_API_KEY is required for OpenAlex.", "OPENALEX_API_KEY")
@@ -166,6 +259,26 @@ def _semantic_headers() -> dict[str, str]:
     return {"x-api-key": key}
 
 
+def _semantic_record(paper_id: str) -> tuple[object, dict[str, Any]]:
+    headers = _semantic_headers()
+    key = (headers["x-api-key"], paper_id)
+    cached = _SEMANTIC_RECORDS.get(key)
+    if cached and time.monotonic() - cached[0] < 60:
+        _SEMANTIC_RECORDS.move_to_end(key)
+        return cached[1], {"cache_hit": True, "cache_age_seconds": round(time.monotonic() - cached[0], 2)}
+    payload = request_json(
+        "Semantic Scholar", f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/{quote(paper_id, safe='')}",
+        params={"fields": "paperId,title,abstract,year,authors,citationCount,referenceCount,externalIds,url"},
+        headers=headers, minimum_interval=5.0,
+    )
+    if isinstance(payload, dict) and payload.get("paperId"):
+        _SEMANTIC_RECORDS[key] = (time.monotonic(), payload)
+        _SEMANTIC_RECORDS.move_to_end(key)
+        while len(_SEMANTIC_RECORDS) > 128:
+            _SEMANTIC_RECORDS.popitem(last=False)
+    return payload, {"cache_hit": False}
+
+
 def _year_range(start_year: int | None, end_year: int | None) -> tuple[int | None, int | None]:
     """Validate an optional inclusive publication-year range."""
     current_year = datetime.now(UTC).year
@@ -179,7 +292,9 @@ def _year_range(start_year: int | None, end_year: int | None) -> tuple[int | Non
 
 @server.tool()
 def search_catalog(source: Source, query: str = "", limit: int = 20) -> str:
-    """Search source catalogs or return supported patent/research record types."""
+    """OpenAlex searches research topics. Other sources return supported operations,
+    not papers/patents; use search_records for subject keywords.
+    """
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=100)
     if selected == "openalex":
@@ -217,25 +332,28 @@ def search_records(
     start_year: int | None = None,
     end_year: int | None = None,
 ) -> str:
-    """Search patent bibliographic records or scholarly works using structured APIs."""
+    """Search patent bibliographies or papers. KIPRIS year bounds filter application
+    dates using advanced search (one bound means that exact year). EPO uses CQL dates
+    inside query. OpenAlex/Crossref/Semantic Scholar accept publication year bounds.
+    Use returned applicationNumber/record_id/id/paperId/DOI unchanged for get_record.
+    EPO publication identifies the returned publication; nested XML fields retain
+    separate application, priority, party, language and legal-event contexts.
+    """
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=100)
     if not query.strip():
         raise ValueError("query is required.")
     start_year, end_year = _year_range(start_year, end_year)
     if selected == "kipris":
-        if (start_year is None) != (end_year is None) or (
-            start_year is not None and start_year != end_year
-        ):
-            raise ValueError(
-                "KIPRISPlus supports one exact year in this adapter, not a year range."
-            )
+        dated = start_year is not None or end_year is not None
+        operation = "getAdvancedSearch" if dated else "getWordSearch"
+        date_params = {"applicationDate": f"{start_year or end_year}0101~{end_year or start_year}1231"} if dated else {"year": 0}
         response = request(
             "KIPRISPlus",
-            f"{KIPRIS_BASE_URL}/getWordSearch",
+            f"{KIPRIS_BASE_URL}/{operation}",
             params={
                 "word": query,
-                "year": start_year or 0,
+                **date_params,
                 "patent": "true",
                 "utility": "true",
                 "numOfRows": safe_limit,
@@ -245,18 +363,14 @@ def search_records(
             timeout=60,
         )
         data: object = _xml_rows(response.content, limit=safe_limit)
-        source_id = "getWordSearch"
+        source_id = operation
     elif selected == "epo_ops":
         if start_year is not None or end_year is not None:
             raise ValueError("Put publication-date constraints in the EPO OPS CQL query.")
         cql = query.strip()
         if len(cql) > 500 or any(character in cql for character in "\r\n"):
             raise ValueError("EPO OPS CQL query is too long or contains a newline.")
-        content = _epo_request(
-            "published-data/search/biblio",
-            params={"q": cql, "Range": f"1-{safe_limit}"},
-        )
-        data = _xml_rows(content, limit=safe_limit)
+        data = _epo_search(cql, safe_limit)
         source_id = "published-data/search/biblio"
     elif selected == "openalex":
         filters = []
@@ -306,6 +420,7 @@ def search_records(
                 "year": f"{start_year or ''}-{end_year or ''}" if start_year or end_year else None,
             },
             headers=_semantic_headers(),
+            minimum_interval=5.0,
         )
         data = payload.get("data", []) if isinstance(payload, dict) else payload
         source_id = "paper/search"
@@ -322,9 +437,13 @@ def search_records(
 
 @server.tool()
 def get_record(source: Source, record_id: str, record_type: str = "detail") -> str:
-    """Get one patent bibliography/family or scholarly-work metadata record."""
+    """Get metadata from a search result ID: KIPRIS applicationNumber (not registerNumber),
+    OpenAlex id, Semantic Scholar paperId, Crossref DOI. record_type=detail works for all;
+    bibliography is patent-only, family is EPO-only. No PDF download or reference-list tool.
+    """
     selected = _source(source)
     kind = record_type.strip().lower()
+    metadata = None
     if selected == "kipris":
         if kind not in {"detail", "bibliography"}:
             raise ValueError("KIPRISPlus record_type must be detail or bibliography.")
@@ -349,7 +468,7 @@ def get_record(source: Source, record_id: str, record_type: str = "detail") -> s
             path = f"family/publication/epodoc/{patent_id}/biblio,legal"
         else:
             path = f"published-data/publication/epodoc/{patent_id}/biblio"
-        payload = _xml_rows(_epo_request(path), limit=100)
+        payload = _epo_rows(_epo_request(path), limit=100)
         source_id = path
     elif selected == "openalex":
         if kind != "detail":
@@ -390,14 +509,7 @@ def get_record(source: Source, record_id: str, record_type: str = "detail") -> s
             or any(character in paper_id for character in "\r\n")
         ):
             raise ValueError("Semantic Scholar paper_id is invalid.")
-        payload = request_json(
-            "Semantic Scholar",
-            f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/{quote(paper_id, safe='')}",
-            params={
-                "fields": "paperId,title,abstract,year,authors,citationCount,referenceCount,externalIds,url"
-            },
-            headers=_semantic_headers(),
-        )
+        payload, metadata = _semantic_record(paper_id)
         source_id = paper_id
     return result_envelope(
         source=SOURCES[selected],
@@ -406,6 +518,7 @@ def get_record(source: Source, record_id: str, record_type: str = "detail") -> s
         revision="latest_returned_by_api",
         completeness="structured_metadata_no_pdf_or_ocr",
         license_name="Official source reuse terms",
+        metadata=metadata,
     )
 
 
@@ -451,11 +564,13 @@ def get_source_health(source: Source) -> str:
                 f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search",
                 params={"query": "steel", "limit": 1, "fields": "paperId,title"},
                 headers=_semantic_headers(),
+                minimum_interval=5.0,
             )
 
     return checked_health_envelope(
         source=SOURCES[selected],
         credential_env=credential,
+        require_all_credentials=selected == "epo_ops",
         probe=probe,
         success_detail=detail,
     )

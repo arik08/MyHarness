@@ -180,6 +180,8 @@ def search_catalog(source: Source, query: str = "", limit: int = 50) -> str:
         )
         root = payload.get("GET_STATS_LIST", {})
         data = root.get("DATALIST_INF", {}).get("TABLE_INF", []) if isinstance(root, dict) else []
+        if isinstance(data, dict):
+            data = [data]
         source_id = "getStatsList"
     else:
         presets = {
@@ -221,7 +223,11 @@ def query_series(
     limit: int = 1000,
     filters_json: dict[str, Any] | str | None = None,
 ) -> str:
-    """Query a source series; SDMX sources require dataset plus source-native series key."""
+    """FRED requires series_id and ISO start_period/end_period. SDMX requires dataset
+    and source-native series key. e-Stat uses the catalog @id as series_id and table-native
+    filters_json (cdArea, cdCat01, cdTime, cdTimeFrom, cdTimeTo); get codes from returned
+    CLASS_INF before filtering. Do not send ISO start_period/end_period for e-Stat.
+    """
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=5000)
     if selected == "fred":
@@ -325,6 +331,8 @@ def query_series(
         unit = data[0].get("Unit of measure") if data else None
         source_id = f"{flow}/{key}"
     else:
+        if start_period is not None or end_period is not None:
+            raise ValueError("e-Stat time filters require table-native cdTime/cdTimeFrom/cdTimeTo in filters_json.")
         stats_id = safe_identifier(series_id, field_name="statsDataId", pattern=r"[A-Za-z0-9_-]+")
         extra: dict[str, Any] = {}
         if filters_json:
@@ -340,6 +348,8 @@ def query_series(
             {"statsDataId": stats_id, "limit": safe_limit, **extra},
         )
         data = payload.get("GET_STATS_DATA", {}).get("STATISTICAL_DATA", {})
+        if isinstance(data.get("DATA_INF", {}).get("VALUE"), dict):
+            data["DATA_INF"]["VALUE"] = [data["DATA_INF"]["VALUE"]]
         unit = None
         source_id = stats_id
     return result_envelope(

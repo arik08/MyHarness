@@ -739,6 +739,7 @@ class Settings(BaseModel):
     effort: str = "low"
     shell: str = "auto"
     web_concurrency: WebConcurrencySettings | None = None
+    enabled_models_by_profile: dict[str, list[str]] = Field(default_factory=dict)
     passes: int = 1
     verbose: bool = False
 
@@ -798,7 +799,27 @@ class Settings(BaseModel):
             if name:
                 raise ValueError(f"Disabled or unknown provider profile: {name!r}")
             profile_name = "p-gpt"
-        return profile_name, profiles[profile_name].model_copy(deep=True)
+        if not name and profile_name in self.enabled_models_by_profile:
+            enabled = self.enabled_models_by_profile[profile_name]
+            if not any(profiles[profile_name].allows_model(model) for model in enabled):
+                for candidate, candidate_profile in profiles.items():
+                    candidate_enabled = self.enabled_models_by_profile.get(candidate)
+                    if candidate_enabled is None or any(candidate_profile.allows_model(model) for model in candidate_enabled):
+                        profile_name = candidate
+                        break
+        profile = profiles[profile_name].model_copy(deep=True)
+        enabled = self.enabled_models_by_profile.get(profile_name)
+        if enabled is not None:
+            allowed = [model for model in enabled if profile.allows_model(model)]
+            if not allowed:
+                raise ValueError(f"허용된 모델이 없습니다: {profile_name}")
+            default = profile.default_model if profile.default_model in allowed else allowed[0]
+            profile = profile.model_copy(update={
+                "allowed_models": allowed,
+                "default_model": default,
+                "last_model": profile.last_model if profile.last_model in allowed else None,
+            })
+        return profile_name, profile
 
     def materialize_active_profile(self) -> Settings:
         """Project the active profile back onto legacy flat settings fields."""
@@ -1061,6 +1082,11 @@ class Settings(BaseModel):
             for model_key in ("model", "subagent_model"):
                 model_value = updates.get(model_key)
                 if isinstance(model_value, str):
+                    if (candidate_profile_name in self.enabled_models_by_profile
+                            and not candidate_profile.allows_model(model_value)
+                            and self.merged_profiles()[candidate_profile_name].allows_model(model_value)):
+                        # Restored sessions may still name a model disabled by an administrator.
+                        updates[model_key] = model_value = candidate_profile.default_model
                     candidate_profile.require_model(model_value, profile_name=candidate_profile_name)
         profile_model_override = False
         if "active_profile" in updates and "model" in updates:
@@ -1217,6 +1243,10 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     model_override = updates.get("model")
     if isinstance(model_override, str):
         profile_name, profile = settings.resolve_profile()
+        if (profile_name in settings.enabled_models_by_profile
+                and not profile.allows_model(model_override)
+                and settings.merged_profiles()[profile_name].allows_model(model_override)):
+            updates["model"] = model_override = profile.default_model
         profile.require_model(model_override, profile_name=profile_name)
     return settings.model_copy(update=updates)
 
@@ -1226,11 +1256,12 @@ def _parse_bool_env(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def load_settings(config_path: Path | None = None) -> Settings:
+def load_settings(config_path: Path | None = None, *, apply_model_policy: bool = True) -> Settings:
     """Load settings from config file, merging with defaults.
 
     Args:
         config_path: Path to settings.json. If None, uses the default location.
+        apply_model_policy: False only for administrative catalog discovery, never execution.
 
     Returns:
         Settings instance with file values merged over defaults.
@@ -1248,6 +1279,8 @@ def load_settings(config_path: Path | None = None) -> Settings:
             if isinstance(local_raw, dict):
                 raw = {**raw, **local_raw}
         settings = Settings.model_validate(raw)
+        if not apply_model_policy:
+            settings = settings.model_copy(update={"enabled_models_by_profile": {}})
         if "active_profile" not in raw:
             profile_name, profile = _profile_from_flat_settings(settings)
             merged_profiles = settings.merged_profiles()

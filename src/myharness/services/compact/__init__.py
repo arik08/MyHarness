@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 from uuid import uuid4
 
+from myharness.context_policy import get_context_window, get_long_context_policy_threshold
+
 from myharness.engine.messages import (
     ConversationMessage,
     ContentBlock,
@@ -74,8 +76,6 @@ AUTOCOMPACT_BUFFER_TOKENS = 13_000
 AUTOCOMPACT_CONTEXT_RATIO = 0.75
 MAX_OUTPUT_TOKENS_FOR_SUMMARY = 4_000
 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
-LONG_CONTEXT_COST_SAVER_THRESHOLD_TOKENS = 250_000
-LONG_CONTEXT_FULL_THRESHOLD_TOKENS = 1_000_000
 COMPACT_TIMEOUT_SECONDS = 25
 MAX_COMPACT_STREAMING_RETRIES = 2
 MAX_PTL_RETRIES = 3
@@ -100,28 +100,6 @@ DEFAULT_GAP_THRESHOLD_MINUTES = 60
 # Token estimation padding (conservative)
 TOKEN_ESTIMATION_PADDING = 4 / 3
 
-# Default context windows per model family
-_DEFAULT_CONTEXT_WINDOW = 200_000
-_OPENAI_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
-    ("gpt-5.6-luna", 1_050_000),
-    ("gpt-5.6-terra", 1_050_000),
-    ("gpt-5.6-sol", 1_050_000),
-    ("gpt-5.5", 1_050_000),
-    ("gpt-5.4-mini", 400_000),
-    ("gpt-5.4-nano", 400_000),
-    ("gpt-5.4", 1_050_000),
-    ("gpt-5.3-codex-spark", 128_000),
-    ("gpt-5.3-codex", 400_000),
-    ("gpt-5.2-codex", 400_000),
-    ("gpt-5.2", 400_000),
-    ("gpt-5-codex", 400_000),
-    ("gpt-5-mini", 400_000),
-    ("gpt-5-nano", 400_000),
-    ("gpt-5", 400_000),
-    ("gpt-4.1", 1_047_576),
-    ("o3", 200_000),
-    ("o4-mini", 200_000),
-)
 PTL_RETRY_MARKER = "[earlier conversation truncated for compaction retry]"
 ERROR_MESSAGE_INCOMPLETE_RESPONSE = "Compaction interrupted before a complete summary was returned."
 
@@ -1301,39 +1279,6 @@ class AutoCompactState:
 # Context window helpers
 # ---------------------------------------------------------------------------
 
-def get_context_window(model: str, *, context_window_tokens: int | None = None) -> int:
-    """Return the context window size for a model (conservative defaults)."""
-    if context_window_tokens is not None and context_window_tokens > 0:
-        return int(context_window_tokens)
-    m = model.lower()
-    for prefix, window in _OPENAI_CONTEXT_WINDOWS:
-        if m == prefix or m.startswith(f"{prefix}-"):
-            return window
-    if "opus" in m:
-        return 200_000
-    if "sonnet" in m:
-        return 200_000
-    if "haiku" in m:
-        return 200_000
-    # Kimi / other providers — be conservative
-    return _DEFAULT_CONTEXT_WINDOW
-
-
-def get_long_context_policy_threshold(model: str, mode: str | None) -> int | None:
-    """Return the selected threshold for GPT models with 272K long-context pricing."""
-    normalized_model = str(model or "").strip().lower()
-    supported_family = any(
-        normalized_model == family or normalized_model.startswith(f"{family}-")
-        for family in ("gpt-5.4", "gpt-5.5", "gpt-5.6")
-    )
-    if not supported_family or normalized_model.startswith(("gpt-5.4-mini", "gpt-5.4-nano")):
-        return None
-    normalized_mode = str(mode or "").strip().lower()
-    if normalized_mode == "full-context":
-        return LONG_CONTEXT_FULL_THRESHOLD_TOKENS
-    return LONG_CONTEXT_COST_SAVER_THRESHOLD_TOKENS
-
-
 def get_autocompact_threshold(
     model: str,
     *,
@@ -1985,6 +1930,7 @@ async def auto_compact_if_needed(
     ):
         return messages, False
 
+    pre_document_tokens = estimate_message_tokens(messages)
     session_document_result = try_session_document_compaction(
         messages,
         cwd=cwd,
@@ -2007,7 +1953,7 @@ async def auto_compact_if_needed(
                 trigger=trigger,
                 message_count=len(messages),
                 token_count=estimate_message_tokens(messages),
-                details={"document_id": document_entry.get("id")},
+                details={"document_id": document_entry.get("id"), "pre_compact_tokens": pre_document_tokens},
             ),
         )
         await _emit_progress(
@@ -2064,6 +2010,7 @@ async def auto_compact_if_needed(
 
     # Try microcompact first — may be enough
     deterministic_compacted = False
+    pre_microcompact_tokens = estimate_message_tokens(messages)
     messages, tokens_freed = microcompact_messages(messages)
     deterministic_compacted = tokens_freed > 0
     _record_compact_checkpoint(
@@ -2082,6 +2029,14 @@ async def auto_compact_if_needed(
         auto_compact_threshold_tokens=auto_compact_threshold_tokens,
     ):
         log.info("Microcompact freed ~%d tokens, auto-compact no longer needed", tokens_freed)
+        await _emit_progress(
+            progress_callback, phase="compact_end", trigger=trigger,
+            message="Older tool results compacted.",
+            metadata={
+                "pre_compact_tokens": pre_microcompact_tokens,
+                "post_compact_tokens": estimate_message_tokens(messages),
+            },
+        )
         return messages, True
 
     context_collapsed = try_context_collapse(
@@ -2281,6 +2236,8 @@ __all__ = [
     "estimate_message_tokens",
     "format_compact_summary",
     "get_autocompact_threshold",
+    "get_context_window",
+    "get_long_context_policy_threshold",
     "get_compact_prompt",
     "microcompact_messages",
     "should_autocompact",

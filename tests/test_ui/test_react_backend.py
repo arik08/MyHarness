@@ -1084,7 +1084,8 @@ def test_backend_host_records_swarm_status_for_snapshot_replay():
         )
     )
 
-    assert host._history_events == [
+    assert host._history_events[0]["type"] == "swarm_status"
+    assert host._history_events[1:] == [
         {"type": "assistant", "text": "중간 보고"},
         {
             "type": "swarm_status",
@@ -2139,6 +2140,40 @@ async def test_backend_host_uses_transcript_line_for_visible_user_message(tmp_pa
     assert "previous chat context should stay isolated" in stored_text
     assert "visible AI edit summary" in stored_text
     assert "hidden full prompt with document body" not in stored_text
+
+
+@pytest.mark.asyncio
+async def test_backend_host_persists_sent_image_preview_without_changing_model_input(tmp_path, monkeypatch):
+    from myharness.engine.messages import ImageBlock
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    client = SequencedApiClient(["done"])
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        host._record_history_event(event)
+
+    host._emit = emit
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line(
+            "사진을 확인해 주세요",
+            attachments=[FrontendAttachment(name="new-name.png", media_type="image/png", data="aGVsbG8=")],
+            attachment_refs=[FrontendAttachment(name="notes.txt", path=".myharness/client-uploads/notes.txt", media_type="text/plain")],
+        )
+    finally:
+        await close_runtime(host._bundle)
+    item = next(event.item for event in events if event.type == "transcript_item" and event.item.role == "user")
+    assert item.display_text == "사진을 확인해 주세요\n[notes.txt]"
+    assert len(item.images) == 1
+    assert (tmp_path / item.images[0]["path"]).read_bytes() == b"hello"
+    assert host._history_events[0]["images"] == item.images
+    assert any(isinstance(block, ImageBlock) for message in client.requests[0].messages for block in message.content)
 
 
 @pytest.mark.asyncio
@@ -3381,6 +3416,32 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["auto", "reactive", "manual"])
+async def test_compaction_events_survive_real_emit_save_and_disk_reload(tmp_path, trigger):
+    from myharness.services.session_backend import MyHarnessSessionBackend
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    await host._emit(BackendEvent(type="transcript_item", item={"role": "user", "text": "compress"}))
+    metadata = {"pre_compact_tokens": 180000, "post_compact_tokens": 40000, "context_window_tokens": 200000, "tokens_estimated": True}
+    for phase in ("compact_start", "compact_retry", "compact_failed", "compact_start", "compact_end"):
+        await host._emit(BackendEvent(
+            type="compact_progress", compact_phase=phase, compact_trigger=trigger,
+            compact_checkpoint=phase, compact_metadata=metadata, attempt=1,
+            message="progress", timestamp_ms=123456,
+        ))
+    await host._emit(BackendEvent(type="assistant_complete", message="continued"))
+    backend = MyHarnessSessionBackend()
+    backend.save_snapshot(
+        cwd=tmp_path, model="gpt-5.6-luna", system_prompt="system", messages=[],
+        usage=UsageSnapshot(), session_id="compact-persistence", history_events=host._history_events,
+    )
+    restored = MyHarnessSessionBackend().load_by_id(tmp_path, "compact-persistence")
+    recorded = [event for event in restored["history_events"] if event["type"] == "compact_progress"]
+    assert [event["compact_phase"] for event in recorded] == ["compact_start", "compact_retry", "compact_failed", "compact_start", "compact_end"]
+    assert all(event["compact_metadata"] == metadata and event["compact_trigger"] == trigger and event["timestamp"] == 123456 for event in recorded)
+
+
+@pytest.mark.asyncio
 async def test_backend_host_emits_tool_transcript_output(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -3882,7 +3943,7 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
     assert runtime_options["subagent_effort"] == "medium"
     assert any(option["value"] == "low" for option in runtime_options["efforts"])
     none_option = next(option for option in runtime_options["efforts"] if option["value"] == "none")
-    assert none_option["label"] == "None"
+    assert none_option["label"] == "Auto"
 
 
 @pytest.mark.asyncio
@@ -4338,5 +4399,41 @@ async def test_branch_snapshot_resumes_and_continues_without_changing_source(tmp
         host._bundle.engine.tool_metadata["branch_origin"] = {"session_id": "source"}
         host._start_new_saved_session()
         assert "branch_origin" not in host._bundle.engine.tool_metadata
+    finally:
+        await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
+async def test_runtime_model_select_is_atomic_and_rejects_disabled_models(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    settings = Settings()
+    settings.enabled_models_by_profile = {"codex": ["gpt-5.6-terra"]}
+    save_settings(settings)
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+    async def capture(event):
+        events.append(event)
+    host._emit = capture
+    await start_runtime(host._bundle)
+    try:
+        before = dict(host._bundle.settings_overrides)
+        await host._apply_select_command("runtime_model", json.dumps({"profile": "codex", "model": "gpt-5.6-sol"}))
+        assert any(event.type == "error" for event in events)
+        assert host._bundle.settings_overrides == before
+        events.clear()
+        await host._apply_select_command("runtime_model", json.dumps({"profile": "codex", "model": "gpt-5.6-terra"}))
+        assert not any(event.type == "error" for event in events)
+        assert host._bundle.engine.model == "gpt-5.6-terra"
+        assert host._bundle.current_settings().active_profile == "codex"
+        # A policy edit during an existing session applies at the next prompt boundary.
+        settings.enabled_models_by_profile = {"codex": ["gpt-5.6-luna"]}
+        save_settings(settings)
+        assert host._bundle.engine.model == "gpt-5.6-terra"
+        await handle_line(host._bundle, "hello", print_system=AsyncMock(), render_event=AsyncMock(), clear_output=AsyncMock(), persist_session=False)
+        assert host._bundle.engine.model == "gpt-5.6-luna"
+        assert host._bundle.engine.tool_metadata["runtime_model"] == "gpt-5.6-luna"
     finally:
         await close_runtime(host._bundle)

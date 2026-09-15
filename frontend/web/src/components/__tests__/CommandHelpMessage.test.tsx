@@ -1105,6 +1105,59 @@ describe("CommandHelpMessage", () => {
     expect(standaloneGroup.textContent).toContain("review");
   });
 
+  it("does not recreate the general skill group from bundled-only snapshots", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        skills: ["plan", "commit", "debug", "diagnose", "review", "simplify", "test"].map((name) => ({
+          name, source: "bundled", description: "Internal workflow.", enabled: true,
+        })),
+      }}>
+        <CommandHelpMessage text={"사용 가능한 스킬:\n(사용자 스킬이 없습니다)\n\n사용 가능한 명령어:\n- /help 도움말"} />
+      </AppStateProvider>,
+    );
+    await openHelpSection(user, "스킬");
+    expect(screen.queryByRole("group", { name: "일반 스킬" })).toBeNull();
+    expect(screen.queryByText("plan", { exact: true })).toBeNull();
+  });
+
+  it.each(["bundled", " Bundled "])("keeps internal %s skills out of help after merging live snapshots", async (source) => {
+    const user = userEvent.setup();
+    const helpText = [
+      "사용 가능한 스킬:",
+      "- restored-internal [bundled] [활성]: Restored internal entry.",
+      "- plan [user] [활성]: User-defined planning skill.",
+      "",
+      "사용 가능한 명령어:",
+      "- /help 도움말",
+    ].join("\n");
+
+    render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        sessionId: "session-1",
+        skills: [
+          ...["review", "debug", "new-internal-workflow"].map((name) => ({
+            name, source, description: "Internal workflow.", enabled: true,
+          })),
+          { name: "plan", source: "user", description: "User-defined planning skill.", enabled: false },
+          { name: "general-guide", source: "skill-category:General", description: "General guide.", enabled: true },
+        ],
+      }}>
+        <CommandHelpMessage text={helpText} />
+      </AppStateProvider>,
+    );
+
+    await openHelpSection(user, "스킬");
+    const regular = screen.getByRole("group", { name: "일반 스킬" });
+    expect(regular.textContent).toContain("plan");
+    for (const name of ["restored-internal", "review", "debug", "new-internal-workflow"]) {
+      expect(screen.queryByText(name, { exact: true })).toBeNull();
+    }
+    expect(screen.getByRole("group", { name: "General 스킬" }).textContent).toContain("general-guide");
+  });
+
   it("groups program skills by their .skills category", async () => {
     const user = userEvent.setup();
     const helpText = [

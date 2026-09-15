@@ -92,7 +92,7 @@ def validate_output(server: str, tool: str, text: str) -> None:
             raise AssertionError("zero health sample_count")
 
 
-async def audit(root: Path, output: Path, selected: list[str]) -> int:
+async def audit(root: Path, output: Path, selected: list[str], *, http_audit: bool = False) -> int:
     load_web_environment(root)
     settings = load_settings()
     plugins = load_plugins(settings, root, include_program_plugins=True)
@@ -109,11 +109,16 @@ async def audit(root: Path, output: Path, selected: list[str]) -> int:
         output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"{status:24} {label} {redact(detail, secrets)[:200]}", flush=True)
 
-    async def check(label, action, *, record_success=True):
+    async def check(label, action, *, record_success=True, http_log=None):
         started = time.perf_counter()
+        before = len(http_log.read_text(encoding="utf-8").splitlines()) if http_log else 0
         try:
             value = await asyncio.wait_for(action(), timeout=100)
-            if record_success:
+            calls = [json.loads(line) for line in http_log.read_text(encoding="utf-8").splitlines()[before:]] if http_log else []
+            recovered = any(c.get("exception") or c.get("status", 0) >= 400 for c in calls)
+            if recovered:
+                record(label, "RECOVERED_AFTER_HTTP_ERROR", json.dumps(calls), round((time.perf_counter() - started) * 1000))
+            elif record_success:
                 record(label, "PASS", elapsed_ms=round((time.perf_counter() - started) * 1000))
             return value
         except Exception as exc:
@@ -134,6 +139,12 @@ async def audit(root: Path, output: Path, selected: list[str]) -> int:
             if name in TOOLLESS_PLACEHOLDERS:
                 record(f"workflow:{name}", "PLACEHOLDER", "No business tools implemented; execution intentionally disabled")
                 return
+            http_log = None
+            if http_audit and config.args and Path(config.args[0]).name == "server.py":
+                config = config.model_copy(deep=True)
+                http_log = output.with_suffix(f".{name}.http.jsonl")
+                http_log.write_text("", encoding="utf-8")
+                config.args = [str(Path(__file__).with_name("mcp_http_audit.py")), str(http_log), *config.args]
             manager = McpClientManager({name: config})
             try:
                 # Keep connection and teardown in the same task (AnyIO cancel scopes).
@@ -161,7 +172,7 @@ async def audit(root: Path, output: Path, selected: list[str]) -> int:
                                     raise ValueError("Missing credential: " + ", ".join(credential.get("environment_names", [])))
                                 raise AssertionError(payload.get("detail") or "health probe failed")
                             return True
-                        healthy = await check(f"health:{name}:{source}", health)
+                        healthy = await check(f"health:{name}:{source}", health, http_log=http_log)
                         if healthy:
                             states = {(s, src): False for s, sources in SERVER_SOURCES.items() for src in sources}
                             states[(name, source)] = True
@@ -170,7 +181,7 @@ async def audit(root: Path, output: Path, selected: list[str]) -> int:
                                 await workflow(states)
                             # Health probes already perform a live source request. Do not
                             # count a workflow with no fixture as another successful call.
-                            await check(f"workflow:{name}:{source}", run_workflow, record_success=False)
+                            await check(f"workflow:{name}:{source}", run_workflow, record_success=False, http_log=http_log)
                             for result in verifier.results[before:]:
                                 record(result.label, result.status, elapsed_ms=result.elapsed_ms)
                 elif name in EXTRA_CASES:
@@ -178,7 +189,7 @@ async def audit(root: Path, output: Path, selected: list[str]) -> int:
                         async def call(tool=tool, arguments=arguments):
                             result = await manager.call_tool(name, tool, arguments)
                             validate_output(name, tool, result)
-                        await check(f"call:{name}:{tool}:{index}", call)
+                        await check(f"call:{name}:{tool}:{index}", call, http_log=http_log)
                 else:
                     record(f"workflow:{name}", "UNVERIFIED", "No read-only fixture configured")
             except Exception as exc:
@@ -206,5 +217,6 @@ if __name__ == "__main__":
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", type=Path, default=Path(".myharness/ui-checks/mcp-audit.json"))
     parser.add_argument("--servers", nargs="*", default=[])
+    parser.add_argument("--http-audit", action="store_true", help="Record Python MCP HTTP statuses and flag recovered errors separately")
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(audit(args.root.resolve(), args.output.resolve(), args.servers)))
+    raise SystemExit(asyncio.run(audit(args.root.resolve(), args.output.resolve(), args.servers, http_audit=args.http_audit)))

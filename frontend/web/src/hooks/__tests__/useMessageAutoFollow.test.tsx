@@ -5,6 +5,54 @@ import { initialAppState } from "../../state/reducer";
 
 afterEach(() => vi.useRealTimers());
 
+it("positions completed chats before paint without animating later text layout changes", () => {
+  vi.useFakeTimers();
+  let height = 1400;
+  let top = 0;
+  const dispatch = vi.fn();
+  const frames = vi.spyOn(window, "requestAnimationFrame");
+  function Harness({ busy = false, text = "Completed answer" }) {
+    const message = { id: "a", role: "assistant" as const, text, isComplete: !busy };
+    const follow = useMessageAutoFollow({
+      state: { ...initialAppState, busy, messages: [message],
+        appSettings: { ...initialAppState.appSettings, streamScrollDurationMs: 600 } },
+      dispatch, lastMessage: message, activeWorkflowFollowSignature: "",
+    });
+    return <>
+      <section ref={(element) => {
+        follow.messagesRef.current = element;
+        if (element) Object.defineProperties(element, {
+          scrollHeight: { configurable: true, get: () => height },
+          clientHeight: { configurable: true, get: () => 400 },
+          scrollTop: { configurable: true, get: () => top,
+            set: (value: number) => { top = Math.max(0, Math.min(height - 400, value)); } },
+        });
+      }} />
+      <button onClick={follow.handleVisibleTextChange}>Text layout</button>
+    </>;
+  }
+  const view = render(<Harness />);
+  expect(top).toBe(1000);
+  expect(frames).not.toHaveBeenCalled();
+  height = 1800;
+  fireEvent.click(screen.getByText("Text layout"));
+  expect(top).toBe(1400);
+  expect(frames).not.toHaveBeenCalled();
+  height = 2200;
+  view.rerender(<Harness text="Another completed answer" />);
+  expect(top).toBe(1800);
+  expect(frames).not.toHaveBeenCalled();
+  height = 2600;
+  view.rerender(<Harness busy text="New live answer" />);
+  expect(frames).toHaveBeenCalled();
+  expect(top).toBe(1800);
+  view.rerender(<Harness text="New answer finished" />);
+  expect(top).toBe(2200);
+  act(() => vi.advanceTimersByTime(1000));
+  expect(top).toBe(2200);
+  frames.mockRestore();
+});
+
 it("shows a jump button away from the bottom and resumes streaming until the user scrolls up", () => {
   vi.useFakeTimers();
   let height = 1400;

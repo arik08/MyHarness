@@ -1640,6 +1640,8 @@ export function ArtifactPanel() {
                   onPointerDown={handleAiEditProgressPointerDown}
                 >
                   <WorkflowPanel
+                    expanded
+                    persistenceKey={`artifact-edit:${activePath}`}
                     events={aiEditProgressEvents}
                     durationSeconds={aiEditLiveProgressEvents.length ? state.workflowDurationSeconds : aiEditElapsedSeconds}
                   />

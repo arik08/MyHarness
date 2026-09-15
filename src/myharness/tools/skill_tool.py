@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -69,7 +70,7 @@ class SkillTool(BaseTool):
             )
         activation_error = await _activate_routed_mcp(skill, context)
         increment_skill_usage_count(skill.name)
-        output = _format_skill_output(skill)
+        output = _format_skill_output(skill, cwd=context.cwd)
         if activation_error:
             output += f"\n\nMCP 활성화 실패: {activation_error}\n스킬 지침만 로드되었으며 MCP 데이터는 조회되지 않았습니다."
         else:
@@ -128,14 +129,40 @@ async def _activate_routed_mcp(skill, context: ToolExecutionContext) -> str | No
         tool_registry.register(McpToolAdapter(manager, tool_info))
 
 
-def _format_skill_output(skill) -> str:
+def _format_skill_output(skill, *, cwd: Path) -> str:
     """Return skill content with user-facing metadata first."""
     description = str(getattr(skill, "description", "") or "").strip()
     if not description:
         description = f"스킬: {skill.name}"
+    path = getattr(skill, "path", None)
+    location = ""
+    if path:
+        skill_path = Path(path).expanduser()
+        if not skill_path.is_absolute():
+            skill_path = cwd / skill_path
+        skill_path = skill_path.resolve()
+        location = (
+            f"Skill file: {skill_path}\n"
+            f"Skill directory (<skill>): {skill_path.parent}\n"
+            f"Task working directory: {cwd.resolve()}\n"
+            "Resolve bundled scripts/, references/, assets/ and other skill-relative resources "
+            "against the Skill directory above, not the task working directory. "
+            "Replace <skill> in examples with that actual directory; pass the resulting absolute "
+            "script path as a quoted argument when invoking commands. "
+            "Keep task inputs and outputs relative to the task working directory, or use their "
+            "absolute paths. Loading this skill does not change the command working directory. "
+            "Check that referenced resources exist before running them; do not guess a replacement path "
+            "or claim verification succeeded when a required check failed.\n\n"
+        )
+    else:
+        location = (
+            "This skill has no filesystem location. Do not assume its bundled resource paths "
+            "exist in the task working directory; locate them before execution.\n\n"
+        )
     return (
         f"스킬: {skill.name}\n"
         f"설명: {description}\n\n"
+        f"{location}"
         f"{skill.content}"
     )
 

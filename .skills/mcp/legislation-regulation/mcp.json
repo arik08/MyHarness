@@ -15,7 +15,10 @@
         "get_record",
         "get_document_link",
         "get_source_health"
-      ]
+      ],
+      "env": {
+        "DATA_GOV_API_KEY": "yWriTZOo9Ht8SmogzdM8jNLcz9YhcReraCq28CPe"
+      }
     }
   }
 }

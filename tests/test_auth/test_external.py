@@ -20,7 +20,7 @@ from myharness.auth.external import (
     refresh_claude_oauth_credential,
 )
 from myharness.auth.manager import AuthManager
-from myharness.auth.storage import ExternalAuthBinding, load_external_binding, store_external_binding
+from myharness.auth.storage import ExternalAuthBinding, load_external_binding
 from myharness.cli import app
 from myharness.config.settings import Settings, load_settings
 

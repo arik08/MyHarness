@@ -5,6 +5,27 @@ import { initialAppState } from "../../state/reducer";
 import { TodoDock } from "../TodoDock";
 
 describe("TodoDock", () => {
+  it.each(["new_custom_tool", "progress_note"])("shows the latest %s message first and labels earlier messages", (toolName) => {
+    const { container } = render(
+      <AppStateProvider initialState={{
+        ...initialAppState,
+        busy: true,
+        todoMarkdown: "- [ ] 작업 확인",
+        statusText: "준비됨",
+        workflowEvents: [{
+          id: "activity", toolName, title: "진행", status: "running",
+          detailLog: ["처음 메시지", "이전 메시지", "바로 전 메시지"],
+          detail: "최신 메시지",
+        }],
+      }}><TodoDock /></AppStateProvider>,
+    );
+    const lines = [...container.querySelectorAll(".todo-activity-line")];
+    expect(lines.map((line) => line.textContent)).toEqual([
+      "최신최신 메시지", "이전 1바로 전 메시지", "이전 2이전 메시지",
+    ]);
+    expect(container.querySelectorAll(".todo-activity-line.latest")).toHaveLength(1);
+  });
+
   it("does not animate an unchecked item after the final answer is complete", () => {
     const { container } = render(
       <AppStateProvider

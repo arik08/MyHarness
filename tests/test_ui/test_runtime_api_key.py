@@ -10,6 +10,7 @@ import pytest
 from myharness.api.client import ApiMessageRequest
 from myharness.api.errors import AuthenticationFailure
 from myharness.api.openai_client import OpenAICompatibleClient
+from myharness.config.settings import Settings
 from myharness.ui.runtime import (
     MissingAuthClient,
     _next_prompt_profile,
@@ -101,17 +102,20 @@ async def test_refresh_runtime_client_closes_replaced_owned_client(monkeypatch):
 
     previous = _ClosableClient()
     replacement = _ClosableClient()
-    settings = SimpleNamespace(model="gpt-5.6-sol", effective_max_tokens=lambda: 32_000)
+    settings = Settings(model="gpt-5.6-sol")
     engine = SimpleNamespace(
         tool_metadata={},
         set_api_client=lambda client: None,
         set_model=lambda model: None,
+        set_context_window=lambda tokens: None,
+        set_auto_compact_threshold=lambda tokens: None,
         set_max_tokens=lambda max_tokens: None,
         set_system_prompt=lambda prompt: None,
     )
     hook_executor = SimpleNamespace(update_context=lambda **kwargs: None)
     bundle = SimpleNamespace(
         current_settings=lambda: settings,
+        gpt56_context_mode="cost-saver",
         external_api_client=False,
         api_client=previous,
         engine=engine,

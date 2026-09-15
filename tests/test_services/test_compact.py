@@ -837,9 +837,16 @@ def test_get_context_window_uses_current_openai_model_limits():
     ["gpt-5.4", "gpt-5.4-pro", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
 )
 def test_long_context_policy_defaults_to_cost_saver(model: str):
-    assert get_long_context_policy_threshold(model, None) == 250_000
-    assert get_long_context_policy_threshold(model, "cost-saver") == 250_000
+    assert get_long_context_policy_threshold(model, None) == 231_200
+    assert get_long_context_policy_threshold(model, "cost-saver") == 231_200
     assert get_long_context_policy_threshold(model, "full-context") == 1_000_000
+
+
+@pytest.mark.parametrize("mode,expected", [("cost-saver", 108_800), ("full-context", 108_800)])
+def test_long_context_policy_respects_smaller_deployment_capacity(mode, expected):
+    assert get_long_context_policy_threshold(
+        "gpt-5.6-luna", mode, context_window_tokens=256_000,
+    ) == expected
 
 
 @pytest.mark.parametrize("model", ["gpt-5.3-codex", "gpt-5.4-mini", "gpt-5.4-nano"])

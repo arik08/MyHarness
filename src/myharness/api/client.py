@@ -8,7 +8,7 @@ import logging
 import uuid
 from contextlib import aclosing
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Protocol
+from typing import Any, AsyncIterator, Callable, Literal, Protocol
 
 from anthropic import APIError, APIStatusError, AsyncAnthropic
 
@@ -94,7 +94,14 @@ class ApiReasoningSummaryEvent:
     text: str
 
 
-ApiStreamEvent = ApiTextDeltaEvent | ApiToolCallDeltaEvent | ApiMessageCompleteEvent | ApiRetryEvent | ApiReasoningSummaryEvent
+@dataclass(frozen=True)
+class ApiCompactionEvent:
+    """Provider-reported compaction lifecycle, without opaque state contents."""
+
+    phase: Literal["compact_start", "compact_end"]
+
+
+ApiStreamEvent = ApiTextDeltaEvent | ApiToolCallDeltaEvent | ApiMessageCompleteEvent | ApiRetryEvent | ApiReasoningSummaryEvent | ApiCompactionEvent
 
 
 class SupportsStreamingMessages(Protocol):

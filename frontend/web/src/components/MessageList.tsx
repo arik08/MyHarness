@@ -11,6 +11,7 @@ import { CommandHelpMessage, isCommandCatalog } from "./CommandHelpMessage";
 import type { SourceEvidenceByUrl } from "./MarkdownMessage";
 import { StarterPrompts } from "./StarterPrompts";
 import { UserMessageText } from "./UserMessageText";
+import { UserMessageImages } from "./UserMessageImages";
 import { WebInvestigationSources, webInvestigationSummary, WorkflowPanel } from "./WorkflowPanel";
 
 function TerminalCommandMessage({ message }: { message: ChatMessage }) {
@@ -213,7 +214,12 @@ function mergeAdjacentLogMessages(messages: ChatMessage[]): RenderMessageItem[] 
     }
     items.push({ message, originalIndex: index });
   }
-  return items;
+  // Older servers emitted each raw stderr line as a chat log. Filter after
+  // joining adjacent lines so traceback source/caret lines cannot leak alone.
+  return items.filter(({ message }) => !(
+    isMergeableLogMessage(message)
+    && /(?:Traceback \(most recent call last\):|^tool execution raised:|^invalid input for \S+: \d+ validation errors?)/m.test(message.text)
+  ));
 }
 
 export function MessageList() {
@@ -348,8 +354,13 @@ export function MessageList() {
         <WorkflowPanel onVisibleProgressChange={handleVisibleWorkflowProgressChange} />
       ) : null}
       {renderMessages.map(({ message, originalIndex }) => {
+        // Intermediate assistant text lives at its recorded position in the workflow.
+        // The final response stays outside the collapsible work history.
+        if (message.responsePhase === "commentary") return null;
         const commandCatalog = isCommandCatalog(message.text);
         const kindBadge = message.role === "user" ? messageKindBadge(message.kind) : null;
+        const images = message.role === "user" ? message.images || [] : [];
+        const userText = images.length ? message.displayText ?? message.text : message.text;
         const workflowEvents = workflowEventsForMessageId(state, message.id);
         const showWorkflowHere = workflowEvents.length > 0 && !isQuietCommandTurn(message);
         const answerWebSourceEvents = message.role === "assistant" && message.isComplete
@@ -369,7 +380,8 @@ export function MessageList() {
               data-message-id={message.id}
             >
               {kindBadge ? <div className="message-kind-label">{kindBadge.label}</div> : null}
-              <div className="bubble">
+              {images.length > 0 ? <UserMessageImages images={images} /> : null}
+              {!(images.length && !userText.trim()) && <div className="bubble">
                 {commandCatalog ? (
                   <CommandHelpMessage text={message.text} />
                 ) : message.role === "assistant" ? (
@@ -391,9 +403,9 @@ export function MessageList() {
                 ) : message.role === "log" ? (
                   <pre aria-label="실행 로그" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.text}</pre>
                 ) : (
-                  <UserMessageText text={message.text} promptTokenReferences={promptTokenReferences} />
+                  <UserMessageText text={userText} promptTokenReferences={promptTokenReferences} />
                 )}
-              </div>
+              </div>}
               {message.pendingRequestId && (message.kind === "steering" || message.kind === "queued") ? (
                 <button
                   type="button"
@@ -410,6 +422,7 @@ export function MessageList() {
             {showWorkflowHere ? (
               <WorkflowPanel
                 events={workflowEvents}
+                persistenceKey={`turn:${state.messages.slice(0, originalIndex + 1).filter((item) => item.role === "user").length}`}
                 durationSeconds={workflowDurationForMessageId(state, message.id)}
                 onVisibleProgressChange={handleVisibleWorkflowProgressChange}
               />

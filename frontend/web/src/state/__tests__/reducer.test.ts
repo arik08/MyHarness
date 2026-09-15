@@ -1,10 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
 import { appReducer, initialAppState, loadAdminModePreference, loadHiddenHistoryKeys } from "../reducer";
 import { historyVisibilityKey } from "../../utils/history";
+import { submittedTranscriptTexts } from "../../utils/userTranscript";
 
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
 
 describe("appReducer", () => {
+  it.each([
+    ["사진 확인", 1, false, "사진 확인 [image attachments: 1]"],
+    ["", 2, false, "[image attachments: 2]"],
+    ["문서 확인", 0, true, "문서 확인 [file attachments: arbitrary.csv]"],
+    ["같이 확인", 3, true, "같이 확인 [image attachments: 3] [file attachments: arbitrary.csv]"],
+    ["같이 확인", 3, true, "같이 확인 [image attachments: 3; file attachments: arbitrary.csv]"],
+    ["", 1, false, "(파일 첨부) [image attachments: 1]"],
+  ])("reconciles attachment echoes for %s / %s / %s", (line, count, hasFile, echo) => {
+    const files = hasFile ? [{ id: "file", name: "arbitrary.csv", path: "/tmp/arbitrary.csv", size: 10 }] : [];
+    const message = { role: "user" as const, text: `${line}\n[arbitrary attachment]`,
+      transcriptTexts: submittedTranscriptTexts(line, Array(count).fill({}), files) };
+    let state = appReducer(initialAppState, { type: "append_message", message });
+    state = appReducer(state, { type: "set_busy", value: true });
+    state = appReducer(state, { type: "backend_event", event: { type: "clear_transcript" } });
+    const anchor = state.workflowAnchorMessageId;
+    state = appReducer(state, { type: "backend_event", event: { type: "transcript_item", item: { role: "user", text: echo } } });
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].text).toBe(message.text);
+    expect(state.workflowAnchorMessageId).toBe(anchor);
+    const distinct = appReducer(state, { type: "backend_event", event: { type: "transcript_item", item: { role: "user", text: `${echo} different` } } });
+    expect(distinct.messages).toHaveLength(2);
+  });
+
   it.each(["set_history", "append_history"] as const)("%s replaces runtime aliases without merging saved conversations", (type) => {
     const temporary = { value: "runtime", label: "same title", pending: true };
     const saved = { value: "saved", label: "same title", live: true, liveSessionId: "runtime", liked: true };
@@ -553,6 +577,34 @@ describe("appReducer", () => {
     expect(next.statusText).toBe("컨텍스트 자동 압축 후 재시도 중");
     expect(compactEvent?.detail).toContain("컨텍스트 한도");
     expect(next.messages.map((message) => message.text)).toEqual(["방금 작업 계속해줘"]);
+  });
+
+  it("retains before/after compaction usage and its original window across progress", () => {
+    const progress = (state: typeof initialAppState, phase: string, metadata: Record<string, unknown>) => appReducer(state, {
+      type: "backend_event", event: { type: "compact_progress", compact_phase: phase, compact_metadata: metadata },
+    });
+    const started = progress(initialAppState, "context_collapse_start", { token_count: 180000, context_window_tokens: 200000, tokens_estimated: true });
+    const retry = progress(started, "compact_retry", { token_count: 120000 });
+    const completed = progress(retry, "context_collapse_end", { token_count: 40000 });
+    const compacts = completed.workflowEvents.filter((event) => event.toolName === "context_compaction");
+    expect(compacts).toHaveLength(1);
+    expect(compacts[0].executionMetadata).toMatchObject({ pre_compact_tokens: 180000, post_compact_tokens: 40000, context_window_tokens: 200000 });
+    const next = progress(completed, "compact_start", { token_count: 190000, context_window_tokens: 300000 });
+    const latest = next.workflowEvents.at(-1)!;
+    expect(latest.executionMetadata).toMatchObject({ pre_compact_tokens: 190000, context_window_tokens: 300000 });
+    expect(latest.executionMetadata?.post_compact_tokens).toBeUndefined();
+    const restored = appReducer(initialAppState, { type: "backend_event", event: {
+      type: "history_snapshot", value: "compact-history", history_events: [
+        { type: "user", text: "분석" },
+        { type: "compact_progress", compact_phase: "context_collapse_start", compact_metadata: { token_count: 180000, context_window_tokens: 200000, tokens_estimated: true } },
+        { type: "compact_progress", compact_phase: "context_collapse_end", compact_metadata: { token_count: 40000 } },
+        { type: "assistant", text: "완료" },
+      ],
+    } as any });
+    const restoredEvents = Object.values(restored.workflowEventsByMessageId).flat();
+    expect(restoredEvents.find((event) => event.toolName === "context_compaction")?.executionMetadata).toMatchObject({
+      pre_compact_tokens: 180000, post_compact_tokens: 40000, context_window_tokens: 200000,
+    });
   });
 
   it("rebuilds a live streaming answer and workflow from replayed snapshot events", () => {
@@ -4052,7 +4104,7 @@ describe("appReducer", () => {
     expect(writeEvents[0].toolInput?.content).toBe("<!doctype html>");
   });
 
-  it("does not add a second running write_file step for the same path", () => {
+  it("preserves distinct parallel call ids even for the same write path", () => {
     const first = appReducer(initialAppState, {
       type: "backend_event",
       event: {
@@ -4081,12 +4133,12 @@ describe("appReducer", () => {
     });
 
     const writeEvents = second.workflowEvents.filter((event) => event.toolName === "write_file");
-    expect(writeEvents).toHaveLength(1);
-    expect(writeEvents[0]).toMatchObject({
+    expect(writeEvents).toHaveLength(2);
+    expect(writeEvents[1]).toMatchObject({
       toolCallId: "call-write-2",
       toolCallIndex: 1,
     });
-    expect(writeEvents[0].toolInput?.content).toBe("<!doctype html><html>");
+    expect(writeEvents[1].toolInput?.content).toBe("<!doctype html><html>");
   });
 
   it("merges shell shortcut output into the optimistic terminal message", () => {
