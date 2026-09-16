@@ -526,9 +526,6 @@ function catalogTooltip(item: ToggleEntry, fallback: string) {
   return [
     item.name,
     item.description || item.source || fallback,
-    fallback === "스킬" || isSkillMcpItem(item)
-      ? "비활성화하면 자동 트리거만 꺼집니다. $로 직접 선택하면 사용할 수 있습니다."
-      : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -883,7 +880,7 @@ function SkillCatalog({
                 className="skill-section-header plugin-skill-header skill-plugin-group-trigger"
                 type="button"
                 aria-label={`${group.plugin.name} 플러그인 ${group.plugin.enabled ? "비활성화" : "활성화"}`}
-                data-tooltip={`${group.plugin.name}\n클릭하면 플러그인을 ${group.plugin.enabled ? "비활성화하고 스킬 목록을 접습니다." : "활성화합니다."}`}
+                data-tooltip={catalogTooltip(group.plugin, "플러그인")}
                 onClick={() => onPluginToggle(group.plugin)}
               >
                 <span>
