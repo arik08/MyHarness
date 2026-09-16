@@ -1798,7 +1798,6 @@ export function Sidebar() {
         </span>
         <div className="runtime-copy">
           <strong>Provider: {state.providerLabel || state.provider}</strong>
-          <small>Model: {state.model} · Effort: {state.effort || "none"}</small>
         </div>
       </button>
       {!state.sidebarCollapsed ? (

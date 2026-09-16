@@ -211,6 +211,8 @@ function activeSuggestionToken(value: string, cursorOffset: number): ActiveSugge
 export function Composer() {
   const { state, dispatch } = useAppState();
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
+  const [suggestionPicker, setSuggestionPicker] = useState<ActiveSuggestionToken | null>(null);
+  const [dismissedSuggestion, setDismissedSuggestion] = useState<string | null>(null);
   const [isMultiline, setIsMultiline] = useState(false);
   const [cursorOffset, setCursorOffset] = useState(0);
   const [analysisDepth, setAnalysisDepth] = useState<"auto" | "brief" | "standard" | "deep">("auto");
@@ -247,7 +249,9 @@ export function Composer() {
   const canSend = Boolean(state.sessionId && hasPayload && !state.busy && !uploadingFiles && !enhancing);
   const canSteer = Boolean(state.sessionId && state.busy && fullLine().trim() && !hasAnyAttachment);
   const showStop = Boolean(state.busy && !canSteer);
-  const suggestionToken = useMemo(() => activeSuggestionToken(draft, cursorOffset), [draft, cursorOffset]);
+  const typedSuggestionToken = useMemo(() => activeSuggestionToken(draft, cursorOffset), [draft, cursorOffset]);
+  const suggestionKey = JSON.stringify([draft, cursorOffset]);
+  const suggestionToken = suggestionPicker ?? (dismissedSuggestion === suggestionKey ? null : typedSuggestionToken);
   const suggestions = useMemo(() => {
     if (!suggestionToken) return [];
     if (suggestionToken.trigger === "/") return commandSuggestions(state.commands, suggestionToken.query);
@@ -267,6 +271,8 @@ export function Composer() {
 
   useEffect(() => {
     setReferenceFiles([]);
+    setSuggestionPicker(null);
+    setDismissedSuggestion(null);
   }, [state.workspacePath, state.sessionId]);
 
   useEffect(() => {
@@ -280,6 +286,8 @@ export function Composer() {
 
   useEffect(() => {
     setSelectedSuggestionIndex(0);
+    setSuggestionPicker(null);
+    setDismissedSuggestion(null);
   }, [draft]);
 
   useEffect(() => {
@@ -501,16 +509,20 @@ export function Composer() {
     setExtraLongTarget(24_000);
   }
 
-  function insertTrigger(trigger: "@" | "$") {
-    const offset = inputRef.current?.selectionStart ?? draft.length;
-    const prefix = draft.slice(0, offset);
-    const inserted = `${prefix && !/\s$/.test(prefix) ? " " : ""}${trigger}`;
-    dispatch({ type: "set_draft", value: prefix + inserted + draft.slice(offset) });
-    requestAnimationFrame(() => {
+  function toggleSuggestionPicker(trigger: "@" | "$") {
+    if (suggestionToken?.trigger === trigger) {
+      setSuggestionPicker(null);
+      setDismissedSuggestion(suggestionKey);
       inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(offset + inserted.length, offset + inserted.length);
-      setCursorOffset(offset + inserted.length);
-    });
+      return;
+    }
+    const offset = inputRef.current?.selectionStart ?? draft.length;
+    setSuggestionPicker(typedSuggestionToken?.trigger === trigger
+      ? typedSuggestionToken
+      : { trigger, query: trigger, start: offset, end: inputRef.current?.selectionEnd ?? offset });
+    setDismissedSuggestion(null);
+    setSelectedSuggestionIndex(0);
+    inputRef.current?.focus();
   }
 
   async function improvePrompt() {
@@ -671,8 +683,11 @@ export function Composer() {
     const shouldSeparateMention = suggestionToken.trigger === "@" || suggestionToken.trigger === "$";
     const spacer = shouldSeparateMention && !suffix.startsWith(" ") ? " " : "";
     const cursorSpacerOffset = shouldSeparateMention && suffix.startsWith(" ") ? 1 : spacer.length;
-    const nextDraft = `${draft.slice(0, suggestionToken.start)}${suggestion.value}${spacer}${suffix}`;
-    const nextCursorOffset = suggestionToken.start + suggestion.value.length + cursorSpacerOffset;
+    const prefix = draft.slice(0, suggestionToken.start);
+    const leadingSpacer = suggestionPicker && prefix && !/\s$/.test(prefix) ? " " : "";
+    const nextDraft = `${prefix}${leadingSpacer}${suggestion.value}${spacer}${suffix}`;
+    const nextCursorOffset = suggestionToken.start + leadingSpacer.length + suggestion.value.length + cursorSpacerOffset;
+    setSuggestionPicker(null);
     dispatch({ type: "set_draft", value: nextDraft });
     window.requestAnimationFrame(() => {
       const nextInput = inputRef.current;
@@ -930,6 +945,8 @@ export function Composer() {
       event.preventDefault();
       if (event.key === "Escape") {
         setSelectedSuggestionIndex(0);
+        setSuggestionPicker(null);
+        setDismissedSuggestion(suggestionKey);
         return;
       }
       if (event.key === "ArrowDown") {
@@ -1032,7 +1049,7 @@ export function Composer() {
           </div>
         ))}
       </div>
-      <InlineQuestion />
+      <InlineQuestion surface="composer" />
           <input
             ref={clientFileInputRef}
             className="composer-file-input"
@@ -1096,44 +1113,61 @@ export function Composer() {
             </div>
           ))}
         </div>
-      <div className={`composer-box${isMultiline ? " multiline" : ""}`} ref={composerBoxRef} onMouseDown={handleComposerBoxMouseDown}>
-        <textarea
-          id="promptInput"
-          ref={inputRef}
-          rows={1}
-          placeholder="메시지를 입력하세요..."
-          autoComplete="off"
-          spellCheck={false}
-          value={draft}
-          onChange={(event) => {
-            syncCursorFromInput(event.currentTarget);
-            dispatch({ type: "set_draft", value: event.currentTarget.value });
-          }}
-          onClick={(event) => syncCursorFromInput(event.currentTarget)}
-          onKeyDown={handleKeyDown}
-          onKeyUp={(event) => syncCursorFromInput(event.currentTarget)}
-          onPaste={handlePaste}
-          onSelect={(event) => syncCursorFromInput(event.currentTarget)}
-        />
-        <button
-          id="sendButton"
-          className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}
-          type="submit"
-          disabled={state.busy ? !showStop && !canSteer : !canSend}
-          aria-label={showStop ? "작업 중단" : canSteer ? "스티어링 보내기" : "메시지 보내기"}
-        >
-          {showStop ? (
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="8.5" />
-              <path d="M15.5 8.5 8.5 15.5" />
-              <path d="m8.5 8.5 7 7" />
-            </svg>
-          ) : (
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <path d="M12 19V5m-6 6 6-6 6 6" />
-            </svg>
-          )}
-        </button>
+      <div className="composer-input-anchor">
+        <div className={`composer-box${isMultiline ? " multiline" : ""}`} ref={composerBoxRef} onMouseDown={handleComposerBoxMouseDown}>
+          <textarea
+            id="promptInput"
+            ref={inputRef}
+            rows={1}
+            placeholder="메시지를 입력하세요..."
+            autoComplete="off"
+            spellCheck={false}
+            value={draft}
+            onChange={(event) => {
+              syncCursorFromInput(event.currentTarget);
+              dispatch({ type: "set_draft", value: event.currentTarget.value });
+            }}
+            onClick={(event) => syncCursorFromInput(event.currentTarget)}
+            onKeyDown={handleKeyDown}
+            onKeyUp={(event) => syncCursorFromInput(event.currentTarget)}
+            onPaste={handlePaste}
+            onSelect={(event) => syncCursorFromInput(event.currentTarget)}
+          />
+          <button
+            id="sendButton"
+            className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}
+            type="submit"
+            disabled={state.busy ? !showStop && !canSteer : !canSend}
+            aria-label={showStop ? "작업 중단" : canSteer ? "스티어링 보내기" : "메시지 보내기"}
+          >
+            {showStop ? (
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <rect x="4" y="4" width="16" height="16" rx="1.5" />
+              </svg>
+            ) : (
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="m22 2-7 20-4-9-9-4 20-7Z" />
+                <path d="M22 2 11 13" />
+              </svg>
+            )}
+          </button>
+        </div>
+        <div className={`slash-menu${suggestions.length ? "" : " hidden"}`} id="slashMenu" role="listbox" aria-label="명령어와 스킬">
+          {suggestions.map((suggestion, index) => (
+            <button
+              className={`slash-menu-item${index === activeSuggestionIndex ? " active" : ""}`}
+              type="button"
+              role="option"
+              aria-selected={index === activeSuggestionIndex}
+              key={`${suggestion.kind}-${suggestion.value}`}
+              ref={index === activeSuggestionIndex ? activeSuggestionRef : null}
+              onClick={() => applySuggestion(suggestion)}
+            >
+              <span className="slash-command-name">{suggestion.label}</span>
+              <span className="slash-command-description">{suggestion.description}</span>
+            </button>
+          ))}
+        </div>
       </div>
       <div className="composer-toolbar" aria-label="입력 기능">
         <div className="composer-tools-left">
@@ -1152,8 +1186,8 @@ export function Composer() {
                   </svg>
                 </button>
               </div>
-          <button className="composer-tool" type="button" aria-label="참고자료 연결" data-tooltip="참고자료 연결" onClick={() => insertTrigger("@")}><ComposerIcon name="context" /></button>
-          <button className="composer-tool" type="button" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" onClick={() => insertTrigger("$")}><ComposerIcon name="skill" /></button>
+          <button className="composer-tool" type="button" aria-label="참고자료 연결" data-tooltip="참고자료 연결" aria-expanded={suggestionToken?.trigger === "@"} aria-controls="slashMenu" onClick={() => toggleSuggestionPicker("@")}><ComposerIcon name="context" /></button>
+          <button className="composer-tool" type="button" aria-label="Skill 및 MCP 호출" data-tooltip="Skill / MCP" aria-expanded={suggestionToken?.trigger === "$"} aria-controls="slashMenu" onClick={() => toggleSuggestionPicker("$")}><ComposerIcon name="skill" /></button>
           <ComposerMenu label="요청 개선" icon={<ComposerIcon name="enhance" />} text={enhancing ? "개선 중…" : undefined} disabled={enhancing || state.busy || !state.sessionId || !draft.trim()}>
             {(close) => <>
               <p className="composer-menu-description">요청을 실행하기 전에 문장을 다듬습니다.</p>
@@ -1276,22 +1310,7 @@ export function Composer() {
       </div>
       {enhancementError && <div className="composer-feedback" role="alert">{enhancementError}</div>}
       {originalPrompt !== null && <div className="composer-feedback"><button type="button" onClick={() => { dispatch({ type: "set_draft", value: originalPrompt }); setOriginalPrompt(null); }}>개선 전 원문 복원</button></div>}
-      <div className={`slash-menu${suggestions.length ? "" : " hidden"}`} id="slashMenu" role="listbox" aria-label="명령어와 스킬">
-        {suggestions.map((suggestion, index) => (
-          <button
-            className={`slash-menu-item${index === activeSuggestionIndex ? " active" : ""}`}
-            type="button"
-            role="option"
-            aria-selected={index === activeSuggestionIndex}
-            key={`${suggestion.kind}-${suggestion.value}`}
-            ref={index === activeSuggestionIndex ? activeSuggestionRef : null}
-            onClick={() => applySuggestion(suggestion)}
-          >
-            <span className="slash-command-name">{suggestion.label}</span>
-            <span className="slash-command-description">{suggestion.description}</span>
-          </button>
-        ))}
-      </div>
+
     </form>
   );
 }

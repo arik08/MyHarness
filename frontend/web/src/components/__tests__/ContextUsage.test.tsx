@@ -13,14 +13,15 @@ function BackendAck() {
   const { state, dispatch } = useAppState();
   return <button onClick={() => dispatch({ type: "backend_event", event: { type: "state_snapshot", state: { runtime_options: {
     context_window: 1050000, standard_context_window: 272000, context_mode_available: true,
+    context_used_tokens: 163718,
     context_mode: state.appSettings.gpt56ContextMode === "full-context" ? "cost-saver" : "full-context",
   } } } })}>ack</button>;
 }
 
-function setup(busy = false, available = true) {
+function setup(busy = false, available = true, contextUsedTokens: number | undefined = 163718) {
   render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", busy,
-    runtimePicker: { ...initialAppState.runtimePicker, contextWindow: 1_050_000, standardContextWindow: 272_000, contextModeAvailable: available },
-    messages: [{ id: "m", role: "assistant", text: "done", usage: { input_tokens: 163718, output_tokens: 0, cached_input_tokens: 0, uncached_input_tokens: 163718, total_tokens: 163718 } }],
+    runtimePicker: { ...initialAppState.runtimePicker, contextWindow: 1_050_000, standardContextWindow: 272_000, contextModeAvailable: available, contextUsedTokens },
+    messages: [{ id: "m", role: "assistant", text: "done", usage: { input_tokens: 445000, output_tokens: 0, cached_input_tokens: 0, uncached_input_tokens: 445000, total_tokens: 445000 } }],
   }}><ComposerRuntimeControls /><TooltipLayer /><BackendAck /></AppStateProvider>);
   return screen.getByRole("button", { name: /컨텍스트/ });
 }
@@ -50,6 +51,15 @@ it("preserves mode and reports a failed change", async () => {
   fireEvent.click(trigger);
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", "연결 실패");
   expect(trigger.getAttribute("aria-pressed")).toBe("false");
+});
+
+it("does not report zero usage before context telemetry arrives", () => {
+  render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s",
+    runtimePicker: { ...initialAppState.runtimePicker, contextWindow: 1_050_000, standardContextWindow: 272_000 },
+  }}><ComposerRuntimeControls /><TooltipLayer /></AppStateProvider>);
+  fireEvent.pointerOver(screen.getByRole("button", { name: /컨텍스트/ }));
+  expect(screen.getByRole("tooltip").textContent).toContain("사용량 확인 대기");
+  expect(screen.getByRole("tooltip").textContent).not.toContain("0% 사용");
 });
 
 it.each([[true, true], [false, false]])("disables switching when busy=%s and supported=%s", (busy, available) => {

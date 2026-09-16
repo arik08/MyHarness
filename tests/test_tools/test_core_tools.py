@@ -893,16 +893,13 @@ def test_todo_write_schema_guides_incremental_progress_updates():
 def test_ask_user_question_schema_discourages_unnecessary_follow_ups():
     schema = AskUserQuestionTool.input_model.model_json_schema()
 
-    assert "Use this only when the missing information" in AskUserQuestionTool.description
     assert "state the assumption and proceed" in AskUserQuestionTool.description
-    assert "batch the choices into one prompt" in AskUserQuestionTool.description
-    assert "avoid approval-only questions" in AskUserQuestionTool.description
-    assert "After the user answers, continue the original task" in AskUserQuestionTool.description
-    assert "without restating the plan" in AskUserQuestionTool.description
-    assert "Do not ask another clarification immediately after the user answers" in AskUserQuestionTool.description
-    assert "label each item as (1/N)" in AskUserQuestionTool.description
-    assert "Batch all necessary clarification" in schema["properties"]["question"]["description"]
-    assert "(1/N)" in schema["properties"]["question"]["description"]
+    assert "each with its own choices" in AskUserQuestionTool.description
+    assert "approval-only questions" in AskUserQuestionTool.description
+    assert "explicitly requested interview" in AskUserQuestionTool.description
+    assert "questions" in schema["properties"]
+    assert schema["properties"]["questions"]["maxItems"] == 20
+
 
 
 @pytest.mark.asyncio

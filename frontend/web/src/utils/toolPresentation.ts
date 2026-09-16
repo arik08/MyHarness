@@ -29,9 +29,28 @@ export function workflowActionSummary(events: WorkflowEvent[]): string {
   return [...categories].map(([label, count]) => `${label} ${count}회`).join(" · ");
 }
 
-export function workflowGroupStatus(events: WorkflowEvent[]): WorkflowEvent["status"] {
-  const actions = events.filter((event) => event.role !== "reasoning");
+export function workflowDisplayStatus(event: WorkflowEvent): WorkflowEvent["status"] | "empty" {
+  if (event.status === "running") return event.status;
+  const raw = (event.output || event.detail).trim();
+  // Legacy web searches recorded a normal zero-result response as an error.
+  if (event.toolName === "web_search" && raw === "검색 결과가 없습니다.") return "empty";
+  if (event.status === "error") return event.status;
+  try {
+    const root = record(JSON.parse(raw));
+    const data = root && (record(root.detail) || root);
+    // Require an explicit empty collection AND count; missing data is not zero results.
+    if (root && data && !root.error && !root.isError && !root.is_error
+      && !data.error && !data.isError && !data.is_error
+      && data.total === 0 && Array.isArray(data.items) && data.items.length === 0) return "empty";
+  } catch { /* Unstructured outputs retain their recorded status. */ }
+  return event.status;
+}
+
+export function workflowGroupStatus(events: WorkflowEvent[]): WorkflowEvent["status"] | "empty" {
+  const actions = events.filter((event) => event.role !== "reasoning" && event.role !== "purpose")
+    .map((event) => ({ status: workflowDisplayStatus(event) }));
   if (actions.some((event) => event.status === "running")) return "running";
+  if (actions.length && actions.every((event) => event.status === "empty")) return "empty";
   if (actions.some((event) => event.status === "error")) {
     return actions.some((event) => event.status === "done" || event.status === "warning") ? "warning" : "error";
   }
@@ -62,6 +81,7 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 export function toolResultSummary(event: WorkflowEvent): string | null {
+  if (event.toolName !== "web_search" && workflowDisplayStatus(event) === "empty") return "이 조회 조건에서는 결과가 없습니다.";
   if (event.toolName === "web_search" || event.toolName === "web_fetch") {
     const input = event.toolInput || {};
     const provided = typeof input.progress_message === "string" ? input.progress_message.trim().slice(0, 220) : "";
@@ -77,14 +97,14 @@ export function toolResultSummary(event: WorkflowEvent): string | null {
     const status = raw.trim() === "검색 결과가 없습니다."
       ? "이 검색 조건에서는 결과가 없습니다."
       : event.status === "error" ? "조회 실패 · 상세 실행 기록을 확인해 주세요."
-      : event.status === "warning" ? "확인 필요 · 상세 실행 기록을 확인해 주세요."
+      : event.status === "warning" ? "부분응답 · 상세 실행 기록을 확인해 주세요."
       : event.status === "done" ? "" : "진행 중";
     return [provided || fallback, status].filter(Boolean).join(" · ");
   }
   if (!event.toolName.startsWith("mcp__")) return null;
   if (event.status === "running") return "진행 중";
   if (event.status === "error") return "도구 작업에 실패했습니다. 상세 실행 기록에서 원인을 확인할 수 있습니다.";
-  if (event.status === "warning") return "작업 결과를 확인해야 합니다. 상세 실행 기록을 확인해 주세요.";
+  if (event.status === "warning") return "부분응답 · 상세 실행 기록을 확인해 주세요.";
   let value: unknown;
   try {
     value = JSON.parse(event.output || event.detail);

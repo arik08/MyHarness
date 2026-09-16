@@ -216,9 +216,7 @@
   },
   "design_mode": "classic",
   "enabled_models_by_profile": {
-    "p-gpt": [
-      "gpt-5.6-sol"
-    ],
+    "p-gpt": [],
     "codex": [
       "gpt-5.6-luna",
       "gpt-5.6-terra",

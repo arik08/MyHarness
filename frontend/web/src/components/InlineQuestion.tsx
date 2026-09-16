@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { sendBackendRequest } from "../api/messages";
 import { useAppState } from "../state/app-state";
+import { QuestionRound } from "./QuestionRound";
 
 type QuestionChoice = {
   label: string;
@@ -10,7 +11,7 @@ type QuestionChoice = {
   source: "structured" | "question" | "default";
 };
 
-export function InlineQuestion() {
+export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" | "composer" }) {
   const { state, dispatch } = useAppState();
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -68,6 +69,10 @@ export function InlineQuestion() {
 
   if (!payload || (!isQuestion && !isPermission)) {
     return null;
+  }
+  if ((surface === "chat" && !isQuestion) || (surface === "composer" && !isPermission)) return null;
+  if (isQuestion && Array.isArray(payload.questions) && payload.questions.length) {
+    return <QuestionRound key={`${state.sessionId}:${requestId}`} payload={payload} />;
   }
 
   async function respond(responsePayload: Record<string, unknown>) {

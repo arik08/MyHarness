@@ -190,20 +190,12 @@ def test_build_system_prompt_discourages_repeated_clarification_rounds():
     prompt = build_system_prompt(env=env)
 
     assert "Clarifying-question budget" in prompt
-    assert "state your assumption and proceed" in prompt
-    assert "use the `ask_user_question` tool" in prompt
-    assert "explicit question event instead of inferring from assistant text" in prompt
-    assert "structured `choices` JSON array" in prompt
-    assert "Batch the necessary choices into one question" in prompt
+    assert "use `ask_user_question`" in prompt
+    assert "its own `choices`" in prompt
     assert "at most two clarification rounds" in prompt
-    assert 'Do not ask "should I proceed?"' in prompt
-    assert "After the user answers a clarification question" in prompt
-    assert 'A short numeric reply like "2" counts as choosing' in prompt
-    assert "Do not restate the full plan, table of contents, or alternative approaches" in prompt
-    assert "unless the answer creates a new concrete blocker or risky action" in prompt
-    assert "Do not ask another clarification immediately after the user answers" in prompt
-    assert "batch them into one question" in prompt
-    assert "(1/N)" in prompt
+    assert "exception to the normal clarification budget" in prompt
+    assert "do not put questions for the user in visible assistant text" in prompt
+    assert "Do not use this tool for execution permission" in prompt
 
 
 def test_build_system_prompt_requires_direct_build_requests_to_produce_the_artifact():

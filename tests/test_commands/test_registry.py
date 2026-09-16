@@ -854,8 +854,8 @@ async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
 
     compact_command, compact_args = registry.lookup("/compact 2")
     compact_result = await compact_command.handler(compact_args, context)
-    assert "대화를 압축했습니다" in compact_result.message
-    assert len(context.engine.messages) == 3
+    assert "기존 대화를 유지했습니다" in compact_result.message
+    assert len(context.engine.messages) == 4
 
     usage_command, usage_args = registry.lookup("/usage")
     usage_result = await usage_command.handler(usage_args, context)

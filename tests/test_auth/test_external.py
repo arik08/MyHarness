@@ -271,7 +271,7 @@ def test_cli_codex_login_binds_without_switching(monkeypatch, tmp_path: Path):
     settings = load_settings()
     assert settings.active_profile != "codex"
     assert settings.provider == "openai"
-    assert settings.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
+    assert settings.base_url == "http://pgpt.posco.com/s01a01-gpt/v1"
     assert settings.api_key == "stale-key"
     assert "Use `oh provider use codex` to activate it." in result.stdout
     binding = load_external_binding(CODEX_PROVIDER)

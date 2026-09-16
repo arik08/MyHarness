@@ -1,3 +1,4 @@
+import paletteCss from "../styles/palette.css?inline";
 import { useEffect, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import type { ArtifactSummary } from "../types/backend";
@@ -1386,18 +1387,19 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
   const isFullDocument = /<(?:!doctype|html|head|body)\b/i.test(content);
   const bridge = `
 <style data-myharness-ai-style="true">
+${paletteCss}
 .myharness-ai-comment-highlight {
-  border-bottom: 2px solid rgba(245, 158, 11, 0.82);
-  background: rgba(245, 158, 11, 0.22);
-  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.1);
+  border-bottom: 2px solid color-mix(in srgb, var(--color-orange) 82%, transparent);
+  background: color-mix(in srgb, var(--color-orange) 22%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-orange) 10%, transparent);
 }
 .myharness-ai-comment-highlight:hover {
-  background: rgba(245, 158, 11, 0.32);
+  background: color-mix(in srgb, var(--color-orange) 32%, transparent);
 }
 .myharness-ai-pending-highlight {
-  border-bottom: 2px solid rgba(245, 158, 11, 0.86);
-  background: rgba(245, 158, 11, 0.34);
-  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12);
+  border-bottom: 2px solid color-mix(in srgb, var(--color-orange) 86%, transparent);
+  background: color-mix(in srgb, var(--color-orange) 34%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-orange) 12%, transparent);
 }
 .myharness-ai-comment-anchor {
   position: absolute;
@@ -1456,15 +1458,15 @@ function iframeHtmlAiSelectionBridge(content: string, artifactPath: string, comm
   display: block;
 }
 ::selection {
-  background: rgba(245, 158, 11, 0.34);
+  background: color-mix(in srgb, var(--color-orange) 34%, transparent);
   color: inherit;
 }
 ::-moz-selection {
-  background: rgba(245, 158, 11, 0.34);
+  background: color-mix(in srgb, var(--color-orange) 34%, transparent);
   color: inherit;
 }
 ::highlight(myharness-ai-pending-selection) {
-  background: rgba(245, 158, 11, 0.34);
+  background: color-mix(in srgb, var(--color-orange) 34%, transparent);
   color: inherit;
 }
 .myharness-ai-comment-popover {

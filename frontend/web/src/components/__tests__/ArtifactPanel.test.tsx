@@ -1022,7 +1022,7 @@ describe("ArtifactPanel", () => {
     expect(frame.srcdoc).toContain("window.scrollTo(restoreScroll.x, restoreScroll.y)");
     expect(frame.srcdoc).toContain("::selection");
     expect(frame.srcdoc).toContain("::highlight(myharness-ai-pending-selection)");
-    expect(frame.srcdoc).toContain("rgba(245, 158, 11, 0.34)");
+    expect(frame.srcdoc).toContain("color-mix(in srgb, var(--color-orange) 34%, transparent)");
     expect(frame.srcdoc).toContain("myharness-ai-pending-highlight");
     expect(frame.srcdoc).toContain("const showPendingHighlight");
     expect(frame.srcdoc).not.toContain("hasDirectSelectableText");
@@ -2584,7 +2584,7 @@ describe("ArtifactPanel", () => {
 
     const progressText = document.querySelector(".artifact-ai-progress")?.textContent || "";
     expect(progressText).toContain("AI 응답 대기 중");
-    expect(progressText).toContain("3분 경과");
+    expect(progressText).toContain("3분 0초 동안 작업 중");
     expect(progressText).toContain("report_v1.html");
     expect(progressText).not.toContain("첫 streaming 이벤트 대기");
   });
@@ -2702,10 +2702,9 @@ describe("ArtifactPanel", () => {
     await user.click(screen.getByRole("button", { name: "AI 수정 패널 접기" }));
     await user.click(screen.getByRole("button", { name: "AI 수정 패널 다시 펼치기" }));
 
-    const waitingStep = [...document.querySelectorAll(".aside-note-detail")]
-      .find((item) => (item.textContent || "").includes("streaming 이벤트 지연"));
-    const elapsedMatches = waitingStep?.textContent?.match(/(?:\d+분(?: \d+초)?|\d+초) 경과/g) || [];
-    expect(elapsedMatches).toEqual(["58초 경과"]);
+    const progressText = document.querySelector(".artifact-ai-progress")?.textContent || "";
+    expect(progressText.match(/58초 동안 작업 중/g)).toHaveLength(1);
+    expect(progressText).not.toMatch(/\d+초 경과/);
   });
 
   it("renames the active preview title on double click and Enter", async () => {

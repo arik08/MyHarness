@@ -1,36 +1,51 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sendBackendRequest } from "../api/messages";
 import { useAppState } from "../state/app-state";
-import { rememberRuntimeChoice } from "../utils/runtimePreferences";
+import { rememberRuntimeChoice, runtimeStateWithPendingChoices } from "../utils/runtimePreferences";
 import type { RuntimePickerOption } from "../types/ui";
 import { ComposerChoice, ComposerIcon, ComposerMenu } from "./ComposerMenu";
 
 export function ComposerRuntimeControls() {
-  const { state } = useAppState();
+  const { state: confirmedState, dispatch } = useAppState();
+  const state = runtimeStateWithPendingChoices(confirmedState);
+  const currentSession = useRef(state.sessionId);
+  currentSession.current = state.sessionId;
+  const savedConfirmation = useRef(confirmedState.confirmedRuntimeChoiceId);
+  useEffect(() => {
+    const id = confirmedState.confirmedRuntimeChoiceId;
+    if (!id || id === savedConfirmation.current) return;
+    savedConfirmation.current = id;
+    const profile = confirmedState.activeProfile || confirmedState.provider;
+    rememberRuntimeChoice("provider", { value: profile, label: profile });
+    rememberRuntimeChoice("model", { value: confirmedState.model, label: confirmedState.model });
+    rememberRuntimeChoice("effort", { value: confirmedState.effort, label: confirmedState.effort });
+  }, [confirmedState.confirmedRuntimeChoiceId, confirmedState.activeProfile, confirmedState.provider, confirmedState.model, confirmedState.effort]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const disabled = !state.sessionId || state.busy || pending || state.runtimeChoicePending;
-  const latestUsage = [...state.messages].reverse().find((message) => message.usage)?.usage;
   const maximum = state.runtimePicker.contextModeAvailable && state.appSettings.gpt56ContextMode === "full-context";
   const contextWindow = maximum ? state.runtimePicker.contextWindow : state.runtimePicker.standardContextWindow;
-  const usedTokens = Math.max(0, latestUsage?.input_tokens || 0);
-  const usagePercent = contextWindow ? Math.min(100, Math.round(usedTokens / contextWindow * 100)) : 0;
-  const modelLabel = state.runtimePicker.models.find((model) => model.value === state.model)?.label || (state.model !== "-" && state.model) || "모델";
+  const usedTokens = state.runtimePicker.contextUsedTokens;
+  const usageKnown = contextWindow && usedTokens !== undefined;
+  const usagePercent = usageKnown ? Math.min(100, Math.round(usedTokens / contextWindow * 100)) : 0;
+  const modelLabel = (state.runtimePicker.modelsByProvider[state.activeProfile || state.provider] || state.runtimePicker.models).find((model) => model.value === state.model)?.label || (state.model !== "-" && state.model) || "모델";
 
   async function select(command: "model" | "effort", option: RuntimePickerOption, profile?: string) {
     if (!state.sessionId || disabled) return;
-    setPending(true);
+    const sessionId = state.sessionId;
+    const requestId = crypto.randomUUID();
+    dispatch({ type: "queue_runtime_choice", choice: { requestId, sessionId, command, value: option.value, profile } });
     setError("");
     try {
-      await sendBackendRequest(state.sessionId, state.clientId, {
+      await sendBackendRequest(sessionId, state.clientId, {
         type: "apply_select_command", command: profile ? "runtime_model" : command,
         value: profile ? JSON.stringify({ profile, model: option.value }) : option.value,
+        request_id: requestId,
       });
-      if (profile) rememberRuntimeChoice("provider", state.runtimePicker.providers.find((item) => item.value === profile) || { value: profile, label: profile });
-      rememberRuntimeChoice(command, option);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally { setPending(false); }
+      dispatch({ type: "reject_runtime_choice", requestId });
+      if (currentSession.current === sessionId) setError(reason instanceof Error ? reason.message : String(reason));
+    }
   }
 
   async function changeContext(mode: "cost-saver" | "full-context") {
@@ -46,11 +61,11 @@ export function ComposerRuntimeControls() {
 
   return <>
     <button type="button" className={`composer-tool context-usage-trigger${maximum ? " is-maximum" : ""}`}
-      aria-label={`컨텍스트 ${contextWindow ? formatContextTokens(contextWindow) : ""} 모드, ${usagePercent}% 사용`}
+      aria-label={`컨텍스트 ${contextWindow ? formatContextTokens(contextWindow) : ""} 모드, ${usageKnown ? `${usagePercent}% 사용` : "사용량 확인 대기"}`}
       aria-pressed={Boolean(maximum)} disabled={disabled || !state.runtimePicker.contextModeAvailable}
       data-tooltip="컨텍스트 길이:" data-tooltip-placement="top" data-tooltip-immediate="true"
-      data-context-usage={contextWindow ? `${usagePercent}% 사용 (${100 - usagePercent}% 남음)` : "용량을 불러오는 중입니다."}
-      data-tooltip-description={contextWindow ? `${formatContextTokens(usedTokens)} / ${formatContextTokens(contextWindow)} 토큰 사용` : ""}
+      data-context-usage={usageKnown ? `${usagePercent}% 사용 (${100 - usagePercent}% 남음)` : "사용량 확인 대기"}
+      data-tooltip-description={usageKnown ? `${formatContextTokens(usedTokens)} / ${formatContextTokens(contextWindow)} 토큰 사용 (예상)` : "다음 응답 후 갱신됩니다."}
       data-context-warning={maximum ? "주의: 1M 모드는 비용이 2배입니다." : ""}
       onClick={() => void changeContext(maximum ? "cost-saver" : "full-context")}>
       <svg viewBox="0 0 20 20" aria-hidden="true">

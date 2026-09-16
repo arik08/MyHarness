@@ -34,6 +34,13 @@ class AssistantTurnComplete:
 
 
 @dataclass(frozen=True)
+class UsageUpdated:
+    """Billable auxiliary model usage, without an assistant answer."""
+
+    usage: UsageSnapshot
+
+
+@dataclass(frozen=True)
 class ToolExecutionStarted:
     """The engine is about to execute a tool."""
 
@@ -101,6 +108,7 @@ class CompactProgressEvent:
 
 StreamEvent = (
     AssistantTextDelta
+    | UsageUpdated
     | ToolInputDelta
     | AssistantTurnComplete
     | ToolExecutionStarted

@@ -53,7 +53,7 @@ it("selects provider and model together from the composer", async () => {
   } }}><ComposerRuntimeControls /></AppStateProvider>);
   fireEvent.click(screen.getByRole("button", { name: "모델 선택" }));
   fireEvent.click(screen.getByRole("button", { name: "Other One" }));
-  await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session", expect.any(String), { type: "apply_select_command", command: "runtime_model", value: JSON.stringify({ profile: "b", model: "one" }) }));
+  await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("session", expect.any(String), { type: "apply_select_command", request_id: expect.any(String), command: "runtime_model", value: JSON.stringify({ profile: "b", model: "one" }) }));
 });
 
 it("keeps rapid input enabled and overlays pending changes on old responses", async () => {

@@ -4,7 +4,7 @@ import { AppStateProvider } from "../../state/app-state";
 import { appReducer, initialAppState } from "../../state/reducer";
 import type { WorkflowEvent } from "../../types/ui";
 import { WorkflowPanel } from "../WorkflowPanel";
-import { asideTimelineRows, workflowSafeText } from "../AsideWorkflowTimeline";
+import { AsideWorkflowTimeline, asideTimelineRows, workflowSafeText } from "../AsideWorkflowTimeline";
 
 const note = (id: string, detail: string): WorkflowEvent => ({ id, detail, toolName: "", title: "진행 메모", status: "done", role: "reasoning", noteSource: "progress" });
 const call = (id: string, toolName = "cmd", extra: Partial<WorkflowEvent> = {}): WorkflowEvent => ({ id, toolCallId: id, toolName, title: toolName, detail: "", status: "done", toolInput: { command: `echo ${id}` }, output: `output ${id}`, ...extra });
@@ -20,6 +20,19 @@ beforeEach(() => sessionStorage.clear());
 afterEach(cleanup);
 
 describe("Aside work history", () => {
+  it.each(["mcp__future__lookup", "read_file"])("keeps response activity visible after %s finishes", (toolName) => {
+    const events = [call("one", toolName), call("two", toolName)];
+    const timeline = (busy: boolean) => <AsideWorkflowTimeline events={events} scope="response-test" duration={56} busy={busy} />;
+    const view = render(timeline(true));
+    const spinner = screen.getByRole("status", { name: "응답 생성 중" });
+    expect(spinner.previousElementSibling?.classList.contains("aside-chevron")).toBe(true);
+    expect(spinner.closest(".aside-activity")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    expect(screen.getByRole("status", { name: "응답 생성 중" })).toBeTruthy();
+    view.rerender(timeline(false));
+    expect(screen.queryByRole("status", { name: "응답 생성 중" })).toBeNull();
+  });
+
   it("shows compaction quantities and window percentages on the status line", () => {
     const event = call("compact", "context_compaction", { title: "컨텍스트 자동 압축", executionMetadata: {
       pre_compact_tokens: 180000, post_compact_tokens: 40000, context_window_tokens: 200000, tokens_estimated: true,
@@ -46,15 +59,24 @@ describe("Aside work history", () => {
     } })]));
     expect(document.querySelector(".aside-system-event")?.textContent).toContain("220,000 토큰 (110%) → 0 토큰 (0%)");
   });
-  it.each(["write_file", "future_write_document"])("keeps %s content streaming outside collapsed call details", (toolName) => {
+  it.each(["write_file", "future_write_document"])("keeps %s previews inside collapsible details while content updates", (toolName) => {
     const writing = call("writing", toolName, { status: "running", toolInput: { path: "report.html", content: "first chunk" } });
     const view = render(panel([call("search", "web_search"), writing]));
-    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk");
+    expect(document.querySelector(".workflow-output-body")).toBeNull();
+    const group = openActivity();
     expect(screen.getAllByRole("button", { name: /상세 실행 기록/, expanded: false })).toHaveLength(2);
+    const detail = screen.getByRole("button", { name: /report.html 상세 실행 기록/ });
+    fireEvent.click(detail);
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk");
     view.rerender(panel([call("search", "web_search"), { ...writing, toolInput: { path: "report.html", content: "first chunk second chunk" } }]));
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk second chunk");
     view.rerender(panel([call("search", "web_search"), { ...writing, status: "error", toolInput: { path: "report.html", content: "first chunk second chunk" } }]));
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk second chunk");
+    fireEvent.click(detail);
+    expect(document.querySelector(".workflow-output-body")).toBeNull();
+    fireEvent.click(detail);
+    fireEvent.click(group);
+    expect(document.querySelector(".workflow-output-body")).toBeNull();
   });
 
   it.each(["web_search", "write_file", "mcp__future__lookup"])("shows a running indicator for %s and removes it on completion", (toolName) => {
@@ -76,26 +98,71 @@ describe("Aside work history", () => {
     expect(document.querySelectorAll(".aside-running-spinner")).toHaveLength(2);
     view.rerender(panel([events[0], { ...events[1], status: "done" }]));
     expect(document.querySelector(".aside-running-spinner")).toBeNull();
-    expect(screen.getByText("확인 필요")).toBeTruthy();
+    expect(screen.getByText("부분응답")).toBeTruthy();
   });
 
-  it("keeps short-answer lifecycle history available after completion and remount", () => {
-    const events: WorkflowEvent[] = [{ id: "start", toolName: "", title: "요청 확인", detail: "사용자 요청을 확인했습니다.", status: "done", role: "planning" }];
+  it.each([false, true])("hides routine lifecycle history including restored=%s", (restored) => {
+    const events: WorkflowEvent[] = [undefined, "planning", "activity", "final"].map((role, index) => ({
+      id: `system-${index}`, toolName: "", title: `arbitrary lifecycle ${index}`, detail: "internal bookkeeping", status: "done", role: role as WorkflowEvent["role"], restored,
+    }));
     const view = render(panel(events));
-    fireEvent.click(screen.getByRole("button", { name: "진행 기록" }));
-    expect(screen.getByText("사용자 요청을 확인했습니다.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    expect(view.container.textContent).toBe("");
     view.unmount();
     render(panel(events));
-    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
-    expect(screen.getByText("사용자 요청을 확인했습니다.")).toBeTruthy();
+    expect(screen.queryByRole("article")).toBeNull();
   });
 
-  it("retains a disclosure when a provider supplied only a heading", () => {
-    render(panel([{ ...note("heading", "**Thinking**"), noteSource: "provider-summary" }]));
-    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" })).toBeTruthy();
-    expect(screen.getByText("이 답변에 기록된 상세 진행 내용이 없습니다.")).toBeTruthy();
+  it("shows one waiting indicator then replaces it with real progress and hides empty completion", () => {
+    const lifecycle: WorkflowEvent = { id: "start", toolName: "", title: "request", detail: "internal", status: "running", role: "planning" };
+    const timeline = (events: WorkflowEvent[], busy = true) => <AsideWorkflowTimeline events={events} scope="waiting-test" duration={11} busy={busy} />;
+    const view = render(timeline([]));
+    expect(screen.getByRole("status").textContent).toBe("답변 준비 중");
+    view.rerender(timeline([lifecycle, { ...lifecycle, id: "next", role: "final" }]));
+    expect(document.querySelectorAll(".aside-running-spinner")).toHaveLength(1);
+    expect(screen.queryByRole("button")).toBeNull();
+    view.rerender(timeline([lifecycle, note("progress", "자료의 기준을 비교합니다."), call("lookup", "mcp__new__lookup")]));
+    expect(screen.queryByText("답변 준비 중")).toBeNull();
+    expect(screen.getByText("자료의 기준을 비교합니다.")).toBeTruthy();
+    expect(screen.queryByText("진행 기록")).toBeNull();
+    view.rerender(timeline([{ ...lifecycle, status: "done" }], false));
+    expect(view.container.textContent).toBe("");
+  });
+
+  it.each(["error", "warning"] as const)("keeps lifecycle %s visible alongside meaningful work", (status) => {
+    render(panel([note("progress", "자료를 확인합니다."), { id: "failure", toolName: "", title: "연결 확인 필요", detail: "응답을 받지 못했습니다.", status, role: "final" }]));
+    expect(screen.queryByText("응답을 받지 못했습니다.")).toBeNull();
+    const toggle = screen.getByRole("button", { name: /연결 확인 필요/ });
+    fireEvent.click(toggle);
+    expect(screen.getByText("응답을 받지 못했습니다.")).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(screen.queryByText("응답을 받지 못했습니다.")).toBeNull();
+    expect(screen.getByText("자료를 확인합니다.")).toBeTruthy();
+  });
+
+  it.each(["done", "warning", "error"] as const)("keeps prose and counted tools without duplicate purpose rows (%s)", (status) => {
+    const prose = "자료를 비교합니다.";
+    render(panel([
+      note("p", prose),
+      { id: "purpose", toolName: "", title: "정보 수집", detail: prose, status, role: "purpose" },
+      call("one", "future_tool", { status }),
+      note("p2", "결과를 검증합니다."), call("two"), call("three"),
+    ]));
+    expect(screen.getAllByText(prose)).toHaveLength(1);
+    expect(screen.queryByText("정보 수집")).toBeNull();
+    expect(document.querySelector(".aside-timeline")?.children).toHaveLength(4);
+    expect(document.querySelectorAll(".aside-activity")[0].textContent).toContain("(1건)");
+    expect(document.querySelectorAll(".aside-activity")[1].textContent).toContain("(2건)");
+    const toggle = screen.getByRole("button", { name: /future_tool 상세 실행 기록/ });
+    fireEvent.click(toggle);
+    expect(screen.getByText("output one")).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(screen.queryByText("output one")).toBeNull();
+    expect(screen.getByText(prose)).toBeTruthy();
+  });
+
+  it("omits empty progress and heading-only summaries without an empty disclosure", () => {
+    const view = render(panel([note("empty", "  "), { ...note("heading", "**Thinking**"), noteSource: "provider-summary" }]));
+    expect(view.container.textContent).toBe("");
   });
 
   it("keeps prose between groups and opens actual calls, then their input and output", () => {
@@ -179,8 +246,11 @@ describe("Aside work history", () => {
     expect(document.body.textContent).toContain("END");
   });
 
-  it("shows saved file content and real edit diffs without opening call details", () => {
+  it("shows saved file content and real edit diffs only after opening details", () => {
     render(panel([call("write", "write_file", { toolInput: { path: "report.html", content: "<h1>Report</h1>" } }), call("edit", "edit_file", { toolInput: { path: "report.html", old_string: "Report", new_string: "Updated" } })]));
+    expect(document.querySelector(".workflow-output-body")).toBeNull();
+    openActivity();
+    for (const toggle of screen.getAllByRole("button", { name: /상세 실행 기록/ })) fireEvent.click(toggle);
     expect(document.querySelector(".workflow-output-body")?.textContent).toContain("Report");
     expect(document.querySelector(".workflow-output-body.diff")?.textContent).toContain("Updated");
   });

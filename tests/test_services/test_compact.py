@@ -374,7 +374,7 @@ def test_microcompact_preserves_recoverable_tool_output_marker():
 
 
 @pytest.mark.asyncio
-async def test_forced_auto_compact_returns_collapsed_messages_when_summary_prompt_is_too_large():
+async def test_forced_auto_compact_retains_original_when_summary_cannot_reduce_history():
     giant = ("search result " * 1000).strip()
     messages = [
         ConversationMessage(role="user", content=[TextBlock(text="search this")]),
@@ -397,10 +397,10 @@ async def test_forced_auto_compact_returns_collapsed_messages_when_summary_promp
         trigger="reactive",
     )
 
-    assert was_compacted is True
+    assert was_compacted is False
     tool_result = compacted[-1].content[0]
     assert isinstance(tool_result, ToolResultBlock)
-    assert "[collapsed" in tool_result.content
+    assert tool_result.content == giant
 
 
 @pytest.mark.asyncio
@@ -747,7 +747,7 @@ async def test_auto_compact_records_richer_checkpoint_metadata(monkeypatch):
     assert isinstance(checkpoints, list)
     checkpoint_names = [entry["checkpoint"] for entry in checkpoints]
     assert "query_auto_triggered" in checkpoint_names
-    assert "query_microcompact_end" in checkpoint_names
+    assert "compact_prepare" in checkpoint_names
     assert "compact_end" in checkpoint_names
     assert isinstance(metadata.get("compact_last"), dict)
     assert metadata["compact_last"]["checkpoint"] == "compact_end"
@@ -837,12 +837,12 @@ def test_get_context_window_uses_current_openai_model_limits():
     ["gpt-5.4", "gpt-5.4-pro", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
 )
 def test_long_context_policy_defaults_to_cost_saver(model: str):
-    assert get_long_context_policy_threshold(model, None) == 231_200
-    assert get_long_context_policy_threshold(model, "cost-saver") == 231_200
+    assert get_long_context_policy_threshold(model, None) == 264_000
+    assert get_long_context_policy_threshold(model, "cost-saver") == 264_000
     assert get_long_context_policy_threshold(model, "full-context") == 1_000_000
 
 
-@pytest.mark.parametrize("mode,expected", [("cost-saver", 108_800), ("full-context", 108_800)])
+@pytest.mark.parametrize("mode,expected", [("cost-saver", 232_000), ("full-context", 232_000)])
 def test_long_context_policy_respects_smaller_deployment_capacity(mode, expected):
     assert get_long_context_policy_threshold(
         "gpt-5.6-luna", mode, context_window_tokens=256_000,

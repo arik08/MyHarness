@@ -12,6 +12,7 @@ from myharness.engine.cost_tracker import CostTracker
 from myharness.coordinator.coordinator_mode import get_coordinator_user_context
 from myharness.engine.messages import (
     ConversationMessage,
+    ResponsesStateBlock,
     TextBlock,
     ToolResultBlock,
     sanitize_conversation_messages,
@@ -111,6 +112,31 @@ class QueryEngine:
         return self._cost_tracker.total
 
     @property
+    def context_used_tokens(self) -> int | None:
+        """Estimate the current prompt, independently of cumulative billing usage."""
+        import json
+        from myharness.services.compact import estimate_message_tokens
+        from myharness.services.token_estimation import estimate_tokens
+
+        for index in range(len(self._messages) - 1, -1, -1):
+            message = self._messages[index]
+            if any(isinstance(block, ResponsesStateBlock) and block.item.get("type") == "compaction"
+                   for block in message.content):
+                # The provider's encrypted summary has no locally knowable size.
+                # Its pre-compaction usage and retained transcript are not the
+                # active context. Wait for the next measured request.
+                return None
+            if message.context_input_tokens is not None:
+                # Use one request's measured input (including tools/system/cache),
+                # then estimate only the response and newer unsent messages.
+                return message.context_input_tokens + estimate_message_tokens(self._messages[index:], model=self._model)
+        return (
+            estimate_message_tokens(self._messages, model=self._model)
+            + estimate_tokens(self._system_prompt, model=self._model)
+            + estimate_tokens(json.dumps(self._tool_registry.to_api_schema(), ensure_ascii=False), model=self._model)
+        )
+
+    @property
     def usage_accounting(self) -> dict:
         """Return usage buckets grouped by provider/model."""
         return self._cost_tracker.accounting
@@ -173,6 +199,12 @@ class QueryEngine:
     def set_auto_skill_learning_enabled(self, enabled: bool) -> None:
         """Update whether verified repeated failures may create learned skills."""
         self._auto_skill_learning_enabled = bool(enabled)
+
+    def record_usage(self, usage: UsageSnapshot) -> None:
+        """Account for auxiliary requests, including explicit /compact calls."""
+        self._cost_tracker.add(
+            usage, provider=str(self._tool_metadata.get("provider") or ""), model=self._model,
+        )
 
     def _build_coordinator_context_message(self) -> ConversationMessage | None:
         """Build a synthetic user message carrying coordinator runtime context."""

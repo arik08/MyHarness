@@ -35,7 +35,11 @@ export type SendMessagePayload = {
   systemPrompt?: string;
 };
 
-export function sendMessage(payload: SendMessagePayload) {
+const runtimeDeliveries = new Map<string, Promise<unknown>>();
+
+export async function sendMessage(payload: SendMessagePayload) {
+  // Deliver earlier runtime changes first; Python processes them before the turn.
+  await runtimeDeliveries.get(payload.sessionId)?.catch(() => undefined);
   return postJson<Record<string, unknown>>("/api/message", payload);
 }
 
@@ -73,7 +77,14 @@ export async function uploadClientAttachments(payload: {
 }
 
 export function sendBackendRequest(sessionId: string, clientId: string, payload: Record<string, unknown>) {
-  return postJson<{ ok: boolean }>("/api/respond", { sessionId, clientId, payload });
+  const send = () => postJson<{ ok: boolean }>("/api/respond", { sessionId, clientId, payload });
+  if (payload.type !== "apply_select_command") return send();
+  const previous = runtimeDeliveries.get(sessionId);
+  const delivery = previous ? previous.catch(() => undefined).then(send) : send();
+  runtimeDeliveries.set(sessionId, delivery);
+  const clear = () => { if (runtimeDeliveries.get(sessionId) === delivery) runtimeDeliveries.delete(sessionId); };
+  void delivery.then(clear, clear);
+  return delivery;
 }
 
 export function cancelMessage(sessionId: string, clientId: string) {

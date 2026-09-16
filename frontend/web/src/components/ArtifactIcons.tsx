@@ -1,4 +1,4 @@
-export type IconName = "source" | "preview" | "copy" | "screenshot" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star" | "chevron-up" | "chevron-down" | "keyboard" | "sparkles" | "network" | "plug" | "terminal";
+export type IconName = "source" | "preview" | "copy" | "screenshot" | "fullscreen" | "restore" | "close" | "back" | "download" | "save" | "trash" | "warning" | "refresh" | "edit" | "comment" | "ai" | "undo" | "rename" | "star" | "chevron-up" | "chevron-down" | "keyboard" | "sparkles" | "network" | "plug" | "terminal" | "globe";
 
 export function Icon({ name }: { name: IconName }) {
   if (name === "source") {
@@ -196,6 +196,15 @@ export function Icon({ name }: { name: IconName }) {
         <path d="M12 3l1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4Z" />
         <path d="M5 15l.7 2.1L8 18l-2.3.9L5 21l-.7-2.1L2 18l2.3-.9Z" />
         <path d="M18 13l.8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8Z" />
+      </svg>
+    );
+  }
+  if (name === "globe") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <ellipse cx="12" cy="12" rx="4" ry="9" />
+        <path d="M3 12h18" />
       </svg>
     );
   }

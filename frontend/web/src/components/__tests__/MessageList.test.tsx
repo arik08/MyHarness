@@ -1422,7 +1422,7 @@ describe("MessageList", () => {
           workflowStartedAtMs: Date.now(),
           workflowEvents: [
             { id: "workflow-1", toolName: "", title: "요청 이해", detail: "사용자 요청을 확인했습니다.", status: "done", level: "parent" },
-            { id: "workflow-2", toolName: "", title: "응답 작성", detail: "답변 본문을 작성하고 있습니다.", status: "running", level: "parent", role: "final" },
+            { id: "workflow-2", toolName: "", title: "응답 작성", detail: "답변 본문을 작성하고 있습니다.", status: "running", level: "parent", role: "reasoning", noteSource: "progress" },
           ],
         }}
       >
@@ -1675,8 +1675,8 @@ describe("MessageList", () => {
     expect(screen.getByText("작성 완료 - chart.html")).toBeTruthy();
     expect(screen.getByText(/\d+ 토큰 \(1줄\)/)).toBeTruthy();
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("<canvas id=\"chart\">");
-    expect(document.querySelector(".aside-activity > .workflow-output-preview")).toBeTruthy();
-    expect(document.querySelector(".aside-call-detail .workflow-output-preview")).toBeNull();
+    expect(document.querySelector(".aside-activity > .workflow-output-preview")).toBeNull();
+    expect(document.querySelector(".aside-call-detail .workflow-output-preview")).toBeTruthy();
     expect(document.querySelector(".workflow-step .workflow-output-preview")).toBeFalsy();
     expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("true");
   });

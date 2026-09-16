@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 import platform
+import logging
+import time
 from contextlib import aclosing
 from dataclasses import replace
 from typing import Any, AsyncIterator
@@ -181,44 +183,37 @@ def _convert_messages_to_codex(
                 if isinstance(block, TextBlock) and block.text.strip():
                     user_content.append({"type": "input_text", "text": block.text})
                 elif isinstance(block, ImageBlock):
-                    user_content.append({
-                        "type": "input_image",
-                        "image_url": f"data:{block.media_type};base64,{block.data}",
-                    })
+                    user_content.append({"type": "input_image", "image_url": f"data:{block.media_type};base64,{block.data}"})
+                elif isinstance(block, ToolResultBlock):
+                    if user_content:
+                        result.append({"role": "user", "content": user_content})
+                        user_content = []
+                    result.append({"type": "function_call_output", "call_id": block.tool_use_id, "output": block.content})
             if user_content:
                 result.append({"role": "user", "content": user_content})
-            for block in msg.content:
-                if isinstance(block, ToolResultBlock):
-                    result.append({
-                        "type": "function_call_output",
-                        "call_id": block.tool_use_id,
-                        "output": block.content,
-                    })
             continue
 
         for block in msg.content:
-            if not isinstance(block, ResponsesStateBlock):
-                continue
-            item = dict(block.item)
-            if item.get("type") == "compaction":
-                result = [*developer_items, item]
-            else:
+            if isinstance(block, ResponsesStateBlock):
+                item = dict(block.item)
+                if item.get("type") == "compaction":
+                    result = [*developer_items, item]
+                else:
+                    result.append(item)
+            elif isinstance(block, TextBlock) and block.text:
+                item = dict(block.response_item or {})
+                item.update(type="message", role="assistant")
+                original_text = "".join(str(part.get("text", part.get("refusal", "")))
+                                        for part in item.get("content", []) if isinstance(part, dict))
+                if original_text != block.text:
+                    item["content"] = [{"type": "output_text", "text": block.text, "annotations": []}]
+                if msg.phase and "phase" not in item:
+                    item["phase"] = msg.phase
                 result.append(item)
-
-        assistant_text = "".join(block.text for block in msg.content if isinstance(block, TextBlock))
-        if assistant_text:
-            result.append({
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": assistant_text, "annotations": []}],
-            })
-        for block in msg.content:
-            if isinstance(block, ToolUseBlock):
+            elif isinstance(block, ToolUseBlock):
                 result.append({
-                    "type": "function_call",
-                    "id": f"fc_{block.id[:58]}",
-                    "call_id": block.id,
-                    "name": block.name,
+                    "type": "function_call", "id": (block.response_item or {}).get("id", f"fc_{block.id[:58]}"),
+                    "call_id": block.id, "name": block.name,
                     "arguments": json.dumps(block.input, separators=(",", ":")),
                 })
     return result
@@ -264,15 +259,21 @@ def _usage_from_response(response: dict[str, Any]) -> UsageSnapshot:
     usage = response.get("usage")
     if not isinstance(usage, dict):
         return UsageSnapshot()
-    input_details = usage.get("input_tokens_details") if isinstance(usage.get("input_tokens_details"), dict) else {}
+    input_details = usage.get("input_tokens_details") or {}
+    prompt_details = usage.get("prompt_tokens_details") or {}
+    input_details = input_details if isinstance(input_details, dict) else {}
+    prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
     return UsageSnapshot(
-        input_tokens=int(usage.get("input_tokens") or 0),
-        output_tokens=int(usage.get("output_tokens") or 0),
-        cached_input_tokens=int(input_details.get("cached_tokens") or 0),
+        input_tokens=int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0),
+        output_tokens=int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
+        cached_input_tokens=int(input_details.get("cached_tokens") or prompt_details.get("cached_tokens") or 0),
         cache_write_tokens=int(
             usage.get("cache_write_tokens")
+            or usage.get("cache_creation_input_tokens")
             or input_details.get("cache_write_tokens")
             or input_details.get("cache_creation_input_tokens")
+            or prompt_details.get("cache_write_tokens")
+            or prompt_details.get("cache_creation_input_tokens")
             or 0
         ),
     )
@@ -358,7 +359,7 @@ class CodexApiClient:
         self._auth_token = auth_token
         self._base_url = base_url
         self._url = _resolve_codex_url(base_url)
-        self._timeout = timeout
+        self._timeout = timeout or DEFAULT_CODEX_TIMEOUT_SECONDS
         retention = prompt_cache_retention if prompt_cache_retention is not None else _prompt_cache_retention_from_env()
         self._prompt_cache_retention = retention if retention in _PROMPT_CACHE_RETENTION_VALUES else None
         self._unsupported_cache_option_names: set[str] = set()
@@ -373,14 +374,16 @@ class CodexApiClient:
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES + 1):
+            emitted = False
             try:
                 async with aclosing(self._stream_once(request)) as stream:
                     async for event in stream:
+                        emitted = True
                         yield event
                 return
             except Exception as exc:
                 last_error = exc
-                if attempt >= MAX_RETRIES or not self._is_retryable(exc):
+                if emitted or attempt >= MAX_RETRIES or not self._is_retryable(exc):
                     raise self._translate_error(exc) from exc
                 delay = calculate_retry_delay(
                     attempt,
@@ -445,7 +448,7 @@ class CodexApiClient:
         if _is_gpt_56_model(request.model):
             reasoning["context"] = "all_turns"
         body["reasoning"] = reasoning
-        if _is_gpt_56_model(request.model):
+        if self.supports_server_compaction(request.model):
             from myharness.context_policy import get_long_context_policy_threshold
 
             threshold = request.compact_threshold_tokens or get_long_context_policy_threshold(request.model, "cost-saver")
@@ -461,6 +464,8 @@ class CodexApiClient:
             safe_messages,
             developer_instructions=request.system_prompt or "You are MyHarness.",
         )
+        for option in self._unsupported_cache_option_names:
+            body.pop(option, None)
         return body
 
     async def _stream_once(
@@ -477,17 +482,18 @@ class CodexApiClient:
         content: list[TextBlock | ToolUseBlock | ResponsesStateBlock] = []
         current_text_parts: list[str] = []
         completed_response: dict[str, Any] | None = None
+        compaction_started = False
         tool_names_by_item_id: dict[str, str] = {}
         current_tool_name: str | None = None
 
         headers = self._build_headers(body)
         client = self._stream_client()
-        for option_attempt in range(2):
+        for option_attempt in range(6):
             async with client.stream("POST", self._url, headers=headers, json=body) as response:
                 if response.status_code >= 400:
                     payload = await response.aread()
                     message = _format_error_message(response.status_code, payload.decode("utf-8", "replace"))
-                    if option_attempt == 0 and self._disable_unsupported_cache_options(message, body):
+                    if self._disable_unsupported_cache_options(message, body):
                         body = self._request_body(request, safe_messages)
                         if max_output_tokens is not None:
                             body["max_output_tokens"] = max_output_tokens
@@ -504,6 +510,7 @@ class CodexApiClient:
                     elif event_type == "response.output_item.added":
                         item = event.get("item")
                         if isinstance(item, dict) and item.get("type") == "compaction":
+                            compaction_started = True
                             yield ApiCompactionEvent(phase="compact_start")
                             continue
                         if not isinstance(item, dict) or item.get("type") != "function_call":
@@ -537,7 +544,9 @@ class CodexApiClient:
                         if item_type in {"reasoning", "compaction"}:
                             content.append(ResponsesStateBlock(item=item))
                             if item_type == "compaction":
-                                yield ApiCompactionEvent(phase="compact_end")
+                                if not compaction_started:
+                                    compaction_started = True
+                                    yield ApiCompactionEvent(phase="compact_start")
                             if item_type == "reasoning":
                                 summary = "\n\n".join(
                                     part["text"] for part in (item.get("summary") or [])
@@ -561,7 +570,7 @@ class CodexApiClient:
                                             parts.append(str(block.get("refusal", "")))
                                 text = "".join(parts)
                             if text:
-                                content.append(TextBlock(text=text))
+                                content.append(TextBlock(text=text, response_item=item))
                         elif item_type == "function_call":
                             arguments = item.get("arguments")
                             parsed_arguments: dict[str, Any]
@@ -569,14 +578,16 @@ class CodexApiClient:
                                 try:
                                     loaded = json.loads(arguments)
                                 except json.JSONDecodeError:
-                                    loaded = {}
+                                    raise RequestFailure("Invalid Responses tool arguments.")
                             else:
                                 loaded = {}
-                            parsed_arguments = loaded if isinstance(loaded, dict) else {}
+                            if not isinstance(loaded, dict):
+                                raise RequestFailure("Invalid Responses tool arguments: expected an object.")
+                            parsed_arguments = loaded
                             call_id = item.get("call_id")
                             name = item.get("name")
                             if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
-                                content.append(ToolUseBlock(id=call_id, name=name, input=parsed_arguments))
+                                content.append(ToolUseBlock(id=call_id, name=name, input=parsed_arguments, response_item=item))
                     elif event_type == "response.completed":
                         response_payload = event.get("response")
                         if isinstance(response_payload, dict):
@@ -603,11 +614,49 @@ class CodexApiClient:
                         )
                 break
 
+        if completed_response is None:
+            raise RequestFailure("Responses stream ended without a completion event.")
+        # Completed output is authoritative; some gateways only emit this event.
+        output = completed_response.get("output")
+        if isinstance(output, list) and output:
+            content = []
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                kind = item.get("type")
+                if kind in {"reasoning", "compaction"}:
+                    content.append(ResponsesStateBlock(item=item))
+                elif kind == "message":
+                    text = "".join(str(part.get("text", part.get("refusal", "")))
+                                   for part in item.get("content", []) if isinstance(part, dict))
+                    if text:
+                        content.append(TextBlock(text=text, response_item=item))
+                elif kind == "function_call":
+                    try:
+                        arguments = json.loads(item.get("arguments") or "{}")
+                    except (ValueError, TypeError) as exc:
+                        raise RequestFailure("Invalid Responses tool arguments.") from exc
+                    if not isinstance(arguments, dict) or not item.get("call_id") or not item.get("name"):
+                        raise RequestFailure("Invalid Responses function call.")
+                    content.append(ToolUseBlock(id=item["call_id"], name=item["name"], input=arguments, response_item=item))
         if current_text_parts and not any(isinstance(block, TextBlock) for block in content):
             content.insert(0, TextBlock(text="".join(current_text_parts)))
 
+        compactions = [block for block in content if isinstance(block, ResponsesStateBlock) and block.item.get("type") == "compaction"]
+        if len(compactions) > 1 or (compactions and completed_response.get("status") != "completed"):
+            raise RequestFailure("Invalid or incomplete Responses compaction result.")
+        if compaction_started and not compactions:
+            raise RequestFailure("Responses compaction ended without its replacement state.")
+        if compactions:
+            if not compaction_started:
+                yield ApiCompactionEvent(phase="compact_start")
+            yield ApiCompactionEvent(phase="compact_end")
+        for block in content:
+            if isinstance(block, ResponsesStateBlock):
+                block.origin = self.state_origin(request.model)
         final_message = ConversationMessage(role="assistant", content=content)
         usage = _usage_from_response(completed_response or {})
+        self._write_cache_diagnostic(request, body, usage)
         stop_reason = _stop_reason_from_response(
             completed_response or {},
             has_tool_calls=bool(final_message.tool_uses),
@@ -620,7 +669,34 @@ class CodexApiClient:
 
     def supports_server_compaction(self, model: str) -> bool:
         """Return whether this client can preserve GPT-5.6 server compaction state."""
-        return _is_gpt_56_model(model)
+        return _is_gpt_56_model(model) and "context_management" not in self._unsupported_cache_option_names
+
+    def state_origin(self, model: str) -> str:
+        return hashlib.sha256(f"{self._url}:{model}".encode()).hexdigest()[:24]
+
+    def _write_cache_diagnostic(self, request: ApiMessageRequest, body: dict[str, Any], usage: UsageSnapshot) -> None:
+        # Keep the existing bounded log and field names, without recording prompts
+        # or authentication data. UI accounting continues through UsageSnapshot.
+        from myharness.api.openai_client import _append_diagnostic_jsonl
+        from myharness.config.paths import get_logs_dir
+
+        def digest(value: Any) -> str:
+            return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+        try:
+            _append_diagnostic_jsonl(get_logs_dir() / "prompt-cache-diagnostics.jsonl", {
+                "ts": time.time(), "provider": "responses", "event": "completed", "model": request.model,
+                "cache_event": request.cache_event or "", "prompt_cache_key": body.get("prompt_cache_key", ""),
+                "system_prompt_hash": digest(request.system_prompt), "tool_schema_hash": digest(body.get("tools", [])),
+                "message_prefix_hash": digest(body.get("input", [])[:-1]),
+                "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
+                "cached_input_tokens": usage.cached_input_tokens, "cache_write_tokens": usage.cache_write_tokens,
+                "uncached_input_tokens": max(0, usage.input_tokens - usage.cached_input_tokens - usage.cache_write_tokens),
+                "cache_hit_ratio": usage.cached_input_tokens / usage.input_tokens if usage.input_tokens else 0.0,
+                "cache_write_ratio": usage.cache_write_tokens / usage.input_tokens if usage.input_tokens else 0.0,
+            })
+        except OSError:
+            logging.getLogger(__name__).debug("Could not write cache diagnostics", exc_info=True)
 
     def _build_headers(self, body: dict[str, Any]) -> dict[str, str]:
         return _build_codex_headers(
@@ -643,6 +719,13 @@ class CodexApiClient:
             self._http_client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
         return self._http_client
     async def _iter_sse_events(self, response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
+        if "application/json" in getattr(response, "headers", {}).get("content-type", ""):
+            payload = json.loads(await response.aread())
+            if isinstance(payload, dict) and payload.get("object") == "response":
+                yield {"type": f"response.{payload.get('status', 'failed')}", "response": payload}
+            else:
+                raise RequestFailure("Invalid Responses JSON body.")
+            return
         data_lines: list[str] = []
         async for line in response.aiter_lines():
             if line == "":
@@ -674,7 +757,9 @@ class CodexApiClient:
         if not any(term in text for term in _UNSUPPORTED_OPTION_TERMS):
             return False
         disabled: set[str] = set()
-        for key in _CACHE_OPTION_KEYS:
+        if "prompt_cache_breakpoint" in text and "prompt_cache_options" in body:
+            disabled.add("prompt_cache_options")
+        for key in (*_CACHE_OPTION_KEYS, "context_management", "include", "text", "prompt_cache_options"):
             if key in body and key.lower() in text:
                 disabled.add(key)
         if not disabled and "cache" in text and "prompt_cache_retention" in body:
@@ -739,3 +824,19 @@ class OpenAIResponsesClient(CodexApiClient):
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
         }
+
+    def supports_server_compaction(self, model: str) -> bool:
+        # Responses support does not establish gateway compaction support.
+        return False
+
+    def _request_body(self, request: ApiMessageRequest, safe_messages: list[ConversationMessage]) -> dict[str, Any]:
+        body = super()._request_body(request, safe_messages)
+        body["max_output_tokens"] = request.max_tokens
+        body["reasoning"].pop("context", None)
+        if _is_gpt_56_model(request.model) or request.model.startswith("gpt-6"):
+            body.pop("prompt_cache_retention", None)
+            if "prompt_cache_options" not in self._unsupported_cache_option_names:
+                body["prompt_cache_options"] = {"mode": "explicit", "ttl": "30m"}
+                if body["input"] and body["input"][0].get("role") == "developer":
+                    body["input"][0]["content"][-1]["prompt_cache_breakpoint"] = {"mode": "explicit"}
+        return body

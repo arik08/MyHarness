@@ -23,7 +23,7 @@ from myharness.api.client import (
     SupportsStreamingMessages,
 )
 from myharness.api.usage import UsageSnapshot
-from myharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock
+from myharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock, ResponsesStateBlock
 from myharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
@@ -35,6 +35,7 @@ from myharness.engine.stream_events import (
     ToolExecutionCompleted,
     ToolExecutionStarted,
     ToolInputDelta,
+    UsageUpdated,
 )
 from myharness.hooks import HookEvent, HookExecutor
 from myharness.learning import run_auto_skill_learning
@@ -878,6 +879,7 @@ async def run_query(
     compact_state = AutoCompactState()
     reactive_compact_attempted = False
     last_compaction_result: tuple[list[ConversationMessage], bool] = (messages, False)
+    request_tools: list[dict[str, Any]] = []
 
     async def _stream_compaction(
         *,
@@ -885,7 +887,7 @@ async def run_query(
         force: bool = False,
     ) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
         nonlocal last_compaction_result
-        progress_queue: asyncio.Queue[CompactProgressEvent] = asyncio.Queue(
+        progress_queue: asyncio.Queue[CompactProgressEvent | UsageSnapshot] = asyncio.Queue(
             maxsize=COMPACTION_PROGRESS_QUEUE_MAXSIZE
         )
 
@@ -897,6 +899,14 @@ async def run_query(
                 ),
                 "tokens_estimated": True,
             }))
+
+        async def _summary_usage(usage: UsageSnapshot) -> None:
+            await progress_queue.put(usage)
+
+        def _queued_event(event):
+            if isinstance(event, UsageSnapshot):
+                return UsageUpdated(usage=event), event
+            return event, None
 
         task = asyncio.create_task(
             auto_compact_if_needed(
@@ -913,19 +923,22 @@ async def run_query(
                 cwd=context.cwd,
                 context_window_tokens=context.context_window_tokens,
                 auto_compact_threshold_tokens=context.auto_compact_threshold_tokens,
+                request_tools=request_tools,
+                max_output_tokens=context.max_tokens,
+                usage_callback=_summary_usage,
             )
         )
         try:
             while True:
                 try:
                     event = await asyncio.wait_for(progress_queue.get(), timeout=0.05)
-                    yield event, None
+                    yield _queued_event(event)
                 except asyncio.TimeoutError:
                     if task.done():
                         break
                     continue
             while not progress_queue.empty():
-                yield progress_queue.get_nowait(), None
+                yield _queued_event(progress_queue.get_nowait())
             last_compaction_result = await task
         finally:
             if not task.done():
@@ -938,6 +951,8 @@ async def run_query(
         if was_compacted and compacted_messages is not messages:
             messages[:] = compacted_messages
         if was_compacted:
+            for message in messages:
+                message.context_input_tokens = None
             if context.tool_metadata is None:
                 context.tool_metadata = {}
             context.tool_metadata["cache_prefix_event"] = "compaction_rewrite"
@@ -951,15 +966,41 @@ async def run_query(
     continuation_status_sent = False
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
-        # --- auto-compact check before calling the model ---------------
+        origin_fn = getattr(context.api_client, "state_origin", None)
+        if callable(origin_fn):
+            origin = origin_fn(context.model)
+            incompatible = any(isinstance(block, ResponsesStateBlock) and block.origin != origin
+                               for message in messages for block in message.content)
+            if incompatible:
+                metadata = context.tool_metadata or {}
+                if metadata.get("session_id"):
+                    from myharness.services.session_documents import store_session_document
+                    store_session_document(
+                        cwd=context.cwd, session_id=str(metadata["session_id"]),
+                        text="\n".join(message.model_dump_json() for message in messages),
+                        metadata=metadata, model=context.model, source_kind="provider_checkpoint",
+                        source_label="History before provider/model state migration",
+                    )
+                # Raw conversational items remain in the snapshot even when wire
+                # replay prunes before a compaction boundary. Rebuild from them.
+                for message in messages:
+                    message.content = [block for block in message.content if not isinstance(block, ResponsesStateBlock)]
+                    message.context_input_tokens = None
+        # Include newly arrived steering before evaluating the final input.
+        steering_count = await _drain_steering_messages(context, messages)
+        if steering_count:
+            yield StatusEvent(message="추가 요청을 반영합니다."), None
+        request_tools = _select_tool_schemas(context, messages, was_compacted=False)
         async for event, usage in _stream_compaction(trigger="auto"):
             yield event, usage
         was_compacted = _adopt_compaction_result()
-        steering_count = await _drain_steering_messages(context, messages)
-        if steering_count:
-            yield StatusEvent(
-                message="추가 요청을 반영합니다."
-            ), None
+        # Steering that arrived during the awaited summary must also enter the
+        # budget check before the next model call, exactly once.
+        while await _drain_steering_messages(context, messages):
+            yield StatusEvent(message="추가 요청을 반영합니다."), None
+            async for event, usage in _stream_compaction(trigger="auto"):
+                yield event, usage
+            was_compacted = _adopt_compaction_result() or was_compacted
         # ---------------------------------------------------------------
 
         final_message: ConversationMessage | None = None
@@ -973,15 +1014,26 @@ async def run_query(
                 messages=messages,
                 system_prompt=context.system_prompt,
                 max_tokens=context.max_tokens,
-                tools=_select_tool_schemas(context, messages, was_compacted=was_compacted),
+                tools=request_tools,
                 reasoning_effort=context.reasoning_effort,
-                compact_threshold_tokens=context.auto_compact_threshold_tokens,
+                compact_threshold_tokens=min(
+                    context.auto_compact_threshold_tokens or get_context_window(context.model, context_window_tokens=context.context_window_tokens),
+                    max(1, get_context_window(context.model, context_window_tokens=context.context_window_tokens) - context.max_tokens - 8000),
+                ),
                 cache_event=(
                     str(context.tool_metadata.pop("cache_prefix_event", "") or "")
                     if isinstance(context.tool_metadata, dict)
                     else None
                 ),
             )
+            from myharness.services.compact import estimate_request_tokens
+            estimated_input = estimate_request_tokens(
+                messages, model=context.model, system_prompt=context.system_prompt,
+                tools=request.tools,
+            )
+            physical_window = get_context_window(context.model, context_window_tokens=context.context_window_tokens)
+            if estimated_input + context.max_tokens > physical_window:
+                raise RuntimeError("context window exceeded after preflight; compaction required")
             async for event in _stream_provider_events_with_idle_status(context, request):
                 if isinstance(event, StatusEvent):
                     yield event, None
@@ -1074,6 +1126,7 @@ async def run_query(
             continue
 
         if continuation_start_index is not None:
+            request_input_tokens = usage.input_tokens
             final_message = _combine_continued_assistant_message(
                 continued_text_parts,
                 final_message,
@@ -1086,7 +1139,13 @@ async def run_query(
             continued_usage = UsageSnapshot()
             continuation_count = 0
             continuation_status_sent = False
+        else:
+            request_input_tokens = usage.input_tokens
 
+        final_message.context_input_tokens = request_input_tokens or None
+        final_message.context_prefix_tokens = estimate_request_tokens(
+            [], model=context.model, system_prompt=context.system_prompt, tools=request_tools,
+        )
         messages.append(final_message)
         yield AssistantTurnComplete(message=final_message, usage=usage), usage
 

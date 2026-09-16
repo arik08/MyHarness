@@ -49,7 +49,7 @@ describe("tool presentation without model calls", () => {
     expect(toolResultSummary(running)).toContain("기사의 발행일과 주요 내용을 확인하고 있습니다.");
     const done = { ...running, status: "done" as const, output: "URL: https://example.com/article\n상태: 200\nContent-Type: text/html" };
     expect(toolResultSummary(done)).toBe("기사의 발행일과 주요 내용을 확인하고 있습니다.");
-    expect(toolResultSummary({ ...done, status: "warning" })).toContain("확인 필요");
+    expect(toolResultSummary({ ...done, status: "warning" })).toContain("부분응답");
     expect(toolResultSummary({ ...done, status: "error" })).toContain("조회 실패");
   });
 
@@ -83,7 +83,7 @@ describe("tool presentation without model calls", () => {
   });
   it("keeps errors and warnings explicit, including successful transports with error payloads", () => {
     expect(toolResultSummary(event('{"total":0,"items":[]}', "error"))).toContain("실패");
-    expect(toolResultSummary(event('{}', "warning"))).toContain("확인해야");
+    expect(toolResultSummary(event('{}', "warning"))).toContain("부분응답");
     expect(toolResultSummary(event('{"error":"denied"}'))).toContain("오류");
   });
   it("summarizes actual bill details without inventing status", () => {

@@ -41,12 +41,13 @@ async def test_live_context_switch_keeps_history_and_reaches_next_query(tmp_path
 
     monkeypatch.setattr(engine_module, "run_query", observed_query)
     try:
-        for mode, expected in [("full-context", 1_000_000), ("cost-saver", 231_200)]:
+        for mode, expected in [("full-context", 1_000_000), ("cost-saver", 264_000)]:
             await host._apply_select_command("context_mode", mode)
             assert host._bundle.engine is engine
             assert host._bundle.session_id == session_id
             assert engine.messages[0].text == "기존 대화 유지"
             assert host._status_snapshot().state["runtime_options"]["context_mode"] == mode
+            assert host._status_snapshot().state["runtime_options"]["context_used_tokens"] == engine.context_used_tokens
             async for _ in engine.submit_message("계속"):
                 pass
             assert thresholds[-1] == expected
@@ -79,7 +80,7 @@ async def test_switch_and_refresh_preserve_smaller_user_limit(tmp_path, monkeypa
         # Returning to the original model retains the chosen mode on refresh.
         smaller = Settings(model="gpt-5.6-luna")
         await refresh_runtime_client(host._bundle)
-        assert engine._auto_compact_threshold_tokens == 231_200
+        assert engine._auto_compact_threshold_tokens == 264_000
         await host._apply_select_command("context_mode", "full-context")
         await refresh_runtime_client(host._bundle)
         assert engine._auto_compact_threshold_tokens == 1_000_000

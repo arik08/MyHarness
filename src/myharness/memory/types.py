@@ -16,3 +16,6 @@ class MemoryHeader:
     modified_at: float
     memory_type: str = ""
     body_preview: str = ""
+    source: str = ""
+    verified_at: str = ""
+    scope: str = ""

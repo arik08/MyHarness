@@ -58,6 +58,8 @@ class TextBlock(BaseModel):
 
     type: Literal["text"] = "text"
     text: str
+    # Preserve individual Responses message boundaries across snapshot/replay.
+    response_item: dict[str, Any] | None = None
 
 
 class ImageBlock(BaseModel):
@@ -86,6 +88,7 @@ class ToolUseBlock(BaseModel):
     id: str = Field(default_factory=lambda: f"toolu_{uuid4().hex}")
     name: str
     input: dict[str, Any] = Field(default_factory=dict)
+    response_item: dict[str, Any] | None = None
 
 
 class ToolResultBlock(BaseModel):
@@ -104,6 +107,7 @@ class ResponsesStateBlock(BaseModel):
 
     type: Literal["responses_state"] = "responses_state"
     item: dict[str, Any]
+    origin: str | None = None
 
 
 ContentBlock = Annotated[
@@ -116,7 +120,11 @@ class ConversationMessage(BaseModel):
     """A single assistant or user message."""
 
     role: Literal["user", "assistant"]
+    phase: str | None = None
     content: list[ContentBlock] = Field(default_factory=list)
+    # Local accounting metadata; never serialized into provider message content.
+    context_input_tokens: int | None = Field(default=None, ge=0)
+    context_prefix_tokens: int | None = Field(default=None, ge=0)
 
     @field_validator("content", mode="before")
     @classmethod

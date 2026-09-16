@@ -6,6 +6,11 @@ function eventType(event) {
   return String(event?.type || "");
 }
 
+function isQuestionRoundEvent(event) {
+  return eventType(event) === "modal_request" && event.modal?.kind === "question"
+    && (Array.isArray(event.modal.questions) || event.modal.status === "answered" || event.modal.status === "cancelled");
+}
+
 function nextOrder(state) {
   state.nextOrder += 1;
   return state.nextOrder;
@@ -32,6 +37,7 @@ function resetActiveStreams(state) {
 function resetConversationReplay(state) {
   state.stableEvents = [];
   state.latestEvents.delete("todo_update");
+  state.latestEvents.delete("question_round");
   resetActiveStreams(state);
 }
 
@@ -139,7 +145,7 @@ export function createSessionReplayState() {
 }
 
 export function shouldReplayRawEvent(event) {
-  return !replayExcludedTypes.has(eventType(event));
+  return isQuestionRoundEvent(event) || !replayExcludedTypes.has(eventType(event));
 }
 
 export function appendRawSessionEvent(events, id, event, limit = defaultRawEventLimit) {
@@ -173,6 +179,12 @@ export function canReplayFromLastEventId(events, lastEventId) {
 
 export function updateSessionReplayState(state, event) {
   const type = eventType(event);
+  if (isQuestionRoundEvent(event)) {
+    const current = state.latestEvents.get("question_round")?.event?.modal;
+    if (event.modal.status && current && current.request_id !== event.modal.request_id) return;
+    rememberLatestEvent(state, "question_round", event);
+    return;
+  }
   if (!type || replayExcludedTypes.has(type)) {
     return;
   }

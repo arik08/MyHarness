@@ -13,10 +13,9 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Iterable
 
 from myharness.api.client import ApiMessageRequest, ApiStreamEvent, SupportsStreamingMessages
 from myharness.api.errors import AuthenticationFailure
-from myharness.api.codex_client import CodexApiClient
+from myharness.api.codex_client import CodexApiClient, OpenAIResponsesClient
 # from myharness.api.client import AnthropicApiClient
 # from myharness.api.copilot_client import CopilotClient
-from myharness.api.openai_client import OpenAICompatibleClient
 from myharness.api.pgpt_auth import (
     build_pgpt_auth_token,
     resolve_pgpt_company_code,
@@ -203,16 +202,11 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             if not employee_no:
                 raise ValueError(_missing_auth_message(settings))
             api_key = build_pgpt_auth_token(api_key, employee_no, resolve_pgpt_company_code())
-            return OpenAICompatibleClient(
+            return OpenAIResponsesClient(
                 api_key=api_key,
                 base_url=settings.base_url,
                 timeout=settings.timeout,
-                raw_stream=_pgpt_raw_sse_enabled(),
-                diagnostics_label="P-GPT",
-                enable_prompt_cache_options=True,
-                include_usage_with_tools=True,
                 prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
-                enable_gpt56_responses=True,
             )
     #     return OpenAICompatibleClient(
     #         api_key=api_key,
@@ -229,11 +223,6 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
     #     base_url=settings.base_url,
     # )
     raise ValueError("Only P-GPT and Codex providers are enabled.")
-
-
-def _pgpt_raw_sse_enabled() -> bool:
-    value = os.environ.get("MYHARNESS_PGPT_RAW_SSE", "")
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _missing_auth_message(settings) -> str:

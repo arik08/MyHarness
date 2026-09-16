@@ -421,7 +421,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             api_format="openai",
             auth_source="pgpt_api_key",
             default_model=pgpt_models.default_model,
-            base_url="http://pgpt.posco.com/s0la01-gpt/v1",
+            base_url="http://pgpt.posco.com/s01a01-gpt/v1",
             allowed_models=list(pgpt_models.allowed_models),
         ),
         "codex": ProviderProfile(
@@ -767,6 +767,8 @@ class Settings(BaseModel):
                 builtin.provider, builtin.api_format, builtin.auth_source
             ):
                 continue
+            if name == "p-gpt" and profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1":
+                profile = profile.model_copy(update={"base_url": builtin.base_url})
             if builtin is not None and profile.base_url is None and builtin.base_url is not None:
                 profile = profile.model_copy(update={"base_url": builtin.base_url})
             if builtin is not None and (

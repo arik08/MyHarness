@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from re import sub
+import json
 
 from myharness.memory.paths import get_memory_entrypoint, get_project_memory_dir
 from myharness.utils.file_lock import exclusive_file_lock
@@ -20,13 +21,24 @@ def list_memory_files(cwd: str | Path) -> list[Path]:
     return sorted(path for path in memory_dir.glob("*.md"))
 
 
-def add_memory_entry(cwd: str | Path, title: str, content: str) -> Path:
+def add_memory_entry(cwd: str | Path, title: str, content: str, *,
+                     source: str = "manual", verified_at: str = "", scope: str = "project") -> Path:
     """Create a memory file and append it to MEMORY.md."""
     memory_dir = get_project_memory_dir(cwd)
     slug = sub(r"[^a-zA-Z0-9]+", "_", title.strip().lower()).strip("_") or "memory"
     path = memory_dir / f"{slug}.md"
+    text = content.strip()
+    fields = {"source": source, "verified_at": verified_at, "scope": scope}
+    lines = text.splitlines()
+    if lines and lines[0] == "---" and "---" in lines[1:]:
+        end = lines.index("---", 1)
+        existing_keys = {line.partition(":")[0].strip() for line in lines[1:end]}
+        additions = [f"{key}: {json.dumps(value, ensure_ascii=False)}" for key, value in fields.items() if key not in existing_keys]
+        text = "\n".join([*lines[:end], *additions, *lines[end:]])
+    else:
+        text = "---\n" + "\n".join(f"{key}: {json.dumps(value, ensure_ascii=False)}" for key, value in fields.items()) + "\n---\n" + text
     with exclusive_file_lock(_memory_lock_path(cwd)):
-        atomic_write_text(path, content.strip() + "\n")
+        atomic_write_text(path, text + "\n")
 
         entrypoint = get_memory_entrypoint(cwd)
         existing = entrypoint.read_text(encoding="utf-8") if entrypoint.exists() else "# Memory Index\n"

@@ -87,7 +87,7 @@ describe("ChatPanel", () => {
       </AppStateProvider>,
     );
 
-    expect(screen.getByRole("status").textContent).toContain("응답 대기열 2번째");
+    expect(screen.getAllByRole("status").some((element) => element.textContent?.includes("응답 대기열 2번째"))).toBe(true);
     await screen.findByRole("button", { name: /동시 사용 현황/ });
   });
 

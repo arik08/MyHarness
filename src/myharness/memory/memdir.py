@@ -16,6 +16,10 @@ def load_memory_prompt(cwd: str | Path, *, max_entrypoint_lines: int = 200) -> s
         f"- Persistent memory directory: {memory_dir}",
         "- Use this directory to store durable user or project context that should survive future sessions.",
         "- Prefer concise topic files plus an index entry in MEMORY.md.",
+        "- Session goals, pending tools and compacted handoffs belong to session state, not durable memory.",
+        "- Record source, verified_at and scope for durable facts. Prefer newer verified evidence and explicit user corrections over stale memory.",
+        "- Read detailed topic files only when relevant; the index is a discovery aid, not proof of current facts.",
+        "- Do not run automatic extraction or consolidation model calls without an explicit enabled product policy and cost budget.",
     ]
 
     if entrypoint.exists():

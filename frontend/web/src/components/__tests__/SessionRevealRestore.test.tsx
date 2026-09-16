@@ -25,7 +25,7 @@ it("shows all running workflow rows from a live replay snapshot without replay d
   expect(restored.workflowEvents.every((event) => event.restored)).toBe(true);
   render(<AppStateProvider initialState={restored}><MessageList /></AppStateProvider>);
   expect(document.querySelectorAll(".aside-progress-prose, .aside-call")).toHaveLength(2);
-  expect(document.body.textContent).toContain("웹 페이지 조회");
+  expect(document.body.textContent).toContain("웹 탐색 (1건)");
 });
 
 it("shows cached running progress immediately after switching away and back", () => {
@@ -49,7 +49,7 @@ it("shows cached running progress immediately after switching away and back", ()
   render(<AppStateProvider initialState={back}><MessageList /></AppStateProvider>);
   expect(document.querySelectorAll(".aside-call")).toHaveLength(1);
   expect(back.workflowEvents.some((event) => event.detail === "Latest progress")).toBe(true);
-  expect(document.body.textContent).toContain("웹 페이지 조회");
+  expect(document.body.textContent).toContain("웹 탐색 (1건)");
   expect(document.body.textContent).toContain("Already received answer");
 });
 

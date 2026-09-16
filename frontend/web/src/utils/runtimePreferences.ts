@@ -79,7 +79,17 @@ function saveRuntimePreferences(preferences: RuntimePreferences) {
   }
 }
 
-export function runtimePreferencesFromState(state: Pick<AppState, "provider" | "activeProfile" | "model" | "subagentModel" | "subagentEffort" | "effort" | "appSettings">): RuntimePreferences {
+export function runtimeStateWithPendingChoices<T extends Pick<AppState, "model" | "effort" | "activeProfile"> & Partial<Pick<AppState, "sessionId" | "pendingRuntimeChoices">>>(state: T): T {
+  return (state.pendingRuntimeChoices || []).reduce((current, choice) => {
+    if (choice.sessionId !== state.sessionId) return current;
+    return choice.command === "model"
+      ? { ...current, model: choice.value, activeProfile: choice.profile || current.activeProfile }
+      : { ...current, effort: choice.value };
+  }, state);
+}
+
+export function runtimePreferencesFromState(source: Pick<AppState, "provider" | "activeProfile" | "model" | "subagentModel" | "subagentEffort" | "effort" | "appSettings"> & Partial<Pick<AppState, "sessionId" | "pendingRuntimeChoices">>): RuntimePreferences {
+  const state = runtimeStateWithPendingChoices(source);
   return {
     activeProfile: normalizeActiveProfile(state.activeProfile) || normalizeActiveProfile(state.provider) || undefined,
     model: clean(state.model) || undefined,

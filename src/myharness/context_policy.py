@@ -8,23 +8,23 @@ def get_long_context_policy_threshold(
     model: str, mode: str | None, *, context_window_tokens: int | None = None,
     auto_compact_threshold_tokens: int | None = None,
 ) -> int | None:
-    """Use Lumina's cost headroom and preserve MyHarness's full-mode policy."""
+    """Keep a small margin below the cost boundary; cap physical input at preflight."""
     normalized = str(model or "").strip().lower().rsplit("/", 1)[-1]
     if not any(normalized == family or normalized.startswith(f"{family}-")
-               for family in ("gpt-5.4", "gpt-5.5", "gpt-5.6")):
+               for family in ("gpt-5.4", "gpt-5.5", "gpt-5.6", "gpt-6")):
         return None
     if normalized.startswith(("gpt-5.4-mini", "gpt-5.4-nano")):
         return None
     profile = model_output_profile(normalized)
     model_window = profile.context_window_tokens or 1_050_000
     window = context_window_tokens or model_window
-    reserved_output = profile.model_max_output_tokens or 128_000
+    reserved_output = 16_000  # request-specific output reservation is enforced at preflight
     input_budget = max(1, window - reserved_output)
     if str(mode or "").strip().lower() == "full-context":
         # Preserve the existing explicit MyHarness full-context threshold.
-        threshold = 1_000_000 if window >= model_window else max(1, input_budget * 85 // 100)
+        threshold = 1_000_000 if window >= model_window else max(1, input_budget - 8_000)
     else:
-        threshold = max(1, min(input_budget, LONG_CONTEXT_INPUT_TOKEN_THRESHOLD) * 85 // 100)
+        threshold = max(1, min(input_budget, LONG_CONTEXT_INPUT_TOKEN_THRESHOLD) - 8_000)
     if auto_compact_threshold_tokens is not None and auto_compact_threshold_tokens > 0:
         threshold = min(threshold, auto_compact_threshold_tokens)
     return threshold
@@ -33,6 +33,7 @@ def get_long_context_policy_threshold(
 # Default context windows per model family
 _DEFAULT_CONTEXT_WINDOW = 200_000
 _OPENAI_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("gpt-6-astra", 1_050_000),
     ("gpt-5.6-luna", 1_050_000),
     ("gpt-5.6-terra", 1_050_000),
     ("gpt-5.6-sol", 1_050_000),

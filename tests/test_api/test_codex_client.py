@@ -434,7 +434,7 @@ def test_reasoning_summary_requested_without_explicit_effort(model, client_type,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
-@pytest.mark.parametrize("threshold,expected", [(None, 231_200), (1_000_000, 1_000_000)])
+@pytest.mark.parametrize("threshold,expected", [(None, 264_000), (1_000_000, 1_000_000)])
 async def test_gpt56_preserves_reasoning_and_enables_server_compaction(monkeypatch, model, threshold, expected):
     sink: dict[str, Any] = {}
     response = _FakeStreamResponse(

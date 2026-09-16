@@ -1373,10 +1373,7 @@ class ReactBackendHost:
                 if request.type == "apply_select_command":
                     command = (request.command or "").strip().lstrip("/").lower()
                     if command in {"provider", "model", "runtime_model", "subagent_model", "effort", "subagent_effort", "context_mode"}:
-                        if self._busy:
-                            await self._emit(BackendEvent(type="error", message="Session is busy"))
-                            continue
-                        await self._apply_select_command(command, request.value or "")
+                        await self._apply_runtime_selection_request(request)
                         continue
                     if self._busy:
                         await self._emit(BackendEvent(type="error", message="Session is busy"))
@@ -1932,24 +1929,44 @@ class ReactBackendHost:
                 continue
             if request.type == "question_response" and request.request_id in self._question_requests:
                 future = self._question_requests[request.request_id]
+                if future.done():
+                    continue
                 detail = self._question_request_details.get(request.request_id, {})
                 choices = detail.get("choices")
+                answer_text = request.answer or ""
+                questions = detail.get("questions")
+                if isinstance(questions, list) and questions:
+                    from myharness.ui.question_answers import resolve_question_answers
+
+                    try:
+                        answer_text, transcript = resolve_question_answers(questions, answer_text)
+                    except ValueError as exc:
+                        await self._emit(BackendEvent(type="modal_request", modal={
+                            "kind": "question", "request_id": request.request_id,
+                            **detail, "error": str(exc),
+                        }))
+                        continue
+                else:
+                    transcript = _format_question_answer_transcript(
+                        str(detail.get("question") or ""), answer_text,
+                        choices if isinstance(choices, list) else [],
+                    )
                 await self._emit(
                     BackendEvent(
                         type="transcript_item",
                         item=TranscriptItem(
                             role="user",
-                            text=_format_question_answer_transcript(
-                                str(detail.get("question") or ""),
-                                request.answer or "",
-                                choices if isinstance(choices, list) else [],
-                            ),
+                            text=transcript,
                             kind="question_answer",
                         ),
                     )
                 )
                 if not future.done():
-                    future.set_result(request.answer or "")
+                    future.set_result(answer_text)
+                if questions:
+                    await self._emit(BackendEvent(type="modal_request", modal={
+                        "kind": "question", "request_id": request.request_id, "status": "answered",
+                    }))
                 continue
             if request.type == "cancel_current":
                 await self._cancel_current_request()
@@ -3210,6 +3227,21 @@ class ReactBackendHost:
     def _mcp_name_key(self, value: str) -> str:
         return re.sub(r"[^a-z0-9]+", "", value.lower())
 
+    async def _apply_runtime_selection_request(self, request: FrontendRequest) -> None:
+        command = (request.command or "").strip().lstrip("/").lower()
+        try:
+            if self._busy:
+                await self._emit(BackendEvent(type="error", message="Session is busy"))
+            else:
+                await self._apply_select_command(command, request.value or "")
+        finally:
+            # HTTP only acknowledges delivery. Confirm the resulting runtime
+            # after processing, including rejected choices, for optimistic UI.
+            if request.request_id:
+                snapshot = self._status_snapshot()
+                snapshot.request_id = request.request_id
+                await self._emit(snapshot)
+
     async def _apply_select_command(self, command_name: str, value: str) -> bool:
         command = command_name.strip().lstrip("/").lower()
         selected = value.strip()
@@ -3477,6 +3509,7 @@ class ReactBackendHost:
             event.state["runtime_options"] = {
                 **_runtime_picker_options(self._bundle.current_settings()),
                 "context_mode": self._config.gpt56_context_mode or "cost-saver",
+                "context_used_tokens": self._bundle.engine.context_used_tokens,
             }
         return event
 
@@ -4017,7 +4050,16 @@ class ReactBackendHost:
             finally:
                 self._permission_requests.pop(request_id, None)
 
-    async def _ask_question(self, question: str, choices: list[dict[str, object]] | None = None) -> str:
+    async def _ask_question(
+        self, question: str, choices: list[dict[str, object]] | None = None,
+        *, questions: list[dict[str, object]] | None = None,
+    ) -> str:
+        normalized_questions = []
+        if questions:
+            from myharness.tools.ask_user_question_tool import AskUserQuestionToolInput
+
+            bundle = AskUserQuestionToolInput(questions=questions)
+            normalized_questions = [item.model_dump(exclude_none=True) for item in bundle.questions]
         request_id = uuid4().hex
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self._question_requests[request_id] = future
@@ -4025,6 +4067,7 @@ class ReactBackendHost:
         self._question_request_details[request_id] = {
             "question": question,
             "choices": normalized_choices,
+            **({"questions": normalized_questions} if normalized_questions else {}),
         }
         await self._emit(
             BackendEvent(
@@ -4034,6 +4077,7 @@ class ReactBackendHost:
                     "request_id": request_id,
                     "question": question,
                     "choices": normalized_choices,
+                    **({"questions": normalized_questions} if normalized_questions else {}),
                 },
             )
         )
@@ -4042,6 +4086,10 @@ class ReactBackendHost:
         finally:
             self._question_requests.pop(request_id, None)
             self._question_request_details.pop(request_id, None)
+            if normalized_questions and future.cancelled():
+                await self._emit(BackendEvent(type="modal_request", modal={
+                    "kind": "question", "request_id": request_id, "status": "cancelled",
+                }))
 
     def _append_history_event(self, event: dict[str, object]) -> None:
         if not str(event.get("type") or "").strip():

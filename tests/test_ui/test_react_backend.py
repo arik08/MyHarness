@@ -4437,3 +4437,38 @@ async def test_runtime_model_select_is_atomic_and_rejects_disabled_models(tmp_pa
         assert host._bundle.engine.tool_metadata["runtime_model"] == "gpt-5.6-luna"
     finally:
         await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "rejected", "busy", "exception"])
+async def test_runtime_selection_confirms_actual_state_with_request_id(outcome):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events = []
+    state = {"model": "old", "effort": "low"}
+
+    async def emit(event):
+        events.append(event)
+
+    async def apply(command, value):
+        assert command == "model"
+        assert not events
+        if outcome == "exception":
+            raise RuntimeError("refresh failed")
+        if outcome == "rejected":
+            await emit(BackendEvent(type="error", message="unavailable"))
+        else:
+            state["model"] = value
+
+    host._emit = emit
+    host._apply_select_command = apply
+    host._status_snapshot = lambda: BackendEvent(type="state_snapshot", state=dict(state))
+    host._busy = outcome == "busy"
+    request = FrontendRequest(type="apply_select_command", command="model", value="future", request_id="choice-123")
+    if outcome == "exception":
+        with pytest.raises(RuntimeError, match="refresh failed"):
+            await host._apply_runtime_selection_request(request)
+    else:
+        await host._apply_runtime_selection_request(request)
+    assert events[-1].type == "state_snapshot"
+    assert events[-1].request_id == "choice-123"
+    assert events[-1].state["model"] == ("future" if outcome == "success" else "old")

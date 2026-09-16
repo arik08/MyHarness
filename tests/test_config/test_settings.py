@@ -22,10 +22,12 @@ from myharness.config.settings import (
 )
 
 
-def test_checked_in_project_settings_default_to_pgpt():
+def test_checked_in_project_settings_default_to_pgpt(tmp_path):
     settings_path = Path(__file__).resolve().parents[2] / ".myharness" / "settings.json"
-
-    settings = load_settings(settings_path)
+    # Inspect the shipped default independently of local overrides and ADMIN policy.
+    isolated_path = tmp_path / "settings.json"
+    isolated_path.write_bytes(settings_path.read_bytes())
+    settings = load_settings(isolated_path, apply_model_policy=False)
 
     assert settings.active_profile == "p-gpt"
     assert settings.provider == "openai"
@@ -585,7 +587,7 @@ class TestPgptOpenAICompatibleProvider:
             "gpt-5.6-terra",
             "gpt-5.6-sol",
         ]
-        assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
+        assert profile.base_url == "http://pgpt.posco.com/s01a01-gpt/v1"
 
     def test_codex_subscription_default_profile_includes_gpt56_family(self):
         from myharness.config.settings import default_provider_profiles

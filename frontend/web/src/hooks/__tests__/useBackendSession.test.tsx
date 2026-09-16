@@ -156,7 +156,7 @@ describe("useBackendSession", () => {
     expect(screen.getByTestId("busy").textContent).toBe("true");
     expect(screen.getByTestId("workspace").textContent).toBe("C:/demo");
     expect(startSession).not.toHaveBeenCalled();
-    expect(openBackendEvents).toHaveBeenCalled();
+    await waitFor(() => expect(openBackendEvents).toHaveBeenCalled());
   });
 
   it("applies replayed live snapshot events after reconnecting to a busy session", async () => {
@@ -183,6 +183,7 @@ describe("useBackendSession", () => {
     );
 
     await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("live-previous"));
+    await waitFor(() => expect(eventHandlers).not.toBeNull());
     act(() => {
       eventHandlers?.onEvent({ type: "clear_transcript" } as any);
       eventHandlers?.onEvent({ type: "transcript_item", item: { role: "user", text: "진행 중 질문" } });

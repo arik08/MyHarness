@@ -31,6 +31,7 @@ def _parse_memory_file(path: Path, content: str) -> MemoryHeader:
     title = path.stem
     description = ""
     memory_type = ""
+    provenance = {"source": "", "verified_at": "", "scope": ""}
     body_start = 0
 
     # Parse YAML frontmatter (--- ... ---)
@@ -49,6 +50,8 @@ def _parse_memory_file(path: Path, content: str) -> MemoryHeader:
                         description = value
                     elif key == "type":
                         memory_type = value
+                    elif key in provenance:
+                        provenance[key] = value
                 body_start = i + 1
                 break
 
@@ -80,4 +83,5 @@ def _parse_memory_file(path: Path, content: str) -> MemoryHeader:
         modified_at=path.stat().st_mtime,
         memory_type=memory_type,
         body_preview=body_preview,
+        **provenance,
     )

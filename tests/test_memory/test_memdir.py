@@ -13,6 +13,15 @@ from myharness.memory import (
 from myharness.memory.scan import _parse_memory_file, scan_memory_files
 
 
+def test_new_memory_records_provenance_without_claiming_verification(tmp_path):
+    from myharness.memory.manager import add_memory_entry
+    path = add_memory_entry(tmp_path, "Durable preference", "Prefer concise reports.", source="user turn 12", scope="project")
+    header = _parse_memory_file(path, path.read_text(encoding="utf-8"))
+    assert header.source == "user turn 12"
+    assert header.scope == "project"
+    assert header.verified_at == ""
+
+
 def test_memory_paths_are_stable(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     project_dir = tmp_path / "repo"

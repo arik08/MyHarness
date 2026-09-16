@@ -136,10 +136,10 @@ function aiEditWaitingDetail(liveStatus: string, elapsedSeconds: number, targetP
     ? `${targetName} 작업 요청은 전달됐습니다.`
     : "AI 편집 요청을 전달하고 있습니다.";
   if (elapsedSeconds >= 120) {
-    return `${targetPrefix} ${formatAiEditElapsed(elapsedSeconds)}입니다. AI가 수정안을 작성 중이거나 이벤트 갱신이 지연되고 있어 계속 확인 중입니다.`;
+    return `${targetPrefix} AI가 수정안을 작성 중이거나 이벤트 갱신이 지연되고 있어 계속 확인 중입니다.`;
   }
   if (elapsedSeconds >= 30) {
-    return `${targetPrefix} ${formatAiEditElapsed(elapsedSeconds)}입니다. 첫 streaming 이벤트가 늦어지고 있어 계속 대기 중입니다.`;
+    return `${targetPrefix} 첫 streaming 이벤트가 늦어지고 있어 계속 대기 중입니다.`;
   }
   if (elapsedSeconds >= 8) {
     return `${targetPrefix} 아직 첫 streaming 이벤트는 없고, AI가 수정 방향을 구성 중일 수 있습니다.`;
@@ -1641,6 +1641,7 @@ export function ArtifactPanel() {
                 >
                   <WorkflowPanel
                     expanded
+                    busy
                     persistenceKey={`artifact-edit:${activePath}`}
                     events={aiEditProgressEvents}
                     durationSeconds={aiEditLiveProgressEvents.length ? state.workflowDurationSeconds : aiEditElapsedSeconds}

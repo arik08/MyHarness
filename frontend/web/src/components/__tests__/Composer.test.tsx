@@ -119,28 +119,49 @@ describe("Composer", () => {
     render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c", model: "model-old", runtimePicker: { ...initialAppState.runtimePicker, providers: [{ value: "future-provider", label: "Future provider" }], modelsByProvider: { "future-provider": [{ value: "model-new", label: "New model" }] }, models: [{ value: "model-new", label: "New model" }], efforts: [{ value: "high", label: "High" }] } }}><Composer /></AppStateProvider>);
     await userEvent.click(screen.getByRole("button", { name: "모델 선택" }));
     await userEvent.click(screen.getByRole("button", { name: "New model" }));
-    expect(sendBackendRequest).toHaveBeenCalledWith("s", "c", { type: "apply_select_command", command: "runtime_model", value: JSON.stringify({ profile: "future-provider", model: "model-new" }) });
+    expect(sendBackendRequest).toHaveBeenCalledWith("s", "c", { type: "apply_select_command", request_id: expect.any(String), command: "runtime_model", value: JSON.stringify({ profile: "future-provider", model: "model-new" }) });
     await userEvent.click(screen.getByRole("button", { name: "추론 노력도" }));
     await userEvent.click(screen.getByRole("button", { name: "High" }));
-    expect(sendBackendRequest).toHaveBeenCalledWith("s", "c", { type: "apply_select_command", command: "effort", value: "high" });
+    expect(sendBackendRequest).toHaveBeenCalledWith("s", "c", { type: "apply_select_command", request_id: expect.any(String), command: "effort", value: "high" });
   });
 
-  it("inserts context and skill triggers at the caret from the outside toolbar", async () => {
-    render(<AppStateProvider><Composer /></AppStateProvider>);
+  it("toggles reference pickers without changing the draft and inserts only a selected item", async () => {
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      skills: [{ name: "new-skill", description: "새 스킬", enabled: true }],
+      artifacts: [{ path: "outputs/new-file.md", name: "new-file.md", kind: "file" }],
+    }}><Composer /></AppStateProvider>);
     const input = screen.getByRole("textbox") as HTMLTextAreaElement;
     await userEvent.type(input, "비교해줘");
+    for (const name of ["참고자료 연결", "Skill 및 MCP 호출"]) {
+      const button = screen.getByRole("button", { name });
+      await userEvent.click(button);
+      expect(button.getAttribute("aria-expanded")).toBe("true");
+      expect(input.value).toBe("비교해줘");
+      await userEvent.click(button);
+      expect(button.getAttribute("aria-expanded")).toBe("false");
+      expect(document.querySelector("#slashMenu")?.classList.contains("hidden")).toBe(true);
+      expect(input.value).toBe("비교해줘");
+    }
     await userEvent.click(screen.getByRole("button", { name: "참고자료 연결" }));
-    await waitFor(() => expect(input.value).toBe("비교해줘 @"));
-    await userEvent.clear(input);
     await userEvent.click(screen.getByRole("button", { name: "Skill 및 MCP 호출" }));
-    await waitFor(() => expect(input.value).toBe("$"));
+    await userEvent.click(screen.getByRole("option", { name: /new-skill/ }));
+    expect(input.value).toBe("비교해줘 $new-skill ");
+    await userEvent.clear(input);
+    await userEvent.type(input, "@new");
+    await userEvent.click(screen.getByRole("button", { name: "참고자료 연결" }));
+    expect(input.value).toBe("@new");
+    expect(document.querySelector("#slashMenu")?.classList.contains("hidden")).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "참고자료 연결" }));
+    await userEvent.keyboard("{Escape}");
+    expect(document.querySelector("#slashMenu")?.classList.contains("hidden")).toBe(true);
   });
 
-  it("uses POSCO Blue for the default theme send button", () => {
+  it("uses the shared Lumina blue palette for the send button", () => {
     const stylesheet = readStylesheet();
 
-    expect(stylesheet).toContain("--send-button-bg: #0072bc;");
-    expect(stylesheet).toContain("--send-button-ink: #ffffff;");
+    expect(stylesheet).toContain("--brand-accent: var(--color-cobalt);");
+    expect(stylesheet).toContain("--send-button-bg: var(--brand-accent);");
+    expect(stylesheet).toContain("--send-button-ink: var(--color-white);");
   });
 
   it("does not expose an image file attachment button", () => {
@@ -1547,8 +1568,8 @@ describe("Composer", () => {
 
     const stop = screen.getByRole<HTMLButtonElement>("button", { name: "작업 중단" });
     expect(stop.classList.contains("is-stop")).toBe(true);
-    expect(stop.querySelector("circle")?.getAttribute("r")).toBe("8.5");
-    expect(stop.querySelectorAll("path")).toHaveLength(2);
+    expect(stop.querySelector("rect")?.getAttribute("width")).toBe("16");
+    expect(stop.querySelector("circle")).toBeNull();
 
     await userEvent.click(stop);
 
@@ -2036,7 +2057,7 @@ describe("Composer", () => {
     expect(screen.queryByText("(완료) 이전 세션 작업")).toBeNull();
   });
 
-  it("renders backend questions inline directly above the composer input", async () => {
+  it("renders backend questions inside chat instead of above the composer input", async () => {
     const user = userEvent.setup();
     render(
       <AppStateProvider
@@ -2058,6 +2079,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
         <ModalHost />
       </AppStateProvider>,
@@ -2066,6 +2088,8 @@ describe("Composer", () => {
     const card = document.querySelector(".inline-question-card");
     const composerBox = document.querySelector(".composer-box");
     expect(card).toBeTruthy();
+    expect(document.querySelector(".messages")?.contains(card)).toBe(true);
+    expect(document.querySelector(".composer")?.contains(card)).toBe(false);
     expect(Boolean(card && composerBox && (card.compareDocumentPosition(composerBox) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
     expect(screen.queryByRole("dialog", { name: "질문" })).toBeNull();
     expect(screen.getByText("Q1")).toBeTruthy();
@@ -2096,6 +2120,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );
@@ -2155,7 +2180,8 @@ describe("Composer", () => {
             },
           }}
         >
-          <Composer />
+          <MessageList />
+        <Composer />
         </AppStateProvider>,
       );
 
@@ -2326,6 +2352,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );
@@ -2358,6 +2385,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );
@@ -2420,6 +2448,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );
@@ -2480,6 +2509,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );
@@ -2517,6 +2547,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );
@@ -2566,6 +2597,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );
@@ -2613,6 +2645,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );
@@ -2662,6 +2695,7 @@ describe("Composer", () => {
           },
         }}
       >
+        <MessageList />
         <Composer />
       </AppStateProvider>,
     );

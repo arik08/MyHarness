@@ -116,7 +116,7 @@ export type SwarmNotificationSnapshot = {
 
 export type BackendEvent =
   | { type: "ready"; state?: BackendStateSnapshot; commands?: unknown[]; skills?: unknown[]; plugins?: unknown[]; tasks?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null }
-  | { type: "state_snapshot"; state?: BackendStateSnapshot; plugins?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null }
+  | { type: "state_snapshot"; state?: BackendStateSnapshot; plugins?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null; request_id?: string | null }
   | { type: "skills_snapshot"; skills?: unknown[] }
   | { type: "transcript_item"; item?: TranscriptItem }
   | { type: "queued_message_status"; request_id?: string | null; status?: "delivered" | "cancelled" | "not_found" | string | null }

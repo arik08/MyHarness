@@ -96,6 +96,48 @@ class StaticApiClient:
         )
 
 
+@pytest.mark.asyncio
+async def test_steering_during_compaction_is_budgeted_once_before_request(tmp_path, monkeypatch):
+    queued = []
+    checked = []
+    async def compact(messages, **kwargs):
+        checked.append([message.text for message in messages])
+        if len(checked) == 1:
+            queued.append("Do not publish the report.")
+        return messages, False
+    async def steering():
+        result = list(queued)
+        queued.clear()
+        return result
+    monkeypatch.setattr("myharness.services.compact.auto_compact_if_needed", compact)
+    client = FakeApiClient([_FakeResponse(ConversationMessage(role="assistant", content=[TextBlock(text="done")]), UsageSnapshot())])
+    engine = QueryEngine(api_client=client, tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings()), cwd=tmp_path, model="gpt-5", system_prompt="system")
+    events = [event async for event in engine.submit_message("Review report", steering_provider=steering)]
+    assert len(checked) == 2
+    assert checked[-1].count("Do not publish the report.") == 1
+    assert [message.text for message in client.requests[0].messages].count("Do not publish the report.") == 1
+    assert isinstance(events[-1], AssistantTurnComplete)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("old_origin", [None, "previous-provider"])
+async def test_provider_change_rebuilds_visible_history_without_foreign_state(tmp_path, old_origin):
+    from myharness.engine.messages import ResponsesStateBlock
+    class NewClient(FakeApiClient):
+        def state_origin(self, model):
+            return "current-provider"
+    client = NewClient([_FakeResponse(ConversationMessage(role="assistant", content=[TextBlock(text="done")]), UsageSnapshot())])
+    engine = QueryEngine(api_client=client, tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings()), cwd=tmp_path, model="gpt-5", system_prompt="system")
+    engine.load_messages([ConversationMessage.from_user_text("Do not publish."),
+        ConversationMessage(role="assistant", content=[ResponsesStateBlock(origin=old_origin,
+            item={"type": "compaction", "encrypted_content": "foreign"}), TextBlock(text="Work is pending.")])])
+    _ = [event async for event in engine.submit_message("Continue")]
+    assert any(message.text == "Do not publish." for message in client.requests[0].messages)
+    assert not any(isinstance(block, ResponsesStateBlock) for message in client.requests[0].messages for block in message.content)
+
+
 class RetryThenSuccessApiClient:
     async def stream_message(self, request):
         del request
@@ -293,6 +335,42 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["gpt-5.6-luna", "new-provider-model"])
+async def test_context_usage_tracks_one_request_and_restored_history(tmp_path, model):
+    engine = QueryEngine(
+        api_client=FakeApiClient([
+            _FakeResponse(ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                          UsageSnapshot(input_tokens=tokens, output_tokens=1))
+            for tokens in (220_000, 225_000)
+        ]),
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path, model=model, system_prompt="system", context_window_tokens=400_000,
+    )
+    for _ in range(2):
+        async for event in engine.submit_message("continue"):
+            pass
+    assert engine.total_usage.input_tokens == 445_000
+    assert 225_000 <= engine.context_used_tokens < 226_000
+    restored = [ConversationMessage.model_validate(message.model_dump()) for message in engine.messages]
+    engine.clear()
+    assert engine.context_used_tokens < 100
+    engine.load_messages(restored)
+    assert 225_000 <= engine.context_used_tokens < 226_000
+    # Local compaction replaces history; the previous measurement must not survive.
+    engine.load_messages([ConversationMessage.from_user_text("compacted summary")])
+    assert engine.context_used_tokens < 100
+    from myharness.engine.messages import ResponsesStateBlock
+    engine.load_messages([*restored, ConversationMessage(role="assistant", content=[
+        ResponsesStateBlock(item={"type": "compaction", "encrypted_content": "opaque"}),
+    ], context_input_tokens=260_000)])
+    assert engine.context_used_tokens is None
+    engine.load_messages([*engine.messages, ConversationMessage(role="assistant", content=[TextBlock(text="after")],
+                                                               context_input_tokens=19_000)])
+    assert 19_000 <= engine.context_used_tokens < 20_000
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failed", [False, True])
 async def test_provider_compaction_reaches_workflow(tmp_path, monkeypatch, failed):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
@@ -440,6 +518,8 @@ async def test_query_engine_auto_continues_truncated_final_answer(tmp_path: Path
     assert len(completions) == 1
     assert completions[0].message.text == "첫 부분 이어진 부분"
     assert engine.messages[-1].text == "첫 부분 이어진 부분"
+    assert engine.total_usage.input_tokens == 2
+    assert engine.messages[-1].context_input_tokens == 1
     assert all("continue" not in message.text.lower() for message in engine.messages)
     assert len(client.requests) == 2
     assert client.requests[1].messages[-1].role == "user"
@@ -475,12 +555,12 @@ async def test_query_engine_applies_steering_after_current_answer(tmp_path: Path
         model="claude-test",
         system_prompt="system",
     )
-    drain_calls = 0
+    sent = False
 
     async def _steering_provider() -> list[str]:
-        nonlocal drain_calls
-        drain_calls += 1
-        if drain_calls == 2:
+        nonlocal sent
+        if api_client.requests and not sent:
+            sent = True
             return ["make it shorter"]
         return []
 
@@ -1124,7 +1204,7 @@ async def test_query_engine_reactive_compacts_after_prompt_too_long(tmp_path: Pa
     )
     engine.load_messages(
         [
-            ConversationMessage(role="user", content=[TextBlock(text="one")]),
+            ConversationMessage(role="user", content=[TextBlock(text="one " * 4000)]),
             ConversationMessage(role="assistant", content=[TextBlock(text="two")]),
             ConversationMessage(role="user", content=[TextBlock(text="three")]),
             ConversationMessage(role="assistant", content=[TextBlock(text="four")]),
@@ -1171,7 +1251,7 @@ async def test_query_engine_stores_oversized_current_user_input_before_model_req
         model="gpt-5.5",
         system_prompt="system",
         tool_metadata=metadata,
-        context_window_tokens=4000,
+        context_window_tokens=40000,
     )
 
     events = [event async for event in engine.submit_message(f"{long_text}\n\n조직 개편안을 검토해줘.")]

@@ -72,6 +72,8 @@ export type AppAction =
   | { type: "select_runtime_provider"; value: string }
   | { type: "select_runtime_model"; value: string }
   | { type: "select_runtime_effort"; value: string }
+  | { type: "queue_runtime_choice"; choice: NonNullable<AppState["pendingRuntimeChoices"]>[number] }
+  | { type: "reject_runtime_choice"; requestId: string }
   | { type: "toggle_todo_collapsed" }
   | { type: "dismiss_todo" }
   | { type: "set_swarm_popup_open"; value: boolean }
@@ -1464,6 +1466,7 @@ function isAutoPurposeSummary(detail: string, purpose: WorkflowEvent["purpose"])
 function purposeFallbackDetail(purpose: WorkflowEvent["purpose"], status: WorkflowEventStatus) {
   const copy = purposeCopy(purpose);
   if (status === "running") return copy.running;
+  if (status === "empty") return "조회 조건에 해당하는 결과가 없습니다.";
   if (status === "error") return "작업 중 문제가 발생했습니다.";
   if (status === "warning" && purpose === "info") return "일부 자료 확인에 실패했지만, 가능한 정보로 계속 진행합니다.";
   if (status === "warning") return "일부 단계에서 확인이 필요합니다.";
@@ -2050,6 +2053,10 @@ function applyStateSnapshot(state: AppState, event: Extract<BackendEvent, { type
     sessionUsage: sessionUsage || state.sessionUsage,
     runtimePicker,
     runtimeChoicePending: preserveRuntimeChoice || false,
+    ...(event.type === "state_snapshot" && event.request_id ? {
+      pendingRuntimeChoices: state.pendingRuntimeChoices?.filter((choice) => choice.requestId !== event.request_id),
+      confirmedRuntimeChoiceId: event.request_id,
+    } : {}),
     ...(preserveRuntimeChoice ? {
       provider: state.provider,
       activeProfile: state.activeProfile,
@@ -2116,6 +2123,8 @@ function runtimePickerFromOptions(state: AppState, runtimeOptions: Record<string
   return {
     ...state.runtimePicker,
     contextWindow: Number(runtimeOptions.context_window) || undefined,
+    contextUsedTokens: typeof runtimeOptions.context_used_tokens === "number" && Number.isFinite(runtimeOptions.context_used_tokens)
+      ? Math.max(0, runtimeOptions.context_used_tokens) : undefined,
     standardContextWindow: Number(runtimeOptions.standard_context_window) || undefined,
     contextModeAvailable: runtimeOptions.context_mode_available === true,
     open,
@@ -3295,6 +3304,18 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     const payload = event.modal && typeof event.modal === "object"
       ? event.modal as Record<string, unknown>
       : {};
+    if (payload.kind === "question" && (payload.status === "answered" || payload.status === "cancelled")) {
+      const requestId = payload.request_id;
+      const matches = (modal: AppState["modal"]) => modal?.kind === "backend"
+        && modal.payload?.kind === "question" && modal.payload?.request_id === requestId;
+      return {
+        ...state,
+        modal: matches(state.modal) ? null : state.modal,
+        backendModalsBySessionId: Object.fromEntries(
+          Object.entries(state.backendModalsBySessionId).filter(([, modal]) => !matches(modal)),
+        ),
+      };
+    }
     if (String(payload.kind || "") === "command_help" && isCommandHelpModal(state.modal)) {
       const currentText = String(state.modal?.kind === "backend" ? state.modal.payload?.text || "" : "");
       const nextText = String(payload.text || "");
@@ -4006,6 +4027,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         };
       }
       return { ...state, runtimePicker: { ...state.runtimePicker, open: true, loading: false, error: action.message } };
+
+    case "queue_runtime_choice":
+      return { ...state, pendingRuntimeChoices: [...(state.pendingRuntimeChoices || []).filter((choice) => choice.sessionId === state.sessionId), action.choice] };
+
+    case "reject_runtime_choice":
+      return { ...state, pendingRuntimeChoices: state.pendingRuntimeChoices?.filter((choice) => choice.requestId !== action.requestId) };
 
     case "select_runtime_provider": {
       const models = state.runtimePicker.modelsByProvider[action.value] || [];

@@ -24,6 +24,8 @@ class SessionDocumentReadToolInput(BaseModel):
     document_id: str = Field(description="Session document ID, for example doc-1234abcd5678")
     start_line: int = Field(default=1, ge=1, description="One-based starting line")
     limit: int = Field(default=200, ge=1, le=2000, description="Number of lines to return")
+    start_column: int = Field(default=1, ge=1, description="One-based character column on the starting line; use the search match column for very long lines")
+    max_chars: int = Field(default=8000, ge=256, le=12000, description="Maximum returned source characters; continue with the returned line/column cursor")
 
 
 def _shared_metadata(context: ToolExecutionContext) -> dict[str, Any]:
@@ -65,19 +67,28 @@ def _trim_snippet(text: str, limit: int = 220) -> str:
 
 
 def _snippet_for_chunk(lines: list[str], query: str) -> str:
-    needle = query.lower().strip()
-    tokens = _tokens(needle)
-    for line in lines:
-        if needle and needle in line.lower():
-            return _trim_snippet(line)
-    for line in lines:
-        lower = line.lower()
-        if any(token in lower for token in tokens):
-            return _trim_snippet(line)
-    for line in lines:
-        if line.strip():
-            return _trim_snippet(line)
-    return ""
+    if not lines:
+        return ""
+    offset, column = _best_match(lines, query)
+    return _trim_snippet(lines[offset][max(0, column - 60):])
+
+
+def _best_match(lines: list[str], query: str) -> tuple[int, int]:
+    offset = max(range(len(lines)), key=lambda index: _score(lines[index], query))
+    # Match offsets in the original string: lower() may expand Unicode
+    # characters, making a search column point past the actual source text.
+    for needle in [query.strip(), *query.split()]:
+        match = re.search(re.escape(needle), lines[offset], re.IGNORECASE) if needle else None
+        if match:
+            return offset, match.start()
+    return offset, 0
+
+
+def _match_cursor(lines: list[str], query: str, start_line: int) -> str:
+    if not lines:
+        return ""
+    offset, column = _best_match(lines, query)
+    return f" match start_line={start_line + offset} start_column={column + 1}"
 
 
 def _load_indexed_chunks(index_path: Path, document_id: str, line_count: int) -> list[dict[str, Any]]:
@@ -166,11 +177,32 @@ class SessionDocumentReadTool(BaseTool):
         start_index = arguments.start_line - 1
         if start_index >= len(lines):
             return ToolResult(output=f"(선택한 범위에 내용이 없습니다: {arguments.document_id})")
-        selected = lines[start_index : start_index + arguments.limit]
-        numbered = [
-            f"{start_index + index + 1:>6}\t{line}"
-            for index, line in enumerate(selected)
-        ]
+        column = arguments.start_column - 1
+        if column > len(lines[start_index]):
+            return ToolResult(output="Starting column is beyond the selected line.", is_error=True)
+        numbered: list[str] = []
+        remaining = arguments.max_chars
+        end_index = min(len(lines), start_index + arguments.limit)
+        cursor_line, cursor_column = end_index + 1, 1
+        for index in range(start_index, end_index):
+            prefix = f"{index + 1:>6}\t"
+            available = max(0, remaining - len(prefix) - 1)
+            text = lines[index][column:]
+            part = text[:available]
+            numbered.append(prefix + part)
+            remaining -= len(prefix) + len(part) + 1
+            if len(part) < len(text):
+                cursor_line, cursor_column = index + 1, column + len(part) + 1
+                break
+            column = 0
+            if remaining < 16 and index + 1 < end_index:
+                cursor_line, cursor_column = index + 2, 1
+                break
+        if cursor_line <= len(lines):
+            numbered.append(
+                f"[More source available. Continue session_document_read with document_id={arguments.document_id}, "
+                f"start_line={cursor_line}, start_column={cursor_column}.]"
+            )
         return ToolResult(output="\n".join(numbered))
 
 
@@ -206,8 +238,9 @@ def _search_document(
         output_lines = []
         for score, start, end, chunk_index, heading, snippet in matches[:limit]:
             heading_part = f' heading "{heading}"' if heading else ""
+            cursor = _match_cursor(lines[start - 1:end], query, start)
             output_lines.append(
-                f"- {document_id} chunk {chunk_index} lines {start}-{end}{heading_part} score {score}: {snippet}"
+                f"- {document_id} chunk {chunk_index} lines {start}-{end}{heading_part}{cursor} score {score}: {snippet}"
             )
         return ToolResult(output="\n".join(output_lines))
 
@@ -221,13 +254,13 @@ def _search_document(
         score = _score(chunk, query)
         if score <= 0:
             continue
-        snippet = _trim_snippet(chunk)
+        snippet = _snippet_for_chunk(lines[start:end], query)
         matches_fallback.append((score, start + 1, end, snippet))
     if not matches_fallback:
         return ToolResult(output="(no matches)")
     matches_fallback.sort(key=lambda item: (-item[0], item[1]))
     output_lines = [
-        f"- {document_id} lines {start}-{end} score {score}: {snippet}"
+        f"- {document_id} lines {start}-{end}{_match_cursor(lines[start - 1:end], query, start)} score {score}: {snippet}"
         for score, start, end, snippet in matches_fallback[:limit]
     ]
     return ToolResult(output="\n".join(output_lines))

@@ -59,7 +59,7 @@ export type LiveSessionView = {
   sessionUsage?: UsageCostSummary | null;
 };
 
-export type WorkflowEventStatus = "running" | "done" | "error" | "warning";
+export type WorkflowEventStatus = "running" | "done" | "error" | "warning" | "empty";
 
 export type WorkflowEvent = {
   startedAtMs?: number;
@@ -170,6 +170,8 @@ export type AppState = {
   composer: ComposerState;
   runtimePicker: RuntimePickerState;
   runtimeChoicePending?: boolean;
+  pendingRuntimeChoices?: Array<{ requestId: string; sessionId: string; command: "model" | "effort"; value: string; profile?: string }>;
+  confirmedRuntimeChoiceId?: string;
 };
 
 export type AppSettings = {
@@ -192,6 +194,7 @@ export type RuntimePickerOption = {
 
 export type RuntimePickerState = {
   contextWindow?: number;
+  contextUsedTokens?: number;
   standardContextWindow?: number;
   contextModeAvailable?: boolean;
   open: boolean;

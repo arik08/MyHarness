@@ -1,0 +1,25 @@
+/* Shared UI palette. Components use semantic aliases (accent, warning, success, ink).
+   Cobalt and neutrals follow Lumina; orange and green reflect the approved MyHarness colors. */
+:root {
+  --color-cobalt: #3f66c9;
+  --color-cobalt-hover: #3158b8;
+  --color-cobalt-pale: #edf2fb;
+  --color-cobalt-night: #7e9ce5;
+  --color-cobalt-night-hover: #6f91df;
+  --color-cobalt-night-pale: #26334d;
+  --color-orange: #ea6a20;
+  --color-green: #36b94a;
+  --color-red: #c34f51;
+  --color-white: #ffffff;
+  --color-gray-50: #f5f6f7;
+  --color-gray-200: #e0e3e7;
+  --color-gray-300: #d4d8de;
+  --color-gray-400: #9ba2ad;
+  --color-gray-500: #6c737e;
+  --color-gray-800: #20242c;
+  --color-gray-900: #1d2025;
+  --color-gray-950: #17191d;
+  --color-violet: #7c3aed;
+  --color-teal: #059669;
+  --color-rose: #be123c;
+}

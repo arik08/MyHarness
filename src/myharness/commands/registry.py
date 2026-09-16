@@ -824,11 +824,17 @@ def create_default_command_registry(
                 preserve_recent=preserve_recent,
                 trigger="manual",
                 carryover_metadata=context.engine.tool_metadata,
+                cwd=context.cwd,
+                usage_callback=context.engine.record_usage,
             )
             compacted = build_post_compact_messages(compacted_result)
-        except Exception:
-            compacted = compact_messages(context.engine.messages, preserve_recent=preserve_recent)
-        context.engine.load_messages(compacted)
+            if estimate_conversation_tokens(compacted) >= estimate_conversation_tokens(context.engine.messages):
+                return CommandResult(message="압축으로 문맥이 줄어들지 않아 기존 대화를 유지했습니다.")
+        except Exception as exc:
+            return CommandResult(message=f"압축하지 못해 기존 대화를 유지했습니다: {exc}")
+        context.engine.load_messages([
+            message.model_copy(update={"context_input_tokens": None}) for message in compacted
+        ])
         return CommandResult(
             message=f"대화를 압축했습니다: 메시지 {before}개 -> {len(compacted)}개."
         )

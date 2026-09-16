@@ -9,7 +9,7 @@ import pytest
 
 from myharness.api.client import ApiMessageRequest
 from myharness.api.errors import AuthenticationFailure
-from myharness.api.openai_client import OpenAICompatibleClient
+from myharness.api.codex_client import OpenAIResponsesClient
 from myharness.config.settings import Settings
 from myharness.ui.runtime import (
     MissingAuthClient,
@@ -55,7 +55,7 @@ async def test_build_runtime_uses_missing_auth_client_for_openai_format(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_build_runtime_keeps_pgpt_raw_sse_disabled_by_default(monkeypatch):
+async def test_build_runtime_uses_responses_for_pgpt(monkeypatch):
     monkeypatch.setenv("PGPT_API_KEY", "pgpt-key")
     monkeypatch.setenv("PGPT_EMPLOYEE_NO", "123456")
     monkeypatch.delenv("MYHARNESS_PGPT_RAW_SSE", raising=False)
@@ -63,23 +63,21 @@ async def test_build_runtime_keeps_pgpt_raw_sse_disabled_by_default(monkeypatch)
 
     bundle = await build_runtime(active_profile="p-gpt")
 
-    assert isinstance(bundle.api_client, OpenAICompatibleClient)
-    assert getattr(bundle.api_client, "_raw_stream") is False
-    assert getattr(bundle.api_client, "_enable_prompt_cache_options") is True
-    assert getattr(bundle.api_client, "_include_usage_with_tools") is True
-    assert getattr(bundle.api_client, "_prompt_cache_retention") == "24h"
+    assert isinstance(bundle.api_client, OpenAIResponsesClient)
+    assert bundle.api_client._url.endswith("/responses")
+    assert not bundle.api_client.supports_server_compaction("gpt-5.6-sol")
 
 
 @pytest.mark.asyncio
-async def test_build_runtime_enables_pgpt_raw_sse_with_env_flag(monkeypatch):
+async def test_build_runtime_ignores_legacy_stream_flag_for_responses(monkeypatch):
     monkeypatch.setenv("PGPT_API_KEY", "pgpt-key")
     monkeypatch.setenv("PGPT_EMPLOYEE_NO", "123456")
     monkeypatch.setenv("MYHARNESS_PGPT_RAW_SSE", "1")
 
     bundle = await build_runtime(active_profile="p-gpt")
 
-    assert isinstance(bundle.api_client, OpenAICompatibleClient)
-    assert getattr(bundle.api_client, "_raw_stream") is True
+    assert isinstance(bundle.api_client, OpenAIResponsesClient)
+    assert bundle.api_client._url.endswith("/responses")
 
 
 @pytest.mark.asyncio

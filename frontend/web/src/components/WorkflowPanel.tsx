@@ -993,17 +993,19 @@ export function WorkflowPanel({
   onVisibleProgressChange,
   persistenceKey,
   expanded = false,
+  busy: busyOverride,
 }: {
   events?: WorkflowEvent[];
   durationSeconds?: number | null;
   onVisibleProgressChange?: () => void;
   persistenceKey?: string;
   expanded?: boolean;
+  busy?: boolean;
 } = {}) {
   const { state } = useAppState();
   const events = eventOverride || state.workflowEvents;
   const active = !eventOverride || eventOverride === state.workflowEvents;
-  const busy = active && isResponseVisiblyBusy(state);
+  const busy = busyOverride ?? (active && isResponseVisiblyBusy(state));
   const [now, setNow] = useState(Date.now);
   const progressCallback = useRef(onVisibleProgressChange);
   useLayoutEffect(() => { progressCallback.current = onVisibleProgressChange; });
@@ -1019,7 +1021,7 @@ export function WorkflowPanel({
   const duration = durationSeconds ?? (active ? state.workflowDurationSeconds : null)
     ?? (busy && state.workflowStartedAtMs !== null ? Math.max(0, Math.floor((now - state.workflowStartedAtMs) / 1000)) : null);
   const scope = `myharness:aside:${state.workspacePath}:${state.activeHistoryId || state.sessionId || "draft"}:${persistenceKey || events[0]?.id || "active"}`;
-  return <AsideWorkflowTimeline events={events} scope={scope} duration={duration} busy={busy} expanded={expanded}
+  return <AsideWorkflowTimeline events={events} scope={scope} duration={duration} busy={busy} expanded={expanded} workspacePath={state.workspacePath}
     agents={active ? state.swarmTeammates : []}
     renderPreview={(event) => isWorkflowOutputTool(event.toolName) ? workflowPreviewSources(event).map((source) => (
       <WorkflowOutputPreview key={`${event.id}:${source.path}`} event={event} source={{ ...source, content: workflowSafeText(source.content) }} revealDurationMs={0} />

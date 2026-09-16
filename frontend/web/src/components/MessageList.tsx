@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { InlineQuestion } from "./InlineQuestion";
 import "./loading-skeleton.css";
 import { ConversationQuestionNavigator } from "./ConversationQuestionNavigator";
 import { sendBackendRequest } from "../api/messages";
@@ -270,6 +271,8 @@ export function MessageList() {
       });
     }
   }
+  const questionRequestId = state.modal?.kind === "backend" && state.modal.payload?.kind === "question"
+    ? String(state.modal.payload.request_id || "") : "";
   const activeWorkflowFollowSignature = useMemo(
     () => state.workflowEvents.map((event) => [
       event.id,
@@ -294,7 +297,7 @@ export function MessageList() {
     state,
     dispatch,
     lastMessage,
-    activeWorkflowFollowSignature,
+    activeWorkflowFollowSignature: `${activeWorkflowFollowSignature}|question:${questionRequestId}`,
   });
 
   function webSourceEventsForAssistant(messageIndex: number): WorkflowEvent[] {
@@ -313,6 +316,7 @@ export function MessageList() {
   }
 
   const showWelcome = !state.messages.length
+    && !questionRequestId
     && !state.busy
     && !state.workflowEvents.length
     && !state.pendingHistoryId
@@ -430,6 +434,7 @@ export function MessageList() {
           </Fragment>
         );
       })}
+      {!state.historyReadOnly && <InlineQuestion surface="chat" />}
     </section>
     {showJumpToLatest ? (
       <button className="message-jump-to-latest" type="button"
