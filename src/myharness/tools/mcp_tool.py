@@ -24,7 +24,7 @@ class McpToolAdapter(BaseTool):
         server_segment = _sanitize_tool_segment(tool_info.server_name)
         tool_segment = _sanitize_tool_segment(tool_info.name)
         self.name = f"mcp__{server_segment}__{tool_segment}"
-        self.description = tool_info.description or f"MCP tool {tool_info.name}"
+        self.description = f"MCP server: {tool_info.server_name}\n{tool_info.description or f'MCP tool {tool_info.name}'}"
         self.input_model = _input_model_from_schema(self.name, tool_info.input_schema)
 
     def is_read_only(self, arguments: BaseModel) -> bool:

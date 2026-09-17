@@ -80,13 +80,12 @@ if not exist "Playground" mkdir "Playground"
 if not exist "Playground\Default" mkdir "Playground\Default"
 if not exist "Playground\shared\Default" mkdir "Playground\shared\Default"
 
-if not exist "%MYHARNESS_SETTINGS%" (
-  echo [INFO] Creating default settings...
-  > "%MYHARNESS_SETTINGS%" echo {
-  >> "%MYHARNESS_SETTINGS%" echo   "active_profile": "p-gpt"
-  >> "%MYHARNESS_SETTINGS%" echo }
-) else (
-  echo [INFO] Existing settings.json found. Keeping it.
+echo [INFO] Detecting locally configured provider credentials...
+"%MYHARNESS_BOOTSTRAP_PYTHON%" %MYHARNESS_BOOTSTRAP_PYTHON_ARGS% "%MYHARNESS_PROJECT_DIR%\scripts\select_default_provider_profile.py" --settings "%MYHARNESS_SETTINGS%" --reset
+if errorlevel 1 (
+  echo [ERROR] Default provider setup failed. Check settings.json.
+  pause
+  exit /b 1
 )
 
 echo [INFO] Upgrading pip...

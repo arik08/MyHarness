@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import html
 import re
-from urllib.parse import parse_qs, unquote, urlparse
+import time
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from pydantic import BaseModel, Field
@@ -14,12 +16,13 @@ from myharness.utils.network_guard import NetworkGuardError, fetch_public_http_r
 
 
 REQUEST_TIMEOUT_SECONDS = 45.0
+SEARCH_ENDPOINTS = ("https://html.duckduckgo.com/html/", "https://lite.duckduckgo.com/lite/")
 
 
 class WebSearchToolInput(BaseModel):
     """Arguments for a web search."""
 
-    query: str = Field(description="Search query")
+    query: str = Field(description="Search query. Month names are keywords, not a date-range filter. Prefer focused queries and verify publication dates in results.")
     progress_message: str | None = Field(
         default=None,
         description="도구명 옆에 표시할 짧은 한국어 존댓말 안내. 어떤 자료를 왜 검색하는지 한 문장으로 작성하세요. 아직 확인하지 않은 결과는 말하지 마세요. 검색어가 영어여도 이 안내는 한국어로 작성하세요.",
@@ -48,21 +51,53 @@ class WebSearchTool(BaseTool):
         context: ToolExecutionContext,
     ) -> ToolResult:
         del context
-        endpoint = arguments.search_url or "https://html.duckduckgo.com/html/"
-        try:
-            response = await fetch_public_http_response(
-                endpoint,
-                params={"q": arguments.query},
-                headers={"User-Agent": "MyHarness/0.1"},
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-        except (httpx.HTTPError, NetworkGuardError) as exc:
-            return ToolResult(output=f"web_search 실패: {exc}", is_error=True)
+        # An explicit backend must never leak its query to another service.
+        endpoints = (arguments.search_url,) if arguments.search_url else SEARCH_ENDPOINTS
+        deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS
+        attempts: list[dict[str, object]] = []
+        results: list[dict[str, str]] = []
+        for endpoint in endpoints:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            attempt: dict[str, object] = {"endpoint": endpoint}
+            attempts.append(attempt)
+            try:
+                response = await fetch_public_http_response(
+                    endpoint,
+                    params={"q": arguments.query},
+                    headers={"User-Agent": "MyHarness/0.1"},
+                    timeout=min(remaining, REQUEST_TIMEOUT_SECONDS / len(endpoints)),
+                )
+                attempt["http_status"] = response.status_code
+                response.raise_for_status()
+            except NetworkGuardError as exc:
+                return ToolResult(output=f"web_search 실패: {exc}", is_error=True)
+            except httpx.HTTPError as exc:
+                attempt.update(outcome="request_failed", error=str(exc))
+                continue
 
-        results = _parse_search_results(response.text, limit=arguments.max_results)
+            body = response.text
+            if _is_search_challenge(body):
+                attempt["outcome"] = "blocked"
+                continue
+            results = _parse_search_results(body, limit=arguments.max_results)
+            attempt["result_count"] = len(results)
+            if results:
+                attempt["outcome"] = "success"
+                break
+            if _is_empty_search(body):
+                attempt["outcome"] = "empty"
+                return ToolResult(output="검색 결과가 없습니다.", metadata={"search_attempts": attempts})
+            attempt["outcome"] = "unrecognized_response"
+
         if not results:
-            return ToolResult(output="검색 결과가 없습니다.", is_error=True)
+            reasons = "; ".join(str(item.get("error") or item["outcome"]) for item in attempts)
+            return ToolResult(
+                output=f"web_search 실패: 검색 결과를 가져오지 못했습니다. 결과가 없다는 뜻은 아닙니다. ({reasons})",
+                is_error=True,
+                metadata={"search_attempts": attempts},
+            )
 
         lines = [f"검색 결과: {arguments.query}"]
         for index, result in enumerate(results, start=1):
@@ -70,56 +105,78 @@ class WebSearchTool(BaseTool):
             lines.append(f"   URL: {result['url']}")
             if result["snippet"]:
                 lines.append(f"   {result['snippet']}")
-        return ToolResult(output="\n".join(lines))
+        return ToolResult(output="\n".join(lines), metadata={"search_attempts": attempts})
+
+
+def _is_search_challenge(body: str) -> bool:
+    return bool(re.search(r"challenge-form|anomaly\.js|Unfortunately, bots", body, re.I))
+
+
+def _is_empty_search(body: str) -> bool:
+    return bool(re.search(r"class=[\"'][^\"']*\bno-results\b|<h[12][^>]*>\s*No results", body, re.I))
 
 
 def _parse_search_results(body: str, *, limit: int) -> list[dict[str, str]]:
-    snippets = [
-        _clean_html(match.group("snippet"))
-        for match in re.finditer(
-            r'<(?:a|div|span)[^>]+class="[^"]*(?:result__snippet|result-snippet)[^"]*"[^>]*>(?P<snippet>.*?)</(?:a|div|span)>',
-            body,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-    ]
+    parser = _SearchHTMLParser()
+    parser.feed(body)
+    parser.close()
+    return parser.results[:limit]
 
-    results: list[dict[str, str]] = []
-    anchor_matches = re.finditer(
-        r"<a(?P<attrs>[^>]+)>(?P<title>.*?)</a>",
-        body,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    for index, match in enumerate(anchor_matches):
-        attrs = match.group("attrs")
-        class_match = re.search(r'class="(?P<class>[^"]+)"', attrs, flags=re.IGNORECASE)
-        if class_match is None:
-            continue
-        class_names = class_match.group("class")
-        if "result__a" not in class_names and "result-link" not in class_names:
-            continue
-        href_match = re.search(r'href="(?P<href>[^"]+)"', attrs, flags=re.IGNORECASE)
-        if href_match is None:
-            continue
-        title = _clean_html(match.group("title"))
-        url = _normalize_result_url(href_match.group("href"))
-        snippet = snippets[index] if index < len(snippets) else ""
-        if title and url:
-            results.append({"title": title, "url": url, "snippet": snippet})
-        if len(results) >= limit:
-            break
-    return results
+
+class _SearchHTMLParser(HTMLParser):
+    """Read HTML and Lite results without counting navigation links."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: list[dict[str, str]] = []
+        self.capture: tuple[str, str] | None = None
+        self.depth = 0
+        self.parts: list[str] = []
+        self.current: dict[str, str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.capture:
+            if tag == self.capture[0]:
+                self.depth += 1
+            return
+        attributes = dict(attrs)
+        classes = set((attributes.get("class") or "").split())
+        if tag == "a" and classes & {"result__a", "result-link"}:
+            self.current = {"title": "", "url": _normalize_result_url(attributes.get("href") or ""), "snippet": ""}
+            self.capture = (tag, "title")
+        elif classes & {"result__snippet", "result-snippet"} and self.current:
+            self.capture = (tag, "snippet")
+        if self.capture:
+            self.depth = 1
+            self.parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self.capture or tag != self.capture[0]:
+            return
+        self.depth -= 1
+        if self.depth:
+            return
+        field = self.capture[1]
+        if self.current is not None:
+            self.current[field] = re.sub(r"\s+", " ", "".join(self.parts)).strip()
+            if field == "title" and self.current["title"] and self.current["url"]:
+                self.results.append(self.current)
+        self.capture = None
+
+    def handle_data(self, data: str) -> None:
+        if self.capture:
+            self.parts.append(data)
 
 
 def _normalize_result_url(raw_url: str) -> str:
+    raw_url = html.unescape(raw_url)
+    if raw_url.startswith("//"):
+        raw_url = "https:" + raw_url
+    elif raw_url.startswith("/l/"):
+        raw_url = "https://duckduckgo.com" + raw_url
     parsed = urlparse(raw_url)
-    if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+    if (parsed.hostname == "duckduckgo.com" or (parsed.hostname or "").endswith(".duckduckgo.com")) and parsed.path.startswith("/l/"):
         target = parse_qs(parsed.query).get("uddg", [""])[0]
-        return unquote(target) if target else raw_url
-    return raw_url
-
-
-def _clean_html(fragment: str) -> str:
-    text = re.sub(r"(?s)<[^>]+>", " ", fragment)
-    text = html.unescape(text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+        parsed = urlparse(target)
+        raw_url = target
+    return raw_url if parsed.scheme in {"http", "https"} and parsed.hostname else ""

@@ -118,7 +118,7 @@ export type BackendEvent =
   | { type: "ready"; state?: BackendStateSnapshot; commands?: unknown[]; skills?: unknown[]; plugins?: unknown[]; tasks?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null }
   | { type: "state_snapshot"; state?: BackendStateSnapshot; plugins?: unknown[]; mcp_servers?: unknown[]; session_usage?: UsageCostSummary | null; request_id?: string | null }
   | { type: "skills_snapshot"; skills?: unknown[] }
-  | { type: "transcript_item"; item?: TranscriptItem }
+  | { type: "transcript_item"; timestamp_ms?: number; item?: TranscriptItem }
   | { type: "queued_message_status"; request_id?: string | null; status?: "delivered" | "cancelled" | "not_found" | string | null }
   | { type: "capacity_queue_status"; kind?: "session" | "response" | string | null; status?: "waiting" | "started" | "cancelled" | string | null; position?: number | null; message?: string | null }
   | { type: "reasoning_summary"; message?: string | null }

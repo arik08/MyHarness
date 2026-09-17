@@ -1,5 +1,6 @@
 import { resourceAdmissionReason } from "./modules/resourceAdmission.js";
 import { applyModelAvailability, changeModelAvailability } from "./modules/modelAvailability.js";
+import { createModelCatalogCache } from "./modules/modelCatalogCache.js";
 import { createServer } from "node:http";
 import { createActivityLog } from "./modules/activityLog.js";
 import { createResourceSampler, createServerMetrics } from "./modules/serverMetrics.js";
@@ -32,6 +33,7 @@ import {
   replayEventsForState,
   shouldReplayRawEvent,
   updateSessionReplayState,
+  withEventTimestamp,
 } from "./modules/sessionReplay.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
@@ -5703,6 +5705,7 @@ function writeSseEvent(client, event, id = null) {
 }
 
 function emit(session, event) {
+  event = withEventTimestamp(event);
   if (event.type === "prompt_enhanced") {
     const pending = session.promptEnhancement;
     if (pending?.id === event.request_id) pending.complete(event);
@@ -5772,7 +5775,7 @@ function shutdownAllSessions(reason = "server shutdown") {
 }
 
 function scheduleIdleClientClose(session, reason = "idle client disconnect") {
-  if (!session || session.shuttingDown || session.clients.size > 0 || session.busy) {
+  if (!session || session.shuttingDown || session.clients.size > 0 || session.busy || session.capacityQueued) {
     return;
   }
   if (session.clientCloseTimer) {
@@ -5780,7 +5783,7 @@ function scheduleIdleClientClose(session, reason = "idle client disconnect") {
   }
   session.clientCloseTimer = setTimeout(() => {
     session.clientCloseTimer = null;
-    if (!session.shuttingDown && session.clients.size === 0 && !session.busy) {
+    if (!session.shuttingDown && session.clients.size === 0 && !session.busy && !session.capacityQueued) {
       shutdownSession(session, reason);
     }
   }, backendIdleClientCloseMs);
@@ -6090,7 +6093,12 @@ function waitForResponseCapacity(session) {
   if (session.capacityQueued) {
     return Promise.reject(httpError(409, "현재 요청이 응답 대기열에 있습니다."));
   }
-  if (responseHasCapacity(session)) return Promise.resolve();
+  if (responseHasCapacity(session)) {
+    // Reserve before yielding so another request cannot take this same slot.
+    session.busy = true;
+    cancelIdleClientClose(session);
+    return Promise.resolve();
+  }
   session.capacityQueued = true;
   return new Promise((resolve, reject) => {
     responseCapacityQueue.push({
@@ -6160,17 +6168,22 @@ async function drainCapacityQueues() {
     pruneAbandonedSessionRequests();
     do {
       capacityQueueDrainPending = false;
-      while (responseCapacityQueue.length) {
-        const entry = responseCapacityQueue[0];
+      for (let index = 0; index < responseCapacityQueue.length;) {
+        const entry = responseCapacityQueue[index];
         const session = sessions.get(entry.sessionId);
         if (!session || session.shuttingDown) {
-          responseCapacityQueue.shift();
+          responseCapacityQueue.splice(index, 1);
           if (session) session.capacityQueued = false;
           entry.reject?.(httpError(409, "대기 중 세션이 종료되었습니다."));
           continue;
         }
-        if (!responseHasCapacity(session)) break;
-        responseCapacityQueue.shift();
+        // A per-client limit must not hold up eligible clients behind it.
+        // Scanning in order still preserves FIFO within each client.
+        if (!responseHasCapacity(session)) {
+          index += 1;
+          continue;
+        }
+        responseCapacityQueue.splice(index, 1);
         serverMetrics.recordQueueWait(entry.queuedAt);
         if (entry.type === "gate") {
           session.capacityQueued = false;
@@ -6298,7 +6311,24 @@ async function saveDesignModeSettings(body) {
   return { mode: body.mode };
 }
 
+const readModelCatalog = createModelCatalogCache(loadModelCatalog);
+
 async function readModelAvailability() {
+  const settingsPath = join(globalConfigDir(), "settings.json");
+  const [settings, local] = await Promise.all([
+    readJsonFileIfExists(settingsPath),
+    readJsonFileIfExists(join(globalConfigDir(), "settings.local.json")),
+  ]);
+  const { enabled_models_by_profile: ignored, ...discoverySettings } = settings || {};
+  const { enabled_models_by_profile: ignoredLocal, ...localDiscoverySettings } = local || {};
+  const key = JSON.stringify([discoverySettings, localDiscoverySettings]);
+  const catalog = await readModelCatalog(key);
+  // A save may have completed while cold discovery was running.
+  const latest = await readJsonFileIfExists(settingsPath) || {};
+  return applyModelAvailability(catalog, latest.enabled_models_by_profile || {});
+}
+
+async function loadModelCatalog() {
   const python = backendPythonCommand();
   return new Promise((resolve, reject) => {
     const child = spawn(python.file, [...python.args, "-c",
@@ -6312,12 +6342,11 @@ async function readModelAvailability() {
     child.stdout.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
     child.stderr.resume();
     child.on("error", (error) => { clearTimeout(timer); reject(error); });
-    child.on("close", async (code) => {
+    child.on("close", (code) => {
       clearTimeout(timer);
       if (code !== 0) return reject(new Error("모델 목록을 불러오지 못했습니다."));
       try {
-        const settings = await readJsonFileIfExists(join(globalConfigDir(), "settings.json")) || {};
-        resolve(applyModelAvailability(JSON.parse(output), settings.enabled_models_by_profile || {}));
+        resolve(JSON.parse(output));
       } catch (error) { reject(error); }
     });
   });
@@ -7675,6 +7704,9 @@ server.on("error", (error) => {
 server.listen(port, effectiveHost, async () => {
   await serverMetrics.sample();
   serverMetrics.start();
+  // Discovery probes Python synchronously. Warm it only after the first resource
+  // sample so those probes cannot consume the collector's startup deadline.
+  void readModelAvailability().catch(() => {});
   const localUrl = `http://localhost:${port}`;
   const lanUrl = getLanUrl();
   const colorUrl = (url) => process.stdout.isTTY && !('NO_COLOR' in process.env)

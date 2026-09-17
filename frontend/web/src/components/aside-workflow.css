@@ -21,9 +21,9 @@
 .aside-running-spinner { width: 12px; height: 12px; box-sizing: border-box; border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent); border-top-color: currentColor; border-radius: 50%; animation: aside-running-spin 900ms linear infinite; }
 @keyframes aside-running-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .aside-running-spinner { animation: none; } }
-.aside-status.done { color: var(--aside-muted); }
-.aside-status.error { color: var(--danger); }
-.aside-status.warning { color: var(--aside-muted); }
+.aside-status.aside-state-done { color: var(--aside-muted); }
+.aside-status.aside-state-error { color: var(--danger); }
+.aside-status.aside-state-warning { color: var(--aside-muted); }
 .aside-call-detail { padding: 4px 0 8px 29px; color: var(--aside-muted); font-size: 13px; min-width: 0; }
 .aside-call-meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin: 0 0 6px; }
 .aside-call-meta dd { margin: 0; overflow-wrap: anywhere; }
@@ -49,4 +49,5 @@
 .aside-workflow .aside-work > .aside-toggle[aria-expanded="false"] { margin-bottom: 0; }
 .aside-timeline > :last-child { margin-bottom: 0; }
 
-.aside-response-spinner { display: inline-block; flex: 0 0 12px; }
+.aside-spinner-slot { width: 19px; height: 19px; flex: 0 0 19px; display: inline-flex; align-items: center; justify-content: center; }
+.aside-workflow .aside-toggle[data-spinning="true"] > .aside-activity-icon { display: none; }

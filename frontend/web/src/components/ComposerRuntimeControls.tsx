@@ -1,3 +1,4 @@
+import { createClientId } from "../utils/ids";
 import { useEffect, useRef, useState } from "react";
 import { sendBackendRequest } from "../api/messages";
 import { useAppState } from "../state/app-state";
@@ -33,7 +34,7 @@ export function ComposerRuntimeControls() {
   async function select(command: "model" | "effort", option: RuntimePickerOption, profile?: string) {
     if (!state.sessionId || disabled) return;
     const sessionId = state.sessionId;
-    const requestId = crypto.randomUUID();
+    const requestId = createClientId();
     dispatch({ type: "queue_runtime_choice", choice: { requestId, sessionId, command, value: option.value, profile } });
     setError("");
     try {

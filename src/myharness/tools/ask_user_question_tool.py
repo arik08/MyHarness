@@ -27,6 +27,12 @@ class UserQuestion(BaseModel):
     id: str = Field(min_length=1, max_length=80)
     question: str = Field(min_length=1)
     choices: list[AskUserQuestionChoice] = Field(default_factory=list, max_length=6)
+    multi_select: bool = Field(
+        default=True,
+        description="Allow multiple choices by default. Set false ONLY when selecting two or more "
+        "answers would be logically incompatible for this question. Decide from the question's "
+        "meaning, not the number of options or a preference for one recommendation.",
+    )
 
     @model_validator(mode="after")
     def validate_question(self):
@@ -50,6 +56,11 @@ class AskUserQuestionToolInput(BaseModel):
         description=(
             "Legacy single question. Prefer questions for a round of independent questions."
         )
+    )
+    multi_select: bool = Field(
+        default=True,
+        description="For legacy question/choices: allow multiple selections by default; set false "
+        "only when multiple answers are logically incompatible. For questions, set per question.",
     )
     questions: list[UserQuestion] = Field(
         default_factory=list, max_length=20,
@@ -90,6 +101,9 @@ class AskUserQuestionTool(BaseTool):
         "wrong, destructive, or wasteful; otherwise state the assumption and proceed. "
         "Use questions to group independent decisions, each with its own choices. The UI always "
         "allows direct input. Put the recommended choice first and mark its label. "
+        "Multiple choices are allowed by default (multi_select=true). For EACH question, "
+        "set multi_select=false only if two or more choices cannot logically hold together. "
+        "Compatible preferences, requirements and deliverables must remain multi-select. "
         "After answers arrive, continue the original task without restating the plan or "
         "asking approval-only questions. For an explicitly requested interview or grill-me, "
         "continue rounds when answers unlock dependent decisions, without repeating resolved questions. "
@@ -113,6 +127,21 @@ class AskUserQuestionTool(BaseTool):
                 output="ask_user_question is unavailable in this session",
                 is_error=True,
             )
+        # Route legacy tool arguments through the same structured GUI contract when supported.
+        if not arguments.questions:
+            try:
+                parameters = inspect.signature(prompt).parameters.values()
+                supports_round = any(
+                    param.name == "questions" or param.kind == inspect.Parameter.VAR_KEYWORD
+                    for param in parameters
+                )
+            except (TypeError, ValueError):
+                supports_round = False
+            if supports_round:
+                arguments = AskUserQuestionToolInput(questions=[UserQuestion(
+                    id="question", question=arguments.question, choices=arguments.choices,
+                    multi_select=arguments.multi_select,
+                )])
         if arguments.questions:
             questions = [item.model_dump(exclude_none=True) for item in arguments.questions]
             try:
@@ -129,6 +158,7 @@ class AskUserQuestionTool(BaseTool):
                 # Terminal and older integrations retain all question/choice context.
                 text = "\n\n".join(
                     f"({index + 1}/{len(questions)}) {item['question']}\n"
+                    + ("[Select multiple]\n" if item["multi_select"] else "[Select one]\n")
                     + "\n".join(
                         f"- {choice.get('label') or choice['value']}: {choice.get('description', '')}"
                         for choice in item["choices"]

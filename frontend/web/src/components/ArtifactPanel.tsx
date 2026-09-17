@@ -1,3 +1,4 @@
+import { createClientId } from "../utils/ids";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent, WheelEvent as ReactWheelEvent } from "react";
 import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../api/artifacts";
@@ -394,6 +395,8 @@ function ArtifactDownloadAction({ artifact, url }: { artifact: ArtifactSummary; 
 
 export function ArtifactPanel() {
   const { state, dispatch } = useAppState();
+  const currentSessionRef = useRef(state.sessionId);
+  currentSessionRef.current = state.sessionId;
   const [loadingPath, setLoadingPath] = useState("");
   const [fileScope, setFileScope] = useState<"default" | "all">("default");
   const [fileFilter, setFileFilter] = useState(() => readLocalStorage("myharness:projectFileFilter", "all"));
@@ -529,6 +532,15 @@ export function ArtifactPanel() {
     }
     setFullscreen((value) => !value);
   }
+
+  useEffect(() => {
+    setAiEditTargetPath("");
+    setSubmittingAiEdit(false);
+    setAiEditStatus("");
+    setAiEditComments([]);
+    setAiEditProgressStartedAt(null);
+    aiEditCompletionRefreshKeyRef.current = null;
+  }, [state.sessionId]);
 
   useEffect(() => {
     if (aiEditTargetPath) {
@@ -1105,9 +1117,7 @@ export function ArtifactPanel() {
   async function copyActiveArtifactImage() {
     if (!active || !payload || !canEditHtmlPreview || sourceMode || htmlEditMode || draftDirty || pendingCaptureRef.current) return;
     clearCaptureResetTimer();
-    const requestId = typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `artifact-capture-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const requestId = createClientId();
     const png = new Promise<Blob>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         if (pendingCaptureRef.current?.requestId !== requestId) return;
@@ -1184,7 +1194,7 @@ export function ArtifactPanel() {
       ...items,
       {
         ...selection,
-        id: crypto.randomUUID?.() || `${Date.now()}-${items.length}`,
+        id: createClientId(),
         instruction: text,
       },
     ]);
@@ -1216,6 +1226,7 @@ export function ArtifactPanel() {
         workspacePath: active.workspace?.path || payload?.workspace?.path || state.workspacePath,
         workspaceName: active.workspace?.name || payload?.workspace?.name || state.workspaceName,
       });
+      if (currentSessionRef.current !== state.sessionId) return;
       const targetArtifact: ArtifactSummary = {
         ...active,
         path: response.targetPath,
@@ -1233,13 +1244,14 @@ export function ArtifactPanel() {
       dispatch({ type: "set_busy", value: true });
       setAiEditStatus(`AI 자동편집 진행 중: ${response.targetPath}`);
     } catch (error) {
+      if (currentSessionRef.current !== state.sessionId) return;
       aiEditCompletionRefreshKeyRef.current = null;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      setSubmittingAiEdit(false);
+      if (currentSessionRef.current === state.sessionId) setSubmittingAiEdit(false);
     }
   }
 

@@ -15,6 +15,39 @@ import type { BackendEvent } from "../../types/backend";
 import type { ArtifactAiEditComment } from "../../types/ui";
 
 const require = createRequire(import.meta.url);
+
+function SwitchAiEditSession() {
+  const { state, dispatch } = useAppState();
+  return <><button onClick={() => dispatch({ type: "session_started", sessionId: "session-b", busy: false })}>Switch AI edit session</button>
+    <output data-testid="ai-edit-session">{state.sessionId}:{String(state.busy)}:{state.artifacts.map((item) => item.path).join(",")}:{state.modal?.kind || "none"}</output></>;
+}
+
+it.each([false, true])("isolates delayed AI edit results after changing sessions (failure=%s)", async (failure) => {
+  let resolve!: (value: { ok: boolean; sourcePath: string; targetPath: string }) => void;
+  let reject!: (error: Error) => void;
+  vi.mocked(aiEditArtifact).mockReturnValueOnce(new Promise((res, rej) => { resolve = res; reject = rej; }));
+  render(<AppStateProvider initialState={{ ...initialAppState, artifactPanelOpen: true, sessionId: "session-a", clientId: "client-a", workspacePath: "C:/repo", workspaceName: "repo",
+    activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+    activeArtifactPayload: { kind: "html", content: "<html><body><h1>Old</h1></body></html>" },
+  }}><ArtifactPanel /><SwitchAiEditSession /></AppStateProvider>);
+  await screen.findByTitle("report.html");
+  fireEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+  act(() => window.dispatchEvent(new MessageEvent("message", { data: {
+    type: artifactAiSelectionMessage, path: "outputs/report.html",
+    selection: { text: "Old", html: "<h1>Old</h1>", start: 0, end: 3, before: "", after: "", instruction: "Update headline" },
+  } })));
+  fireEvent.click(screen.getByRole("button", { name: "AI 자동편집" }));
+  await waitFor(() => expect(aiEditArtifact).toHaveBeenCalled());
+  fireEvent.click(screen.getByText("Switch AI edit session"));
+  const before = screen.getByTestId("ai-edit-session").textContent;
+  await act(async () => {
+    if (failure) reject(new Error("old session edit failed"));
+    else resolve({ ok: true, sourcePath: "outputs/report.html", targetPath: "outputs/old-session-result.html" });
+  });
+  expect(screen.getByTestId("ai-edit-session").textContent).toBe(before);
+  expect(screen.getByTestId("ai-edit-session").textContent).toContain("session-b:false");
+  expect(screen.queryByText(/AI 자동편집 진행 중:/)).toBeNull();
+});
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (html: string, options?: Record<string, unknown>) => { window: Window & typeof globalThis };
 };

@@ -32,3 +32,19 @@ it("keeps mixed and in-progress group outcomes distinct", () => {
   expect(workflowGroupStatus([empty, error])).toBe("error");
   expect(workflowGroupStatus([empty, { ...done, status: "running" }])).toBe("running");
 });
+
+it("isolates workflow state classes from shared empty-state layout for any tool", () => {
+  const { container } = render(<AsideWorkflowTimeline events={[
+    { ...empty, id: "skill", toolName: "skill", output: "loaded", status: "done" },
+    { ...empty, id: "new-tool", toolName: "mcp__future__lookup", output: '{"total":0,"items":[]}' },
+  ]} scope="isolated-states" duration={1} busy={false} expanded />);
+  expect(container.querySelector(".aside-call.aside-state-empty")).not.toBeNull();
+  expect(container.querySelector(".aside-status.aside-state-empty")).not.toBeNull();
+  expect(container.querySelector(".empty, .done, .warning, .running, .error")).toBeNull();
+
+  cleanup();
+  const group = render(<AsideWorkflowTimeline events={[empty, { ...empty, id: "other" }]}
+    scope="isolated-empty-group" duration={1} busy={false} expanded />);
+  expect(group.container.querySelector(".aside-activity.aside-state-empty")).not.toBeNull();
+  expect(group.container.querySelector(".empty")).toBeNull();
+});

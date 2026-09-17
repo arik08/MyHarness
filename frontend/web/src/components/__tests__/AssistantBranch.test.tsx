@@ -23,7 +23,7 @@ function Probe() {
   return <output data-testid="state">{JSON.stringify({ sessionId: state.sessionId, activeHistoryId: state.activeHistoryId, pendingHistoryId: state.pendingHistoryId, restoringHistory: state.restoringHistory, historyReadOnly: state.historyReadOnly, messages: state.messages, chatTitle: state.chatTitle, artifactPanelOpen: state.artifactPanelOpen, history: state.history, modal: state.modal })}</output>;
 }
 function mount(message = first) {
-  return render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "live-source", activeHistoryId: "saved-source", clientId: "client", workspacePath: workspace.path, workspaceName: workspace.name, messages: [first, second] }}>
+  return render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "live-source", activeHistoryId: "saved-source", clientId: "client", workspacePath: workspace.path, workspaceName: workspace.name, messages: [first, second], history: Array.from({ length: 40 }, (_, index) => ({ value: `saved-${index}`, label: `Existing ${index}` })), historyHasMore: true, historyNextOffset: 40 }}>
     <AssistantActions message={message} /><Probe />
   </AppStateProvider>);
 }
@@ -51,6 +51,8 @@ describe("answer branching", () => {
     expect(state).toMatchObject({ pendingHistoryId: null, restoringHistory: false, historyReadOnly: true, chatTitle: "Source · 분기", artifactPanelOpen: false });
     expect(state.messages.map((message: ChatMessage) => message.text)).toEqual(["first question", "first answer"]);
     expect(loadHistorySnapshot).toHaveBeenCalledWith({ sessionId: "child", workspacePath: "/workspace", workspaceName: "Default" });
+    expect(state.history[0]).toMatchObject({ value: "child", description: "Source · 분기" });
+    expect(state.history).toHaveLength(41);
     expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
@@ -72,6 +74,7 @@ describe("answer branching", () => {
     expect(state.sessionId).toBe("live-source");
     expect(state.activeHistoryId).toBe("saved-source");
     expect(state.messages).toEqual([first, second]);
+    expect(state.history[0].value).toBe("child");
   });
 
   it("does not offer a branching button for an unfinished answer", () => {

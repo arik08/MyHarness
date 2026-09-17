@@ -25,7 +25,7 @@ describe("Aside work history", () => {
     const timeline = (busy: boolean) => <AsideWorkflowTimeline events={events} scope="response-test" duration={56} busy={busy} />;
     const view = render(timeline(true));
     const spinner = screen.getByRole("status", { name: "응답 생성 중" });
-    expect(spinner.previousElementSibling?.classList.contains("aside-chevron")).toBe(true);
+    expect(spinner.closest("button")?.firstElementChild).toBe(spinner.parentElement);
     expect(spinner.closest(".aside-activity")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
     expect(screen.getByRole("status", { name: "응답 생성 중" })).toBeTruthy();
@@ -59,24 +59,27 @@ describe("Aside work history", () => {
     } })]));
     expect(document.querySelector(".aside-system-event")?.textContent).toContain("220,000 토큰 (110%) → 0 토큰 (0%)");
   });
-  it.each(["write_file", "future_write_document"])("keeps %s previews inside collapsible details while content updates", (toolName) => {
+  it.each(["write_file", "future_write_document", "edit_file", "apply_patch"])("shows %s streaming outside all collapsed history", (toolName) => {
     const writing = call("writing", toolName, { status: "running", toolInput: { path: "report.html", content: "first chunk" } });
-    const view = render(panel([call("search", "web_search"), writing]));
-    expect(document.querySelector(".workflow-output-body")).toBeNull();
-    const group = openActivity();
-    expect(screen.getAllByRole("button", { name: /상세 실행 기록/, expanded: false })).toHaveLength(2);
-    const detail = screen.getByRole("button", { name: /report.html 상세 실행 기록/ });
-    fireEvent.click(detail);
+    const events = (event: WorkflowEvent) => [call("search", "web_search"), event];
+    const view = render(panel(events(writing)));
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk");
-    view.rerender(panel([call("search", "web_search"), { ...writing, toolInput: { path: "report.html", content: "first chunk second chunk" } }]));
+    const all = screen.getByRole("button", { name: "작업 과정 펼침/접기" });
+    fireEvent.click(all);
+    const updated = { ...writing, toolInput: { path: "report.html", content: "first chunk second chunk" } };
+    view.rerender(panel(events(updated)));
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk second chunk");
-    view.rerender(panel([call("search", "web_search"), { ...writing, status: "error", toolInput: { path: "report.html", content: "first chunk second chunk" } }]));
+    expect(document.querySelector(".workflow-output-body")?.closest("[hidden]")).toBeNull();
+    view.unmount();
+    const restored = render(panel(events(updated)));
+    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelectorAll(".workflow-output-body")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    openActivity();
+    fireEvent.click(screen.getByRole("button", { name: /report.html 상세 실행 기록/ }));
+    expect(document.querySelectorAll(".workflow-output-body")).toHaveLength(1);
+    restored.rerender(panel(events({ ...updated, status: "error" })));
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk second chunk");
-    fireEvent.click(detail);
-    expect(document.querySelector(".workflow-output-body")).toBeNull();
-    fireEvent.click(detail);
-    fireEvent.click(group);
-    expect(document.querySelector(".workflow-output-body")).toBeNull();
   });
 
   it.each(["web_search", "write_file", "mcp__future__lookup"])("shows a running indicator for %s and removes it on completion", (toolName) => {
@@ -84,6 +87,9 @@ describe("Aside work history", () => {
     const view = render(panel([event]));
     expect(document.querySelectorAll(".aside-running-spinner")).toHaveLength(1);
     expect(screen.getByText("실행 중")).toBeTruthy();
+    const spinner = screen.getByRole("status", { name: "도구 실행 중" });
+    expect(spinner.closest("button")?.firstElementChild).toBe(spinner.parentElement);
+    expect(spinner.closest(".aside-status")).toBeNull();
     for (const status of ["done", "error", "warning"] as const) {
       view.rerender(panel([{ ...event, status }]));
       expect(document.querySelector(".aside-running-spinner")).toBeNull();
@@ -219,7 +225,7 @@ describe("Aside work history", () => {
 
   it("shows failures for unknown tools and exposes credential-safe actual data", () => {
     render(panel([call("unknown", "mcp__future__custom", { status: "error", toolInput: { api_key: "never-show", nested: { password: "hidden" }, query: "valid query" }, output: 'authorization=secret-value\nHTTP 403' })]));
-    expect(screen.getByText("실패")).toBeTruthy();
+    expect(screen.getByText("접근 거부")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /상세 실행 기록/ }));
     expect(document.body.textContent).toContain("HTTP 403");
     expect(document.body.textContent).toContain("valid query");

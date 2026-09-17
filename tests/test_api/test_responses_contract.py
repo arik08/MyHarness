@@ -9,8 +9,7 @@ from myharness.api.errors import RequestFailure
 from myharness.api.usage import UsageSnapshot
 from myharness.engine.messages import ConversationMessage, TextBlock, ResponsesStateBlock, ImageBlock
 from myharness.services.compact import (
-    AutoCompactState, auto_compact_if_needed, compact_conversation,
-    estimate_message_tokens, get_autocompact_threshold,
+    AutoCompactState, auto_compact_if_needed, estimate_message_tokens, get_autocompact_threshold,
 )
 from myharness.services.session_storage import save_session_snapshot, load_session_snapshot
 

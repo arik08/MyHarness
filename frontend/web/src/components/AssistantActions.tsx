@@ -525,7 +525,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
         answerIndex,
         answerText: text,
       });
-      dispatch({ type: "append_history", history: [{ value: branch.sessionId, label: branch.title, description: branch.title, workspace: branch.workspace }] });
+      dispatch({ type: "prepend_history", history: [{ value: branch.sessionId, label: branch.title, description: branch.title, workspace: branch.workspace }] });
       const [snapshot, session] = await Promise.all([
         loadHistorySnapshot({
           sessionId: branch.sessionId,

@@ -386,7 +386,7 @@ describe("MessageList", () => {
     expect(chips.map((item) => item.textContent)).toEqual(["1", "2"]);
     expect(chip?.getAttribute("href")).toBe("https://dailian.co.kr/news/view/1640740");
     expect(chip?.getAttribute("target")).toBe("_blank");
-    expect(chip?.getAttribute("data-tooltip")).toBe("dailian.co.kr\n\"기사 본문은 약 8,600억 원 규모 투자와 세제·외환 규제 완화 기대를 전했습니다.\"");
+    expect(chip?.getAttribute("data-tooltip")).toBe("웹 조회 · dailian.co.kr\n\"기사 본문은 약 8,600억 원 규모 투자와 세제·외환 규제 완화 기대를 전했습니다.\"");
     expect(chip?.getAttribute("aria-label")).toBe("출처 1 데일리안 열기");
     expect(chip?.hasAttribute("title")).toBe(false);
     expect(document.querySelector(".markdown-inline-source-favicon")).toBeNull();
@@ -529,7 +529,7 @@ describe("MessageList", () => {
     );
 
     const chip = document.querySelector(".markdown-inline-source-chip") as HTMLAnchorElement | null;
-    expect(chip?.getAttribute("data-tooltip")).toBe("newsroom.posco.com");
+    expect(chip?.getAttribute("data-tooltip")).toBe("newsroom.posco.com\n저장된 출처 내용이 없습니다.");
     expect(chip?.getAttribute("href")).toBe("https://newsroom.posco.com/kr");
     expect(chip?.getAttribute("target")).toBe("_blank");
     expect(chip?.hasAttribute("title")).toBe(false);
@@ -2603,6 +2603,24 @@ describe("MessageList", () => {
     expect(screen.queryByText(/1,781 토큰/)).toBeNull();
   });
 
+  it.each([
+    [false, "source:mcp/new-server/call/1"], [true, "source:mcp/new-server/call/1"],
+    [false, "https://example.com/report"], [true, "https://example.com/report"],
+  ] as const)("renders persisted MCP evidence while complete=%s for %s without tool output or a link title", (isComplete, href) => {
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      workflowAnchorMessageId: "source-user",
+      messages: [{ id: "source-user", role: "user", text: "조회해줘" },
+        { id: "source-answer", role: "assistant", text: `매출은 3억입니다. [출처: MCP · new-server · 보고서](${href})`, isComplete }],
+      workflowEvents: [{ id: "source-tool", toolName: "mcp__new_server__lookup", title: "조회", detail: "완료", status: "done",
+        output: "[오래된 도구 로그 축약됨]", executionMetadata: { source_records: [
+          { href: "source:mcp/new-server/call/1", origin: "mcp", server: "new-server", text: "매출 3억", url: "https://example.com/report" },
+        ] } }],
+    }}><MessageList /></AppStateProvider>);
+    const chip = document.querySelector(".markdown-inline-source-chip");
+    expect(chip?.getAttribute("data-tooltip")).toBe('MCP · new-server · 보고서\n"매출 3억"');
+    expect(chip?.getAttribute("href")).toBe("https://example.com/report");
+  });
+
   it("renders web investigation sources after the completed assistant answer", async () => {
     const user = userEvent.setup();
     render(
@@ -2667,7 +2685,7 @@ describe("MessageList", () => {
     expect(articles[1]).not.toContain("출처");
     expect(articles[2]).toContain("문서에는 1분기 실적과 주주환원 정책이 정리돼 있습니다.");
     expect(articles[2]).toContain("출처");
-    expect(document.querySelector(".markdown-inline-source-chip")?.getAttribute("data-tooltip")).toBe("example.com\n\"문서에는 MyHarness 1분기 실적과 주주환원 정책이 정리돼 있습니다.\"");
+    expect(document.querySelector(".markdown-inline-source-chip")?.getAttribute("data-tooltip")).toBe("웹 조회 · example.com\n\"문서에는 MyHarness 1분기 실적과 주주환원 정책이 정리돼 있습니다.\"");
 
     expect(screen.getByText("출처")).toBeTruthy();
     expect(screen.getByText(/2개 사이트/)).toBeTruthy();

@@ -1,3 +1,4 @@
+import { createClientId } from "../utils/ids";
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { MouseEvent } from "react";
 import { Marked } from "marked";
@@ -82,7 +83,8 @@ function inlineSourceLabel(value: string) {
     .trim();
 }
 
-export type SourceEvidenceByUrl = Record<string, string>;
+export type SourceEvidence = { text: string; origin: string; server?: string; url?: string };
+export type SourceEvidenceByUrl = Record<string, string | SourceEvidence>;
 export type SourceNumberByKey = Record<string, number>;
 
 export function InlineMarkdown({ text }: { text: string }) {
@@ -193,14 +195,21 @@ function sourceEvidenceChunks(value: string) {
     .replace(/\r\n/g, "\n")
     .split(/(?<=[.!?。！？]|[다요음임됨함됨])\s+|\n+/)
     .map((chunk) => chunk.replace(/\s+/g, " ").trim())
-    .filter((chunk) => chunk.length >= 18 && !/^URL:|^상태:|^Content-Type:/i.test(chunk) && !isNoisySourceEvidenceChunk(chunk))
+    .filter((chunk) => chunk.length > 0 && !/^URL:|^상태:|^Content-Type:/i.test(chunk) && !isNoisySourceEvidenceChunk(chunk))
     .map((chunk) => (chunk.length > 160 ? `${chunk.slice(0, 157).trim()}...` : chunk))
     .slice(0, 80);
 }
 
-function sourceEvidenceForLink(link: HTMLAnchorElement, sourceEvidenceByUrl?: SourceEvidenceByUrl) {
+function storedSourceForLink(link: HTMLAnchorElement, sourceEvidenceByUrl?: SourceEvidenceByUrl) {
   const href = link.getAttribute("href") || "";
-  const sourceText = sourceEvidenceByUrl?.[normalizedSourceUrlKey(href)];
+  const key = normalizedSourceUrlKey(href);
+  const server = inlineSourceLabel(link.textContent || "").match(/^MCP\s*·\s*([^·]+)/i)?.[1].trim();
+  return (server ? sourceEvidenceByUrl?.[`mcp:${server}:${key}`] : undefined) || sourceEvidenceByUrl?.[key];
+}
+
+function sourceEvidenceForLink(link: HTMLAnchorElement, sourceEvidenceByUrl?: SourceEvidenceByUrl) {
+  const source = storedSourceForLink(link, sourceEvidenceByUrl);
+  const sourceText = typeof source === "string" ? source : source?.text;
   if (!sourceText) {
     return "";
   }
@@ -305,26 +314,38 @@ function enhanceRenderedInlineSourceHtml(
       sourceNumberByKey[sourceKey] = sourceNumber;
     }
     const numberLabel = String(sourceNumberByKey[sourceKey]);
+    const source = storedSourceForLink(link, sourceEvidenceByUrl);
+    const record = typeof source === "object" ? source : undefined;
     const extractedEvidence = sourceEvidenceForLink(link, sourceEvidenceByUrl);
     const evidence = String(link.getAttribute("title") || "").replace(/\s+/g, " ").trim();
     const domain = sourceLinkDomain(href);
-    const tooltip = extractedEvidence || evidence;
+    const tooltip = /^MCP\s*·\s*\S/i.test(label) && record?.origin !== "mcp" ? evidence : extractedEvidence || evidence;
+    // Keep the retrieval origin even when an MCP result has a public URL.
+    const explicitOrigin = /^(?:MCP|웹검색|웹페이지)\s*·\s*\S/i.test(label);
+    const sourceHeading = record?.origin === "mcp" ? `MCP · ${record.server || "이름 미확인"} · ${label.replace(/^MCP\s*·\s*[^·]+\s*·\s*/i, "")}`
+      : record?.origin === "web_search" ? `웹검색 · ${domain || label}`
+      : record?.origin === "web_fetch" ? `웹페이지 · ${domain || label}`
+      : explicitOrigin
+      ? label
+      : domain && extractedEvidence ? `웹 조회 · ${domain}` : domain || label || href;
     trimWhitespaceBeforeInlineSource(link);
-    if (!isBrowserOpenableSourceHref(href)) {
+    const destination = record?.url && isBrowserOpenableSourceHref(record.url) ? record.url : href;
+    if (!isBrowserOpenableSourceHref(destination)) {
       const chip = document.createElement("span");
       chip.className = "markdown-inline-source-chip markdown-inline-source-chip-static";
       chip.setAttribute("role", "note");
       chip.setAttribute("aria-label", `출처 ${numberLabel} ${label}`);
       chip.tabIndex = 0;
-      chip.setAttribute("data-tooltip", tooltip ? `${label}\n${quotedSourceExcerpt(tooltip)}` : label || href);
+      chip.setAttribute("data-tooltip", `${sourceHeading}\n${tooltip ? quotedSourceExcerpt(tooltip) : "저장된 출처 내용이 없습니다."}`);
       chip.textContent = numberLabel;
       link.replaceWith(chip);
       continue;
     }
     link.classList.add("markdown-inline-source-chip");
+    link.setAttribute("href", destination);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noreferrer noopener");
-    link.setAttribute("data-tooltip", tooltip && domain ? `${domain}\n${quotedSourceExcerpt(tooltip)}` : domain || quotedSourceExcerpt(tooltip) || href);
+    link.setAttribute("data-tooltip", `${sourceHeading}\n${tooltip ? quotedSourceExcerpt(tooltip) : "저장된 출처 내용이 없습니다."}`);
     link.removeAttribute("title");
     link.setAttribute("aria-label", `출처 ${numberLabel} ${label} 열기`);
     link.textContent = numberLabel;
@@ -1341,7 +1362,7 @@ function htmlPreviewHeight(value: unknown) {
 }
 
 function htmlPreviewToken() {
-  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createClientId();
 }
 
 async function loadHtmlPreview(frame: HTMLIFrameElement, errorNode: HTMLDivElement, source: string) {

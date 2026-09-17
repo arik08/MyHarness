@@ -5548,10 +5548,10 @@ a:focus-visible {
   display: grid;
   place-items: center;
   align-self: end;
-  grid-column: 4;
+  grid-column: 2;
   width: 30px;
   height: 30px;
-  margin: 0 0 1px;
+  margin: 0;
   padding: 0;
   background: color-mix(in srgb, var(--accent-soft) 74%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line) 70%);
@@ -5688,30 +5688,12 @@ a:focus-visible {
 }
 
 .todo-activity-line {
-  display: grid;
-  grid-template-columns: 4em minmax(0, 1fr);
-  align-items: start;
-  gap: 5px;
   min-width: 0;
   overflow-wrap: anywhere;
   white-space: normal;
   word-break: break-word;
-}
-
-.todo-activity-order {
-  font-size: 0.92em;
-  line-height: inherit;
-  white-space: nowrap;
-}
-
-.todo-activity-line.latest {
   color: var(--ink);
   font-weight: 600;
-}
-
-.todo-activity-line.latest .todo-activity-order {
-  color: var(--accent);
-  font-weight: 700;
 }
 
 .workflow-card {
@@ -8781,6 +8763,7 @@ a:focus-visible {
   transform: translateY(0) rotate(45deg);
 }
 
+.inline-question-choice[aria-pressed="true"],
 .inline-question-choice:hover:not(:disabled),
 .inline-question-submit:hover:not(:disabled) {
   background: var(--sidebar-hover);
@@ -9715,10 +9698,18 @@ a:focus-visible {
   grid-column: 2;
 }
 
+.composer-box:has(> .composer-todo-button) {
+  grid-template-columns: minmax(0, 1fr) 30px 30px;
+}
+
+.composer-box:has(> .composer-todo-button) > #sendButton {
+  grid-column: 3;
+}
+
 .composer-box > #sendButton.is-stop {
   background: var(--panel);
   border-color: var(--composer-border);
-  color: var(--ink);
+  color: var(--color-gray-500);
 }
 
 .composer-box > #sendButton.is-stop svg {
@@ -9749,11 +9740,11 @@ a:focus-visible {
 @keyframes stopButtonBreath {
   0%,
   100% {
-    transform: scale(1);
+    transform: scale(0.9);
   }
 
   50% {
-    transform: scale(1.08);
+    transform: scale(1.165);
   }
 }
 

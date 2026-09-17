@@ -97,7 +97,9 @@ function addSourceEvidence(target: SourceEvidenceByUrl, url: string, evidence: s
   if (!key || !text) {
     return;
   }
-  if (prefer || (target[key] || "").length < text.length) {
+  const current = target[key];
+  if (typeof current === "object") return;
+  if (prefer || (current || "").length < text.length) {
     target[key] = text;
   }
 }
@@ -134,7 +136,28 @@ function sourceEvidenceByUrlForEvents(events: WorkflowEvent[]) {
     return cached;
   }
   const evidenceByUrl: SourceEvidenceByUrl = {};
+  const ambiguousAliases = new Set<string>();
   for (const event of events) {
+    if (event.status === "error" || event.status === "empty") continue;
+    const records = event.executionMetadata?.source_records;
+    if (Array.isArray(records)) {
+      for (const record of records) {
+        if (!record || typeof record.href !== "string" || typeof record.text !== "string" || !record.text.trim()) continue;
+        const evidence = { text: record.text, origin: String(record.origin || ""), server: String(record.server || ""), url: String(record.url || "") };
+        evidenceByUrl[normalizedSourceUrlKey(record.href)] = evidence;
+        if (evidence.origin === "mcp" && evidence.server && evidence.url) {
+          const alias = `mcp:${evidence.server}:${normalizedSourceUrlKey(evidence.url)}`;
+          const existing = evidenceByUrl[alias];
+          if (existing && typeof existing === "object" && existing.text !== evidence.text) {
+            ambiguousAliases.add(alias);
+            delete evidenceByUrl[alias];
+          } else if (!ambiguousAliases.has(alias)) {
+            evidenceByUrl[alias] = evidence;
+          }
+        }
+      }
+      continue;
+    }
     const lower = `${event.toolName} ${event.title}`.toLowerCase();
     const output = event.output || "";
     if (lower.includes("web_search")) {
@@ -367,7 +390,7 @@ export function MessageList() {
         const userText = images.length ? message.displayText ?? message.text : message.text;
         const workflowEvents = workflowEventsForMessageId(state, message.id);
         const showWorkflowHere = workflowEvents.length > 0 && !isQuietCommandTurn(message);
-        const answerWebSourceEvents = message.role === "assistant" && message.isComplete
+        const answerWebSourceEvents = message.role === "assistant"
           ? webSourceEventsForAssistant(originalIndex)
           : [];
         const answerWebSources = answerWebSourceEvents.length

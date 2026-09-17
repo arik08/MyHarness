@@ -26,6 +26,33 @@ from myharness.config.settings import Settings
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE
 
 
+@pytest.mark.parametrize("prompt_profile", ["full", "continuation"])
+@pytest.mark.parametrize("mode", ["default", "custom", "worker", "coordinator", "fast"])
+def test_execution_contract_survives_runtime_prompt_modes(tmp_path: Path, monkeypatch, prompt_profile, mode):
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1" if mode == "coordinator" else "0")
+    settings = Settings()
+    if mode == "custom":
+        settings.system_prompt = "CUSTOM_PROMPT_SENTINEL"
+    settings.fast_mode = mode == "fast"
+
+    prompt = build_runtime_system_prompt(
+        settings, cwd=tmp_path, prompt_profile=prompt_profile, task_worker=mode == "worker",
+    )
+
+    assert prompt.count("# Task Execution Contract") == 1
+    contract = prompt.split("# Task Execution Contract\n", 1)[1].split("\n\n", 1)[0]
+    assert "immediately continue with the necessary tool calls or substantive answer in the same run" in contract
+    assert "If work remains and no real blocker requires user input, continue now" in contract
+    assert "Ask through ask_user_question only when missing information materially affects correctness or scope" in contract
+    assert "Respect execution permission gates" in contract
+    assert "planning-only or explanation-only" in contract
+    assert "state the concrete blocker and what is incomplete" in contract
+    if mode == "custom":
+        assert "CUSTOM_PROMPT_SENTINEL" in prompt
+
+
 def test_discover_claude_md_files(tmp_path: Path):
     repo = tmp_path / "repo"
     nested = repo / "pkg" / "mod"

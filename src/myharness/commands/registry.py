@@ -67,7 +67,6 @@ from myharness.project_preferences import (
 from myharness.services import (
     build_post_compact_messages,
     compact_conversation,
-    compact_messages,
     estimate_conversation_tokens,
     migrate_session_snapshots,
     summarize_messages,

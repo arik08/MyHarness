@@ -33,6 +33,7 @@ Use this checklist before final delivery of a visual HTML artifact.
 
 - Every raster image is converted to valid WebP and embedded in the HTML as a complete `data:image/webp;base64,...` URI, including CSS backgrounds and chart/diagram image assets. No image depends on an external URL, local/relative file, or temporary blob URL; inline vector icons/diagrams may remain SVG/HTML.
 - Embedded image payloads decode successfully, render in the actual preview without their original image sources, and preserve readable detail, aspect ratio, and any required transparency/animation. Content images have alt text and applicable source attribution.
+- Source badges, evidence-backed hover/focus tooltips, and diagrams work in the intended viewer without undocumented parent-application assets or save-time processing. Standalone HTML includes the required styles, scripts, and initialization; missing evidence or rendering capabilities are disclosed.
 - Print/PDF styles preserve hierarchy and avoid awkward page breaks.
 - Important content is visible without relying on hover, animation, or collapsed panels.
 - Dark backgrounds print acceptably or switch to a print-safe theme.

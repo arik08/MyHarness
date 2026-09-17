@@ -1,3 +1,5 @@
+import { createClientId } from "../utils/ids";
+import { workflowElapsedSeconds } from "../utils/workflowTime";
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, UsageCostSummary, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { artifactKind, artifactLabelForPath, artifactName, isKnownArtifactPath, normalizeArtifactPath } from "../utils/artifacts";
@@ -48,6 +50,7 @@ export type AppAction =
   | { type: "set_workspace"; workspace: Workspace }
   | { type: "set_history"; history: HistoryItem[]; hasMore?: boolean; nextOffset?: number }
   | { type: "append_history"; history: HistoryItem[]; hasMore?: boolean; nextOffset?: number }
+  | { type: "prepend_history"; history: HistoryItem[] }
   | { type: "hide_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "restore_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "delete_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
@@ -240,7 +243,7 @@ const issuedIds = new Set<string>();
 let idCollisionSerial = 0;
 
 function nextId() {
-  const base = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const base = createClientId();
   if (!issuedIds.has(base)) {
     issuedIds.add(base);
     return base;
@@ -1534,7 +1537,9 @@ function refreshPurposeEvents(events: WorkflowEvent[]) {
     if (event.role !== "purpose" || !event.groupId) return event;
     const children = childrenByGroup.get(event.groupId) || [];
     if (!children.length) return event;
-    const status = workflowGroupStatus(children);
+    const displayStatus = workflowGroupStatus(children);
+    // HTTP categories are presentation-only; preserve the stored lifecycle contract.
+    const status = displayStatus.startsWith("http_") ? "warning" : displayStatus as WorkflowEvent["status"];
     const currentDetail = compactWorkflowDetail(event.detail);
     return {
       ...event,
@@ -1783,12 +1788,13 @@ function workflowDurationFromMetadata(metadata?: Record<string, unknown> | null)
   return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : null;
 }
 
-function workflowElapsedDurationSeconds(state: AppState) {
-  if (state.workflowStartedAtMs === null) {
-    return null;
-  }
-  const seconds = Math.floor((Date.now() - state.workflowStartedAtMs) / 1000);
-  return Number.isFinite(seconds) ? Math.max(0, seconds) : null;
+function backendEventTime(event: BackendEvent) {
+  const timestamp = (event as { timestamp_ms?: unknown }).timestamp_ms;
+  return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now();
+}
+
+function workflowElapsedDurationSeconds(state: AppState, now = Date.now()) {
+  return workflowElapsedSeconds(state.workflowStartedAtMs, state.workflowEvents, now);
 }
 
 function normalizeCommands(commands: unknown[]): CommandItem[] {
@@ -3119,7 +3125,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
           workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
           workflowEvents: initialWorkflowEvents(text),
           workflowDurationSeconds: null,
-          workflowStartedAtMs: Date.now(),
+          workflowStartedAtMs: backendEventTime(event),
         };
       }
       if (isDuplicateActiveUserTranscript(state, text)) {
@@ -3151,7 +3157,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
         workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
         workflowEvents: initialWorkflowEvents(text),
         workflowDurationSeconds: null,
-        workflowStartedAtMs: Date.now(),
+        workflowStartedAtMs: backendEventTime(event),
       };
     }
     return {
@@ -3379,7 +3385,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
       ? refreshPurposeEvents(completeActivityStep(completePlanning(state.workflowEvents), "작업을 마쳤습니다."))
       : [];
     const workflowDurationSeconds = hasRestorableWorkflow
-      ? workflowDurationFromMetadata(recordOrNull(event.compact_metadata)) ?? workflowElapsedDurationSeconds(state)
+      ? workflowDurationFromMetadata(recordOrNull(event.compact_metadata)) ?? workflowElapsedDurationSeconds(state, backendEventTime(event))
       : null;
     const workflowDurationSecondsByMessageId = workflowDurationSeconds !== null && workflowAnchorMessageId
       ? {
@@ -3425,7 +3431,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
       messages: state.busy ? appendErrorMessage(state.messages, message) : state.messages,
       workflowEvents,
       workflowEventsByMessageId: rememberWorkflowEventsForAnchor(state, workflowEvents),
-      workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
+      workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state, backendEventTime(event)),
       workflowStartedAtMs: null,
     };
   }
@@ -3447,7 +3453,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
       busy: false,
       status: "error",
       statusText: errorStatusText(message),
-      workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state),
+      workflowDurationSeconds: state.workflowDurationSeconds ?? workflowElapsedDurationSeconds(state, backendEventTime(event)),
       workflowStartedAtMs: null,
     };
   }
@@ -3762,6 +3768,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         historyHasMore: typeof action.hasMore === "boolean" ? action.hasMore : state.historyHasMore,
         historyNextOffset: typeof action.nextOffset === "number" ? action.nextOffset : state.historyNextOffset,
         modal: isResumeSelectModal(state.modal) ? null : state.modal,
+      };
+    }
+
+    case "prepend_history": {
+      const history = visibleHistoryRows(state, appendHistoryRows(action.history, state.history));
+      const addedCount = history.filter((item) => !state.history.some((existing) => existing.value === item.value)).length;
+      return {
+        ...state,
+        history,
+        historyNextOffset: state.historyNextOffset + addedCount,
       };
     }
 

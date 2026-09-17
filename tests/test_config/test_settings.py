@@ -587,7 +587,7 @@ class TestPgptOpenAICompatibleProvider:
             "gpt-5.6-terra",
             "gpt-5.6-sol",
         ]
-        assert profile.base_url == "http://pgpt.posco.com/s01a01-gpt/v1"
+        assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
 
     def test_codex_subscription_default_profile_includes_gpt56_family(self):
         from myharness.config.settings import default_provider_profiles
@@ -802,3 +802,51 @@ class TestPgptOpenAICompatibleProvider:
 
         assert resolved.value == "pgpt-env-key"
         assert resolved.source == "env:PGPT_API_KEY"
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("http://pgpt.posco.com/s01a01-gpt/v1", "http://pgpt.posco.com/s0la01-gpt/v1"),
+    ("https://pgpt.posco.com/s01a01-gpt/v1/", "https://pgpt.posco.com/s0la01-gpt/v1/"),
+    ("http://pgpt.posco.com/s0la01-gpt/v1", "http://pgpt.posco.com/s0la01-gpt/v1"),
+    ("https://custom.example/s01a01-gpt/v1", "https://custom.example/s01a01-gpt/v1"),
+    ("http://pgpt.posco.com/custom/v1", "http://pgpt.posco.com/custom/v1"),
+])
+def test_pgpt_endpoint_migration_round_trip(tmp_path, url, expected):
+    settings = Settings().materialize_active_profile()
+    settings.profiles["p-gpt"].base_url = url
+    path = tmp_path / "settings.json"
+    path.write_text(settings.model_dump_json(), encoding="utf-8")
+    loaded = load_settings(path)
+    assert loaded.base_url == expected
+    save_settings(loaded, path)
+    assert load_settings(path).base_url == expected
+    overridden = loaded.merge_cli_overrides(base_url=url)
+    assert overridden.base_url == expected
+
+
+def test_legacy_pgpt_endpoint_retains_pgpt_auth(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"provider": "openai", "api_format": "openai", "model": "gpt-5.6-luna", "base_url": "http://pgpt.posco.com/s01a01-gpt/v1"}), encoding="utf-8")
+    loaded = load_settings(path)
+    assert loaded.active_profile == "p-gpt"
+    assert loaded.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
+    assert loaded.resolve_profile()[1].auth_source == "pgpt_api_key"
+
+
+@pytest.mark.parametrize("source,target", [("p-gpt", "codex"), ("codex", "p-gpt")])
+@pytest.mark.parametrize("overrides", [{}, {"context_window_tokens": 123456}, {"model": "gpt-5.6-luna"}])
+def test_profile_switch_does_not_inherit_previous_endpoint(source, target, overrides):
+    settings = Settings(active_profile=source).materialize_active_profile()
+    original = settings.merged_profiles()[source]
+    expected = settings.merged_profiles()[target]
+    switched = settings.merge_cli_overrides(active_profile=target, **overrides)
+    assert switched.base_url == expected.base_url
+    assert switched.provider == expected.provider
+    assert switched.resolve_profile()[1].auth_source == expected.auth_source
+    assert switched.merged_profiles()[source] == original
+
+
+def test_pgpt_registry_and_settings_share_endpoint():
+    from myharness.api.registry import PROVIDERS
+    pgpt = next(provider for provider in PROVIDERS if provider.name == "pgpt")
+    assert pgpt.default_base_url == Settings().materialize_active_profile().base_url

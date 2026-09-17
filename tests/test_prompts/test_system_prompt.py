@@ -319,7 +319,7 @@ def test_visual_artifact_includes_default_report_chart_palette():
     assert "Use a few colors intentionally" in skill_text
 
 
-def test_visual_artifact_contains_report_design_rules_and_routes_a4_to_a4_skill():
+def test_visual_artifact_contains_report_design_rules_and_portable_a4_workflow():
     env = _make_env()
     prompt = build_system_prompt(env=env)
     skill_text = (Path(__file__).resolve().parents[2] / ".skills" / "General" / "visual-artifact" / "SKILL.md").read_text(
@@ -334,9 +334,10 @@ def test_visual_artifact_contains_report_design_rules_and_routes_a4_to_a4_skill(
     assert "Lucide or similar icon sets" in skill_text
     assert "For standalone HTML reports or web reports, use Mermaid" in skill_text
     assert "organization-change diagrams" in skill_text
-    assert "same app Mermaid renderer used for chat" in skill_text
-    assert "use both this skill and `html-a4-landscape-report`" in skill_text
-    assert "let `html-a4-landscape-report` own the page-based layout workflow" in skill_text
+    assert "include Mermaid.js and initialize it in the artifact itself" in skill_text
+    assert "unless the target viewer explicitly provides a compatible renderer" in skill_text
+    assert "otherwise implement explicit page dimensions, density limits, table splitting, and overflow QA directly" in skill_text
+    assert "**ECharts (required)**" in skill_text
 
 
 def test_visual_artifact_cites_important_external_sources():
@@ -353,13 +354,13 @@ def test_visual_artifact_cites_important_external_sources():
     assert "URL/title, document page/path, MCP server/resource, document id, table name, or query label" in skill_text
     assert "Do not invent citations" in skill_text
     assert "HTML Source Footnotes" in skill_text
-    assert "`<!-- myharness:source-footnotes-css -->` once in the HTML `<head>`" in skill_text
-    assert "write_file` tool expands this marker into the fixed tooltip CSS" in skill_text
+    assert "Include the CSS and any JS needed for `.source-ref` badges and hover/focus tooltips in the HTML itself" in skill_text
+    assert "do not assume a proprietary marker or save-time injection is available" in skill_text
     assert "small circular badge containing only the number" in skill_text
-    assert "Leave `data-tooltip` absent or empty" in skill_text
-    assert "`write_file` fills it from stored tool evidence" in skill_text
-    assert "short verbatim excerpt directly taken from the source/tool result" in skill_text
-    assert "excerpt line is wrapped in double quotes" in skill_text
+    assert "Populate source tooltips from retrieved source evidence" in skill_text
+    assert "never invent a quotation or assume an unavailable tool will fill it later" in skill_text
+    assert "short verbatim excerpt from the source/tool result" in skill_text
+    assert "wrapped in double quotes" in skill_text
 
 
 def test_visual_artifact_flags_empty_report_panels_as_layout_defects():

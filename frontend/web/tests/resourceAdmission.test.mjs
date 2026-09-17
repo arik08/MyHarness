@@ -70,6 +70,70 @@ test("both queues automatically resume after sampling recovery without closing r
 });
 
 
+test("a limited client does not block other clients and retains its own FIFO order", async () => {
+  const started = [];
+  const sessions = new Map([
+    ["running", { id: "running", clientId: "a", busy: true }],
+    ...["a1", "a2", "b1", "b2"].map((id) => [id, { id, clientId: id[0], capacityQueued: true }]),
+  ]);
+  const responseCapacityQueue = ["a1", "a2", "gone", "b1", "b2"].map((sessionId) => ({ sessionId, type: "message", queuedAt: 0 }));
+  const context = vm.createContext({
+    sessions, responseCapacityQueue, sessionCapacityQueue: [], maxBusySessionsPerClient: 1,
+    capacityQueueDrainRunning: false, capacityQueueDrainPending: false,
+    sessionHasCapacity: () => true, serverMetrics: { recordQueueWait() {} },
+    emitResponseQueuePositions() {}, httpError: () => new Error("closed"),
+    startSessionMessage: (session) => { session.busy = true; session.capacityQueued = false; started.push(session.id); },
+  });
+  vm.runInContext(["countBusySessionsForClient", "responseHasCapacity", "pruneAbandonedSessionRequests", "drainCapacityQueues"].map(sourceFunction).join("\n"), context);
+  await context.drainCapacityQueues();
+  assert.deepEqual(started, ["b1"]);
+  assert.deepEqual(responseCapacityQueue.map((entry) => entry.sessionId), ["a1", "a2", "b2"]);
+  sessions.get("running").busy = false;
+  sessions.get("b1").busy = false;
+  await context.drainCapacityQueues();
+  assert.deepEqual(started, ["b1", "a1", "b2"]);
+  assert.deepEqual(responseCapacityQueue.map((entry) => entry.sessionId), ["a2"]);
+});
+
+test("an immediate response gate reserves its slot before another caller can enter", async () => {
+  const session = { id: "edit", clientId: "a", busy: false };
+  const responseCapacityQueue = [];
+  const context = vm.createContext({
+    sessions: new Map([[session.id, session]]), maxBusySessionsPerClient: 1,
+    sessionHasCapacity: () => true, cancelIdleClientClose() {},
+    responseCapacityQueue, crypto: { randomUUID: () => "queued" }, emitResponseQueuePositions() {},
+    httpError: (status) => Object.assign(new Error(), { status }),
+  });
+  vm.runInContext(["countBusySessionsForClient", "responseHasCapacity", "waitForResponseCapacity"].map(sourceFunction).join("\n"), context);
+  const first = context.waitForResponseCapacity(session);
+  assert.equal(session.busy, true);
+  assert.equal(context.responseHasCapacity({ clientId: "a" }), false);
+  await first;
+});
+
+test("capacity-waiting sessions survive a disconnected screen's idle timer", () => {
+  let timeout;
+  let closed = false;
+  const context = vm.createContext({
+    backendIdleClientCloseMs: 1, clearTimeout() {},
+    setTimeout(callback) { timeout = callback; return { unref() {} }; },
+    shutdownSession() { closed = true; },
+  });
+  vm.runInContext(sourceFunction("scheduleIdleClientClose"), context);
+  const session = { clients: new Set(), busy: false, capacityQueued: true };
+  context.scheduleIdleClientClose(session);
+  assert.equal(timeout, undefined);
+  session.capacityQueued = false;
+  context.scheduleIdleClientClose(session);
+  session.capacityQueued = true;
+  timeout();
+  assert.equal(closed, false);
+  session.capacityQueued = false;
+  context.scheduleIdleClientClose(session);
+  timeout();
+  assert.equal(closed, true);
+});
+
 test("closed waiting tabs expire while clients that keep polling retain their place", () => {
   const sessionCapacityQueue = [{ id: "closed", lastPolledAt: Date.now() - 61_000 }, { id: "live", lastPolledAt: Date.now() }];
   const context = vm.createContext({ sessionCapacityQueue });

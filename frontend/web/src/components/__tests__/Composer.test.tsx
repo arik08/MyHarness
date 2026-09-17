@@ -32,6 +32,12 @@ function BusyProbe() {
   return <output data-testid="busy-state">{String(state.busy)}</output>;
 }
 
+function SwitchSessionProbe() {
+  const { state, dispatch } = useAppState();
+  return <><button onClick={() => dispatch({ type: "session_started", sessionId: "session-b", busy: true, replay: true, savedSessionId: "history-b" })}>Switch session</button>
+    <output data-testid="session-state">{state.sessionId}:{String(state.busy)}</output></>;
+}
+
 function AttachmentEchoProbe() {
   const { dispatch } = useAppState();
   return <button onClick={() => dispatch({ type: "backend_event", event: {
@@ -40,6 +46,143 @@ function AttachmentEchoProbe() {
 }
 
 describe("Composer", () => {
+  it.each([
+    ["$national-assembly", 1, "$mcp:national-assembly", "click"],
+    ["$national-assembly", 10, "$mcp:national-assembly", "Tab"],
+    ["$future-connector", 8, "$mcp:future-connector", "Enter"],
+    ["$design-review", 4, "$design-review", "click"],
+    ["@outputs/report.md", 5, "@outputs/report.md", "Tab"],
+    ["/help", 2, "/help", "Tab"],
+  ])("recognizes and replaces the whole %s token at caret %s", async (token, caret, replacement, action) => {
+    const suffix = " 포스코 관련 법안 찾아봐";
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      composer: { ...initialAppState.composer, draft: `${token}${suffix}` },
+      commands: [{ name: "help", description: "Help" }],
+      skills: [
+        { name: "design-review", description: "Design" },
+        { name: "future-connector", description: "Future connector", source: "skill-mcp:future-connector" },
+        { name: "unrelated", description: "Other" },
+      ],
+      mcpServers: [{ name: "national-assembly", state: "connected" }],
+      artifacts: [{ path: "outputs/report.md", kind: "file" }],
+    }}><Composer /></AppStateProvider>);
+    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+    input.focus();
+    input.setSelectionRange(Number(caret), Number(caret));
+    fireEvent.select(input);
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(1);
+    if (action === "click") await userEvent.click(options[0]);
+    else fireEvent.keyDown(input, { key: action });
+    expect(input.value).toBe(`${replacement}${suffix}`);
+  });
+
+  it("keeps an unknown mention unchanged without unrelated suggestions", () => {
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      composer: { ...initialAppState.composer, draft: "$unknown-service 내용" },
+      skills: [{ name: "design-review", description: "Design" }],
+    }}><Composer /></AppStateProvider>);
+    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+    input.focus();
+    input.setSelectionRange(1, 1);
+    fireEvent.select(input);
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(input.value).toBe("$unknown-service 내용");
+  });
+
+  it.each(["@", "$", "$mcp", "/"])("dismisses %s suggestions outside without changing the draft and reopens on typing", async (trigger) => {
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      commands: [{ name: "entry", description: "Command" }],
+      artifacts: [{ path: "entry.txt", kind: "file" }],
+      skills: [{ name: "entry", description: "Skill" }],
+      mcpServers: [{ name: "entry", state: "connected" }],
+    }}><Composer /><button>Outside</button></AppStateProvider>);
+    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await userEvent.type(input, trigger);
+    expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+    await userEvent.click(input);
+    fireEvent.pointerDown(screen.getByRole("listbox"));
+    expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: "Outside" }));
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(input.value).toBe(trigger);
+    await userEvent.type(input, trigger === "$mcp" ? ":e" : "e");
+    expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+    await userEvent.click(screen.getAllByRole("option")[0]);
+    expect(input.value).toContain("entry");
+  });
+
+  it.each(["참고자료 연결", "Skill 및 MCP 호출"])("dismisses and reopens the %s button picker", async (label) => {
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      artifacts: [{ path: "entry.txt", kind: "file" }],
+      skills: [{ name: "entry", description: "Skill" }],
+    }}><Composer /><button>Outside</button></AppStateProvider>);
+    const picker = screen.getByRole("button", { name: label });
+    await userEvent.click(picker);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "Outside" }));
+    expect(picker.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    await userEvent.click(picker);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    await userEvent.click(picker);
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+  });
+
+  it.each(["$mcp", "$mcp:", "$MCP"])("shows the full MCP catalog for %s and can select the last entry", async (query) => {
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      mcpServers: Array.from({ length: 15 }, (_, i) => ({ name: `service-${i}`, state: "connected" })),
+      skills: [
+        ...Array.from({ length: 15 }, (_, i) => ({ name: `connector-${i}`, description: "External data", source: `skill-mcp:connector-${i}` })),
+        { name: "mcp-guide", description: "Ordinary skill" },
+      ],
+    }}><Composer /></AppStateProvider>);
+    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await userEvent.type(input, query);
+    expect(screen.getAllByRole("option")).toHaveLength(30);
+    await userEvent.keyboard("{ArrowUp}{Tab}");
+    expect(input.value).toBe("$mcp:connector-14 ");
+    await userEvent.clear(input);
+    await userEvent.type(input, "$mcp:connector-14");
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    await userEvent.type(input, "-missing");
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+  });
+
+  it.each(["/", "@", "$"])("shows all matching %s suggestions beyond eight entries", async (trigger) => {
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      commands: Array.from({ length: 20 }, (_, i) => ({ name: `entry-${i}`, description: "Command" })),
+      artifacts: Array.from({ length: 20 }, (_, i) => ({ path: `entry-${i}`, kind: "file" })),
+      skills: Array.from({ length: 20 }, (_, i) => ({ name: `entry-${i}`, description: "Skill" })),
+    }}><Composer /></AppStateProvider>);
+    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await userEvent.type(input, trigger);
+    expect(screen.getAllByRole("option")).toHaveLength(20);
+    await userEvent.click(screen.getByRole("option", { name: new RegExp("entry-19") }));
+    expect(input.value.trim()).toBe(`${trigger}entry-19`);
+  });
+
+  it.each(["send", "steer", "cancel", "missing-session", "help"])("keeps another running session intact after a delayed %s result", async (operation) => {
+    let resolve!: (value: { ok: boolean }) => void;
+    let reject!: (reason: Error) => void;
+    const pending = new Promise<{ ok: boolean }>((res, rej) => { resolve = res; reject = rej; });
+    if (operation === "cancel") vi.mocked(cancelMessage).mockReturnValueOnce(pending);
+    else vi.mocked(sendMessage).mockReturnValueOnce(pending);
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", clientId: "client", busy: operation === "steer" || operation === "cancel" }}>
+      <Composer /><SwitchSessionProbe />
+    </AppStateProvider>);
+    if (operation !== "cancel") fireEvent.change(screen.getByRole("textbox"), { target: { value: operation === "help" ? "/help" : "session A request" } });
+    fireEvent.submit(document.querySelector("form")!);
+    await waitFor(() => expect(operation === "cancel" ? cancelMessage : sendMessage).toHaveBeenCalled());
+    fireEvent.click(screen.getByText("Switch session"));
+    await act(async () => {
+      if (operation === "cancel") resolve({ ok: true });
+      else reject(new Error(operation === "missing-session" ? "Unknown session" : "session A failed"));
+    });
+    expect(screen.getByTestId("session-state").textContent).toBe("session-b:true");
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.mocked(enhancePrompt).mockReset();
     vi.mocked(enhancePrompt).mockResolvedValue({ text: "개선한 요청" });
@@ -1576,7 +1719,7 @@ describe("Composer", () => {
     expect(cancelMessage).toHaveBeenCalledWith("session-1", "client-1");
   });
 
-  it("shows a compact todo icon above the input when the checklist is collapsed", async () => {
+  it("shows the collapsed todo icon immediately before the send button inside the input", async () => {
     const user = userEvent.setup();
     render(
       <AppStateProvider
@@ -1591,7 +1734,8 @@ describe("Composer", () => {
     );
 
     const todoButton = screen.getByRole("button", { name: "작업 목록 펼치기 1/2" });
-    expect(todoButton.closest(".composer-task-toggle")).toBeTruthy();
+    expect(todoButton.parentElement?.classList.contains("composer-box")).toBe(true);
+    expect(todoButton.nextElementSibling?.id).toBe("sendButton");
     expect(document.querySelector(".todo-checklist-dock")).toBeNull();
 
     await user.click(todoButton);
@@ -1856,11 +2000,11 @@ describe("Composer", () => {
     const runningItem = screen.getByText("분석 결과 정리").closest("li");
     expect(runningItem?.classList.contains("running")).toBe(true);
     expect(screen.getByLabelText("현재 작업 진행")).toBeTruthy();
-    expect(screen.getByText("unemployment_industries 테이블 범위를 확인했습니다.")).toBeTruthy();
+    expect(screen.queryByText("unemployment_industries 테이블 범위를 확인했습니다.")).toBeNull();
     expect(screen.getByText("분석 결과를 보고서 구조로 정리하고 있습니다.")).toBeTruthy();
   });
 
-  it("shows only the three most recent live workflow activity lines", () => {
+  it("shows only the current live workflow activity without an order label", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -1903,9 +2047,7 @@ describe("Composer", () => {
     const activityLines = [...document.querySelectorAll(".todo-activity-line")]
       .map((line) => line.textContent);
     expect(activityLines).toEqual([
-      "최신파일 작업 중",
-      "이전 1시각 구성·표·우선순위 매트릭스 설계",
-      "이전 2포스코 업무 시나리오별 법무·규제 활용 구조화",
+      "파일 작업 중",
     ]);
   });
 
@@ -1984,7 +2126,7 @@ describe("Composer", () => {
     );
 
     const activity = screen.getByLabelText("현재 작업 진행");
-    expect(activity.textContent || "").toContain("공식 발표 자료 3건을 확인했습니다.");
+    expect(activity.textContent || "").not.toContain("공식 발표 자료 3건을 확인했습니다.");
     expect(activity.textContent || "").toContain("관련 링크의 핵심 정보를 정리하고 있습니다.");
     expect(activity.textContent || "").not.toContain("검색 결과가 없습니다.");
     expect(activity.textContent || "").not.toContain("필요한 번역이나 명령을 실행하고 있습니다.");
@@ -1997,6 +2139,7 @@ describe("Composer", () => {
           ...initialAppState,
           busy: true,
           todoMarkdown: "- [x] 데이터 분석\n- [ ] 초장문 웹보고서 생성 및 저장",
+          statusText: "준비됨",
           workflowEvents: [
             {
               id: "workflow-report",
@@ -2095,6 +2238,8 @@ describe("Composer", () => {
     expect(screen.getByText("Q1")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /파랑/ }));
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "선택한 답변 보내기" }));
 
     expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
       type: "question_response",
@@ -2460,11 +2605,13 @@ describe("Composer", () => {
     expect(screen.getByPlaceholderText("기타 직접 입력...")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /정보가 아직 부족함/ }));
+    await user.click(screen.getByRole("button", { name: "선택한 답변 보내기" }));
     expect(sendBackendRequest).not.toHaveBeenCalled();
     expect(screen.getByText("질문 (2/3)")).toBeTruthy();
     expect(screen.getByText("송금한 날짜와 시간은 언제인가요?")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /직접 입력 양식/ }));
+    await user.click(screen.getByRole("button", { name: "선택한 답변 보내기" }));
     expect(sendBackendRequest).not.toHaveBeenCalled();
     expect(screen.getByText("질문 (3/3)")).toBeTruthy();
 
@@ -2559,6 +2706,7 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "답변" }));
     expect(screen.queryByPlaceholderText("답변 입력...")).toBeNull();
     await user.click(screen.getByRole("button", { name: /A1\s*친근한 톤 \+ 짧은 선택형/ }));
+    await user.click(screen.getByRole("button", { name: "선택한 답변 보내기" }));
 
     await waitFor(() => {
       expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {
@@ -2657,6 +2805,7 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "답변" }));
     expect(screen.getByText("질문 (2/2)")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /불릿 목록 답변/ }));
+    await user.click(screen.getByRole("button", { name: "선택한 답변 보내기" }));
 
     await waitFor(() => {
       expect(sendBackendRequest).toHaveBeenCalledWith("session-1", "client-1", {

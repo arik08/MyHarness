@@ -539,6 +539,40 @@ test("migrates count limits to resource settings, exposes queue population, and 
   assert.deepEqual(stored.web_concurrency, { max_cpu_percent: 100, max_memory_percent: 100, max_busy_sessions_per_client: 3, idle_session_timeout_minutes: 5 });
 });
 
+test("concurrent sessions keep running independently when another session is cancelled", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  t.after(() => app.stop());
+  const clientId = "concurrent-session-check";
+  const post = (path, body) => fetch(`${app.baseUrl}${path}`, {
+    method: "POST", headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" }, body: JSON.stringify(body),
+  });
+  assert.equal((await post("/api/settings/concurrency", {
+    maxCpuPercent: 100, maxMemoryPercent: 100, maxBusySessionsPerClient: 3, idleSessionTimeoutMinutes: 5,
+  })).status, 200);
+  const sessions = await Promise.all(Array.from({ length: 3 }, async () => {
+    const response = await post("/api/session", { clientId });
+    assert.equal(response.status, 200);
+    return response.json();
+  }));
+  const eventsUrl = (session) => `${app.baseUrl}/api/events?session=${session.sessionId}&clientId=${clientId}`;
+  await Promise.all(sessions.map((session) => waitForSseEvent(eventsUrl(session), (event) => event.type === "ready", { timeoutMs: 15000 })));
+  // Shell turns exercise real Python runners and SSE without calling an LLM.
+  const replies = await Promise.all(sessions.map((session, index) => post("/api/message", {
+    sessionId: session.sessionId, clientId,
+    line: `!python -c "import time; time.sleep(4); print('isolated-result-${index}')"`,
+  })));
+  assert.ok(replies.every((response) => response.status === 200));
+  const live = async () => (await (await fetch(`${app.baseUrl}/api/live-sessions?clientId=${clientId}`)).json()).sessions;
+  assert.equal((await live()).filter((session) => session.busy).length, 3);
+  assert.equal((await post("/api/cancel", { sessionId: sessions[0].sessionId, clientId })).status, 200);
+  const afterCancel = await live();
+  for (const session of sessions.slice(1)) assert.equal(afterCancel.find((item) => item.sessionId === session.sessionId)?.busy, true);
+  await Promise.all(sessions.slice(1).map(async (session, offset) => {
+    const result = await waitForSseEvent(eventsUrl(session), (event) => event.type === "tool_completed" && String(event.output).includes(`isolated-result-${offset + 1}`), { timeoutMs: 15000 });
+    assert.ok(!String(result.output).includes(`isolated-result-${offset === 0 ? 2 : 1}`));
+  }));
+});
+
 test("queues an over-capacity response and starts it automatically when a slot opens", async (t) => {
   const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
   t.after(() => app.stop());
@@ -874,7 +908,7 @@ test("keeps main runtime choices client-scoped for ip workspace sessions", async
     body: JSON.stringify({ clientId: "runtime-ip", activeProfile: "p-gpt", model: "gpt-5.5" }),
   });
   const created = await createdResponse.json();
-  assert.equal(createdResponse.status, 200);
+  assert.equal(createdResponse.status, 200, JSON.stringify(created));
   assert.ok(created.sessionId);
 
   const modelResponse = await fetch(`${app.baseUrl}/api/respond`, {
@@ -2984,6 +3018,13 @@ test("model availability requires ADMIN and persists across catalog reloads", as
   assert.equal(initialResponse.status, 200);
   const initial = await initialResponse.json();
   const profile = initial.providers[0].value;
+  const warmStart = performance.now();
+  await Promise.all(Array.from({ length: 5 }, async () => {
+    const response = await fetch(url);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), initial);
+  }));
+  t.diagnostic(`Five warm catalog requests: ${(performance.now() - warmStart).toFixed(1)} ms`);
   const models = initial.all_models_by_provider[profile];
   assert.ok(models.length > 1);
   const model = models[0].value;
@@ -3007,4 +3048,13 @@ test("model availability requires ADMIN and persists across catalog reloads", as
   assert.equal((await write({ profile, enabled: true })).status, 200);
   assert.equal((await (await fetch(url)).json()).models_by_provider[profile].length, models.length);
   assert.equal((await write({ profile, model, enabled: true })).status, 200);
+  const externallyChanged = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
+  externallyChanged.enabled_models_by_profile[profile] = [];
+  await writeFile(join(app.configDir, "settings.json"), JSON.stringify(externallyChanged), "utf8");
+  assert.equal((await (await fetch(url)).json()).models_by_provider[profile].length, 0);
+  await writeFile(join(app.configDir, "settings.local.json"), JSON.stringify({
+    subagent_effort: "high",
+  }), "utf8");
+  const changedCatalog = await (await fetch(url)).json();
+  assert.equal(changedCatalog.subagent_effort, "high");
 });

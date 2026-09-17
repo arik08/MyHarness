@@ -295,7 +295,11 @@ def _build_long_report_section() -> str:
             "Do not replace item-level links with "
             "a separate final `참고:` or `출처:` line, and do not group several unrelated article sources into one trailing note. "
             "For web sources keep URLs/titles; for MCP, vector database, knowledge-base, document, or database-query results keep "
-            "the server/resource/document/table/query identifiers that let the reader understand where the information came from.",
+            "the server/resource/document/table/query identifiers that let the reader understand where the information came from. "
+            "Always label MCP citations `출처: MCP · actual-server-name · 자료명`, even for HTTPS destinations or provided "
+            "source_chip values; preserve their destination and excerpt. Use `출처: 웹검색 · 사이트명` for web_search and "
+            "`출처: 웹페이지 · 사이트명` for web_fetch. Keep the same origin in HTML source lists and MCP tooltip headings. "
+            "Never infer the retrieval origin from the URL; use the actual tool/skill metadata. If unknown, say so.",
         ]
     )
 
@@ -331,6 +335,30 @@ def build_runtime_system_prompt(
 
     if not coordinator_mode and settings.system_prompt is None:
         sections[0] = build_system_prompt(cwd=str(cwd))
+
+    sections.append(
+        "# Task Execution Contract\n"
+        "Treat requests to do work, including indirect requests such as 'can you', as instructions to execute "
+        "in the current run. This applies to research, retrieval, analysis, creation, edits, and other actions, "
+        "regardless of the tool or subject. Do not end a turn with only an acknowledgment, promise, plan, "
+        "or offer to proceed (for example, '확인하겠습니다', '진행하겠습니다', or '원하시면 해드리겠습니다'). "
+        "A progress update or checklist is not the requested result: immediately continue with the necessary "
+        "tool calls or substantive answer in the same run, inspect the results, and carry the authorized work "
+        "through appropriate verification. Never imply that work will continue after the turn unless an actual "
+        "background task has been started.\n"
+        "Use the request and conversation context to resolve routine choices. If a reasonable assumption allows "
+        "useful work, proceed without asking whether to start or continue. Ask through ask_user_question only "
+        "when missing information materially affects correctness or scope and cannot be resolved from available "
+        "context. While an essential answer is pending, complete independent work when possible; do not invent "
+        "the answer or treat waiting as consent. Once answered, resume without another confirmation round. "
+        "Respect execution permission gates, explicit requests to wait, and planning-only or explanation-only "
+        "requests; this contract does not authorize destructive or otherwise unauthorized actions.\n"
+        "Before ending the turn, check whether the requested outcome has actually been delivered. If work remains "
+        "and no real blocker requires user input, continue now. If execution is blocked by unavailable tools, "
+        "permissions, credentials, or a failed operation that cannot be recovered, state the concrete blocker and "
+        "what is incomplete instead of promising future execution or claiming success. Base completion claims on "
+        "observed results. Purely informational requests may be completed directly without tool calls."
+    )
 
     if settings.fast_mode:
         sections.append(

@@ -5,7 +5,7 @@ import { initialAppState } from "../../state/reducer";
 import { TodoDock } from "../TodoDock";
 
 describe("TodoDock", () => {
-  it.each(["new_custom_tool", "progress_note"])("shows the latest %s message first and labels earlier messages", (toolName) => {
+  it.each(["new_custom_tool", "progress_note"])("shows only the current %s message without an order label", (toolName) => {
     const { container } = render(
       <AppStateProvider initialState={{
         ...initialAppState,
@@ -21,9 +21,9 @@ describe("TodoDock", () => {
     );
     const lines = [...container.querySelectorAll(".todo-activity-line")];
     expect(lines.map((line) => line.textContent)).toEqual([
-      "최신최신 메시지", "이전 1바로 전 메시지", "이전 2이전 메시지",
+      "최신 메시지",
     ]);
-    expect(container.querySelectorAll(".todo-activity-line.latest")).toHaveLength(1);
+    expect(container.querySelector(".todo-activity-order")).toBeNull();
   });
 
   it("does not animate an unchecked item after the final answer is complete", () => {

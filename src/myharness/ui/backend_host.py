@@ -1210,6 +1210,8 @@ class ReactBackendHost:
         self._follow_up_line_queue: asyncio.Queue[str | tuple[str, str] | tuple[str, str, FrontendComposeOptions]] = asyncio.Queue()
         self._permission_requests: dict[str, asyncio.Future[bool]] = {}
         self._question_requests: dict[str, asyncio.Future[str]] = {}
+        self._question_wait_started_at: float | None = None
+        self._question_wait_seconds = 0.0
         self._question_request_details: dict[str, dict[str, object]] = {}
         self._permission_lock = asyncio.Lock()
         self._busy = False
@@ -2449,6 +2451,7 @@ class ReactBackendHost:
 
         started_at = time.monotonic()
         original_messages = self._bundle.engine.messages if isolated_context else None
+        question_wait_before = self._question_wait_elapsed(started_at)
         original_conversation_state = (
             copy.deepcopy(self._bundle.engine.tool_metadata.get("conversation_state"))
             if isolated_context
@@ -2550,7 +2553,9 @@ class ReactBackendHost:
                     self._bundle.engine.tool_metadata.pop("conversation_state", None)
                 else:
                     self._bundle.engine.tool_metadata["conversation_state"] = original_conversation_state
-            workflow_duration_seconds = max(1, round(time.monotonic() - started_at))
+            finished_at = time.monotonic()
+            question_wait = self._question_wait_elapsed(finished_at) - question_wait_before
+            workflow_duration_seconds = max(1, round(finished_at - started_at - question_wait))
             workflow_duration_metadata = {"workflow_duration_seconds": workflow_duration_seconds}
             self._bundle.engine.tool_metadata["workflow_duration_seconds"] = workflow_duration_seconds
             self._record_history_event(BackendEvent(type="line_complete", compact_metadata=workflow_duration_metadata))
@@ -4050,6 +4055,10 @@ class ReactBackendHost:
             finally:
                 self._permission_requests.pop(request_id, None)
 
+    def _question_wait_elapsed(self, now: float) -> float:
+        active = max(0.0, now - self._question_wait_started_at) if self._question_wait_started_at is not None else 0.0
+        return self._question_wait_seconds + active
+
     async def _ask_question(
         self, question: str, choices: list[dict[str, object]] | None = None,
         *, questions: list[dict[str, object]] | None = None,
@@ -4063,28 +4072,33 @@ class ReactBackendHost:
         request_id = uuid4().hex
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self._question_requests[request_id] = future
+        if self._question_wait_started_at is None:
+            self._question_wait_started_at = time.monotonic()
         normalized_choices = _normalize_question_choices(choices or [])
         self._question_request_details[request_id] = {
             "question": question,
             "choices": normalized_choices,
             **({"questions": normalized_questions} if normalized_questions else {}),
         }
-        await self._emit(
-            BackendEvent(
-                type="modal_request",
-                modal={
-                    "kind": "question",
-                    "request_id": request_id,
-                    "question": question,
-                    "choices": normalized_choices,
-                    **({"questions": normalized_questions} if normalized_questions else {}),
-                },
-            )
-        )
         try:
+            await self._emit(
+                BackendEvent(
+                    type="modal_request",
+                    modal={
+                        "kind": "question",
+                        "request_id": request_id,
+                        "question": question,
+                        "choices": normalized_choices,
+                        **({"questions": normalized_questions} if normalized_questions else {}),
+                    },
+                )
+            )
             return await future
         finally:
             self._question_requests.pop(request_id, None)
+            if not self._question_requests:
+                self._question_wait_seconds = self._question_wait_elapsed(time.monotonic())
+                self._question_wait_started_at = None
             self._question_request_details.pop(request_id, None)
             if normalized_questions and future.cancelled():
                 await self._emit(BackendEvent(type="modal_request", modal={

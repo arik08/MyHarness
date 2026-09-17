@@ -47,7 +47,7 @@ from myharness.permissions.mutation_lock import (
 )
 from myharness.tools.base import ToolExecutionContext
 from myharness.tools.base import ToolRegistry
-from myharness.tools.source_evidence import remember_web_fetch_evidence, remember_web_search_evidence
+from myharness.tools.source_evidence import remember_web_fetch_evidence, remember_web_search_evidence, tool_source_records, source_record_instructions
 
 AUTO_COMPACT_STATUS_MESSAGE = "컨텍스트 초과를 막기 위해 이전 대화를 요약합니다."
 REACTIVE_COMPACT_STATUS_MESSAGE = "컨텍스트 한도를 넘어 이전 대화를 요약한 뒤 다시 시도합니다."
@@ -1415,6 +1415,18 @@ async def _execute_tool_call(
     log.debug("executed %s in %.2fs err=%s output_len=%d",
               tool_name, elapsed, result.is_error, len(result.output or ""))
     model_output = str(result.metadata.get("model_output") or result.output)
+    server = str(getattr(getattr(tool, "_tool_info", None), "server_name", "") or "")
+    if tool_name == "read_mcp_resource":
+        server = str(tool_input.get("server") or "")
+    source_records = [] if result.is_error else tool_source_records(
+        tool_name, tool_input, model_output, server=server, call_id=tool_use_id,
+    )
+    if source_records:
+        callback = (context.tool_metadata or {}).get("execution_output_callback")
+        if callable(callback):
+            await callback(tool_name, tool_use_id, str(result.metadata.get("display_output") or result.output),
+                           {"source_records": source_records})
+        model_output += source_record_instructions(source_records)
     display_output = result.metadata.get("display_output")
     transcript_output = result.metadata.get("transcript_output")
     tool_result = ToolResultBlock(

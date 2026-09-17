@@ -12,6 +12,20 @@ standard providers by keyword, local/special providers last.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
+
+
+PGPT_BASE_URL = "http://pgpt.posco.com/s0la01-gpt/v1"
+
+
+def normalize_pgpt_base_url(base_url: str | None) -> str | None:
+    """Repair the known official endpoint typo without rewriting custom gateways."""
+    if not base_url:
+        return base_url
+    parts = urlsplit(base_url)
+    if parts.hostname == "pgpt.posco.com" and parts.path.rstrip("/") == "/s01a01-gpt/v1":
+        return urlunsplit(parts._replace(path=parts.path.replace("/s01a01-gpt/", "/s0la01-gpt/", 1)))
+    return base_url
 
 
 @dataclass(frozen=True)
@@ -74,7 +88,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         env_key="PGPT_API_KEY",
         display_name="P-GPT",
         backend_type="openai_compat",
-        default_base_url="http://pgpt.posco.com/s01a01-gpt/v1",
+        default_base_url=PGPT_BASE_URL,
         detect_by_key_prefix="",
         detect_by_base_keyword="pgpt.posco.com",
         is_gateway=False,

@@ -1,3 +1,4 @@
+import { createClientId } from "../utils/ids";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
@@ -58,16 +59,7 @@ function HistoryListChecksIcon() {
 }
 
 function createSavedSessionId() {
-  const randomUuid = globalThis.crypto?.randomUUID?.().replace(/-/g, "").toLowerCase();
-  if (randomUuid && randomUuid.length >= 12) {
-    return randomUuid.slice(0, 12);
-  }
-  const bytes = new Uint8Array(6);
-  globalThis.crypto?.getRandomValues?.(bytes);
-  if (bytes.some((byte) => byte !== 0)) {
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  }
-  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`.slice(0, 12).padEnd(12, "0");
+  return createClientId().replace(/-/g, "").slice(0, 12);
 }
 
 export function Sidebar() {
@@ -1001,6 +993,9 @@ export function Sidebar() {
   const currentTheme = themeOptions.find((item) => item.id === state.themeId) || themeOptions[0];
   const sidebarLabel = state.sidebarCollapsed ? "사이드바 열기" : "사이드바 닫기";
   const activeHistoryValue = state.activeHistoryId || state.sessionId || "";
+  useLayoutEffect(() => {
+    historyListRef.current?.querySelector(".history-item.active")?.scrollIntoView?.({ block: "nearest" });
+  }, [activeHistoryValue]);
   const activeHistoryHiddenKey = historyVisibilityKey(activeHistoryValue, state.workspacePath, state.workspaceName);
   const activeHistoryDeleted = Boolean(!state.adminMode && activeHistoryHiddenKey && state.hiddenHistoryKeys.includes(activeHistoryHiddenKey));
   const visibleHistory = uniqueHistoryItems(state.history).filter((item) => (

@@ -46,7 +46,7 @@ def test_frontend_design_display_scope_prioritizes_homepages_not_reports():
     assert "스타일 선택 질문 없이 바로 구현" in translated
     assert "HTML 보고서" in translated
     assert "`visual-artifact`" in translated
-    assert "`html-a4-landscape-report`" in translated
+    assert "고정 페이지" in translated
 
 
 def test_ui_design_essence_display_scope_is_supporting_guardrail():

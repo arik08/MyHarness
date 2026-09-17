@@ -29,9 +29,48 @@ export function workflowActionSummary(events: WorkflowEvent[]): string {
   return [...categories].map(([label, count]) => `${label} ${count}회`).join(" · ");
 }
 
-export function workflowDisplayStatus(event: WorkflowEvent): WorkflowEvent["status"] | "empty" {
+type WorkflowDisplayStatus = WorkflowEvent["status"] | "empty" | `http_${number}`;
+
+const httpLabels: Record<number, string> = {
+  400: "잘못된 요청", 401: "인증 필요", 402: "결제 필요", 403: "접근 거부",
+  404: "페이지 없음", 405: "요청 방식 불가", 407: "프록시 인증 필요",
+  408: "요청 시간 초과", 409: "요청 충돌", 410: "삭제된 리소스",
+  413: "요청 크기 초과", 414: "주소 길이 초과", 415: "지원하지 않는 형식",
+  422: "요청 내용 오류", 423: "리소스 잠김", 429: "요청 제한", 451: "법적 접근 제한",
+  500: "서버 오류", 501: "지원하지 않는 기능", 502: "게이트웨이 오류",
+  503: "서비스 이용 불가", 504: "게이트웨이 시간 초과",
+};
+
+export function httpStatusLabel(status: string): string | null {
+  if (!/^http_[45]\d{2}$/.test(status)) return null;
+  const code = Number(status.slice(5));
+  return httpLabels[code] || (code < 500 ? "요청 오류" : "서버 오류");
+}
+
+// Only interpret failed tool responses, never arbitrary numbers in successful page text.
+function httpFailureStatus(event: WorkflowEvent, raw: string): WorkflowDisplayStatus | null {
+  if (!event.toolName || (event.status !== "error" && event.status !== "warning")) return null;
+  let code: unknown;
+  try {
+    const root = record(JSON.parse(raw));
+    const error = root && record(root.error);
+    code = error?.status_code ?? error?.statusCode ?? error?.http_status
+      ?? root?.status_code ?? root?.statusCode ?? root?.http_status;
+  } catch { /* Older events contain formatted HTTP exception text. */ }
+  if (!/^[45]\d{2}$/.test(String(code))) {
+    const match = raw.match(/\bHTTP(?:\/\d(?:\.\d)?)?(?:\s+(?:error|status)(?:\s+code)?)?\s*[:=]?\s*['"]?([45]\d{2})\b/i)
+      || raw.match(/\b(?:Client|Server) error\s*['"]([45]\d{2})\b/i)
+      || raw.match(/\b([45]\d{2})\s+(?:Client|Server) Error\b/i);
+    code = match?.[1];
+  }
+  return /^[45]\d{2}$/.test(String(code)) ? `http_${Number(code)}` : null;
+}
+
+export function workflowDisplayStatus(event: WorkflowEvent): WorkflowDisplayStatus {
   if (event.status === "running") return event.status;
   const raw = (event.output || event.detail).trim();
+  const httpStatus = httpFailureStatus(event, raw);
+  if (httpStatus) return httpStatus;
   // Legacy web searches recorded a normal zero-result response as an error.
   if (event.toolName === "web_search" && raw === "검색 결과가 없습니다.") return "empty";
   if (event.status === "error") return event.status;
@@ -46,10 +85,13 @@ export function workflowDisplayStatus(event: WorkflowEvent): WorkflowEvent["stat
   return event.status;
 }
 
-export function workflowGroupStatus(events: WorkflowEvent[]): WorkflowEvent["status"] | "empty" {
+export function workflowGroupStatus(events: WorkflowEvent[]): WorkflowDisplayStatus {
   const actions = events.filter((event) => event.role !== "reasoning" && event.role !== "purpose")
     .map((event) => ({ status: workflowDisplayStatus(event) }));
   if (actions.some((event) => event.status === "running")) return "running";
+  if (actions.some((event) => event.status.startsWith("http_"))) {
+    return actions.every((event) => event.status === actions[0].status) ? actions[0].status : "warning";
+  }
   if (actions.length && actions.every((event) => event.status === "empty")) return "empty";
   if (actions.some((event) => event.status === "error")) {
     return actions.some((event) => event.status === "done" || event.status === "warning") ? "warning" : "error";
@@ -81,6 +123,8 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 export function toolResultSummary(event: WorkflowEvent): string | null {
+  const httpLabel = httpStatusLabel(workflowDisplayStatus(event));
+  if (httpLabel) return `${httpLabel} · 상세 실행 기록을 확인해 주세요.`;
   if (event.toolName !== "web_search" && workflowDisplayStatus(event) === "empty") return "이 조회 조건에서는 결과가 없습니다.";
   if (event.toolName === "web_search" || event.toolName === "web_fetch") {
     const input = event.toolInput || {};

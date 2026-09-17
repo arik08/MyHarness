@@ -17,10 +17,14 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
   const [submitting, setSubmitting] = useState(false);
   const [choiceFreeformAnswer, setChoiceFreeformAnswer] = useState("");
   const [questionStepIndex, setQuestionStepIndex] = useState(0);
+  const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const payload = state.modal?.kind === "backend" ? state.modal.payload || {} : null;
   const kind = String(payload?.kind || "");
   const requestId = String(payload?.request_id || "");
+  const requestScope = JSON.stringify([state.sessionId, requestId]);
+  const currentRequestRef = useRef(requestScope);
+  currentRequestRef.current = requestScope;
   const isQuestion = kind === "question";
   const isPermission = kind === "permission";
   const question = String(payload?.question || payload?.reason || payload?.message || "").trim()
@@ -56,10 +60,12 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
 
   useLayoutEffect(() => {
     setAnswer("");
+    setSubmitting(false);
     setQuestionStepAnswers([]);
     setQuestionStepIndex(0);
     setChoiceFreeformAnswer("");
-  }, [question, requestId]);
+    setSelectedChoices([]);
+  }, [question, requestScope]);
 
   useLayoutEffect(() => {
     if (isQuestion) {
@@ -80,15 +86,17 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
     setSubmitting(true);
     try {
       await sendBackendRequest(state.sessionId, state.clientId, responsePayload);
+      if (currentRequestRef.current !== requestScope) return;
       dispatch({ type: "close_modal" });
       setAnswer("");
     } catch (error) {
+      if (currentRequestRef.current !== requestScope) return;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      setSubmitting(false);
+      if (currentRequestRef.current === requestScope) setSubmitting(false);
     }
   }
 
@@ -110,6 +118,7 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
       setQuestionStepIndex(activeQuestionIndex + 1);
       setAnswer("");
       setChoiceFreeformAnswer("");
+      setSelectedChoices([]);
       return;
     }
     void respond({
@@ -202,13 +211,19 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
               type="button"
               key={`${choice.value}-${index}`}
               disabled={submitting}
-              onClick={() => submitAnswer(choice.value)}
+              aria-pressed={selectedChoices.includes(choice.value)}
+              onClick={() => setSelectedChoices((current) => payload.multi_select === false
+                ? [choice.value]
+                : current.includes(choice.value) ? current.filter((value) => value !== choice.value) : [...current, choice.value])}
             >
               <span className="inline-question-number inline-question-choice-number">A{index + 1}</span>
               <span className="inline-question-choice-copy">{choice.label}</span>
               {choice.description ? <small className="inline-question-choice-description">{choice.description}</small> : null}
             </button>
           ))}
+          <small>{payload.multi_select === false ? "하나만 선택" : "여러 개 선택 가능"}</small>
+          <button type="button" disabled={submitting || !selectedChoices.length}
+            onClick={() => submitAnswer(selectedChoices.join(", "))}>선택한 답변 보내기</button>
         </div>
       ) : null}
       <div className={`inline-question-form${displayChoices.length ? " inline-question-choice-freeform-row" : ""}`}>

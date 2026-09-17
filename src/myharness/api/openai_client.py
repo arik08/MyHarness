@@ -36,6 +36,7 @@ from myharness.api.errors import (
 )
 from myharness.api.usage import UsageSnapshot
 from myharness.api.retry import calculate_retry_delay
+from myharness.api.registry import normalize_pgpt_base_url
 from myharness.config.paths import get_logs_dir
 from myharness.engine.messages import (
     ConversationMessage,
@@ -354,7 +355,7 @@ def _normalize_openai_base_url(base_url: str | None) -> str | None:
     """Normalize custom OpenAI-compatible base URLs without dropping API path segments."""
     if not base_url:
         return None
-    trimmed = base_url.strip()
+    trimmed = normalize_pgpt_base_url(base_url.strip())
     if not trimmed:
         return None
     parts = urlsplit(trimmed)

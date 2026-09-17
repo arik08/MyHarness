@@ -20,7 +20,7 @@ _KO_SKILL_DESCRIPTIONS_BY_NAME: dict[str, str] = {
         "프론트엔드 화면의 아트디렉션·상호작용·이미지·페이지 구성이 핵심일 때 사용을 고려합니다. "
         "요구가 충분하면 스타일 선택 질문 없이 바로 구현합니다. "
         "HTML 보고서, 조사 보고서, A4/PDF 보고서, 밀도 높은 업무용 산출물에는 기본적으로 "
-        "`visual-artifact` 또는 `html-a4-landscape-report`를 사용합니다."
+        "`visual-artifact`를 사용하고, 고정 페이지 산출물은 페이지 크기와 넘침을 검증합니다."
     ),
     "html-a4-landscape-report": (
         "A4 가로 HTML 보고서, PDF용 고정 페이지 자료, 인쇄용 가로 보고서처럼 페이지 단위 레이아웃과 "

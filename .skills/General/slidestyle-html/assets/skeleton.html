@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>덱 제목 — 발표</title>
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<!-- 인라인 favicon. 파일을 두지 않으면 브라우저가 /favicon.ico를 찾아 404를 남긴다.
+     도형은 주제에 맞게 바꾼다. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%23101820%27/%3E%3Cpath d=%27M6 23 L13 14 L19 18 L26 8%27 stroke=%27%2360C0F0%27 stroke-width=%273%27 fill=%27none%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
+
+<!-- 서체. 한글 발표 서체 선택은 references/korean-type.md 참고.
+     기본값은 Paperlogy(발표용으로 설계된 한글 고딕) + 라틴/숫자 전용 모노. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+@font-face{font-family:'Paperlogy';font-weight:400;font-display:swap;
+  src:url('https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy-4Regular.woff2') format('woff2')}
+@font-face{font-family:'Paperlogy';font-weight:600;font-display:swap;
+  src:url('https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy-6SemiBold.woff2') format('woff2')}
+@font-face{font-family:'Paperlogy';font-weight:800;font-display:swap;
+  src:url('https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy-8ExtraBold.woff2') format('woff2')}
+@font-face{font-family:'Paperlogy';font-weight:900;font-display:swap;
+  src:url('https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy-9Black.woff2') format('woff2')}
+</style>
+
+<style>
+/* ═══ 토큰 ═══════════════════════════════════════════════════════════
+ * 팔레트는 브랜드색 하나에서 파생시킨다 → references/palette.md
+ * 아래는 중립 기본값이다. 실제 덱에서는 반드시 갈아치운다.
+ */
+:root{
+  --void:#080D13;        /* 무대 밖 */
+  --paper:#101820;       /* 슬라이드 지면 */
+  --surface:#18242F;     /* 패널 */
+  --brand:#60C0F0;       /* 제목·강조 — 어두운 바닥 위의 글자색 */
+  --brand-solid:#0A6EA8; /* 흰 글자를 얹는 채움 (--brand로 채우면 글자가 사라진다) */
+  --ink:#EAF1F7;
+  --ink-soft:#B3C3D0;
+  --ink-faint:#8B9BA9;
+  --line:rgba(234,241,247,.16);
+  --line-soft:rgba(234,241,247,.08);
+  /* 의미색 — 기회·주의·위험의 실제 의미에만 쓴다 */
+  --pos:#4FD8AE;
+  --warn:#F8C96A;
+  --neg:#FF8A7B;
+
+  --stage-w:1920px;
+  --stage-h:1080px;
+
+  --font-display:'Paperlogy','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+  --font-body:'Paperlogy','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+  /* 모노는 라틴·숫자 전용이다. 한글을 넣으면 글리프가 없어 대체 서체로
+     떨어지고 자간이 벌어진다. 자세한 이유는 references/korean-type.md */
+  --font-mono:'IBM Plex Mono',ui-monospace,'Consolas',monospace;
+}
+
+/* ── 밝은 경로 ────────────────────────────────────────────────────────
+ * 제품 UI와 톤을 맞춰야 할 때, 라이브 데모가 밝은 화면일 때, 또는 내부
+ * 회고처럼 톤을 낮춰야 할 때 쓴다. 위 :root 블록의 값을 이걸로 갈아치운다
+ * (주석을 풀고 위쪽 같은 이름의 값을 지운다).
+ *
+ * 밝은 바닥에서는 브랜드색이 그대로 글자색이 되므로 --brand 와
+ * --brand-solid 가 같아도 된다. 의미색은 명도를 낮춰야 대비가 산다.
+ *
+:root{
+  --void:#E7EBEF;  --paper:#FFFFFF;  --surface:#F4F6F8;
+  --brand:#05507D;  --brand-solid:#05507D;
+  --ink:#20242C;  --ink-soft:#4B5462;  --ink-faint:#6E7885;
+  --line:#D7DDE4;  --line-soft:#E7ECF1;
+  --pos:#0F6152;  --warn:#8A5A00;  --neg:#A32A1E;
+}
+#stage{ box-shadow:0 2px 28px rgba(32,36,44,.13) }
+.panel{ background:var(--surface); border-top:none }
+ */
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--void)}
+body{
+  font-family:var(--font-body);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  /* 한글은 어절 단위로 끊어야 한다. 기본값으로 두면 '선행조건'이
+     '선행조 / 건'처럼 낱자에서 갈라진다. 긴 URL·해시만 각자 break-all. */
+  word-break:keep-all;
+}
+#viewport{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+
+/* ═══ 무대 ═══════════════════════════════════════════════════════════
+ * 1920×1080 논리 좌표에 고정하고 전체를 scale한다. 창 크기가 바뀌어도
+ * 레이아웃이 재계산되지 않는다 — 발표 중 글자가 재배치되는 사고를 막는다.
+ *
+ * flex:none 이 없으면 flex-shrink 기본값이 1920px 무대를 창 폭까지 눌러
+ * **가로만 압축된 화면**이 된다. 눈으로는 "글자가 좀 좁네" 정도로 보여서
+ * 놓치기 쉽다. 무대는 절대 줄어들지 않고, 크기 조절은 transform만 한다.
+ */
+#stage{
+  position:relative;
+  flex:none;
+  width:var(--stage-w);height:var(--stage-h);
+  background:var(--paper);
+  transform-origin:center center;
+  overflow:hidden;
+}
+
+/* ═══ 슬라이드 ═══════════════════════════════════════════════════════ */
+.slide{
+  position:absolute;inset:0;z-index:1;
+  padding:72px 96px 84px;
+  display:flex;flex-direction:column;
+  opacity:0;visibility:hidden;
+  transition:opacity .34s ease;
+}
+.slide.is-active{opacity:1;visibility:visible}
+.slide-body{flex:1;display:flex;flex-direction:column;justify-content:center;min-height:0}
+.slide-body.top{justify-content:flex-start;padding-top:8px}
+
+/* 단계 노출 — PPT의 "클릭할 때마다 한 줄"에 해당한다 */
+[data-step]{opacity:0;transform:translateY(10px);transition:opacity .34s ease,transform .34s ease}
+[data-step].is-shown{opacity:1;transform:none}
+
+@media (prefers-reduced-motion:reduce){
+  .slide,[data-step]{transition:none}
+  [data-step]{transform:none}
+}
+
+/* ═══ 타이포 ═════════════════════════════════════════════════════════
+ * 1920 무대 기준 값이다. 프로젝터 뒷줄을 생각하면 이보다 작게 가지 않는다.
+ * 한글에 음수 자간을 크게 주면 글자가 서로 붙는다 → -0.01em 근처까지만.
+ */
+.kicker{font-family:var(--font-body);font-size:23px;font-weight:600;
+  letter-spacing:.02em;color:var(--ink-faint);margin:0 0 18px}
+h1{font-family:var(--font-display);font-size:112px;line-height:1.1;font-weight:900;
+  color:var(--brand);margin:0;letter-spacing:-.018em}
+h2{font-family:var(--font-display);font-size:68px;line-height:1.22;font-weight:800;
+  color:var(--brand);margin:0 0 18px;letter-spacing:-.012em}
+h3{font-family:var(--font-display);font-size:34px;line-height:1.34;font-weight:800;
+  color:var(--ink);margin:0 0 12px}
+.lede{font-size:36px;line-height:1.52;color:var(--ink-soft);margin:0;max-width:1560px}
+p{font-size:29px;line-height:1.6;margin:0}
+strong{font-weight:700;color:var(--brand)}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* 하단 결론 바 — 그 장의 판단을 한 줄로 닫는다 */
+.closer{margin-top:auto;border-top:3px solid var(--brand);padding-top:24px;
+  font-size:32px;line-height:1.5;color:var(--ink);font-weight:500}
+
+/* ═══ 부품 ═══════════════════════════════════════════════════════════ */
+.cols{display:grid;gap:34px}
+.cols-2{grid-template-columns:1fr 1fr}
+.cols-3{grid-template-columns:repeat(3,1fr)}
+.panel{
+  --accent:var(--brand);
+  position:relative;overflow:hidden;
+  border:1px solid var(--line);padding:34px 34px 32px;
+  background:linear-gradient(168deg,rgba(234,241,247,.07),rgba(234,241,247,.02));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06);
+}
+.panel::before{content:'';position:absolute;left:0;right:0;top:0;height:4px;
+  background:linear-gradient(90deg,var(--accent),transparent 88%)}
+.panel--pos{--accent:var(--pos)}
+.panel--neg{--accent:var(--neg)}
+.panel p{font-size:27px;line-height:1.55;color:var(--ink-soft)}
+.panel .label{font-family:var(--font-body);font-size:19px;font-weight:700;
+  letter-spacing:.01em;color:var(--ink-faint);margin:18px 0 6px}
+
+table{width:100%;border-collapse:collapse;font-size:28px}
+th,td{text-align:left;padding:19px 22px;border-bottom:1px solid var(--line-soft);
+  vertical-align:top;line-height:1.45}
+th{font-size:21px;font-weight:600;color:var(--ink-faint);
+  border-bottom:2px solid var(--line);padding-bottom:14px}
+
+.stats{display:grid;grid-template-columns:repeat(4,1fr);margin:20px 0 34px}
+.stat{padding:0 34px;border-left:1px solid var(--line)}
+.stat:first-child{padding-left:0;border-left:0}
+.stat .v{font-family:var(--font-mono);font-size:120px;font-weight:600;line-height:1;
+  color:var(--brand);font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+.stat .l{font-size:29px;font-weight:800;color:var(--ink);margin-top:14px}
+.stat .s{font-size:22px;color:var(--ink-faint);margin-top:6px;line-height:1.42}
+
+/* ═══ 차트 (라이브러리 없이) ═════════════════════════════════════════
+ * 언제 차트를 쓰고 무엇을 피할지는 references/charts.md 를 본다.
+ * 값 라벨을 막대에 직접 얹는 이유: y축 눈금을 만들면 청중이 눈으로 값을
+ * 읽어야 하는데, 발표 속도에서는 아무도 그걸 하지 않는다.
+ */
+.chart{display:flex;align-items:flex-end;height:400px;border-bottom:2px solid var(--line)}
+.chart-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+  align-items:center;height:100%;position:relative}
+.chart-bar{width:64%;background:var(--brand);border-radius:3px 3px 0 0;height:0;
+  transition:height .8s cubic-bezier(.22,.7,.3,1)}
+.chart-bar.gap{background:var(--line);opacity:.6}   /* 값이 0인 구간 */
+.chart-val{font-family:var(--font-mono);font-size:26px;font-weight:600;color:var(--brand);
+  margin-bottom:10px;font-variant-numeric:tabular-nums}
+.chart-val.zero{color:var(--ink-faint)}
+.chart-note{position:absolute;top:0;left:50%;transform:translateX(-50%);
+  font-size:21px;font-weight:700;color:var(--warn);white-space:nowrap}
+/* x축은 .chart 밖에 두고 같은 flex 분할을 쓴다 — 안에 넣으면 막대 높이 계산에 섞인다 */
+.chart-x{display:flex;margin-top:14px}
+.chart-x div{flex:1;text-align:center;font-size:20px;color:var(--ink-faint);line-height:1.4}
+
+/* 가로 막대 — 한글 레이블이 길거나 항목이 4개 이상일 때 */
+.bar-row{display:grid;grid-template-columns:200px 1fr 110px;gap:22px;
+  align-items:center;margin-bottom:18px}
+.bar-label{font-size:27px;color:var(--ink)}
+.bar-track{height:42px;background:rgba(234,241,247,.07);overflow:hidden}
+.bar-fill{height:100%;width:0;background:var(--brand);
+  transition:width .85s cubic-bezier(.22,.7,.3,1)}
+/* 단위(건·%)가 붙어 한글이 섞이므로 모노를 걸지 않는다 */
+.bar-value{font-size:29px;font-weight:800;text-align:right;color:var(--brand);
+  font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){.chart-bar,.bar-fill{transition:none}}
+
+/* ═══ 진행 표시 ══════════════════════════════════════════════════════ */
+#progress{position:absolute;left:0;right:0;bottom:0;height:5px;
+  background:rgba(234,241,247,.08);z-index:2}
+#progress-fill{height:100%;width:0;transition:width .34s ease;background:var(--brand)}
+#counter{position:absolute;right:96px;bottom:32px;z-index:2;
+  font-family:var(--font-mono);font-size:20px;font-weight:600;
+  color:var(--ink-faint);letter-spacing:.06em}
+#chapter-tag{position:absolute;left:96px;bottom:32px;z-index:2;
+  font-family:var(--font-body);font-size:21px;font-weight:600;color:var(--ink-faint)}
+
+/* ═══ 도움말 ═════════════════════════════════════════════════════════ */
+#help{position:absolute;inset:0;background:rgba(8,13,19,.95);
+  display:none;align-items:center;justify-content:center;z-index:50}
+#help.on{display:flex}
+#help .box{background:var(--surface);border:1px solid var(--line);
+  padding:56px 64px;max-width:820px}
+#help h3{font-size:34px;color:var(--brand);margin-bottom:26px}
+#help dl{display:grid;grid-template-columns:auto 1fr;gap:16px 30px;margin:0;font-size:23px}
+#help dt{font-family:var(--font-mono);font-weight:600;color:var(--brand)}
+#help dd{margin:0;color:var(--ink-soft)}
+</style>
+</head>
+<body>
+<div id="viewport">
+<div id="stage">
+
+<!-- ══ 1. 표지 ══════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-body">
+    <p class="kicker">행사·맥락 한 줄</p>
+    <h1>덱 제목</h1>
+    <p class="lede" style="margin-top:24px">한 문장 요약. 이 덱이 이기려는 문장을 여기 둔다.</p>
+  </div>
+</section>
+
+<!-- ══ 2. 단계 노출 예시 ════════════════════════════════════════════ -->
+<section class="slide" data-chapter="문제">
+  <p class="kicker">문제</p>
+  <h2>한 장은 한 가지만 말한다</h2>
+  <div class="slide-body">
+    <div class="cols cols-2">
+      <div class="panel" data-step="1">
+        <h3>먼저 나오는 것</h3>
+        <p>클릭하면 이 패널이 나온다.</p>
+      </div>
+      <div class="panel" data-step="2">
+        <h3>다음에 나오는 것</h3>
+        <p>한 번 더 클릭하면 이쪽이 나온다.</p>
+      </div>
+    </div>
+  </div>
+  <p class="closer" data-step="3">내용이 넘치면 글자를 줄이지 말고 <strong>장을 쪼갠다.</strong></p>
+</section>
+
+<!-- ══ 3. 카운트업 예시 ════════════════════════════════════════════ -->
+<section class="slide" data-chapter="규모">
+  <p class="kicker">규모</p>
+  <h2>실측값만 쓴다</h2>
+  <div class="slide-body">
+    <div class="stats">
+      <div class="stat"><div class="v" data-count="59">0</div><div class="l">항목</div>
+        <div class="s">보조 설명</div></div>
+      <div class="stat"><div class="v" data-count="764">0</div><div class="l">항목</div>
+        <div class="s">보조 설명</div></div>
+      <div class="stat"><div class="v" data-count="13">0</div><div class="l">항목</div>
+        <div class="s">보조 설명</div></div>
+      <div class="stat"><div class="v" data-count="74">0</div><div class="l">항목</div>
+        <div class="s">보조 설명</div></div>
+    </div>
+    <p class="lede" data-step="1">많이 모았기 때문이 아니라 걸러냈기 때문이라는 식으로,
+    숫자에 <strong>해석</strong>을 붙인다.</p>
+    <div class="bar-row" data-step="2">
+      <div class="bar-label">정책·규제</div>
+      <div class="bar-track"><div class="bar-fill" data-pct="100"></div></div>
+      <div class="bar-value">21건</div>
+    </div>
+    <div class="bar-row" data-step="2">
+      <div class="bar-label">수급·가격</div>
+      <div class="bar-track"><div class="bar-fill" data-pct="62"></div></div>
+      <div class="bar-value">13건</div>
+    </div>
+  </div>
+</section>
+
+<div id="chapter-tag"></div>
+<div id="counter"></div>
+<div id="progress"><div id="progress-fill"></div></div>
+
+<div id="help" role="dialog" aria-label="키 안내">
+  <div class="box">
+    <h3>발표 조작</h3>
+    <dl>
+      <dt>&rarr; Space PageDown</dt><dd>다음 단계 / 다음 장</dd>
+      <dt>&larr; PageUp</dt><dd>이전</dd>
+      <dt>&darr; &uarr;</dt><dd>단계를 건너뛰고 장 단위로 이동</dd>
+      <dt>Home End</dt><dd>처음 / 마지막 장</dd>
+      <dt>F</dt><dd>전체화면</dd>
+      <dt>1 … 9 0</dt><dd>장 번호로 이동</dd>
+      <dt>?</dt><dd>이 안내 열기 / 닫기</dd>
+    </dl>
+  </div>
+</div>
+
+</div><!-- /#stage -->
+</div><!-- /#viewport -->
+
+<script>
+(() => {
+"use strict";
+
+const stage   = document.getElementById('stage');
+const slides  = [...document.querySelectorAll('.slide')];
+const fill    = document.getElementById('progress-fill');
+const counter = document.getElementById('counter');
+const tag     = document.getElementById('chapter-tag');
+const help    = document.getElementById('help');
+const STAGE_W = 1920, STAGE_H = 1080;
+const reduce  = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ── 무대 맞춤 ──────────────────────────────────────────────────────
+ * **0을 절대 쓰지 않는다.** 숨은 탭이나 레이아웃 전에 로드되면 innerWidth가
+ * 0으로 나오고, 그대로 scale(0)을 박으면 화면이 통째로 사라진 뒤 resize가
+ * 올 때까지 복구되지 않는다. 발표 직전 탭을 미리 열어두는 흔한 상황에서
+ * 그대로 터지는 자리라, 값이 유효할 때까지 다음 프레임에 다시 잰다.
+ */
+function fitStage(){
+  const w = innerWidth  || document.documentElement.clientWidth;
+  const h = innerHeight || document.documentElement.clientHeight;
+  if (!w || !h) { requestAnimationFrame(fitStage); return; }
+  stage.style.transform = `scale(${Math.min(w / STAGE_W, h / STAGE_H)})`;
+}
+['resize','load','orientationchange'].forEach(e => addEventListener(e, fitStage));
+document.addEventListener('visibilitychange', fitStage);
+document.addEventListener('fullscreenchange', fitStage);
+if (window.ResizeObserver) new ResizeObserver(fitStage).observe(document.documentElement);
+fitStage();
+
+/* ── 단계 ───────────────────────────────────────────────────────────*/
+const stepsOf = slides.map(sl => {
+  const ns = [...sl.querySelectorAll('[data-step]')].map(e => +e.dataset.step);
+  return ns.length ? Math.max(...ns) : 0;
+});
+
+let cur = 0, step = 0;
+
+function applySteps(){
+  slides[cur].querySelectorAll('[data-step]').forEach(el => {
+    el.classList.toggle('is-shown', +el.dataset.step <= step);
+  });
+}
+
+function render(){
+  slides.forEach((sl,i) => sl.classList.toggle('is-active', i === cur));
+  applySteps();
+  fill.style.width = ((cur + 1) / slides.length * 100) + '%';
+  counter.textContent = String(cur + 1).padStart(2,'0') + ' / ' +
+                        String(slides.length).padStart(2,'0');
+  tag.textContent = slides[cur].dataset.chapter || '';
+  const hash = '#/' + (cur + 1);
+  if (location.hash !== hash) history.replaceState(null,'',hash);
+  /* 애니메이션은 장 번호로 묶지 않는다. 슬라이드를 하나 끼워 넣는 순간
+     번호가 밀려 조용히 죽는다 — 발표 당일에야 알게 되는 종류의 사고다. */
+  if (slides[cur].querySelector('[data-count]')) runCounts();
+  if (slides[cur].querySelector('.chart-bar,.bar-fill')) runBars();
+}
+
+function go(i, atEnd){
+  cur = Math.max(0, Math.min(slides.length - 1, i));
+  step = atEnd ? stepsOf[cur] : 0;
+  render();
+}
+function next(){
+  if (step < stepsOf[cur]) { step++; applySteps(); }
+  else if (cur < slides.length - 1) go(cur + 1, false);
+}
+function prev(){
+  if (step > 0) { step--; applySteps(); }
+  else if (cur > 0) go(cur - 1, true);
+}
+
+/* ── 카운트업 ───────────────────────────────────────────────────────*/
+let counted = false;
+function runCounts(){
+  if (counted) return; counted = true;
+  document.querySelectorAll('[data-count]').forEach(node => {
+    const target = +node.dataset.count;
+    if (reduce) { node.textContent = target; return; }
+    const dur = 900, t0 = performance.now();
+    (function tick(t){
+      const k = Math.min(1, (t - t0) / dur);
+      node.textContent = Math.round(target * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(tick);
+    })(t0);
+  });
+}
+
+let barred = false;
+function runBars(){
+  if (barred) return; barred = true;
+  document.querySelectorAll('.chart-bar').forEach((b,i) => {
+    setTimeout(() => { b.style.height = b.dataset.h + '%' }, reduce ? 0 : i * 90);
+  });
+  document.querySelectorAll('.bar-fill').forEach((b,i) => {
+    setTimeout(() => { b.style.width = b.dataset.pct + '%' }, reduce ? 0 : i * 120);
+  });
+}
+
+/* ── 키·클릭·스와이프 ───────────────────────────────────────────────*/
+let numBuf = '';
+addEventListener('keydown', e => {
+  if (e.key === '?' || (e.key === '/' && e.shiftKey)) { help.classList.toggle('on'); return; }
+  if (help.classList.contains('on')) { help.classList.remove('on'); return; }
+  switch (e.key) {
+    case 'ArrowRight': case ' ': case 'PageDown': case 'Enter':
+      e.preventDefault(); next(); break;
+    case 'ArrowLeft': case 'PageUp': case 'Backspace':
+      e.preventDefault(); prev(); break;
+    case 'ArrowDown': e.preventDefault(); go(cur + 1, false); break;
+    case 'ArrowUp':   e.preventDefault(); go(cur - 1, false); break;
+    case 'Home': go(0, false); break;
+    case 'End':  go(slides.length - 1, false); break;
+    case 'f': case 'F':
+      document.fullscreenElement ? document.exitFullscreen()
+                                 : document.documentElement.requestFullscreen?.();
+      break;
+    default:
+      if (/^[0-9]$/.test(e.key)) {
+        numBuf += e.key;
+        clearTimeout(window.__nb);
+        window.__nb = setTimeout(() => {
+          const n = parseInt(numBuf,10); numBuf = '';
+          if (n >= 1 && n <= slides.length) go(n - 1, false);
+        }, 420);
+      }
+  }
+});
+
+/* 클릭 넘김. data-noclick이 붙은 장에서는 끈다 — 슬라이더나 버튼을
+   만지는 장에서 컨트롤 옆 빈 공간을 스치면 장이 넘어가 사고가 된다. */
+stage.addEventListener('click', e => {
+  if (e.target.closest('input,button,a,select,textarea,#help')) return;
+  if (slides[cur].hasAttribute('data-noclick')) return;
+  next();
+});
+
+let tx = 0, ty = 0;
+stage.addEventListener('touchstart', e => {
+  tx = e.touches[0].clientX; ty = e.touches[0].clientY;
+}, {passive:true});
+stage.addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - tx, dy = e.changedTouches[0].clientY - ty;
+  if (Math.abs(dx) > 46 && Math.abs(dx) > Math.abs(dy)) (dx < 0 ? next() : prev());
+}, {passive:true});
+
+/* ── 해시 진입 ──────────────────────────────────────────────────────
+ * 같은 문서 안에서 주소만 바뀌는 경우(딥링크 붙여넣기, 브라우저 뒤로/앞으로)
+ * 에는 스크립트가 다시 돌지 않으므로 hashchange를 듣는다. 이걸 빼면
+ * 주소창에 #/7을 넣어도 화면이 그대로 있는다.
+ */
+function fromHash(){
+  const m = /^#\/(\d+)/.exec(location.hash);
+  return m ? Math.min(slides.length, Math.max(1, +m[1])) - 1 : 0;
+}
+addEventListener('hashchange', () => { if (fromHash() !== cur) go(fromHash(), false); });
+go(fromHash(), false);
+})();
+</script>
+</body>
+</html>

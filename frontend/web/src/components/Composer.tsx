@@ -1,3 +1,4 @@
+import { createClientId } from "../utils/ids";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
 import { cancelMessage, enhancePrompt, sendBackendRequest, sendMessage, uploadClientAttachments } from "../api/messages";
@@ -103,7 +104,6 @@ function commandSuggestions(commands: CommandItem[], query: string): Suggestion[
   const normalized = query.replace(/^\//, "").toLowerCase();
   return commands
     .filter((command) => command.name.toLowerCase().includes(normalized))
-    .slice(0, 8)
     .map((command) => ({
       kind: "command",
       value: command.name.startsWith("/") ? command.name : `/${command.name}`,
@@ -113,6 +113,7 @@ function commandSuggestions(commands: CommandItem[], query: string): Suggestion[
 }
 
 function skillSuggestions(skills: SkillItem[], query: string): Suggestion[] {
+  if (/^\$mcp(?::|$)/i.test(query)) return [];
   const normalized = query.replace(/^\$/, "").toLowerCase();
   return skills
     .filter((skill) => !isSkillMcpSource(skill.source || ""))
@@ -130,7 +131,7 @@ function isSkillMcpSource(source: string) {
 }
 
 function skillMcpSuggestions(skills: SkillItem[], query: string): Suggestion[] {
-  const normalized = query.replace(/^\$/, "").replace(/^mcp:/i, "").toLowerCase();
+  const normalized = query.replace(/^\$/, "").replace(/^mcp(?::|$)/i, "").toLowerCase();
   return skills
     .filter((skill) => isSkillMcpSource(skill.source || ""))
     .filter((skill) => `${skill.name} ${skill.description || ""}`.toLowerCase().includes(normalized))
@@ -143,7 +144,7 @@ function skillMcpSuggestions(skills: SkillItem[], query: string): Suggestion[] {
 }
 
 function mcpSuggestions(servers: McpServerItem[], skills: SkillItem[], query: string): Suggestion[] {
-  const normalized = query.replace(/^\$/, "").replace(/^mcp:/i, "").toLowerCase();
+  const normalized = query.replace(/^\$/, "").replace(/^mcp(?::|$)/i, "").toLowerCase();
   const visibleServerNames = new Set(
     servers
       .filter((server) => server.state !== "disabled")
@@ -181,7 +182,6 @@ function fileSuggestions(artifacts: ArtifactSummary[], query: string): Suggestio
       const displayName = artifactDisplayName(artifact);
       return artifact.path.toLowerCase().includes(normalized) || displayName.toLowerCase().includes(normalized);
     })
-    .slice(0, 8)
     .map((artifact) => {
       const displayName = artifactDisplayName(artifact);
       return {
@@ -194,10 +194,13 @@ function fileSuggestions(artifacts: ArtifactSummary[], query: string): Suggestio
 }
 
 function activeSuggestionToken(value: string, cursorOffset: number): ActiveSuggestionToken | null {
-  const end = Math.max(0, Math.min(cursorOffset, value.length));
-  const beforeCursor = value.slice(0, end);
-  const tokenStart = Math.max(beforeCursor.lastIndexOf(" "), beforeCursor.lastIndexOf("\n"), beforeCursor.lastIndexOf("\t")) + 1;
-  const query = beforeCursor.slice(tokenStart);
+  const cursor = Math.max(0, Math.min(cursorOffset, value.length));
+  const beforeCursor = value.slice(0, cursor);
+  const tokenStart = beforeCursor.search(/\S*$/);
+  // Resolve the whole token, including the part to the right of the caret.
+  // This also recognizes a name when its trigger was just inserted in front.
+  const end = cursor + (value.slice(cursor).match(/^\S*/)?.[0].length ?? 0);
+  const query = value.slice(tokenStart, end);
 
   if (!query) return null;
   if (query.startsWith("$")) return { trigger: "$", query, start: tokenStart, end };
@@ -236,12 +239,15 @@ export function Composer() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const clientFileInputRef = useRef<HTMLInputElement | null>(null);
   const activeSuggestionRef = useRef<HTMLButtonElement | null>(null);
+  const suggestionMenuRef = useRef<HTMLDivElement | null>(null);
   const uploadedAttachmentsRef = useRef<UploadedClientAttachment[]>([]);
   const composerHeightRef = useRef(0);
   const composerMetricFrameRef = useRef(0);
   const composerFollowFrameRef = useRef(0);
   const chatPanelMetricFrameRef = useRef(0);
   const submittingRef = useRef(false);
+  const currentSessionRef = useRef(state.sessionId);
+  currentSessionRef.current = state.sessionId;
   const draft = state.composer.draft;
   latestDraft.current = draft;
   const hasPayload = Boolean(draft.trim() || state.composer.attachments.length || uploadedAttachments.length || state.composer.pastedTexts.length);
@@ -270,6 +276,21 @@ export function Composer() {
   const activeSuggestionIndex = suggestions.length ? Math.min(selectedSuggestionIndex, suggestions.length - 1) : 0;
 
   useEffect(() => {
+    if (!suggestionToken) return;
+    const dismissOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (suggestionMenuRef.current?.contains(target) || composerBoxRef.current?.contains(target)) return;
+      const pickerButtons = composerRef.current?.querySelectorAll('[aria-controls="slashMenu"]');
+      if (pickerButtons && [...pickerButtons].some((button) => button.contains(target))) return;
+      setSuggestionPicker(null);
+      setDismissedSuggestion(suggestionKey);
+    };
+    document.addEventListener("pointerdown", dismissOutside, true);
+    return () => document.removeEventListener("pointerdown", dismissOutside, true);
+  }, [suggestionToken, suggestionKey]);
+
+  useEffect(() => {
     setReferenceFiles([]);
     setSuggestionPicker(null);
     setDismissedSuggestion(null);
@@ -294,7 +315,7 @@ export function Composer() {
     if (!state.busy) {
       submittingRef.current = false;
     }
-  }, [state.busy]);
+  }, [state.busy, state.sessionId]);
 
   useEffect(() => {
     uploadedAttachmentsRef.current = uploadedAttachments;
@@ -681,8 +702,9 @@ export function Composer() {
     const replaceEnd = Math.max(suggestionToken.end, input?.selectionEnd ?? suggestionToken.end);
     const suffix = draft.slice(replaceEnd);
     const shouldSeparateMention = suggestionToken.trigger === "@" || suggestionToken.trigger === "$";
-    const spacer = shouldSeparateMention && !suffix.startsWith(" ") ? " " : "";
-    const cursorSpacerOffset = shouldSeparateMention && suffix.startsWith(" ") ? 1 : spacer.length;
+    const hasSeparator = /^\s/.test(suffix);
+    const spacer = shouldSeparateMention && !hasSeparator ? " " : "";
+    const cursorSpacerOffset = shouldSeparateMention && hasSeparator ? 1 : spacer.length;
     const prefix = draft.slice(0, suggestionToken.start);
     const leadingSpacer = suggestionPicker && prefix && !/\s$/.test(prefix) ? " " : "";
     const nextDraft = `${prefix}${leadingSpacer}${suggestion.value}${spacer}${suffix}`;
@@ -709,8 +731,10 @@ export function Composer() {
     if (!state.sessionId) return;
     try {
       await cancelMessage(state.sessionId, state.clientId);
+      if (currentSessionRef.current !== state.sessionId) return;
       dispatch({ type: "set_busy", value: false });
     } catch (error) {
+      if (currentSessionRef.current !== state.sessionId) return;
       dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
     }
   }
@@ -729,15 +753,17 @@ export function Composer() {
         attachments: [],
         suppressUserTranscript: true,
       });
+      if (currentSessionRef.current !== state.sessionId) return;
       dispatch({ type: "set_draft", value: currentDraft });
     } catch (error) {
+      if (currentSessionRef.current !== state.sessionId) return;
       dispatch({ type: "set_permission_mode", value: previousPermissionMode });
       dispatch({
         type: "backend_event",
         event: { type: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      submittingRef.current = false;
+      if (currentSessionRef.current === state.sessionId) submittingRef.current = false;
     }
   }
 
@@ -770,6 +796,7 @@ export function Composer() {
         }).catch((error: unknown) => {
           dispatch({
             type: "backend_event",
+            sessionId: state.sessionId || undefined,
             event: { type: "error", message: error instanceof Error ? error.message : String(error) },
           });
         });
@@ -837,6 +864,7 @@ export function Composer() {
           cwd: state.workspacePath || undefined,
           ...runtimePreferencesFromState(state),
         });
+        if (currentSessionRef.current !== targetSessionId) return;
         targetSessionId = session.sessionId;
         dispatch({
           type: "session_started",
@@ -861,7 +889,7 @@ export function Composer() {
       try {
         await sendMessage(payload);
       } catch (error) {
-        if (!isUnknownSessionError(error)) {
+        if (!isUnknownSessionError(error) || currentSessionRef.current !== targetSessionId) {
           throw error;
         }
         const session = await startSession({
@@ -869,6 +897,8 @@ export function Composer() {
           cwd: state.workspacePath || undefined,
           ...runtimePreferencesFromState(state),
         });
+        if (currentSessionRef.current !== targetSessionId) return;
+        targetSessionId = session.sessionId;
         dispatch({
           type: "session_started",
           sessionId: session.sessionId,
@@ -883,6 +913,7 @@ export function Composer() {
     } catch (error) {
       dispatch({
         type: "backend_event",
+        sessionId: targetSessionId,
         event: { type: "error", message: error instanceof Error ? error.message : String(error) },
       });
     }
@@ -902,7 +933,7 @@ export function Composer() {
       });
       return;
     }
-    const requestId = globalThis.crypto?.randomUUID?.() || `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const requestId = createClientId();
     dispatch({
       type: "append_message",
       message: {
@@ -928,6 +959,7 @@ export function Composer() {
     } catch (error) {
       dispatch({
         type: "backend_event",
+        sessionId: state.sessionId,
         event: { type: "error", message: error instanceof Error ? error.message : String(error) },
       });
     }
@@ -1031,7 +1063,6 @@ export function Composer() {
 
   return (
     <form className="composer" id="composer" ref={composerRef} onSubmit={handleSubmit}>
-      <div className="composer-task-toggle"><TodoDock variant="composerButton" /></div>
       <TodoDock variant="dock" />
       {state.statusText.includes("대기열") && state.statusText.includes("번째") ? (
         <div className="capacity-queue-notice" role="status" aria-live="polite">
@@ -1133,6 +1164,7 @@ export function Composer() {
             onPaste={handlePaste}
             onSelect={(event) => syncCursorFromInput(event.currentTarget)}
           />
+          <TodoDock variant="composerButton" />
           <button
             id="sendButton"
             className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}
@@ -1152,7 +1184,7 @@ export function Composer() {
             )}
           </button>
         </div>
-        <div className={`slash-menu${suggestions.length ? "" : " hidden"}`} id="slashMenu" role="listbox" aria-label="명령어와 스킬">
+        <div ref={suggestionMenuRef} className={`slash-menu${suggestions.length ? "" : " hidden"}`} id="slashMenu" role="listbox" aria-label="명령어와 스킬">
           {suggestions.map((suggestion, index) => (
             <button
               className={`slash-menu-item${index === activeSuggestionIndex ? " active" : ""}`}

@@ -5,8 +5,20 @@ import { useAppState } from "../state/app-state";
 import "./QuestionRound.css";
 
 type Choice = { value: string; label?: string; description?: string };
-type Question = { id: string; question: string; choices: Choice[] };
-type Answer = { id: string; answer: string; kind: "choice" | "text" };
+type Question = { id: string; question: string; choices: Choice[]; multi_select?: boolean };
+type Answer = { id: string; answer: string | string[]; kind: "choice" | "text" };
+
+function choiceValues(answer?: Answer): string[] {
+  return answer?.kind === "choice" ? (Array.isArray(answer.answer) ? answer.answer : [answer.answer]) : [];
+}
+
+function validAnswer(question: Question, item?: Answer): boolean {
+  if (item?.kind === "text") return typeof item.answer === "string" && !!item.answer.trim();
+  const values = choiceValues(item);
+  return values.length > 0 && (question.multi_select !== false || values.length === 1)
+    && new Set(values).size === values.length
+    && values.every((value) => question.choices.some((choice) => choice.value === value));
+}
 
 export function QuestionRound({ payload }: { payload: Record<string, unknown> }) {
   const { state } = useAppState();
@@ -18,17 +30,15 @@ export function QuestionRound({ payload }: { payload: Record<string, unknown> })
       const saved = JSON.parse(sessionStorage.getItem(draftKey) || "{}");
       return Object.fromEntries(questions.flatMap((question) => {
         const item = saved?.[question.id];
-        return item && typeof item.answer === "string"
-          && (item.kind === "text" || (item.kind === "choice" && question.choices.some((c) => c.value === item.answer)))
+        return validAnswer(question, item)
           ? [[question.id, { ...item, id: question.id }]] : [];
       }));
     } catch { return {}; }
   });
-  const [customText, setCustomText] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(answers).filter(([, item]) => item.kind === "text").map(([id, item]) => [id, item.answer])));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
-  const completeCount = questions.filter((question) => answers[question.id]?.answer.trim()).length;
+  const completeCount = questions.filter((question) => validAnswer(question, answers[question.id])).length;
 
   useEffect(() => {
     try { sessionStorage.setItem(draftKey, JSON.stringify(answers)); } catch { /* Storage may be disabled. */ }
@@ -43,7 +53,13 @@ export function QuestionRound({ payload }: { payload: Record<string, unknown> })
   }, [payload]);
 
   function updateAnswer(question: Question, value: string, kind: Answer["kind"]) {
-    setAnswers((current) => ({ ...current, [question.id]: { id: question.id, answer: value, kind } }));
+    setAnswers((current) => {
+      const selected = choiceValues(current[question.id]);
+      const answer = kind === "choice" && question.multi_select !== false
+        ? (selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value])
+        : value;
+      return { ...current, [question.id]: { id: question.id, answer, kind } };
+    });
     setError("");
   }
 
@@ -56,7 +72,8 @@ export function QuestionRound({ payload }: { payload: Record<string, unknown> })
       await sendBackendRequest(state.sessionId, state.clientId, {
         type: "question_response", request_id: requestId,
         answer: JSON.stringify(questions.map((question) => ({
-          ...answers[question.id], answer: answers[question.id].answer.trim(),
+          ...answers[question.id], answer: typeof answers[question.id].answer === "string"
+            ? (answers[question.id].answer as string).trim() : answers[question.id].answer,
         }))),
       });
       // The backend acknowledgement closes only this request, not a newer question.
@@ -88,31 +105,26 @@ export function QuestionRound({ payload }: { payload: Record<string, unknown> })
           return (
             <fieldset key={question.id} disabled={submitting} className="clarification-question">
               <legend><span>질문 {index + 1} / {questions.length}</span><strong>{question.question}</strong></legend>
+              {question.choices.length > 0 && <small>{question.multi_select === false ? "하나만 선택" : "여러 개 선택 가능"}</small>}
               <div className="clarification-options">
                 {question.choices.map((choice) => (
                   <button key={choice.value} type="button"
-                    className={selected?.kind === "choice" && selected.answer === choice.value ? "is-selected" : ""}
-                    aria-pressed={selected?.kind === "choice" && selected.answer === choice.value}
+                    className={choiceValues(selected).includes(choice.value) ? "is-selected" : ""}
+                    aria-pressed={choiceValues(selected).includes(choice.value)}
                     onClick={() => updateAnswer(question, choice.value, "choice")}>
                     <span>{choice.label || choice.value}</span>
                     {choice.description && <small>{choice.description}</small>}
                   </button>
                 ))}
               </div>
-              <form className="clarification-custom-answer" onSubmit={(event) => {
-                event.preventDefault();
-                if (customText[question.id]?.trim()) updateAnswer(question, customText[question.id].trim(), "text");
-              }}>
+              <div className="clarification-custom-answer">
                 <input type="text" aria-label={`${index + 1}번 질문에 직접 답변`}
-                  placeholder="직접 답변하기" value={customText[question.id] || ""}
+                  placeholder="직접 답변하기" value={selected?.kind === "text" ? String(selected.answer) : ""}
                   onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    setCustomText((current) => ({ ...current, [question.id]: value }));
-                    if (selected?.kind === "text") updateAnswer(question, value, "text");
+                    updateAnswer(question, event.currentTarget.value, "text");
                   }}
-                  onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing && event.key === "Enter") event.preventDefault(); }} />
-                <button type="submit" disabled={submitting || !customText[question.id]?.trim()}>적용</button>
-              </form>
+                  onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") event.preventDefault(); }} />
+              </div>
               {selected?.kind === "text" && selected.answer === "AI가 판단해 주세요." && <div className="clarification-ai-answer">AI가 판단하도록 맡겼습니다.</div>}
             </fieldset>
           );

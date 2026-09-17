@@ -1,0 +1,6 @@
+# 검증 중 생기는 임시 산출물
+*.png
+*.pdf
+bgonly*
+.playwright-mcp/
+__pycache__/

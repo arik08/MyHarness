@@ -35,7 +35,7 @@ async def test_web_fetch_tool_reads_html(tmp_path, monkeypatch):
     )
 
     assert result.is_error is False
-    assert captured["timeout"] == 45.0
+    assert captured["timeout"] == pytest.approx(45.0)
     assert "외부 콘텐츠" in result.output
     assert "MyHarness Test" in result.output
     assert "web fetch works" in result.output
@@ -74,7 +74,7 @@ async def test_web_search_tool_reads_results(tmp_path, monkeypatch):
     )
 
     assert result.is_error is False
-    assert captured["timeout"] == 45.0
+    assert captured["timeout"] == pytest.approx(45.0)
     assert "MyHarness Docs" in result.output
     assert "https://example.com/docs" in result.output
     assert "myharness docs" in result.output

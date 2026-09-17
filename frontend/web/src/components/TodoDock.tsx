@@ -26,7 +26,7 @@ type TodoDockProps = {
   variant?: "dock" | "composerButton";
 };
 
-const maxTodoActivityLines = 3;
+const maxTodoActivityLines = 1;
 
 const todoActivityGenericDetails = new Set([
   "준비됨",
@@ -305,10 +305,9 @@ export function TodoDock({ variant = "dock" }: TodoDockProps) {
               <span className="todo-label">{item.done ? `(완료) ${item.label}` : item.label}</span>
               {index === runningIndex && activityLines.length ? (
                 <ul className="todo-activity-list" aria-label="현재 작업 진행">
-                  {[...activityLines].reverse().map((line, activityIndex) => (
-                    <li className={`todo-activity-line${activityIndex === 0 ? " latest" : ""}`} key={`${activityIndex}-${line}`}>
-                      <span className="todo-activity-order">{activityIndex === 0 ? "최신" : `이전 ${activityIndex}`}</span>
-                      <span>{line}</span>
+                  {activityLines.map((line) => (
+                    <li className="todo-activity-line" key={line}>
+                      {line}
                     </li>
                   ))}
                 </ul>

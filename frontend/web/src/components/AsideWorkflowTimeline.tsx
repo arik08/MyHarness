@@ -1,10 +1,11 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { SwarmTeammateSnapshot } from "../types/backend";
 import type { WorkflowEvent } from "../types/ui";
-import { toolDisplayName, workflowDisplayStatus, workflowGroupStatus } from "../utils/toolPresentation";
+import { httpStatusLabel, toolDisplayName, workflowDisplayStatus, workflowGroupStatus } from "../utils/toolPresentation";
 import { InlineMarkdown } from "./MarkdownMessage";
 import { Icon, type IconName } from "./ArtifactIcons";
 import "./aside-workflow.css";
+import { QuestionHistory, questionHistory } from "./QuestionHistory";
 
 type TimelineRow = { kind: "note"; event: WorkflowEvent } | { kind: "actions"; events: WorkflowEvent[]; index: number };
 
@@ -38,7 +39,7 @@ export function asideTimelineRows(events: WorkflowEvent[]): TimelineRow[] {
     if (event.noteSource === "provider-summary" && !reasoningSummaryBody(event.detail)) continue;
     if (event.role === "agents" && !event.agents?.length) continue;
     if (!event.toolName && event.role !== "agents" && !event.detail.trim() && !(event.role === "waiting" && event.title.trim())) continue;
-    if (event.role === "reasoning" || event.role === "waiting" || event.role === "agents" || event.toolName === "context_compaction") {
+    if (event.role === "reasoning" || event.role === "waiting" || event.role === "agents" || event.toolName === "context_compaction" || questionHistory(event)) {
       rows.push({ kind: "note", event });
     } else if (event.toolName) {
       const last = rows.at(-1);
@@ -120,17 +121,18 @@ function Chevron() {
 }
 
 // Only disclosure booleans are persisted. Never put tool inputs or outputs here.
-function Disclosure({ storageKey, label, children, defaultOpen = false, className = "", ariaLabel, pending = false, pendingWhenClosed = false }: {
-  storageKey: string; label: ReactNode; children: ReactNode; defaultOpen?: boolean; className?: string; ariaLabel?: string; pending?: boolean; pendingWhenClosed?: boolean;
+function Disclosure({ storageKey, label, children, defaultOpen = false, className = "", ariaLabel, pending = false, pendingWhenClosed = false, running = false }: {
+  storageKey: string; label: ReactNode; children: ReactNode; defaultOpen?: boolean; className?: string; ariaLabel?: string; pending?: boolean; pendingWhenClosed?: boolean; running?: boolean;
 }) {
   const id = useId();
   const read = () => { try { const stored = sessionStorage.getItem(storageKey); return stored === null ? defaultOpen : stored === "1"; } catch { return defaultOpen; } };
   const [open, setOpen] = useState(read);
   useEffect(() => setOpen(read()), [storageKey]);
+  const showPending = pending || (pendingWhenClosed && !open);
   return <section className={`aside-disclosure ${className}`}>
-    <button type="button" className="aside-toggle" aria-label={ariaLabel} aria-expanded={open} aria-controls={id}
+    <button type="button" className="aside-toggle" data-spinning={running || showPending || undefined} aria-label={ariaLabel} aria-expanded={open} aria-controls={id}
       onClick={() => { const next = !open; setOpen(next); try { sessionStorage.setItem(storageKey, next ? "1" : "0"); } catch { /* storage can be disabled */ } }}>
-      {label}<Chevron />{(pending || (pendingWhenClosed && !open)) ? <span className="aside-running-spinner aside-response-spinner" role="status" aria-label="응답 생성 중" /> : null}
+      {running || showPending ? <span className="aside-spinner-slot"><span className="aside-running-spinner" role="status" aria-label={running ? "도구 실행 중" : "응답 생성 중"} /></span> : null}{label}<Chevron />
     </button>
     <div id={id} hidden={!open}>{open ? children : null}</div>
   </section>;
@@ -164,6 +166,8 @@ function CallDetail({ event, preview }: { event: WorkflowEvent; preview?: ReactN
 }
 
 function statusLabel(status: string) {
+  const httpLabel = httpStatusLabel(status);
+  if (httpLabel) return httpLabel;
   return ({ running: "실행 중", done: "완료", completed: "완료", error: "실패", failed: "실패", killed: "중단", idle: "대기", warning: "부분응답", empty: "결과 없음" } as Record<string, string>)[status] || status;
 }
 
@@ -185,8 +189,7 @@ export function compactionUsageLabel(event: WorkflowEvent): string {
 }
 
 function ActivityStatus({ status }: { status: string }) {
-  return <span className={`aside-status ${status}`}>
-    {status === "running" ? <span className="aside-running-spinner" aria-hidden="true" /> : null}
+  return <span className={`aside-status aside-state-${status}`}>
     {statusLabel(status)}
   </span>;
 }
@@ -200,7 +203,7 @@ function agentTime(value: number | string | null | undefined) {
 function Call({ event, scope, preview, expanded = false, workspacePath = "", summary = false, pending = false }: { event: WorkflowEvent; scope: string; preview?: ReactNode; expanded?: boolean; workspacePath?: string; summary?: boolean; pending?: boolean }) {
   const item = category(event);
   const title = asideCallTitle(event, workspacePath);
-  return <Disclosure pending={pending} storageKey={`${scope}:detail`} defaultOpen={expanded} className={`aside-call ${workflowDisplayStatus(event)}`} ariaLabel={`${title} 상세 실행 기록`}
+  return <Disclosure running={workflowDisplayStatus(event) === "running"} pending={pending} storageKey={`${scope}:detail`} defaultOpen={expanded} className={`aside-call aside-state-${workflowDisplayStatus(event)}`} ariaLabel={`${title} 상세 실행 기록`}
     label={<><span className="aside-activity-icon"><Icon name={item.icon} /></span><span className={`aside-call-title${item.key === "skill" ? " aside-skill-name" : ""}`}>{summary ? `${asideActivitySummary([event])} (1건)` : title}</span>
       <ActivityStatus status={workflowDisplayStatus(event)} /></>}>
     <CallDetail event={event} preview={preview} />
@@ -243,6 +246,11 @@ export function AsideWorkflowTimeline({ events, scope, duration, busy, agents = 
       <div className="aside-timeline">{rows.map((row, index) => {
         if (row.kind === "note") {
           const event = row.event;
+          const history = questionHistory(event);
+          if (history) return <Disclosure key={event.id} storageKey={`${scope}:question:${event.toolCallId || event.id}`} className="aside-question"
+            label={<><span className="aside-activity-icon"><Icon name="ai" /></span><span>질의응답 · {history.questions.length}개 질문</span><ActivityStatus status={event.status} /></>}>
+            <QuestionHistory event={event} />
+          </Disclosure>;
           if (!event.toolName && (event.role === "waiting" || event.status === "error" || event.status === "warning")) return <Disclosure key={event.id} defaultOpen={expanded} storageKey={`${scope}:note:${event.id}`} className="aside-reasoning"
             label={<><span className="aside-activity-icon"><Icon name="ai" /></span><span className="aside-activity-summary">{event.title || "진행 기록"}</span>
               {event.status === "error" || event.status === "warning" ? <ActivityStatus status={event.status} /> : null}</>}>
@@ -260,16 +268,19 @@ export function AsideWorkflowTimeline({ events, scope, duration, busy, agents = 
         const first = row.events[0];
         const groupScope = `${scope}:actions:${first.toolCallId || row.index}`;
         const callScope = (event: WorkflowEvent, callIndex: number) => `${scope}:call:${event.toolCallId || `${row.index}:${callIndex}`}`;
-        if (row.events.length === 1) return <div className="aside-activity" key={first.id}><Call pending={pendingResponse && index === rows.length - 1} event={first} summary={!expanded} expanded={expanded} workspacePath={workspacePath} scope={callScope(first, 0)} preview={renderPreview?.(first)} /></div>;
+        if (row.events.length === 1) return <div className="aside-activity" key={first.id}><Call pending={pendingResponse && index === rows.length - 1} event={first} summary={!expanded} expanded={expanded} workspacePath={workspacePath} scope={callScope(first, 0)} preview={first.status !== "running" ? renderPreview?.(first) : null} /></div>;
         let firstCallOpen = false;
         try { firstCallOpen = sessionStorage.getItem(`${callScope(first, 0)}:detail`) === "1"; } catch { /* optional storage */ }
         const status = workflowGroupStatus(row.events);
-        return <Disclosure pending={pendingResponse && index === rows.length - 1} key={first.id} storageKey={groupScope} defaultOpen={expanded || firstCallOpen} className={`aside-activity ${status}`} label={<>
+        return <Disclosure running={status === "running"} pending={pendingResponse && index === rows.length - 1} key={first.id} storageKey={groupScope} defaultOpen={expanded || firstCallOpen} className={`aside-activity aside-state-${status}`} label={<>
           <span className="aside-activity-icon"><Icon name={category(first).icon} /></span><span className="aside-activity-summary">{asideActivitySummary(row.events)} ({row.events.length}건)</span>
-          {status === "running" || status === "error" || status === "warning" || status === "empty" ? <ActivityStatus status={status} /> : null}
-        </>}><div className="aside-children">{row.events.map((event, callIndex) => <Call key={event.toolCallId || event.id} expanded={expanded} workspacePath={workspacePath} event={event} scope={callScope(event, callIndex)} preview={renderPreview?.(event)} />)}</div></Disclosure>;
+          {status === "running" || status === "error" || status === "warning" || status === "empty" || status.startsWith("http_") ? <ActivityStatus status={status} /> : null}
+        </>}><div className="aside-children">{row.events.map((event, callIndex) => <Call key={event.toolCallId || event.id} expanded={expanded} workspacePath={workspacePath} event={event} scope={callScope(event, callIndex)} preview={event.status !== "running" ? renderPreview?.(event) : null} />)}</div></Disclosure>;
       })}{!rows.some((row) => row.kind === "note" && row.event.role === "agents") ? <AgentTree agents={agents} scope={scope} /> : null}
       </div>
     </Disclosure>
+    {events.filter((event) => event.status === "running").map((event) => (
+      <div key={event.id}>{renderPreview?.(event)}</div>
+    ))}
   </article>;
 }

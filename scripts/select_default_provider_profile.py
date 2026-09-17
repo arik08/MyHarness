@@ -1,7 +1,8 @@
-"""Select the launcher default provider profile.
+"""Select installer/launcher defaults from locally configured credentials.
 
-The Windows web launchers use P-GPT as the shared runtime default. Other
-profiles remain available from the provider picker after startup.
+Preserve the saved selection unless the installer requests --reset.
+Prefer P-GPT when both providers are configured. This is an offline readiness
+check, not a guarantee of network access or server-side authorization.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ def _decode_jwt_exp(access_token: str) -> int | None:
         data = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
     except Exception:
         return None
-    exp = data.get("exp")
+    exp = data.get("exp") if isinstance(data, dict) else None
     return exp if isinstance(exp, int) else None
 
 
@@ -37,7 +38,9 @@ def codex_oauth_usable(*, codex_home: Path | None = None, now: int | None = None
 
     try:
         payload = json.loads(auth_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
+        return False
+    if not isinstance(payload, dict):
         return False
 
     tokens = payload.get("tokens")
@@ -56,9 +59,37 @@ def codex_oauth_usable(*, codex_home: Path | None = None, now: int | None = None
     return True
 
 
-def select_default_profile(*, codex_home: Path | None = None, now: int | None = None) -> str:
-    del codex_home, now
-    return "p-gpt"
+def pgpt_credentials_usable(*, credentials_path: Path) -> bool:
+    try:
+        payload = json.loads(credentials_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        payload = {}
+    stored = payload.get("pgpt", {}) if isinstance(payload, dict) else {}
+    if not isinstance(stored, dict):
+        stored = {}
+    api_key = os.environ.get("PGPT_API_KEY") or stored.get("api_key")
+    employee_no = (
+        os.environ.get("PGPT_EMPLOYEE_NO")
+        or os.environ.get("PGPT_SYSTEM_CODE")
+        or os.environ.get("POSCO_EMP_NO")
+        or stored.get("employee_no")
+        or stored.get("system_code")
+    )
+    return all(isinstance(value, str) and bool(value.strip()) for value in (api_key, employee_no))
+
+
+def select_default_profile(
+    *, codex_home: Path | None = None, now: int | None = None,
+    credentials_path: Path | None = None, fallback_profile: str = "p-gpt",
+) -> str:
+    if credentials_path is None:
+        config_dir = os.environ.get("MYHARNESS_CONFIG_DIR") or os.environ.get("MYHARNESS_HOME") or "~/.myharness"
+        credentials_path = Path(config_dir).expanduser() / "credentials.json"
+    if pgpt_credentials_usable(credentials_path=credentials_path):
+        return "p-gpt"
+    if codex_oauth_usable(codex_home=codex_home, now=now):
+        return "codex"
+    return fallback_profile
 
 
 def update_settings_active_profile(settings_path: Path, active_profile: str) -> dict[str, Any]:
@@ -77,9 +108,18 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--settings", required=True, type=Path)
     parser.add_argument("--codex-home", type=Path)
+    parser.add_argument("--reset", action="store_true", help="Reset the saved provider using credential detection (installer only).")
     args = parser.parse_args()
 
-    profile = select_default_profile(codex_home=args.codex_home)
+    existing = json.loads(args.settings.read_text(encoding="utf-8")) if args.settings.exists() else {}
+    fallback = existing.get("active_profile") if isinstance(existing, dict) else None
+    if not args.reset and isinstance(fallback, str) and fallback.strip():
+        print(fallback)
+        return 0
+    profile = select_default_profile(
+        codex_home=args.codex_home,
+        credentials_path=args.settings.parent / "credentials.json",
+    )
     update_settings_active_profile(args.settings, profile)
     print(profile)
     return 0

@@ -1,6 +1,6 @@
 ---
 name: frontend-design
-description: Create distinctive, production-grade frontend interfaces with high design quality. Consider this skill for homepage, landing page, marketing site, product site, branded website, app UI, prototype, demo, game UI, or frontend component work where art direction, interaction, imagery, and page composition are central. Do not use it for HTML reports, research briefs, analytical documents, A4/PDF reports, or dense business artifacts unless the user explicitly asks for homepage/landing-style treatment; use visual-artifact or html-a4-landscape-report for those report deliverables.
+description: Create distinctive, production-grade frontend interfaces with high design quality. Consider this skill for homepage, landing page, marketing site, product site, branded website, app UI, prototype, demo, game UI, or frontend component work where art direction, interaction, imagery, and page composition are central. Do not use it for HTML reports, research briefs, analytical documents, A4/PDF reports, or dense business artifacts unless the user explicitly asks for homepage/landing-style treatment; use visual-artifact for those report deliverables.
 license: Complete terms in LICENSE.txt
 ---
 
@@ -18,7 +18,7 @@ The user provides frontend requirements: a component, page, application, or inte
 
 - HTML reports, research briefs, company analyses, market reports, analytical dashboards-as-documents, A4/PDF reports, or dense business artifacts.
 - Use `visual-artifact` for scrolling HTML reports, dashboards, infographics, visual summaries, timelines, and report-style browser artifacts.
-- Use `html-a4-landscape-report` together with `visual-artifact` for fixed-page A4 landscape report requests.
+- Use `visual-artifact` for fixed-page A4 landscape report requests too; apply its page dimensions, table splitting, and overflow checks. Pair it with a dedicated fixed-page skill only when one is available.
 - If the user references a brand/site style while asking for a report, borrow only the surface language through `design-md` or `visual-artifact`; do not turn the report into a homepage.
 
 ## Design Thinking

@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "../Sidebar";
+import { AssistantActions } from "../AssistantActions";
+import { branchHistory } from "../../api/branch";
 import { useBackendSession } from "../../hooks/useBackendSession";
 import { openBackendEvents } from "../../api/events";
 import { clampSidebarWidth } from "../../layout/sidebarLayout";
@@ -26,6 +28,7 @@ vi.mock("../../api/session", () => ({
 }));
 
 vi.mock("../../api/events", () => ({ openBackendEvents: vi.fn() }));
+vi.mock("../../api/branch", () => ({ branchHistory: vi.fn() }));
 
 function LiveChatProbe() {
   useBackendSession();
@@ -78,6 +81,31 @@ function DispatchProbe({ onReady }: { onReady: (dispatch: ReturnType<typeof useA
 }
 
 describe("Sidebar", () => {
+  it("shows and reveals a saved branch ahead of existing history without sending a message", async () => {
+    const workspace = { name: "Default", path: "C:/demo" };
+    const message = { id: "answer", role: "assistant" as const, text: "Copied answer", isComplete: true };
+    vi.mocked(branchHistory).mockResolvedValue({ sessionId: "copied", title: "Original · 분기", workspace });
+    vi.mocked(loadHistorySnapshot).mockResolvedValue({
+      type: "history_snapshot", value: "copied", message: "Original · 분기", preview_only: true,
+      history_events: [{ type: "user", text: "Question" }, { type: "assistant", text: message.text }],
+    });
+    const scrollIntoView = vi.fn();
+    const previous = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "runtime", activeHistoryId: "source", workspacePath: workspace.path, workspaceName: workspace.name, messages: [message],
+        history: Array.from({ length: 40 }, (_, index) => ({ value: `saved-${index}`, label: `Existing ${index}` })),
+      }}><Sidebar /><AssistantActions message={message} /></AppStateProvider>);
+      await userEvent.click(screen.getByRole("button", { name: "이 답변까지 새 채팅으로 분기" }));
+      await waitFor(() => expect(document.querySelector(".history-item.active .history-title")?.textContent).toBe("Original · 분기"));
+      expect(document.querySelector(".history-item .history-title")?.textContent).toBe("Original · 분기");
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+      expect(sendBackendRequest).not.toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = previous;
+    }
+  });
+
   it("retains restored titles after repeated clicks and stale nonempty list refreshes", async () => {
     const history = ["a", "b"].map((id) => ({
       value: `saved-${id}`, label: "2 msg", description: "새 대화", messageCount: 2,

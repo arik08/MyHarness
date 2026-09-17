@@ -1,0 +1,7 @@
+.lumina-question.question-history { margin: 6px 0; border-radius: 6px; }
+.question-history .clarification-options button[aria-disabled] { cursor: default; }
+.question-history .clarification-question strong,
+.question-history .clarification-options button { overflow-wrap: anywhere; }
+.question-history-answer { clear: both; margin: 10px 0 0; color: var(--ink); }
+.question-history-answer small { color: var(--muted); }
+.question-history-answer p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }

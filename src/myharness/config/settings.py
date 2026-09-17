@@ -18,6 +18,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from myharness.api.registry import PGPT_BASE_URL, normalize_pgpt_base_url
+
 from myharness.hooks.schemas import HookDefinition
 from myharness.mcp.types import McpAuthConfig, McpServerConfig
 from myharness.permissions.modes import PermissionMode
@@ -421,7 +423,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             api_format="openai",
             auth_source="pgpt_api_key",
             default_model=pgpt_models.default_model,
-            base_url="http://pgpt.posco.com/s01a01-gpt/v1",
+            base_url=PGPT_BASE_URL,
             allowed_models=list(pgpt_models.allowed_models),
         ),
         "codex": ProviderProfile(
@@ -660,6 +662,9 @@ def _infer_profile_name_from_flat_settings(settings: "Settings") -> str:
 
 def _profile_from_flat_settings(settings: "Settings") -> tuple[str, ProviderProfile]:
     defaults = default_provider_profiles()
+    normalized_base_url = normalize_pgpt_base_url(settings.base_url)
+    if settings.provider == "openai" and normalized_base_url and normalized_base_url.rstrip("/") == PGPT_BASE_URL:
+        return "p-gpt", defaults["p-gpt"].model_copy(update={"last_model": settings.model})
     name = _infer_profile_name_from_flat_settings(settings)
     existing = defaults.get(name)
     if existing is not None and (
@@ -767,8 +772,8 @@ class Settings(BaseModel):
                 builtin.provider, builtin.api_format, builtin.auth_source
             ):
                 continue
-            if name == "p-gpt" and profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1":
-                profile = profile.model_copy(update={"base_url": builtin.base_url})
+            if profile.auth_source == "pgpt_api_key":
+                profile = profile.model_copy(update={"base_url": normalize_pgpt_base_url(profile.base_url)})
             if builtin is not None and profile.base_url is None and builtin.base_url is not None:
                 profile = profile.model_copy(update={"base_url": builtin.base_url})
             if builtin is not None and (
@@ -862,6 +867,8 @@ class Settings(BaseModel):
         next_provider = profile.provider
         next_api_format = profile.api_format
         next_base_url = self.base_url if self.base_url is not None else profile.base_url
+        if profile.auth_source == "pgpt_api_key":
+            next_base_url = normalize_pgpt_base_url(next_base_url)
         next_context_window_tokens = (
             self.context_window_tokens
             if self.context_window_tokens is not None
@@ -1114,7 +1121,13 @@ class Settings(BaseModel):
             "api_format" in updates or "provider" in updates
         ):
             updates["base_url"] = None
-        merged = self.model_copy(update=updates)
+        # On profile changes, inherit unspecified fields from the destination.
+        # Otherwise a simultaneous override can copy the old provider's URL
+        # and context settings into the newly selected profile.
+        base = self
+        if "active_profile" in updates:
+            base = self.model_copy(update={"active_profile": updates["active_profile"]}).materialize_active_profile()
+        merged = base.model_copy(update=updates)
         if not updates:
             return merged
         if profile_model_override:

@@ -31,13 +31,13 @@ it("keeps per-question choices and custom text editable until one explicit submi
   expect(sendBackendRequest).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "답변 보내기" }).hasAttribute("disabled")).toBe(true);
   fireEvent.change(screen.getByLabelText("2번 질문에 직접 답변"), { target: { value: "내부용 근거 포함" } });
-  fireEvent.click(within(groups[1]).getByRole("button", { name: "적용" }));
+  expect(screen.queryByRole("button", { name: "적용" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "실무자" }));
   fireEvent.click(screen.getByRole("button", { name: "답변 보내기" }));
   await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledTimes(1));
   const sent = vi.mocked(sendBackendRequest).mock.calls[0][2];
   expect(JSON.parse(String(sent.answer))).toEqual([
-    { id: "audience", answer: "team", kind: "choice" }, { id: "detail", answer: "내부용 근거 포함", kind: "text" },
+    { id: "audience", answer: ["board", "team"], kind: "choice" }, { id: "detail", answer: "내부용 근거 포함", kind: "text" },
   ]);
   expect(screen.getByLabelText("AI 확인 질문")).toBeTruthy();
   fireEvent.click(screen.getByText("서버 확인"));
@@ -50,7 +50,6 @@ it("lets custom text replace a selection and preserves it through errors and rem
   fireEvent.click(screen.getByRole("button", { name: /임원/ }));
   fireEvent.change(screen.getByLabelText("1번 질문에 직접 답변"), { target: { value: "외부 독자" } });
   fireEvent.change(screen.getByLabelText("2번 질문에 직접 답변"), { target: { value: "상세하게" } });
-  for (const button of screen.getAllByRole("button", { name: "적용" })) fireEvent.click(button);
   expect(screen.getByRole("button", { name: /임원/ }).getAttribute("aria-pressed")).toBe("false");
   fireEvent.click(screen.getByRole("button", { name: "답변 보내기" }));
   await screen.findByRole("alert");

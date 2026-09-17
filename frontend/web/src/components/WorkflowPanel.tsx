@@ -1,4 +1,5 @@
 import { AsideWorkflowTimeline, workflowSafeText } from "./AsideWorkflowTimeline";
+import { workflowElapsedSeconds } from "../utils/workflowTime";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
@@ -685,6 +686,17 @@ function sourceInitialForSource(source: WebInvestigationSource) {
   return Array.from(text)[0]?.toUpperCase() || "";
 }
 
+function WorkflowSourceFavicon({ url }: { url: string }) {
+  const [failedUrl, setFailedUrl] = useState("");
+  const faviconUrl = faviconUrlForSourceUrl(url);
+  if (!faviconUrl || failedUrl === faviconUrl) return null;
+  return <img src={faviconUrl} alt="" loading="lazy" onError={() => {
+    const origin = sourceOriginForUrl(url);
+    if (origin) failedWorkflowSourceFaviconOrigins.add(origin);
+    setFailedUrl(faviconUrl);
+  }} />;
+}
+
 function sourcePartsForUrl(url: string) {
   try {
     const parsed = new URL(url);
@@ -946,7 +958,6 @@ export function WebInvestigationSources({ sources, queries }: { sources: WebInve
         {sources.length ? (
           <ul className="workflow-web-source-list">
             {sources.map((source, index) => {
-              const faviconUrl = faviconUrlForSourceUrl(source.url);
               return (
                 <li key={source.url}>
                   <a href={source.url} target="_blank" rel="noreferrer">
@@ -954,20 +965,7 @@ export function WebInvestigationSources({ sources, queries }: { sources: WebInve
                       <span className="workflow-web-source-index">{index + 1}</span>
                       <span className="workflow-web-source-favicon">
                         {sourceInitialForSource(source)}
-                        {faviconUrl ? (
-                          <img
-                            src={faviconUrl}
-                            alt=""
-                            loading="lazy"
-                            onError={(event) => {
-                              const origin = sourceOriginForUrl(source.url);
-                              if (origin) {
-                                failedWorkflowSourceFaviconOrigins.add(origin);
-                              }
-                              event.currentTarget.remove();
-                            }}
-                          />
-                        ) : null}
+                        <WorkflowSourceFavicon url={source.url} />
                       </span>
                     </span>
                     <span className="workflow-web-source-label">
@@ -1012,14 +1010,15 @@ export function WorkflowPanel({
   const visibleProgress = events.map((event) => `${event.id}:${event.status}:${event.detail}`).join("|");
   useEffect(() => {
     if (!busy) return;
+    setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [busy]);
+  }, [busy, state.sessionId, state.workflowStartedAtMs]);
   useLayoutEffect(() => {
     if (busy && !state.restoringHistory) progressCallback.current?.();
   }, [visibleProgress, busy, state.restoringHistory]);
   const duration = durationSeconds ?? (active ? state.workflowDurationSeconds : null)
-    ?? (busy && state.workflowStartedAtMs !== null ? Math.max(0, Math.floor((now - state.workflowStartedAtMs) / 1000)) : null);
+    ?? (busy ? workflowElapsedSeconds(state.workflowStartedAtMs, events, now) : null);
   const scope = `myharness:aside:${state.workspacePath}:${state.activeHistoryId || state.sessionId || "draft"}:${persistenceKey || events[0]?.id || "active"}`;
   return <AsideWorkflowTimeline events={events} scope={scope} duration={duration} busy={busy} expanded={expanded} workspacePath={state.workspacePath}
     agents={active ? state.swarmTeammates : []}

@@ -9,7 +9,25 @@ import {
   rememberSuppressedUserTranscript,
   replayEventsForState,
   updateSessionReplayState,
+  withEventTimestamp,
 } from "../modules/sessionReplay.js";
+
+test("original turn timestamps survive compact and cursor replay independently per session", () => {
+  for (const startedAt of [1000, 9000]) {
+    const state = createSessionReplayState();
+    const raw = [];
+    const event = withEventTimestamp({ type: "transcript_item", timestamp_ms: startedAt,
+      item: { role: "user", text: "arbitrary request" } });
+    updateSessionReplayState(state, event);
+    appendRawSessionEvent(raw, 1, event);
+    for (let visit = 0; visit < 3; visit++) {
+      assert.equal(replayEventsForState(state)[0].timestamp_ms, startedAt);
+      assert.equal(rawEventsAfterLastEventId(raw, "0")[0].event.timestamp_ms, startedAt);
+    }
+    rememberSuppressedUserTranscript(state, "next request");
+    assert.ok(replayEventsForState(state).at(-1).timestamp_ms > startedAt);
+  }
+});
 
 test("restoring saved history replaces the bootstrap identity before replay", () => {
   const state = createSessionReplayState();

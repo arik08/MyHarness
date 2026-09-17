@@ -10,7 +10,7 @@ def test_frontend_design_skill_is_scoped_to_sites_and_app_ui_not_reports():
     assert "homepage, landing page, marketing site, product site" in skill_text
     assert "app UI, prototype, demo, game UI" in skill_text
     assert "Do not use it for HTML reports" in skill_text
-    assert "use visual-artifact or html-a4-landscape-report" in skill_text
+    assert "use visual-artifact for those report deliverables" in skill_text
     assert "Use `visual-artifact` for scrolling HTML reports" in skill_text
     assert "choose reasonable visual defaults and implement immediately" in skill_text
     assert "do not turn the request into a style survey" in skill_text

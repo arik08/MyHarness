@@ -148,6 +148,12 @@ export function shouldReplayRawEvent(event) {
   return isQuestionRoundEvent(event) || !replayExcludedTypes.has(eventType(event));
 }
 
+// Capture time once at ingestion, never when a client reconnects/replays.
+export function withEventTimestamp(event) {
+  return { ...event, timestamp_ms: Number.isFinite(event.timestamp_ms) && event.timestamp_ms > 0
+    ? event.timestamp_ms : Date.now() };
+}
+
 export function appendRawSessionEvent(events, id, event, limit = defaultRawEventLimit) {
   if (eventType(event) === "clear_transcript") {
     events.splice(0, events.length);
@@ -247,10 +253,10 @@ export function rememberSuppressedUserTranscript(state, text) {
   if (!clean) {
     return;
   }
-  updateSessionReplayState(state, {
+  updateSessionReplayState(state, withEventTimestamp({
     type: "transcript_item",
     item: { role: "user", text: clean },
-  });
+  }));
 }
 
 export function replayEventsForState(state) {

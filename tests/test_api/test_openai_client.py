@@ -846,7 +846,8 @@ async def test_openai_client_removes_gpt56_breakpoint_when_cache_options_are_uns
 
 
 @pytest.mark.asyncio
-async def test_pgpt_raw_stream_emits_tool_argument_deltas_and_diagnostics(monkeypatch, tmp_path):
+@pytest.mark.parametrize("endpoint_path", ["s0la01-gpt", "s01a01-gpt"])
+async def test_pgpt_raw_stream_emits_tool_argument_deltas_and_diagnostics(monkeypatch, tmp_path, endpoint_path):
     sink: dict[str, Any] = {}
     response = _FakeRawStreamResponse(
         [
@@ -868,7 +869,7 @@ async def test_pgpt_raw_stream_emits_tool_argument_deltas_and_diagnostics(monkey
 
     client = OpenAICompatibleClient(
         api_key="pgpt-token",
-        base_url="http://pgpt.posco.com/s0la01-gpt/v1",
+        base_url=f"http://pgpt.posco.com/{endpoint_path}/v1",
         raw_stream=True,
         diagnostics_label="P-GPT",
         enable_prompt_cache_options=True,

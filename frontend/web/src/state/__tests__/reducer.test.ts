@@ -6,6 +6,30 @@ import { submittedTranscriptTexts } from "../../utils/userTranscript";
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
 
 describe("appReducer", () => {
+  it("keeps elapsed time across session switches and replay, and freezes at the actual end", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
+    try {
+      let state: typeof initialAppState = { ...initialAppState, sessionId: "a" };
+      const userEvent = { type: "transcript_item" as const, timestamp_ms: 100_000,
+        item: { role: "user" as const, text: "arbitrary request" } };
+      state = appReducer(state, { type: "backend_event", event: userEvent });
+      state = appReducer(state, { type: "session_started", sessionId: "b" });
+      clock.mockReturnValue(145_000);
+      state = appReducer(state, { type: "session_started", sessionId: "a", busy: true, replay: true });
+      state = appReducer(state, { type: "backend_event", event: { type: "clear_transcript", live_replay: true } });
+      state = appReducer(state, { type: "backend_event", event: userEvent });
+      expect(state.workflowStartedAtMs).toBe(100_000);
+      state = appReducer(state, { type: "backend_event", event: { type: "tool_started", tool_name: "arbitrary_tool" } });
+      state = appReducer(state, { type: "backend_event", event: { type: "line_complete", timestamp_ms: 130_000 } });
+      expect(state.workflowDurationSeconds).toBe(30);
+      expect(state.workflowStartedAtMs).toBeNull();
+      state = appReducer(state, { type: "backend_event", event: { ...userEvent, timestamp_ms: 150_000,
+        item: { role: "user", text: "another request" } } });
+      expect(state.workflowStartedAtMs).toBe(150_000);
+    } finally {
+      clock.mockRestore();
+    }
+  });
   it.each([
     ["사진 확인", 1, false, "사진 확인 [image attachments: 1]"],
     ["", 2, false, "[image attachments: 2]"],

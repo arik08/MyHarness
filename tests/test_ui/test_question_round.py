@@ -23,8 +23,13 @@ ANSWERS = [
 
 
 @pytest.mark.asyncio
-async def test_round_travels_from_tool_through_host_and_back(monkeypatch, tmp_path):
+@pytest.mark.parametrize("multiple", [False, True])
+async def test_round_travels_from_tool_through_host_and_back(monkeypatch, tmp_path, multiple):
     host = ReactBackendHost(BackendHostConfig())
+    questions = [dict(QUESTIONS[0], multi_select=multiple, choices=[
+        *QUESTIONS[0]["choices"], {"value": "team", "label": "실무자"},
+    ]), QUESTIONS[1]]
+    submitted = [ANSWERS[0], dict(ANSWERS[1], answer=["board", "team"] if multiple else "board")]
     events = []
     reader = None
 
@@ -34,24 +39,25 @@ async def test_round_travels_from_tool_through_host_and_back(monkeypatch, tmp_pa
         if event.type == "modal_request" and event.modal.get("questions") and not event.modal.get("error"):
             request_id = event.modal["request_id"]
             assert event.modal["questions"][1]["choices"] == []
+            assert event.modal["questions"][0]["multi_select"] is multiple
             def wire(answers):
                 return json.dumps({"type": "question_response", "request_id": request_id,
                                    "answer": json.dumps(answers)}).encode() + b"\n"
             # Invalid response must not resume execution; valid duplicate must not duplicate history.
             monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", SimpleNamespace(
-                buffer=io.BytesIO(wire([]) + wire(ANSWERS) + wire(ANSWERS))))
+                buffer=io.BytesIO(wire([]) + wire(submitted) + wire(submitted))))
             reader = asyncio.create_task(host._read_requests())
 
     host._emit = emit
     result = await asyncio.wait_for(AskUserQuestionTool().execute(
-        AskUserQuestionToolInput(questions=QUESTIONS),
+        AskUserQuestionToolInput(questions=questions),
         ToolExecutionContext(cwd=tmp_path, metadata={"ask_user_prompt": host._ask_question}),
     ), timeout=5)
     await reader
     answers = json.loads(result.output)["answers"]
     assert [item["id"] for item in answers] == ["audience", "detail"]
-    assert answers[0]["answer"] == "board"
-    assert answers[0]["label"] == "임원"
+    assert answers[0]["answer"] == (["board", "team"] if multiple else "board")
+    assert answers[0]["label"] == (["임원", "실무자"] if multiple else "임원")
     assert answers[1]["answer"] == "회사 내부용\n세부 근거 포함"
     assert len([event for event in events if event.type == "transcript_item"]) == 1
     assert any(event.modal and event.modal.get("error") for event in events)
@@ -119,3 +125,45 @@ async def test_cancellation_clears_pending_question_and_emits_dismissal():
     assert emitted[-1].modal["status"] == "cancelled"
     assert not host._question_requests
     assert not host._question_request_details
+
+
+@pytest.mark.parametrize("mode", [True, False])
+def test_selection_mode_enforces_cardinality_without_losing_values(mode):
+    question = {"id": "new", "question": "Choose", "multi_select": mode,
+                "choices": [{"value": "a,b", "label": "First"}, {"value": "c", "label": "Second"}]}
+    raw = json.dumps([{"id": "new", "kind": "choice", "answer": ["a,b", "c"]}])
+    if not mode:
+        with pytest.raises(ValueError, match="하나"):
+            resolve_question_answers([question], raw)
+    else:
+        result, transcript = resolve_question_answers([question], raw)
+        assert json.loads(result)["answers"][0]["answer"] == ["a,b", "c"]
+        assert "First, Second" in transcript
+
+
+@pytest.mark.parametrize("value", [[], ["board", "board"], ["unknown"], [None], [1]])
+def test_invalid_multiple_selections_are_rejected(value):
+    with pytest.raises(ValueError):
+        resolve_question_answers(QUESTIONS, json.dumps([
+            {"id": "audience", "kind": "choice", "answer": value}, ANSWERS[0]]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [True, False])
+async def test_legacy_tool_uses_question_round_with_model_selected_mode(tmp_path, mode):
+    captured = []
+    async def prompt(question, *, questions):
+        captured.extend(questions)
+        return "done"
+    await AskUserQuestionTool().execute(
+        AskUserQuestionToolInput(question="Choose", choices=[{"value": "new"}], multi_select=mode),
+        ToolExecutionContext(cwd=tmp_path, metadata={"ask_user_prompt": prompt}))
+    assert captured[0]["multi_select"] is mode
+    assert captured[0]["choices"][0]["value"] == "new"
+
+
+def test_model_schema_defaults_to_multiple_and_explains_exception():
+    schema = AskUserQuestionToolInput.model_json_schema()
+    field = schema["$defs"]["UserQuestion"]["properties"]["multi_select"]
+    assert field["default"] is True
+    assert "logically incompatible" in field["description"]

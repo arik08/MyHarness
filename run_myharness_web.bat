@@ -93,7 +93,7 @@ call :select_default_provider_profile
 if /i "%MYHARNESS_SELECTED_PROFILE%"=="p-gpt" (
   call :ensure_pgpt_env
 ) else (
-  echo [INFO] Codex OAuth is available. Skipping P-GPT environment setup.
+  echo [INFO] Selected provider does not require P-GPT environment setup.
 )
 
 call :upgrade_posco_bundle
