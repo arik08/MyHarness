@@ -17,7 +17,7 @@
   "auto_compact_threshold_tokens": null,
   "api_format": "openai",
   "provider": "openai",
-  "active_profile": "p-gpt",
+  "active_profile": "codex",
   "profiles": {
     "p-gpt": {
       "label": "P-GPT",

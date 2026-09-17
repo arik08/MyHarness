@@ -283,7 +283,7 @@ export function AssistantArtifactContent({
     if (hasStructuredArtifacts || !message.isComplete || !artifactBySourcePath.size) {
       return [];
     }
-    return collectArtifactReferences(message.text)
+    return collectArtifactReferences(message.text, true)
       .map((reference) => ({
         reference,
         artifact: artifactBySourcePath.get(artifactKey(reference.path)),
@@ -297,6 +297,7 @@ export function AssistantArtifactContent({
     }
     const nextParts: Array<{ type: "markdown"; text: string } | { type: "artifact"; artifact: ArtifactSummary }> = [];
     let cursor = 0;
+    const renderedPaths = new Set<string>();
     for (const { reference, artifact } of resolvedReferences) {
       if (reference.start < cursor) {
         continue;
@@ -305,7 +306,11 @@ export function AssistantArtifactContent({
       if (before.trim()) {
         nextParts.push({ type: "markdown", text: before });
       }
-      nextParts.push({ type: "artifact", artifact });
+      const key = artifactKey(artifact.path);
+      if (!renderedPaths.has(key)) {
+        nextParts.push({ type: "artifact", artifact });
+        renderedPaths.add(key);
+      }
       cursor = reference.end;
     }
     const after = message.text.slice(cursor);

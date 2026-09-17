@@ -294,6 +294,16 @@ test("static files cannot escape into a sibling directory with the same prefix",
   assert.doesNotMatch(body, /must-not-be-served/);
 });
 
+test("serves local PDF rendering resources", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  for (const path of ["cmaps/Adobe-Korea1-UCS2.bcmap", "standard_fonts/FoxitSerif.pfb", "wasm/openjpeg.wasm"]) {
+    const response = await fetch(`${app.baseUrl}/vendor/pdfjs/${path}`);
+    assert.equal(response.status, 200, path);
+    assert.ok((await response.arrayBuffer()).byteLength > 0, path);
+  }
+});
+
 test("oversized JSON returns 413 without reading the full request", async (t) => {
   const app = await startWebServer();
   t.after(() => app.stop());

@@ -21,6 +21,16 @@ const metrics: ServerMetrics = {
 };
 
 describe("server load panel", () => {
+  it("shows used memory beside usage percent rather than available memory", async () => {
+    vi.mocked(readServerMetrics).mockResolvedValue({ ...metrics, resources: {
+      ...metrics.resources!, totalMemoryBytes: 15.8 * 1024 ** 3, availableMemoryBytes: 2.5 * 1024 ** 3,
+    } });
+    render(<AppStateProvider initialState={initialAppState}><ConcurrencyStatus /></AppStateProvider>);
+    const tooltip = screen.getByRole("tooltip");
+    expect(await within(tooltip).findByText("13.3 / 15.8 GB · 84.2%")).toBeTruthy();
+    expect(within(tooltip).queryByText(/^2\.5 \/ 15\.8 GB/)).toBeNull();
+  });
+
   it("opens from the compact button, distinguishes empty samples and closes with focus restored", async () => {
     vi.mocked(readServerMetrics).mockResolvedValue(metrics);
     render(<AppStateProvider initialState={initialAppState}><ConcurrencyStatus /></AppStateProvider>);

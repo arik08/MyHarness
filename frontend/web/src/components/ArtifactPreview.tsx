@@ -6,6 +6,7 @@ import type { ArtifactAiEditComment, ArtifactPayload } from "../types/ui";
 import { artifactDisplayName, isSourceCodeArtifact, sourceLanguageForArtifact } from "../utils/artifacts";
 import { Icon } from "./ArtifactIcons";
 import { MarkdownMessage, renderMermaidSvg } from "./MarkdownMessage";
+import { PdfArtifactPreview } from "./PdfArtifactPreview";
 
 export const artifactFrameBackMessage = "myharness:artifact-panel-back";
 export const artifactHtmlEditMessage = "myharness:artifact-html-edit";
@@ -2490,9 +2491,10 @@ export function ArtifactPreview({
   }
   if (kind === "pdf") {
     return (
-      <iframe
-        className="artifact-frame artifact-pdf-frame"
-        title={displayName}
+      <PdfArtifactPreview
+        key={String(rawUrl || dataUrl || downloadUrl)}
+        name={displayName}
+        downloadUrl={downloadUrl}
         src={String(rawUrl || dataUrl || downloadUrl)}
       />
     );

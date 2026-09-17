@@ -471,6 +471,8 @@ function resolvePath(url) {
       ? (hasBuiltReactUi() ? join(webDistRoot, "index.html") : join(root, "index.html"))
       : pathname.startsWith("/web-assets/")
         ? join(webDistRoot, relativePath)
+      : /^\/vendor\/pdfjs\/(?:cmaps|standard_fonts|wasm)\/[^/]+$/.test(pathname)
+        ? join(vendorRoot, "pdfjs-dist", pathname.replace("/vendor/pdfjs/", ""))
       : pathname === "/vendor/marked/marked.esm.js"
         ? join(vendorRoot, "marked/lib/marked.esm.js")
         : pathname === "/vendor/highlight/highlight.min.js"

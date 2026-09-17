@@ -152,7 +152,8 @@ export function ConcurrencyStatus() {
   const queuedSessions = status?.queuedSessions ?? 0;
   const queuedResponses = status?.queuedResponses ?? 0;
   const resources = metricsError ? null : metrics?.resources;
-  const memoryUsage = resources ? 100 * (1 - resources.availableMemoryBytes / resources.totalMemoryBytes) : null;
+  const usedMemoryBytes = resources ? resources.totalMemoryBytes - resources.availableMemoryBytes : null;
+  const memoryUsage = resources && usedMemoryBytes !== null ? 100 * usedMemoryBytes / resources.totalMemoryBytes : null;
 
   return (
     <span className="concurrency-status" data-details-open={detailsOpen}>
@@ -170,7 +171,7 @@ export function ConcurrencyStatus() {
       <span className="concurrency-status-tooltip" id={tooltipId} role="tooltip">
         <strong>동시 사용 현황</strong>
         <span className="concurrency-status-row"><CapacityIcon /><span>서버 CPU</span><span className="concurrency-status-value">{metricsError ? "확인 불가" : percentLabel(metrics?.resources?.cpuPercent)}</span></span>
-        <span className="concurrency-status-row"><SessionsIcon /><span>서버 메모리</span><span className="concurrency-status-value concurrency-memory-value">{resources ? `${((resources.totalMemoryBytes - resources.availableMemoryBytes) / 1024 ** 3).toFixed(1)} / ${(resources.totalMemoryBytes / 1024 ** 3).toFixed(1)} GB · ${percentLabel(memoryUsage)}` : "확인 불가"}</span></span>
+        <span className="concurrency-status-row"><SessionsIcon /><span>서버 메모리</span><span className="concurrency-status-value concurrency-memory-value">{resources && usedMemoryBytes !== null ? `${(usedMemoryBytes / 1024 ** 3).toFixed(1)} / ${(resources.totalMemoryBytes / 1024 ** 3).toFixed(1)} GB · ${percentLabel(memoryUsage)}` : "확인 불가"}</span></span>
         <span className="concurrency-status-row" data-status="users">
           <svg aria-hidden="true" viewBox="0 0 20 20">
             <circle cx="7" cy="6" r="2.5" />
