@@ -3,6 +3,24 @@ import { initialAppState } from "../../state/reducer";
 import { loadRuntimePreferences, rememberRuntimeChoice, runtimePreferencesFromState } from "../runtimePreferences";
 
 describe("runtime preference utilities", () => {
+  it.each(["{broken", "null", "[]"])("keeps provider/model choices when app settings contain %s", (raw) => {
+    localStorage.setItem("myharness:runtimePreferences", JSON.stringify({ version: 2, activeProfile: "custom-provider", model: "custom-model" }));
+    localStorage.setItem("myharness:appSettings", raw);
+    expect(loadRuntimePreferences()).toMatchObject({ activeProfile: "custom-provider", model: "custom-model" });
+  });
+  it.each(["{broken", "null"])("keeps valid context settings when runtime preferences contain %s", (raw) => {
+    localStorage.setItem("myharness:runtimePreferences", raw);
+    localStorage.setItem("myharness:appSettings", JSON.stringify({ gpt56ContextMode: "full-context" }));
+    expect(loadRuntimePreferences().gpt56ContextMode).toBe("full-context");
+  });
+  it("rejects non-string runtime identifiers without losing valid fields", () => {
+    localStorage.setItem("myharness:runtimePreferences", JSON.stringify({ version: 2, activeProfile: {}, model: ["custom-model"], subagentModel: true, effort: "high" }));
+    expect(loadRuntimePreferences()).toMatchObject({ activeProfile: undefined, model: undefined, subagentModel: undefined, effort: "high" });
+  });
+  it.each(["constructor", "__proto__", "toString"])("preserves custom profile name %s as a string", (activeProfile) => {
+    localStorage.setItem("myharness:runtimePreferences", JSON.stringify({ version: 2, activeProfile }));
+    expect(loadRuntimePreferences().activeProfile).toBe(activeProfile);
+  });
   afterEach(() => {
     localStorage.clear();
   });

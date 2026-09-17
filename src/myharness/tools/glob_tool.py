@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import shutil
-from pathlib import Path
+import threading
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from pydantic import BaseModel, Field
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
-from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
+from myharness.tools.grep_tool import _RipgrepError, _run_rg, _timeout_marker, _format_rg_result
 
 
 class GlobToolInput(BaseModel):
@@ -18,6 +20,7 @@ class GlobToolInput(BaseModel):
     pattern: str = Field(description="Glob pattern relative to the working directory")
     root: str | None = Field(default=None, description="Optional search root")
     limit: int = Field(default=200, ge=1, le=5000)
+    timeout_seconds: int = Field(default=20, ge=1, le=120)
 
 
 class GlobTool(BaseTool):
@@ -33,10 +36,17 @@ class GlobTool(BaseTool):
 
     async def execute(self, arguments: GlobToolInput, context: ToolExecutionContext) -> ToolResult:
         root = _resolve_path(context.cwd, arguments.root) if arguments.root else context.cwd
-        matches = await _glob(root, arguments.pattern, limit=arguments.limit)
-        if not matches:
-            return ToolResult(output="(no matches)")
-        return ToolResult(output="\n".join(matches))
+        if not arguments.pattern or PureWindowsPath(arguments.pattern).anchor or PurePosixPath(arguments.pattern).anchor:
+            return ToolResult(output="Use a relative pattern and put the search directory in root.", is_error=True)
+        if not root.is_dir():
+            return ToolResult(output=f"Search root is not an existing directory: {root}", is_error=True)
+        try:
+            matches = await _glob(root, arguments.pattern, limit=arguments.limit, timeout_seconds=arguments.timeout_seconds)
+        except asyncio.TimeoutError:
+            return ToolResult(output=f"[glob timed out after {arguments.timeout_seconds} seconds]", is_error=True)
+        except (OSError, ValueError, _RipgrepError) as exc:
+            return ToolResult(output=f"File search failed: {exc}", is_error=True)
+        return _format_rg_result(matches, arguments.timeout_seconds, tool_name="glob")
 
 
 def _resolve_path(base: Path, candidate: str | None) -> Path:
@@ -63,7 +73,7 @@ def _looks_like_git_repo(path: Path) -> bool:
     return False
 
 
-async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
+async def _glob(root: Path, pattern: str, *, limit: int, timeout_seconds: int = 20) -> list[str]:
     """Fast glob implementation.
 
     Uses ripgrep's file walker when available (respects .gitignore and can skip
@@ -79,49 +89,39 @@ async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
             cmd.append("--hidden")
         cmd.extend(["--glob", pattern, "."])
 
-        from myharness.sandbox.session import get_docker_sandbox
-
-        session = get_docker_sandbox()
-        if session is not None and session.is_running:
-            process = await session.exec_command(
-                cmd,
-                cwd=root,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        else:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=str(root),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                **hidden_subprocess_kwargs(),
-            )
-
-        lines: list[str] = []
-        try:
-            assert process.stdout is not None
-            while len(lines) < limit:
-                raw = await process.stdout.readline()
-                if not raw:
-                    break
-                line = raw.decode("utf-8", errors="replace").strip()
-                if line:
-                    lines.append(_display_path(line))
-        finally:
-            if len(lines) >= limit and process.returncode is None:
-                process.terminate()
-            await process.wait()
-
+        lines = await _run_rg(
+            cmd, cwd=root, limit=limit, timeout_seconds=timeout_seconds,
+            format_match=_display_path,
+        )
+        timed_out = bool(lines and lines[-1] == _timeout_marker(timeout_seconds))
+        if timed_out:
+            lines.pop()
         # Sorting keeps unit tests and user output deterministic for small results.
         lines.sort()
+        if timed_out:
+            lines.append(_timeout_marker(timeout_seconds))
         return lines
 
-    # Fallback: non-recursive patterns are usually cheap; keep Python semantics.
-    return sorted(
-        path.relative_to(root).as_posix()
-        for path in root.glob(pattern)
-    )[:limit]
+    # Keep slow filesystem traversal off the event loop and stop cooperatively
+    # when the caller cancels or its time budget expires.
+    stopped = threading.Event()
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_python_glob, root, pattern, limit, stopped),
+            timeout=timeout_seconds,
+        )
+    finally:
+        stopped.set()
+
+
+def _python_glob(root: Path, pattern: str, limit: int, stopped: threading.Event) -> list[str]:
+    def files():
+        for path in root.glob(pattern):
+            if stopped.is_set():
+                break
+            if path.is_file():
+                yield path.relative_to(root).as_posix()
+    return heapq.nsmallest(limit, files())
 
 
 def _display_path(path: str) -> str:

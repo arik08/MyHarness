@@ -1,3 +1,4 @@
+import { isImeKey } from "../utils/keyboard";
 import { MessageCircleQuestion, Send, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { sendBackendRequest } from "../api/messages";
@@ -123,7 +124,7 @@ export function QuestionRound({ payload }: { payload: Record<string, unknown> })
                   onChange={(event) => {
                     updateAnswer(question, event.currentTarget.value, "text");
                   }}
-                  onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") event.preventDefault(); }} />
+                  onKeyDown={(event) => { event.stopPropagation(); if (isImeKey(event.nativeEvent)) return; if (event.key === "Enter") event.preventDefault(); }} />
               </div>
               {selected?.kind === "text" && selected.answer === "AI가 판단해 주세요." && <div className="clarification-ai-answer">AI가 판단하도록 맡겼습니다.</div>}
             </fieldset>

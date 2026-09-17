@@ -12230,3 +12230,25 @@ body:has(.app-shell.sidebar-collapsed) .modal-backdrop[data-modal-kind="image-pr
 .model-availability-provider-row { display: flex; align-items: center; gap: 5px; padding-left: 5px; }
 .model-availability-provider-row > input { margin: 0; width: 14px; height: 14px; flex-shrink: 0; accent-color: var(--accent); cursor: pointer; }
 .model-availability-provider-row > .model-availability-provider { flex: 1; min-width: 0; }
+
+/* Immediate, local feedback for asynchronous controls, including icon buttons. */
+button[aria-busy="true"] {
+  cursor: progress;
+  position: relative;
+}
+button[aria-busy="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 2px;
+  inset-block-start: 2px;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: async-control-spin 0.8s linear infinite;
+}
+@keyframes async-control-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  button[aria-busy="true"]::after { animation: none; }
+}

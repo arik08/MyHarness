@@ -16,6 +16,7 @@ from myharness.tools.mermaid_preflight import (
 from myharness.tools.html_source_footnotes import prepare_source_footnotes_html
 from myharness.tools.path_display import display_tool_path
 from myharness.skills.refresh import mark_skill_registry_dirty
+from myharness.utils.fs import atomic_write_text
 
 
 class FileReplacement(BaseModel):
@@ -86,7 +87,7 @@ class FileEditTool(BaseTool):
         if version_guard:
             return ToolResult(output=version_guard, is_error=True)
 
-        original = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        original = (await asyncio.to_thread(path.read_bytes)).decode("utf-8")
         replacements = arguments.edits
         if replacements is None:
             replacements = [
@@ -100,17 +101,13 @@ class FileEditTool(BaseTool):
         updated = original
         applied_count = 0
         for index, edit in enumerate(replacements, start=1):
-            if edit.old_str not in updated:
+            updated, count = _replace_preserving_newlines(updated, edit)
+            if not count:
                 return ToolResult(
                     output=f"{index}번째 편집의 old_str을 파일에서 찾을 수 없습니다.",
                     is_error=True,
                 )
-            if edit.replace_all:
-                applied_count += updated.count(edit.old_str)
-                updated = updated.replace(edit.old_str, edit.new_str)
-            else:
-                applied_count += 1
-                updated = updated.replace(edit.old_str, edit.new_str, 1)
+            applied_count += count
 
         updated = prepare_source_footnotes_html(updated, path.suffix, context.metadata)
         mermaid_errors = mermaid_preflight_errors(path, updated)
@@ -120,11 +117,39 @@ class FileEditTool(BaseTool):
                 is_error=True,
             )
 
-        await asyncio.to_thread(path.write_text, updated, encoding="utf-8")
+        await asyncio.to_thread(
+            atomic_write_text, path, updated, encoding="utf-8",
+            create_directories=False,
+        )
         mark_skill_registry_dirty(context.metadata, path)
         return ToolResult(
             output=f"{display_tool_path(path, context.cwd)}을(를) 업데이트했습니다. 치환 {applied_count}건"
         )
+
+
+def _replace_preserving_newlines(text: str, edit: FileReplacement) -> tuple[str, int]:
+    if not any(char in edit.old_str + edit.new_str for char in "\r\n"):
+        count = text.count(edit.old_str)
+        if not edit.replace_all:
+            count = min(count, 1)
+        return text.replace(edit.old_str, edit.new_str, -1 if edit.replace_all else 1), count
+
+    # Match read_file's normalized lines without rewriting untouched bytes.
+    # Do not allow one CRLF to backtrack into two separate line endings.
+    boundary = r"(?:\r\n|\r(?!\n)|(?<!\r)\n)"
+    pattern = boundary.join(re.escape(part) for part in re.split(r"\r\n|\r|\n", edit.old_str))
+    replacement_parts = re.split(r"\r\n|\r|\n", edit.new_str)
+    first_ending = re.search(r"\r\n|\r|\n", text)
+    default_ending = first_ending.group() if first_ending else "\n"
+
+    def replacement(match: re.Match[str]) -> str:
+        endings = re.findall(r"\r\n|\r|\n", match.group()) or [default_ending]
+        parts = [replacement_parts[0]]
+        for index, part in enumerate(replacement_parts[1:]):
+            parts.extend((endings[min(index, len(endings) - 1)], part))
+        return "".join(parts)
+
+    return re.subn(pattern, replacement, text, count=0 if edit.replace_all else 1)
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:

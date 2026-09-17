@@ -25,6 +25,7 @@ export function enhancePrompt(payload: { sessionId: string; clientId: string; te
 export type SendMessagePayload = {
   sessionId: string;
   clientId: string;
+  workspacePath?: string;
   line: string;
   attachments?: unknown[];
   attachmentRefs?: ClientAttachmentRef[];
@@ -33,6 +34,7 @@ export type SendMessagePayload = {
   suppressUserTranscript?: boolean;
   requestId?: string;
   systemPrompt?: string;
+  resumeSessionId?: string;
 };
 
 const runtimeDeliveries = new Map<string, Promise<unknown>>();

@@ -1,3 +1,5 @@
+import { createOptimisticWrites } from "../utils/optimisticWrites";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import { createClientId } from "../utils/ids";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
@@ -105,6 +107,8 @@ export function Sidebar() {
   const newChatInFlightRef = useRef(false);
   const historyScope = `${state.workspacePath}\u0000${state.workspaceName}`;
   const historyScopeRef = useRef(historyScope);
+  const metadataWrites = useRef(createOptimisticWrites());
+  const [metadataOverrides, setMetadataOverrides] = useState<Record<string, Partial<Pick<HistoryItem, "pinned" | "liked" | "description">>>>({});
   const previousHistoryScopeRef = useRef(historyScope);
   const historyOrderRef = useRef<{ scope: string; ids: string[] }>({ scope: historyScope, ids: [] });
   const historyLoadingMoreRequestRef = useRef<object | null>(null);
@@ -181,6 +185,8 @@ export function Sidebar() {
       window.removeEventListener("pointercancel", finishHistoryBulkDrag);
     };
   }, [historyBulkMode]);
+
+  const sessionAction = useAsyncAction();
 
   async function startFreshChat(workspace?: Workspace) {
     if (newChatInFlightRef.current) return;
@@ -337,6 +343,7 @@ export function Sidebar() {
   }
 
   async function openHistory(item: HistoryItem) {
+    const targetWorkspacePath = item.workspace?.path || state.workspacePath;
     const nextHistoryId = String(item.value || "").trim();
     if (!state.sessionId || !nextHistoryId) {
       return;
@@ -408,10 +415,10 @@ export function Sidebar() {
       }
       if (previewLoaded) return;
       acceptPreview = false;
-      if (state.busy) {
+      if (state.busy || (targetWorkspacePath && targetWorkspacePath !== state.workspacePath)) {
         const session = await startSession({
           clientId: state.clientId,
-          cwd: state.workspacePath || undefined,
+          cwd: targetWorkspacePath || undefined,
           ...runtimePreferencesFromState(state),
         });
         if (!isCurrentRequest()) return;
@@ -436,7 +443,7 @@ export function Sidebar() {
         try {
           const session = await startSession({
             clientId: state.clientId,
-            cwd: state.workspacePath || undefined,
+            cwd: targetWorkspacePath || undefined,
             ...runtimePreferencesFromState(state),
           });
           if (!isCurrentRequest()) return;
@@ -533,33 +540,38 @@ export function Sidebar() {
     }
   }
 
+  function writeHistoryMetadata<K extends "pinned" | "liked" | "description">(
+    item: HistoryItem, field: K, value: HistoryItem[K], persist: (value: HistoryItem[K]) => Promise<HistoryItem[K]>,
+  ) {
+    const scope = historyScope;
+    const workspacePath = state.workspacePath;
+    const workspaceName = state.workspaceName;
+    const key = `${scope}\u0000${item.value}`;
+    return metadataWrites.current({
+      key: `${key}\u0000${field}`, previous: item[field], value, persist,
+      apply: (next) => {
+        const patch = { [field]: next };
+        dispatch({ type: "patch_history_metadata", sessionId: item.value, workspacePath, workspaceName, patch });
+        setMetadataOverrides((current) => ({ ...current, [key]: { ...current[key], ...patch } }));
+        if (historyScopeRef.current === scope) {
+          setHistorySearchResults((current) => current.map((row) => row.value === item.value ? { ...row, ...patch } : row));
+        }
+      },
+      onError: (error) => dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } }),
+      onSettled: () => setMetadataOverrides((current) => {
+        const next = { ...current, [key]: { ...current[key] } };
+        delete next[key][field];
+        if (!Object.keys(next[key]).length) delete next[key];
+        return next;
+      }),
+    });
+  }
+
   async function pinHistory(item: HistoryItem) {
-    const sessionId = item.value;
-    if (!sessionId || isLiveOnlyHistoryItem(item)) return;
-    const nextPinned = item.pinned !== true;
-    const workspace = item.workspace || null;
-    try {
-      const data = await toggleHistoryPin(
-        sessionId,
-        nextPinned,
-        workspace?.path || state.workspacePath,
-        workspace?.name || state.workspaceName,
-      );
-      dispatch({
-        type: "set_history",
-        history: state.history.map((historyItem) =>
-          historyItem.value === sessionId ? { ...historyItem, pinned: data.pinned } : historyItem,
-        ),
-      });
-      setHistorySearchResults((current) => current.map((historyItem) =>
-        historyItem.value === sessionId ? { ...historyItem, pinned: data.pinned } : historyItem,
-      ));
-    } catch (error) {
-      dispatch({
-        type: "open_modal",
-        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    }
+    if (!item.value || isLiveOnlyHistoryItem(item)) return;
+    await writeHistoryMetadata(item, "pinned", !item.pinned, async (value) => (
+      await toggleHistoryPin(item.value, value === true, item.workspace?.path || state.workspacePath, item.workspace?.name || state.workspaceName)
+    ).pinned);
   }
 
   async function restoreHiddenHistory(item: HistoryItem) {
@@ -620,61 +632,21 @@ export function Sidebar() {
   }
 
   async function likeHistory(item: HistoryItem) {
-    const sessionId = item.value;
-    if (!sessionId || item.pending || isLiveOnlyHistoryItem(item)) return;
-    const nextLiked = item.liked !== true;
-    const workspace = item.workspace || null;
-    try {
-      const data = await toggleHistoryLike(
-        sessionId,
-        nextLiked,
-        workspace?.path || state.workspacePath,
-        workspace?.name || state.workspaceName,
-      );
-      dispatch({
-        type: "set_history",
-        history: state.history.map((historyItem) =>
-          historyItem.value === sessionId ? { ...historyItem, liked: data.liked } : historyItem,
-        ),
-      });
-      setHistorySearchResults((current) => current.map((historyItem) =>
-        historyItem.value === sessionId ? { ...historyItem, liked: data.liked } : historyItem,
-      ));
-    } catch (error) {
-      dispatch({
-        type: "open_modal",
-        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    }
+    if (!item.value || item.pending || isLiveOnlyHistoryItem(item)) return;
+    await writeHistoryMetadata(item, "liked", !item.liked, async (value) => (
+      await toggleHistoryLike(item.value, value === true, item.workspace?.path || state.workspacePath, item.workspace?.name || state.workspaceName)
+    ).liked);
   }
 
   async function renameHistory(sessionId: string) {
     const title = editingHistoryTitle.trim();
-    if (!sessionId || !title) {
-      setEditingHistoryId("");
-      setEditingHistoryTitle("");
-      return;
-    }
-    try {
-      const data = await updateHistoryTitle(sessionId, title, state.workspacePath, state.workspaceName);
-      dispatch({
-        type: "set_history",
-        history: state.history.map((item) =>
-          item.value === sessionId ? { ...item, description: data.title || title } : item,
-        ),
-      });
-      setHistorySearchResults((current) => current.map((item) =>
-        item.value === sessionId ? { ...item, description: data.title || title } : item,
-      ));
-    } catch (error) {
-      dispatch({
-        type: "open_modal",
-        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    } finally {
-      setEditingHistoryId("");
-      setEditingHistoryTitle("");
-    }
+    const item = filteredRenderedHistory.find((row) => row.value === sessionId);
+    setEditingHistoryId("");
+    setEditingHistoryTitle("");
+    if (!item || !title) return;
+    await writeHistoryMetadata(item, "description", title, async (value) => (
+      await updateHistoryTitle(sessionId, value || title, item.workspace?.path || state.workspacePath, item.workspace?.name || state.workspaceName)
+    ).title || value || title);
   }
 
   async function loadMoreHistory() {
@@ -998,7 +970,8 @@ export function Sidebar() {
   }, [activeHistoryValue]);
   const activeHistoryHiddenKey = historyVisibilityKey(activeHistoryValue, state.workspacePath, state.workspaceName);
   const activeHistoryDeleted = Boolean(!state.adminMode && activeHistoryHiddenKey && state.hiddenHistoryKeys.includes(activeHistoryHiddenKey));
-  const visibleHistory = uniqueHistoryItems(state.history).filter((item) => (
+  const withPendingMetadata = (item: HistoryItem): HistoryItem => ({ ...item, ...metadataOverrides[`${historyScope}\u0000${item.value}`] });
+  const visibleHistory = uniqueHistoryItems(state.history).map(withPendingMetadata).filter((item) => (
     !isCurrentLiveHistoryItem(item, state.sessionId)
     && !optimisticallyHiddenHistoryIds.has(item.value)
   ));
@@ -1068,9 +1041,9 @@ export function Sidebar() {
       : item.description || item.label;
   };
   const renderedHistorySource = likedHistoryOnly
-    ? sortPinnedHistory(appendUniqueHistoryItems(historySearchResults, sortedRenderedHistory))
+    ? sortPinnedHistory(appendUniqueHistoryItems(historySearchResults.map(withPendingMetadata), sortedRenderedHistory))
     : hasHistorySearch
-    ? appendUniqueHistoryItems(sortedRenderedHistory, historySearchResults)
+    ? appendUniqueHistoryItems(sortedRenderedHistory, historySearchResults.map(withPendingMetadata))
     : sortedRenderedHistory;
   const filteredRenderedHistory = renderedHistorySource.filter((item) => (
     !optimisticallyHiddenHistoryIds.has(item.value)
@@ -1299,7 +1272,7 @@ export function Sidebar() {
               type="button"
               role="menuitem"
               key={workspace.path}
-              onClick={() => void switchWorkspace(workspace.path)}
+              aria-busy={sessionAction.pending} disabled={sessionAction.pending} onClick={() => void sessionAction.run(() => switchWorkspace(workspace.path))}
             >
               {workspace.name}
             </button>
@@ -1318,7 +1291,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <button className="new-chat" type="button" aria-label="새 대화" data-tooltip="새 대화" data-tooltip-placement="right" onClick={() => void startFreshChat()}>
+      <button className="new-chat" type="button" aria-label="새 대화" data-tooltip="새 대화" data-tooltip-placement="right" aria-busy={sessionAction.pending} disabled={sessionAction.pending} onClick={() => void sessionAction.run(() => startFreshChat())}>
         <span aria-hidden="true">
           <svg viewBox="0 0 24 24">
             <path d="M12 3H5.5A2.5 2.5 0 0 0 3 5.5v13A2.5 2.5 0 0 0 5.5 21h13A2.5 2.5 0 0 0 21 18.5V12" />
@@ -1453,7 +1426,7 @@ export function Sidebar() {
                 type="button"
                 aria-label="재시작"
                 data-tooltip="재시작"
-                onClick={() => void restartActiveSession()}
+                aria-busy={sessionAction.pending} disabled={sessionAction.pending} onClick={() => void sessionAction.run(restartActiveSession)}
               >
                 <svg aria-hidden="true" viewBox="0 0 24 24">
                   <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />

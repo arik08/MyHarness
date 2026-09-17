@@ -122,12 +122,12 @@ export type BackendEvent =
   | { type: "queued_message_status"; request_id?: string | null; status?: "delivered" | "cancelled" | "not_found" | string | null }
   | { type: "capacity_queue_status"; kind?: "session" | "response" | string | null; status?: "waiting" | "started" | "cancelled" | string | null; position?: number | null; message?: string | null }
   | { type: "reasoning_summary"; message?: string | null }
-  | { type: "assistant_delta"; message?: string | null; value?: string | null }
+  | { type: "assistant_delta"; message?: string | null; value?: string | null; snapshot?: boolean }
   | { type: "assistant_complete"; message?: string | null; has_tool_uses?: boolean | null; artifacts?: ArtifactSummary[] | null; usage?: UsageCostSummary | null; session_usage?: UsageCostSummary | null }
   | { type: "compact_progress"; compact_phase?: CompactProgressPhase | string | null; compact_trigger?: CompactProgressTrigger | string | null; attempt?: number | null; compact_checkpoint?: string | null; compact_metadata?: Record<string, unknown> | null; message?: string | null }
   | { type: "session_title"; message?: string | null; value?: string | null }
   | { type: "tool_started"; timestamp_ms?: number | null; execution_metadata?: Record<string, unknown> | null; tool_name?: string; tool_call_id?: string | null; tool_call_index?: number | null; tool_input?: Record<string, unknown> | null }
-  | { type: "tool_input_delta"; tool_name?: string; tool_call_index?: number; arguments_delta?: string }
+  | { type: "tool_input_delta"; tool_name?: string; tool_call_id?: string | null; tool_call_index?: number | null; arguments_delta?: string }
   | { type: "tool_progress"; timestamp_ms?: number | null; execution_metadata?: Record<string, unknown> | null; output?: string; tool_name?: string; tool_call_id?: string | null; tool_call_index?: number | null; message?: string; tool_input?: Record<string, unknown> | null }
   | { type: "tool_completed"; timestamp_ms?: number | null; execution_metadata?: Record<string, unknown> | null; tool_name?: string; tool_call_id?: string | null; tool_call_index?: number | null; output?: string; is_error?: boolean | null }
   | { type: "line_complete"; quiet?: boolean; compact_metadata?: Record<string, unknown> | null }

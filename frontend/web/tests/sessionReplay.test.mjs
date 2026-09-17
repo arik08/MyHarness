@@ -12,6 +12,30 @@ import {
   withEventTimestamp,
 } from "../modules/sessionReplay.js";
 
+test("supplemental user responses preserve active streams across reconnects", () => {
+  for (const kind of ["steering", "queued", "question_answer"]) {
+    const state = createSessionReplayState();
+    updateSessionReplayState(state, { type: "assistant_delta", message: "앞 문장. " });
+    updateSessionReplayState(state, { type: "tool_input_delta", tool_name: "new_tool", tool_call_id: "tool-1", arguments_delta: '{"value":' });
+    updateSessionReplayState(state, { type: "transcript_item", item: { role: "user", kind, text: "추가 입력" } });
+    updateSessionReplayState(state, { type: "assistant_delta", message: "뒤 문장." });
+    updateSessionReplayState(state, { type: "tool_input_delta", tool_name: "new_tool", tool_call_id: "tool-1", arguments_delta: '42}' });
+    const replay = replayEventsForState(state);
+    assert.equal(replay.find(event => event.type === "assistant_delta")?.message, "앞 문장. 뒤 문장.", kind);
+    assert.equal(replay.find(event => event.type === "assistant_delta")?.snapshot, true);
+    assert.equal(replay.find(event => event.type === "tool_input_delta")?.arguments_delta, '{"value":42}', kind);
+    updateSessionReplayState(state, { type: "transcript_item", item: { role: "user", text: "실제 새 질문" } });
+    assert.equal(replayEventsForState(state).some(event => ["assistant_delta", "tool_input_delta"].includes(event.type)), false);
+  }
+});
+
+test("null call indexes do not collide with call zero in replay", () => {
+  const state = createSessionReplayState();
+  updateSessionReplayState(state, { type: "tool_input_delta", tool_name: "custom-a", tool_call_index: null, arguments_delta: "A" });
+  updateSessionReplayState(state, { type: "tool_input_delta", tool_name: "custom-b", tool_call_index: 0, arguments_delta: "B" });
+  assert.deepEqual(replayEventsForState(state).filter((event) => event.type === "tool_input_delta").map((event) => event.arguments_delta), ["A", "B"]);
+});
+
 test("original turn timestamps survive compact and cursor replay independently per session", () => {
   for (const startedAt of [1000, 9000]) {
     const state = createSessionReplayState();

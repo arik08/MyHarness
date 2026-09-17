@@ -1,3 +1,4 @@
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import { useEffect, useState, type MouseEvent } from "react";
 import { sendBackendRequest } from "../api/messages";
 import { restartSession } from "../api/session";
@@ -22,6 +23,9 @@ function taskOutputForDisplay(value: unknown) {
 
 export function ModalHost() {
   const { state, dispatch } = useAppState();
+  const workspaceAction = useAsyncAction();
+  const runtimeAction = useAsyncAction();
+  const [runtimeError, setRuntimeError] = useState("");
   const [answer, setAnswer] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
@@ -74,7 +78,12 @@ export function ModalHost() {
   if (state.modal.kind === "modelSettings") {
     async function requestRuntimeChoice(command: "provider" | "model" | "effort") {
       if (!state.sessionId) return;
-      await sendBackendRequest(state.sessionId, state.clientId, { type: "select_command", command });
+      setRuntimeError("");
+      try {
+        await sendBackendRequest(state.sessionId, state.clientId, { type: "select_command", command });
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      }
     }
 
     return (
@@ -87,17 +96,18 @@ export function ModalHost() {
             </svg>
           </button>
           <h2>모델 설정</h2>
+          {runtimeError ? <p className="workspace-error" role="alert">{runtimeError}</p> : null}
           <p className="settings-helper">프로바이더, 모델, 추론 강도 선택은 기존 백엔드 선택 흐름을 사용합니다.</p>
           <div className="settings-grid">
-            <button className="settings-row" type="button" onClick={() => void requestRuntimeChoice("provider")}>
+            <button className="settings-row" type="button" aria-busy={runtimeAction.pending} disabled={runtimeAction.pending || !state.sessionId} onClick={() => void runtimeAction.run(() => requestRuntimeChoice("provider"))}>
               <strong>프로바이더</strong>
               <small>{state.provider}</small>
             </button>
-            <button className="settings-row" type="button" onClick={() => void requestRuntimeChoice("model")}>
+            <button className="settings-row" type="button" aria-busy={runtimeAction.pending} disabled={runtimeAction.pending || !state.sessionId} onClick={() => void runtimeAction.run(() => requestRuntimeChoice("model"))}>
               <strong>모델</strong>
               <small>{state.model}</small>
             </button>
-            <button className="settings-row" type="button" onClick={() => void requestRuntimeChoice("effort")}>
+            <button className="settings-row" type="button" aria-busy={runtimeAction.pending} disabled={runtimeAction.pending || !state.sessionId} onClick={() => void runtimeAction.run(() => requestRuntimeChoice("effort"))}>
               <strong>추론 노력</strong>
               <small>{state.effort}</small>
             </button>
@@ -169,7 +179,11 @@ export function ModalHost() {
               const deleteReady = pendingDeleteWorkspace === workspace.name;
               return (
                 <div className={`workspace-row${active ? " active" : ""}${deleteReady ? " delete-ready" : ""}${deleting ? " deleting" : ""}`} key={workspace.path}>
-                  <button className="workspace-option" type="button" onClick={() => void switchWorkspace(workspace).then(close)}>
+                  <button className="workspace-option" type="button" aria-busy={workspaceAction.pending} disabled={workspaceAction.pending} onClick={() => void workspaceAction.run(async () => {
+                    setWorkspaceError("");
+                    try { await switchWorkspace(workspace); close(); }
+                    catch (error) { setWorkspaceError(error instanceof Error ? error.message : String(error)); }
+                  })}>
                     <span>
                       <strong>{workspace.name}</strong>
                       <small>{workspace.path}</small>
@@ -180,8 +194,8 @@ export function ModalHost() {
                     type="button"
                     aria-label={deleteReady ? `${workspace.name} 삭제 확인` : `${workspace.name} 삭제`}
                     data-tooltip={deleteReady ? "한 번 더 누르면 삭제됩니다" : "프로젝트 삭제"}
-                    disabled={deleting}
-                    onClick={() => void removeWorkspace(workspace)}
+                    aria-busy={deleting} disabled={workspaceAction.pending}
+                    onClick={() => void workspaceAction.run(() => removeWorkspace(workspace))}
                   >
                     {deleteReady ? (
                       <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -207,7 +221,7 @@ export function ModalHost() {
             className="workspace-create"
             onSubmit={(event) => {
               event.preventDefault();
-              void createAndSwitch();
+              void workspaceAction.run(createAndSwitch);
             }}
           >
             <input
@@ -216,8 +230,8 @@ export function ModalHost() {
               placeholder="새 프로젝트 이름"
               aria-label="새 프로젝트 이름"
             />
-            <button type="submit" className="primary" disabled={!workspaceName.trim()}>
-              만들기
+            <button type="submit" className="primary" aria-busy={workspaceAction.pending} disabled={!workspaceName.trim() || workspaceAction.pending}>
+              {workspaceAction.pending ? "처리 중..." : "만들기"}
             </button>
           </form>
           <p className="workspace-error">{workspaceError}</p>

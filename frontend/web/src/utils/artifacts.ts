@@ -77,11 +77,20 @@ const documentExtensions = new Set(["doc", "docx", "xls", "xlsx", "ppt", "pptx",
 const sourceCodeExtensions = new Set(["py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "css", "sql", "sh", "ps1", "bat", "cmd"]);
 
 export function normalizeArtifactPath(value: string) {
-  return String(value || "")
+  const path = String(value || "")
     .trim()
-    .replace(/^file:\/\//i, "")
     .replace(/^["'`]+|["'`.,;:)]+$/g, "")
+    .replace(/^<([^<>]+)>$/, "$1")
     .replace(/\\/g, "/");
+  if (!/^file:\/\//i.test(path)) return path;
+  try {
+    const url = new URL(path);
+    const pathname = decodeURIComponent(url.pathname);
+    return url.hostname ? `//${url.hostname}${pathname}` : pathname.replace(/^\/([A-Za-z]:\/)/, "$1");
+  } catch {
+    // An incomplete streamed URL must not break message rendering.
+    return path;
+  }
 }
 
 export function normalizeProjectFilePath(value: string) {

@@ -437,12 +437,15 @@ class OpenAICompatibleClient:
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Yield text deltas and the final message, matching the Anthropic client interface."""
         if self.supports_server_compaction(request.model) and self._responses_client is not None:
+            emitted = False
             try:
-                async for event in self._responses_client.stream_message(request):
-                    yield event
+                async with aclosing(self._responses_client.stream_message(request)) as stream:
+                    async for event in stream:
+                        emitted = emitted or not isinstance(event, ApiRetryEvent)
+                        yield event
                 return
             except RequestFailure as exc:
-                if not self._responses_endpoint_is_unavailable(exc):
+                if emitted or not self._responses_endpoint_is_unavailable(exc):
                     raise
                 self._responses_api_unavailable = True
                 log.warning(
@@ -453,17 +456,20 @@ class OpenAICompatibleClient:
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES + 1):
+            # Consumers have already applied yielded deltas; replay would duplicate them.
+            emitted = False
             try:
                 stream_once = self._stream_raw_once if self._raw_stream else self._stream_once
                 async with aclosing(stream_once(request)) as stream:
                     async for event in stream:
+                        emitted = True
                         yield event
                 return
             except MyHarnessApiError:
                 raise
             except Exception as exc:
                 last_error = exc
-                if attempt >= MAX_RETRIES or not self._is_retryable(exc):
+                if emitted or attempt >= MAX_RETRIES or not self._is_retryable(exc):
                     raise self._translate_error(exc) from exc
 
                 delay = calculate_retry_delay(

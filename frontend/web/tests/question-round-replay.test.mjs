@@ -17,7 +17,26 @@ test("reconnect restores only the latest state of the question round", () => {
   assert.deepEqual(replayEventsForState(state), [next]);
 });
 
-test("incremental replay includes question acknowledgement but never permission prompts", () => {
+for (const kind of ["permission", "question"]) {
+  test(`reconnect restores pending ${kind} and its final acknowledgement`, () => {
+    const state = createSessionReplayState();
+    const request = { type: "modal_request", modal: { kind, request_id: "pending-a", question: "Continue?", reason: "Write a file" } };
+    const closed = { type: "modal_request", modal: { kind, request_id: "pending-a", status: "cancelled" } };
+    updateSessionReplayState(state, request);
+    assert.deepEqual(replayEventsForState(state), [request]);
+    updateSessionReplayState(state, closed);
+    assert.deepEqual(replayEventsForState(state), [closed]);
+    const next = { ...request, modal: { ...request.modal, request_id: "pending-b" } };
+    updateSessionReplayState(state, next);
+    updateSessionReplayState(state, closed);
+    assert.deepEqual(replayEventsForState(state), [next]);
+    assert.deepEqual(rawEventsAfterLastEventId([request, closed].map((event, index) => ({ id: index + 1, event })), "0").map(entry => entry.event), [request, closed]);
+    updateSessionReplayState(state, { type: "clear_transcript" });
+    assert.deepEqual(replayEventsForState(state), []);
+  });
+}
+
+test("incremental replay excludes unaddressable permission prompts", () => {
   const events = [pending, answered, { type: "modal_request", modal: { kind: "permission" } }].map((event, id) => ({ id: id + 1, event }));
   assert.deepEqual(rawEventsAfterLastEventId(events, "1").map(({ event }) => event), [answered]);
 });

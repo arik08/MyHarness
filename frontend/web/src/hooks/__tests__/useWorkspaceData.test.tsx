@@ -46,6 +46,96 @@ function Probe() {
 }
 
 describe("useWorkspaceData", () => {
+  it("keeps all pages on partial refresh failure and later reflects deletions", async () => {
+    vi.useFakeTimers();
+    try {
+      let rows = Array.from({ length: 80 }, (_, index) => ({ value: `saved-${index}`, label: `row-${index}` }));
+      let failLaterPage = false;
+      vi.mocked(listHistory).mockImplementation(async ({ offset = 0, limit = 25 } = {}) => {
+        if (failLaterPage && offset > 0) throw new Error("page unavailable");
+        return { options: rows.slice(offset, offset + limit), hasMore: offset + limit < rows.length, nextOffset: Math.min(offset + limit, rows.length) };
+      });
+      let latest = initialAppState;
+      function Observe() {
+        const { state, dispatch } = useAppState(); latest = state;
+        return <button onClick={() => dispatch({ type: "append_history", history: rows.slice(25, 60), hasMore: true, nextOffset: 60 })}>Load pages</button>;
+      }
+      render(<AppStateProvider initialState={{ ...initialAppState, clientId: "pagination-client", workspaceName: "Default", workspacePath: "C:/demo" }}><Probe /><Observe /></AppStateProvider>);
+      await act(async () => { await Promise.resolve(); });
+      fireEvent.click(screen.getByText("Load pages"));
+      failLaterPage = true;
+      await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+      expect(latest.history).toHaveLength(60);
+      expect(latest.historyNextOffset).toBe(60);
+      failLaterPage = false;
+      rows = rows.slice(0, 40);
+      await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+      expect(latest.history).toHaveLength(40);
+      expect(latest.historyNextOffset).toBe(40);
+      expect(latest.historyHasMore).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+  it.each([60, 125])("retains %s loaded history rows across automatic refresh", async (loaded) => {
+    vi.useFakeTimers();
+    try {
+      const rows = Array.from({ length: 150 }, (_, index) => ({ value: `saved-${index}`, label: `row-${index}` }));
+      vi.mocked(listHistory).mockImplementation(async ({ offset = 0, limit = 25 } = {}) => ({ options: rows.slice(offset, offset + limit), hasMore: offset + limit < rows.length, nextOffset: Math.min(offset + limit, rows.length) }));
+      let latest = initialAppState;
+      function Observe() {
+        const { state, dispatch } = useAppState(); latest = state;
+        return <button onClick={() => dispatch({ type: "append_history", history: rows.slice(25, loaded), hasMore: true, nextOffset: loaded })}>Load pages</button>;
+      }
+      render(<AppStateProvider initialState={{ ...initialAppState, clientId: "pagination-client", workspaceName: "Default", workspacePath: "C:/demo" }}><Probe /><Observe /></AppStateProvider>);
+      await act(async () => { await Promise.resolve(); });
+      fireEvent.click(screen.getByText("Load pages"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+      expect(latest.history.map((row) => row.value)).toEqual(rows.slice(0, loaded).map((row) => row.value));
+      expect(latest.historyNextOffset).toBe(loaded);
+      expect(latest.historyHasMore).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("ignores a refresh response after another page was appended", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = { value: "first", label: "first" };
+      vi.mocked(listHistory).mockResolvedValueOnce({ options: [first], hasMore: true, nextOffset: 25 });
+      let resolvePoll!: (data: Awaited<ReturnType<typeof listHistory>>) => void;
+      vi.mocked(listHistory).mockImplementationOnce(() => new Promise((resolve) => { resolvePoll = resolve; }));
+      let latest = initialAppState;
+      function Observe() {
+        const { state, dispatch } = useAppState(); latest = state;
+        return <button onClick={() => dispatch({ type: "append_history", history: [{ value: "older", label: "older" }], hasMore: false, nextOffset: 26 })}>Append page</button>;
+      }
+      render(<AppStateProvider initialState={{ ...initialAppState, clientId: "pagination-client", workspaceName: "Default", workspacePath: "C:/demo" }}><Probe /><Observe /></AppStateProvider>);
+      await act(async () => { await Promise.resolve(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+      fireEvent.click(screen.getByText("Append page"));
+      await act(async () => { resolvePoll({ options: [first], hasMore: true, nextOffset: 25 }); });
+      expect(latest.history.map((row) => row.value)).toEqual(["first", "older"]);
+      expect(latest.historyNextOffset).toBe(26);
+      expect(latest.historyHasMore).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+  it("keeps newer history and pagination when a slow live lookup finishes", async () => {
+    let resolveLive!: (value: Awaited<ReturnType<typeof listLiveSessions>>) => void;
+    vi.mocked(listLiveSessions).mockReturnValueOnce(new Promise((resolve) => { resolveLive = resolve; }));
+    vi.mocked(listHistory).mockResolvedValue({ options: [{ value: "saved", label: "old" }], hasMore: true, nextOffset: 25 });
+    let latest = initialAppState;
+    function Update() {
+      const { state, dispatch } = useAppState();
+      latest = state;
+      return <button onClick={() => dispatch({ type: "set_history", history: [{ value: "saved", label: "renamed", liked: true }, { value: "older", label: "second page" }], hasMore: false, nextOffset: 50 })}>Update list</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", workspaceName: "Default", workspacePath: "C:/demo" }}><Probe /><Update /></AppStateProvider>);
+    await waitFor(() => expect(latest.history[0]?.label).toBe("old"));
+    fireEvent.click(screen.getByText("Update list"));
+    await act(async () => { resolveLive({ sessions: [] }); });
+    expect(latest.history.map((row) => row.label)).toEqual(["renamed", "second page"]);
+    expect(latest.history[0].liked).toBe(true);
+    expect(latest.historyHasMore).toBe(false);
+    expect(latest.historyNextOffset).toBe(50);
+  });
   it.each([null, "runtime"])("reconciles runtime aliases with saved rows for current session %s", (current) => {
     const temporary = { value: "runtime", label: "live", live: true, liveSessionId: "runtime", busy: true };
     const saved = { value: "saved", label: "saved title", pinned: true, liked: true };

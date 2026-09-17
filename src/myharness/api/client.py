@@ -194,17 +194,20 @@ class AnthropicApiClient:
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES + 1):
+            # Consumers have already applied yielded deltas; replay would duplicate them.
+            emitted = False
             try:
                 await self._refresh_client_auth()
                 async with aclosing(self._stream_once(request)) as stream:
                     async for event in stream:
+                        emitted = True
                         yield event
                 return  # Success
             except MyHarnessApiError:
                 raise  # Auth errors are not retried
             except Exception as exc:
                 last_error = exc
-                if attempt >= MAX_RETRIES or not _is_retryable(exc):
+                if emitted or attempt >= MAX_RETRIES or not _is_retryable(exc):
                     if isinstance(exc, APIError):
                         raise _translate_api_error(exc) from exc
                     raise RequestFailure(str(exc)) from exc

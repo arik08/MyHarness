@@ -3,6 +3,15 @@ import type { BackendEvent } from "../../types/backend";
 import { createWorkflowEventCoalescer } from "../workflowEventCoalescer";
 
 describe("createWorkflowEventCoalescer", () => {
+  it("does not merge a missing index with index zero", () => {
+    const events: BackendEvent[] = [];
+    const coalescer = createWorkflowEventCoalescer((event) => events.push(event));
+    coalescer.push({ type: "tool_input_delta", tool_name: "custom-a", tool_call_index: null, arguments_delta: "A" } as BackendEvent);
+    coalescer.push({ type: "tool_input_delta", tool_name: "custom-b", tool_call_index: 0, arguments_delta: "B" });
+    coalescer.flush();
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => (event as { arguments_delta: string }).arguments_delta)).toEqual(["A", "B"]);
+  });
   it("bounds a burst of 1000 answer chunks without waiting for the next message", () => {
     vi.useFakeTimers();
     const emit = vi.fn();

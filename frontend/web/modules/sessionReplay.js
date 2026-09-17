@@ -1,3 +1,5 @@
+import { toolCallKey } from "./toolIdentity.js";
+
 const defaultRawEventLimit = 400;
 const defaultStableEventLimit = 1000;
 const replayExcludedTypes = new Set(["modal_request", "select_request"]);
@@ -6,9 +8,10 @@ function eventType(event) {
   return String(event?.type || "");
 }
 
-function isQuestionRoundEvent(event) {
-  return eventType(event) === "modal_request" && event.modal?.kind === "question"
-    && (Array.isArray(event.modal.questions) || event.modal.status === "answered" || event.modal.status === "cancelled");
+function isInteractiveRequestEvent(event) {
+  return eventType(event) === "modal_request"
+    && ["question", "permission"].includes(event.modal?.kind)
+    && Boolean(String(event.modal?.request_id || "").trim());
 }
 
 function nextOrder(state) {
@@ -18,14 +21,6 @@ function nextOrder(state) {
 
 function cloneEvent(event) {
   return event && typeof event === "object" ? { ...event } : event;
-}
-
-function toolCallKey(event) {
-  const callId = typeof event.tool_call_id === "string" && event.tool_call_id ? event.tool_call_id : "";
-  if (callId) return `id:${callId}`;
-  const rawIndex = Number(event.tool_call_index);
-  if (Number.isFinite(rawIndex)) return `index:${rawIndex}`;
-  return `tool:${String(event.tool_name || "")}`;
 }
 
 function resetActiveStreams(state) {
@@ -38,6 +33,7 @@ function resetConversationReplay(state) {
   state.stableEvents = [];
   state.latestEvents.delete("todo_update");
   state.latestEvents.delete("question_round");
+  state.latestEvents.delete("permission_request");
   resetActiveStreams(state);
 }
 
@@ -84,7 +80,8 @@ function isRegularUserTranscript(event) {
   return event.type === "transcript_item"
     && item.role === "user"
     && item.kind !== "steering"
-    && item.kind !== "queued";
+    && item.kind !== "queued"
+    && item.kind !== "question_answer";
 }
 
 function updateAssistantDelta(state, event) {
@@ -145,7 +142,7 @@ export function createSessionReplayState() {
 }
 
 export function shouldReplayRawEvent(event) {
-  return isQuestionRoundEvent(event) || !replayExcludedTypes.has(eventType(event));
+  return isInteractiveRequestEvent(event) || !replayExcludedTypes.has(eventType(event));
 }
 
 // Capture time once at ingestion, never when a client reconnects/replays.
@@ -185,10 +182,11 @@ export function canReplayFromLastEventId(events, lastEventId) {
 
 export function updateSessionReplayState(state, event) {
   const type = eventType(event);
-  if (isQuestionRoundEvent(event)) {
-    const current = state.latestEvents.get("question_round")?.event?.modal;
+  if (isInteractiveRequestEvent(event)) {
+    const key = event.modal.kind === "question" ? "question_round" : "permission_request";
+    const current = state.latestEvents.get(key)?.event?.modal;
     if (event.modal.status && current && current.request_id !== event.modal.request_id) return;
-    rememberLatestEvent(state, "question_round", event);
+    rememberLatestEvent(state, key, event);
     return;
   }
   if (!type || replayExcludedTypes.has(type)) {
@@ -269,7 +267,7 @@ export function replayEventsForState(state) {
   if (state.assistantDelta?.message) {
     entries.push({
       order: state.assistantDelta.order,
-      event: { type: "assistant_delta", message: state.assistantDelta.message },
+      event: { type: "assistant_delta", message: state.assistantDelta.message, snapshot: true },
     });
   }
   return entries

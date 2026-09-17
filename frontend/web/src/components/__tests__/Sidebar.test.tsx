@@ -81,6 +81,73 @@ function DispatchProbe({ onReady }: { onReady: (dispatch: ReturnType<typeof useA
 }
 
 describe("Sidebar", () => {
+  it("does not apply a delayed old-workspace write to a new workspace", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof toggleHistoryLike>>) => void;
+    vi.mocked(toggleHistoryLike).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "active", workspaceName: "A", workspacePath: "C:/a",
+      history: [{ value: "same-id", label: "Old", description: "Old" }],
+    }}><Sidebar /><DispatchProbe onReady={(value) => { dispatch = value; }} /></AppStateProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Old 좋아요" }));
+    act(() => {
+      dispatch({ type: "set_workspace", workspace: { name: "B", path: "C:/b" } });
+      dispatch({ type: "set_history", history: [{ value: "same-id", label: "Other", description: "Other", liked: false }] });
+    });
+    await act(async () => finish({ ok: true, sessionId: "same-id", liked: true }));
+    expect(screen.getByRole("button", { name: "Other 좋아요" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("renames immediately, closes the editor, and restores the name on failure", async () => {
+    let fail!: (error: Error) => void;
+    vi.mocked(updateHistoryTitle).mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "active",
+      history: [{ value: "rename", label: "Original", description: "Original" }],
+    }}><Sidebar /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "Original 작업 더보기" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "세션명 변경" }));
+    const input = screen.getByRole("textbox", { name: "대화 제목" }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Immediate" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(screen.getByRole("button", { name: "Immediate 좋아요" })).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "대화 제목" })).toBeNull();
+    await act(async () => fail(new Error("offline")));
+    expect(screen.getByRole("button", { name: "Original 좋아요" })).toBeTruthy();
+  });
+
+  it("applies likes before the server replies and preserves rows added while saving", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof toggleHistoryLike>>) => void;
+    vi.mocked(toggleHistoryLike).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "active", workspacePath: "C:/demo", workspaceName: "Default",
+      history: [{ value: "slow", label: "Delayed row", description: "Delayed row" }],
+    }}><Sidebar /><DispatchProbe onReady={(value) => { dispatch = value; }} /></AppStateProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Delayed row 좋아요" }));
+    expect(screen.getByRole("button", { name: "Delayed row 좋아요 취소" }).getAttribute("aria-pressed")).toBe("true");
+    act(() => dispatch({ type: "prepend_history", history: [{ value: "new", label: "New row", description: "New row" }] }));
+    await act(async () => finish({ ok: true, sessionId: "slow", liked: true }));
+    expect(screen.getByRole("button", { name: "New row 좋아요" })).toBeTruthy();
+  });
+
+  it("reflects repeated likes immediately and rolls back a failed final write", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof toggleHistoryLike>>) => void;
+    let fail!: (error: Error) => void;
+    vi.mocked(toggleHistoryLike)
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "active",
+      history: [{ value: "slow", label: "Delayed row", description: "Delayed row" }],
+    }}><Sidebar /></AppStateProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Delayed row 좋아요" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delayed row 좋아요 취소" }));
+    expect(screen.getByRole("button", { name: "Delayed row 좋아요" }).getAttribute("aria-pressed")).toBe("false");
+    expect(toggleHistoryLike).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ ok: true, sessionId: "slow", liked: true }));
+    expect(toggleHistoryLike).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Delayed row 좋아요" })).toBeTruthy();
+    await act(async () => fail(new Error("offline")));
+    expect(screen.getByRole("button", { name: "Delayed row 좋아요 취소" })).toBeTruthy();
+  });
+
   it("shows and reveals a saved branch ahead of existing history without sending a message", async () => {
     const workspace = { name: "Default", path: "C:/demo" };
     const message = { id: "answer", role: "assistant" as const, text: "Copied answer", isComplete: true };
@@ -1824,6 +1891,22 @@ describe("Sidebar", () => {
       value: "session-old",
     });
     expect(screen.queryByText("Unknown session")).toBeNull();
+  });
+
+  it("starts the fallback restore in the selected history workspace", async () => {
+    vi.mocked(loadHistorySnapshot).mockRejectedValueOnce(new Error("Preview unavailable"));
+    vi.mocked(startSession).mockResolvedValueOnce({ sessionId: "selected-backend", workspace: { name: "Selected", path: "C:/selected" } });
+    render(<AppStateProvider initialState={{
+      ...initialAppState, sessionId: "previous-backend", clientId: "client-1",
+      workspaceName: "Previous", workspacePath: "C:/previous",
+      history: [{ value: "selected-history", label: "Saved", description: "다른 프로젝트 대화", workspace: { name: "Selected", path: "C:/selected" } }],
+    }}><Sidebar /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "다른 프로젝트 대화" }));
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "C:/selected" })));
+    expect(sendBackendRequest).toHaveBeenCalledWith("selected-backend", "client-1", {
+      type: "apply_select_command", command: "resume", value: "selected-history",
+    });
+    expect(sendBackendRequest).not.toHaveBeenCalledWith("previous-backend", expect.anything(), expect.anything());
   });
 
   it("keeps the current chat visible while a saved history item is restoring", async () => {

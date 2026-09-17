@@ -1,4 +1,6 @@
 import { createClientId } from "../utils/ids";
+import { backendToolCallIndex, toolCallKey as workflowInputBufferKey } from "../../modules/toolIdentity.js";
+import type { ToolIdentity } from "../../modules/toolIdentity.js";
 import { workflowElapsedSeconds } from "../utils/workflowTime";
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, UsageCostSummary, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
@@ -51,6 +53,7 @@ export type AppAction =
   | { type: "set_history"; history: HistoryItem[]; hasMore?: boolean; nextOffset?: number }
   | { type: "append_history"; history: HistoryItem[]; hasMore?: boolean; nextOffset?: number }
   | { type: "prepend_history"; history: HistoryItem[] }
+  | { type: "patch_history_metadata"; sessionId: string; workspacePath: string; workspaceName: string; patch: Partial<Pick<HistoryItem, "pinned" | "liked" | "description">> }
   | { type: "hide_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "restore_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
   | { type: "delete_history_local"; sessionId: string; workspacePath?: string; workspaceName?: string }
@@ -136,6 +139,7 @@ function initialSidebarWidth() {
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number) {
+  if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "") return fallback;
   const numberValue = Number(value);
   return Math.max(min, Math.min(max, Number.isFinite(numberValue) ? numberValue : fallback));
 }
@@ -148,7 +152,7 @@ function normalizeAppSettings(value: Partial<AppSettings> = {}): AppSettings {
     streamFollowLeadPx: clampNumber(value.streamFollowLeadPx, defaultAppSettings.streamFollowLeadPx, 0, 360),
     streamRevealDurationMs: clampNumber(value.streamRevealDurationMs, defaultAppSettings.streamRevealDurationMs, 0, 2000),
     downloadMode: value.downloadMode === "folder" || value.downloadMode === "ask" ? value.downloadMode : "browser",
-    downloadFolderPath: String(value.downloadFolderPath || ""),
+    downloadFolderPath: typeof value.downloadFolderPath === "string" ? value.downloadFolderPath : "",
     shell: value.shell === "powershell" || value.shell === "git-bash" || value.shell === "cmd" ? value.shell : "auto",
   };
 }
@@ -276,6 +280,7 @@ const initialSidebarCollapsedValue = initialSidebarCollapsed();
 export const initialAppState: AppState = {
   sessionId: null,
   sessionReplayKey: 0,
+  conversationViewRevision: 0,
   clientId: initialClientSessionId(),
   ready: false,
   busy: false,
@@ -560,18 +565,17 @@ function assistantCompletionText(streamedText: string, completedText: string) {
   return completedText;
 }
 
-function assistantStreamingText(currentText: string, nextChunkOrSnapshot: string) {
-  if (!currentText || !nextChunkOrSnapshot) {
-    return currentText || nextChunkOrSnapshot;
+function pendingAssistantMessageIndex(messages: ChatMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant") return message.isComplete !== true ? index : -1;
+    if (message.role === "user" && !isSupplementalUserTranscriptKind(message.kind)) return -1;
   }
-  if (nextChunkOrSnapshot === currentText || nextChunkOrSnapshot.startsWith(currentText)) {
-    return nextChunkOrSnapshot;
-  }
-  return `${currentText}${nextChunkOrSnapshot}`;
+  return -1;
 }
 
 function completePendingAssistantMessage(messages: ChatMessage[], completedText = "", suppressActions = false, artifacts: ArtifactSummary[] = []): ChatMessage[] {
-  const pendingIndex = lastMatchingIndex(messages, (message) => message.role === "assistant" && message.isComplete !== true);
+  const pendingIndex = pendingAssistantMessageIndex(messages);
   const pending = messages[pendingIndex];
   if (pending) {
     const text = assistantCompletionText(pending.text, completedText);
@@ -1149,19 +1153,11 @@ function workflowPatchPath(patch: string) {
   return match?.[1]?.trim() || "";
 }
 
-function workflowInputBufferIndex(event: Extract<BackendEvent, { type: "tool_input_delta" }>) {
-  const rawIndex = Number(event.tool_call_index);
-  return Number.isFinite(rawIndex) ? rawIndex : 0;
-}
-
-function workflowInputBufferKey(event: Extract<BackendEvent, { type: "tool_input_delta" }>) {
-  return `call:${workflowInputBufferIndex(event)}`;
-}
-
-function clearWorkflowInputBuffer(buffers: Record<string, string>, toolCallIndex: number | null) {
-  const index = toolCallIndex ?? 0;
+function clearWorkflowInputBuffer(buffers: Record<string, string>, event: ToolIdentity) {
   const next = { ...buffers };
-  delete next[`call:${index}`];
+  delete next[workflowInputBufferKey(event)];
+  const index = backendToolCallIndex(event);
+  if (index !== null) delete next[`index:${index}`];
   return next;
 }
 
@@ -1288,11 +1284,6 @@ function normalizeSwarmNotification(value: SwarmNotificationSnapshot, index: num
 function backendToolCallId(event: BackendEvent) {
   const value = "tool_call_id" in event ? event.tool_call_id : null;
   return typeof value === "string" && value ? value : null;
-}
-
-function backendToolCallIndex(event: BackendEvent) {
-  const value = "tool_call_index" in event ? Number(event.tool_call_index) : Number.NaN;
-  return Number.isFinite(value) ? value : null;
 }
 
 function appendWorkflowEvent(events: WorkflowEvent[], event: Omit<WorkflowEvent, "id">) {
@@ -1725,6 +1716,11 @@ function updateLatestWorkflowEvent(
 }
 
 function mergeWorkflowEventPatch(event: WorkflowEvent, patch: Partial<Omit<WorkflowEvent, "id" | "toolName">>) {
+  // Sparse progress/completion events do not erase the call's known identity or input.
+  patch = { ...patch };
+  for (const key of ["toolInput", "toolCallId", "toolCallIndex", "executionMetadata"] as const) {
+    if (patch[key] == null) delete patch[key];
+  }
   const detailLog = workflowDetailLogForPatch(event, patch);
   if (patch.toolInput && event.toolInput) {
     return {
@@ -2331,9 +2327,9 @@ function reduceHistoryRestoreEvent(
   let workflowAnchorMessageId: string | null = null;
   const workflowEventsByMessageId: Record<string, WorkflowEvent[]> = {};
   const workflowDurationSecondsByMessageId: Record<string, number> = {};
-  let restoredSwarmTeammates = state.swarmTeammates;
-  let restoredSwarmNotifications = state.swarmNotifications;
-  let restoredSessionUsage = state.sessionUsage;
+  let restoredSwarmTeammates: AppState["swarmTeammates"] = [];
+  let restoredSwarmNotifications: AppState["swarmNotifications"] = [];
+  let restoredSessionUsage: AppState["sessionUsage"] = null;
   let workflowInputBuffers: Record<string, string> = {};
   let currentTurnHasAssistant = false;
   const historyEvents = (Array.isArray(historyEvent.history_events) ? historyEvent.history_events : [])
@@ -2445,8 +2441,7 @@ function reduceHistoryRestoreEvent(
       const toolInput = recordOrNull(record.tool_input);
       const detail = workflowToolDetail(state.skills, toolName, toolInput);
       const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
-      const rawToolCallIndex = Number(record.tool_call_index);
-      const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+      const toolCallIndex = backendToolCallIndex(record);
       const purpose = ensurePurposeEvent(completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()), toolName);
       workflowEvents = updateLatestWorkflowEvent(purpose.events, toolName, {
         detail,
@@ -2469,13 +2464,13 @@ function reduceHistoryRestoreEvent(
         (toolCallId ? event.toolCallId === toolCallId : event.toolName === toolName && event.status === "running")
           ? { ...event, startedAtMs: event.startedAtMs ?? timestampMsFromRecord(record) } : event
       ));
-      workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
+      workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, record);
       continue;
     }
     if (type === "tool_input_delta") {
       const toolName = String(record.tool_name || "");
-      const rawToolCallIndex = Number(record.tool_call_index);
-      const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+      const toolCallId = typeof record.tool_call_id === "string" ? record.tool_call_id : null;
+      const toolCallIndex = backendToolCallIndex(record);
       const delta = String(record.arguments_delta || "");
       if (!delta) {
         continue;
@@ -2483,6 +2478,7 @@ function reduceHistoryRestoreEvent(
       const deltaEvent = {
         type: "tool_input_delta",
         tool_name: toolName,
+        tool_call_id: toolCallId,
         tool_call_index: toolCallIndex,
         arguments_delta: delta,
       } as Extract<BackendEvent, { type: "tool_input_delta" }>;
@@ -2499,9 +2495,10 @@ function reduceHistoryRestoreEvent(
       let nextEvents = updateLatestWorkflowEvent(workflowEvents, workflowToolName, {
         detail,
         status: "running",
+        toolCallId,
         toolCallIndex,
         toolInput,
-      }, { toolCallIndex });
+      }, { toolCallId, toolCallIndex });
       if (!nextEvents) {
         const purpose = ensurePurposeEvent(
           completePlanning(completeActivityStep(workflowEvents.length ? workflowEvents : initialWorkflowEvents())),
@@ -2514,6 +2511,7 @@ function reduceHistoryRestoreEvent(
           status: "running",
           level: "child",
           groupId: purpose.groupId,
+          toolCallId,
           toolCallIndex,
           toolInput,
         });
@@ -2524,8 +2522,7 @@ function reduceHistoryRestoreEvent(
     if (type === "tool_progress") {
       const toolName = String(record.tool_name || "");
       const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
-      const rawToolCallIndex = Number(record.tool_call_index);
-      const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+      const toolCallIndex = backendToolCallIndex(record);
       const toolInput = recordOrNull(record.tool_input);
       const detail = String(record.message || workflowDetailFromInput(toolInput) || "처리 중");
       const execution = {
@@ -2561,8 +2558,7 @@ function reduceHistoryRestoreEvent(
     if (type === "tool_completed") {
       const toolName = String(record.tool_name || "");
       const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id ? record.tool_call_id : null;
-      const rawToolCallIndex = Number(record.tool_call_index);
-      const toolCallIndex = Number.isFinite(rawToolCallIndex) ? rawToolCallIndex : null;
+      const toolCallIndex = backendToolCallIndex(record);
       const output = String(record.output || "");
       const isError = record.is_error === true;
       const completionStatus = workflowCompletionStatus(toolName, isError);
@@ -2579,6 +2575,8 @@ function reduceHistoryRestoreEvent(
         })?.toolInput || null;
       const detail = workflowToolDetail(state.skills, toolName, lastToolInput, output, `${toolName || "도구"} 완료`, isError);
       let nextEvents = updateLatestWorkflowEvent(workflowEvents, toolName, {
+        finishedAtMs: timestampMsFromRecord(record),
+        executionMetadata: recordOrNull(record.execution_metadata),
         detail,
         output,
         status: completionStatus,
@@ -2588,6 +2586,8 @@ function reduceHistoryRestoreEvent(
       if (!nextEvents) {
         const purpose = ensurePurposeEvent(completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()), toolName);
         nextEvents = appendWorkflowEvent(purpose.events, {
+          finishedAtMs: timestampMsFromRecord(record),
+          executionMetadata: recordOrNull(record.execution_metadata),
           toolName,
           title: workflowTitle(toolName),
           detail,
@@ -2599,11 +2599,8 @@ function reduceHistoryRestoreEvent(
           toolCallIndex,
         });
       }
-      workflowEvents = refreshPurposeEvents(nextEvents).map((event) => (
-        (toolCallId ? event.toolCallId === toolCallId : event.toolName === toolName && event.status === completionStatus)
-          ? { ...event, finishedAtMs: timestampMsFromRecord(record), executionMetadata: recordOrNull(record.execution_metadata) } : event
-      ));
-      workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, toolCallIndex);
+      workflowEvents = refreshPurposeEvents(nextEvents);
+      workflowInputBuffers = clearWorkflowInputBuffer(workflowInputBuffers, record);
     }
   }
   if (workflowAnchorMessageId && hasRestorableWorkflowEvents(workflowEvents)) {
@@ -2700,7 +2697,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
       messages,
       status: "processing",
       statusText: label,
-      workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
+      workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, event),
       workflowEvents: refreshPurposeEvents(startedWorkflowEvents),
     };
   }
@@ -2708,6 +2705,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
   if (event.type === "tool_input_delta") {
     const deltaEvent = event as Extract<BackendEvent, { type: "tool_input_delta" }>;
     const toolName = typeof deltaEvent.tool_name === "string" ? deltaEvent.tool_name : "";
+    const toolCallId = backendToolCallId(deltaEvent);
     const toolCallIndex = backendToolCallIndex(deltaEvent);
     const delta = String(deltaEvent.arguments_delta || "");
     if (!delta) {
@@ -2726,9 +2724,10 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
     let workflowEvents = updateLatestWorkflowEvent(state.workflowEvents, workflowToolName, {
       detail,
       status: "running",
+      toolCallId,
       toolCallIndex,
       toolInput,
-    }, { toolCallIndex });
+    }, { toolCallId, toolCallIndex });
     if (!workflowEvents) {
       const purpose = ensurePurposeEvent(
         completePlanning(completeActivityStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents())),
@@ -2741,6 +2740,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
         status: "running",
         level: "child",
         groupId: purpose.groupId,
+        toolCallId,
         toolCallIndex,
         toolInput,
       });
@@ -2849,7 +2849,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
       busy: true,
       messages,
       workflowEvents,
-      workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, toolCallIndex),
+      workflowInputBuffers: clearWorkflowInputBuffer(state.workflowInputBuffers, event),
       status: "processing",
       statusText: followupCopy.statusText,
       artifactRefreshKey: shouldRefreshArtifactsAfterToolCompletion(toolName, isError, lastToolInput)
@@ -2930,7 +2930,15 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
   if (event.type === "ready" || event.type === "state_snapshot") {
     const snapshotState = applyStateSnapshot(state, event as Extract<BackendEvent, { type: "ready" | "state_snapshot" }>);
     const next = state.historyReadOnly
-      ? { ...snapshotState, sessionUsage: state.sessionUsage, status: state.status, statusText: state.statusText }
+      ? {
+        ...snapshotState,
+        sessionUsage: state.sessionUsage,
+        status: state.status,
+        statusText: state.statusText,
+        workspacePath: state.workspacePath,
+        workspaceName: state.workspaceName,
+        workspaceScope: state.workspaceScope,
+      }
       : snapshotState;
     if (event.type === "ready") {
       return {
@@ -3176,21 +3184,20 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
 
   if (event.type === "assistant_delta") {
     const value = String(event.message ?? event.value ?? "");
-    const last = state.messages[state.messages.length - 1];
-    const shouldAppendToLastAssistant = last?.role === "assistant" && last.isComplete === undefined;
-    const characterCount = (shouldAppendToLastAssistant ? last.text.length : 0) + value.length;
+    const pendingIndex = pendingAssistantMessageIndex(state.messages);
+    const pending = state.messages[pendingIndex];
+    const characterCount = (event.snapshot ? 0 : pending?.text.length || 0) + value.length;
     const workflowEvents = startFinalAnswerStep(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents(), characterCount);
-    if (shouldAppendToLastAssistant) {
+    if (pending) {
       return {
         ...state,
         busy: true,
         status: "processing",
         statusText: "응답 작성 중",
         workflowEvents,
-        messages: [
-          ...state.messages.slice(0, -1),
-          { ...last, text: assistantStreamingText(last.text, value) },
-        ],
+        messages: state.messages.map((message, index) => index === pendingIndex
+          ? { ...message, text: event.snapshot ? value : message.text + value }
+          : message),
       };
     }
     return {
@@ -3232,10 +3239,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     }
     const shouldCompleteTodo = isFinalAnswer && artifacts.length > 0 && Boolean(state.todoMarkdown.trim());
     const todoMarkdown = shouldCompleteTodo ? completeTodoMarkdown(state.todoMarkdown) : state.todoMarkdown;
-    const pendingAssistantIndex = lastMatchingIndex(
-      state.messages,
-      (message) => message.role === "assistant" && message.isComplete !== true,
-    );
+    const pendingAssistantIndex = pendingAssistantMessageIndex(state.messages);
     const messages = isFinalAnswer
       ? pendingAssistantIndex >= 0
         ? completePendingAssistantMessage(state.messages, value, false, artifacts).map((message, index) => (
@@ -3310,10 +3314,10 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     const payload = event.modal && typeof event.modal === "object"
       ? event.modal as Record<string, unknown>
       : {};
-    if (payload.kind === "question" && (payload.status === "answered" || payload.status === "cancelled")) {
+    if ((payload.kind === "question" || payload.kind === "permission") && (payload.status === "answered" || payload.status === "cancelled")) {
       const requestId = payload.request_id;
       const matches = (modal: AppState["modal"]) => modal?.kind === "backend"
-        && modal.payload?.kind === "question" && modal.payload?.request_id === requestId;
+        && modal.payload?.kind === payload.kind && modal.payload?.request_id === requestId;
       return {
         ...state,
         modal: matches(state.modal) ? null : state.modal,
@@ -3731,6 +3735,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         workspaceScope: action.workspace.scope || state.workspaceScope,
       };
 
+    case "patch_history_metadata": {
+      if (action.workspacePath !== state.workspacePath || action.workspaceName !== state.workspaceName) return state;
+      return {
+        ...state,
+        history: state.history.map((item) => item.value === action.sessionId ? { ...item, ...action.patch } : item),
+      };
+    }
+
     case "set_history": {
       if (
         state.history.length > 0
@@ -3865,6 +3877,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const savedSessionId = String(action.sessionId || "").trim();
       return {
         ...state,
+        conversationViewRevision: state.conversationViewRevision + 1,
         liveSessionViewsBySessionId: rememberCurrentLiveSessionView(state),
         chatTitle: "MyHarness",
         busy: false,
@@ -3907,6 +3920,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const restoredView = liveSessionViewForSession(liveSessionViewsBySessionId, action.sessionId);
         return {
           ...state,
+          conversationViewRevision: state.conversationViewRevision + 1,
           liveSessionViewsBySessionId,
           history: rememberBusyHistoryOnSessionSwitch(state, action.sessionId),
           busy: false,

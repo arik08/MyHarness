@@ -1,3 +1,5 @@
+import { isImeKey } from "../utils/keyboard";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import { createClientId } from "../utils/ids";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent, WheelEvent as ReactWheelEvent } from "react";
@@ -397,6 +399,14 @@ export function ArtifactPanel() {
   const { state, dispatch } = useAppState();
   const currentSessionRef = useRef(state.sessionId);
   currentSessionRef.current = state.sessionId;
+  const latestPanelState = useRef(state);
+  latestPanelState.current = state;
+  const projectScope = JSON.stringify([state.sessionId, state.clientId, state.workspacePath, state.workspaceName]);
+  const projectGeneration = useRef({ scope: projectScope, value: 0 });
+  const projectFilesRequestId = useRef(0);
+  if (projectGeneration.current.scope !== projectScope) {
+    projectGeneration.current = { scope: projectScope, value: projectGeneration.current.value + 1 };
+  }
   const [loadingPath, setLoadingPath] = useState("");
   const [fileScope, setFileScope] = useState<"default" | "all">("default");
   const [fileFilter, setFileFilter] = useState(() => readLocalStorage("myharness:projectFileFilter", "all"));
@@ -405,6 +415,15 @@ export function ArtifactPanel() {
   const [draftContent, setDraftContent] = useState("");
   const [draftPath, setDraftPath] = useState("");
   const [draftUserEdited, setDraftUserEdited] = useState(false);
+  const artifactScope = JSON.stringify([state.sessionId, state.clientId, state.activeArtifact?.workspace?.path || state.workspacePath,
+    state.activeArtifact?.path, state.artifactPanelOpen]);
+  const artifactGeneration = useRef({ scope: artifactScope, value: 0 });
+  if (artifactGeneration.current.scope !== artifactScope) {
+    artifactGeneration.current = { scope: artifactScope, value: artifactGeneration.current.value + 1 };
+  }
+  const latestDraftState = useRef({ draftContent, draftUserEdited, artifacts: state.artifacts });
+  latestDraftState.current = { draftContent, draftUserEdited, artifacts: state.artifacts };
+  const preserveDraftPayload = useRef<typeof state.activeArtifactPayload>(null);
   const [copyLabel, setCopyLabel] = useState("복사");
   const [shareLabel, setShareLabel] = useState(shareCopyLabel);
   const captureIdleLabel = canCopyPngToClipboard() ? captureCopyLabel : captureDownloadLabel;
@@ -412,7 +431,8 @@ export function ArtifactPanel() {
   const [captureRequestId, setCaptureRequestId] = useState("");
   const [sourceMode, setSourceMode] = useState(false);
   const [htmlEditMode, setHtmlEditMode] = useState(false);
-  const [savingDraft, setSavingDraft] = useState(false);
+  const draftSave = useAsyncAction(artifactGeneration.current.value);
+  const savingDraft = draftSave.pending;
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [pendingDeletePath, setPendingDeletePath] = useState("");
   const [deletingPath, setDeletingPath] = useState("");
@@ -450,6 +470,11 @@ export function ArtifactPanel() {
     [state.workspaceName, state.workspacePath],
   );
   const [pinnedProjectFiles, setPinnedProjectFiles] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    setPendingDeletePath("");
+    setDeletingPath("");
+    setOrganizeCandidates(null);
+  }, [projectScope]);
   const visibleArtifacts = useMemo(() => sortedArtifacts(state.artifacts, fileFilter, fileSort), [fileFilter, fileSort, state.artifacts]);
   const activeVersionInfo = state.activeArtifact ? artifactVersionInfo(state.activeArtifact) : null;
   const activeVersionArtifacts = useMemo(() => {
@@ -548,9 +573,9 @@ export function ArtifactPanel() {
       return;
     }
     setHtmlEditMode(false);
-    setSavingDraft(false);
     setTitleRenameEditing(false);
     setTitleRenameSaving(false);
+    titleRenameCommittingRef.current = false;
     setTitleRenameValue("");
     setAiEditComments([]);
     setPendingAiSelection(null);
@@ -689,9 +714,12 @@ export function ArtifactPanel() {
   }, [titleRenameEditing]);
 
   useEffect(() => {
-    setDraftContent(String(state.activeArtifactPayload?.content ?? ""));
-    setDraftPath(state.activeArtifact?.path || "");
-    setDraftUserEdited(false);
+    if (!preserveDraftPayload.current || preserveDraftPayload.current !== state.activeArtifactPayload) {
+      setDraftContent(String(state.activeArtifactPayload?.content ?? ""));
+      setDraftPath(state.activeArtifact?.path || "");
+      setDraftUserEdited(false);
+    }
+    preserveDraftPayload.current = null;
     setCopyLabel("복사");
     clearShareResetTimer();
     setShareLabel(shareCopyLabel);
@@ -846,7 +874,9 @@ export function ArtifactPanel() {
       return;
     }
     lastArtifactRefreshKeyRef.current = state.artifactRefreshKey;
-    if (!state.artifactPanelOpen || !state.activeArtifact || aiEditTargetPath) {
+    const hasUnsavedDraft = draftUserEdited && draftPath === state.activeArtifact?.path
+      && draftContent !== String(state.activeArtifactPayload?.content ?? "");
+    if (!state.artifactPanelOpen || !state.activeArtifact || aiEditTargetPath || hasUnsavedDraft) {
       return;
     }
     void openArtifact(state.activeArtifact);
@@ -972,6 +1002,8 @@ export function ArtifactPanel() {
     : `수정 의견 ${aiEditComments.length}개`;
 
   async function refreshProjectFiles(nextScope = fileScope) {
+    const project = projectGeneration.current.value;
+    const requestId = ++projectFilesRequestId.current;
     try {
       const data = await listProjectFiles({
         sessionId: state.sessionId || undefined,
@@ -980,10 +1012,12 @@ export function ArtifactPanel() {
         workspaceName: state.workspaceName,
         scope: nextScope,
       });
+      if (projectGeneration.current.value !== project || projectFilesRequestId.current !== requestId) return;
       setFileScope(data.scope === "all" ? "all" : "default");
       setPendingDeletePath("");
       dispatch({ type: "set_artifacts", artifacts: Array.isArray(data.files) ? data.files : [] });
     } catch (error) {
+      if (projectGeneration.current.value !== project || projectFilesRequestId.current !== requestId) return;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
@@ -1150,34 +1184,40 @@ export function ArtifactPanel() {
 
   async function saveHtmlDraft() {
     if (!active || !payload || !canEditHtmlPreview || !draftDirty) return;
-    setSavingDraft(true);
-    try {
-      const saved = await overwriteArtifact({
-        path: active.path,
-        content: draftContentForActive,
-        expectedMtimeMs: payload.mtimeMs || active.mtimeMs,
-        clientId: state.clientId,
-        workspacePath: active.workspace?.path || payload.workspace?.path || state.workspacePath,
-        workspaceName: active.workspace?.name || payload.workspace?.name || state.workspaceName,
-      });
-      const nextArtifact = { ...active, ...saved.artifact };
-      dispatch({
-        type: "set_artifacts",
-        artifacts: state.artifacts.map((item) => item.path === active.path ? nextArtifact : item),
-      });
-      dispatch({ type: "open_artifact", artifact: nextArtifact, payload: saved.payload });
-      setDraftContent(String(saved.payload.content ?? draftContentForActive));
-      setDraftPath(nextArtifact.path);
-      setDraftUserEdited(false);
-    } catch (error) {
-      setAiEditStatus("");
-      dispatch({
-        type: "open_modal",
-        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    } finally {
-      setSavingDraft(false);
-    }
+    const generation = artifactGeneration.current.value;
+    return draftSave.run(async () => {
+      try {
+        const saved = await overwriteArtifact({
+          path: active.path,
+          content: draftContentForActive,
+          expectedMtimeMs: payload.mtimeMs || active.mtimeMs,
+          clientId: state.clientId,
+          workspacePath: active.workspace?.path || payload.workspace?.path || state.workspacePath,
+          workspaceName: active.workspace?.name || payload.workspace?.name || state.workspaceName,
+        });
+        if (artifactGeneration.current.value !== generation) return;
+        const nextArtifact = { ...active, ...saved.artifact };
+        const hasNewEdits = latestDraftState.current.draftUserEdited && latestDraftState.current.draftContent !== draftContentForActive;
+        if (hasNewEdits) preserveDraftPayload.current = saved.payload;
+        dispatch({
+          type: "set_artifacts",
+          artifacts: latestDraftState.current.artifacts.map((item) => item.path === active.path ? nextArtifact : item),
+        });
+        dispatch({ type: "open_artifact", artifact: nextArtifact, payload: saved.payload });
+        if (!hasNewEdits) {
+          setDraftContent(String(saved.payload.content ?? draftContentForActive));
+          setDraftPath(nextArtifact.path);
+          setDraftUserEdited(false);
+        }
+      } catch (error) {
+        if (artifactGeneration.current.value !== generation) return;
+        setAiEditStatus("");
+        dispatch({
+          type: "open_modal",
+          modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    });
   }
 
   function cancelHtmlDraft() {
@@ -1256,28 +1296,43 @@ export function ArtifactPanel() {
   }
 
   async function submitRenameArtifact(artifact: ArtifactSummary, name: string) {
-    const saved = await renameArtifact({
-      path: artifact.path,
-      name,
-      expectedMtimeMs: artifact.mtimeMs,
-      sessionId: state.sessionId || undefined,
-      clientId: state.clientId,
-      workspacePath: artifact.workspace?.path || state.workspacePath,
-      workspaceName: artifact.workspace?.name || state.workspaceName,
-    });
+    const project = projectGeneration.current.value;
+    const view = artifactGeneration.current.value;
+    let saved: Awaited<ReturnType<typeof renameArtifact>>;
+    try {
+      saved = await renameArtifact({
+        path: artifact.path,
+        name,
+        expectedMtimeMs: artifact.mtimeMs,
+        sessionId: state.sessionId || undefined,
+        clientId: state.clientId,
+        workspacePath: artifact.workspace?.path || state.workspacePath,
+        workspaceName: artifact.workspace?.name || state.workspaceName,
+      });
+    } catch (error) {
+      if (projectGeneration.current.value !== project) return;
+      throw error;
+    }
+    if (projectGeneration.current.value !== project) return;
+    projectFilesRequestId.current += 1;
     const nextArtifact = { ...artifact, ...saved.artifact };
-    const replaced = state.artifacts.some((item) => item.path === artifact.path);
+    const current = latestPanelState.current;
+    const replaced = current.artifacts.some((item) => item.path === artifact.path);
     dispatch({
       type: "set_artifacts",
       artifacts: replaced
-        ? state.artifacts.map((item) => item.path === artifact.path ? nextArtifact : item)
-        : [nextArtifact, ...state.artifacts],
+        ? current.artifacts.map((item) => item.path === artifact.path ? nextArtifact : item)
+        : [nextArtifact, ...current.artifacts],
     });
-    if (state.activeArtifact?.path === artifact.path) {
+    if (artifactGeneration.current.value === view && current.activeArtifact?.path === artifact.path) {
+      const keepDraft = latestDraftState.current.draftUserEdited;
+      if (keepDraft) preserveDraftPayload.current = saved.payload;
       dispatch({ type: "open_artifact", artifact: nextArtifact, payload: saved.payload });
-      setDraftContent(String(saved.payload.content ?? ""));
       setDraftPath(nextArtifact.path);
-      setDraftUserEdited(false);
+      if (!keepDraft) {
+        setDraftContent(String(saved.payload.content ?? ""));
+        setDraftUserEdited(false);
+      }
     }
     const previousPath = normalizeProjectFilePath(artifact.path);
     const nextPath = normalizeProjectFilePath(saved.artifact.path);
@@ -1328,19 +1383,24 @@ export function ArtifactPanel() {
       return;
     }
     titleRenameCommittingRef.current = true;
+    const view = artifactGeneration.current.value;
     setTitleRenameSaving(true);
     try {
       await submitRenameArtifact(active, nextName);
+      if (artifactGeneration.current.value !== view) return;
       setTitleRenameEditing(false);
       setTitleRenameValue("");
     } catch (error) {
+      if (artifactGeneration.current.value !== view) return;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      titleRenameCommittingRef.current = false;
-      setTitleRenameSaving(false);
+      if (artifactGeneration.current.value === view) {
+        titleRenameCommittingRef.current = false;
+        setTitleRenameSaving(false);
+      }
     }
   }
 
@@ -1350,6 +1410,8 @@ export function ArtifactPanel() {
       return;
     }
     setDeletingPath(artifact.path);
+    const project = projectGeneration.current.value;
+    const view = artifactGeneration.current.value;
     try {
       await deleteArtifact({
         path: artifact.path,
@@ -1359,6 +1421,8 @@ export function ArtifactPanel() {
         workspacePath: artifact.workspace?.path || state.workspacePath,
         workspaceName: artifact.workspace?.name || state.workspaceName,
       });
+      if (projectGeneration.current.value !== project) return;
+      projectFilesRequestId.current += 1;
       setPendingDeletePath("");
       setPinnedProjectFiles((current) => {
         const path = normalizeProjectFilePath(artifact.path);
@@ -1368,23 +1432,25 @@ export function ArtifactPanel() {
         writePinnedProjectFiles(projectFilePinnedStorage, next);
         return next;
       });
-      dispatch({ type: "set_artifacts", artifacts: state.artifacts.filter((item) => item.path !== artifact.path) });
-      if (state.activeArtifact?.path === artifact.path) {
+      dispatch({ type: "set_artifacts", artifacts: latestPanelState.current.artifacts.filter((item) => item.path !== artifact.path) });
+      if (artifactGeneration.current.value === view && latestPanelState.current.activeArtifact?.path === artifact.path) {
         openArtifactRequestRef.current += 1;
         setLoadingPath("");
         dispatch({ type: "open_artifact_list" });
       }
     } catch (error) {
+      if (projectGeneration.current.value !== project) return;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      setDeletingPath("");
+      if (projectGeneration.current.value === project) setDeletingPath("");
     }
   }
 
   async function organizeRootFiles(paths: string[]) {
+    const project = projectGeneration.current.value;
     const expectedMtimes = Object.fromEntries(
       state.artifacts
         .filter((artifact) => paths.includes(normalizeProjectFilePath(artifact.path)) && artifact.mtimeMs)
@@ -1398,6 +1464,7 @@ export function ArtifactPanel() {
       workspacePath: state.workspacePath,
       workspaceName: state.workspaceName,
     });
+    if (projectGeneration.current.value !== project) return;
     setOrganizeCandidates(null);
     await refreshProjectFiles(fileScope);
   }
@@ -1455,6 +1522,7 @@ export function ArtifactPanel() {
                 onChange={(event) => setTitleRenameValue(event.currentTarget.value)}
                 onBlur={() => void commitTitleRename()}
                 onKeyDown={(event) => {
+                  if (isImeKey(event.nativeEvent)) return;
                   if (event.key === "Enter") {
                     event.preventDefault();
                     void commitTitleRename();
@@ -2012,6 +2080,7 @@ function ProjectFileItem({
               onBlur={() => void commitRename()}
               onChange={(event) => setNameValue(event.currentTarget.value)}
               onKeyDown={(event) => {
+                if (isImeKey(event.nativeEvent)) return;
                 if (event.key === "Enter") {
                   event.preventDefault();
                   void commitRename();
@@ -2144,6 +2213,7 @@ function AiEditCommentModal({
             value={instruction}
             onChange={(event) => setInstruction(event.currentTarget.value)}
             onKeyDown={(event) => {
+              if (isImeKey(event.nativeEvent)) return;
               if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canSubmit) {
                 event.preventDefault();
                 onSubmit(instruction);

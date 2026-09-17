@@ -1,6 +1,10 @@
 import { resourceAdmissionReason } from "./modules/resourceAdmission.js";
+import { writeTextFileAtomic } from "./modules/atomicFile.js";
+import { sendFileResponse } from "./modules/fileResponse.js";
+import { moveFileExclusive } from "./modules/moveFileExclusive.js";
 import { applyModelAvailability, changeModelAvailability } from "./modules/modelAvailability.js";
 import { createModelCatalogCache } from "./modules/modelCatalogCache.js";
+import { pythonCommandCandidates } from "./modules/pythonCommandCandidates.js";
 import { createServer } from "node:http";
 import { createActivityLog } from "./modules/activityLog.js";
 import { createResourceSampler, createServerMetrics } from "./modules/serverMetrics.js";
@@ -8,7 +12,6 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import crypto from "node:crypto";
-import { createReadStream } from "node:fs";
 import { copyFile, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, delimiter, dirname, extname, isAbsolute, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -694,8 +697,9 @@ async function writeWindowsClipboardImage(png) {
       child.kill();
       reject(new Error("Windows 이미지 클립보드 응답 시간이 초과되었습니다."));
     }, 15_000);
+    child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
+      stderr += chunk;
     });
     child.once("error", (error) => {
       clearTimeout(timeoutId);
@@ -992,15 +996,14 @@ function workspaceRelativeTarget(workspacePath, candidate) {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) && !raw.toLowerCase().startsWith("file://")) {
     throw new Error("External URLs cannot be previewed");
   }
-  const withoutFileScheme = raw
-    .replace(/^file:\/\/\/?/i, "")
+  const withoutFileScheme = (/^file:\/\//i.test(raw) ? fileURLToPath(raw) : raw)
     .replace(/^\/([A-Za-z]:\/)/, "$1")
     .replace(/\\/g, "/");
   const target = isAbsolute(withoutFileScheme)
     ? normalize(withoutFileScheme)
     : normalize(join(workspacePath, withoutFileScheme));
   const rel = relative(workspacePath, target);
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+  if (!rel || rel === ".." || rel.replace(/\\/g, "/").startsWith("../") || isAbsolute(rel)) {
     throw new Error("Artifact must stay inside the current project");
   }
   return { target, rel: rel.replace(/\\/g, "/") };
@@ -1415,17 +1418,18 @@ async function handleShare(request, response, pathname) {
       );
       const fallbackName = asciiHeaderFilename(payload.name);
       const body = await readDownloadableArtifactBody(payload.target, payload.ext);
-      response.writeHead(200, {
+      const headers = {
         "Content-Type": payload.mime,
         "Content-Length": String(body?.length || payload.size),
         "Content-Disposition": `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
-      });
+      };
       if (body) {
+        response.writeHead(200, headers);
         response.end(body);
       } else {
-        createReadStream(payload.target).pipe(response);
+        await sendFileResponse(response, payload.target, headers);
       }
       return true;
     }
@@ -1436,15 +1440,16 @@ async function handleShare(request, response, pathname) {
         const htmlPayload = await readArtifactPreview(session, artifactPath);
         body = withDownloadedMermaidZoomBridge(injectHtmlBase(htmlPayload.content || "", htmlPayload.assetBaseUrl || ""));
       }
-      response.writeHead(200, {
+      const headers = {
         "Content-Type": payload.mime,
         "Cache-Control": "no-store",
         "Content-Length": body === null ? payload.size : Buffer.byteLength(body, "utf8"),
         "X-Content-Type-Options": "nosniff",
-      });
+      };
       if (body === null) {
-        createReadStream(payload.target).pipe(response);
+        await sendFileResponse(response, payload.target, headers);
       } else {
+        response.writeHead(200, headers);
         response.end(body);
       }
       return true;
@@ -1997,11 +2002,13 @@ exit 2
     );
     let stdout = "";
     let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
+      stdout += chunk;
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
+      stderr += chunk;
     });
     child.on("error", reject);
     child.on("exit", (code) => {
@@ -2093,7 +2100,7 @@ async function overwriteHtmlArtifactFile(session, artifactPath, content, options
     throw new Error("Artifact is too large to save");
   }
   await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, value, "utf8");
+  await writeTextFileAtomic(target, value);
   invalidateProjectFileCache(session.workspace.path);
   return {
     artifact: await readArtifactMetadata(session, rel),
@@ -2145,7 +2152,13 @@ async function renameArtifactFile(session, artifactPath, nextName, options = {})
     }
   }
   await mkdir(dirname(destinationTarget), { recursive: true });
-  await rename(source.target, destinationTarget);
+  try {
+    await moveFileExclusive(source.target, destinationTarget);
+  } catch (error) {
+    if (error?.code === "EEXIST") throw conflictError("같은 이름의 파일이 이미 있습니다. 다른 이름을 사용해 주세요.");
+    throw error;
+  }
+  invalidateProjectFileCache(session.workspace.path);
   await updateArtifactRenameAlias(session, source.rel, destinationRel);
   invalidateProjectFileCache(session.workspace.path);
   return {
@@ -2693,10 +2706,21 @@ async function organizeRootProjectFiles(session, paths = [], options = {}) {
       ? options.expectedMtimes[requestedPath] ?? options.expectedMtimes[rel]
       : null;
     assertExpectedMtime(info, expectedMtimeMs);
-    const destinationRel = await collisionSafeOutputsPath(session, basename(target), existingPaths);
-    const { target: destinationTarget } = workspaceRelativeTarget(session.workspace.path, destinationRel);
-    await mkdir(dirname(destinationTarget), { recursive: true });
-    await rename(target, destinationTarget);
+    let destinationRel;
+    for (let attempt = 0; attempt < 1000; attempt += 1) {
+      destinationRel = await collisionSafeOutputsPath(session, basename(target), existingPaths);
+      const { target: destinationTarget } = workspaceRelativeTarget(session.workspace.path, destinationRel);
+      await mkdir(dirname(destinationTarget), { recursive: true });
+      try {
+        await moveFileExclusive(target, destinationTarget);
+        break;
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+        existingPaths.add(destinationRel);
+        if (attempt === 999) throw conflictError("파일 이름 충돌이 계속됩니다. 다시 시도해 주세요.");
+      }
+    }
+    invalidateProjectFileCache(session.workspace.path);
     await updateArtifactRenameAlias(session, rel, destinationRel);
     existingPaths.delete(normalizeProjectFilePath(rel));
     existingPaths.add(destinationRel);
@@ -2821,11 +2845,8 @@ async function readJsonFileIfExists(path) {
 }
 
 async function writeJsonFileAtomic(path, payload, { compact = false } = {}) {
-  await mkdir(dirname(path), { recursive: true });
-  const tmpPath = `${path}.${process.pid}.${Date.now()}-${crypto.randomUUID()}.tmp`;
   const serialized = compact ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
-  await writeFile(tmpPath, `${serialized}\n`, "utf8");
-  await rename(tmpPath, path);
+  await writeTextFileAtomic(path, `${serialized}\n`);
 }
 
 async function mutateJsonFile(path, mutator) {
@@ -4983,11 +5004,26 @@ async function resolveSessionWorkspace(options = {}) {
 }
 
 function sendBackend(session, payload) {
-  if (!session.process || session.process.killed || session.process.stdin.destroyed) {
+  const child = session.process;
+  if (!child || child.killed || child.exitCode !== null || !child.stdin?.writable || child.stdin.destroyed) {
     return false;
   }
-  session.process.stdin.write(`${JSON.stringify(payload)}\n`);
-  return true;
+  const serialized = `${JSON.stringify(payload)}\n`;
+  try {
+    child.stdin.write(serialized);
+    return true;
+  } catch (error) {
+    handleBackendInputError(session, error);
+    return false;
+  }
+}
+
+function handleBackendInputError(session, error) {
+  writeRuntimeLog("backend_input_error", { session_id: session.id, error: errorPayload(error) });
+  if (session.shuttingDown) return;
+  emit(session, { type: "error", message: "백엔드 연결이 종료되었습니다. 새 요청으로 다시 연결해 주세요." });
+  session.process.stdin.destroy();
+  shutdownSession(session, "backend input error");
 }
 
 function trimShellOutput(value) {
@@ -5170,41 +5206,14 @@ function resolvePythonCommand(requestedExecutable = "", requestedArgs = []) {
   const requestedBase = basename(requestedName).toLowerCase();
   const requestedIsGeneric = ["", "python", "python.exe", "python3", "python3.exe"].includes(requestedBase);
   const requestedHasPath = requestedName.includes("\\") || requestedName.includes("/") || isAbsolute(requestedName);
-  const candidates = [];
-
-  if (requestedIsGeneric) {
-    const cached = loadCachedWindowsPythonLauncher();
-    if (cached) {
-      candidates.push({
-        file: cached.file,
-        args: cached.args,
-        label: "cached python",
-        cacheable: false,
-      });
-    }
-  }
-
-  if (requestedName && (requestedHasPath || !requestedIsGeneric)) {
-    candidates.push({
-      file: resolveExecutable(requestedName),
-      args: requestedArgs,
-      label: [requestedName, ...requestedArgs].join(" "),
-      cacheable: requestedIsGeneric,
-    });
-  }
-
-  if (requestedIsGeneric) {
-    candidates.push(...defaultPythonCandidates());
-    if (requestedName && !requestedHasPath) {
-      candidates.push({
-        file: resolveExecutable(requestedName),
-        args: requestedArgs,
-        label: [requestedName, ...requestedArgs].join(" "),
-      });
-    }
-  } else {
-    candidates.push(...defaultPythonCandidates());
-  }
+  const useDiscovery = requestedIsGeneric && !requestedHasPath;
+  const candidates = pythonCommandCandidates({
+    requestedExecutable: requestedName,
+    requestedArgs,
+    defaults: useDiscovery ? defaultPythonCandidates() : [],
+    cached: useDiscovery ? loadCachedWindowsPythonLauncher() : null,
+    resolveExecutable,
+  });
 
   const seen = new Set();
   const attempts = [];
@@ -5217,7 +5226,7 @@ function resolvePythonCommand(requestedExecutable = "", requestedArgs = []) {
     attempts.push(candidate.label || [candidate.file, ...(candidate.args || [])].join(" "));
     if (pythonCandidateIsUsable(candidate)) {
       const resolved = { file: candidate.file, args: candidate.args || [] };
-      if (requestedIsGeneric && candidate.label !== "cached python") {
+      if (useDiscovery && candidate.label !== "cached python") {
         storeCachedWindowsPythonLauncher(resolved, candidate.label || "detected");
       }
       return resolved;
@@ -5318,8 +5327,8 @@ function loadCachedWindowsPythonLauncher() {
     if ((isAbsolute(file) && !existsSync(file)) || (!isAbsolute(file) && !resolveCommandOnPath(file))) {
       return null;
     }
-    const candidate = { file, args };
-    return pythonCandidateIsUsable(candidate) ? candidate : null;
+    // The selection loop probes each distinct candidate exactly once.
+    return { file, args };
   } catch {
     return null;
   }
@@ -5386,12 +5395,18 @@ async function runShellCommand(options = {}) {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let finished = false;
     const timer = setTimeout(() => {
       timedOut = true;
       killProcessTree(child);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      finish(null);
     }, shellCommandTimeoutMs);
     timer.unref?.();
 
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout = appendBoundedShellOutput(stdout, chunk);
     });
@@ -5399,6 +5414,8 @@ async function runShellCommand(options = {}) {
       stderr = appendBoundedShellOutput(stderr, chunk);
     });
     child.on("error", (error) => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       resolve({
         command,
@@ -5410,20 +5427,23 @@ async function runShellCommand(options = {}) {
         truncated: false,
       });
     });
-    child.on("exit", (code) => {
+    const finish = (code) => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       const trimmedStdout = trimShellOutput(stdout);
       const trimmedStderr = trimShellOutput(stderr);
       resolve({
         command,
         cwd: workspace.path,
-        exitCode: timedOut ? null : code ?? 0,
+        exitCode: timedOut ? null : code ?? 1,
         stdout: trimmedStdout.text,
         stderr: trimmedStderr.text,
         timedOut,
         truncated: trimmedStdout.truncated || trimmedStderr.truncated,
       });
-    });
+    };
+    child.on("close", finish);
   });
 }
 
@@ -5498,24 +5518,33 @@ async function streamShellCommand(options = {}, request, response) {
   const timer = setTimeout(() => {
     timedOut = true;
     killProcessTree(child);
+    child.stdout.destroy();
+    child.stderr.destroy();
+    finish({ type: "exit", exitCode: null, timedOut: true });
   }, shellCommandTimeoutMs);
   timer.unref?.();
 
   response.on("close", () => {
     if (!finished) {
+      finished = true;
+      clearTimeout(timer);
       killProcessTree(child);
+      child.stdout.destroy();
+      child.stderr.destroy();
     }
   });
 
   writeEvent({ type: "start", command, cwd: workspace.path });
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => writeText("stdout", chunk));
   child.stderr.on("data", (chunk) => writeText("stderr", chunk));
   child.on("error", (error) => {
     writeEvent({ type: "stderr", text: error.message });
     finish({ type: "exit", exitCode: 1, timedOut: false });
   });
-  child.on("exit", (code) => {
-    finish({ type: "exit", exitCode: timedOut ? null : code ?? 0, timedOut });
+  child.on("close", (code) => {
+    finish({ type: "exit", exitCode: timedOut ? null : code ?? 1, timedOut });
   });
 }
 
@@ -5614,10 +5643,9 @@ async function saveClientAttachments(fields, files, scope) {
     const value = String(fields.get(name) || "").trim();
     if (value) params.set(name, value);
   }
-  const liveSession = params.get("session")
-    ? sessionFromIdForClient(params.get("session"), params.get("clientId"))
-    : null;
-  const session = liveSession || await workspaceTargetSessionFromRequest(params, "", scope);
+  // Validate ownership even when an explicit workspace overrides the live session.
+  if (params.get("session")) sessionFromIdForClient(params.get("session"), params.get("clientId"));
+  const session = await workspaceTargetSessionFromRequest(params, "", scope);
   const uploadFiles = files.filter((file) => file.fieldName === "files" || file.fieldName === "file");
   if (!uploadFiles.length) {
     throw new Error("No files were uploaded");
@@ -5647,25 +5675,33 @@ async function saveClientAttachments(fields, files, scope) {
   const bucket = safeClientUploadSegment(params.get("session") || params.get("clientId") || "pending");
   const batch = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString("hex")}`;
   const baseRel = `${clientAttachmentRootRel}/${bucket}/${batch}`;
-  const counts = new Map();
+  const storedNames = new Set();
   const attachments = [];
   for (const file of uploadFiles) {
     const safeName = safeClientAttachmentName(file.filename);
-    const currentCount = counts.get(safeName) || 0;
-    counts.set(safeName, currentCount + 1);
-    const storedName = currentCount
-      ? `${safeName.replace(/(\.[^.]*)?$/, `-${currentCount + 1}$1`)}`
-      : safeName;
-    const { target, rel } = workspaceRelativeTarget(session.workspace.path, `${baseRel}/${storedName}`);
-    if (rel !== clientAttachmentRootRel && !rel.startsWith(`${clientAttachmentRootRel}/`)) {
-      throw new Error("Attachment path must stay inside the client upload directory");
+    let storedName = nextAvailableRelativePath(safeName, storedNames);
+    let savedRel;
+    while (true) {
+      const { target, rel } = workspaceRelativeTarget(session.workspace.path, `${baseRel}/${storedName}`);
+      if (rel !== clientAttachmentRootRel && !rel.startsWith(`${clientAttachmentRootRel}/`)) {
+        throw new Error("Attachment path must stay inside the client upload directory");
+      }
+      await mkdir(dirname(target), { recursive: true });
+      try {
+        await writeFile(target, file.data, { flag: "wx" });
+        storedNames.add(storedName);
+        savedRel = rel;
+        break;
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        storedNames.add(storedName);
+        storedName = nextAvailableRelativePath(safeName, storedNames);
+      }
     }
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, file.data);
     attachments.push({
       id: crypto.randomUUID(),
       name: safeName,
-      path: rel,
+      path: savedRel,
       size: file.data.length,
       media_type: file.media_type || "application/octet-stream",
     });
@@ -5932,10 +5968,18 @@ async function createBackendSession(options = {}, { fromQueue = false } = {}) {
   });
 
   child.on("error", (error) => {
-    emit(session, { type: "error", message: `Failed to start backend: ${error.message}` });
+    writeRuntimeLog("backend_process_error", { session_id: id, error: errorPayload(error) });
+    emit(session, { type: "error", message: "백엔드를 시작하지 못했습니다. 실행 환경을 확인해 주세요." });
   });
 
-  child.on("exit", (code, signal) => {
+  child.stdin.on("error", (error) => handleBackendInputError(session, error));
+
+  let finished = false;
+  let outputDrainTimer = null;
+  const finishSession = (code, signal) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(outputDrainTimer);
     if (session.forceKillTimer) {
       clearTimeout(session.forceKillTimer);
       session.forceKillTimer = null;
@@ -5954,10 +5998,22 @@ async function createBackendSession(options = {}, { fromQueue = false } = {}) {
       workspace: session.workspace?.path || "",
       shutting_down: Boolean(session.shuttingDown),
     });
-    emit(session, { type: "shutdown", code, message: `Backend exited with code ${code ?? 0}` });
+    emit(session, { type: "shutdown", code, message: signal ? `Backend exited with signal ${signal}` : `Backend exited with code ${code ?? "unknown"}` });
     sessions.delete(id);
     scheduleCapacityQueueDrain();
+  };
+  child.on("exit", (code, signal) => {
+    // exit can precede the final stdout bytes. A descendant may also inherit
+    // these pipes, so bound the drain instead of holding a dead session forever.
+    outputDrainTimer = setTimeout(() => {
+      child.stdout.destroy();
+      child.stderr.destroy();
+      finishSession(code, signal);
+    }, 5000);
+    outputDrainTimer.unref?.();
   });
+  // close follows drained output and also covers failed spawns without exit.
+  child.on("close", finishSession);
 
   return session;
 }
@@ -6060,6 +6116,7 @@ function startSessionMessage(session, request) {
     attachments: request.attachments,
     attachment_refs: request.attachmentRefs,
     suppress_user_transcript: suppressUserTranscript,
+    resume_session_id: request.resumeSessionId || null,
   };
   if (request.composeOptions) {
     backendPayload.compose_options = request.composeOptions;
@@ -7128,12 +7185,10 @@ async function handleApi(request, response, pathname) {
         : decodeURIComponent(rawAssetPath);
       const session = tokenSession || await workspaceTargetSessionFromRequest(params, assetPath, workspaceScope);
       const payload = await artifactAssetTarget(session, assetPath);
-      response.writeHead(200, {
+      await sendFileResponse(response, payload.target, {
         "Content-Type": payload.mime,
-        "Content-Length": String(payload.size),
         "Cache-Control": "no-store",
       });
-      createReadStream(payload.target).pipe(response);
     } catch (error) {
       json(response, error.status || 404, { error: error.message || "Artifact asset not found" });
     }
@@ -7151,16 +7206,17 @@ async function handleApi(request, response, pathname) {
       );
       const fallbackName = asciiHeaderFilename(payload.name);
       const body = await readDownloadableArtifactBody(payload.target, payload.ext);
-      response.writeHead(200, {
+      const headers = {
         "Content-Type": payload.mime,
         "Content-Length": String(body?.length || payload.size),
         "Content-Disposition": `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
         "Cache-Control": "no-store",
-      });
+      };
       if (body) {
+        response.writeHead(200, headers);
         response.end(body);
       } else {
-        createReadStream(payload.target).pipe(response);
+        await sendFileResponse(response, payload.target, headers);
       }
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not download artifact" });
@@ -7174,14 +7230,12 @@ async function handleApi(request, response, pathname) {
       const artifactPath = params.get("path");
       const session = await workspaceTargetSessionFromRequest(params, artifactPath, workspaceScope);
       const payload = await artifactDownloadTarget(session, artifactPath);
-      response.writeHead(200, {
+      await sendFileResponse(response, payload.target, {
         "Content-Type": payload.mime,
-        "Content-Length": String(payload.size),
         "Content-Disposition": `inline; filename="${asciiHeaderFilename(payload.name)}"`,
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
       });
-      createReadStream(payload.target).pipe(response);
     } catch (error) {
       json(response, error.status || 400, { error: error.message || "Could not open artifact" });
     }
@@ -7314,6 +7368,15 @@ async function handleApi(request, response, pathname) {
         json(response, 404, { error: "Unknown session" });
         return true;
       }
+      if (body.workspacePath) {
+        const requestedWorkspace = workspaceFromPath(body.workspacePath, workspaceScope);
+        if (relative(session.workspace.path, requestedWorkspace.path)) {
+          // This backend does not belong to the requested workspace. Let the
+          // client reconnect there before delivering text or attachment paths.
+          json(response, 404, { error: "Unknown session" });
+          return true;
+        }
+      }
       const line = String(body.line || "").trim();
       const attachments = Array.isArray(body.attachments)
         ? body.attachments.map(normalizeAttachment).filter(Boolean)
@@ -7331,6 +7394,10 @@ async function handleApi(request, response, pathname) {
         return true;
       }
       if (session.busy) {
+        if (typeof body.resumeSessionId === "string" && body.resumeSessionId.trim()) {
+          json(response, 409, { error: "현재 대화가 응답 중이라 다른 대화를 이어갈 수 없습니다. 답변이 끝난 뒤 다시 시도하세요." });
+          return true;
+        }
         if (attachments.length > 0 || attachmentRefs.length > 0) {
           json(response, 409, { error: "현재 대화가 응답 중이라 첨부파일은 보낼 수 없습니다. 답변이 끝난 뒤 다시 시도하세요." });
           return true;
@@ -7356,6 +7423,7 @@ async function handleApi(request, response, pathname) {
         attachmentRefs,
         composeOptions,
         suppressUserTranscript: body.suppressUserTranscript === true,
+        resumeSessionId: typeof body.resumeSessionId === "string" ? body.resumeSessionId.trim() : undefined,
       };
       if (!responseHasCapacity(session)) {
         const position = enqueueSessionMessage(session, messageRequest);

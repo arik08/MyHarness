@@ -18,6 +18,18 @@ class FakeEventSource {
 }
 
 describe("openBackendEvents", () => {
+  it.each(["null", "[]", "42", '"text"', "{}", '{"type":3}', '{"type":""}'])("rejects malformed event shape %s without losing the next valid event", (data) => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const onEvent = vi.fn();
+    const onCursor = vi.fn();
+    const source = openBackendEvents(new URLSearchParams(), { onEvent, onCursor, onError: vi.fn() });
+    expect(() => source.onmessage?.({ data, lastEventId: "1" } as MessageEvent)).not.toThrow();
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "error" }));
+    expect(onCursor).not.toHaveBeenCalled();
+    source.onmessage?.({ data: '{"type":"line_complete"}', lastEventId: "2" } as MessageEvent);
+    expect(onEvent).toHaveBeenLastCalledWith({ type: "line_complete" });
+    expect(onCursor).toHaveBeenCalledWith("2");
+  });
   it("commits replay checkpoints without exposing them as chat events", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const onEvent = vi.fn();

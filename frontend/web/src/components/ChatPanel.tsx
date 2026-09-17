@@ -1,3 +1,4 @@
+import { isImeKey } from "../utils/keyboard";
 import { Composer } from "./Composer";
 import { ConcurrencyStatus } from "./ConcurrencyStatus";
 import { MessageList } from "./MessageList";
@@ -71,6 +72,7 @@ export function ChatPanel() {
   }
 
   function handleTitleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (isImeKey(event.nativeEvent)) return;
     if (event.key === "Enter") {
       event.preventDefault();
       finishTitleEdit(true);

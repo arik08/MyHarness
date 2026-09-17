@@ -1,4 +1,5 @@
 import type { BackendEvent } from "../types/backend";
+import { toolCallKey } from "../../modules/toolIdentity.js";
 
 type ToolInputDeltaEvent = Extract<BackendEvent, { type: "tool_input_delta" }> & {
   tool_call_id?: string | null;
@@ -14,18 +15,6 @@ type PendingDelta = {
 };
 
 const defaultFlushMs = 120;
-
-function toolInputDeltaKey(event: ToolInputDeltaEvent) {
-  const callId = typeof event.tool_call_id === "string" && event.tool_call_id ? event.tool_call_id : "";
-  if (callId) {
-    return `id:${callId}`;
-  }
-  const index = Number(event.tool_call_index);
-  if (Number.isFinite(index)) {
-    return `index:${index}`;
-  }
-  return `tool:${String(event.tool_name || "")}`;
-}
 
 function isToolInputDeltaEvent(event: BackendEvent): event is ToolInputDeltaEvent {
   return event.type === "tool_input_delta";
@@ -83,6 +72,11 @@ export function createWorkflowEventCoalescer(
 
   function push(event: BackendEvent) {
     if (event.type === "assistant_delta") {
+      if (event.snapshot) {
+        flush();
+        emit(event);
+        return;
+      }
       const text = String(event.message ?? event.value ?? "");
       if (!text) return;
       if (pending.size) flush();
@@ -106,7 +100,7 @@ export function createWorkflowEventCoalescer(
     if (!event.arguments_delta) {
       return;
     }
-    const key = toolInputDeltaKey(event);
+    const key = toolCallKey(event);
     const current = pending.get(key);
     if (current) {
       pending.set(key, {

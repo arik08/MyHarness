@@ -13,7 +13,7 @@ export type RuntimePreferences = {
 };
 
 function clean(value: unknown) {
-  const text = String(value || "").trim();
+  const text = typeof value === "string" ? value.trim() : "";
   return text && text !== "-" ? text : "";
 }
 
@@ -25,17 +25,22 @@ function normalizeActiveProfile(value: unknown) {
     "openai_codex": "codex",
     "pgpt": "p-gpt",
   };
-  return aliases[text] || text;
+  return Object.prototype.hasOwnProperty.call(aliases, text) ? aliases[text] : text;
+}
+
+function readPreferenceRecord(key: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(key) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
 }
 
 export function loadRuntimePreferences(): RuntimePreferences {
   try {
-    const value = JSON.parse(localStorage.getItem(runtimePreferenceKey) || "{}") as RuntimePreferences & {
-      version?: number;
-    };
-    const appSettings = JSON.parse(localStorage.getItem("myharness:appSettings") || "{}") as {
-      gpt56ContextMode?: string;
-    };
+    const value = readPreferenceRecord(runtimePreferenceKey);
+    const appSettings = readPreferenceRecord("myharness:appSettings");
     // Let the backend use settings.json until the user chooses a provider.
     const activeProfile = normalizeActiveProfile(value.activeProfile) || undefined;
     const resetBuiltInModel = value.version !== runtimePreferenceVersion

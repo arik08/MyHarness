@@ -25,6 +25,29 @@ function validHistory(value: unknown): value is HistoryData {
 const backgroundLiveSessionPollMs = 3000;
 const historyPollMs = 7000;
 
+async function readHistoryPages(
+  params: Parameters<typeof listHistory>[0],
+  count: number,
+  isCurrent: () => boolean,
+): Promise<HistoryData | null> {
+  const history: HistoryItem[] = [];
+  let offset = 0;
+  while (offset < count) {
+    const data = await listHistory({ ...params, limit: Math.min(historyPageSize, count - offset), offset });
+    if (!isCurrent()) return null;
+    const rows = Array.isArray(data.options) ? data.options : [];
+    const nextOffset = typeof data.nextOffset === "number" ? data.nextOffset : offset + rows.length;
+    const hasMore = data.hasMore === true;
+    if (!Number.isSafeInteger(nextOffset) || nextOffset < 0 || (hasMore && nextOffset <= offset)) {
+      throw new Error("대화 목록의 다음 페이지 위치를 확인하지 못했습니다.");
+    }
+    history.push(...rows);
+    if (!hasMore || nextOffset >= count) return { history, hasMore, nextOffset };
+    offset = nextOffset;
+  }
+  return null;
+}
+
 export function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionItem[], currentSessionId: string | null): HistoryItem[] {
   const liveSessionIds = new Set(sessions.map((session) => session.sessionId));
   const mergedHistory = history.flatMap<HistoryItem>((item) => {
@@ -179,11 +202,13 @@ export function useWorkspaceData() {
           workspacePath: state.workspacePath || undefined,
         })
         : Promise.resolve({ sessions: [] })).catch(() => ({ sessions: [] }));
-    void listHistory({ workspacePath: state.workspacePath, workspaceName: state.workspaceName, limit: historyPageSize, offset: 0 })
-      .then(async (data) => {
-        const history = Array.isArray(data.options) ? data.options : [];
-        const page = { history, hasMore: data.hasMore === true,
-          nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : history.length };
+    void readHistoryPages(
+      { workspacePath: state.workspacePath, workspaceName: state.workspaceName },
+      Math.max(historyPageSize, state.historyNextOffset),
+      () => !cancelled,
+    ).then(async (page) => {
+        if (!page) return;
+        const historyBeforeRefresh = latestState.current.history;
         if (!cancelled) {
           writeRecentData("history", scope, page);
           showHistory(page);
@@ -191,10 +216,15 @@ export function useWorkspaceData() {
         const liveData = await liveRequest;
         if (!cancelled) {
           const liveSessions = Array.isArray(liveData.sessions) ? liveData.sessions : [];
+          // Live status can arrive after edits or pagination. Enrich the current
+          // list, falling back to this page only while its dispatch awaits render.
+          const current = latestState.current;
+          const base = current.history === historyBeforeRefresh ? page : {
+            history: current.history, hasMore: current.historyHasMore, nextOffset: current.historyNextOffset,
+          };
           showHistory({
-            history: mergeLiveSessions(history, liveSessions, currentSessionIdRef.current),
-            hasMore: data.hasMore === true,
-            nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : history.length,
+            ...base,
+            history: mergeLiveSessions(base.history, liveSessions, currentSessionIdRef.current),
           });
         }
       })
@@ -233,19 +263,18 @@ export function useWorkspaceData() {
 
     async function refreshHistory() {
       try {
-        const data = await listHistory({
-          workspacePath: state.workspacePath,
-          workspaceName: state.workspaceName,
-          limit: historyPageSize,
-          offset: 0,
-        });
-        if (cancelled) return;
-        const history = Array.isArray(data.options) ? data.options : [];
+        const before = latestState.current;
+        if (before.historyLoading || before.historyLoadingMore) return;
+        const data = await readHistoryPages(
+          { workspacePath: state.workspacePath, workspaceName: state.workspaceName },
+          Math.max(historyPageSize, before.historyNextOffset),
+          () => !cancelled && latestState.current.history === before.history
+            && !latestState.current.historyLoadingMore,
+        );
+        if (!data) return;
         dispatch({
           type: "set_history",
-          history,
-          hasMore: data.hasMore === true,
-          nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : history.length,
+          ...data,
         });
       } catch {
         // Keep the current list visible and retry at the next interval.

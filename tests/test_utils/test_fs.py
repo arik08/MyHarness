@@ -42,6 +42,36 @@ def test_atomic_write_overwrites_existing_file(tmp_path: Path) -> None:
     assert path.read_text() == "new contents"
 
 
+@pytest.mark.parametrize("writer,payload", [(atomic_write_text, "hello"), (atomic_write_bytes, b"hello")])
+def test_atomic_write_can_require_existing_parent(tmp_path: Path, writer, payload) -> None:
+    path = tmp_path / "missing" / "out.txt"
+    with pytest.raises(FileNotFoundError):
+        writer(path, payload, create_directories=False)
+    assert not path.parent.exists()
+    path.parent.mkdir()
+    writer(path, payload, create_directories=False)
+    assert path.read_bytes() == b"hello"
+
+
+@pytest.mark.parametrize("newline", [None, "", "\n", "\r", "\r\n"])
+def test_atomic_text_newlines_match_text_io(tmp_path: Path, newline) -> None:
+    content = "first\nsecond\r\nthird\rfinal\n"
+    expected = tmp_path / "expected.txt"
+    with expected.open("w", encoding="utf-8", newline=newline) as stream:
+        stream.write(content)
+    actual = tmp_path / "actual.txt"
+    atomic_write_text(actual, content, newline=newline)
+    assert actual.read_bytes() == expected.read_bytes()
+
+
+def test_invalid_newline_leaves_file_untouched(tmp_path: Path) -> None:
+    path = tmp_path / "out.txt"
+    path.write_bytes(b"original")
+    with pytest.raises(ValueError):
+        atomic_write_text(path, "updated", newline="invalid")
+    assert path.read_bytes() == b"original"
+
+
 def test_atomic_write_does_not_leave_tempfiles(tmp_path: Path) -> None:
     path = tmp_path / "out.txt"
     atomic_write_text(path, "payload")

@@ -24,6 +24,22 @@ import {
 } from "../artifacts";
 
 describe("artifact utilities", () => {
+  it.each([
+    ["file:///C:/Work/%ED%95%9C%EA%B8%80%20%23%20100%25.pdf", "C:/Work/한글 # 100%.pdf"],
+    ["`file:///C:/Work/report%20one.html`", "C:/Work/report one.html"],
+    ["file://server/share/report%20one.pdf", "//server/share/report one.pdf"],
+    ["file:///tmp/report%20one.pdf", "/tmp/report one.pdf"],
+    ["outputs/report%20one.pdf", "outputs/report%20one.pdf"],
+  ])("normalizes local file reference %s without corrupting literal paths", (input, expected) => {
+    expect(normalizeArtifactPath(input)).toBe(expected);
+  });
+  it("recognizes Markdown angle-bracket destinations with spaces", () => {
+    expect(collectArtifactCandidates("[보고서](<outputs/한글 보고서.pdf>)")[0]?.path).toBe("outputs/한글 보고서.pdf");
+    expect(collectArtifactCandidates("[보고서](<file:///C:/Work/report%20one.pdf>)")[0]?.path).toBe("C:/Work/report one.pdf");
+  });
+  it("does not throw for incomplete file URL escapes", () => {
+    expect(normalizeArtifactPath("file:///C:/Work/%E0%A4.pdf")).toBe("file:///C:/Work/%E0%A4.pdf");
+  });
   it("derives display-safe names from paths", () => {
     expect(normalizeArtifactPath("`outputs\\report.html`,")).toBe("outputs/report.html");
     expect(normalizeProjectFilePath("\\outputs\\report.html")).toBe("outputs/report.html");

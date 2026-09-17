@@ -12,15 +12,22 @@ const activeBackendSessionKey = "myharness:activeBackendSessionId";
 const lastConversationKey = "myharness:lastConversation";
 
 function loadLastConversation() {
-  try {
-    const value = JSON.parse(localStorage.getItem(lastConversationKey) || "null");
-    return value && typeof value.sessionId === "string" && value.sessionId
-      && typeof value.workspacePath === "string" && typeof value.workspaceName === "string"
-      ? value as { sessionId: string; workspacePath: string; workspaceName: string }
-      : null;
-  } catch {
-    return null;
+  // A different tab may update the browser-wide recent conversation.
+  for (const read of [
+    () => sessionStorage.getItem(lastConversationKey),
+    () => localStorage.getItem(lastConversationKey),
+  ]) {
+    try {
+      const value = JSON.parse(read() || "null");
+      if (value && typeof value.sessionId === "string" && value.sessionId
+        && typeof value.workspacePath === "string" && typeof value.workspaceName === "string") {
+        return value as { sessionId: string; workspacePath: string; workspaceName: string };
+      }
+    } catch {
+      // Fall back to the other storage if this one is unavailable or invalid.
+    }
   }
+  return null;
 }
 const pendingSessionStarts = new Map<string, Promise<SessionResponse>>();
 const busySessionPollMs = 3000;
@@ -64,14 +71,20 @@ export function useBackendSession() {
 
   useEffect(() => {
     if (!state.activeHistoryId || state.restoringHistory || state.pendingHistoryId) return;
-    try {
-      localStorage.setItem(lastConversationKey, JSON.stringify({
-        sessionId: state.activeHistoryId,
-        workspacePath: state.workspacePath,
-        workspaceName: state.workspaceName,
-      }));
-    } catch {
-      // Storage may be unavailable in embedded/private contexts.
+    const value = JSON.stringify({
+      sessionId: state.activeHistoryId,
+      workspacePath: state.workspacePath,
+      workspaceName: state.workspaceName,
+    });
+    for (const write of [
+      () => sessionStorage.setItem(lastConversationKey, value),
+      () => localStorage.setItem(lastConversationKey, value),
+    ]) {
+      try {
+        write();
+      } catch {
+        // Either storage may be unavailable in embedded/private contexts.
+      }
     }
   }, [state.activeHistoryId, state.restoringHistory, state.pendingHistoryId, state.workspacePath, state.workspaceName]);
 
@@ -110,6 +123,7 @@ export function useBackendSession() {
       const previousSessionId = loadActiveBackendSessionId();
       let lastConversation = loadLastConversation();
       const liveSessions = await listLiveSessions({ clientId: state.clientId });
+      if (cancelled) return;
       const savedSessionId = lastConversation?.sessionId;
       const liveSession = lastConversation
         ? liveSessions.sessions.find((item) => item.savedSessionId === savedSessionId)
@@ -184,6 +198,7 @@ export function useBackendSession() {
     }
 
     void boot().catch((error) => {
+      if (cancelled) return;
       dispatch({
         type: "backend_event",
         event: { type: "error", message: error instanceof Error ? error.message : String(error) },

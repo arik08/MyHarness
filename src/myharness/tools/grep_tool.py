@@ -12,6 +12,11 @@ from pydantic import BaseModel, Field
 
 from myharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from myharness.utils.windows_subprocess import hidden_subprocess_kwargs
+from myharness.utils.process_tree import terminate_process_tree
+
+
+class _RipgrepError(RuntimeError):
+    """A search failed instead of returning a valid empty result."""
 
 
 class GrepToolInput(BaseModel):
@@ -37,6 +42,12 @@ class GrepTool(BaseTool):
         return True
 
     async def execute(self, arguments: GrepToolInput, context: ToolExecutionContext) -> ToolResult:
+        try:
+            return await self._execute_search(arguments, context)
+        except (re.error, _RipgrepError, OSError) as exc:
+            return ToolResult(output=f"Search failed: {exc}", is_error=True)
+
+    async def _execute_search(self, arguments: GrepToolInput, context: ToolExecutionContext) -> ToolResult:
         root = _resolve_path(context.cwd, arguments.root) if arguments.root else context.cwd
         if not root.exists():
             return ToolResult(output=f"Search path does not exist: {root}. Use an existing file or directory as root; put file patterns in file_glob.", is_error=True)
@@ -140,15 +151,15 @@ def _resolve_path(base: Path, candidate: str | None) -> Path:
     return path.resolve()
 
 
-def _format_rg_result(matches: list[str], timeout_seconds: int) -> ToolResult:
+def _format_rg_result(matches: list[str], timeout_seconds: int, *, tool_name: str = "grep") -> ToolResult:
     timed_out = bool(matches and matches[-1] == _timeout_marker(timeout_seconds))
     rendered = matches[:-1] if timed_out else matches
     output = "\n".join(rendered) if rendered else "(no matches)"
     if timed_out:
         output = (
-            f"{output}\n\n[grep timed out after {timeout_seconds} seconds]"
+            f"{output}\n\n[{tool_name} timed out after {timeout_seconds} seconds]"
             if output != "(no matches)"
-            else f"[grep timed out after {timeout_seconds} seconds]"
+            else f"[{tool_name} timed out after {timeout_seconds} seconds]"
         )
     return ToolResult(output=output, is_error=timed_out)
 
@@ -233,36 +244,48 @@ async def _run_rg(
     limit: int,
     timeout_seconds: int,
     format_match: Callable[[str], str | None],
-) -> list[str] | None:
+) -> list[str]:
     process = await _start_rg_process(cmd, cwd=cwd)
     matches: list[str] = []
+    stderr_task = asyncio.create_task(_read_rg_stderr(process.stderr))
+    stopped_early = False
+
+    async def collect_and_wait() -> str:
+        nonlocal stopped_early
+        await _collect_rg_matches(process, matches, limit=limit, format_match=format_match)
+        if len(matches) >= limit and process.returncode is None:
+            stopped_early = True
+            await _terminate_process(process)
+        await process.wait()
+        return await asyncio.shield(stderr_task)
+
     try:
-        await asyncio.wait_for(
-            _collect_rg_matches(
-                process,
-                matches,
-                limit=limit,
-                format_match=format_match,
-            ),
-            timeout=timeout_seconds,
-        )
+        stderr = await asyncio.wait_for(collect_and_wait(), timeout=timeout_seconds)
     except asyncio.TimeoutError:
         matches.append(_timeout_marker(timeout_seconds))
         await _terminate_process(process)
-    except asyncio.CancelledError:
+        return matches
+    except BaseException:
         await _terminate_process(process)
         raise
     finally:
-        if len(matches) >= limit and process.returncode is None:
-            await _terminate_process(process)
-        elif process.returncode is None:
-            await process.wait()
+        stderr_task.cancel()
+        await asyncio.gather(stderr_task, return_exceptions=True)
 
     # rg exits 0 when matches are found, 1 when none are found.
-    # Any other return code indicates an error; fall back to Python.
-    if process.returncode in {0, 1, -15, -9}:
+    # A failed native search must not silently become a different Python search.
+    if stopped_early or process.returncode in {0, 1}:
         return matches
-    return None
+    raise _RipgrepError(stderr.strip() or f"ripgrep exited with code {process.returncode}")
+
+
+async def _read_rg_stderr(stream: asyncio.StreamReader | None) -> str:
+    if stream is None:
+        return ""
+    tail = b""
+    while chunk := await stream.read(64 * 1024):
+        tail = (tail + chunk)[-16 * 1024:]
+    return tail.decode("utf-8", errors="replace")
 
 
 async def _start_rg_process(cmd: list[str], *, cwd: Path):
@@ -316,15 +339,7 @@ async def _collect_rg_matches(
 
 
 async def _terminate_process(process: asyncio.subprocess.Process) -> None:
-    if process.returncode is not None:
-        return
-    process.terminate()
-    try:
-        await asyncio.wait_for(process.wait(), timeout=2.0)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
-    return None
+    await terminate_process_tree(process)
 
 
 def _format_path(path: Path, display_base: Path) -> str:
@@ -335,4 +350,9 @@ def _format_path(path: Path, display_base: Path) -> str:
 
 
 def _normalize_rg_match(line: str) -> str:
-    return line.replace("\\", "/").removeprefix("./")
+    match = re.match(r"^(.*?):(\d+):(.*)$", line)
+    if not match:
+        return line
+    path, line_number, content = match.groups()
+    path = path.replace("\\", "/").removeprefix("./")
+    return f"{path}:{line_number}:{content}"

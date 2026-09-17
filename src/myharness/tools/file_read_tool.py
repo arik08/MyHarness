@@ -89,11 +89,30 @@ def _resolve_path(base: Path, candidate: str) -> Path:
 
 def _read_selected_lines(path: Path, offset: int, limit: int) -> tuple[bool, list[str]]:
     selected: list[str] = []
-    end = offset + limit
     with path.open("r", encoding="utf-8", errors="replace", newline=None) as handle:
-        for index, line in enumerate(handle):
+        # Skip long lines in bounded chunks, without retaining their contents.
+        skipped = 0
+        while skipped < offset:
+            chunk = handle.readline(64 * 1024)
+            if not chunk:
+                return False, []
+            if "\x00" in chunk:
+                return True, []
+            if chunk.endswith("\n"):
+                skipped += 1
+
+        rendered_chars = 0
+        for index in range(limit):
+            # One extra character lets the caller distinguish exact-fit output
+            # from truncation without allocating an arbitrarily large line.
+            line = handle.readline(FILE_READ_MAX_OUTPUT_CHARS + 1)
+            if not line:
+                break
             if "\x00" in line:
                 return True, []
-            if offset <= index < end:
-                selected.append(line.rstrip("\r\n"))
+            text = line.rstrip("\r\n")
+            selected.append(text)
+            rendered_chars += len(f"{offset + index + 1:>6}\t") + len(text) + bool(index)
+            if rendered_chars > FILE_READ_MAX_OUTPUT_CHARS:
+                break
     return False, selected

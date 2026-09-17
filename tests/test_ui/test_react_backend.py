@@ -1275,6 +1275,56 @@ async def test_read_requests_decodes_utf8_json_from_binary_stdin(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["catalog", "task_output", "invalid_utf8"])
+async def test_read_requests_survives_control_failure_and_accepts_cancel(monkeypatch, failure):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._busy = True
+    events = []
+    cancelled = []
+
+    async def emit(event):
+        events.append(event)
+
+    async def fail(*args):
+        raise OSError("private failure details")
+
+    async def cancel():
+        assert host._busy
+        cancelled.append(True)
+
+    first = {
+        "catalog": b'{"type":"select_command","command":"runtime-picker"}\n',
+        "task_output": b'{"type":"task_output","task_id":"worker"}\n',
+        "invalid_utf8": b'\xff\n',
+    }[failure]
+    requests = iter([first, b'{"type":"cancel_current"}\n',
+                     b'{"type":"submit_line","line":"next"}\n', b''])
+
+    class FakeStdin:
+        class buffer:
+            @staticmethod
+            def readline():
+                return next(requests)
+
+    monkeypatch.setattr("myharness.ui.backend_host.sys.stdin", FakeStdin())
+    host._emit = emit
+    host._handle_select_command = fail
+    host._handle_task_output = fail
+    host._cancel_current_request = cancel
+    await host._read_requests()
+
+    assert cancelled == [True]
+    assert host._busy
+    assert host._request_queue.get_nowait().line == "next"
+    assert host._request_queue.get_nowait().type == "shutdown"
+    assert host._request_queue.empty()
+    assert [event.type for event in events] == ["transcript_item"]
+    assert events[0].item.role == "system"
+    assert events[0].item.is_error is True
+    assert "private failure details" not in events[0].item.text
+
+
+@pytest.mark.asyncio
 async def test_read_requests_records_question_answer_transcript(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     fut = asyncio.get_running_loop().create_future()
@@ -1316,6 +1366,9 @@ async def test_read_requests_records_question_answer_transcript(monkeypatch):
     assert "어떤 색으로 진행할까요?" in transcript.text
     assert "blue" in transcript.text
     assert "파랑" in transcript.text
+    assert any(event.type == "modal_request" and event.modal == {
+        "kind": "question", "request_id": "question-1", "status": "answered",
+    } for event in events)
     queued = await host._request_queue.get()
     assert queued.type == "shutdown"
     assert host._request_queue.empty()
@@ -2174,6 +2227,81 @@ async def test_backend_host_persists_sent_image_preview_without_changing_model_i
     assert (tmp_path / item.images[0]["path"]).read_bytes() == b"hello"
     assert host._history_events[0]["images"] == item.images
     assert any(isinstance(block, ImageBlock) for message in client.requests[0].messages for block in message.content)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_pasted", [False, True])
+@pytest.mark.parametrize("line", ["Describe the screenshot", "/clear"])
+async def test_uploaded_image_is_included_in_model_input_and_transcript(tmp_path, monkeypatch, include_pasted, line):
+    import base64
+    from myharness.engine.messages import ImageBlock
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    relative = ".myharness/client-uploads/screenshot.png"
+    image_bytes = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5ZkAAAAASUVORK5CYII=")
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True)
+    target.write_bytes(image_bytes)
+    client = SequencedApiClient(["done"])
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        host._record_history_event(event)
+
+    host._emit = emit
+    await start_runtime(host._bundle)
+    session_id = host._bundle.session_id
+    try:
+        pasted = [FrontendAttachment(name="pasted.png", media_type="image/png", data=base64.b64encode(image_bytes).decode("ascii"))] if include_pasted else []
+        await host._process_line(line, attachments=pasted, attachment_refs=[
+            FrontendAttachment(name="screenshot.png", path=relative, media_type="image/png", size=len(image_bytes)),
+        ])
+        assert host._bundle.session_id == session_id
+        snapshot = host._bundle.session_backend.load_by_id(host._bundle.cwd, session_id)
+        assert snapshot is not None and snapshot["messages"]
+        assert not any(event.type == "clear_transcript" for event in events)
+    finally:
+        await close_runtime(host._bundle)
+    images = [block for message in client.requests[0].messages for block in message.content if isinstance(block, ImageBlock)]
+    assert len(images) == 1 + int(include_pasted)
+    assert all(base64.b64decode(image.data) == image_bytes for image in images)
+    assert images[-1].source_path == relative
+    item = next(event.item for event in events if event.type == "transcript_item" and event.item.role == "user")
+    pasted_label = " [image attachments: 1]" if include_pasted else ""
+    assert item.text == f"{line}{pasted_label} [file attachments: screenshot.png]"
+    assert len(item.images) == len(images)
+    assert item.images[-1] == {"name": "screenshot.png", "path": relative, "media_type": "image/png"}
+
+
+@pytest.mark.asyncio
+async def test_unreadable_uploaded_image_stops_before_calling_model(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    client = SequencedApiClient(["must not run"])
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    host._emit = emit
+    await start_runtime(host._bundle)
+    try:
+        assert await host._process_line("Describe the screenshot", attachment_refs=[
+            FrontendAttachment(name="missing.png", path=".myharness/client-uploads/missing.png", media_type="image/png"),
+        ]) is True
+    finally:
+        await close_runtime(host._bundle)
+    assert client.requests == []
+    assert any(event.type == "error" and "첨부 이미지" in event.message for event in events)
+    assert events[-1].type == "line_complete"
 
 
 @pytest.mark.asyncio
@@ -3124,7 +3252,52 @@ async def test_backend_host_persists_user_edited_session_title(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_backend_host_starts_empty_saved_session_immediately(tmp_path, monkeypatch):
+@pytest.mark.parametrize("command", [False, True])
+@pytest.mark.parametrize("error_type", [OSError, asyncio.CancelledError])
+async def test_new_session_save_failure_preserves_current_conversation(tmp_path, monkeypatch, command, error_type):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    engine = host._bundle.engine
+    engine.load_messages([ConversationMessage.from_user_text("보존할 대화")])
+    engine.load_usage(usage={"input_tokens": 120, "output_tokens": 30})
+    engine.tool_metadata.update(session_title="보존할 제목", branch_origin={"session_id": "parent"})
+    session_id = host._bundle.session_id
+    metadata = dict(engine.tool_metadata)
+    usage = engine.usage_accounting
+    history = [{"type": "transcript_item", "item": {"role": "user", "text": "보존할 대화"}}]
+    host._history_events = list(history)
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    def fail_save(self, **kwargs):
+        raise error_type("save interrupted")
+
+    host._emit = emit
+    monkeypatch.setattr(type(host._bundle.session_backend), "save_snapshot", fail_save)
+    try:
+        with pytest.raises(error_type, match="save interrupted"):
+            if command:
+                await host._process_line("/clear")
+            else:
+                await host._handle_start_new_session("abcdef123456")
+        assert [message.text for message in engine.messages] == ["보존할 대화"]
+        assert engine.usage_accounting == usage
+        assert engine.tool_metadata == metadata
+        assert host._bundle.session_id == session_id
+        assert host._history_events == history
+        assert not any(event.type in {"clear_transcript", "active_session"} for event in events)
+    finally:
+        await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", [False, True])
+async def test_backend_host_starts_empty_saved_session_immediately(tmp_path, monkeypatch, command):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
@@ -3142,24 +3315,41 @@ async def test_backend_host_starts_empty_saved_session_immediately(tmp_path, mon
         host._bundle.engine.load_messages([
             ConversationMessage.from_user_text("이전 대화가 새 대화에 섞이면 안 됨")
         ])
+        host._bundle.engine.load_usage(usage={"input_tokens": 120, "output_tokens": 30})
+        host._bundle.engine.tool_metadata.update(
+            session_title="이전 제목", session_title_user_edited=True,
+            workflow_duration_seconds=99, branch_origin={"session_id": "parent"},
+        )
         host._history_events = [{"type": "user", "text": "이전 대화"}]
 
-        await host._handle_start_new_session("abcdef123456")
-        snapshot = host._bundle.session_backend.load_by_id(host._bundle.cwd, "abcdef123456")
+        if command:
+            await host._process_line("/clear")
+        else:
+            await host._handle_start_new_session("abcdef123456")
+        session_id = host._bundle.session_id
+        snapshot = host._bundle.session_backend.load_by_id(host._bundle.cwd, session_id)
     finally:
         await close_runtime(host._bundle)
 
     assert snapshot is not None
-    assert snapshot["session_id"] == "abcdef123456"
-    assert snapshot["summary"] == "새 대화"
+    assert snapshot["session_id"] == session_id
+    if not command:
+        assert session_id == "abcdef123456"
+    title = "새 채팅" if command else "새 대화"
+    assert snapshot["summary"] == title
     assert snapshot["messages"] == []
     assert snapshot["history_events"] == []
-    assert host._bundle.session_id == "abcdef123456"
+    assert snapshot["usage"]["input_tokens"] == 0
+    assert snapshot["usage"]["output_tokens"] == 0
+    assert "branch_origin" not in snapshot["tool_metadata"]
+    assert "session_title_user_edited" not in snapshot["tool_metadata"]
+    assert "workflow_duration_seconds" not in snapshot["tool_metadata"]
+    assert host._bundle.engine.total_usage.total_tokens == 0
     assert host._bundle.engine.messages == []
     assert host._history_events == []
     assert any(event.type == "clear_transcript" for event in events)
-    assert any(event.type == "active_session" and event.value == "abcdef123456" for event in events)
-    assert any(event.type == "session_title" and event.message == "새 대화" for event in events)
+    assert any(event.type == "active_session" and event.value == session_id for event in events)
+    assert any(event.type == "session_title" and event.message == title for event in events)
 
 
 @pytest.mark.asyncio
@@ -4266,6 +4456,59 @@ def test_selected_mcp_registry_keeps_builtin_tools_and_selected_server_tools():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["allow", "deny", "cancel", "timeout"])
+async def test_permission_request_emits_terminal_state(mode, monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        if event.modal and not event.modal.get("status"):
+            future = host._permission_requests[event.modal["request_id"]]
+            if mode in {"allow", "deny"}:
+                future.set_result(mode == "allow")
+            elif mode == "cancel":
+                future.cancel()
+
+    if mode == "timeout":
+        async def timeout(future, timeout):
+            future.cancel()
+            raise asyncio.TimeoutError
+        monkeypatch.setattr("myharness.ui.backend_host.asyncio.wait_for", timeout)
+    host._emit = emit
+    if mode == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await host._ask_permission("arbitrary_tool", "Needs approval")
+    else:
+        assert await host._ask_permission("arbitrary_tool", "Needs approval") is (mode == "allow")
+    assert not host._permission_requests
+    assert len(events) == 2
+    assert events[-1].modal == {
+        "kind": "permission", "request_id": events[0].modal["request_id"],
+        "status": "answered" if mode in {"allow", "deny"} else "cancelled",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cancelled_legacy_question_emits_terminal_state():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        if event.modal and not event.modal.get("status"):
+            host._question_requests[event.modal["request_id"]].cancel()
+
+    host._emit = emit
+    with pytest.raises(asyncio.CancelledError):
+        await host._ask_question("Continue?")
+    assert events[-1].modal == {
+        "kind": "question", "request_id": events[0].modal["request_id"], "status": "cancelled",
+    }
+    assert not host._question_requests
+
+
+@pytest.mark.asyncio
 async def test_concurrent_ask_permission_are_serialised():
     """Concurrent _ask_permission calls must be serialised so the frontend
     never receives two overlapping modal_request events.
@@ -4279,7 +4522,7 @@ async def test_concurrent_ask_permission_are_serialised():
     emitted_order: list[str] = []
 
     async def _fake_emit(event: BackendEvent) -> None:
-        if event.type == "modal_request" and event.modal:
+        if event.type == "modal_request" and event.modal and not event.modal.get("status"):
             emitted_order.append(str(event.modal.get("request_id", "")))
 
     host._emit = _fake_emit  # type: ignore[method-assign]
@@ -4472,3 +4715,186 @@ async def test_runtime_selection_confirms_actual_state_with_request_id(outcome):
     assert events[-1].type == "state_snapshot"
     assert events[-1].request_id == "choice-123"
     assert events[-1].state["model"] == ("future" if outcome == "success" else "old")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved", [True, False])
+async def test_submit_restores_context_before_model_or_aborts(tmp_path, monkeypatch, saved):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    client = SequencedApiClient(["continued", "title"])
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+
+    async def capture(event):
+        host._record_history_event(event)
+        events.append(event)
+
+    host._emit = capture
+    host._ensure_async_agent_monitor = lambda: None
+    await start_runtime(host._bundle)
+    try:
+        if saved:
+            host._bundle.session_backend.save_snapshot(
+                cwd=host._bundle.cwd,
+                model=host._bundle.engine.model,
+                system_prompt=host._bundle.engine.system_prompt,
+                messages=[ConversationMessage(role="user", content=[TextBlock(text="Remember reference ZX-491")]),
+                          ConversationMessage(role="assistant", content=[TextBlock(text="Acknowledged")])],
+                usage=host._bundle.engine.total_usage,
+                session_id="recover-context",
+                tool_metadata={"session_title": "Existing conversation", "session_title_source": "conversation"},
+            )
+        await host._process_submit_request(FrontendRequest(
+            type="submit_line", line="Continue with that reference", resume_session_id="recover-context",
+            suppress_user_transcript=True,
+        ))
+        if saved:
+            assert client.requests
+            sent = "\n".join(message.text for message in client.requests[0].messages)
+            assert "Remember reference ZX-491" in sent
+            assert "Continue with that reference" in sent
+            history_index = next(i for i, event in enumerate(events) if event.type == "history_snapshot")
+            user_index = next(i for i, event in enumerate(events) if event.type == "transcript_item" and event.item.role == "user")
+            assert history_index < user_index
+            assert not any(event.type == "line_complete" for event in events[:user_index])
+        else:
+            assert not client.requests
+            assert any(event.type == "error" for event in events)
+            assert events[-1].type == "line_complete"
+    finally:
+        await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
+async def test_submit_does_not_run_after_restore_exception():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._restore_history_snapshot = AsyncMock(side_effect=ValueError("invalid snapshot"))
+    host._process_line = AsyncMock()
+    host._emit = AsyncMock()
+    await host._process_submit_request(FrontendRequest(type="submit_line", line="continue", resume_session_id="broken"))
+    host._process_line.assert_not_called()
+    assert [call.args[0].type for call in host._emit.call_args_list] == ["error", "line_complete"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preparation", ["connect", "refresh"])
+async def test_cancel_during_request_preparation_prevents_execution(tmp_path, monkeypatch, preparation):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    events = []
+
+    async def prepare():
+        entered.set()
+        await release.wait()
+
+    async def read_requests():
+        await host._request_queue.put(FrontendRequest(type="submit_line", line="Please do this task"))
+        await entered.wait()
+        await host._cancel_current_request()
+        release.set()
+        await host._request_queue.put(FrontendRequest(type="shutdown"))
+
+    async def emit(event):
+        events.append(event)
+
+    host._read_requests = read_requests
+    host._emit = emit
+    host._line_may_need_mcp = lambda line: preparation == "connect"
+    host._wait_for_mcp_connect_if_needed = prepare
+    host._refresh_mcp_configs = prepare
+    host._process_line = AsyncMock(return_value=True)
+    await asyncio.wait_for(host.run(), timeout=10)
+    host._process_line.assert_not_called()
+    assert any(event.type == "line_complete" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_start_removes_only_the_first_pending_message():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._emit = AsyncMock()
+    requests = [FrontendRequest(type="set_system_prompt", value="Keep settings"),
+                FrontendRequest(type="submit_line", line="Cancel this", request_id="first"),
+                FrontendRequest(type="submit_line", line="Keep next", request_id="second")]
+    for request in requests:
+        await host._request_queue.put(request)
+    await host._cancel_current_request()
+    remaining = []
+    while not host._request_queue.empty():
+        remaining.append(host._request_queue.get_nowait())
+    assert remaining == [requests[0], requests[2]]
+    assert any(call.args[0].type == "line_complete" for call in host._emit.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_mcp_wait_keeps_shared_connection_alive():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = SimpleNamespace()
+    host._emit = AsyncMock()
+    release = asyncio.Event()
+    connection = asyncio.create_task(release.wait())
+    host._mcp_connect_task = connection
+    waiter = asyncio.create_task(host._wait_for_mcp_connect_if_needed())
+    await asyncio.sleep(0)
+    waiter.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert not connection.cancelled()
+    finally:
+        release.set()
+        await asyncio.gather(connection, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["prepare", "resume", "settings", "execute"])
+async def test_request_failure_preserves_session_and_accepts_next_request(tmp_path, monkeypatch, failure):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused"), restore_messages=[
+        ConversationMessage(role="user", content=[TextBlock(text="Retain this context")]).model_dump(mode="json")
+    ]))
+    events = []
+    executed = []
+    private_error = OSError("private/path/credential-config: injected failure")
+    host._refresh_mcp_configs = AsyncMock(side_effect=[private_error, None] if failure == "prepare" else None)
+    host._restore_history_snapshot = AsyncMock(side_effect=private_error)
+    host._handle_set_system_prompt = AsyncMock(side_effect=private_error)
+
+    async def process(line, **kwargs):
+        if line == "fail" and failure == "execute":
+            raise private_error
+        executed.append(line)
+        assert any(message.text == "Retain this context" for message in host._bundle.engine.messages)
+        return True
+
+    async def read_requests():
+        first = FrontendRequest(type="submit_line", line="fail")
+        if failure == "resume":
+            first = FrontendRequest(type="apply_select_command", command="resume", value="broken")
+        elif failure == "settings":
+            first = FrontendRequest(type="set_system_prompt", value="new prompt")
+        for request in [first, FrontendRequest(type="submit_line", line="next request"), FrontendRequest(type="shutdown")]:
+            await host._request_queue.put(request)
+
+    async def emit(event):
+        events.append(event)
+
+    host._process_line = process
+    host._read_requests = read_requests
+    host._emit = emit
+    await asyncio.wait_for(host.run(), timeout=10)
+    assert executed == ["next request"]
+    errors = [event.message for event in events if event.type == "error"]
+    assert len(errors) == 1
+    assert "private/path" not in errors[0]
+    assert any(event.type == "line_complete" for event in events)
+    assert host._busy is False
+    assert host._active_request_task is None

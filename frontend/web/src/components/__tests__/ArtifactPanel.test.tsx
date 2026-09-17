@@ -168,6 +168,10 @@ async function submitInlineAiSelection(
   expect(textarea).toBeTruthy();
   textarea.value = instruction;
   textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  textarea.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
+  textarea.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true }));
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  expect(submitted).toHaveLength(0);
   textarea.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
   expect(submitted).toHaveLength(1);
@@ -1409,6 +1413,52 @@ describe("ArtifactPanel", () => {
 
     await waitFor(() => expect(document.querySelector(".artifact-ai-comment")).toBeTruthy());
     expect(frame.srcdoc).toBe(editModeSrcdoc);
+  });
+
+  it.each(["edit", "navigate", "navigate-error", "catalog", "refresh"])("preserves the current editor across a pending save and %s", async (operation) => {
+    let finish!: (value: Awaited<ReturnType<typeof overwriteArtifact>>) => void;
+    let fail!: (error: Error) => void;
+    vi.mocked(overwriteArtifact).mockReturnValueOnce(new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+    let current = initialAppState;
+    function Controls() {
+      const { state, dispatch } = useAppState();
+      current = state;
+      return <><button onClick={() => dispatch({ type: "open_artifact", artifact: { path: "other.html", kind: "html" }, payload: { kind: "html", content: "Other document" } })}>Other file</button>
+        <button onClick={() => dispatch({ type: "refresh_artifacts" })}>Refresh files</button>
+        <button onClick={() => dispatch({ type: "set_artifacts", artifacts: [...state.artifacts, { path: "new-file.txt", kind: "text" }] })}>Add file</button></>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c", artifactPanelOpen: true,
+      artifacts: [{ path: "report.html", kind: "html" }], activeArtifact: { path: "report.html", kind: "html" },
+      activeArtifactPayload: { kind: "html", content: "Original", mtimeMs: 10 },
+    }}><ArtifactPanel /><Controls /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+    const edit = (html: string) => act(() => { window.dispatchEvent(new MessageEvent("message", { data: { type: artifactHtmlEditMessage, path: "report.html", html } })); });
+    edit("First edit");
+    if (operation === "refresh") {
+      fireEvent.click(screen.getByText("Refresh files"));
+      expect(readArtifact).not.toHaveBeenCalled();
+    }
+    await userEvent.click(screen.getByRole("button", { name: "수정사항 반영" }));
+    expect(overwriteArtifact).toHaveBeenCalledWith(expect.objectContaining({ content: "First edit", expectedMtimeMs: 10 }));
+    if (operation === "edit") edit("New unsaved edit");
+    if (operation.startsWith("navigate")) fireEvent.click(screen.getByText("Other file"));
+    if (operation === "catalog") fireEvent.click(screen.getByText("Add file"));
+    await act(async () => {
+      if (operation === "navigate-error") fail(new Error("Old save failed"));
+      else finish({ artifact: { path: "report.html", kind: "html", mtimeMs: 20 }, payload: { kind: "html", content: "First edit", mtimeMs: 20 } });
+    });
+    if (operation.startsWith("navigate")) {
+      expect(current.activeArtifact?.path).toBe("other.html");
+      expect(current.activeArtifactPayload?.content).toBe("Other document");
+      expect(current.modal).toBeNull();
+    } else if (operation === "catalog") {
+      expect(current.artifacts.map((item) => item.path)).toContain("new-file.txt");
+    } else if (operation === "edit") {
+      const save = screen.getByRole("button", { name: "수정사항 반영" }) as HTMLButtonElement;
+      expect(save.disabled).toBe(false);
+      await userEvent.click(save);
+      expect(overwriteArtifact).toHaveBeenLastCalledWith(expect.objectContaining({ content: "New unsaved edit", expectedMtimeMs: 20 }));
+    }
   });
 
   it("saves edited HTML preview drafts back to the current artifact path", async () => {
@@ -2740,6 +2790,99 @@ describe("ArtifactPanel", () => {
     expect(progressText).not.toMatch(/\d+초 경과/);
   });
 
+  it.each(["navigate", "catalog", "draft", "workspace", "navigate-error"])("preserves current work while rename waits: %s", async (operation) => {
+    let finish!: (value: Awaited<ReturnType<typeof renameArtifact>>) => void;
+    let fail!: (error: Error) => void;
+    vi.mocked(renameArtifact).mockReturnValueOnce(new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+    let current = initialAppState;
+    function Controls() {
+      const { state, dispatch } = useAppState(); current = state;
+      return <><button onClick={() => dispatch({ type: "open_artifact", artifact: { path: "other.html", kind: "html" }, payload: { kind: "html", content: "Other" } })}>Other file</button>
+        <button onClick={() => dispatch({ type: "set_artifacts", artifacts: [...state.artifacts, { path: "added.txt", kind: "text" }] })}>Add file</button>
+        <button onClick={() => dispatch({ type: "set_workspace", workspace: { name: "other", path: "C:/other" } })}>Other workspace</button></>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c", workspacePath: "C:/repo", workspaceName: "repo", artifactPanelOpen: true,
+      artifacts: [{ path: "report.html", kind: "html" }], activeArtifact: { path: "report.html", kind: "html" },
+      activeArtifactPayload: { kind: "html", content: "Original", mtimeMs: 10 },
+    }}><ArtifactPanel /><Controls /></AppStateProvider>);
+    if (operation === "draft") {
+      await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+      act(() => window.dispatchEvent(new MessageEvent("message", { data: { type: artifactHtmlEditMessage, path: "report.html", html: "Unsaved draft" } })));
+    }
+    await userEvent.dblClick(screen.getByRole("button", { name: "report.html 파일명 수정" }));
+    const input = document.querySelector(".artifact-title-rename-input") as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, "renamed.html{Enter}");
+    await waitFor(() => expect(renameArtifact).toHaveBeenCalled());
+    if (operation.startsWith("navigate")) fireEvent.click(screen.getByText("Other file"));
+    if (operation === "catalog") fireEvent.click(screen.getByText("Add file"));
+    if (operation === "workspace") fireEvent.click(screen.getByText("Other workspace"));
+    const before = current;
+    await act(async () => {
+      if (operation === "navigate-error") fail(new Error("old rename failed"));
+      else finish({ artifact: { path: "renamed.html", kind: "html", mtimeMs: 20 }, payload: { kind: "html", content: "Original", mtimeMs: 20 } });
+    });
+    if (operation.startsWith("navigate")) {
+      expect(current.activeArtifact?.path).toBe("other.html");
+      expect(current.modal).toBeNull();
+    } else if (operation === "workspace") {
+      expect(current.artifacts).toEqual(before.artifacts);
+      expect(current.activeArtifact).toEqual(before.activeArtifact);
+    } else if (operation === "catalog") {
+      expect(current.artifacts.map(item => item.path)).toEqual(["renamed.html", "added.txt"]);
+    } else {
+      await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+      await userEvent.click(screen.getByRole("button", { name: "수정사항 반영" }));
+      expect(overwriteArtifact).toHaveBeenCalledWith(expect.objectContaining({ path: "renamed.html", content: "Unsaved draft", expectedMtimeMs: 20 }));
+    }
+  });
+
+  it.each([false, true])("preserves updated file lists after a delayed deletion (workspace=%s)", async (switchWorkspace) => {
+    vi.mocked(listProjectFiles).mockResolvedValueOnce({ scope: "default", files: [{ path: "report.html", kind: "html" }] });
+    if (switchWorkspace) vi.mocked(listProjectFiles).mockResolvedValueOnce({ scope: "default", files: [{ path: "added.txt", kind: "text" }] });
+    let finish!: (value: Awaited<ReturnType<typeof deleteArtifact>>) => void;
+    vi.mocked(deleteArtifact).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    let current = initialAppState;
+    function Controls() {
+      const { state, dispatch } = useAppState(); current = state;
+      return <button onClick={() => {
+        if (switchWorkspace) dispatch({ type: "set_workspace", workspace: { name: "other", path: "C:/other" } });
+        dispatch({ type: "set_artifacts", artifacts: [{ path: "added.txt", kind: "text" }] });
+      }}>Update list</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c", workspacePath: "C:/repo", artifactPanelOpen: true,
+      artifacts: [{ path: "report.html", kind: "html" }],
+    }}><ArtifactPanel /><Controls /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "report.html 삭제" }));
+    await userEvent.click(screen.getByRole("button", { name: "report.html 삭제 확인" }));
+    fireEvent.click(screen.getByText("Update list"));
+    await act(async () => finish({ deleted: true }));
+    expect(current.artifacts.map(item => item.path)).toEqual(["added.txt"]);
+  });
+
+  it.each(["newer", "workspace", "workspace-error"])("ignores an obsolete file listing after %s", async (operation) => {
+    let finish!: (value: Awaited<ReturnType<typeof listProjectFiles>>) => void;
+    let fail!: (error: Error) => void;
+    vi.mocked(listProjectFiles).mockReturnValueOnce(new Promise((resolve, reject) => { finish = resolve; fail = reject; }))
+      .mockResolvedValueOnce({ scope: "default", files: [{ path: "newest.txt", kind: "text" }] });
+    let current = initialAppState;
+    function Controls() {
+      const { state, dispatch } = useAppState(); current = state;
+      return <button onClick={() => dispatch({ type: "set_workspace", workspace: { name: "other", path: "C:/other" } })}>Other workspace</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", clientId: "c", workspacePath: "C:/repo", artifactPanelOpen: true }}>
+      <ArtifactPanel /><Controls /></AppStateProvider>);
+    await waitFor(() => expect(listProjectFiles).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: operation === "newer" ? "새로고침" : "Other workspace" }));
+    await waitFor(() => expect(current.artifacts[0]?.path).toBe("newest.txt"));
+    await act(async () => {
+      if (operation.endsWith("error")) fail(new Error("old listing failed"));
+      else finish({ scope: "all", files: [{ path: "obsolete.txt", kind: "text" }] });
+    });
+    expect(current.artifacts.map(item => item.path)).toEqual(["newest.txt"]);
+    expect(current.modal).toBeNull();
+  });
+
   it("renames the active preview title on double click and Enter", async () => {
     vi.mocked(renameArtifact).mockResolvedValueOnce({
       artifact: {
@@ -2790,7 +2933,11 @@ describe("ArtifactPanel", () => {
     await userEvent.dblClick(screen.getByRole("button", { name: "history-report.html 파일명 수정" }));
     const input = document.querySelector(".artifact-title-rename-input") as HTMLInputElement;
     await userEvent.clear(input);
-    await userEvent.type(input, "renamed-history-report.html{Enter}");
+    await userEvent.type(input, "renamed-history-report.html");
+    expect(fireEvent.keyDown(input, { key: "Enter", isComposing: true })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "Enter", keyCode: 229 })).toBe(true);
+    expect(renameArtifact).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(renameArtifact).toHaveBeenCalledWith({
       path: "outputs/history-report.html",

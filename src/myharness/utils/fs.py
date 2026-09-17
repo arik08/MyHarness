@@ -36,7 +36,10 @@ from pathlib import Path
 __all__ = ["atomic_write_bytes", "atomic_write_text"]
 
 
-def atomic_write_bytes(path: str | os.PathLike[str], data: bytes, *, mode: int | None = None) -> None:
+def atomic_write_bytes(
+    path: str | os.PathLike[str], data: bytes, *, mode: int | None = None,
+    create_directories: bool = True,
+) -> None:
     """Write ``data`` to ``path`` atomically.
 
     When ``mode`` is given, the final file is created with that POSIX mode
@@ -46,7 +49,8 @@ def atomic_write_bytes(path: str | os.PathLike[str], data: bytes, *, mode: int |
     :meth:`pathlib.Path.write_text`.
     """
     dst = Path(path)
-    dst.parent.mkdir(parents=True, exist_ok=True)
+    if create_directories:
+        dst.parent.mkdir(parents=True, exist_ok=True)
     target_mode = _resolve_target_mode(dst, mode)
 
     fd, tmp_name = tempfile.mkstemp(
@@ -72,9 +76,20 @@ def atomic_write_text(
     *,
     encoding: str = "utf-8",
     mode: int | None = None,
+    create_directories: bool = True,
+    newline: str | None = "",
 ) -> None:
-    """Text variant of :func:`atomic_write_bytes`."""
-    atomic_write_bytes(path, data.encode(encoding), mode=mode)
+    """Text variant; ``newline=None`` uses platform-native line endings.
+
+    By default text is encoded verbatim, preserving existing callers' behavior.
+    """
+    if newline not in (None, "", "\n", "\r", "\r\n"):
+        raise ValueError(f"illegal newline value: {newline!r}")
+    if newline != "":
+        data = data.replace("\n", os.linesep if newline is None else newline)
+    atomic_write_bytes(
+        path, data.encode(encoding), mode=mode, create_directories=create_directories,
+    )
 
 
 def _resolve_target_mode(path: Path, explicit_mode: int | None) -> int:

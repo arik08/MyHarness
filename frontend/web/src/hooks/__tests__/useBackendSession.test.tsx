@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openBackendEvents } from "../../api/events";
 import { loadHistorySnapshot } from "../../api/history";
@@ -43,6 +43,20 @@ function Probe() {
 }
 
 describe("useBackendSession", () => {
+  it("ignores a startup failure after another session has been selected", async () => {
+    let rejectLookup!: (error: Error) => void;
+    vi.mocked(listLiveSessions).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectLookup = reject; }));
+    function Switch() {
+      const { dispatch } = useAppState();
+      return <button onClick={() => dispatch({ type: "session_started", sessionId: "selected", busy: true })}>Select</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: null }}><Probe /><Switch /></AppStateProvider>);
+    fireEvent.click(screen.getByText("Select"));
+    await act(async () => { rejectLookup(new Error("old startup failed")); });
+    expect(screen.getByTestId("session").textContent).toBe("selected");
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+    expect(screen.getByTestId("messages").textContent).not.toContain("old startup failed");
+  });
   it("recovers a silent stream from its cursor while work is still busy, preserving long history", async () => {
     vi.useFakeTimers();
     vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{
@@ -222,6 +236,32 @@ describe("useBackendSession", () => {
     expect(JSON.parse(localStorage.getItem("myharness:lastConversation")!).sessionId).toBe("saved-last");
   });
 
+  it.each([true, false])("restores this tab's conversation after another tab changes the recent chat (live=%s)", async (live) => {
+    const view = render(<AppStateProvider initialState={{
+      ...initialAppState, clientId: "client-1", sessionId: "tab-live", activeHistoryId: "tab-saved",
+      workspacePath: "C:/tab-project", workspaceName: "Tab project",
+    }}><Probe /></AppStateProvider>);
+    view.unmount();
+    localStorage.setItem("myharness:lastConversation", JSON.stringify({
+      sessionId: "other-saved", workspacePath: "C:/other-project", workspaceName: "Other project",
+    }));
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [
+      ...(live ? [{ sessionId: "tab-live", savedSessionId: "tab-saved", busy: true, createdAt: 1 }] : []),
+      { sessionId: "other-live", savedSessionId: "other-saved", busy: false, createdAt: 2 },
+    ] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}><Probe /></AppStateProvider>);
+    if (live) {
+      await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("tab-live"));
+      expect(screen.getByTestId("busy").textContent).toBe("true");
+      expect(startSession).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(sendBackendRequest).toHaveBeenCalledWith("new-session", "client-1", {
+        type: "apply_select_command", command: "resume", value: "tab-saved",
+      }));
+      expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "C:/tab-project" }));
+    }
+  });
+
   it("uses the last viewed conversation across visits even without tab session storage", async () => {
     localStorage.setItem("myharness:lastConversation", JSON.stringify({
       sessionId: "saved-last", workspacePath: "C:/demo", workspaceName: "Default",
@@ -233,6 +273,40 @@ describe("useBackendSession", () => {
     render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}><Probe /></AppStateProvider>);
     await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("last-viewed"));
     expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the recent conversation when the tab record is malformed", async () => {
+    sessionStorage.setItem("myharness:lastConversation", "{invalid");
+    localStorage.setItem("myharness:lastConversation", JSON.stringify({
+      sessionId: "saved-last", workspacePath: "C:/demo", workspaceName: "Default",
+    }));
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [
+      { sessionId: "last-viewed", savedSessionId: "saved-last", busy: false, createdAt: 1 },
+    ] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}><Probe /></AppStateProvider>);
+    await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("last-viewed"));
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["local", "session"])("keeps recording the conversation when %s storage writes are blocked", (blocked) => {
+    const blockedStorage = blocked === "local" ? localStorage : sessionStorage;
+    const availableStorage = blocked === "local" ? sessionStorage : localStorage;
+    const originalSetItem = Storage.prototype.setItem;
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (this === blockedStorage) throw new Error("Storage unavailable");
+      originalSetItem.call(this, key, value);
+    });
+    try {
+      render(<AppStateProvider initialState={{
+        ...initialAppState, clientId: "client-1", sessionId: "tab-live", activeHistoryId: "tab-saved",
+        workspacePath: "C:/tab-project", workspaceName: "Tab project",
+      }}><Probe /></AppStateProvider>);
+      expect(JSON.parse(availableStorage.getItem("myharness:lastConversation")!)).toEqual({
+        sessionId: "tab-saved", workspacePath: "C:/tab-project", workspaceName: "Tab project",
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("saves the first empty chat and falls back when the previous conversation is gone", async () => {

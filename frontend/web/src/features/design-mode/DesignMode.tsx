@@ -50,10 +50,13 @@ export function DesignModeProvider({ children }: { children: ReactNode }) {
     generation.current += 1;
     setPending(true);
     setError("");
+    const previous = improved;
+    setImproved(!previous);
     try {
       const settings = await postJson<DesignSettings>(endpoint, { mode: improved ? "classic" : "improved" });
       setImproved(settings.mode === "improved");
     } catch {
+      setImproved(previous);
       setError("디자인 설정을 저장하지 못했습니다. 관리자 모드를 확인해 주세요.");
     } finally { saving.current = false; setPending(false); }
   };

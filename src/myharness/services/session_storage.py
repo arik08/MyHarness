@@ -444,7 +444,7 @@ def save_session_snapshot(
     existing_last_assistant_at = 0.0
     if session_path.exists():
         try:
-            existing = json.loads(session_path.read_text(encoding="utf-8"))
+            existing = _read_json_object(session_path) or {}
             existing_pinned = bool(existing.get("pinned"))
             existing_liked = bool(existing.get("liked"))
             existing_last_assistant_at = _timestamp_millis(existing.get("last_assistant_at"))
@@ -846,7 +846,7 @@ def _sanitize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def _read_json_object(path: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeError, OSError):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -863,12 +863,14 @@ def _load_snapshot_file(path: Path) -> dict[str, Any] | None:
     if payload is None:
         return None
     pointer_session_id = _pointer_session_id(payload)
+    if payload.get("format") == _SESSION_POINTER_FORMAT and not pointer_session_id:
+        return None
     if pointer_session_id:
         target = path.parent / f"session-{pointer_session_id}.json"
         if target == path:
             return None
         payload = _read_json_object(target)
-        if payload is None or _pointer_session_id(payload):
+        if payload is None or payload.get("format") == _SESSION_POINTER_FORMAT:
             return None
     try:
         return _sanitize_snapshot_payload(payload)
@@ -908,9 +910,9 @@ def _migrate_named_snapshot(path: Path) -> tuple[dict[str, Any] | None, bool, in
     try:
         original = path.read_text(encoding="utf-8")
         payload = json.loads(original)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeError, OSError):
         return None, False, 0, 0
-    if not isinstance(payload, dict) or _pointer_session_id(payload):
+    if not isinstance(payload, dict) or payload.get("format") == _SESSION_POINTER_FORMAT:
         return None, False, 0, 0
     try:
         stored = _storage_payload(payload)
@@ -1021,8 +1023,6 @@ def load_session_snapshot(cwd: str | Path) -> dict[str, Any] | None:
     migrate_session_snapshots(cwd)
     session_dir = get_project_session_dir(cwd)
     path = session_dir / "latest.json"
-    if not path.exists():
-        return None
     data = _load_snapshot_file(path)
     if data is not None and not _is_hidden_worker_snapshot(data):
         return data
@@ -1106,7 +1106,7 @@ def _load_snapshot_summary(snapshot_path: Path) -> dict[str, Any] | None:
         if summary_path.stat().st_mtime_ns < snapshot_path.stat().st_mtime_ns:
             return None
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, UnicodeError):
         return None
     if not isinstance(summary, dict):
         return None

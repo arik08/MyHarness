@@ -21,6 +21,7 @@ from myharness.tools.path_display import display_tool_path
 from myharness.services.token_estimation import estimate_tokens
 from myharness.skills.refresh import mark_skill_registry_dirty
 from myharness.utils.helpers import replace_filename_whitespace
+from myharness.utils.fs import atomic_write_text
 
 
 class FileWriteToolInput(BaseModel):
@@ -83,7 +84,10 @@ class FileWriteTool(BaseTool):
                 output=format_mermaid_preflight_errors(path, mermaid_errors, action="written"),
                 is_error=True,
             )
-        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+        await asyncio.to_thread(
+            atomic_write_text, path, content, encoding="utf-8",
+            create_directories=arguments.create_directories,
+        )
         mark_skill_registry_dirty(context.metadata, path)
         display_path = display_tool_path(path, context.cwd)
         output = f"Wrote {display_path}"

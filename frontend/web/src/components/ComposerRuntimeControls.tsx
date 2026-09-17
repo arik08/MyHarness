@@ -63,7 +63,7 @@ export function ComposerRuntimeControls() {
   return <>
     <button type="button" className={`composer-tool context-usage-trigger${maximum ? " is-maximum" : ""}`}
       aria-label={`컨텍스트 ${contextWindow ? formatContextTokens(contextWindow) : ""} 모드, ${usageKnown ? `${usagePercent}% 사용` : "사용량 확인 대기"}`}
-      aria-pressed={Boolean(maximum)} disabled={disabled || !state.runtimePicker.contextModeAvailable}
+      aria-pressed={Boolean(maximum)} aria-busy={pending} disabled={disabled || !state.runtimePicker.contextModeAvailable}
       data-tooltip="컨텍스트 길이:" data-tooltip-placement="top" data-tooltip-immediate="true"
       data-context-usage={usageKnown ? `${usagePercent}% 사용 (${100 - usagePercent}% 남음)` : "사용량 확인 대기"}
       data-tooltip-description={usageKnown ? `${formatContextTokens(usedTokens)} / ${formatContextTokens(contextWindow)} 토큰 사용 (예상)` : "다음 응답 후 갱신됩니다."}

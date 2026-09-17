@@ -63,7 +63,8 @@ it("lets custom text replace a selection and preserves it through errors and rem
 it("does not submit on Enter or Korean composition and rejects whitespace answers", () => {
   show();
   fireEvent.change(screen.getByLabelText("1번 질문에 직접 답변"), { target: { value: " " } });
-  fireEvent.keyDown(screen.getByLabelText("1번 질문에 직접 답변"), { key: "Enter", isComposing: true });
+  expect(fireEvent.keyDown(screen.getByLabelText("1번 질문에 직접 답변"), { key: "Enter", isComposing: true })).toBe(true);
+  expect(fireEvent.keyDown(screen.getByLabelText("1번 질문에 직접 답변"), { key: "Enter", keyCode: 229 })).toBe(true);
   expect(sendBackendRequest).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "답변 보내기" }).hasAttribute("disabled")).toBe(true);
 });

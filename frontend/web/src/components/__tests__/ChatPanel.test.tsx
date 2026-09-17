@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatPanel } from "../ChatPanel";
@@ -152,6 +152,19 @@ describe("ChatPanel", () => {
     const titleInput = screen.getByLabelText("대화 제목");
     expect(titleInput.closest("button")).toBeNull();
     expect(titleInput.closest(".chat-title.editing")?.tagName).toBe("DIV");
+  });
+
+  it("waits for IME completion before saving a conversation title", async () => {
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", chatTitle: "Original" }}><ChatPanel /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "Original" }));
+    const input = screen.getByLabelText("대화 제목");
+    fireEvent.change(input, { target: { value: "새 대화 제목" } });
+    expect(fireEvent.keyDown(input, { key: "Enter", isComposing: true })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "Enter", keyCode: 229 })).toBe(true);
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("대화 제목")).toBe(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(sendBackendRequest).toHaveBeenCalledTimes(1);
   });
 
   it("toggles the sidebar from the mobile header control", async () => {

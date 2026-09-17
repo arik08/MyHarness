@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canUseServerHostSettings, isLocalBrowserHostname } from "../ModalHost";
@@ -7,7 +7,7 @@ import { AppStateProvider } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { restartSession } from "../../api/session";
 import { deleteWorkspace } from "../../api/workspaces";
-import { readConcurrencySettings, readUserStats, saveConcurrencySettings } from "../../api/settings";
+import { changeYoloMode, readYoloModeSettings, readConcurrencySettings, readUserStats, saveConcurrencySettings } from "../../api/settings";
 
 vi.mock("../../api/session", () => ({
   restartSession: vi.fn(),
@@ -21,6 +21,8 @@ vi.mock("../../api/workspaces", () => ({
 vi.mock("../../api/settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/settings")>()),
   readConcurrencySettings: vi.fn(),
+  changeYoloMode: vi.fn(),
+  readYoloModeSettings: vi.fn(),
   readUserStats: vi.fn(),
   saveConcurrencySettings: vi.fn(),
 }));
@@ -445,4 +447,24 @@ describe("ModalHost workspace deletion", () => {
     expect(deleteWorkspace).toHaveBeenCalledWith("TEST1");
     expect(screen.queryByText("TEST1")).toBeNull();
   });
+});
+
+
+it("shows a setting choice immediately, blocks duplicates, and restores it on failed save", async () => {
+  vi.mocked(readYoloModeSettings).mockResolvedValue({ enabled: true });
+  let reject!: (error: Error) => void;
+  vi.mocked(changeYoloMode).mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
+  render(<AppStateProvider initialState={{ ...initialAppState, adminMode: true, modal: { kind: "settings" } }}><ModalHost /></AppStateProvider>);
+  await userEvent.click(screen.getByRole("button", { name: /Yolo 모드/ }));
+  const off = await screen.findByRole("radio", { name: /꺼짐/ });
+  await waitFor(() => expect((off as HTMLButtonElement).disabled).toBe(false));
+  await userEvent.click(off);
+  expect(off.getAttribute("aria-checked")).toBe("true");
+  expect(screen.getByRole("status").textContent).toBe("저장 중...");
+  await userEvent.click(off);
+  expect(changeYoloMode).toHaveBeenCalledTimes(1);
+  await act(async () => reject(new Error("저장 실패")));
+  expect(off.getAttribute("aria-checked")).toBe("false");
+  expect((off as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.getByRole("alert").textContent).toBe("저장 실패");
 });

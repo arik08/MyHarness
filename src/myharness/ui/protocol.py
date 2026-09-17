@@ -99,6 +99,7 @@ class FrontendRequest(BaseModel):
     attachment_refs: list[FrontendAttachment] = Field(default_factory=list)
     compose_options: FrontendComposeOptions | None = None
     suppress_user_transcript: bool = False
+    resume_session_id: str | None = None
     isolated_context: bool = False
     enhancement_options: list[Literal["structure", "evidence", "missing_context", "output_format"]] = Field(default_factory=list)
     enhancement_instruction: str = Field(default="", max_length=4000)

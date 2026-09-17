@@ -1,3 +1,5 @@
+import { isImeKey } from "../utils/keyboard";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { sendBackendRequest } from "../api/messages";
@@ -14,7 +16,7 @@ type QuestionChoice = {
 export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" | "composer" }) {
   const { state, dispatch } = useAppState();
   const [answer, setAnswer] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [responseError, setResponseError] = useState("");
   const [choiceFreeformAnswer, setChoiceFreeformAnswer] = useState("");
   const [questionStepIndex, setQuestionStepIndex] = useState(0);
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
@@ -23,6 +25,8 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
   const kind = String(payload?.kind || "");
   const requestId = String(payload?.request_id || "");
   const requestScope = JSON.stringify([state.sessionId, requestId]);
+  const responseAction = useAsyncAction(requestScope);
+  const submitting = responseAction.pending;
   const currentRequestRef = useRef(requestScope);
   currentRequestRef.current = requestScope;
   const isQuestion = kind === "question";
@@ -60,7 +64,7 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
 
   useLayoutEffect(() => {
     setAnswer("");
-    setSubmitting(false);
+    setResponseError("");
     setQuestionStepAnswers([]);
     setQuestionStepIndex(0);
     setChoiceFreeformAnswer("");
@@ -82,22 +86,20 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
   }
 
   async function respond(responsePayload: Record<string, unknown>) {
-    if (!state.sessionId || submitting) return;
-    setSubmitting(true);
-    try {
-      await sendBackendRequest(state.sessionId, state.clientId, responsePayload);
-      if (currentRequestRef.current !== requestScope) return;
-      dispatch({ type: "close_modal" });
-      setAnswer("");
-    } catch (error) {
-      if (currentRequestRef.current !== requestScope) return;
-      dispatch({
-        type: "open_modal",
-        modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    } finally {
-      if (currentRequestRef.current === requestScope) setSubmitting(false);
-    }
+    const sessionId = state.sessionId;
+    if (!sessionId) return;
+    await responseAction.run(async () => {
+      setResponseError("");
+      try {
+        await sendBackendRequest(sessionId, state.clientId, responsePayload);
+        if (currentRequestRef.current !== requestScope) return;
+        dispatch({ type: "close_modal" });
+        setAnswer("");
+      } catch (error) {
+        if (currentRequestRef.current !== requestScope) return;
+        setResponseError(error instanceof Error ? error.message : String(error));
+      }
+    });
   }
 
   function submitAnswer(value: string) {
@@ -134,7 +136,7 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
 
   function handleAnswerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     event.stopPropagation();
-    if (event.nativeEvent.isComposing) {
+    if (isImeKey(event.nativeEvent)) {
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
@@ -145,7 +147,7 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
 
   function handleSharedChoiceFreeformKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     event.stopPropagation();
-    if (event.nativeEvent.isComposing) {
+    if (isImeKey(event.nativeEvent)) {
       return;
     }
     if (event.key === "Enter" && !event.shiftKey && choiceFreeformAnswer.trim()) {
@@ -163,6 +165,7 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
           </strong>
           <small>에이전트가 실행 허용을 기다리고 있습니다.</small>
         </div>
+        {responseError ? <p className="workspace-error" role="alert">{responseError}</p> : null}
         <div className="inline-question-choices permission-question-choices">
           <button
             className="inline-question-choice"
@@ -199,6 +202,7 @@ export function InlineQuestion({ surface = "all" }: { surface?: "all" | "chat" |
         </strong>
         <small>에이전트가 답변을 기다리고 있습니다.</small>
       </div>
+      {responseError ? <p className="workspace-error" role="alert">{responseError}</p> : null}
       <div className="inline-question-objective-question inline-question-single-question">
         <span className="inline-question-number inline-question-step-number">Q{activeQuestionIndex + 1}</span>
         <span>{conciseQuestion}</span>

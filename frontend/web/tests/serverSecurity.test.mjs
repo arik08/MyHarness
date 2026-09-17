@@ -6,6 +6,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -122,7 +123,7 @@ async function openPort() {
   throw new Error("Could not find an open test port");
 }
 
-async function startWebServer({ host = "127.0.0.1", env = {} } = {}) {
+async function startWebServer({ host = "127.0.0.1", env = {}, nodeArgs = [] } = {}) {
   const port = await openPort();
   const configDir = await mkdtemp(join(tmpdir(), "myharness-web-security-"));
   const childEnv = {
@@ -144,7 +145,7 @@ async function startWebServer({ host = "127.0.0.1", env = {} } = {}) {
     }
   }
 
-  const child = spawn(process.execPath, ["server.mjs"], {
+  const child = spawn(process.execPath, [...nodeArgs, "server.mjs"], {
     cwd: new URL("..", import.meta.url),
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
@@ -192,6 +193,189 @@ async function startWebServer({ host = "127.0.0.1", env = {} } = {}) {
       await rm(configDir, { recursive: true, force: true });
     },
   };
+}
+
+test("file disappearing before download does not terminate the web server", async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), "myharness-stream-failure-"));
+  const preload = join(fixtureDir, "remove-before-open.mjs");
+  await writeFile(preload, `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { basename } from 'node:path';
+function removeTarget(path) {
+  if (basename(String(path)).startsWith('fault-stream-')) fs.rmSync(path, { force: true });
+}
+const originalStream = fs.createReadStream;
+fs.createReadStream = function(path, ...args) { removeTarget(path); return originalStream(path, ...args); };
+const originalOpen = fs.promises.open;
+fs.promises.open = async function(path, ...args) { removeTarget(path); return originalOpen(path, ...args); };
+syncBuiltinESMExports();
+`, "utf8");
+  const app = await startWebServer({
+    env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
+    nodeArgs: ["--import", pathToFileURL(preload).href],
+  });
+  let workspacePath;
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) await rmWithRetry(workspacePath, { recursive: true, force: true });
+    await rmWithRetry(fixtureDir, { recursive: true, force: true });
+  });
+  const workspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `StreamFailure${Date.now().toString(36)}` }),
+  });
+  assert.equal(workspaceResponse.status, 200);
+  workspacePath = (await workspaceResponse.json()).workspace.path;
+  const routes = ["/api/artifact/raw", "/api/artifact/download", "/share/artifact/raw", "/share/artifact/download", "/api/artifact/asset/fault-stream-asset.txt"];
+  for (const [index, route] of routes.entries()) {
+    const name = index === 4 ? "fault-stream-asset.txt" : `fault-stream-${index}.txt`;
+    await writeFile(join(workspacePath, name), "Original file content", "utf8");
+    const params = new URLSearchParams({ workspacePath, path: name });
+    let download;
+    try { download = await fetch(`${app.baseUrl}${route}?${params}`); } catch {}
+    const health = await fetch(`${app.baseUrl}/api/auth/status`).catch(() => null);
+    assert.equal(health?.status, 200, app.output.join(""));
+    assert.equal(download?.status, 404, route);
+    await download.text();
+  }
+});
+
+for (const stalled of [false, true]) {
+  test(`backend exit drains final events before shutdown (stalled pipes=${stalled})`, async t => {
+    const fixtureDir = await mkdtemp(join(tmpdir(), "myharness-backend-drain-"));
+    const preload = join(fixtureDir, "backend-drain.mjs");
+    await writeFile(preload, `
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { PassThrough, Writable } from 'node:stream';
+const originalSpawn = childProcess.spawn;
+const originalTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (fn, delay, ...args) => originalTimeout(fn, delay === 5000 ? 100 : delay, ...args);
+childProcess.spawn = function(file, args, options) {
+  if (!args?.includes('--backend-only')) return originalSpawn(file, args, options);
+  const child = new EventEmitter();
+  child.stdout = new PassThrough(); child.stderr = new PassThrough();
+  child.exitCode = null; child.killed = false;
+  const emitEvent = event => child.stdout.write('OHJSON:' + JSON.stringify(event) + '\\n');
+  child.stdin = new Writable({ write(chunk, encoding, callback) {
+    const request = JSON.parse(String(chunk));
+    if (request.type === 'submit_line') originalTimeout(() => {
+      child.exitCode = 1;
+      child.emit('exit', 1, null);
+      originalTimeout(() => {
+        emitEvent({ type: 'assistant_complete', message: '마지막 응답🙂' });
+        emitEvent({ type: 'line_complete' });
+        if (!${JSON.stringify(stalled)}) {
+          child.stdout.end(); child.stderr.end(); child.emit('close', 1, null);
+        }
+      }, 25);
+    }, 1);
+    callback();
+  } });
+  originalTimeout(() => emitEvent({ type: 'ready', state: {} }), 10);
+  return child;
+};
+syncBuiltinESMExports();
+`, "utf8");
+    const app = await startWebServer({ nodeArgs: ["--import", pathToFileURL(preload).href] });
+    t.after(async () => { await app.stop(); await rmWithRetry(fixtureDir, { recursive: true, force: true }); });
+    const clientId = "drain-test";
+    const created = await fetch(`${app.baseUrl}/api/session`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId }),
+    });
+    assert.equal(created.status, 200);
+    const { sessionId } = await created.json();
+    const events = [];
+    let ready;
+    const readyPromise = new Promise(resolve => { ready = resolve; });
+    const finished = waitForSseEvent(`${app.baseUrl}/api/events?session=${sessionId}&clientId=${clientId}`, event => {
+      events.push(event);
+      if (event.type === "ready") ready();
+      return event.type === "shutdown";
+    });
+    await Promise.race([readyPromise, finished]);
+    const sent = await fetch(`${app.baseUrl}/api/message`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, clientId, line: "test final output" }),
+    });
+    assert.equal(sent.status, 200);
+    await finished;
+    assert.equal(events.find(event => event.type === "assistant_complete")?.message, "마지막 응답🙂");
+    assert.ok(events.some(event => event.type === "line_complete"));
+    assert.equal(events.at(-1).type, "shutdown");
+    assert.equal(events.at(-1).code, 1);
+    const live = await (await fetch(`${app.baseUrl}/api/live-sessions?clientId=${clientId}`)).json();
+    assert.equal(live.sessions.some(session => session.sessionId === sessionId), false);
+  });
+}
+
+for (const failure of ["spawn", "stdin", "write"]) {
+  test(`backend ${failure} failure releases its session and preserves the web server`, async (t) => {
+    const fixtureDir = await mkdtemp(join(tmpdir(), "myharness-backend-failure-"));
+    const preload = join(fixtureDir, "backend-failure.mjs");
+    await writeFile(preload, `
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+const originalSpawn = childProcess.spawn;
+let injected = false;
+childProcess.spawn = function(file, args, options) {
+  if (!injected && args?.includes('--backend-only')) {
+    injected = true;
+    if (${JSON.stringify(failure)} === 'spawn') return originalSpawn(${JSON.stringify(join(fixtureDir, "missing-python.exe"))}, args, options);
+    const child = originalSpawn(file, args, options);
+    if (${JSON.stringify(failure)} === 'write') {
+      const originalWrite = child.stdin.write.bind(child.stdin);
+      child.stdin.write = function(data, ...args) {
+        if (String(data).includes('"type":"submit_line"')) throw Object.assign(new Error('Injected write failure'), { code: 'EPIPE' });
+        return originalWrite(data, ...args);
+      };
+    } else {
+      setTimeout(() => child.stdin.destroy(Object.assign(new Error('Injected broken input pipe'), { code: 'EPIPE' })), 300);
+    }
+    return child;
+  }
+  return originalSpawn(file, args, options);
+};
+syncBuiltinESMExports();
+`, "utf8");
+    const app = await startWebServer({ nodeArgs: ["--import", pathToFileURL(preload).href] });
+    t.after(async () => {
+      await app.stop();
+      await rmWithRetry(fixtureDir, { recursive: true, force: true });
+    });
+    const clientId = `backend-${failure}`;
+    const startSession = async () => {
+      const response = await fetch(`${app.baseUrl}/api/session`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId }),
+      });
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    const failed = await startSession();
+    if (failure === "write") {
+      const response = await fetch(`${app.baseUrl}/api/message`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: failed.sessionId, clientId, line: "/help" }),
+      });
+      assert.equal(response.status, 409);
+    }
+    await sleep(400);
+    const health = await fetch(`${app.baseUrl}/api/auth/status`).catch(() => null);
+    assert.equal(health?.status, 200, app.output.join(""));
+    await waitForSessionClosed(app.baseUrl, clientId, failed.sessionId);
+    const live = await (await fetch(`${app.baseUrl}/api/live-sessions?clientId=${clientId}`)).json();
+    assert.ok(!live.sessions.some((session) => session.sessionId === failed.sessionId));
+    const next = await startSession();
+    const ready = await waitForSseEvent(`${app.baseUrl}/api/events?session=${next.sessionId}&clientId=${clientId}`, (event) => event.type === "ready", { timeoutMs: 10000 });
+    assert.equal(ready.type, "ready");
+    await fetch(`${app.baseUrl}/api/session/shutdown`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: next.sessionId, clientId }),
+    });
+    await waitForSessionClosed(app.baseUrl, clientId, next.sessionId);
+  });
 }
 
 test("requires a server-issued entry cookie before protected API access", async (t) => {
@@ -356,6 +540,110 @@ test("bounds captured shell output before the command exits", async (t) => {
   assert.equal(response.status, 200);
   assert.equal(payload.truncated, true);
   assert.match(payload.stdout, /^x{128}\n\n\[output truncated\]$/);
+});
+
+test("shell responses drain final output and report signal termination and stalled pipes", async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), "myharness-shell-lifecycle-"));
+  const preload = join(fixtureDir, "shell-lifecycle.mjs");
+  await writeFile(preload, `
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+const originalSpawn = childProcess.spawn;
+const originalTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (fn, delay, ...args) => originalTimeout(fn, delay === 60000 ? 100 : delay, ...args);
+childProcess.spawn = function(file, args, options) {
+  const command = args?.find(arg => String(arg).includes('MYHARNESS_SHELL_LIFECYCLE_'));
+  if (!command) return originalSpawn(file, args, options);
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const signalled = command.includes('_SIGNAL');
+  const stalled = command.includes('_STALLED');
+  originalTimeout(() => {
+    child.stdout.write('begin\\n');
+    child.emit('exit', signalled ? null : 0, signalled ? 'SIGTERM' : null);
+    if (stalled) return;
+    originalTimeout(() => {
+      child.stdout.end('final output\\n');
+      child.stderr.end('final diagnostic\\n');
+      child.emit('close', signalled ? null : 0, signalled ? 'SIGTERM' : null);
+    }, 25);
+  }, 1);
+  return child;
+};
+syncBuiltinESMExports();
+`, "utf8");
+  const app = await startWebServer({ nodeArgs: ["--import", pathToFileURL(preload).href] });
+  t.after(async () => {
+    await app.stop();
+    await rmWithRetry(fixtureDir, { recursive: true, force: true });
+  });
+  const clientId = "shell-lifecycle";
+  const started = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId }),
+  });
+  assert.equal(started.status, 200);
+  const { sessionId } = await started.json();
+  for (const mode of ["NORMAL", "SIGNAL", "STALLED"]) {
+    for (const streaming of [false, true]) {
+      const response = await fetch(`${app.baseUrl}/api/shell${streaming ? "/stream" : ""}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId, clientId, command: `MYHARNESS_SHELL_LIFECYCLE_${mode}` }),
+        signal: AbortSignal.timeout(5000),
+      });
+      assert.equal(response.status, 200);
+      let result;
+      if (streaming) {
+        const events = (await response.text()).trim().split("\n").map(JSON.parse);
+        result = { ...events.at(-1),
+          stdout: events.filter(event => event.type === "stdout").map(event => event.text).join(""),
+          stderr: events.filter(event => event.type === "stderr").map(event => event.text).join(""),
+        };
+        assert.equal(events.filter(event => event.type === "exit").length, 1);
+      } else result = await response.json();
+      assert.equal(result.stdout, mode === "STALLED" ? "begin\n" : "begin\nfinal output\n");
+      assert.equal(result.stderr, mode === "STALLED" ? "" : "final diagnostic\n");
+      assert.equal(result.exitCode, mode === "STALLED" ? null : mode === "SIGNAL" ? 1 : 0);
+      assert.equal(result.timedOut, mode === "STALLED");
+    }
+  }
+});
+
+test("shell responses preserve UTF-8 characters split across process output chunks", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  const clientId = "unicode-shell-output";
+  const started = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId }),
+  });
+  assert.equal(started.status, 200);
+  const { sessionId } = await started.json();
+  const expected = "한글🙂 café\n";
+  const hex = Buffer.from(expected, "utf8").toString("hex");
+  const command = `python -c "import sys,time; data=bytes.fromhex('${hex}'); [(sys.stdout.buffer.write(bytes([b])),sys.stdout.flush(),sys.stderr.buffer.write(bytes([b])),sys.stderr.flush(),time.sleep(0.03)) for b in data]"`;
+  for (const streaming of [false, true]) {
+    const response = await fetch(`${app.baseUrl}/api/shell${streaming ? "/stream" : ""}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId, clientId, command }),
+    });
+    assert.equal(response.status, 200);
+    if (streaming) {
+      const events = (await response.text()).trim().split("\n").map((line) => JSON.parse(line));
+      for (const type of ["stdout", "stderr"]) {
+        assert.equal(events.filter((event) => event.type === type).map((event) => event.text).join(""), expected, type);
+      }
+      assert.equal(events.at(-1).type, "exit");
+      assert.equal(events.at(-1).exitCode, 0);
+    } else {
+      const payload = await response.json();
+      assert.equal(payload.stdout, expected);
+      assert.equal(payload.stderr, expected);
+      assert.equal(payload.exitCode, 0);
+    }
+  }
 });
 
 test("concurrency status counts distinct active IPs across browsers and excludes closed sessions", async (t) => {
@@ -537,6 +825,38 @@ test("migrates count limits to resource settings, exposes queue population, and 
   assert.ok(ready.sessionId);
   const stored = JSON.parse(await readFile(join(app.configDir, "settings.json"), "utf8"));
   assert.deepEqual(stored.web_concurrency, { max_cpu_percent: 100, max_memory_percent: 100, max_busy_sessions_per_client: 3, idle_session_timeout_minutes: 5 });
+});
+
+test("message restoration failure prevents execution through the real backend", async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  const clientId = "resume-failure-check";
+  const post = (path, body) => fetch(`${app.baseUrl}${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const response = await post("/api/session", { clientId });
+  const session = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(session));
+  const eventsUrl = `${app.baseUrl}/api/events?session=${session.sessionId}&clientId=${clientId}`;
+  await waitForSseEvent(eventsUrl, (event) => event.type === "ready", { timeoutMs: 15000 });
+  const marker = join(app.configDir, "must-not-run.txt");
+  const command = `!python -c "from pathlib import Path; Path('${marker.replaceAll("\\", "/")}').write_text('executed')"`;
+  const sent = await post("/api/message", {
+    sessionId: session.sessionId, clientId, line: command, resumeSessionId: "missing-history-contract-check",
+  });
+  assert.equal(sent.status, 200);
+  const error = await waitForSseEvent(eventsUrl, (event) => event.type === "error", { timeoutMs: 15000 });
+  assert.match(error.message, /missing-history-contract-check/);
+  await waitForSseEvent(eventsUrl, (event) => event.type === "line_complete", { timeoutMs: 15000 });
+  assert.equal(existsSync(marker), false);
+  assert.equal((await post("/api/message", {
+    sessionId: session.sessionId, clientId, line: '!python -c "import time; time.sleep(10)"',
+  })).status, 200);
+  const busyResume = await post("/api/message", {
+    sessionId: session.sessionId, clientId, line: command, resumeSessionId: "another-conversation",
+  });
+  assert.equal(busyResume.status, 409);
+  await post("/api/cancel", { sessionId: session.sessionId, clientId });
 });
 
 test("concurrent sessions keep running independently when another session is cancelled", async (t) => {
@@ -926,6 +1246,61 @@ test("keeps main runtime choices client-scoped for ip workspace sessions", async
   assert.equal(settings.web_shared_runtime_preferences, undefined);
 });
 
+test("attachments and messages honor the selected workspace instead of a previous backend", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  const workspaces = [];
+  t.after(async () => {
+    await app.stop();
+    for (const workspace of workspaces) await rmWithRetry(workspace.path, { recursive: true, force: true });
+  });
+  for (const suffix of ["A", "B"]) {
+    const response = await fetch(`${app.baseUrl}/api/workspaces`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `UploadScope${Date.now().toString(36)}${suffix}` }),
+    });
+    assert.equal(response.status, 200);
+    workspaces.push((await response.json()).workspace);
+  }
+  const [previous, selected] = workspaces;
+  const clientId = "workspace-attachment-owner";
+  const started = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId, cwd: previous.path }),
+  });
+  assert.equal(started.status, 200);
+  const { sessionId } = await started.json();
+  for (const scopeField of ["workspacePath", "workspaceName"]) {
+    const form = new FormData();
+    form.set("clientId", clientId);
+    form.set("session", sessionId);
+    form.set(scopeField, scopeField === "workspacePath" ? selected.path : selected.name);
+    form.append("files", new Blob(["Selected project content"]), "source.txt");
+    const response = await fetch(`${app.baseUrl}/api/client-attachments`, { method: "POST", body: form });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.workspace.path, selected.path);
+    assert.equal(await readFile(join(selected.path, payload.attachments[0].path), "utf8"), "Selected project content");
+    assert.equal(existsSync(join(previous.path, payload.attachments[0].path)), false);
+  }
+  const wrongWorkspace = await fetch(`${app.baseUrl}/api/message`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId, clientId, workspacePath: selected.path, line: "/help" }),
+  });
+  assert.equal(wrongWorkspace.status, 404);
+  assert.equal((await wrongWorkspace.json()).error, "Unknown session");
+  const matchingWorkspace = await fetch(`${app.baseUrl}/api/message`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId, clientId, workspacePath: previous.path, line: "/help" }),
+  });
+  assert.equal(matchingWorkspace.status, 200);
+  const foreignForm = new FormData();
+  foreignForm.set("session", sessionId);
+  foreignForm.set("clientId", "not-the-owner");
+  foreignForm.set("workspacePath", selected.path);
+  foreignForm.append("files", new Blob(["Other client"]), "foreign.txt");
+  assert.equal((await fetch(`${app.baseUrl}/api/client-attachments`, { method: "POST", body: foreignForm })).status, 403);
+});
+
 test("uploads client attachments as sanitized workspace-relative copies", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
@@ -967,6 +1342,20 @@ test("uploads client attachments as sanitized workspace-relative copies", async 
   assert.equal(attachment.path.includes(".."), false);
   assert.equal(/[<>:"\\|?*]/.test(attachment.path), false);
   assert.equal(await readFile(join(workspacePath, attachment.path), "utf8"), "hello from client");
+  const collisionNames = ["report.txt", "report.txt", "report-2.txt", "REPORT.TXT", "Report-2.txt",
+    "unsafe:name.txt", "unsafe?name.txt", "한글.txt", "한글.txt".normalize("NFD")];
+  const collisionForm = new FormData();
+  collisionForm.set("clientId", "client-upload-test");
+  collisionForm.set("workspacePath", workspacePath);
+  collisionNames.forEach((name, index) => collisionForm.append("files", new Blob([`original content ${index}`]), name));
+  const collisionResponse = await fetch(`${app.baseUrl}/api/client-attachments`, { method: "POST", body: collisionForm });
+  const collisionPayload = await collisionResponse.json();
+  assert.equal(collisionResponse.status, 200, JSON.stringify(collisionPayload));
+  assert.equal(collisionPayload.attachments.length, collisionNames.length);
+  assert.equal(new Set(collisionPayload.attachments.map((file) => file.path.toLowerCase())).size, collisionNames.length);
+  for (const [index, file] of collisionPayload.attachments.entries()) {
+    assert.equal(await readFile(join(workspacePath, file.path), "utf8"), `original content ${index}`, collisionNames[index]);
+  }
 });
 
 test("overwrites only HTML artifacts through the preview edit API", async (t) => {
@@ -1011,6 +1400,23 @@ test("overwrites only HTML artifacts through the preview edit API", async (t) =>
   const session = await sessionResponse.json();
   assert.equal(sessionResponse.status, 200);
   assert.ok(session.sessionId);
+
+  for (const name of ["한글 # 100% report.txt", "..report.txt", "literal%20name.txt"]) {
+    const path = join(workspacePath, name);
+    await writeFile(path, `contents: ${name}`, "utf8");
+    for (const reference of [name, pathToFileURL(path).href]) {
+      const query = new URLSearchParams({ session: session.sessionId, clientId: "preview-editor", path: reference });
+      const response = await fetch(`${app.baseUrl}/api/artifact?${query}`);
+      assert.equal(response.status, 200, reference);
+      assert.equal((await response.json()).content, `contents: ${name}`);
+    }
+  }
+  for (const reference of ["../outside.txt", pathToFileURL(join(workspacePath, "..", "outside.txt")).href]) {
+    const query = new URLSearchParams({ session: session.sessionId, clientId: "preview-editor", path: reference });
+    const response = await fetch(`${app.baseUrl}/api/artifact?${query}`);
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /inside the current project/i);
+  }
 
   const alternateWorkspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
     method: "POST",
@@ -1404,6 +1810,61 @@ test("serves shared artifact links read-only from workspace-relative paths", asy
   const outsideResponse = await fetch(`${app.baseUrl}/share/artifact?${outsideParams.toString()}`);
   assert.equal(outsideResponse.status, 400);
   assert.match(await outsideResponse.text(), /inside the current project/i);
+});
+
+test("artifact moves preserve files created after destination collision checks", async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), "myharness-move-race-"));
+  const preload = join(fixtureDir, "create-destination.mjs");
+  await writeFile(preload, `
+import fs from 'node:fs/promises';
+import { basename } from 'node:path';
+import { syncBuiltinESMExports } from 'node:module';
+const injected = new Set();
+for (const method of ['link', 'rename']) {
+  const original = fs[method];
+  fs[method] = async function(source, destination, ...args) {
+    if (['race-rename.html', 'race-organize.html'].includes(basename(String(destination))) && !injected.has(destination)) {
+      injected.add(destination);
+      await fs.writeFile(destination, 'external content', { flag: 'wx' });
+    }
+    return original.call(this, source, destination, ...args);
+  };
+}
+syncBuiltinESMExports();
+`, "utf8");
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" }, nodeArgs: ["--import", pathToFileURL(preload).href] });
+  let workspacePath = "";
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) await rmWithRetry(workspacePath, { recursive: true, force: true });
+    await rmWithRetry(fixtureDir, { recursive: true, force: true });
+  });
+  const created = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `MoveRace${Date.now().toString(36)}` }),
+  });
+  assert.equal(created.status, 200);
+  workspacePath = (await created.json()).workspace.path;
+  await mkdir(join(workspacePath, "outputs"), { recursive: true });
+  await writeFile(join(workspacePath, "outputs", "source.html"), "original rename content");
+  const renamed = await fetch(`${app.baseUrl}/api/artifact/rename`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspacePath, clientId: "move-race", path: "outputs/source.html", name: "race-rename.html" }),
+  });
+  assert.equal(renamed.status, 409, await renamed.text());
+  assert.equal(await readFile(join(workspacePath, "outputs", "source.html"), "utf8"), "original rename content");
+  assert.equal(await readFile(join(workspacePath, "outputs", "race-rename.html"), "utf8"), "external content");
+  await writeFile(join(workspacePath, "race-organize.html"), "original organized content");
+  const organized = await fetch(`${app.baseUrl}/api/project-files/organize`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspacePath, clientId: "move-race", paths: ["race-organize.html"] }),
+  });
+  const result = await organized.json();
+  assert.equal(organized.status, 200, JSON.stringify(result));
+  assert.equal(await readFile(join(workspacePath, "outputs", "race-organize.html"), "utf8"), "external content");
+  assert.equal(result.files.length, 1);
+  assert.notEqual(result.files[0].path, "outputs/race-organize.html");
+  assert.equal(await readFile(join(workspacePath, result.files[0].path), "utf8"), "original organized content");
 });
 
 test("renames artifacts and keeps old history links resolvable", async (t) => {
@@ -2121,6 +2582,35 @@ test("migrates legacy history files without deleting messages and converts lates
   await assert.rejects(readFile(join(sessionDir, "latest-client-legacy.meta"), "utf8"), { code: "ENOENT" });
 });
 
+test("configured Python overrides a cached launcher in actual shell requests", { skip: process.platform !== "win32" }, async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_PYTHON: "python" } });
+  t.after(() => app.stop());
+  const clientId = "python-priority-test";
+  const createdResponse = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId }),
+  });
+  const created = await createdResponse.json();
+  assert.equal(createdResponse.status, 200, JSON.stringify(created));
+  const cachePath = join(app.configDir, "data", "runtime", "windows_python_launcher.json");
+  const cache = JSON.parse(await readFile(cachePath, "utf8"));
+  cache.launcher.push("-I");
+  await writeFile(cachePath, JSON.stringify(cache), "utf8");
+  const response = await fetch(`${app.baseUrl}/api/shell`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId, sessionId: created.sessionId, command: "python -c \"import sys; print(sys.flags.isolated)\"" }),
+  });
+  const result = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(result));
+  assert.equal(result.stdout.trim(), "0");
+  const missingExecutable = join(app.configDir, "missing", "python.exe");
+  const invalidResponse = await fetch(`${app.baseUrl}/api/shell`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId, sessionId: created.sessionId, command: `"${missingExecutable}" -c "print('must not run')"` }),
+  });
+  assert.equal(invalidResponse.status, 400);
+});
+
 test("deletes a project after stopping active backend sessions in that project", async (t) => {
   const app = await startWebServer({
     env: { MYHARNESS_WORKSPACE_SCOPE: "shared" },
@@ -2150,7 +2640,8 @@ test("deletes a project after stopping active backend sessions in that project",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ clientId: "stale-client", cwd: workspacePath }),
   });
-  assert.equal(sessionResponse.status, 200);
+  const sessionPayload = await sessionResponse.json();
+  assert.equal(sessionResponse.status, 200, JSON.stringify(sessionPayload));
 
   const deleteResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
     method: "DELETE",

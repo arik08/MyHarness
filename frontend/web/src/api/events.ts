@@ -13,6 +13,9 @@ export function openBackendEvents(params: URLSearchParams, handlers: EventHandle
     let event: BackendEvent | { type: "stream_checkpoint" };
     try {
       event = JSON.parse(message.data);
+      if (!event || typeof event !== "object" || Array.isArray(event) || typeof event.type !== "string" || !event.type.trim()) {
+        throw new Error("Invalid event envelope");
+      }
     } catch {
       handlers.onEvent({ type: "error", message: "이벤트를 해석하지 못했습니다." });
       return;

@@ -394,6 +394,12 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			return;
 		}
 		if (event.type === 'modal_request') {
+			const payload = event.modal;
+			if ((payload?.kind === 'permission' || payload?.kind === 'question')
+				&& (payload.status === 'answered' || payload.status === 'cancelled')) {
+				setModal(current => current?.kind === payload.kind && current?.request_id === payload.request_id ? null : current);
+				return;
+			}
 			setModal(event.modal ?? null);
 			return;
 		}

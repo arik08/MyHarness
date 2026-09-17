@@ -558,6 +558,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
 
   async function copyAnswer() {
     setCopying(true);
+    setStatus("복사 중...");
     try {
       await copyTextToClipboard(text);
       setStatus("복사했습니다.");
@@ -599,6 +600,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
       return;
     }
     setSharing(true);
+    setStatus("공유 링크 준비 중...");
     try {
       const baseUrl = await shareBaseUrl();
       await copyTextToClipboard(chatShareUrl({

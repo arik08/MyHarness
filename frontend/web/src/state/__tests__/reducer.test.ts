@@ -2,10 +2,25 @@ import { describe, expect, it, vi } from "vitest";
 import { appReducer, initialAppState, loadAdminModePreference, loadHiddenHistoryKeys } from "../reducer";
 import { historyVisibilityKey } from "../../utils/history";
 import { submittedTranscriptTexts } from "../../utils/userTranscript";
+import { createWorkflowEventCoalescer } from "../../hooks/workflowEventCoalescer";
 
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
 
 describe("appReducer", () => {
+  it.each([[0, 0], ["0", 0], ["250", 250], [-10, 0], [6000, 5000], [Infinity, 2000], [NaN, 2000]])("normalizes numeric setting %s to %s", (value, expected) => {
+    const next = appReducer(initialAppState, { type: "set_app_settings", value: { streamScrollDurationMs: value } as never });
+    expect(next.appSettings.streamScrollDurationMs).toBe(expected);
+  });
+  it.each([null, false, true, "", " ", [], {}])("uses default numeric settings for malformed value %j", (value) => {
+    const keys = ["streamScrollDurationMs", "streamStartBufferMs", "streamFollowLeadPx", "streamRevealDurationMs"] as const;
+    const settings = Object.fromEntries(keys.map((key) => [key, value]));
+    const next = appReducer(initialAppState, { type: "set_app_settings", value: settings as never });
+    for (const key of keys) expect(next.appSettings[key]).toBe(initialAppState.appSettings[key]);
+  });
+  it("does not turn malformed download folders into literal object strings", () => {
+    const next = appReducer(initialAppState, { type: "set_app_settings", value: { downloadFolderPath: {} } as never });
+    expect(next.appSettings.downloadFolderPath).toBe("");
+  });
   it("keeps elapsed time across session switches and replay, and freezes at the actual end", () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
     try {
@@ -499,6 +514,51 @@ describe("appReducer", () => {
     expect(next.swarmPopupOpen).toBe(false);
   });
 
+  it.each([
+    ["#", "## 제목"],
+    ["*", "*강조**"],
+    ["`", "``python\nprint(1)\n```"],
+    ["하", "하"],
+    ["1", "1"],
+    [" ", " 들여쓰기"],
+  ])("preserves repeated prefixes across streamed chunks %j %j", (first, second) => {
+    for (const batched of [false, true]) {
+      let state = initialAppState;
+      const coalescer = createWorkflowEventCoalescer(event => {
+        state = appReducer(state, { type: "backend_event", event });
+      });
+      coalescer.push({ type: "assistant_delta", message: first });
+      if (!batched) coalescer.flush();
+      coalescer.push({ type: "assistant_delta", message: second });
+      coalescer.flush();
+      expect(state.messages[0].text).toBe(first + second);
+      // A replay replaces the old transcript, then streams continue as deltas.
+      state = appReducer(state, { type: "backend_event", event: { type: "clear_transcript", live_replay: true } });
+      coalescer.push({ type: "assistant_delta", message: first + second, snapshot: true });
+      coalescer.flush();
+      coalescer.push({ type: "assistant_delta", message: first + second });
+      coalescer.flush();
+      expect(state.messages).toHaveLength(1);
+      expect(state.messages[0].text).toBe((first + second).repeat(2));
+    }
+  });
+
+  it("replaces cached text with explicit replay snapshots without merging buffered deltas", () => {
+    let state = initialAppState;
+    const coalescer = createWorkflowEventCoalescer(event => {
+      state = appReducer(state, { type: "backend_event", event });
+    });
+    coalescer.push({ type: "assistant_delta", message: "old" });
+    coalescer.push({ type: "assistant_delta", message: " buffered" });
+    coalescer.push({ type: "assistant_delta", message: "new", snapshot: true });
+    expect(state.messages[0].text).toBe("new");
+    coalescer.push({ type: "assistant_delta", message: "new" });
+    coalescer.flush();
+    expect(state.messages[0].text).toBe("newnew");
+    coalescer.push({ type: "assistant_delta", message: "", snapshot: true });
+    expect(state.messages[0].text).toBe("");
+  });
+
   it("appends assistant deltas to the active assistant message", () => {
     const first = appReducer(initialAppState, {
       type: "backend_event",
@@ -511,6 +571,48 @@ describe("appReducer", () => {
 
     expect(second.messages).toHaveLength(1);
     expect(second.messages[0].text).toBe("안녕하세요");
+  });
+
+  it.each([
+    { role: "system" as const, text: "조회 오류 안내", is_error: true },
+    { role: "log" as const, text: "작업 알림" },
+    { role: "user" as const, text: "표도 넣어 주세요", kind: "steering" as const },
+    { role: "user" as const, text: "다음 질문", kind: "queued" as const },
+    { role: "user" as const, text: "선택한 답변", kind: "question_answer" as const },
+  ])("continues the same assistant message across supplemental transcript $role $kind", (item) => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event", event: { type: "assistant_delta", message: "앞 문장. " },
+    });
+    const interleaved = appReducer(first, {
+      type: "backend_event", event: { type: "transcript_item", item },
+    });
+    const streamed = appReducer(interleaved, {
+      type: "backend_event", event: { type: "assistant_delta", message: "뒤 문장." },
+    });
+    const assistants = streamed.messages.filter(message => message.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].id).toBe(first.messages[0].id);
+    expect(assistants[0].text).toBe("앞 문장. 뒤 문장.");
+    const completed = appReducer(streamed, {
+      type: "backend_event", event: { type: "assistant_complete", message: "앞 문장. 뒤 문장." },
+    });
+    expect(completed.messages.filter(message => message.role === "assistant")).toEqual([
+      expect.objectContaining({ id: first.messages[0].id, text: "앞 문장. 뒤 문장.", isComplete: true }),
+    ]);
+    expect(completed.messages.some(message => message.text === item.text)).toBe(true);
+  });
+
+  it.each([false, true])("does not merge a new answer into a previous unfinished turn (streaming=%s)", (streaming) => {
+    const first = appReducer(initialAppState, {
+      type: "backend_event", event: { type: "assistant_delta", message: "이전 일부 응답" },
+    });
+    const nextTurn = appReducer(first, {
+      type: "append_message", message: { role: "user", text: "새 질문" },
+    });
+    const next = appReducer(nextTurn, {
+      type: "backend_event", event: { type: streaming ? "assistant_delta" : "assistant_complete", message: "새 응답" },
+    });
+    expect(next.messages.map(message => message.text)).toEqual(["이전 일부 응답", "새 질문", "새 응답"]);
   });
 
   it("shows answer drafting progress while assistant text streams", () => {
@@ -1257,7 +1359,8 @@ describe("appReducer", () => {
   });
 
   it.each(["state_snapshot", "ready"] as const)("keeps runtime metadata live during read-only history: %s", (type) => {
-    const history = appReducer({ ...initialAppState, sessionId: "live-session" }, {
+    const selectedScope = { mode: "shared", name: "shared", root: "C:/" };
+    const history = appReducer({ ...initialAppState, sessionId: "live-session", workspacePath: "C:/selected", workspaceName: "Selected", workspaceScope: selectedScope }, {
       type: "backend_event",
       event: {
         type: "history_snapshot", value: "saved-report", preview_only: true,
@@ -1277,6 +1380,7 @@ describe("appReducer", () => {
       event: { type, state: {
         provider: "openai-codex", active_profile: "codex", provider_label: "Codex Subscription",
         model: "gpt-5.5", effort: "low", runtime_options: options,
+        workspace: { path: "C:/previous", name: "Previous", scope: { mode: "ip", name: "local", root: "C:/previous" } },
       } },
     });
     expect(updated.providerLabel).toBe("Codex Subscription");
@@ -1286,6 +1390,9 @@ describe("appReducer", () => {
     expect(updated.activeHistoryId).toBe("saved-report");
     expect(updated.sessionUsage).toBe(history.sessionUsage);
     expect(updated.status).toBe(history.status);
+    expect(updated.workspacePath).toBe("C:/selected");
+    expect(updated.workspaceName).toBe("Selected");
+    expect(updated.workspaceScope).toEqual(selectedScope);
 
     const pickerReply = appReducer(opened, {
       type: "backend_event", sessionId: "live-session",
@@ -1405,6 +1512,23 @@ describe("appReducer", () => {
     expect(next.messages).toHaveLength(1);
     expect(next.messages[0].text).toBe("너는 누구니");
     expect("kind" in next.messages[0]).toBe(false);
+  });
+
+  it.each(["permission", "question"])("closes only the matching completed %s prompt", (kind) => {
+    for (const status of ["answered", "cancelled"]) {
+      const pending = appReducer({ ...initialAppState, sessionId: "live" }, {
+        type: "backend_event", event: { type: "modal_request", modal: { kind, request_id: "new", reason: "Continue?" } },
+      });
+      const stale = appReducer(pending, {
+        type: "backend_event", event: { type: "modal_request", modal: { kind, request_id: "old", status } },
+      });
+      expect(stale.modal).toEqual(pending.modal);
+      const closed = appReducer(stale, {
+        type: "backend_event", event: { type: "modal_request", modal: { kind, request_id: "new", status } },
+      });
+      expect(closed.modal).toBeNull();
+      expect(closed.backendModalsBySessionId).toEqual({});
+    }
   });
 
   it("keeps question answer transcript visible without starting a new user turn", () => {
@@ -1921,6 +2045,24 @@ describe("appReducer", () => {
     expect(writeEvent?.status).toBe("error");
     expect(writeEvent?.detail).toBe("백엔드가 종료되어 작업을 중단했습니다.");
     expect(next.workflowEvents.find((event) => event.role === "purpose")?.status).toBe("error");
+  });
+
+  it("keeps generation running when a separate control request reports a system error", () => {
+    const running = appReducer(initialAppState, {
+      type: "backend_event",
+      event: { type: "assistant_delta", message: "작성 중" },
+    });
+    const next = appReducer(running, {
+      type: "backend_event",
+      event: { type: "transcript_item", item: {
+        role: "system", text: "요청 처리 중 오류가 발생했습니다. 다시 시도해 주세요.", is_error: true,
+      } },
+    });
+    expect(next.busy).toBe(true);
+    expect(next.status).toBe(running.status);
+    expect(next.workflowEvents).toBe(running.workflowEvents);
+    expect(next.workflowStartedAtMs).toBe(running.workflowStartedAtMs);
+    expect(next.messages.at(-1)?.isError).toBe(true);
   });
 
   it("marks in-flight workflow steps as failed when the backend reports an error", () => {
@@ -2723,7 +2865,7 @@ describe("appReducer", () => {
     });
     const afterReplayDelta = appReducer(afterReplayUser, {
       type: "backend_event",
-      event: { type: "assistant_delta", message: "초안 작성 중 최신 문장" },
+      event: { type: "assistant_delta", message: "초안 작성 중 최신 문장", snapshot: true },
       sessionId: "live-a",
     });
 

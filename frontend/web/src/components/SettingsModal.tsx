@@ -1,3 +1,4 @@
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import { useEffect, useState, type MouseEvent } from "react";
 import { sendBackendRequest } from "../api/messages";
 import { restartSession } from "../api/session";
@@ -261,6 +262,7 @@ function SettingsHeader({ title, children }: { title: string; children: string }
 }
 
 function PromptSettings({ onBack }: { onBack: () => void }) {
+  const { pending, run } = useAsyncAction();
   const { state, dispatch } = useAppState();
   const [value, setValue] = useState(state.systemPrompt);
   const [error, setError] = useState("");
@@ -268,10 +270,10 @@ function PromptSettings({ onBack }: { onBack: () => void }) {
   async function save() {
     setError("");
     try {
-      dispatch({ type: "set_system_prompt", value });
       if (state.sessionId) {
         await sendBackendRequest(state.sessionId, state.clientId, { type: "set_system_prompt", value });
       }
+      dispatch({ type: "set_system_prompt", value });
       onBack();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -286,7 +288,7 @@ function PromptSettings({ onBack }: { onBack: () => void }) {
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
         <button type="button" onClick={() => setValue("")}>초기화</button>
-        <button type="button" className="primary" onClick={() => void save()}>저장</button>
+        <button type="button" className="primary" aria-busy={pending} disabled={pending} onClick={() => void run(() => save())}>{pending ? "저장 중..." : "저장"}</button>
       </div>
       <p className="workspace-error">{error}</p>
     </>
@@ -338,6 +340,7 @@ function BehaviorSettings({ onBack }: { onBack: () => void }) {
 }
 
 function OutputTokenSettingsForm({ onBack }: { onBack: () => void }) {
+  const { pending, run } = useAsyncAction();
   const { state } = useAppState();
   const [settings, setSettings] = useState<OutputTokenSettings | null>(null);
   const [values, setValues] = useState<Record<string, number>>({});
@@ -403,7 +406,7 @@ function OutputTokenSettingsForm({ onBack }: { onBack: () => void }) {
       </div>
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
-        <button type="button" className="primary" onClick={() => void save()} disabled={!settings}>저장</button>
+        <button type="button" className="primary" aria-busy={pending} onClick={() => void run(() => save())} disabled={!settings || pending}>{pending ? "저장 중..." : "저장"}</button>
       </div>
       <p className="workspace-error">{error}</p>
     </>
@@ -540,6 +543,7 @@ function Gpt56ContextSettings({ onBack, onClose }: { onBack: () => void; onClose
 }
 
 function DownloadSettings({ onBack }: { onBack: () => void }) {
+  const { pending, run } = useAsyncAction();
   const { state, dispatch } = useAppState();
   const localBrowserHost = isLocalBrowserHost();
   const serverHostSettingsAccess = canUseServerHostSettings(localBrowserHost, state.adminMode);
@@ -574,7 +578,7 @@ function DownloadSettings({ onBack }: { onBack: () => void }) {
         <select value={mode} onChange={(event) => setMode(event.currentTarget.value === "folder" ? "folder" : event.currentTarget.value === "ask" ? "ask" : "browser")}>
           <option value="browser">브라우저 다운로드</option>
           <option value="ask">매번 저장 위치 선택</option>
-          <option value="folder" disabled={!serverHostSettingsAccess}>지정 폴더에 자동 저장</option>
+          <option value="folder" aria-busy={pending} disabled={!serverHostSettingsAccess || pending}>지정 폴더에 자동 저장</option>
         </select>
         <small>{serverHostSettingsAccess ? "브라우저 다운로드는 브라우저의 다운로드 설정을 따릅니다." : "클라이언트 PC의 실제 저장 위치는 브라우저 다운로드 설정을 따릅니다."}</small>
       </label>
@@ -582,7 +586,7 @@ function DownloadSettings({ onBack }: { onBack: () => void }) {
         <span className="setting-field-label">지정 폴더</span>
         <div className="folder-picker">
           <input type="text" value={folderPath} readOnly placeholder={serverHostSettingsAccess ? "선택된 폴더가 없습니다" : "브라우저 다운로드 사용"} />
-          <button type="button" disabled={!serverHostSettingsAccess} onClick={() => void browse()}>찾아보기</button>
+          <button type="button" aria-busy={pending} disabled={!serverHostSettingsAccess || pending} onClick={() => void run(() => browse())}>{pending ? "선택 중..." : "찾아보기"}</button>
         </div>
         <small>{serverHostSettingsAccess ? "찾아보기를 눌러 저장할 폴더를 선택하세요." : "Admin mode 전에는 Host 폴더 선택을 사용할 수 없습니다."}</small>
       </label>
@@ -596,6 +600,8 @@ function DownloadSettings({ onBack }: { onBack: () => void }) {
 }
 
 function ShellSettings({ onBack }: { onBack: () => void }) {
+  const { pending, run } = useAsyncAction();
+  const [loaded, setLoaded] = useState(false);
   const { dispatch } = useAppState();
   const [selected, setSelected] = useState("auto");
   const [options, setOptions] = useState<Array<{ value: string; label: string; description?: string }>>([]);
@@ -607,16 +613,20 @@ function ShellSettings({ onBack }: { onBack: () => void }) {
         setSelected(data.shell || "auto");
         setOptions(Array.isArray((data as { options?: typeof options }).options) ? (data as { options?: typeof options }).options || [] : []);
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setLoaded(true));
   }, []);
 
   async function save(shell: string) {
+    const previous = selected;
+    setSelected(shell);
     setError("");
     try {
       const data = await changeShellPreference(shell);
       setSelected(data.shell || shell);
       dispatch({ type: "set_app_settings", value: { shell: (data.shell || shell) as AppSettings["shell"] } });
     } catch (reason) {
+      setSelected(previous);
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }
@@ -631,9 +641,9 @@ function ShellSettings({ onBack }: { onBack: () => void }) {
   return (
     <>
       <SettingsHeader title="명령어 셀">터미널 명령을 실행할 셸을 선택합니다.</SettingsHeader>
-      <div className="scope-segmented-control shell-mode-list" role="radiogroup" aria-label="명령어 셀">
+      <div aria-busy={pending} className="scope-segmented-control shell-mode-list" role="radiogroup" aria-label="명령어 셀">
         {rows.map((option) => (
-          <button className={`scope-mode-option${selected === option.value ? " active" : ""}`} type="button" role="radio" aria-checked={selected === option.value} key={option.value} onClick={() => void save(option.value)}>
+          <button className={`scope-mode-option${selected === option.value ? " active" : ""}`} type="button" disabled={!loaded || pending} role="radio" aria-checked={selected === option.value} key={option.value} onClick={() => void run(() => save(option.value))}>
             <span className="scope-mode-marker" />
             <span className="scope-mode-copy">
               <strong>{option.label}</strong>
@@ -645,7 +655,8 @@ function ShellSettings({ onBack }: { onBack: () => void }) {
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
       </div>
-      <p className="workspace-error">{error}</p>
+      {pending ? <p className="settings-helper" role="status">저장 중...</p> : null}
+      <p className="workspace-error" role="alert">{error}</p>
     </>
   );
 }
@@ -839,21 +850,27 @@ function RestartSessionSettings({ onBack, onClose }: { onBack: () => void; onClo
 }
 
 function YoloSettings({ onBack }: { onBack: () => void }) {
+  const { pending, run } = useAsyncAction();
+  const [loaded, setLoaded] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     void readYoloModeSettings()
       .then((data) => setEnabled(data.enabled !== false))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setLoaded(true));
   }, []);
 
   async function save(value: boolean) {
+    const previous = enabled;
+    setEnabled(value);
     setError("");
     try {
       const data = await changeYoloMode(value);
       setEnabled(data.enabled !== false);
     } catch (reason) {
+      setEnabled(previous);
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }
@@ -861,12 +878,12 @@ function YoloSettings({ onBack }: { onBack: () => void }) {
   return (
     <>
       <SettingsHeader title="Yolo 모드">권한 확인 질문을 줄이고 자동 실행을 허용할지 선택합니다.</SettingsHeader>
-      <div className="scope-segmented-control yolo-mode-list" role="radiogroup" aria-label="Yolo 모드">
-        <button className={`scope-mode-option${enabled ? " active" : ""}`} type="button" role="radio" aria-checked={enabled} onClick={() => void save(true)}>
+      <div aria-busy={pending} className="scope-segmented-control yolo-mode-list" role="radiogroup" aria-label="Yolo 모드">
+        <button className={`scope-mode-option${enabled ? " active" : ""}`} type="button" disabled={!loaded || pending} role="radio" aria-checked={enabled} onClick={() => void run(() => save(true))}>
           <span className="scope-mode-marker" />
           <span className="scope-mode-copy"><strong>켜짐</strong><small>새 세션을 full_auto 권한 모드로 시작합니다.</small></span>
         </button>
-        <button className={`scope-mode-option${!enabled ? " active" : ""}`} type="button" role="radio" aria-checked={!enabled} onClick={() => void save(false)}>
+        <button className={`scope-mode-option${!enabled ? " active" : ""}`} type="button" disabled={!loaded || pending} role="radio" aria-checked={!enabled} onClick={() => void run(() => save(false))}>
           <span className="scope-mode-marker" />
           <span className="scope-mode-copy"><strong>꺼짐</strong><small>기본 권한 확인 흐름을 사용합니다.</small></span>
         </button>
@@ -874,22 +891,28 @@ function YoloSettings({ onBack }: { onBack: () => void }) {
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
       </div>
-      <p className="workspace-error">{error}</p>
+      {pending ? <p className="settings-helper" role="status">저장 중...</p> : null}
+      <p className="workspace-error" role="alert">{error}</p>
     </>
   );
 }
 
 function WorkspaceScopeSettings({ onBack, onClose }: { onBack: () => void; onClose: () => void }) {
+  const { pending, run } = useAsyncAction();
+  const [loaded, setLoaded] = useState(false);
   const [mode, setMode] = useState<"shared" | "ip">("shared");
   const [error, setError] = useState("");
 
   useEffect(() => {
     void readWorkspaceScopeSettings()
       .then((data) => setMode(data.mode === "ip" ? "ip" : "shared"))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setLoaded(true));
   }, []);
 
   async function save(value: "shared" | "ip") {
+    const previous = mode;
+    setMode(value);
     setError("");
     try {
       const data = await changeWorkspaceScope(value);
@@ -897,6 +920,7 @@ function WorkspaceScopeSettings({ onBack, onClose }: { onBack: () => void; onClo
       onClose();
       window.location.reload();
     } catch (reason) {
+      setMode(previous);
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }
@@ -904,12 +928,12 @@ function WorkspaceScopeSettings({ onBack, onClose }: { onBack: () => void; onClo
   return (
     <>
       <SettingsHeader title="작업공간 범위">프로젝트, 대화 기록, 스킬 활성화 설정을 공유할지 접속 IP별로 나눌지 정합니다.</SettingsHeader>
-      <div className="scope-segmented-control workspace-scope-mode-list" role="radiogroup" aria-label="작업공간 범위">
-        <button className={`scope-mode-option${mode === "shared" ? " active" : ""}`} type="button" role="radio" aria-checked={mode === "shared"} onClick={() => void save("shared")}>
+      <div aria-busy={pending} className="scope-segmented-control workspace-scope-mode-list" role="radiogroup" aria-label="작업공간 범위">
+        <button className={`scope-mode-option${mode === "shared" ? " active" : ""}`} type="button" disabled={!loaded || pending} role="radio" aria-checked={mode === "shared"} onClick={() => void run(() => save("shared"))}>
           <span className="scope-mode-marker" />
           <span className="scope-mode-copy"><strong>공용</strong><small>모든 접속자가 같은 프로젝트, 기록, 스킬 설정을 봅니다.</small></span>
         </button>
-        <button className={`scope-mode-option${mode === "ip" ? " active" : ""}`} type="button" role="radio" aria-checked={mode === "ip"} onClick={() => void save("ip")}>
+        <button className={`scope-mode-option${mode === "ip" ? " active" : ""}`} type="button" disabled={!loaded || pending} role="radio" aria-checked={mode === "ip"} onClick={() => void run(() => save("ip"))}>
           <span className="scope-mode-marker" />
           <span className="scope-mode-copy"><strong>IP별</strong><small>접속 IP마다 별도 프로젝트, 기록, 스킬 설정을 봅니다.</small></span>
         </button>
@@ -917,27 +941,34 @@ function WorkspaceScopeSettings({ onBack, onClose }: { onBack: () => void; onClo
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
       </div>
-      <p className="workspace-error">{error}</p>
+      {pending ? <p className="settings-helper" role="status">저장 중...</p> : null}
+      <p className="workspace-error" role="alert">{error}</p>
     </>
   );
 }
 
 function LearnedSkillsSettings({ onBack }: { onBack: () => void }) {
+  const { pending, run } = useAsyncAction();
+  const [loaded, setLoaded] = useState(false);
   const [mode, setMode] = useState<"use" | "hide" | "off">("hide");
   const [error, setError] = useState("");
 
   useEffect(() => {
     void readLearnedSkillsSettings()
       .then((data) => setMode(data.mode === "use" || data.mode === "off" ? data.mode : "hide"))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setLoaded(true));
   }, []);
 
   async function save(value: "use" | "hide" | "off") {
+    const previous = mode;
+    setMode(value);
     setError("");
     try {
       const data = await changeLearnedSkillsMode(value);
       setMode(data.mode === "use" || data.mode === "off" ? data.mode : "hide");
     } catch (reason) {
+      setMode(previous);
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }
@@ -945,13 +976,13 @@ function LearnedSkillsSettings({ onBack }: { onBack: () => void }) {
   return (
     <>
       <SettingsHeader title="자동학습 스킬 표시">학습된 스킬을 프롬프트 추천에 어떻게 반영할지 선택합니다.</SettingsHeader>
-      <div className="scope-segmented-control learned-skill-mode-list" role="radiogroup" aria-label="자동학습 스킬 표시">
+      <div aria-busy={pending} className="scope-segmented-control learned-skill-mode-list" role="radiogroup" aria-label="자동학습 스킬 표시">
         {[
           ["use", "표시", "추천 목록에 표시하고 사용할 수 있게 둡니다."],
           ["hide", "숨김", "기본 추천 목록에서는 숨깁니다."],
           ["off", "끄기", "자동학습 스킬 사용을 끕니다."],
         ].map(([value, label, description]) => (
-          <button className={`scope-mode-option${mode === value ? " active" : ""}`} type="button" role="radio" aria-checked={mode === value} key={value} onClick={() => void save(value as "use" | "hide" | "off")}>
+          <button className={`scope-mode-option${mode === value ? " active" : ""}`} type="button" disabled={!loaded || pending} role="radio" aria-checked={mode === value} key={value} onClick={() => void run(() => save(value as "use" | "hide" | "off"))}>
             <span className="scope-mode-marker" />
             <span className="scope-mode-copy"><strong>{label}</strong><small>{description}</small></span>
           </button>
@@ -960,12 +991,14 @@ function LearnedSkillsSettings({ onBack }: { onBack: () => void }) {
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
       </div>
-      <p className="workspace-error">{error}</p>
+      {pending ? <p className="settings-helper" role="status">저장 중...</p> : null}
+      <p className="workspace-error" role="alert">{error}</p>
     </>
   );
 }
 
 function PgptSettingsForm({ onBack }: { onBack: () => void }) {
+  const { pending, run } = useAsyncAction();
   const [settings, setSettings] = useState<PgptSettings>({});
   const [apiKey, setApiKey] = useState("");
   const [employeeNo, setEmployeeNo] = useState("");
@@ -1011,7 +1044,7 @@ function PgptSettingsForm({ onBack }: { onBack: () => void }) {
       </div>
       <div className="modal-actions">
         <button type="button" onClick={onBack}>뒤로</button>
-        <button type="button" className="primary" onClick={() => void save()}>저장</button>
+        <button type="button" className="primary" aria-busy={pending} disabled={pending} onClick={() => void run(() => save())}>{pending ? "저장 중..." : "저장"}</button>
       </div>
       <p className="workspace-error">{error}</p>
     </>

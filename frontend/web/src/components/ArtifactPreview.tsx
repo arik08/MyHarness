@@ -1318,7 +1318,7 @@ function iframeHtmlEditorBridge(content: string, artifactPath: string) {
 
   document.addEventListener("keydown", (event) => {
     if (!editorEnabled) return;
-    if (!targetEditable(event.target) || event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    if (!targetEditable(event.target) || event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     event.stopPropagation();
     commitActiveEditable();
@@ -2087,7 +2087,7 @@ ${paletteCss}
       }
     };
     textarea.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault();
         stopPopoverEvent(event);
         submitComment();

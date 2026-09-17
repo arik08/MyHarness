@@ -47,7 +47,7 @@ from myharness.engine.messages import (
     sanitize_conversation_messages,
 )
 from myharness.engine.query import format_internal_steering_update
-from myharness.engine.cost_tracker import usage_accounting_delta
+from myharness.engine.cost_tracker import CostTracker, usage_accounting_delta
 from myharness.output_styles import load_output_styles
 from myharness.permissions.mutation_lock import release_mutation_lock
 from myharness.project_preferences import (
@@ -87,6 +87,7 @@ from myharness.ui.async_agents import (
 from myharness.ui.protocol import BackendEvent, FrontendComposeOptions, FrontendRequest, PluginSnapshot, SkillSnapshot, TranscriptItem
 from myharness.ui.execution_display import execution_display_value
 from myharness.ui.transcript_images import transcript_images
+from myharness.ui.image_attachments import uploaded_image_blocks
 from myharness.ui.runtime import (
     build_runtime,
     close_runtime,
@@ -139,6 +140,10 @@ _SWARM_ORCHESTRATION_CHECKPOINT_SECONDS = 60
 _SWARM_NO_PROGRESS_SECONDS = 2 * 60
 _SWARM_TASK_TYPES = {"local_agent", "remote_agent", "in_process_teammate"}
 _SAVED_SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+_SESSION_SCOPED_METADATA_KEYS = (
+    "session_title", "session_title_source", "session_title_user_edited",
+    "workflow_duration_seconds", "branch_origin",
+)
 _SESSION_TITLE_SOURCE_PROMPT = "prompt"
 _SESSION_TITLE_SOURCE_CONVERSATION = "conversation"
 
@@ -1291,111 +1296,142 @@ class ReactBackendHost:
         try:
             while self._running:
                 request = await self._request_queue.get()
-                if request.type == "shutdown":
-                    await self._emit(BackendEvent(type="shutdown"))
-                    break
-                if request.type in ("permission_response", "question_response"):
-                    continue
-                if request.type == "cancel_current":
-                    await self._cancel_current_request()
-                    continue
-                if request.type == "cancel_queued_line":
-                    await self._cancel_queued_line(request.request_id or "")
-                    continue
-                if request.type == "steer_line":
-                    if self._busy:
-                        if self._final_answer_emitted:
-                            await self._queue_follow_up_line(request.line or "", request.request_id or "", request.compose_options)
+                try:
+                    if request.type == "shutdown":
+                        await self._emit(BackendEvent(type="shutdown"))
+                        break
+                    if request.type in ("permission_response", "question_response"):
+                        continue
+                    if request.type == "cancel_current":
+                        await self._cancel_current_request()
+                        continue
+                    if request.type == "cancel_queued_line":
+                        await self._cancel_queued_line(request.request_id or "")
+                        continue
+                    if request.type == "steer_line":
+                        if self._busy:
+                            if self._final_answer_emitted:
+                                await self._queue_follow_up_line(request.line or "", request.request_id or "", request.compose_options)
+                            else:
+                                await self._queue_steering_line(request.line or "", request.request_id or "", request.compose_options)
                         else:
-                            await self._queue_steering_line(request.line or "", request.request_id or "", request.compose_options)
-                    else:
-                        await self._emit_queued_message_status(request.request_id or "", "delivered")
-                        await self._request_queue.put(FrontendRequest(type="submit_line", line=request.line or "", compose_options=request.compose_options))
-                    continue
-                if request.type == "queue_line":
-                    if self._busy:
-                        await self._queue_line_after_current(request.line or "", request.request_id or "", request.compose_options)
-                    else:
-                        await self._emit_queued_message_status(request.request_id or "", "delivered")
-                        await self._request_queue.put(
-                            FrontendRequest(
-                                type="submit_line",
-                                line=request.line or "",
-                                attachments=request.attachments,
-                                attachment_refs=request.attachment_refs,
-                                compose_options=request.compose_options,
+                            await self._emit_queued_message_status(request.request_id or "", "delivered")
+                            await self._request_queue.put(FrontendRequest(type="submit_line", line=request.line or "", compose_options=request.compose_options))
+                        continue
+                    if request.type == "queue_line":
+                        if self._busy:
+                            await self._queue_line_after_current(request.line or "", request.request_id or "", request.compose_options)
+                        else:
+                            await self._emit_queued_message_status(request.request_id or "", "delivered")
+                            await self._request_queue.put(
+                                FrontendRequest(
+                                    type="submit_line",
+                                    line=request.line or "",
+                                    attachments=request.attachments,
+                                    attachment_refs=request.attachment_refs,
+                                    compose_options=request.compose_options,
+                                )
                             )
-                        )
-                    continue
-                if request.type == "start_new_session":
-                    await self._handle_start_new_session(request.value or "")
-                    continue
-                if request.type == "list_sessions":
-                    await self._handle_list_sessions()
-                    continue
-                if request.type == "delete_session":
-                    await self._handle_delete_session(request.value or "")
-                    continue
-                if request.type == "refresh_skills":
-                    self._sync_learning_mode()
-                    await self._refresh_mcp_configs()
-                    await self._refresh_skill_runtime()
-                    await self._emit(self._status_snapshot())
-                    continue
-                if request.type == "set_skill_enabled":
-                    await self._handle_set_skill_enabled(request.value or "", request.enabled)
-                    continue
-                if request.type == "set_mcp_enabled":
-                    await self._handle_set_mcp_enabled(request.value or "", request.enabled)
-                    continue
-                if request.type == "set_plugin_enabled":
-                    await self._handle_set_plugin_enabled(request.value or "", request.enabled)
-                    continue
-                if request.type == "set_system_prompt":
-                    await self._handle_set_system_prompt(request.value or "")
-                    continue
-                if request.type == "refresh_runtime_settings":
-                    await self._handle_refresh_runtime_settings()
-                    continue
-                if request.type == "update_session_title":
-                    await self._handle_update_session_title(request.value or "")
-                    continue
-                if request.type == "select_command":
-                    await self._handle_select_command(request.command or "")
-                    continue
-                if request.type == "enhance_prompt":
-                    await self._enhance_prompt(request)
-                    continue
-                if request.type == "task_output":
-                    await self._handle_task_output(request.task_id or "", request.max_bytes or 12000)
-                    continue
-                if request.type == "task_stop":
-                    await self._handle_task_stop(request.task_id or "")
-                    continue
-                if request.type == "apply_select_command":
-                    command = (request.command or "").strip().lstrip("/").lower()
-                    if command in {"provider", "model", "runtime_model", "subagent_model", "effort", "subagent_effort", "context_mode"}:
-                        await self._apply_runtime_selection_request(request)
+                        continue
+                    if request.type == "start_new_session":
+                        await self._handle_start_new_session(request.value or "")
+                        continue
+                    if request.type == "list_sessions":
+                        await self._handle_list_sessions()
+                        continue
+                    if request.type == "delete_session":
+                        await self._handle_delete_session(request.value or "")
+                        continue
+                    if request.type == "refresh_skills":
+                        self._sync_learning_mode()
+                        await self._refresh_mcp_configs()
+                        await self._refresh_skill_runtime()
+                        await self._emit(self._status_snapshot())
+                        continue
+                    if request.type == "set_skill_enabled":
+                        await self._handle_set_skill_enabled(request.value or "", request.enabled)
+                        continue
+                    if request.type == "set_mcp_enabled":
+                        await self._handle_set_mcp_enabled(request.value or "", request.enabled)
+                        continue
+                    if request.type == "set_plugin_enabled":
+                        await self._handle_set_plugin_enabled(request.value or "", request.enabled)
+                        continue
+                    if request.type == "set_system_prompt":
+                        await self._handle_set_system_prompt(request.value or "")
+                        continue
+                    if request.type == "refresh_runtime_settings":
+                        await self._handle_refresh_runtime_settings()
+                        continue
+                    if request.type == "update_session_title":
+                        await self._handle_update_session_title(request.value or "")
+                        continue
+                    if request.type == "select_command":
+                        await self._handle_select_command(request.command or "")
+                        continue
+                    if request.type == "enhance_prompt":
+                        await self._enhance_prompt(request)
+                        continue
+                    if request.type == "task_output":
+                        await self._handle_task_output(request.task_id or "", request.max_bytes or 12000)
+                        continue
+                    if request.type == "task_stop":
+                        await self._handle_task_stop(request.task_id or "")
+                        continue
+                    if request.type == "apply_select_command":
+                        command = (request.command or "").strip().lstrip("/").lower()
+                        if command in {"provider", "model", "runtime_model", "subagent_model", "effort", "subagent_effort", "context_mode"}:
+                            await self._apply_runtime_selection_request(request)
+                            continue
+                        if self._busy:
+                            await self._emit(BackendEvent(type="error", message="Session is busy"))
+                            continue
+                        self._busy = True
+                        try:
+                            self._active_request_task = asyncio.create_task(
+                                self._apply_select_command(
+                                    command,
+                                    request.value or "",
+                                )
+                            )
+                            should_continue = await self._active_request_task
+                        except asyncio.CancelledError:
+                            should_continue = True
+                            await self._emit(
+                                BackendEvent(
+                                    type="transcript_item",
+                                    item=TranscriptItem(role="system", text="작업을 중단했습니다."),
+                                )
+                            )
+                            await self._emit(self._status_snapshot())
+                            await self._emit(BackendEvent(type="line_complete"))
+                        finally:
+                            self._active_request_task = None
+                            self._busy = False
+                        if not should_continue:
+                            await self._emit(BackendEvent(type="shutdown"))
+                            break
+                        await self._promote_next_queued_line()
+                        continue
+                    if request.type != "submit_line":
+                        await self._emit(BackendEvent(type="error", message=f"Unknown request type: {request.type}"))
                         continue
                     if self._busy:
                         await self._emit(BackendEvent(type="error", message="Session is busy"))
                         continue
+                    line = (request.line or "").strip()
+                    if not line and not request.attachments and not request.attachment_refs:
+                        continue
                     self._busy = True
                     try:
                         self._active_request_task = asyncio.create_task(
-                            self._apply_select_command(
-                                command,
-                                request.value or "",
-                            )
+                            self._process_submit_request(request)
                         )
                         should_continue = await self._active_request_task
                     except asyncio.CancelledError:
                         should_continue = True
                         await self._emit(
-                            BackendEvent(
-                                type="transcript_item",
-                                item=TranscriptItem(role="system", text="작업을 중단했습니다."),
-                            )
+                            BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text="작업을 중단했습니다."))
                         )
                         await self._emit(self._status_snapshot())
                         await self._emit(BackendEvent(type="line_complete"))
@@ -1406,48 +1442,13 @@ class ReactBackendHost:
                         await self._emit(BackendEvent(type="shutdown"))
                         break
                     await self._promote_next_queued_line()
-                    continue
-                if request.type != "submit_line":
-                    await self._emit(BackendEvent(type="error", message=f"Unknown request type: {request.type}"))
-                    continue
-                if self._busy:
-                    await self._emit(BackendEvent(type="error", message="Session is busy"))
-                    continue
-                line = (request.line or "").strip()
-                if not line and not request.attachments and not request.attachment_refs:
-                    continue
-                if self._line_may_need_mcp(line):
-                    await self._wait_for_mcp_connect_if_needed()
-                elif not self._mcp_connect_in_progress():
-                    await self._refresh_mcp_configs()
-                self._busy = True
-                try:
-                    self._active_request_task = asyncio.create_task(
-                        self._process_line(
-                            line,
-                            transcript_line=request.transcript_line,
-                            attachments=request.attachments,
-                            attachment_refs=request.attachment_refs,
-                            compose_options=request.compose_options,
-                            emit_user_transcript=not request.suppress_user_transcript,
-                            isolated_context=request.isolated_context,
-                        )
-                    )
-                    should_continue = await self._active_request_task
-                except asyncio.CancelledError:
-                    should_continue = True
-                    await self._emit(
-                        BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text="작업을 중단했습니다."))
-                    )
-                    await self._emit(self._status_snapshot())
-                    await self._emit(BackendEvent(type="line_complete"))
-                finally:
+                except Exception:
+                    log.exception("backend request failed: %s", request.type)
                     self._active_request_task = None
                     self._busy = False
-                if not should_continue:
-                    await self._emit(BackendEvent(type="shutdown"))
-                    break
-                await self._promote_next_queued_line()
+                    await self._emit(BackendEvent(type="error", message="요청 처리 중 오류가 발생했습니다. 대화는 유지됩니다."))
+                    await self._emit(BackendEvent(type="line_complete"))
+                    await self._promote_next_queued_line()
         finally:
             self._running = False
             if self._async_agent_monitor_task is not None:
@@ -1504,7 +1505,7 @@ class ReactBackendHost:
                     quiet=True,
                 )
             )
-            await self._mcp_connect_task
+            await asyncio.shield(self._mcp_connect_task)
             return
         if any(status.state == "pending" for status in self._bundle.mcp_manager.list_statuses()):
             await self._refresh_mcp_configs()
@@ -1817,9 +1818,27 @@ class ReactBackendHost:
 
     async def _cancel_current_request(self) -> None:
         task = self._active_request_task
-        if task is None or task.done():
+        if task is not None and not task.done():
+            task.cancel()
             return
-        task.cancel()
+        if self._busy:
+            return
+        retained: list[FrontendRequest] = []
+        cancelled: FrontendRequest | None = None
+        while not self._request_queue.empty():
+            request = self._request_queue.get_nowait()
+            if cancelled is None and request.type == "submit_line":
+                cancelled = request
+            else:
+                retained.append(request)
+        try:
+            if cancelled is not None:
+                await self._emit_queued_message_status(cancelled.request_id or "", "cancelled")
+                await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text="작업을 중단했습니다.")))
+                await self._emit(BackendEvent(type="line_complete"))
+        finally:
+            for request in retained:
+                self._request_queue.put_nowait(request)
 
     @staticmethod
     def _pending_line(value: str | tuple[str, str] | tuple[str, str, FrontendComposeOptions]) -> tuple[str, str]:
@@ -1916,100 +1935,110 @@ class ReactBackendHost:
             if not raw:
                 await self._request_queue.put(FrontendRequest(type="shutdown"))
                 return
-            payload = raw.decode("utf-8").strip()
-            if not payload:
+            try:
+                payload = raw.decode("utf-8").strip()
+                if not payload:
+                    continue
+                request = FrontendRequest.model_validate_json(payload)
+            except Exception:
+                log.exception("invalid frontend request")
+                await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(
+                    role="system", text="요청을 읽을 수 없습니다. 다시 시도해 주세요.", is_error=True,
+                )))
                 continue
             try:
-                request = FrontendRequest.model_validate_json(payload)
-            except Exception as exc:  # pragma: no cover - defensive protocol handling
-                await self._emit(BackendEvent(type="error", message=f"Invalid request: {exc}"))
-                continue
-            if request.type == "permission_response" and request.request_id in self._permission_requests:
-                future = self._permission_requests[request.request_id]
-                if not future.done():
-                    future.set_result(bool(request.allowed))
-                continue
-            if request.type == "question_response" and request.request_id in self._question_requests:
-                future = self._question_requests[request.request_id]
-                if future.done():
+                if request.type == "permission_response" and request.request_id in self._permission_requests:
+                    future = self._permission_requests[request.request_id]
+                    if not future.done():
+                        future.set_result(bool(request.allowed))
                     continue
-                detail = self._question_request_details.get(request.request_id, {})
-                choices = detail.get("choices")
-                answer_text = request.answer or ""
-                questions = detail.get("questions")
-                if isinstance(questions, list) and questions:
-                    from myharness.ui.question_answers import resolve_question_answers
-
-                    try:
-                        answer_text, transcript = resolve_question_answers(questions, answer_text)
-                    except ValueError as exc:
-                        await self._emit(BackendEvent(type="modal_request", modal={
-                            "kind": "question", "request_id": request.request_id,
-                            **detail, "error": str(exc),
-                        }))
+                if request.type == "question_response" and request.request_id in self._question_requests:
+                    future = self._question_requests[request.request_id]
+                    if future.done():
                         continue
-                else:
-                    transcript = _format_question_answer_transcript(
-                        str(detail.get("question") or ""), answer_text,
-                        choices if isinstance(choices, list) else [],
+                    detail = self._question_request_details.get(request.request_id, {})
+                    choices = detail.get("choices")
+                    answer_text = request.answer or ""
+                    questions = detail.get("questions")
+                    if isinstance(questions, list) and questions:
+                        from myharness.ui.question_answers import resolve_question_answers
+
+                        try:
+                            answer_text, transcript = resolve_question_answers(questions, answer_text)
+                        except ValueError as exc:
+                            await self._emit(BackendEvent(type="modal_request", modal={
+                                "kind": "question", "request_id": request.request_id,
+                                **detail, "error": str(exc),
+                            }))
+                            continue
+                    else:
+                        transcript = _format_question_answer_transcript(
+                            str(detail.get("question") or ""), answer_text,
+                            choices if isinstance(choices, list) else [],
+                        )
+                    await self._emit(
+                        BackendEvent(
+                            type="transcript_item",
+                            item=TranscriptItem(
+                                role="user",
+                                text=transcript,
+                                kind="question_answer",
+                            ),
+                        )
                     )
-                await self._emit(
-                    BackendEvent(
-                        type="transcript_item",
-                        item=TranscriptItem(
-                            role="user",
-                            text=transcript,
-                            kind="question_answer",
-                        ),
-                    )
-                )
-                if not future.done():
-                    future.set_result(answer_text)
-                if questions:
+                    if not future.done():
+                        future.set_result(answer_text)
                     await self._emit(BackendEvent(type="modal_request", modal={
                         "kind": "question", "request_id": request.request_id, "status": "answered",
                     }))
-                continue
-            if request.type == "cancel_current":
-                await self._cancel_current_request()
-                continue
-            if request.type == "cancel_queued_line":
-                await self._cancel_queued_line(request.request_id or "")
-                continue
-            if request.type == "task_output":
-                await self._handle_task_output(request.task_id or "", request.max_bytes or 12000)
-                continue
-            if request.type == "select_command" and request.command == "runtime-picker":
-                # Catalog reads may run during generation. Runtime mutations stay
-                # in the serial request queue, after the active turn completes.
-                await self._handle_select_command("runtime-picker")
-                continue
-            if request.type == "steer_line":
-                if self._busy:
-                    if self._final_answer_emitted:
-                        await self._queue_follow_up_line(request.line or "", request.request_id or "", request.compose_options)
+                    continue
+                if request.type == "cancel_current":
+                    await self._cancel_current_request()
+                    continue
+                if request.type == "cancel_queued_line":
+                    await self._cancel_queued_line(request.request_id or "")
+                    continue
+                if request.type == "task_output":
+                    await self._handle_task_output(request.task_id or "", request.max_bytes or 12000)
+                    continue
+                if request.type == "select_command" and request.command == "runtime-picker":
+                    # Catalog reads may run during generation. Runtime mutations stay
+                    # in the serial request queue, after the active turn completes.
+                    await self._handle_select_command("runtime-picker")
+                    continue
+                if request.type == "steer_line":
+                    if self._busy:
+                        if self._final_answer_emitted:
+                            await self._queue_follow_up_line(request.line or "", request.request_id or "", request.compose_options)
+                        else:
+                            await self._queue_steering_line(request.line or "", request.request_id or "", request.compose_options)
                     else:
-                        await self._queue_steering_line(request.line or "", request.request_id or "", request.compose_options)
-                else:
-                    await self._emit_queued_message_status(request.request_id or "", "delivered")
-                    await self._request_queue.put(FrontendRequest(type="submit_line", line=request.line or "", compose_options=request.compose_options))
-                continue
-            if request.type == "queue_line":
-                if self._busy:
-                    await self._queue_line_after_current(request.line or "", request.request_id or "", request.compose_options)
-                else:
-                    await self._emit_queued_message_status(request.request_id or "", "delivered")
-                    await self._request_queue.put(
-                        FrontendRequest(
-                            type="submit_line",
-                            line=request.line or "",
-                            attachments=request.attachments,
-                            attachment_refs=request.attachment_refs,
-                            compose_options=request.compose_options,
+                        await self._emit_queued_message_status(request.request_id or "", "delivered")
+                        await self._request_queue.put(FrontendRequest(type="submit_line", line=request.line or "", compose_options=request.compose_options))
+                    continue
+                if request.type == "queue_line":
+                    if self._busy:
+                        await self._queue_line_after_current(request.line or "", request.request_id or "", request.compose_options)
+                    else:
+                        await self._emit_queued_message_status(request.request_id or "", "delivered")
+                        await self._request_queue.put(
+                            FrontendRequest(
+                                type="submit_line",
+                                line=request.line or "",
+                                attachments=request.attachments,
+                                attachment_refs=request.attachment_refs,
+                                compose_options=request.compose_options,
+                            )
                         )
-                    )
-                continue
-            await self._request_queue.put(request)
+                    continue
+                await self._request_queue.put(request)
+            except Exception:
+                # A failed control request must not stop stdin consumption or
+                # complete/reset an unrelated generation already in progress.
+                log.exception("frontend control request failed: %s", request.type)
+                await self._emit(BackendEvent(type="transcript_item", item=TranscriptItem(
+                    role="system", text="요청 처리 중 오류가 발생했습니다. 다시 시도해 주세요.", is_error=True,
+                )))
 
     async def _process_line(
         self,
@@ -2039,6 +2068,14 @@ class ReactBackendHost:
             for item in attachment_refs
             if str(getattr(item, "path", "") or "").strip()
         ]
+        inline_image_count = len(image_blocks)
+        try:
+            if client_attachment_refs:
+                image_blocks.extend(await asyncio.to_thread(uploaded_image_blocks, self._bundle.cwd, client_attachment_refs))
+        except ValueError as exc:
+            await self._emit(BackendEvent(type="error", message=str(exc)))
+            await self._emit(BackendEvent(type="line_complete"))
+            return True
         prompt_notes = [
             note
             for note in (
@@ -2068,8 +2105,8 @@ class ReactBackendHost:
             content.extend(image_blocks)
             effective_prompt = ConversationMessage.from_user_content(content)
         transcript_text = transcript_line or line
-        if image_blocks:
-            suffix = f" [image attachments: {len(image_blocks)}]"
+        if inline_image_count:
+            suffix = f" [image attachments: {inline_image_count}]"
             transcript_text = f"{transcript_text}{suffix}" if transcript_text else suffix.strip()
         if client_attachment_refs:
             names = ", ".join(
@@ -2095,6 +2132,12 @@ class ReactBackendHost:
         user_transcript = TranscriptItem(role="user", text=transcript_text, images=images, display_text=display_text)
         if not attachments and not attachment_refs and first_token == "/help":
             return await self._emit_command_help_modal(line)
+        if not image_blocks and first_token == "/clear":
+            await self._handle_start_new_session("", title="새 채팅")
+            await self._emit(self._status_snapshot())
+            await self._handle_list_sessions()
+            await self._emit(BackendEvent(type="line_complete", quiet=quiet))
+            return True
         is_internal_task_notification = (
             not emit_user_transcript
             and isinstance(effective_prompt, str)
@@ -2501,8 +2544,7 @@ class ReactBackendHost:
                 )
                 self._bundle.engine.tool_metadata["compose_artifact_versioning"] = True
             if (
-                first_token != "/clear"
-                and not first_token.startswith("/")
+                not first_token.startswith("/")
                 and not quiet
                 and not is_internal_task_notification
             ):
@@ -2559,24 +2601,19 @@ class ReactBackendHost:
             workflow_duration_metadata = {"workflow_duration_seconds": workflow_duration_seconds}
             self._bundle.engine.tool_metadata["workflow_duration_seconds"] = workflow_duration_seconds
             self._record_history_event(BackendEvent(type="line_complete", compact_metadata=workflow_duration_metadata))
-            if first_token != "/clear" and not quiet:
+            if not quiet:
                 await self._save_current_session_snapshot()
             await self._emit(self._status_snapshot())
             await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
             self._ensure_swarm_status_monitor()
-            if first_token == "/clear":
-                session_id = self._start_new_saved_session()
-                await self._save_empty_session_snapshot("새 채팅")
-                await self._emit(BackendEvent(type="active_session", value=session_id))
-                await self._handle_list_sessions()
-            elif first_token == "/resume":
+            if first_token == "/resume":
                 parts = line.strip().split(maxsplit=1)
                 if len(parts) > 1 and parts[1].strip():
                     self._set_saved_session_id(parts[1].strip().split()[0])
             if first_token in {"/reload-plugins", "/skills"}:
                 await self._emit(BackendEvent.skills_snapshot(self._skill_snapshots()))
             self._ensure_async_agent_monitor()
-            if first_token != "/clear" and not quiet and not is_internal_task_notification:
+            if not quiet and not is_internal_task_notification:
                 await self._maybe_update_session_title()
             await self._emit(
                 BackendEvent(
@@ -2813,13 +2850,7 @@ class ReactBackendHost:
 
     def _reset_session_scoped_metadata(self) -> None:
         assert self._bundle is not None
-        for key in (
-            "session_title",
-            "session_title_source",
-            "session_title_user_edited",
-            "workflow_duration_seconds",
-            "branch_origin",
-        ):
+        for key in _SESSION_SCOPED_METADATA_KEYS:
             self._bundle.engine.tool_metadata.pop(key, None)
 
     def _start_new_saved_session(self, session_id: str | None = None) -> str:
@@ -2830,14 +2861,14 @@ class ReactBackendHost:
         self._history_events = []
         return session_id
 
-    async def _handle_start_new_session(self, session_id: str) -> None:
+    async def _handle_start_new_session(self, session_id: str, *, title: str = "새 대화") -> None:
         assert self._bundle is not None
+        new_session_id = await self._save_empty_session_snapshot(title, session_id)
         self._bundle.engine.clear()
-        new_session_id = self._start_new_saved_session(session_id)
-        await self._save_empty_session_snapshot("새 대화")
+        self._start_new_saved_session(new_session_id)
         await self._emit(BackendEvent(type="clear_transcript"))
         await self._emit(BackendEvent(type="active_session", value=new_session_id))
-        await self._emit(BackendEvent(type="session_title", message="새 대화"))
+        await self._emit(BackendEvent(type="session_title", message=title))
 
     def _restore_session_tool_metadata(self, snapshot: dict[str, object]) -> None:
         assert self._bundle is not None
@@ -2851,10 +2882,17 @@ class ReactBackendHost:
         if isinstance(snapshot_metadata, dict):
             metadata.update(snapshot_metadata)
 
-    async def _save_empty_session_snapshot(self, title: str) -> None:
+    async def _save_empty_session_snapshot(self, title: str, session_id: str) -> str:
         assert self._bundle is not None
-        metadata = dict(self._bundle.engine.tool_metadata)
+        requested_id = str(session_id or "").strip().lower()
+        new_session_id = requested_id if _SAVED_SESSION_ID_RE.fullmatch(requested_id) else uuid4().hex[:12]
+        metadata = {
+            key: value for key, value in self._bundle.engine.tool_metadata.items()
+            if key not in _SESSION_SCOPED_METADATA_KEYS
+        }
+        metadata["session_id"] = new_session_id
         metadata["session_title"] = title
+        empty_usage = CostTracker()
         if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
             metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
         await asyncio.to_thread(
@@ -2862,13 +2900,14 @@ class ReactBackendHost:
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,
             system_prompt=self._bundle.engine.system_prompt,
-            messages=self._bundle.engine.messages,
-            usage=self._bundle.engine.total_usage,
-            session_id=self._bundle.session_id,
+            messages=[],
+            usage=empty_usage.total,
+            session_id=new_session_id,
             tool_metadata=metadata,
             history_events=[],
-            usage_accounting=self._bundle.engine.usage_accounting,
+            usage_accounting=empty_usage.accounting,
         )
+        return new_session_id
 
     async def _save_current_session_snapshot(self) -> None:
         assert self._bundle is not None
@@ -3402,13 +3441,38 @@ class ReactBackendHost:
         await self._emit(self._status_snapshot())
         await self._emit(BackendEvent(type="line_complete", quiet=True))
 
-    async def _restore_history_snapshot(self, session_id: str) -> None:
+    async def _process_submit_request(self, request: FrontendRequest) -> bool:
+        if request.resume_session_id:
+            try:
+                restored = await self._restore_history_snapshot(request.resume_session_id, complete=False)
+            except Exception:
+                await self._emit(BackendEvent(type="error", message="이전 대화를 복원하지 못했습니다. 메시지를 실행하지 않았습니다."))
+                await self._emit(BackendEvent(type="line_complete"))
+                return True
+            if not restored:
+                return True
+        line = (request.line or "").strip()
+        if self._line_may_need_mcp(line):
+            await self._wait_for_mcp_connect_if_needed()
+        elif not self._mcp_connect_in_progress():
+            await self._refresh_mcp_configs()
+        return await self._process_line(
+            line,
+            transcript_line=request.transcript_line,
+            attachments=request.attachments,
+            attachment_refs=request.attachment_refs,
+            compose_options=request.compose_options,
+            emit_user_transcript=bool(request.resume_session_id) or not request.suppress_user_transcript,
+            isolated_context=request.isolated_context,
+        )
+
+    async def _restore_history_snapshot(self, session_id: str, *, complete: bool = True) -> bool:
         assert self._bundle is not None
         selected = session_id.strip()
         if not selected:
             await self._emit(BackendEvent(type="error", message="세션 ID가 없습니다."))
             await self._emit(BackendEvent(type="line_complete"))
-            return
+            return False
         snapshot = await asyncio.to_thread(
             self._bundle.session_backend.load_by_id,
             self._bundle.cwd,
@@ -3417,7 +3481,7 @@ class ReactBackendHost:
         if snapshot is None:
             await self._emit(BackendEvent(type="error", message=f"세션을 찾을 수 없습니다: {selected}"))
             await self._emit(BackendEvent(type="line_complete"))
-            return
+            return False
         messages = sanitize_conversation_messages(
             [ConversationMessage.model_validate(item) for item in snapshot.get("messages", [])]
         )
@@ -3460,7 +3524,9 @@ class ReactBackendHost:
         await self._emit(self._status_snapshot())
         await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
         self._ensure_async_agent_monitor()
-        await self._emit(BackendEvent(type="line_complete"))
+        if complete:
+            await self._emit(BackendEvent(type="line_complete"))
+        return True
 
     def _history_events_from_messages(self, messages: list[ConversationMessage]) -> list[dict[str, object]]:
         events: list[dict[str, object]] = []
@@ -4054,6 +4120,13 @@ class ReactBackendHost:
                 return False
             finally:
                 self._permission_requests.pop(request_id, None)
+                answered = future.done() and not future.cancelled()
+                if not future.done():
+                    future.cancel()
+                await self._emit(BackendEvent(type="modal_request", modal={
+                    "kind": "permission", "request_id": request_id,
+                    "status": "answered" if answered else "cancelled",
+                }))
 
     def _question_wait_elapsed(self, now: float) -> float:
         active = max(0.0, now - self._question_wait_started_at) if self._question_wait_started_at is not None else 0.0
@@ -4100,7 +4173,7 @@ class ReactBackendHost:
                 self._question_wait_seconds = self._question_wait_elapsed(time.monotonic())
                 self._question_wait_started_at = None
             self._question_request_details.pop(request_id, None)
-            if normalized_questions and future.cancelled():
+            if future.cancelled():
                 await self._emit(BackendEvent(type="modal_request", modal={
                     "kind": "question", "request_id": request_id, "status": "cancelled",
                 }))

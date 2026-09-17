@@ -1,3 +1,5 @@
+import { useAsyncAction } from "../hooks/useAsyncAction";
+import { isImeKey } from "../utils/keyboard";
 import { createClientId } from "../utils/ids";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, FormEvent, KeyboardEvent, MouseEvent } from "react";
@@ -221,6 +223,7 @@ export function Composer() {
   const [analysisDepth, setAnalysisDepth] = useState<"auto" | "brief" | "standard" | "deep">("auto");
   const [answerLength, setAnswerLength] = useState<"auto" | "brief" | "standard" | "detailed">("auto");
   const [enhancing, setEnhancing] = useState(false);
+  const [cancelAwaitingScope, setCancelAwaitingScope] = useState<string | null>(null);
   const [enhancementError, setEnhancementError] = useState("");
   const [originalPrompt, setOriginalPrompt] = useState<string | null>(null);
   const [enhancementOptions, setEnhancementOptions] = useState(["structure", "evidence", "missing_context", "output_format"]);
@@ -229,11 +232,22 @@ export function Composer() {
   const latestDraft = useRef("");
   const [uploadedAttachments, setUploadedAttachments] = useState<UploadedClientAttachment[]>([]);
   const [referenceFiles, setReferenceFiles] = useState<ArtifactSummary[]>([]);
-  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [pendingAttachmentCount, setPendingAttachmentCount] = useState(0);
+  const pendingAttachmentCountRef = useRef(0);
+  const uploadingFiles = pendingAttachmentCount > 0;
   const [outputSurface, setOutputSurface] = useState<OutputSurface>("default");
   const [artifactAction, setArtifactAction] = useState<ArtifactAction>("auto");
   const [lengthPreset, setLengthPreset] = useState<LengthPreset>("default");
   const [extraLongTarget, setExtraLongTarget] = useState<number>(24_000);
+  const [failedSubmission, setFailedSubmission] = useState<{
+    sessionId: string;
+    historyId: string | null;
+    pendingFreshChat: boolean;
+    viewRevision: number;
+    composer: typeof state.composer;
+    uploaded: UploadedClientAttachment[];
+    panel: { outputSurface: OutputSurface; artifactAction: ArtifactAction; lengthPreset: LengthPreset; extraLongTarget: number; analysisDepth: typeof analysisDepth; answerLength: typeof answerLength };
+  } | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const composerBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -241,6 +255,7 @@ export function Composer() {
   const activeSuggestionRef = useRef<HTMLButtonElement | null>(null);
   const suggestionMenuRef = useRef<HTMLDivElement | null>(null);
   const uploadedAttachmentsRef = useRef<UploadedClientAttachment[]>([]);
+  const attachmentGeneration = useRef(0);
   const composerHeightRef = useRef(0);
   const composerMetricFrameRef = useRef(0);
   const composerFollowFrameRef = useRef(0);
@@ -248,12 +263,16 @@ export function Composer() {
   const submittingRef = useRef(false);
   const currentSessionRef = useRef(state.sessionId);
   currentSessionRef.current = state.sessionId;
+  const currentViewRevision = useRef(state.conversationViewRevision);
+  currentViewRevision.current = state.conversationViewRevision;
   const draft = state.composer.draft;
   latestDraft.current = draft;
   const hasPayload = Boolean(draft.trim() || state.composer.attachments.length || uploadedAttachments.length || state.composer.pastedTexts.length);
   const hasAnyAttachment = Boolean(state.composer.attachments.length || uploadedAttachments.length);
+  const cancellationScope = JSON.stringify([state.sessionId, state.conversationViewRevision, state.workflowAnchorMessageId, state.workflowStartedAtMs]);
+  const waitingForCancellation = state.busy && cancelAwaitingScope === cancellationScope;
   const canSend = Boolean(state.sessionId && hasPayload && !state.busy && !uploadingFiles && !enhancing);
-  const canSteer = Boolean(state.sessionId && state.busy && fullLine().trim() && !hasAnyAttachment);
+  const canSteer = Boolean(state.sessionId && state.busy && !waitingForCancellation && !uploadingFiles && fullLine().trim() && !hasAnyAttachment);
   const showStop = Boolean(state.busy && !canSteer);
   const typedSuggestionToken = useMemo(() => activeSuggestionToken(draft, cursorOffset), [draft, cursorOffset]);
   const suggestionKey = JSON.stringify([draft, cursorOffset]);
@@ -314,6 +333,7 @@ export function Composer() {
   useEffect(() => {
     if (!state.busy) {
       submittingRef.current = false;
+      setCancelAwaitingScope(null);
     }
   }, [state.busy, state.sessionId]);
 
@@ -322,12 +342,18 @@ export function Composer() {
   }, [uploadedAttachments]);
 
   useEffect(() => () => {
+    attachmentGeneration.current += 1;
     for (const attachment of uploadedAttachmentsRef.current) {
       if (attachment.previewUrl) {
         URL.revokeObjectURL(attachment.previewUrl);
       }
     }
   }, []);
+
+  useEffect(() => {
+    resetExpandedPanel();
+    return () => { attachmentGeneration.current += 1; };
+  }, [state.sessionId, state.workspacePath, state.conversationViewRevision]);
 
   useEffect(() => {
     resetExpandedPanel();
@@ -345,7 +371,27 @@ export function Composer() {
     setOriginalPrompt(null);
     setEnhancementError("");
     return () => { enhancementGeneration.current += 1; };
-  }, [state.sessionId, state.workspacePath]);
+  }, [state.sessionId, state.workspacePath, state.conversationViewRevision]);
+
+  useEffect(() => {
+    if (!failedSubmission) return;
+    setFailedSubmission(null);
+    if (state.sessionId !== failedSubmission.sessionId || state.activeHistoryId !== failedSubmission.historyId
+      || state.pendingFreshChat !== failedSubmission.pendingFreshChat || state.conversationViewRevision !== failedSubmission.viewRevision) return;
+    if (state.composer.draft || state.composer.attachments.length || state.composer.pastedTexts.length
+      || uploadedAttachmentsRef.current.length || uploadingFiles) return;
+    dispatch({ type: "set_draft", value: failedSubmission.composer.draft });
+    for (const attachment of failedSubmission.composer.attachments) dispatch({ type: "add_attachment", attachment });
+    for (const text of failedSubmission.composer.pastedTexts) dispatch({ type: "add_pasted_text", text });
+    // The original object URLs were revoked on submission; server paths remain valid.
+    setUploadedAttachments(failedSubmission.uploaded.map(({ previewUrl: _previewUrl, ...attachment }) => attachment));
+    setOutputSurface(failedSubmission.panel.outputSurface);
+    setArtifactAction(failedSubmission.panel.artifactAction);
+    setLengthPreset(failedSubmission.panel.lengthPreset);
+    setExtraLongTarget(failedSubmission.panel.extraLongTarget);
+    setAnalysisDepth(failedSubmission.panel.analysisDepth);
+    setAnswerLength(failedSubmission.panel.answerLength);
+  }, [failedSubmission, state.sessionId, state.activeHistoryId, state.pendingFreshChat, state.conversationViewRevision, state.composer, uploadingFiles, dispatch]);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -517,13 +563,15 @@ export function Composer() {
   }
 
   function resetExpandedPanel() {
+    attachmentGeneration.current += 1;
     for (const attachment of uploadedAttachments) {
       if (attachment.previewUrl) {
         URL.revokeObjectURL(attachment.previewUrl);
       }
     }
     setUploadedAttachments([]);
-    setUploadingFiles(false);
+    pendingAttachmentCountRef.current = 0;
+    setPendingAttachmentCount(0);
     setOutputSurface("default");
     setArtifactAction("auto");
     setLengthPreset("default");
@@ -603,18 +651,24 @@ export function Composer() {
     return Object.keys(options).length ? options : undefined;
   }
 
+  function beginAttachmentPreparation() {
+    pendingAttachmentCountRef.current += 1;
+    setPendingAttachmentCount(pendingAttachmentCountRef.current);
+  }
+
+  function finishAttachmentPreparation(generation: number) {
+    if (generation !== attachmentGeneration.current) return;
+    pendingAttachmentCountRef.current -= 1;
+    setPendingAttachmentCount(pendingAttachmentCountRef.current);
+  }
+
   async function handleClientFileInput(event: ChangeEvent<HTMLInputElement>) {
     const files = [...(event.currentTarget.files || [])];
     event.currentTarget.value = "";
     if (!files.length) return;
-    setUploadingFiles(true);
+    const generation = attachmentGeneration.current;
+    beginAttachmentPreparation();
     try {
-      const previews = new Map<string, string>();
-      for (const file of files) {
-        if (file.type.startsWith("image/")) {
-          previews.set(`${file.name}\u0000${file.size}\u0000${file.lastModified}`, URL.createObjectURL(file));
-        }
-      }
       const result = await uploadClientAttachments({
         sessionId: state.sessionId,
         clientId: state.clientId,
@@ -622,18 +676,18 @@ export function Composer() {
         workspaceName: state.workspaceName || undefined,
         files,
       });
+      if (generation !== attachmentGeneration.current) return;
       const nextAttachments = result.attachments.map((attachment, index) => {
         const source = files[index];
-        const previewUrl = source
-          ? previews.get(`${source.name}\u0000${source.size}\u0000${source.lastModified}`)
-          : undefined;
+        const previewUrl = source?.type.startsWith("image/") ? URL.createObjectURL(source) : undefined;
         return previewUrl ? { ...attachment, previewUrl } : attachment;
       });
       setUploadedAttachments((current) => [...current, ...nextAttachments]);
     } catch (error) {
+      if (generation !== attachmentGeneration.current) return;
       dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
     } finally {
-      setUploadingFiles(false);
+      finishAttachmentPreparation(generation);
     }
   }
 
@@ -648,6 +702,7 @@ export function Composer() {
   }
 
   async function addImageFile(file: File) {
+    const generation = attachmentGeneration.current;
     if (!file.type.startsWith("image/")) {
       dispatch({ type: "open_modal", modal: { kind: "error", message: "이미지 파일만 첨부할 수 있습니다." } });
       return;
@@ -656,10 +711,16 @@ export function Composer() {
       dispatch({ type: "open_modal", modal: { kind: "error", message: "이미지는 10MB 이하만 첨부할 수 있습니다." } });
       return;
     }
+    beginAttachmentPreparation();
     try {
-      dispatch({ type: "add_attachment", attachment: await fileToAttachment(file) });
+      const attachment = await fileToAttachment(file);
+      if (generation !== attachmentGeneration.current) return;
+      dispatch({ type: "add_attachment", attachment });
     } catch (error) {
+      if (generation !== attachmentGeneration.current) return;
       dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
+    } finally {
+      finishAttachmentPreparation(generation);
     }
   }
 
@@ -727,21 +788,29 @@ export function Composer() {
     window.dispatchEvent(new Event(messageBottomFollowEvent));
   }
 
+  const currentCancellationScope = useRef(cancellationScope);
+  currentCancellationScope.current = cancellationScope;
+  const cancellation = useAsyncAction(cancellationScope);
+  const busyDelivery = useAsyncAction(JSON.stringify([state.sessionId, state.conversationViewRevision]));
+
   async function cancelCurrent() {
-    if (!state.sessionId) return;
-    try {
-      await cancelMessage(state.sessionId, state.clientId);
-      if (currentSessionRef.current !== state.sessionId) return;
-      dispatch({ type: "set_busy", value: false });
-    } catch (error) {
-      if (currentSessionRef.current !== state.sessionId) return;
-      dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
-    }
+    if (waitingForCancellation) return;
+    return cancellation.run(async () => {
+      if (!state.sessionId) return;
+      setCancelAwaitingScope(cancellationScope);
+      try {
+        // Delivery acknowledgement is not completion; the event stream clears busy.
+        await cancelMessage(state.sessionId, state.clientId);
+      } catch (error) {
+        if (currentCancellationScope.current !== cancellationScope) return;
+        setCancelAwaitingScope(null);
+        dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
+      }
+    });
   }
 
   async function togglePlanMode() {
     if (!state.sessionId) return;
-    const currentDraft = state.composer.draft;
     const previousPermissionMode = state.permissionMode;
     const nextPermissionMode = isPlanMode(previousPermissionMode) ? "full_auto" : "plan";
     dispatch({ type: "set_permission_mode", value: nextPermissionMode });
@@ -753,23 +822,21 @@ export function Composer() {
         attachments: [],
         suppressUserTranscript: true,
       });
-      if (currentSessionRef.current !== state.sessionId) return;
-      dispatch({ type: "set_draft", value: currentDraft });
     } catch (error) {
-      if (currentSessionRef.current !== state.sessionId) return;
+      if (currentSessionRef.current !== state.sessionId || currentViewRevision.current !== state.conversationViewRevision) return;
       dispatch({ type: "set_permission_mode", value: previousPermissionMode });
       dispatch({
         type: "backend_event",
         event: { type: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      if (currentSessionRef.current === state.sessionId) submittingRef.current = false;
+      if (currentSessionRef.current === state.sessionId && currentViewRevision.current === state.conversationViewRevision) submittingRef.current = false;
     }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (enhancing || uploadingFiles) return;
+    if (waitingForCancellation || enhancing || pendingAttachmentCountRef.current > 0 || (busyDelivery.pending && hasPayload)) return;
     const line = fullLine();
     const quietHelpCommand = /^\/help(?:\s|$)/i.test(line.trim()) && !hasAnyAttachment;
     if (quietHelpCommand) {
@@ -790,10 +857,12 @@ export function Composer() {
         void sendMessage({
           sessionId: state.sessionId,
           clientId: state.clientId,
+          workspacePath: state.workspacePath || undefined,
           line: "/help",
           attachments: [],
           suppressUserTranscript: true,
         }).catch((error: unknown) => {
+          if (currentViewRevision.current !== state.conversationViewRevision) return;
           dispatch({
             type: "backend_event",
             sessionId: state.sessionId || undefined,
@@ -851,20 +920,13 @@ export function Composer() {
     setOriginalPrompt(null);
 
     try {
-      if (state.historyReadOnly && state.activeHistoryId) {
-        await sendBackendRequest(targetSessionId, state.clientId, {
-          type: "apply_select_command",
-          command: "resume",
-          value: state.activeHistoryId,
-        });
-      }
       if (state.pendingFreshChat) {
         const session = await startSession({
           clientId: state.clientId,
           cwd: state.workspacePath || undefined,
           ...runtimePreferencesFromState(state),
         });
-        if (currentSessionRef.current !== targetSessionId) return;
+        if (currentSessionRef.current !== targetSessionId || currentViewRevision.current !== state.conversationViewRevision) return;
         targetSessionId = session.sessionId;
         dispatch({
           type: "session_started",
@@ -879,17 +941,19 @@ export function Composer() {
       const payload = {
         sessionId: targetSessionId,
         clientId: state.clientId,
+        workspacePath: state.workspacePath || undefined,
         line,
         attachments,
         attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
         composeOptions,
         suppressUserTranscript: true,
         systemPrompt: state.systemPrompt.trim() || undefined,
+        resumeSessionId: state.historyReadOnly && !state.pendingFreshChat ? state.activeHistoryId || undefined : undefined,
       };
       try {
         await sendMessage(payload);
       } catch (error) {
-        if (!isUnknownSessionError(error) || currentSessionRef.current !== targetSessionId) {
+        if (!isUnknownSessionError(error) || currentSessionRef.current !== targetSessionId || currentViewRevision.current !== state.conversationViewRevision) {
           throw error;
         }
         const session = await startSession({
@@ -897,7 +961,7 @@ export function Composer() {
           cwd: state.workspacePath || undefined,
           ...runtimePreferencesFromState(state),
         });
-        if (currentSessionRef.current !== targetSessionId) return;
+        if (currentSessionRef.current !== targetSessionId || currentViewRevision.current !== state.conversationViewRevision) return;
         targetSessionId = session.sessionId;
         dispatch({
           type: "session_started",
@@ -908,9 +972,23 @@ export function Composer() {
         if (session.workspace) {
           dispatch({ type: "set_workspace", workspace: session.workspace });
         }
-        await sendMessage({ ...payload, sessionId: session.sessionId });
+        await sendMessage({
+          ...payload,
+          sessionId: session.sessionId,
+          resumeSessionId: !state.pendingFreshChat ? state.activeHistoryId || undefined : undefined,
+        });
       }
     } catch (error) {
+      if (currentViewRevision.current !== state.conversationViewRevision) return;
+      setFailedSubmission({
+        sessionId: targetSessionId,
+        historyId: state.activeHistoryId,
+        pendingFreshChat: targetSessionId === state.sessionId && state.pendingFreshChat,
+        viewRevision: state.conversationViewRevision,
+        composer: state.composer,
+        uploaded: attachmentRefs,
+        panel: { outputSurface, artifactAction, lengthPreset, extraLongTarget, analysisDepth, answerLength },
+      });
       dispatch({
         type: "backend_event",
         sessionId: targetSessionId,
@@ -920,52 +998,65 @@ export function Composer() {
   }
 
   async function sendBusyLine(mode: "queue" | "steer") {
-    if (!state.sessionId) return;
+    if (waitingForCancellation || pendingAttachmentCountRef.current > 0) return;
+    const sessionId = state.sessionId;
+    if (!sessionId) return;
     const line = fullLine();
     if (!line && !hasAnyAttachment) {
       await cancelCurrent();
       return;
     }
-    if (hasAnyAttachment) {
+    return busyDelivery.run(async () => {
+      if (hasAnyAttachment) {
+        dispatch({
+          type: "open_modal",
+          modal: { kind: "error", message: "진행 중인 답변에는 텍스트만 보낼 수 있습니다. 첨부파일은 답변이 끝난 뒤 보내주세요." },
+        });
+        return;
+      }
+      const requestId = createClientId();
       dispatch({
-        type: "open_modal",
-        modal: { kind: "error", message: "진행 중인 답변에는 텍스트만 보낼 수 있습니다. 첨부파일은 답변이 끝난 뒤 보내주세요." },
+        type: "append_message",
+        message: {
+          id: requestId,
+          role: "user",
+          text: line,
+          kind: mode === "queue" ? "queued" : "steering",
+          pendingRequestId: requestId,
+        },
       });
-      return;
-    }
-    const requestId = createClientId();
-    dispatch({
-      type: "append_message",
-      message: {
-        id: requestId,
-        role: "user",
-        text: line,
-        kind: mode === "queue" ? "queued" : "steering",
-        pendingRequestId: requestId,
-      },
+      dispatch({ type: "clear_composer" });
+      try {
+        await sendMessage({
+          sessionId,
+          clientId: state.clientId,
+          workspacePath: state.workspacePath || undefined,
+          line,
+          attachments: [],
+          mode,
+          composeOptions: composeOptionsPayload(),
+          suppressUserTranscript: true,
+          requestId,
+        });
+      } catch (error) {
+        if (currentSessionRef.current !== sessionId || currentViewRevision.current !== state.conversationViewRevision) return;
+        dispatch({
+          type: "backend_event",
+          sessionId,
+          event: { type: "queued_message_status", request_id: requestId, status: "cancelled" },
+        });
+        if (!latestDraft.current.trim()) dispatch({ type: "set_draft", value: line });
+        dispatch({ type: "open_modal", modal: { kind: "error", message: error instanceof Error ? error.message : String(error) } });
+      }
     });
-    dispatch({ type: "clear_composer" });
-    try {
-      await sendMessage({
-        sessionId: state.sessionId,
-        clientId: state.clientId,
-        line,
-        attachments: [],
-        mode,
-        composeOptions: composeOptionsPayload(),
-        suppressUserTranscript: true,
-        requestId,
-      });
-    } catch (error) {
-      dispatch({
-        type: "backend_event",
-        sessionId: state.sessionId,
-        event: { type: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (isImeKey(event.nativeEvent)) return;
+    if (event.key === "Enter" && !event.shiftKey && (event.repeat || waitingForCancellation || pendingAttachmentCountRef.current > 0 || (busyDelivery.pending && hasPayload))) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
       event.preventDefault();
       if (!state.busy) {
@@ -1169,7 +1260,8 @@ export function Composer() {
             id="sendButton"
             className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}
             type="submit"
-            disabled={state.busy ? !showStop && !canSteer : !canSend}
+            aria-busy={waitingForCancellation || cancellation.pending || (busyDelivery.pending && canSteer)}
+            disabled={waitingForCancellation || cancellation.pending || (busyDelivery.pending && canSteer) || (state.busy ? !showStop && !canSteer : !canSend)}
             aria-label={showStop ? "작업 중단" : canSteer ? "스티어링 보내기" : "메시지 보내기"}
           >
             {showStop ? (

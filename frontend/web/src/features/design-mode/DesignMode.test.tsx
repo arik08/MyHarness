@@ -114,6 +114,19 @@ describe("global design mode", () => {
     expect(document.documentElement.dataset.designMode).toBeUndefined();
   });
 
+  it("changes the actual design before a delayed save and restores it on failure", async () => {
+    let reject!: (error: Error) => void;
+    vi.mocked(postJson).mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
+    render(<Fixture />);
+    await ready();
+    fireEvent.click(screen.getByRole("switch"));
+    expect(document.documentElement.dataset.designMode).toBe("improved");
+    expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("true");
+    await act(async () => reject(new Error("offline")));
+    expect(document.documentElement.dataset.designMode).toBeUndefined();
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
   it("supports keyboard changes", async () => {
     render(<Fixture />);
     await ready();

@@ -97,6 +97,7 @@ export type ComposerState = {
 export type AppState = {
   sessionId: string | null;
   sessionReplayKey: number;
+  conversationViewRevision: number;
   clientId: string;
   ready: boolean;
   busy: boolean;

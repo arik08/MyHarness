@@ -46,6 +46,354 @@ function AttachmentEchoProbe() {
 }
 
 describe("Composer", () => {
+  it("waits for backend completion after cancel acknowledgement before sending the next message", async () => {
+    function Complete() {
+      const { dispatch } = useAppState();
+      return <button onClick={() => dispatch({ type: "backend_event", event: { type: "line_complete" } })}>Backend stopped</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", busy: true }}><Composer /><BusyProbe /><Complete /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "작업 중단" }));
+    expect(cancelMessage).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("busy-state").textContent).toBe("true");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Next request" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", ctrlKey: true });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Next request");
+    fireEvent.click(screen.getByText("Backend stopped"));
+    await act(async () => fireEvent.submit(document.querySelector("form")!));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ line: "Next request" }));
+    expect(vi.mocked(sendMessage).mock.calls[0][0].mode).toBeUndefined();
+  });
+
+  it("releases the cancellation wait if the cancellation request fails", async () => {
+    vi.mocked(cancelMessage).mockRejectedValueOnce(new Error("Cancel delivery failed"));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", busy: true }}><Composer /><BusyProbe /></AppStateProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "작업 중단" }));
+    expect(screen.getByTestId("busy-state").textContent).toBe("true");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Updated instruction" } });
+    expect((screen.getByRole("button", { name: "스티어링 보내기" }) as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => fireEvent.submit(document.querySelector("form")!));
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ line: "Updated instruction", mode: "steer" }));
+  });
+
+  it.each([false, true])("does not cancel a running response when Enter repeats after submission (ctrl %s)", async (ctrlKey) => {
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", busy: true, composer: { ...initialAppState.composer, draft: "추가 요청" } }}><Composer /></AppStateProvider>);
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", ctrlKey });
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", ctrlKey, repeat: true });
+    expect(cancelMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers overlapping additional-message submits only once and preserves the next draft", async () => {
+    let finish!: (value: { ok: boolean }) => void;
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", busy: true, composer: { ...initialAppState.composer, draft: "First follow-up" } }}><Composer /></AppStateProvider>);
+    const form = document.querySelector("form")!;
+    act(() => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Next follow-up" } });
+    fireEvent.submit(form);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Next follow-up");
+    await act(async () => finish({ ok: true }));
+    fireEvent.submit(form);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ line: "Next follow-up" }));
+  });
+
+  it("keeps explicit cancellation available while additional-message delivery is pending", async () => {
+    let finish!: (value: { ok: boolean }) => void;
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", busy: true, composer: { ...initialAppState.composer, draft: "Follow-up" } }}><Composer /></AppStateProvider>);
+    fireEvent.submit(document.querySelector("form")!);
+    fireEvent.submit(document.querySelector("form")!);
+    expect(cancelMessage).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ ok: true }));
+  });
+
+  it.each([
+    [false, false, true, 13], [false, true, true, 13], [true, false, true, 13], [true, true, true, 13],
+    [false, false, false, 229], [true, false, false, 229], [true, true, false, 229],
+  ])("keeps IME Enter in the editor (busy %s, ctrl %s, composing %s, code %s)", (busy, ctrlKey, isComposing, keyCode) => {
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", busy: Boolean(busy), composer: { ...initialAppState.composer, draft: "검토 중인 한글" } }}><Composer /></AppStateProvider>);
+    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+    const unhandled = fireEvent.keyDown(input, { key: "Enter", ctrlKey, isComposing, keyCode });
+    expect(unhandled).toBe(true);
+    expect(input.value).toBe("검토 중인 한글");
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(cancelMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(["send", "steer", "missing-session", "help", "cancel", "cancel-error"])("ignores delayed %s results after a fresh chat reuses the backend", async (operation) => {
+    let reject!: (error: Error) => void;
+    let resolve!: (result: { ok: boolean }) => void;
+    const pending = new Promise<{ ok: boolean }>((res, rej) => { resolve = res; reject = rej; });
+    if (operation.startsWith("cancel")) vi.mocked(cancelMessage).mockReturnValueOnce(pending);
+    else vi.mocked(sendMessage).mockReturnValueOnce(pending);
+    let current = initialAppState;
+    function NewChat() {
+      const { state, dispatch } = useAppState();
+      current = state;
+      return <button onClick={() => {
+        dispatch({ type: "begin_new_chat" });
+        dispatch({ type: "set_busy", value: true });
+      }}>Fresh running chat</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", busy: operation === "steer" || operation.startsWith("cancel"),
+      composer: { ...initialAppState.composer, draft: operation.startsWith("cancel") ? "" : operation === "help" ? "/help" : "Old request" },
+    }}><Composer /><NewChat /></AppStateProvider>);
+    fireEvent.submit(document.querySelector("form")!);
+    fireEvent.click(screen.getByText("Fresh running chat"));
+    await act(async () => {
+      if (operation === "cancel") resolve({ ok: true });
+      else reject(new Error(operation === "missing-session" ? "Unknown session" : "Old failure"));
+    });
+    expect(current.busy).toBe(true);
+    expect(current.messages).toEqual([]);
+    expect(current.modal).toBeNull();
+    expect(current.composer.draft).toBe("");
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["fresh", "history"])("does not adopt a delayed backend after navigation to %s", async (destination) => {
+    let finish!: (value: { sessionId: string }) => void;
+    vi.mocked(startSession).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    let current = initialAppState;
+    function Navigate() {
+      const { state, dispatch } = useAppState();
+      current = state;
+      return <button onClick={() => {
+        dispatch(destination === "fresh" ? { type: "begin_new_chat" } : { type: "begin_history_restore", sessionId: "different-history" });
+        dispatch({ type: "set_draft", value: "New conversation draft" });
+      }}>Navigate</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", pendingFreshChat: true,
+      composer: { ...initialAppState.composer, draft: "Old request" },
+    }}><Composer /><Navigate /></AppStateProvider>);
+    fireEvent.submit(document.querySelector("form")!);
+    fireEvent.click(screen.getByText("Navigate"));
+    await act(async () => finish({ sessionId: "obsolete-start" }));
+    expect(current.sessionId).toBe("session-a");
+    expect(current.composer.draft).toBe("New conversation draft");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(["send", "recovered-send", "start"])("restores text and attachments for a manual retry after %s failure", async (failure) => {
+    if (failure === "recovered-send") vi.mocked(sendMessage).mockRejectedValueOnce(new Error("Unknown session"));
+    if (failure === "start") vi.mocked(startSession).mockRejectedValueOnce(new Error("offline"));
+    else vi.mocked(sendMessage).mockRejectedValueOnce(new Error("offline"));
+    const image = { name: "capture.png", media_type: "image/png", data: "aW1hZ2U=" };
+    const uploaded = { id: "reference", name: "reference.pdf", path: "uploads/reference.pdf", size: 42, media_type: "application/pdf" };
+    vi.mocked(uploadClientAttachments).mockResolvedValueOnce({ attachments: [uploaded] });
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", clientId: "client",
+      pendingFreshChat: failure === "start",
+      composer: { draft: "Use these sources", attachments: [image], pastedTexts: ["Additional source text"], token: null },
+    }}><Composer /></AppStateProvider>);
+    await userEvent.upload(document.querySelector<HTMLInputElement>(".composer-file-input")!, new File(["pdf"], "reference.pdf", { type: "application/pdf" }));
+    await userEvent.click(screen.getByRole("button", { name: "분석 범위" }));
+    await userEvent.click(screen.getByRole("button", { name: /심층/ }));
+    fireEvent.submit(document.querySelector("form")!);
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Use these sources"));
+    expect(screen.getByRole("button", { name: "capture.png" })).toBeTruthy();
+    expect(screen.getByText("reference.pdf")).toBeTruthy();
+    const callsBeforeRetry = vi.mocked(sendMessage).mock.calls.length;
+    fireEvent.submit(document.querySelector("form")!);
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(callsBeforeRetry + 1));
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      line: "Use these sources\n\n[붙여넣은 텍스트 1]\nAdditional source text",
+      attachments: [image], attachmentRefs: [uploaded],
+      composeOptions: { analysis_depth: "deep" },
+    }));
+  });
+
+  it("does not overwrite a new draft after an earlier send fails", async () => {
+    let rejectSend!: (error: Error) => void;
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSend = reject; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", composer: { ...initialAppState.composer, draft: "First request" } }}><Composer /></AppStateProvider>);
+    fireEvent.submit(document.querySelector("form")!);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "New draft" } });
+    await act(async () => rejectSend(new Error("offline")));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("New draft");
+  });
+
+  it("does not restore an old request into a fresh chat using the same backend", async () => {
+    let rejectSend!: (error: Error) => void;
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSend = reject; }));
+    function NewChat() {
+      const { dispatch } = useAppState();
+      return <button onClick={() => dispatch({ type: "begin_new_chat" })}>Fresh chat</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", composer: { ...initialAppState.composer, draft: "Old request" } }}><Composer /><NewChat /></AppStateProvider>);
+    fireEvent.submit(document.querySelector("form")!);
+    fireEvent.click(screen.getByText("Fresh chat"));
+    await act(async () => rejectSend(new Error("offline")));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("does not mark a newer turn idle when an old cancellation response arrives", async () => {
+    let finishCancel!: (value: { ok: boolean }) => void;
+    vi.mocked(cancelMessage).mockReturnValueOnce(new Promise((resolve) => { finishCancel = resolve; }));
+    function NextTurn() {
+      const { dispatch } = useAppState();
+      return <button onClick={() => {
+        dispatch({ type: "backend_event", event: { type: "line_complete" } });
+        dispatch({ type: "backend_event", event: { type: "transcript_item", item: { role: "user", text: "New turn" } } });
+        dispatch({ type: "set_busy", value: true });
+      }}>Next turn</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", busy: true }}><Composer /><BusyProbe /><NextTurn /></AppStateProvider>);
+    fireEvent.submit(document.querySelector("form")!);
+    fireEvent.click(screen.getByText("Next turn"));
+    await act(async () => { finishCancel({ ok: true }); });
+    expect(screen.getByTestId("busy-state").textContent).toBe("true");
+  });
+  it.each(["queue", "steer"])("keeps the running answer intact when %s delivery fails and allows retry", async (mode) => {
+    let rejectSend!: (reason: Error) => void;
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSend = reject; }));
+    let latest = initialAppState;
+    function Observe() { latest = useAppState().state; return null; }
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", busy: true }}><Composer /><Observe /></AppStateProvider>);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "추가 지시" } });
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: mode === "queue" });
+    await act(async () => { rejectSend(new Error("delivery unavailable")); });
+    expect(latest.busy).toBe(true);
+    expect(latest.messages.some((message) => message.pendingRequestId)).toBe(false);
+    expect((input as HTMLTextAreaElement).value).toBe("추가 지시");
+    expect(latest.modal?.kind).toBe("error");
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: mode === "queue" });
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+  });
+  it.each([false, true])("waits for all pasted images before sending (busy=%s)", async (busy) => {
+    const readers: FileReader[] = [];
+    const spy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) { readers.push(this); });
+    function Complete() {
+      const { dispatch } = useAppState();
+      return <button onClick={() => dispatch({ type: "backend_event", event: { type: "line_complete" } })}>Complete current work</button>;
+    }
+    try {
+      render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s", busy,
+        composer: { ...initialAppState.composer, draft: "Compare the images" },
+      }}><Composer /><Complete /></AppStateProvider>);
+      const input = screen.getByRole("textbox");
+      act(() => {
+        for (const name of ["first.png", "second.png"]) {
+          const file = new File(["image"], name, { type: "image/png" });
+          fireEvent.paste(input, { clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }], getData: () => "" } });
+        }
+        fireEvent.keyDown(input, { key: "Enter", ctrlKey: busy });
+        fireEvent.submit(document.querySelector("form")!);
+      });
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(cancelMessage).not.toHaveBeenCalled();
+      for (let index = 0; index < readers.length; index += 1) {
+        await act(async () => {
+          Object.defineProperty(readers[index], "result", { value: `data:image/png;base64,aW1hZ2U${index}` });
+          readers[index].onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>);
+        });
+        if (index === 0) {
+          fireEvent.submit(document.querySelector("form")!);
+          expect(sendMessage).not.toHaveBeenCalled();
+        }
+      }
+      if (busy) fireEvent.click(screen.getByText("Complete current work"));
+      await act(async () => fireEvent.submit(document.querySelector("form")!));
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(sendMessage).mock.calls[0][0].attachments).toEqual([
+        expect.objectContaining({ name: "first.png" }), expect.objectContaining({ name: "second.png" }),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("ignores an image read that finishes after switching conversations", async () => {
+    let reader!: FileReader;
+    const spy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) { reader = this; });
+    try {
+      render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a" }}><Composer /><SwitchSessionProbe /></AppStateProvider>);
+      const file = new File(["image"], "old-image.png", { type: "image/png" });
+      fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }], getData: () => "" } });
+      fireEvent.click(screen.getByText("Switch session"));
+      await act(async () => {
+        Object.defineProperty(reader, "result", { value: "data:image/png;base64,aW1hZ2U=" });
+        reader.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>);
+      });
+      expect(screen.queryByRole("button", { name: "old-image.png" })).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each(["image", "file"])("waits for mixed attachment preparation when the %s finishes first", async (first) => {
+    let reader!: FileReader;
+    let finishUpload!: (value: Awaited<ReturnType<typeof uploadClientAttachments>>) => void;
+    vi.mocked(uploadClientAttachments).mockReturnValueOnce(new Promise((resolve) => { finishUpload = resolve; }));
+    const spy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) { reader = this; });
+    try {
+      render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s",
+        composer: { ...initialAppState.composer, draft: "Analyze both attachments" },
+      }}><Composer /></AppStateProvider>);
+      fireEvent.change(document.querySelector(".composer-file-input")!, { target: { files: [new File(["notes"], "notes.txt")] } });
+      const image = new File(["image"], "chart.png", { type: "image/png" });
+      fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => image }], getData: () => "" } });
+      const uploaded = { id: "notes", name: "notes.txt", path: ".myharness/client-uploads/notes.txt", size: 5 };
+      const finish = async (kind: string) => act(async () => {
+        if (kind === "file") finishUpload({ attachments: [uploaded] });
+        else {
+          Object.defineProperty(reader, "result", { value: "data:image/png;base64,aW1hZ2U=" });
+          reader.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>);
+        }
+      });
+      await finish(first);
+      fireEvent.submit(document.querySelector("form")!);
+      expect(sendMessage).not.toHaveBeenCalled();
+      await finish(first === "image" ? "file" : "image");
+      await act(async () => fireEvent.submit(document.querySelector("form")!));
+      expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+        attachments: [expect.objectContaining({ name: "chart.png" })], attachmentRefs: [uploaded],
+      }));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("unblocks sending after a pasted image cannot be read", async () => {
+    let reader!: FileReader;
+    const spy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) { reader = this; });
+    try {
+      render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "s",
+        composer: { ...initialAppState.composer, draft: "Keep this text" },
+      }}><Composer /></AppStateProvider>);
+      const image = new File(["image"], "broken.png", { type: "image/png" });
+      fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => image }], getData: () => "" } });
+      await act(async () => { reader.onerror?.(new ProgressEvent("error") as ProgressEvent<FileReader>); });
+      await act(async () => fireEvent.submit(document.querySelector("form")!));
+      expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ line: "Keep this text", attachments: [] }));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+  it.each([false, true])("ignores an old upload after changing sessions (failure=%s)", async (failure) => {
+    let resolveUpload!: (value: Awaited<ReturnType<typeof uploadClientAttachments>>) => void;
+    let rejectUpload!: (error: Error) => void;
+    vi.mocked(uploadClientAttachments).mockReturnValueOnce(new Promise((resolve, reject) => { resolveUpload = resolve; rejectUpload = reject; }));
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-a", clientId: "client-1" }}><Composer /><SwitchSessionProbe /><ModalHost /></AppStateProvider>);
+    fireEvent.change(document.querySelector(".composer-file-input")!, { target: { files: [new File(["notes"], "old-upload.txt", { type: "text/plain" })] } });
+    fireEvent.click(screen.getByText("Switch session"));
+    await act(async () => {
+      if (failure) rejectUpload(new Error("old upload failed"));
+      else resolveUpload({ attachments: [{ id: "old", name: "old-upload.txt", path: "old-upload.txt", size: 5 }] });
+    });
+    expect(screen.queryByText("old-upload.txt")).toBeNull();
+    expect(screen.queryByText("old upload failed")).toBeNull();
+  });
   it.each([
     ["$national-assembly", 1, "$mcp:national-assembly", "click"],
     ["$national-assembly", 10, "$mcp:national-assembly", "Tab"],
@@ -1555,6 +1903,19 @@ describe("Composer", () => {
     expect(screen.getByTestId("busy-state").textContent).toBe("true");
   });
 
+  it.each([false, true])("restores conversation atomically on expired backend (preview: %s)", async (historyReadOnly) => {
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error("Unknown session")).mockResolvedValueOnce({ ok: true });
+    vi.mocked(startSession).mockResolvedValueOnce({ sessionId: "session-recovered" });
+    render(<AppStateProvider initialState={{ ...initialAppState, sessionId: "session-expired", clientId: "client-1", activeHistoryId: "saved-conversation", historyReadOnly, composer: { ...initialAppState.composer, draft: "앞에서 정한 기준으로 계속해줘" } }}><Composer /></AppStateProvider>);
+    fireEvent.submit(document.querySelector("form")!);
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: "session-recovered", resumeSessionId: "saved-conversation",
+      line: "앞에서 정한 기준으로 계속해줘",
+    }));
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+  });
+
   it("recreates an expired backend session and retries the message once", async () => {
     const user = userEvent.setup();
     vi.mocked(sendMessage)
@@ -1613,14 +1974,32 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "메시지 보내기" }));
 
     await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
-    expect(sendBackendRequest).toHaveBeenCalledWith("session-live", "client-1", {
-      type: "apply_select_command",
-      command: "resume",
-      value: "session-saved",
-    });
-    expect(vi.mocked(sendBackendRequest).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(sendMessage).mock.invocationCallOrder[0],
-    );
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: "session-live", resumeSessionId: "session-saved", line: "이어서 설명해줘",
+    }));
+    expect(sendBackendRequest).not.toHaveBeenCalled();
+  });
+
+  it("reconnects in the previewed workspace and preserves uploaded file references", async () => {
+    const uploaded = { id: "source", name: "source.txt", path: ".myharness/client-uploads/source.txt", size: 10 };
+    vi.mocked(uploadClientAttachments).mockResolvedValueOnce({ attachments: [uploaded] });
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error("Unknown session"));
+    vi.mocked(startSession).mockResolvedValueOnce({ sessionId: "selected-backend", workspace: { name: "Selected", path: "C:/selected" } });
+    render(<AppStateProvider initialState={{
+      ...initialAppState, sessionId: "previous-backend", clientId: "client-1",
+      activeHistoryId: "selected-history", historyReadOnly: true,
+      workspaceName: "Selected", workspacePath: "C:/selected",
+      composer: { ...initialAppState.composer, draft: "Continue with this source" },
+    }}><Composer /></AppStateProvider>);
+    fireEvent.change(document.querySelector(".composer-file-input")!, { target: { files: [new File(["content"], "source.txt")] } });
+    await screen.findByText("source.txt");
+    await act(async () => fireEvent.submit(document.querySelector("form")!));
+    expect(uploadClientAttachments).toHaveBeenCalledWith(expect.objectContaining({ workspacePath: "C:/selected" }));
+    expect(sendMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({ sessionId: "previous-backend", workspacePath: "C:/selected" }));
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "C:/selected" }));
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: "selected-backend", workspacePath: "C:/selected", resumeSessionId: "selected-history", attachmentRefs: [uploaded],
+    }));
   });
 
   it("shows a fresh-chat user message before the new backend session finishes starting", async () => {
@@ -1690,9 +2069,11 @@ describe("Composer", () => {
       suppressUserTranscript: true,
     }));
 
+    fireEvent.change(input, { target: { value: "전환 중 새로 입력한 문장" } });
     await act(async () => {
       resolvePlan({ ok: true });
     });
+    expect((input as HTMLTextAreaElement).value).toBe("전환 중 새로 입력한 문장");
   });
 
   it("renders the legacy stop button while a response is running without draft text", async () => {
