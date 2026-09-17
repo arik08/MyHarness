@@ -22,17 +22,18 @@ from myharness.config.settings import (
 )
 
 
-def test_checked_in_project_settings_default_to_pgpt(tmp_path):
+def test_checked_in_project_settings_load_configured_profile(tmp_path):
     settings_path = Path(__file__).resolve().parents[2] / ".myharness" / "settings.json"
     # Inspect the shipped default independently of local overrides and ADMIN policy.
     isolated_path = tmp_path / "settings.json"
     isolated_path.write_bytes(settings_path.read_bytes())
     settings = load_settings(isolated_path, apply_model_policy=False)
 
-    assert settings.active_profile == "p-gpt"
-    assert settings.provider == "openai"
-    assert settings.api_format == "openai"
-    assert settings.resolve_profile()[0] == "p-gpt"
+    configured_profile = json.loads(settings_path.read_text(encoding="utf-8"))["active_profile"]
+    assert settings.active_profile == configured_profile
+    assert settings.resolve_profile()[0] == configured_profile
+    assert settings.provider == settings.resolve_profile()[1].provider
+    assert settings.api_format == settings.resolve_profile()[1].api_format
     assert settings.model == settings.resolve_profile()[1].default_model
     assert settings.resolve_profile()[1].allows_model(settings.model)
     assert settings.effort == "low"

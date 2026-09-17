@@ -444,7 +444,7 @@ function artifactReferenceFromRange(value: string, start: number, end: number, r
   };
 }
 
-export function collectArtifactReferences(text: string) {
+export function collectArtifactReferences(text: string, includeRepeated = false) {
   const value = String(text || "");
   const references: ArtifactReference[] = [];
   const occupiedRanges: Array<{ start: number; end: number }> = [];
@@ -489,11 +489,11 @@ export function collectArtifactReferences(text: string) {
   return references
     .filter((reference) => {
       const key = artifactReferenceKey(reference.path);
-      if (seen.has(key)) return false;
+      if (!includeRepeated && seen.has(key)) return false;
       seen.add(key);
       return true;
     })
-    .slice(0, 8);
+    .slice(0, includeRepeated ? undefined : 8);
 }
 
 export function collectArtifactCandidates(text: string) {

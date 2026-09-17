@@ -48,6 +48,9 @@ it.each([false, true])("isolates delayed AI edit results after changing sessions
   expect(screen.getByTestId("ai-edit-session").textContent).toContain("session-b:false");
   expect(screen.queryByText(/AI 자동편집 진행 중:/)).toBeNull();
 });
+vi.mock("../PdfArtifactPreview", () => ({
+  PdfArtifactPreview: ({ src }: { src: string }) => <div data-testid="pdf-preview" data-src={src} />,
+}));
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (html: string, options?: Record<string, unknown>) => { window: Window & typeof globalThis };
 };
@@ -3228,7 +3231,7 @@ describe("ArtifactPanel", () => {
     expect(decodeURIComponent(download.getAttribute("href") || "")).toContain("path=outputs/namuwiki-history-report.pptx");
   });
 
-  it("embeds PDF previews through the inline artifact URL", () => {
+  it("passes the inline artifact URL to the PDF renderer", () => {
     render(
       <AppStateProvider
         initialState={{
@@ -3252,10 +3255,10 @@ describe("ArtifactPanel", () => {
       </AppStateProvider>,
     );
 
-    const frame = document.querySelector(".artifact-pdf-frame") as HTMLIFrameElement;
+    const frame = screen.getByTestId("pdf-preview");
     expect(frame).toBeTruthy();
-    expect(decodeURIComponent(frame.getAttribute("src") || "")).toContain("/api/artifact/raw?");
-    expect(decodeURIComponent(frame.getAttribute("src") || "")).toContain("path=outputs/quarterly-review.pdf");
+    expect(decodeURIComponent(frame.getAttribute("data-src") || "")).toContain("/api/artifact/raw?");
+    expect(decodeURIComponent(frame.getAttribute("data-src") || "")).toContain("path=outputs/quarterly-review.pdf");
   });
 
   it("requires a second click before deleting a project file from the list", async () => {

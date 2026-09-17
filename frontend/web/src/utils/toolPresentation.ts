@@ -108,9 +108,12 @@ const toolLabels: Record<string, string> = {
 };
 
 export function toolDisplayName(name: string) {
-  if (!name.startsWith("mcp__")) return toolLabels[name] || "";
-  const [server, ...tool] = name.slice("mcp__".length).split("__");
-  return ["mcp", server, tool.join("__")].filter(Boolean).join(" · ");
+  if (name.startsWith("mcp__")) {
+    const actualName = name.slice(5).split("__").join(" / ");
+    const [server, ...tool] = name.slice(5).split("__");
+    return toolLabels[name] ? `${toolLabels[name]} · ${actualName}` : ["mcp", server, tool.join("__")].filter(Boolean).join(" · ");
+  }
+  return toolLabels[name] || "";
 }
 
 export function isKnownLookupTool(name: string) {
@@ -120,6 +123,34 @@ export function isKnownLookupTool(name: string) {
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
+}
+
+function preview(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 220) : "";
+}
+
+function mcpWorkDescription(event: WorkflowEvent) {
+  const input = event.toolInput || {};
+  const description = preview(input.progress_message);
+  if (description) return description;
+  const target = ["query", "search_query", "keyword", "url", "path", "file_path", "title", "name", "bill_id", "id"]
+    .map((key) => preview(input[key])).find(Boolean);
+  return [toolDisplayName(event.toolName), target].filter(Boolean).join(" · ");
+}
+
+function responsePreview(value: unknown, depth = 0): string {
+  if (depth > 4) return "";
+  if (typeof value === "string") {
+    try { return responsePreview(JSON.parse(value), depth + 1); } catch { return preview(value); }
+  }
+  if (Array.isArray(value)) return value.slice(0, 3).map((item) => responsePreview(item, depth + 1)).filter(Boolean).join(" · ").slice(0, 220);
+  const row = record(value);
+  if (!row) return "";
+  for (const key of ["summary", "message", "text", "content", "structuredContent", "result", "data", "error"]) {
+    const summary = responsePreview(row[key], depth + 1);
+    if (summary) return summary;
+  }
+  return "";
 }
 
 export function toolResultSummary(event: WorkflowEvent): string | null {
@@ -146,19 +177,22 @@ export function toolResultSummary(event: WorkflowEvent): string | null {
     return [provided || fallback, status].filter(Boolean).join(" · ");
   }
   if (!event.toolName.startsWith("mcp__")) return null;
-  if (event.status === "running") return "진행 중";
-  if (event.status === "error") return "도구 작업에 실패했습니다. 상세 실행 기록에서 원인을 확인할 수 있습니다.";
-  if (event.status === "warning") return "부분응답 · 상세 실행 기록을 확인해 주세요.";
+  const work = mcpWorkDescription(event);
+  const raw = event.output || event.detail;
+  if (event.status === "running") return `${work} · 진행 중`;
+  if (event.status === "error") return `${work} · 실패${responsePreview(raw) ? ` · ${responsePreview(raw)}` : ""}`;
+  if (event.status === "warning") return `${work} · 부분응답 · 상세 실행 기록을 확인해 주세요.${responsePreview(raw) ? ` · ${responsePreview(raw)}` : ""}`;
+  const fallback = (value: unknown) => `${work} · 실행 완료${responsePreview(value) ? ` · ${responsePreview(value)}` : " · 요약 가능한 결과 없음"}`;
   let value: unknown;
   try {
     value = JSON.parse(event.output || event.detail);
   } catch {
-    return "응답 수신";
+    return fallback(raw);
   }
   const root = record(value);
-  if (!root) return "응답 수신";
+  if (!root) return fallback(value);
   if (root.error || root.isError === true || root.is_error === true) {
-    return "응답에 오류가 포함되어 있습니다. 상세 실행 기록을 확인해 주세요.";
+    return `${work} · 응답 오류${responsePreview(root) ? ` · ${responsePreview(root)}` : ""}`;
   }
   const data = record(root.detail) || root;
   const items = Array.isArray(data.items) ? data.items : null;
@@ -176,5 +210,5 @@ export function toolResultSummary(event: WorkflowEvent): string | null {
     return [count, ...titles, items.length > 3 ? `외 ${items.length - 3}건은 상세 실행 기록에서 확인` : ""].filter(Boolean).join(" · ");
   }
   const title = titleOf(data);
-  return title ? `상세 정보 확인 · ${title}` : "응답 수신";
+  return title ? `상세 정보 확인 · ${title}` : fallback(root);
 }

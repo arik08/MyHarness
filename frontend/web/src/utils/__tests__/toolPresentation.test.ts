@@ -58,7 +58,7 @@ describe("tool presentation without model calls", () => {
     expect(toolResultSummary(old)).toBe("‘POSCO steel’ 관련 자료 검색 · 이 검색 조건에서는 결과가 없습니다.");
   });
   it("labels known queries without treating arbitrary MCP actions as lookups", () => {
-    expect(toolDisplayName(event("").toolName)).toBe("mcp · national-assembly · assembly_bill");
+    expect(toolDisplayName(event("").toolName)).toBe("국회 법안 검색 · national-assembly / assembly_bill");
     expect(isKnownLookupTool(event("").toolName)).toBe(true);
     expect(isKnownLookupTool("mcp__other__delete")).toBe(false);
   });
@@ -79,7 +79,7 @@ describe("tool presentation without model calls", () => {
     expect(toolResultSummary(event('{"total":0,"items":[]}'))).toBe("이 조회 조건에서는 결과가 없습니다.");
     expect(toolResultSummary(event('{"items":[]}'))).toContain("응답에 포함된 항목 0건");
     expect(toolResultSummary(event('{"detail":{"total":0,"items":[]}}'))).toContain("이 조회 조건");
-    expect(toolResultSummary(event('{"total":5,...'))).toBe("응답 수신");
+    expect(toolResultSummary(event('{"total":5,...'))).toContain("실행 완료");
   });
   it("keeps errors and warnings explicit, including successful transports with error payloads", () => {
     expect(toolResultSummary(event('{"total":0,"items":[]}', "error"))).toContain("실패");
@@ -90,3 +90,12 @@ describe("tool presentation without model calls", () => {
     expect(toolResultSummary(event('{"detail":{"BILL_NM":"철강법","PROC_RESULT":null}}'))).toBe("상세 정보 확인 · 철강법");
   });
 });
+
+ it("shows actual MCP names, targets and text content", () => {
+   const tool = { ...event(""), toolName: "mcp__files__read_file", toolInput: { path: "outputs/report.html" } };
+   expect(toolDisplayName(tool.toolName)).toBe("mcp · files · read_file");
+   expect(toolResultSummary({ ...tool, status: "running" })).toContain("outputs/report.html · 진행 중");
+   expect(toolResultSummary({ ...tool, output: JSON.stringify({ content: [{ type: "text", text: "보고서 3개를 확인했습니다." }] }) })).toContain("보고서 3개를 확인했습니다.");
+   expect(toolResultSummary({ ...tool, output: "파일을 저장했습니다." })).toContain("파일을 저장했습니다.");
+   expect(toolResultSummary({ ...tool, status: "error", output: "파일 없음" })).toContain("파일 없음");
+ });

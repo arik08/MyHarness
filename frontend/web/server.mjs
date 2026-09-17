@@ -2,6 +2,7 @@ import { resourceAdmissionReason } from "./modules/resourceAdmission.js";
 import { writeTextFileAtomic } from "./modules/atomicFile.js";
 import { sendFileResponse } from "./modules/fileResponse.js";
 import { moveFileExclusive } from "./modules/moveFileExclusive.js";
+import { pythonEnvironmentCandidates } from "./modules/pythonEnvironment.js";
 import { applyModelAvailability, changeModelAvailability } from "./modules/modelAvailability.js";
 import { createModelCatalogCache } from "./modules/modelCatalogCache.js";
 import { pythonCommandCandidates } from "./modules/pythonCommandCandidates.js";
@@ -474,6 +475,8 @@ function resolvePath(url) {
       ? (hasBuiltReactUi() ? join(webDistRoot, "index.html") : join(root, "index.html"))
       : pathname.startsWith("/web-assets/")
         ? join(webDistRoot, relativePath)
+      : /^\/vendor\/pdfjs\/(?:cmaps|standard_fonts|wasm)\/[^/]+$/.test(pathname)
+        ? join(vendorRoot, "pdfjs-dist", pathname.replace("/vendor/pdfjs/", ""))
       : pathname === "/vendor/marked/marked.esm.js"
         ? join(vendorRoot, "marked/lib/marked.esm.js")
         : pathname === "/vendor/highlight/highlight.min.js"
@@ -647,15 +650,15 @@ async function handleEntryAuth(request, response, pathname) {
 }
 
 async function writeWindowsClipboardImage(png) {
-  if (process.platform !== "win32") {
-    const error = new Error("HTTP 이미지 복사는 Windows에서만 지원됩니다.");
-    error.status = 501;
-    throw error;
-  }
   const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   if (png.length < pngSignature.length || !png.subarray(0, pngSignature.length).equals(pngSignature)) {
     const error = new Error("올바른 PNG 이미지가 아닙니다.");
     error.status = 415;
+    throw error;
+  }
+  if (process.platform !== "win32") {
+    const error = new Error("HTTP 이미지 복사는 Windows에서만 지원됩니다.");
+    error.status = 501;
     throw error;
   }
   const powershell = resolveWindowsPowerShell();
@@ -5241,16 +5244,9 @@ function resolveExecutable(commandName) {
 }
 
 function defaultPythonCandidates() {
-  const candidates = [];
-  const configured = String(process.env.MYHARNESS_PYTHON || "").trim();
-  if (configured) {
-    candidates.push({ file: configured, args: [], label: "MYHARNESS_PYTHON" });
-  }
-
-  const envPython = String(process.env.PYTHON || "").trim();
-  if (envPython) {
-    candidates.push({ file: envPython, args: [], label: "PYTHON" });
-  }
+  // npm start/test does not activate the environment created by our installer.
+  // Honor explicit overrides and an activated environment before checkout defaults.
+  const candidates = pythonEnvironmentCandidates(repoRoot);
 
   if (process.platform === "win32") {
     candidates.push(
