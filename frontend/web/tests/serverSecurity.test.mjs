@@ -432,7 +432,7 @@ test("server metrics track resource queue wait until the resource threshold is r
     return fetch(`${app.baseUrl}/api/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId }) });
   }
   const first = await start("metrics-first");
-  assert.equal(first.status, 200);
+  assert.equal(first.status, 200, await first.clone().text());
   const { sessionId } = await first.json();
   await fetch(`${app.baseUrl}/api/settings/concurrency`, {
     method: "POST", headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
@@ -1019,7 +1019,7 @@ test("overwrites only HTML artifacts through the preview edit API", async (t) =>
     body: JSON.stringify({ clientId: "preview-editor", cwd: workspacePath }),
   });
   const session = await sessionResponse.json();
-  assert.equal(sessionResponse.status, 200);
+  assert.equal(sessionResponse.status, 200, JSON.stringify(session));
   assert.ok(session.sessionId);
 
   const alternateWorkspaceResponse = await fetch(`${app.baseUrl}/api/workspaces`, {
@@ -1450,7 +1450,7 @@ test("renames artifacts and keeps old history links resolvable", async (t) => {
     body: JSON.stringify({ clientId: "artifact-rename", cwd: workspacePath }),
   });
   const session = await sessionResponse.json();
-  assert.equal(sessionResponse.status, 200);
+  assert.equal(sessionResponse.status, 200, JSON.stringify(session));
 
   const renameResponse = await fetch(`${app.baseUrl}/api/artifact/rename`, {
     method: "POST",
@@ -2666,6 +2666,18 @@ test("rejects non-PNG clipboard payloads before invoking the Windows clipboard",
 
   assert.equal(response.status, 415);
   assert.match(payload.error, /올바른 PNG/);
+});
+
+test("valid PNG clipboard requests report unsupported platforms", { skip: process.platform === "win32" }, async (t) => {
+  const app = await startWebServer();
+  t.after(() => app.stop());
+  const response = await fetch(`${app.baseUrl}/api/clipboard/image`, {
+    method: "POST",
+    headers: { "content-type": "image/png" },
+    body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"),
+  });
+  assert.equal(response.status, 501);
+  assert.match((await response.json()).error, /Windows에서만 지원/);
 });
 
 test("design mode is persisted globally across IPs and writable only in admin mode", async (t) => {

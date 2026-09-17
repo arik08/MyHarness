@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { createResourceSampler, createServerMetrics } from "../modules/serverMetrics.js";
 import { fileURLToPath } from "node:url";
+import { pythonEnvironmentCandidates } from "../modules/pythonEnvironment.js";
 
 test("metrics retain 15 minutes, distinguish unavailable data, and bound samples", async () => {
   let time = 0;
@@ -55,7 +56,9 @@ test("ordinary API latency excludes streams, telemetry, errors and AI submission
 });
 
 test("resource sampler measures this process tree and shuts down cleanly", async (t) => {
-  const sampler = createResourceSampler({ file: "python", args: [] }, fileURLToPath(new URL("../scripts/resource_sample.py", import.meta.url)));
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const python = pythonEnvironmentCandidates(repoRoot)[0] || { file: "python", args: [] };
+  const sampler = createResourceSampler(python, fileURLToPath(new URL("../scripts/resource_sample.py", import.meta.url)));
   t.after(() => sampler.stop());
   const first = await sampler.sample();
   assert.ok(Number.isFinite(first.cpuPercent) && first.cpuPercent >= 0 && first.cpuPercent <= 100);

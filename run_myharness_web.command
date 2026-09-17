@@ -18,7 +18,7 @@ fi
 if [ ! -f frontend/web/dist/index.html ]; then
   npm run build --prefix frontend/web
 fi
-if ! python -c 'import myharness, openai, mcp' >/dev/null 2>&1; then
+if ! python -c 'import myharness, openai, mcp, psutil' >/dev/null 2>&1; then
   python -m pip install -e .
 fi
 exec python scripts/run_myharness_web.py
