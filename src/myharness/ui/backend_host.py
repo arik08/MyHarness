@@ -1242,34 +1242,42 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="state_snapshot", state=_initial_runtime_state_snapshot(self._config)))
         except Exception:
             log.exception("failed to emit initial runtime state snapshot")
-        self._bundle = await build_runtime(
-            model=self._config.model,
-            subagent_model=self._config.subagent_model,
-            subagent_effort=self._config.subagent_effort,
-            max_turns=self._config.max_turns,
-            base_url=self._config.base_url,
-            system_prompt=self._config.system_prompt,
-            api_key=self._config.api_key,
-            api_format=self._config.api_format,
-            active_profile=self._config.active_profile,
-            effort=self._config.effort,
-            api_client=self._config.api_client,
-            cwd=self._config.cwd,
-            restore_messages=self._config.restore_messages,
-            restore_tool_metadata=self._config.restore_tool_metadata,
-            restore_usage=self._config.restore_usage,
-            restore_usage_accounting=self._config.restore_usage_accounting,
-            permission_prompt=self._ask_permission,
-            ask_user_prompt=self._ask_question,
-            enforce_max_turns=self._config.enforce_max_turns,
-            permission_mode=self._config.permission_mode,
-            session_backend=self._config.session_backend,
-            extra_skill_dirs=self._config.extra_skill_dirs,
-            extra_plugin_roots=self._config.extra_plugin_roots,
-            connect_mcp=False,
-            gpt56_context_mode=self._config.gpt56_context_mode,
-        )
-        await start_runtime(self._bundle)
+        try:
+            self._bundle = await build_runtime(
+                model=self._config.model,
+                subagent_model=self._config.subagent_model,
+                subagent_effort=self._config.subagent_effort,
+                max_turns=self._config.max_turns,
+                base_url=self._config.base_url,
+                system_prompt=self._config.system_prompt,
+                api_key=self._config.api_key,
+                api_format=self._config.api_format,
+                active_profile=self._config.active_profile,
+                effort=self._config.effort,
+                api_client=self._config.api_client,
+                cwd=self._config.cwd,
+                restore_messages=self._config.restore_messages,
+                restore_tool_metadata=self._config.restore_tool_metadata,
+                restore_usage=self._config.restore_usage,
+                restore_usage_accounting=self._config.restore_usage_accounting,
+                permission_prompt=self._ask_permission,
+                ask_user_prompt=self._ask_question,
+                enforce_max_turns=self._config.enforce_max_turns,
+                permission_mode=self._config.permission_mode,
+                session_backend=self._config.session_backend,
+                extra_skill_dirs=self._config.extra_skill_dirs,
+                extra_plugin_roots=self._config.extra_plugin_roots,
+                connect_mcp=False,
+                gpt56_context_mode=self._config.gpt56_context_mode,
+            )
+            await start_runtime(self._bundle)
+        except Exception as exc:
+            log.exception("backend runtime initialization failed")
+            await self._emit(BackendEvent(type="error", message=f"백엔드 초기화에 실패했습니다: {exc}"))
+            if self._bundle is not None:
+                with contextlib.suppress(Exception):
+                    await close_runtime(self._bundle)
+            return 1
         ready_event = BackendEvent.ready(
             self._bundle.app_state.get(),
             get_task_manager().list_tasks(),

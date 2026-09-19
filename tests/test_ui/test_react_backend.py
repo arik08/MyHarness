@@ -4898,3 +4898,14 @@ async def test_request_failure_preserves_session_and_accepts_next_request(tmp_pa
     assert any(event.type == "line_complete" for event in events)
     assert host._busy is False
     assert host._active_request_task is None
+
+
+def test_initialization_failure_emits_protocol_error(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig())
+    emit = AsyncMock()
+    monkeypatch.setattr(host, "_emit", emit)
+    monkeypatch.setattr("myharness.ui.backend_host.build_runtime", AsyncMock(side_effect=ValueError("disabled model")))
+    assert asyncio.run(host.run()) == 1
+    errors = [call.args[0] for call in emit.call_args_list if call.args[0].type == "error"]
+    assert len(errors) == 1
+    assert "disabled model" in errors[0].message

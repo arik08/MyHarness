@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyModelAvailability, changeModelAvailability } from '../modules/modelAvailability.js';
+import { applyModelAvailability, changeModelAvailability, reconcileSessionModel } from '../modules/modelAvailability.js';
 
 const catalog = { all_models_by_provider: { a: [{ value: 'one' }, { value: 'two' }], b: [{ value: 'one' }, { value: 'new' }] } };
 test('model changes are provider scoped and preserve disabled models in the admin catalog', () => {
@@ -27,4 +27,13 @@ test('last model and entire providers can be disabled and restored, including ne
   assert.deepEqual(applyModelAvailability(catalog, saved).models_by_provider, { a: [], b: [] });
   saved = changeModelAvailability(catalog, saved, { profile: 'b', enabled: true });
   assert.deepEqual(saved, { a: [], b: ['one', 'new'] });
+});
+
+test('repairs stale models and profiles without enabling disabled models', () => {
+  const available = applyModelAvailability(catalog, { a: ['two'], b: [] });
+  assert.deepEqual(reconcileSessionModel({ activeProfile: 'a', model: 'one' }, available), { activeProfile: 'a', model: 'two' });
+  assert.equal(reconcileSessionModel({ activeProfile: 'removed', model: 'new' }, available).model, 'two');
+  assert.equal(reconcileSessionModel({ activeProfile: 'b' }, available).activeProfile, 'a');
+  assert.equal(reconcileSessionModel({ activeProfile: 'a', model: 'two' }, available).model, 'two');
+  assert.throws(() => reconcileSessionModel({}, applyModelAvailability(catalog, { a: [], b: [] })), { status: 409 });
 });

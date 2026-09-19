@@ -91,3 +91,25 @@ it("uses the confirmed runtime after backend rejection and never overlays anothe
   act(() => dispatch({ type: "session_started", sessionId: "other" }));
   expect(screen.getByRole("button", { name: "모델 선택" }).textContent).not.toContain("New");
 });
+
+it("reconnects an expired model session and clears pending choices", async () => {
+  vi.mocked(sendBackendRequest).mockRejectedValue(new Error("Unknown session"));
+  setup();
+  select("모델 선택", "New");
+  await act(async () => {});
+  expect(screen.getByRole("button", { name: "모델 선택" }).hasAttribute("disabled")).toBe(true);
+  act(() => dispatch({ type: "session_started", sessionId: "replacement" }));
+  expect(screen.getByRole("button", { name: "모델 선택" }).textContent).toContain("Old");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("ignores a model request failure after switching sessions", async () => {
+  let reject!: (error: Error) => void;
+  vi.mocked(sendBackendRequest).mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+  setup();
+  select("모델 선택", "New");
+  act(() => dispatch({ type: "session_started", sessionId: "replacement" }));
+  await act(async () => reject(new Error("Unknown session")));
+  expect(screen.getByRole("button", { name: "모델 선택" }).hasAttribute("disabled")).toBe(false);
+  expect(screen.queryByRole("alert")).toBeNull();
+});

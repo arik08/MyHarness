@@ -65,6 +65,8 @@ function saveActiveBackendSessionId(sessionId: string) {
 export function useBackendSession() {
   const { state, dispatch } = useAppState();
   const sourceRef = useRef<EventSource | null>(null);
+  const latestStateRef = useRef(state);
+  latestStateRef.current = state;
   const startupRestoreIdRef = useRef<string | null>(null);
   const [eventStreamGeneration, setEventStreamGeneration] = useState(0);
   const streamCursorRef = useRef({ scope: "", id: "", receivedAt: 0, revision: 0 });
@@ -130,6 +132,16 @@ export function useBackendSession() {
         : liveSessions.sessions.find((item) => item.sessionId === previousSessionId) ?? liveSessions.sessions.at(-1);
 
       if (liveSession) {
+        let snapshot;
+        if (liveSession.savedSessionId) {
+          try {
+            snapshot = await loadHistorySnapshot({
+              sessionId: liveSession.savedSessionId,
+              workspacePath: liveSession.workspace?.path,
+              workspaceName: liveSession.workspace?.name,
+            });
+          } catch { /* The stream can still replay an unavailable snapshot. */ }
+        }
         if (cancelled) {
           return;
         }
@@ -143,6 +155,9 @@ export function useBackendSession() {
           savedSessionId: liveSession.savedSessionId,
         });
 
+        if (snapshot?.value === liveSession.savedSessionId) {
+          dispatch({ type: "backend_event", sessionId: liveSession.sessionId, event: { ...snapshot, live_replay: true } });
+        }
         if (liveSession.workspace) {
           dispatch({
             type: "backend_event",
@@ -156,9 +171,10 @@ export function useBackendSession() {
         return;
       }
 
+      let restoredSnapshot;
       if (lastConversation) {
         try {
-          await loadHistorySnapshot(lastConversation);
+          restoredSnapshot = await loadHistorySnapshot(lastConversation);
         } catch {
           // A removed or unavailable conversation must not prevent opening the app.
           lastConversation = null;
@@ -178,6 +194,10 @@ export function useBackendSession() {
       if (lastConversation) {
         startupRestoreIdRef.current = lastConversation.sessionId;
         dispatch({ type: "begin_history_restore", sessionId: lastConversation.sessionId });
+        if (restoredSnapshot) {
+          dispatch({ type: "backend_event", event: { ...restoredSnapshot, preview_only: true } });
+          dispatch({ type: "finish_history_restore" });
+        }
       }
 
       dispatch({
@@ -286,7 +306,45 @@ export function useBackendSession() {
           return;
         }
         const liveSession = liveSessions.sessions.find((item) => item.sessionId === sessionId);
+        if (!liveSession) {
+          dispatch({ type: "backend_event", sessionId, event: { type: "shutdown" } });
+          return;
+        }
+        const current = latestStateRef.current;
         const cursor = streamCursorRef.current;
+        const question = [...current.messages].reverse().find((message) => message.role === "user" && !message.kind);
+        const unanswered = question && !current.messages.slice(current.messages.indexOf(question) + 1)
+          .some((message) => message.role === "assistant" && message.text.trim());
+        if ((current.busy || unanswered) && !current.restoringHistory && !current.pendingHistoryId
+          && liveSession.busy === false && liveSession.savedSessionId
+          && Date.now() - cursor.receivedAt >= busySessionPollMs * 2) {
+          if (question?.createdAt) {
+            const snapshot = await loadHistorySnapshot({
+              sessionId: liveSession.savedSessionId,
+              workspacePath: liveSession.workspace?.path || current.workspacePath || undefined,
+              workspaceName: liveSession.workspace?.name || current.workspaceName || undefined,
+            }).catch(() => null);
+            if (cancelled || revision !== streamCursorRef.current.revision
+              || latestStateRef.current !== current) return;
+            const events = snapshot?.history_events || [];
+            const lastUser = [...events].reverse().find((event) => event.type === "user" && !event.kind);
+            const index = lastUser ? events.indexOf(lastUser) : -1;
+            const savedQuestion = events[index];
+            const rawTime = savedQuestion?.timestamp;
+            const timestamp = typeof rawTime === "number" ? rawTime : Date.parse(String(rawTime || ""));
+            // Content alone cannot distinguish repeated questions across turns.
+            if (snapshot?.value === liveSession.savedSessionId && savedQuestion?.text === question.text
+              && Number.isFinite(timestamp) && timestamp >= question.createdAt
+              && events.slice(index + 1).some((event) => event.type === "assistant" && String(event.text || "").trim())) {
+              dispatch({ type: "backend_event", sessionId, event: { ...snapshot, live_replay: true } });
+              dispatch({ type: "backend_event", sessionId, event: { type: "line_complete" } });
+              if (Number.isSafeInteger(liveSession.latestEventId)) cursor.id = String(liveSession.latestEventId);
+              cursor.receivedAt = Date.now();
+              setEventStreamGeneration((value) => value + 1);
+              return;
+            }
+          }
+        }
         const hasServerCursor = Number.isSafeInteger(liveSession?.latestEventId);
         const behind = hasServerCursor && (!cursor.id || Number(cursor.id) < liveSession!.latestEventId!);
         if (behind) {

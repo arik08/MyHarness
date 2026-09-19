@@ -43,6 +43,69 @@ function Probe() {
 }
 
 describe("useBackendSession", () => {
+  it.each([[true, true], [false, true], [true, false], [false, false]])("recovers only the current saved answer when SSE is missing (fresh=%s, busy=%s)", async (fresh, busy) => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{
+      sessionId: "session-a", savedSessionId: "saved", busy: false, createdAt: 1, latestEventId: 12,
+    }] });
+    vi.mocked(loadHistorySnapshot).mockResolvedValue({ type: "history_snapshot", value: "saved", history_events: [
+      { type: "user", text: "same question", timestamp: now - (fresh ? 0 : 60_000) },
+      { type: "assistant", text: "saved answer", timestamp: now + 1000 },
+    ] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", sessionId: "session-a", busy,
+      messages: [{ id: "question", role: "user", text: "same question", createdAt: now }],
+    }}><Probe /></AppStateProvider>);
+    act(() => { vi.mocked(openBackendEvents).mock.calls.at(-1)![1].onCursor?.("10"); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(busy ? 6000 : 15000); });
+    expect(screen.getByTestId("messages").textContent?.includes("saved answer")).toBe(fresh);
+    expect(screen.getByTestId("busy").textContent).toBe(String(busy && !fresh));
+  });
+
+  it("does not overwrite a selected session with a delayed recovery snapshot", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    let resolveSnapshot!: (value: any) => void;
+    vi.mocked(loadHistorySnapshot).mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    vi.mocked(listLiveSessions).mockResolvedValue({ sessions: [{
+      sessionId: "session-a", savedSessionId: "saved", busy: false, createdAt: 1, latestEventId: 12,
+    }] });
+    function Switch() {
+      const { dispatch } = useAppState();
+      return <button onClick={() => dispatch({ type: "session_started", sessionId: "selected", busy: true })}>Select</button>;
+    }
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", sessionId: "session-a", busy: true,
+      messages: [{ id: "question", role: "user", text: "question", createdAt: now }],
+    }}><Probe /><Switch /></AppStateProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    fireEvent.click(screen.getByText("Select"));
+    await act(async () => resolveSnapshot({ type: "history_snapshot", value: "saved", history_events: [
+      { type: "user", text: "question", timestamp: now }, { type: "assistant", text: "stale answer" },
+    ] }));
+    expect(screen.getByTestId("session").textContent).toBe("selected");
+    expect(screen.getByTestId("messages").textContent).not.toContain("stale answer");
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+  });
+
+  it("shows the HTTP history without waiting for SSE on startup", async () => {
+    localStorage.setItem("myharness:lastConversation", JSON.stringify({
+      sessionId: "saved-last", workspacePath: "C:/demo", workspaceName: "Demo",
+    }));
+    vi.mocked(loadHistorySnapshot).mockResolvedValue({ type: "history_snapshot", value: "saved-last", history_events: [
+      { type: "user", text: "saved question" }, { type: "assistant", text: "saved answer" },
+    ] });
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}><Probe /></AppStateProvider>);
+    await waitFor(() => expect(screen.getByTestId("messages").textContent).toContain("saved answer"));
+    expect(screen.getByTestId("restoring").textContent).toBe("false");
+  });
+
+  it("reconnects when the HTTP session list no longer contains the active session", async () => {
+    vi.useFakeTimers();
+    render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1", sessionId: "expired", busy: true }}><Probe /></AppStateProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(screen.getByTestId("session").textContent).toBe("new-session");
+  });
+
   it("ignores a startup failure after another session has been selected", async () => {
     let rejectLookup!: (error: Error) => void;
     vi.mocked(listLiveSessions).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectLookup = reject; }));
@@ -466,7 +529,7 @@ describe("useBackendSession", () => {
 
   it("does not overlap busy-state polls when a request is still pending", async () => {
     vi.useFakeTimers();
-    let resolvePoll: ((value: { sessions: [] }) => void) | undefined;
+    let resolvePoll: ((value: Awaited<ReturnType<typeof listLiveSessions>>) => void) | undefined;
     vi.mocked(listLiveSessions).mockImplementation(() => new Promise((resolve) => {
       resolvePoll = resolve;
     }));
@@ -490,7 +553,7 @@ describe("useBackendSession", () => {
     expect(listLiveSessions).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      resolvePoll?.({ sessions: [] });
+      resolvePoll?.({ sessions: [{ sessionId: "session-a", savedSessionId: "", busy: true, createdAt: 1 }] });
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(3000);
     });

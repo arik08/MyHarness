@@ -23,6 +23,13 @@ export function ComposerRuntimeControls() {
   }, [confirmedState.confirmedRuntimeChoiceId, confirmedState.activeProfile, confirmedState.provider, confirmedState.model, confirmedState.effort]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => { setPending(false); setError(""); }, [state.sessionId]);
+  function reportFailure(reason: unknown, sessionId: string) {
+    if (currentSession.current !== sessionId) return;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    setError(message);
+    if (/unknown session/i.test(message)) dispatch({ type: "set_runtime_picker_error", message });
+  }
   const disabled = !state.sessionId || state.busy || pending || state.runtimeChoicePending;
   const maximum = state.runtimePicker.contextModeAvailable && state.appSettings.gpt56ContextMode === "full-context";
   const contextWindow = maximum ? state.runtimePicker.contextWindow : state.runtimePicker.standardContextWindow;
@@ -45,19 +52,20 @@ export function ComposerRuntimeControls() {
       });
     } catch (reason) {
       dispatch({ type: "reject_runtime_choice", requestId });
-      if (currentSession.current === sessionId) setError(reason instanceof Error ? reason.message : String(reason));
+      reportFailure(reason, sessionId);
     }
   }
 
   async function changeContext(mode: "cost-saver" | "full-context") {
     if (!state.sessionId || disabled || state.appSettings.gpt56ContextMode === mode) return;
+    const sessionId = state.sessionId;
     setPending(true);
     setError("");
     try {
       await sendBackendRequest(state.sessionId, state.clientId, { type: "apply_select_command", command: "context_mode", value: mode });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally { setPending(false); }
+      reportFailure(reason, sessionId);
+    } finally { if (currentSession.current === sessionId) setPending(false); }
   }
 
   return <>

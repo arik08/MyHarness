@@ -3,7 +3,7 @@ import { writeTextFileAtomic } from "./modules/atomicFile.js";
 import { sendFileResponse } from "./modules/fileResponse.js";
 import { moveFileExclusive } from "./modules/moveFileExclusive.js";
 import { pythonEnvironmentCandidates } from "./modules/pythonEnvironment.js";
-import { applyModelAvailability, changeModelAvailability } from "./modules/modelAvailability.js";
+import { applyModelAvailability, changeModelAvailability, reconcileSessionModel } from "./modules/modelAvailability.js";
 import { createModelCatalogCache } from "./modules/modelCatalogCache.js";
 import { pythonCommandCandidates } from "./modules/pythonCommandCandidates.js";
 import { createServer } from "node:http";
@@ -5845,6 +5845,7 @@ function getLanUrl() {
 }
 
 async function createBackendSession(options = {}, { fromQueue = false } = {}) {
+  options = reconcileSessionModel(options, await readModelAvailability());
   const id = crypto.randomUUID();
   const workspace = await resolveSessionWorkspace(options);
   const clientId = String(options.clientId || "").trim();

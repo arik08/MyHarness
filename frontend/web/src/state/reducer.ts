@@ -3488,6 +3488,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         return {
         ...state,
         sessionId: action.sessionId,
+        pendingRuntimeChoices: state.pendingRuntimeChoices?.filter((choice) => choice.sessionId === action.sessionId),
+        runtimeChoicePending: state.sessionId === action.sessionId && state.runtimeChoicePending,
         sessionReplayKey: state.sessionReplayKey + (action.replay ? 1 : 0),
         clientId: action.clientId || state.clientId,
         modal: backendModalForSession(backendModalsBySessionId, action.sessionId),
@@ -4049,6 +4051,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         return {
           ...state,
           sessionId: null,
+          pendingRuntimeChoices: [],
+          runtimeChoicePending: false,
           ready: false,
           busy: false,
           status: "connecting",
