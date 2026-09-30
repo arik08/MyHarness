@@ -20,9 +20,11 @@ import { canCopyPngToClipboard, copyPngToClipboard, copyTextToClipboard } from "
 import { readLocalStorage, writeLocalStorage } from "../utils/storage";
 import { Icon, type IconName } from "./ArtifactIcons";
 import { ProjectFileIcon } from "./ProjectFileIcon";
-import { ArtifactPreview, artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload, type ArtifactCaptureResult } from "./ArtifactPreview";
+import { DeferredArtifactPreview } from "./DeferredArtifactPreview";
+import { artifactAiSelectionMessage, artifactFrameBackMessage, artifactHtmlEditMessage, isEditablePayload, type ArtifactCaptureResult } from "./artifactPreviewContract";
 import { showTooltipNowEvent } from "./TooltipLayer";
 import { WorkflowPanel } from "./WorkflowPanel";
+import { useArtifactReadGuard } from "../hooks/useArtifactReadGuard";
 import { sidebarAutoCollapseChatWidthPx, sidebarCollapsedTrackWidthPx, sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 
 const artifactHistoryMarker = "myharnessArtifactPanel";
@@ -397,8 +399,10 @@ function ArtifactDownloadAction({ artifact, url }: { artifact: ArtifactSummary; 
 
 export function ArtifactPanel() {
   const { state, dispatch } = useAppState();
-  const currentSessionRef = useRef(state.sessionId);
-  currentSessionRef.current = state.sessionId;
+  const artifactReadGuard = useArtifactReadGuard();
+  const conversationScope = JSON.stringify([state.sessionId, state.clientId, state.workspacePath, state.workspaceName, state.conversationViewRevision]);
+  const currentConversationScopeRef = useRef(conversationScope);
+  currentConversationScopeRef.current = conversationScope;
   const latestPanelState = useRef(state);
   latestPanelState.current = state;
   const projectScope = JSON.stringify([state.sessionId, state.clientId, state.workspacePath, state.workspaceName]);
@@ -415,7 +419,7 @@ export function ArtifactPanel() {
   const [draftContent, setDraftContent] = useState("");
   const [draftPath, setDraftPath] = useState("");
   const [draftUserEdited, setDraftUserEdited] = useState(false);
-  const artifactScope = JSON.stringify([state.sessionId, state.clientId, state.activeArtifact?.workspace?.path || state.workspacePath,
+  const artifactScope = JSON.stringify([conversationScope, state.activeArtifact?.workspace?.path || state.workspacePath,
     state.activeArtifact?.path, state.artifactPanelOpen]);
   const artifactGeneration = useRef({ scope: artifactScope, value: 0 });
   if (artifactGeneration.current.scope !== artifactScope) {
@@ -455,6 +459,10 @@ export function ArtifactPanel() {
   const versionMenuRef = useRef<HTMLDivElement | null>(null);
   const lastArtifactRefreshKeyRef = useRef(state.artifactRefreshKey);
   const aiEditCompletionRefreshKeyRef = useRef<number | null>(null);
+  const aiEditRequestRef = useRef<{ scope: string; completed: boolean } | null>(null);
+  if (aiEditRequestRef.current?.scope === conversationScope && !state.busy) {
+    aiEditRequestRef.current.completed = true;
+  }
   const openArtifactRequestRef = useRef(0);
   const aiEditCommentsRef = useRef<HTMLDivElement | null>(null);
   const aiEditProgressRef = useRef<HTMLDivElement | null>(null);
@@ -559,13 +567,14 @@ export function ArtifactPanel() {
   }
 
   useEffect(() => {
+    setLoadingPath("");
     setAiEditTargetPath("");
     setSubmittingAiEdit(false);
     setAiEditStatus("");
     setAiEditComments([]);
     setAiEditProgressStartedAt(null);
     aiEditCompletionRefreshKeyRef.current = null;
-  }, [state.sessionId]);
+  }, [conversationScope]);
 
   useEffect(() => {
     if (aiEditTargetPath) {
@@ -895,6 +904,8 @@ export function ArtifactPanel() {
     const requestId = openArtifactRequestRef.current + 1;
     openArtifactRequestRef.current = requestId;
     const displayArtifact = { ...artifact, name: artifactDisplayName(artifact) };
+    const isCurrentView = artifactReadGuard(displayArtifact);
+    const isCurrentRequest = () => requestId === openArtifactRequestRef.current && isCurrentView();
     dispatch({ type: "open_artifact", artifact: displayArtifact });
     setLoadingPath(displayArtifact.path);
     try {
@@ -905,12 +916,12 @@ export function ArtifactPanel() {
         workspaceName: displayArtifact.workspace?.name || state.workspaceName,
         path: displayArtifact.path,
       });
-      if (requestId !== openArtifactRequestRef.current) {
+      if (!isCurrentRequest()) {
         return;
       }
       dispatch({ type: "open_artifact", artifact: { ...displayArtifact, workspace: payload.workspace || displayArtifact.workspace }, payload });
     } catch (error) {
-      if (requestId !== openArtifactRequestRef.current) {
+      if (!isCurrentRequest()) {
         return;
       }
       dispatch({
@@ -918,7 +929,7 @@ export function ArtifactPanel() {
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      if (requestId === openArtifactRequestRef.current) {
+      if (requestId === openArtifactRequestRef.current && currentConversationScopeRef.current === conversationScope) {
         setLoadingPath("");
       }
     }
@@ -1250,6 +1261,14 @@ export function ArtifactPanel() {
       });
       return;
     }
+    const generation = artifactGeneration.current.value;
+    const request = { scope: conversationScope, completed: false };
+    aiEditRequestRef.current = request;
+    const isCurrentConversationRequest = () => aiEditRequestRef.current === request
+      && currentConversationScopeRef.current === conversationScope;
+    const isCurrentRequest = () => isCurrentConversationRequest()
+      && artifactGeneration.current.value === generation
+      && !(request.completed && latestPanelState.current.busy);
     setSubmittingAiEdit(true);
     setAiEditOverlayCollapsed(false);
     setAiEditProgressStartedAt(Date.now());
@@ -1257,6 +1276,7 @@ export function ArtifactPanel() {
     setAiEditStatus("AI 자동편집 요청을 중앙 채팅으로 전달 중입니다.");
     aiEditCompletionRefreshKeyRef.current = state.artifactRefreshKey;
     dispatch({ type: "clear_workflow" });
+    dispatch({ type: "set_busy", value: true });
     try {
       const response = await aiEditArtifact({
         path: active.path,
@@ -1266,7 +1286,7 @@ export function ArtifactPanel() {
         workspacePath: active.workspace?.path || payload?.workspace?.path || state.workspacePath,
         workspaceName: active.workspace?.name || payload?.workspace?.name || state.workspaceName,
       });
-      if (currentSessionRef.current !== state.sessionId) return;
+      if (!isCurrentRequest()) return;
       const targetArtifact: ArtifactSummary = {
         ...active,
         path: response.targetPath,
@@ -1276,22 +1296,23 @@ export function ArtifactPanel() {
       };
       const nextArtifacts = [
         targetArtifact,
-        ...state.artifacts.filter((artifact) => artifact.path !== response.targetPath),
+        ...latestPanelState.current.artifacts.filter((artifact) => artifact.path !== response.targetPath),
       ];
       setAiEditTargetPath(response.targetPath);
       dispatch({ type: "set_artifacts", artifacts: nextArtifacts });
       setVersionMenuOpen(false);
-      dispatch({ type: "set_busy", value: true });
       setAiEditStatus(`AI 자동편집 진행 중: ${response.targetPath}`);
     } catch (error) {
-      if (currentSessionRef.current !== state.sessionId) return;
+      if (!isCurrentConversationRequest() || (request.completed && latestPanelState.current.busy)) return;
       aiEditCompletionRefreshKeyRef.current = null;
+      setAiEditStatus("");
+      if (!request.completed) dispatch({ type: "set_busy", value: false });
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      if (currentSessionRef.current === state.sessionId) setSubmittingAiEdit(false);
+      if (isCurrentConversationRequest()) setSubmittingAiEdit(false);
     }
   }
 
@@ -1738,7 +1759,12 @@ export function ArtifactPanel() {
           )}
         </div>
       ) : null}
-      <div className="artifact-viewer" key={active ? "detail" : "list"}>
+      <div
+        className="artifact-viewer"
+        key={active ? "detail" : "list"}
+        data-artifact-path={active?.path}
+        data-fullscreen-disabled={!active || !payload || htmlEditMode || sourceMode ? "true" : undefined}
+      >
         {!active ? (
           <ArtifactList
             artifacts={visibleArtifacts}
@@ -1769,7 +1795,7 @@ export function ArtifactPanel() {
             })}
           />
         ) : payload ? (
-          <ArtifactPreview
+          <DeferredArtifactPreview
             artifact={active}
             payload={payload}
             draftContent={draftContentForActive}

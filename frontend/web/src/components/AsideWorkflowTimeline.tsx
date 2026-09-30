@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { SwarmTeammateSnapshot } from "../types/backend";
 import type { WorkflowEvent } from "../types/ui";
 import { httpStatusLabel, toolDisplayName, workflowDisplayStatus, workflowGroupStatus } from "../utils/toolPresentation";
@@ -140,7 +140,7 @@ function Output({ text }: { text: string }) {
     {text.length > limit ? <button className="aside-show-output" type="button" onClick={() => setFull(!full)}>{full ? "출력 줄이기" : `전체 출력 보기 (${text.length.toLocaleString()}자)`}</button> : null}</>;
 }
 
-function CallDetail({ event, preview }: { event: WorkflowEvent; preview?: ReactNode }) {
+function CallDetail({ event }: { event: WorkflowEvent }) {
   const output = workflowSafeText(event.output);
   const detail = workflowSafeText(event.detail);
   const elapsed = event.startedAtMs && event.finishedAtMs ? Math.max(0, (event.finishedAtMs - event.startedAtMs) / 1000) : null;
@@ -152,7 +152,6 @@ function CallDetail({ event, preview }: { event: WorkflowEvent; preview?: ReactN
       {typeof event.executionMetadata?.returncode === "number" ? <><dt>종료 코드</dt><dd>{event.executionMetadata.returncode}</dd></> : null}
     </dl>
     {event.toolInput ? <><h4>입력</h4><Output text={workflowSafeText(event.toolInput)} /></> : null}
-    {preview}
     {output ? <><h4>출력</h4><Output text={output} /></> : null}
     {detail && detail !== output ? <><h4>{event.status === "running" ? "현재 진행" : "실행 기록"}</h4><Output text={detail} /></> : null}
     {event.detailLog?.length ? <><h4>진행 기록</h4><Output text={workflowSafeText(event.detailLog.join("\n"))} /></> : null}
@@ -195,13 +194,13 @@ function agentTime(value: number | string | null | undefined) {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function Call({ event, scope, preview, expanded = false, workspacePath = "", summary = false, pending = false }: { event: WorkflowEvent; scope: string; preview?: ReactNode; expanded?: boolean; workspacePath?: string; summary?: boolean; pending?: boolean }) {
+function Call({ event, scope, expanded = false, workspacePath = "", summary = false, pending = false }: { event: WorkflowEvent; scope: string; expanded?: boolean; workspacePath?: string; summary?: boolean; pending?: boolean }) {
   const item = category(event);
   const title = asideCallTitle(event, workspacePath);
   return <Disclosure running={workflowDisplayStatus(event) === "running"} pending={pending} storageKey={`${scope}:detail`} defaultOpen={expanded} className={`aside-call aside-state-${workflowDisplayStatus(event)}`} ariaLabel={`${title} 상세 실행 기록`}
     label={<><span className="aside-activity-icon"><Icon name={item.icon} /></span><span className={`aside-call-title${item.key === "skill" ? " aside-skill-name" : ""}`}>{summary ? `${asideActivitySummary([event])} (1건)` : title}</span>
       <ActivityStatus status={workflowDisplayStatus(event)} /></>}>
-    <CallDetail event={event} preview={preview} />
+    <CallDetail event={event} />
   </Disclosure>;
 }
 
@@ -261,19 +260,20 @@ export function AsideWorkflowTimeline({ events, scope, duration, busy, agents = 
         const first = row.events[0];
         const groupScope = `${scope}:actions:${first.toolCallId || row.index}`;
         const callScope = (event: WorkflowEvent, callIndex: number) => `${scope}:call:${event.toolCallId || `${row.index}:${callIndex}`}`;
-        if (row.events.length === 1) return <div className="aside-activity" key={first.id}><Call pending={pendingResponse && index === rows.length - 1} event={first} summary={!expanded} expanded={expanded} workspacePath={workspacePath} scope={callScope(first, 0)} preview={first.status !== "running" ? renderPreview?.(first) : null} /></div>;
+        if (row.events.length === 1) return <div className="aside-activity" key={first.id}><Call pending={pendingResponse && index === rows.length - 1} event={first} summary={!expanded} expanded={expanded} workspacePath={workspacePath} scope={callScope(first, 0)} /></div>;
         let firstCallOpen = false;
         try { firstCallOpen = sessionStorage.getItem(`${callScope(first, 0)}:detail`) === "1"; } catch { /* optional storage */ }
         const status = workflowGroupStatus(row.events);
         return <Disclosure running={status === "running"} pending={pendingResponse && index === rows.length - 1} key={first.id} storageKey={groupScope} defaultOpen={expanded || firstCallOpen} className={`aside-activity aside-state-${status}`} label={<>
           <span className="aside-activity-icon"><Icon name={category(first).icon} /></span><span className="aside-activity-summary">{asideActivitySummary(row.events)} ({row.events.length}건)</span>
           {status === "running" || status === "error" || status === "warning" || status === "empty" || status.startsWith("http_") ? <ActivityStatus status={status} /> : null}
-        </>}><div className="aside-children">{row.events.map((event, callIndex) => <Call key={event.toolCallId || event.id} expanded={expanded} workspacePath={workspacePath} event={event} scope={callScope(event, callIndex)} preview={event.status !== "running" ? renderPreview?.(event) : null} />)}</div></Disclosure>;
+        </>}><div className="aside-children">{row.events.map((event, callIndex) => <Call key={event.toolCallId || event.id} expanded={expanded} workspacePath={workspacePath} event={event} scope={callScope(event, callIndex)} />)}</div></Disclosure>;
       })}{!rows.some((row) => row.kind === "note" && row.event.role === "agents") ? <AgentTree agents={agents} scope={scope} /> : null}
       </div>
     </Disclosure>
-    {events.filter((event) => event.status === "running").map((event) => (
-      <div key={event.id}>{renderPreview?.(event)}</div>
+    {/* File content is output, so it stays visible independently of work-history disclosures. */}
+    {rows.flatMap((row) => row.kind === "actions" ? row.events : []).map((event) => (
+      <Fragment key={event.toolCallId || event.id}>{renderPreview?.(event)}</Fragment>
     ))}
   </article>;
 }

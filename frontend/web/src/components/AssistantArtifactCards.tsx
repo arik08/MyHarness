@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { readArtifact, resolveArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
+import { useArtifactReadGuard } from "../hooks/useArtifactReadGuard";
 import type { ArtifactSummary } from "../types/backend";
 import type { AppSettings, ChatMessage } from "../types/ui";
 import type { PromptTokenReferences } from "../utils/promptTokens";
@@ -109,6 +110,7 @@ function removeArtifactReferenceRanges(text: string, references: Array<{ start: 
 
 function useMessageArtifacts(message: ChatMessage) {
   const { state, dispatch } = useAppState();
+  const artifactReadGuard = useArtifactReadGuard();
   const [artifacts, setArtifacts] = useState<ResolvedArtifact[]>([]);
   const [loadingPath, setLoadingPath] = useState("");
   const candidateSignature = useMemo(
@@ -174,10 +176,11 @@ function useMessageArtifacts(message: ChatMessage) {
     return () => {
       canceled = true;
     };
-  }, [candidateSignature, dispatch, message.isComplete, message.text, state.clientId, state.sessionId, state.workspaceName, state.workspacePath]);
+  }, [candidateSignature, dispatch, message.isComplete, message.text, state.clientId, state.sessionId, state.workspaceName, state.workspacePath, state.conversationViewRevision]);
 
   async function openArtifact(artifact: ArtifactSummary) {
     const displayArtifact = { ...artifact, name: artifactDisplayName(artifact) };
+    const isCurrentRequest = artifactReadGuard(displayArtifact);
     dispatch({ type: "open_artifact", artifact: displayArtifact });
     setLoadingPath(displayArtifact.path);
     try {
@@ -188,14 +191,16 @@ function useMessageArtifacts(message: ChatMessage) {
         workspaceName: displayArtifact.workspace?.name || state.workspaceName,
         path: displayArtifact.path,
       });
+      if (!isCurrentRequest()) return;
       dispatch({ type: "open_artifact", artifact: { ...displayArtifact, workspace: payload.workspace || displayArtifact.workspace }, payload });
     } catch (error) {
+      if (!isCurrentRequest()) return;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      setLoadingPath("");
+      setLoadingPath((current) => current === displayArtifact.path ? "" : current);
     }
   }
 

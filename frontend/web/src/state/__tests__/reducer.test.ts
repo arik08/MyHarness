@@ -165,7 +165,7 @@ describe("appReducer", () => {
     expect(state.runtimeChoicePending).toBe(false);
   });
 
-  it("retains the saved startup empty chat after opening another conversation", () => {
+  it("does not create a startup history row from an ID and placeholder title", () => {
     let state = appReducer({ ...initialAppState, sessionId: "web-startup" }, {
       type: "backend_event", event: { type: "active_session", value: "saved-startup" },
     });
@@ -174,7 +174,7 @@ describe("appReducer", () => {
     state = appReducer(state, { type: "backend_event", event: {
       type: "history_snapshot", value: "other", history_events: [],
     } });
-    expect(state.history).toContainEqual(expect.objectContaining({ value: "saved-startup", messageCount: 0 }));
+    expect(state.history).not.toContainEqual(expect.objectContaining({ value: "saved-startup" }));
   });
   it("merges a newly saved chat with its optimistic row without losing saved preferences", () => {
     const state = appReducer({
@@ -1870,7 +1870,7 @@ describe("appReducer", () => {
     ]);
   });
 
-  it("creates a visible completion message for marker-only artifact completions", () => {
+  it("creates an artifact-only answer without invented completion prose", () => {
     const completed = appReducer(initialAppState, {
       type: "backend_event",
       event: {
@@ -1883,7 +1883,7 @@ describe("appReducer", () => {
       },
     });
 
-    expect(completed.messages.at(-1)?.text).toBe("작성 완료했습니다.");
+    expect(completed.messages.at(-1)?.text).toBe("");
     expect(completed.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
       "outputs/한국_주변국_GDP_분석_보고서.html",
     ]);
@@ -1914,7 +1914,7 @@ describe("appReducer", () => {
     });
 
     expect(duplicate.messages).toHaveLength(first.messages.length);
-    expect(duplicate.messages.at(-1)?.text).toBe("작성 완료했습니다.");
+    expect(duplicate.messages.at(-1)?.text).toBe("");
     expect(duplicate.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
       "outputs/완성_보고서.html",
     ]);
@@ -2651,7 +2651,7 @@ describe("appReducer", () => {
 
     expect(restored.messages.map((message) => [message.role, message.text])).toEqual([
       ["user", "GDP 보고서 작성"],
-      ["assistant", "작성 완료했습니다."],
+      ["assistant", ""],
     ]);
     expect(restored.messages.at(-1)?.artifacts?.map((artifact) => artifact.path)).toEqual([
       "outputs/한국_주변국_GDP_분석_보고서.html",

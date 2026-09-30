@@ -128,6 +128,7 @@ class CopilotClient:
             tools=request.tools,
             reasoning_effort=request.reasoning_effort,
             cache_event=request.cache_event,
+            prompt_cache_scope=request.prompt_cache_scope,
         )
         async with aclosing(self._inner.stream_message(patched)) as stream:
             async for event in stream:

@@ -17,7 +17,7 @@ from myharness.memory import find_relevant_memories, load_memory_prompt
 from myharness.mcp.types import DUMMY_MCP_SERVERS
 from myharness.personalization.rules import load_local_rules
 from myharness.prompts.project_instructions import load_project_instructions_prompt
-from myharness.prompts.system_prompt import build_system_prompt
+from myharness.prompts.system_prompt import build_system_prompt_sections
 from myharness.skills.loader import load_skill_registry
 from myharness.skills.routing import is_mcp_routed_skill, mcp_server_name_from_skill_source
 from myharness.subagents import SUBAGENT_INVOCATION_DISABLED_MESSAGE, is_subagent_invocation_enabled
@@ -298,7 +298,7 @@ def _build_long_report_section() -> str:
             "the server/resource/document/table/query identifiers that let the reader understand where the information came from. "
             "Always label MCP citations `출처: MCP · actual-server-name · 자료명`, even for HTTPS destinations or provided "
             "source_chip values; preserve their destination and excerpt. Use `출처: 웹검색 · 사이트명` for web_search and "
-            "`출처: 웹페이지 · 사이트명` for web_fetch. Keep the same origin in HTML source lists and MCP tooltip headings. "
+            "`출처: 사이트명` for web_fetch without a `웹페이지` prefix. Keep the same origin in HTML source lists and MCP tooltip headings. "
             "Never infer the retrieval origin from the URL; use the actual tool/skill metadata. If unknown, say so.",
         ]
     )
@@ -328,13 +328,13 @@ def build_runtime_system_prompt(
 ) -> str:
     """Build the runtime system prompt with project instructions and memory."""
     coordinator_mode = is_coordinator_mode() and not task_worker
+    session_sections: list[str] = []
     if coordinator_mode:
         sections = [get_coordinator_system_prompt()]
     else:
-        sections = [build_system_prompt(custom_prompt=settings.system_prompt, cwd=str(cwd))]
-
-    if not coordinator_mode and settings.system_prompt is None:
-        sections[0] = build_system_prompt(cwd=str(cwd))
+        base, environment = build_system_prompt_sections(custom_prompt=settings.system_prompt, cwd=str(cwd))
+        sections = [base]
+        session_sections.append(environment)
 
     sections.append(
         "# Task Execution Contract\n"
@@ -357,15 +357,21 @@ def build_runtime_system_prompt(
         "and no real blocker requires user input, continue now. If execution is blocked by unavailable tools, "
         "permissions, credentials, or a failed operation that cannot be recovered, state the concrete blocker and "
         "what is incomplete instead of promising future execution or claiming success. Base completion claims on "
-        "observed results. Purely informational requests may be completed directly without tool calls."
+        "observed results. Do not emit contentless completion announcements after tool calls or as progress "
+        "notes, such as '작성 완료했습니다', '작업 완료했습니다', or equivalent phrases in any language. "
+        "Tool completion is already shown by the UI. If there is a meaningful update, state the concrete "
+        "finding, changed outcome, verification result, or blocker; otherwise continue the work silently. "
+        "The final answer should deliver the result or a concise factual summary with necessary limitations, "
+        "rather than a bare completion announcement. Purely informational requests may be completed directly "
+        "without tool calls."
     )
 
     if settings.fast_mode:
-        sections.append(
+        session_sections.append(
             "# Session Mode\nFast mode is enabled. Prefer concise replies, minimal tool use, and quicker progress over exhaustive exploration."
         )
 
-    sections.append(
+    session_sections.append(
         "# Reasoning Settings\n"
         f"- Effort: {settings.effort}\n"
         f"- Passes: {settings.passes}\n"
@@ -400,6 +406,10 @@ def build_runtime_system_prompt(
     local_rules = load_local_rules()
     if local_rules:
         sections.append(f"# Local Environment Rules\n\n{local_rules}")
+
+    # Keep changing runtime facts after the reusable instructions, without
+    # changing their role, dropping facts, or parsing arbitrary custom prompts.
+    sections.extend(session_sections)
 
     if prompt_profile == "continuation":
         sections.append(_build_continuation_appendix())

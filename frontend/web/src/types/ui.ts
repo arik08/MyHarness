@@ -1,4 +1,5 @@
 import type { ArtifactSummary, Attachment, CommandItem, HistoryItem, McpServerItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, TranscriptItem, UsageCostSummary, Workspace, WorkspaceScope } from "./backend";
+import type { StreamedJsonInput } from "../state/streamedJsonInput";
 
 export type StatusKind =
   | "connecting"
@@ -47,7 +48,7 @@ export type LiveSessionView = {
   workflowAnchorMessageId: string | null;
   workflowEventsByMessageId: Record<string, WorkflowEvent[]>;
   workflowDurationSecondsByMessageId: Record<string, number>;
-  workflowInputBuffers: Record<string, string>;
+  workflowInputBuffers: Record<string, StreamedJsonInput>;
   workflowEvents: WorkflowEvent[];
   workflowDurationSeconds: number | null;
   workflowStartedAtMs: number | null;
@@ -97,6 +98,7 @@ export type ComposerState = {
 
 export type AppState = {
   sessionId: string | null;
+  restartingSessionId: string | null;
   sessionReplayKey: number;
   conversationViewRevision: number;
   clientId: string;
@@ -158,7 +160,7 @@ export type AppState = {
   workflowAnchorMessageId: string | null;
   workflowEventsByMessageId: Record<string, WorkflowEvent[]>;
   workflowDurationSecondsByMessageId: Record<string, number>;
-  workflowInputBuffers: Record<string, string>;
+  workflowInputBuffers: Record<string, StreamedJsonInput>;
   todoMarkdown: string;
   todoSessionId: string | null;
   todoCollapsed: boolean;

@@ -837,7 +837,7 @@ export function Composer() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (waitingForCancellation || enhancing || pendingAttachmentCountRef.current > 0 || (busyDelivery.pending && hasPayload)) return;
+    if (state.restoringHistory || (state.sessionId && state.restartingSessionId === state.sessionId) || waitingForCancellation || enhancing || pendingAttachmentCountRef.current > 0 || (busyDelivery.pending && hasPayload)) return;
     const line = fullLine();
     const quietHelpCommand = /^\/help(?:\s|$)/i.test(line.trim()) && !hasAnyAttachment;
     if (quietHelpCommand) {
@@ -1263,7 +1263,7 @@ export function Composer() {
             className={showStop ? "is-stop" : canSteer ? "is-steer" : ""}
             type="submit"
             aria-busy={waitingForCancellation || cancellation.pending || (busyDelivery.pending && canSteer)}
-            disabled={waitingForCancellation || cancellation.pending || (busyDelivery.pending && canSteer) || (state.busy ? !showStop && !canSteer : !canSend)}
+            disabled={state.restoringHistory || Boolean(state.sessionId && state.restartingSessionId === state.sessionId) || waitingForCancellation || cancellation.pending || (busyDelivery.pending && canSteer) || (state.busy ? !showStop && !canSteer : !canSend)}
             aria-label={showStop ? "작업 중단" : canSteer ? "스티어링 보내기" : "메시지 보내기"}
           >
             {showStop ? (

@@ -4,7 +4,7 @@
 .aside-workflow .aside-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .aside-workflow .aside-chevron { width: 13px; height: 13px; flex: 0 0 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: transform 160ms ease-out; }
 .aside-workflow .aside-toggle[aria-expanded="true"] > .aside-chevron { transform: rotate(90deg); }
-.aside-workflow .aside-work > .aside-toggle { width: fit-content; margin-bottom: 3px; }
+.aside-workflow .aside-work > .aside-toggle { width: 100%; margin-bottom: 3px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .aside-timeline { padding: 0; min-width: 0; }
 .aside-preparing { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--aside-muted); font-size: 14px; line-height: 1.5; }
 .aside-progress-prose { margin: 8px 0 10px; color: var(--ink); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
@@ -12,9 +12,11 @@
 .aside-workflow .aside-activity-icon, .aside-agent-icon { width: 19px; height: 19px; flex: 0 0 19px; display: inline-flex; align-items: center; justify-content: center; }
 .aside-workflow .aside-activity-icon svg, .aside-agent-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .aside-activity-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.aside-children { position: relative; padding-left: 29px; margin: 2px 0 4px 9px; border-left: 1px solid var(--aside-line); }
+.aside-children { --aside-indent: 29px; position: relative; padding-left: var(--aside-indent); margin: 2px 0 4px 9px; }
 .aside-children > .aside-disclosure { position: relative; }
-.aside-children > .aside-disclosure::before { content: ""; position: absolute; left: -30px; top: 7px; width: 18px; height: 10px; border-left: 1px solid var(--aside-line); border-bottom: 1px solid var(--aside-line); border-radius: 0 0 0 10px; pointer-events: none; }
+.aside-children > .aside-disclosure > .aside-toggle { position: relative; }
+.aside-children > .aside-disclosure > .aside-toggle::before { content: ""; position: absolute; box-sizing: border-box; left: calc(-1 * var(--aside-indent)); top: 0; width: 18px; height: calc(50% + 0.5px); border-left: 1px solid var(--aside-line); border-bottom: 1px solid var(--aside-line); border-radius: 0 0 0 10px; pointer-events: none; }
+.aside-children > .aside-disclosure:not(:last-child)::after { content: ""; position: absolute; left: calc(-1 * var(--aside-indent)); top: 0; bottom: 0; border-left: 1px solid var(--aside-line); pointer-events: none; }
 .aside-call-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .aside-skill-name { color: var(--accent); }
 .aside-status { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; font-size: 12px; margin-left: auto; }
@@ -40,13 +42,13 @@
 .aside-agent-meta small { display: block; }
 .aside-agent-icon.color-0 { color: #43bb83; }.aside-agent-icon.color-1 { color: #d56ba9; }.aside-agent-icon.color-2 { color: #8d85e8; }
 .aside-workflow [hidden] { display: none !important; }
-@media (max-width: 600px) { .aside-children { padding-left: 19px; } .aside-children > .aside-disclosure::before { left: -20px; width: 12px; } .aside-agent-meta { max-width: 95px; overflow-wrap: anywhere; } .aside-call-detail { padding-left: 5px; } }
+@media (max-width: 600px) { .aside-children { --aside-indent: 19px; } .aside-children > .aside-disclosure > .aside-toggle::before { width: 12px; } .aside-agent-meta { max-width: 95px; overflow-wrap: anywhere; } .aside-call-detail { padding-left: 5px; } }
 @media (prefers-reduced-motion: reduce) { .aside-workflow .aside-chevron { transition: none; } }
 
 .messages:has(.aside-workflow) { row-gap: 16px; }
-.messages > .aside-workflow + .message.assistant { border-top: 1px solid var(--line); margin-top: -8px; padding-top: 8px; }
+.messages > .aside-workflow + .message.assistant { margin-top: -8px; padding-top: 8px; }
 .messages > .aside-workflow:has(.aside-work > .aside-toggle[aria-expanded="false"]) + .message.assistant { margin-top: -14px; }
-.aside-workflow .aside-work > .aside-toggle[aria-expanded="false"] { margin-bottom: 0; padding-bottom: 1px; line-height: 1.5; }
+.aside-workflow .aside-work > .aside-toggle[aria-expanded="false"] { margin-bottom: 0; line-height: 1.5; }
 .aside-timeline > :last-child { margin-bottom: 0; }
 
 .aside-spinner-slot { width: 19px; height: 19px; flex: 0 0 19px; display: inline-flex; align-items: center; justify-content: center; }

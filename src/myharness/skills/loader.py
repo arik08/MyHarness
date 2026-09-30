@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -162,20 +163,32 @@ def load_skills_from_dirs(
             if path in seen:
                 continue
             seen.add(path)
-            content = path.read_text(encoding="utf-8")
-            default_name = path.parent.name
-            name, description = _parse_skill_markdown(default_name, content)
-            skill_source = _parse_skill_source(content, source)
-            skills.append(
-                SkillDefinition(
-                    name=name,
-                    description=description,
-                    content=content,
-                    source=skill_source,
-                    path=str(path),
-                )
-            )
+            skills.append(load_skill_file(path, source=source))
     return skills
+
+
+def load_skill_file(path: Path, *, source: str, allow_source_override: bool = True) -> SkillDefinition:
+    """Reuse immutable parsed files, but check disk identity on every lookup.
+
+    Discovery and enablement are intentionally uncached so additions, deletions,
+    plugin configuration and project preferences take effect immediately.
+    """
+    info = path.stat()
+    fingerprint = (info.st_mtime_ns, info.st_ctime_ns, info.st_size, info.st_ino)
+    return _cached_skill_file(str(path), source, allow_source_override, fingerprint)
+
+
+@lru_cache(maxsize=256)
+def _cached_skill_file(path: str, source: str, allow_source_override: bool,
+                       fingerprint: tuple[int, int, int, int]) -> SkillDefinition:
+    del fingerprint
+    skill_path = Path(path)
+    content = skill_path.read_text(encoding="utf-8")
+    name, description = _parse_skill_markdown(skill_path.parent.name, content)
+    return SkillDefinition(
+        name=name, description=description, content=content, path=path,
+        source=_parse_skill_source(content, source) if allow_source_override else source,
+    )
 
 
 def is_learned_skill(skill: SkillDefinition) -> bool:

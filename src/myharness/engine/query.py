@@ -959,7 +959,7 @@ async def run_query(
         return was_compacted
 
     turn_count = 0
-    continuation_start_index: int | None = None
+    continuation_messages: list[ConversationMessage] = []
     continued_text_parts: list[str] = []
     continued_usage = UsageSnapshot()
     continuation_count = 0
@@ -1015,6 +1015,7 @@ async def run_query(
                 system_prompt=context.system_prompt,
                 max_tokens=context.max_tokens,
                 tools=request_tools,
+                prompt_cache_scope=str(context.cwd.resolve()),
                 reasoning_effort=context.reasoning_effort,
                 compact_threshold_tokens=min(
                     context.auto_compact_threshold_tokens or get_context_window(context.model, context_window_tokens=context.context_window_tokens),
@@ -1113,10 +1114,9 @@ async def run_query(
 
         output_truncated = _is_output_truncated_stop_reason(stop_reason)
         if output_truncated and not final_message.tool_uses and continuation_count < MAX_AUTO_CONTINUATIONS:
-            if continuation_start_index is None:
-                continuation_start_index = len(messages)
-            messages.append(final_message)
-            messages.append(ConversationMessage.from_user_text(CONTINUATION_PROMPT))
+            continuation_prompt = ConversationMessage.from_user_text(CONTINUATION_PROMPT)
+            messages.extend([final_message, continuation_prompt])
+            continuation_messages.extend([final_message, continuation_prompt])
             continued_text_parts.append(_raw_message_text(final_message))
             continued_usage = _add_usage(continued_usage, usage)
             continuation_count += 1
@@ -1125,7 +1125,7 @@ async def run_query(
                 yield StatusEvent(message="응답이 출력 한도에 도달해 자동으로 이어서 작성합니다."), None
             continue
 
-        if continuation_start_index is not None:
+        if continuation_messages:
             request_input_tokens = usage.input_tokens
             final_message = _combine_continued_assistant_message(
                 continued_text_parts,
@@ -1133,8 +1133,11 @@ async def run_query(
                 append_notice=output_truncated and not final_message.tool_uses,
             )
             usage = _add_usage(continued_usage, usage)
-            del messages[continuation_start_index:]
-            continuation_start_index = None
+            # Remove only our temporary continuation turns. Real user steering
+            # and any compaction replacement received between them must remain.
+            continuation_ids = {id(message) for message in continuation_messages}
+            messages[:] = [message for message in messages if id(message) not in continuation_ids]
+            continuation_messages = []
             continued_text_parts = []
             continued_usage = UsageSnapshot()
             continuation_count = 0
@@ -1174,6 +1177,27 @@ async def run_query(
             return
 
         tool_calls = final_message.tool_uses
+        tool_results: list[ToolResultBlock | None] = [None] * len(tool_calls)
+        tool_result_message = ConversationMessage(role="user", content=[
+            ToolResultBlock(
+                tool_use_id=tc.id,
+                content=(
+                    "Tool execution was interrupted before a result was received. "
+                    "Its effects are unknown; inspect the current state before retrying."
+                ),
+                is_error=True,
+            )
+            for tc in tool_calls
+        ])
+        results_recorded = False
+
+        def _record_tool_result(index: int, result: ToolResultBlock) -> None:
+            nonlocal results_recorded
+            tool_results[index] = result
+            tool_result_message.content[index] = result
+            if not results_recorded:
+                messages.append(tool_result_message)
+                results_recorded = True
 
         if len(tool_calls) == 1:
             # Single tool: sequential (stream events immediately)
@@ -1185,6 +1209,7 @@ async def run_query(
                 index=0,
             ), None
             result = await _execute_tool_call_safely(context, tc.name, tc.id, tc.input)
+            _record_tool_result(0, result)
             yield ToolExecutionCompleted(
                 tool_name=tc.name,
                 output=result.display_content or result.content,
@@ -1193,7 +1218,6 @@ async def run_query(
                 index=0,
                 transcript_output=result.transcript_content,
             ), None
-            tool_results = [result]
         else:
             # Multiple tools: execute concurrently, emit events after
             for index, tc in enumerate(tool_calls):
@@ -1209,17 +1233,18 @@ async def run_query(
             async def _run(index, tc):
                 async with execution_slots:
                     result = await _execute_tool_call_safely(context, tc.name, tc.id, tc.input)
+                    # Commit before yielding a completion or returning to the
+                    # parent, which may be cancelled while another tool waits.
+                    _record_tool_result(index, result)
                 return index, tc, result
 
             # Emit each completion as soon as that tool finishes so fast tools
             # do not look stuck behind a slower sibling in the UI. Keep the
             # final tool_result message in original tool_use order for providers.
             tasks = [asyncio.create_task(_run(index, tc)) for index, tc in enumerate(tool_calls)]
-            tool_results: list[ToolResultBlock | None] = [None] * len(tool_calls)
             try:
                 for completed_task in asyncio.as_completed(tasks):
                     index, tc, result = await completed_task
-                    tool_results[index] = result
                     yield ToolExecutionCompleted(
                         tool_name=tc.name,
                         output=result.display_content or result.content,
@@ -1236,9 +1261,7 @@ async def run_query(
                     await asyncio.gather(*pending, return_exceptions=True)
             if any(result is None for result in tool_results):
                 raise RuntimeError("parallel tool execution finished without all tool results")
-            tool_results = [result for result in tool_results if result is not None]
 
-        messages.append(ConversationMessage(role="user", content=tool_results))
         steering_count = await _drain_steering_messages(context, messages)
         if steering_count:
             yield StatusEvent(

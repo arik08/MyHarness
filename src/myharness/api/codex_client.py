@@ -29,6 +29,7 @@ from myharness.api.client import (
 from myharness.api.errors import AuthenticationFailure, MyHarnessApiError, RateLimitFailure, RequestFailure
 from myharness.api.usage import UsageSnapshot
 from myharness.api.retry import calculate_retry_delay
+from myharness.api.prompt_cache import supports_modern_prompt_cache
 from myharness.engine.messages import (
     ResponsesStateBlock,
     ConversationMessage,
@@ -225,7 +226,9 @@ def _convert_messages_to_codex(
 def _prompt_cache_key_for_request(request: ApiMessageRequest) -> str:
     payload = {
         "model": request.model,
-        "system_prompt": request.system_prompt or "You are MyHarness.",
+        # This only routes cache lookup; upstream still compares exact tokens.
+        "prompt_scope": request.prompt_cache_scope if request.prompt_cache_scope is not None
+        else request.system_prompt or "You are MyHarness.",
         "tools": sorted(
             [
                 {
@@ -369,6 +372,7 @@ class CodexApiClient:
         self._prompt_cache_retention = retention if retention in _PROMPT_CACHE_RETENTION_VALUES else None
         self._unsupported_cache_option_names: set[str] = set()
         self._http_client: httpx.AsyncClient | None = None
+        self._diagnostics_label = "codex"
 
     async def aclose(self) -> None:
         """Close the shared Codex HTTP connection pool."""
@@ -723,8 +727,12 @@ class CodexApiClient:
 
         try:
             _append_diagnostic_jsonl(get_logs_dir() / "prompt-cache-diagnostics.jsonl", {
-                "ts": time.time(), "provider": "responses", "event": "completed", "model": request.model,
+                "ts": time.time(), "provider": self._diagnostics_label, "event": "completed", "model": request.model,
                 "cache_event": request.cache_event or "", "prompt_cache_key": body.get("prompt_cache_key", ""),
+                "prompt_cache_options": body.get("prompt_cache_options", {}),
+                "prompt_cache_retention": body.get("prompt_cache_retention", ""),
+                "tool_count": len(body.get("tools", [])), "input_item_count": len(body.get("input", [])),
+                "unsupported_cache_options": sorted(self._unsupported_cache_option_names),
                 "system_prompt_hash": digest(request.system_prompt), "tool_schema_hash": digest(body.get("tools", [])),
                 "message_prefix_hash": digest(body.get("input", [])[:-1]),
                 "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
@@ -853,12 +861,14 @@ class OpenAIResponsesClient(CodexApiClient):
         base_url: str | None = None,
         timeout: float | None = None,
         prompt_cache_retention: str | None = None,
+        diagnostics_label: str = "openai-responses",
     ) -> None:
         super().__init__(
             auth_token=api_key,
             timeout=timeout,
             prompt_cache_retention=prompt_cache_retention,
         )
+        self._diagnostics_label = diagnostics_label
         normalized_base = (base_url or "https://api.openai.com/v1").rstrip("/")
         self._url = (
             normalized_base
@@ -882,10 +892,12 @@ class OpenAIResponsesClient(CodexApiClient):
         body = super()._request_body(request, safe_messages)
         body["max_output_tokens"] = request.max_tokens
         body["reasoning"].pop("context", None)
-        if _is_gpt_56_model(request.model) or request.model.startswith("gpt-6"):
+        if supports_modern_prompt_cache(request.model):
             body.pop("prompt_cache_retention", None)
             if "prompt_cache_options" not in self._unsupported_cache_option_names:
-                body["prompt_cache_options"] = {"mode": "explicit", "ttl": "30m"}
+                # Keep the shared developer boundary while allowing append-only
+                # conversation/tool history to become reusable on later turns.
+                body["prompt_cache_options"] = {"mode": "implicit", "ttl": "30m"}
                 if body["input"] and body["input"][0].get("role") == "developer":
                     body["input"][0]["content"][-1]["prompt_cache_breakpoint"] = {"mode": "explicit"}
         return body

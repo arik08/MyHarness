@@ -71,3 +71,31 @@ def test_disabled_default_provider_falls_back_but_explicit_selection_is_rejected
     assert restored.resolve_profile()[1].allows_model(restored.model)
     with pytest.raises(ValueError, match='허용된 모델이 없습니다'):
         restored.resolve_profile(name)
+
+
+@pytest.mark.parametrize('profile_name', ['p-gpt', 'codex'])
+@pytest.mark.parametrize('enabled', ['gpt-6-sol', 'gpt-6-luna'])
+def test_only_gpt6_enabled_restores_stale_gpt56_selection(tmp_path, profile_name, enabled):
+    settings = Settings(active_profile=profile_name)
+    # Exercise saved pre-GPT-6 catalogs and selections, not only fresh defaults.
+    profiles = settings.merged_profiles()
+    for profile in profiles.values():
+        profile.allowed_models = ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol']
+        profile.last_model = 'gpt-5.6-terra'
+    settings.profiles = profiles
+    settings.enabled_models_by_profile = {name: [] for name in profiles}
+    settings.enabled_models_by_profile[profile_name] = [enabled]
+    path = tmp_path / 'settings.json'
+    path.write_text(settings.model_dump_json(), encoding='utf-8')
+
+    restored = load_settings(path)
+    assert restored.active_profile == profile_name
+    assert restored.model == restored.subagent_model == enabled
+    restored = restored.merge_cli_overrides(
+        active_profile=profile_name, model='gpt-5.6-terra', subagent_model='gpt-5.6-luna',
+    )
+    assert restored.model == restored.subagent_model == enabled
+    options = _runtime_picker_options(restored)
+    assert [item['value'] for item in options['models_by_provider'][profile_name]] == [enabled]
+    assert all(not models for name, models in options['models_by_provider'].items() if name != profile_name)
+    assert 'gpt-5.6-luna' in [item['value'] for item in options['all_models_by_provider'][profile_name]]

@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import mermaid from "mermaid";
 import { ArtifactPreview } from "../ArtifactPreview";
-import { MarkdownMessage } from "../MarkdownMessage";
+import { MarkdownMessage, renderMermaidSvg } from "../MarkdownMessage";
 import { StreamingAssistantMessage } from "../StreamingAssistantMessage";
 import { initialAppState } from "../../state/reducer";
 
@@ -21,11 +21,18 @@ vi.mock("mermaid", () => ({
 }));
 
 beforeEach(() => {
+  vi.mocked(mermaid.initialize).mockReset();
   vi.mocked(mermaid.render).mockReset();
   vi.mocked(mermaid.render).mockImplementation(async (id: string, source: string) => ({
     svg: `<svg data-render-id="${id}" role="img"><text>${escapeMockSvgText(source.includes("Ready") ? "Ready" : source)}</text></svg>`,
     diagramType: "flowchart",
   }));
+});
+
+afterEach(() => {
+  document.documentElement.style.removeProperty("--warning-soft");
+  document.documentElement.style.removeProperty("--accent-soft");
+  vi.restoreAllMocks();
 });
 
 function dispatchPointer(target: Element | Window, type: string, init: { clientX?: number; clientY?: number; button?: number; pointerId?: number } = {}) {
@@ -40,6 +47,31 @@ function dispatchPointer(target: Element | Window, type: string, init: { clientX
 }
 
 describe("MarkdownMessage Mermaid rendering", () => {
+  it.each([
+    { value: "color-mix(in srgb, #ea6a20 10%, #ffffff)", pixel: [253, 240, 233, 255], expected: "#fdf0e9" },
+    { value: "oklch(70% 0.1 250)", pixel: [110, 160, 215, 255], expected: "#6ea0d7" },
+    { value: "rgb(10 20 30 / 50%)", pixel: [10, 20, 30, 128], expected: "rgba(10, 20, 30, 0.502)" },
+  ])("passes browser-resolved $value colors to the real Mermaid initializer", async ({ value, pixel, expected }) => {
+    const actual = await vi.importActual<typeof import("mermaid")>("mermaid");
+    vi.mocked(mermaid.initialize).mockImplementation((config) => actual.default.initialize(config));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(), fillRect: vi.fn(), fillStyle: "",
+      getImageData: () => ({ data: new Uint8ClampedArray(pixel) }),
+    } as unknown as CanvasRenderingContext2D);
+    document.documentElement.style.setProperty("--warning-soft", value);
+    await expect(renderMermaidSvg("flowchart LR\n A[입력] --> B[결과]")).resolves.toHaveProperty("svg");
+    const config = vi.mocked(mermaid.initialize).mock.calls.at(-1)?.[0];
+    expect(config?.themeVariables?.noteBkgColor).toBe(expected);
+  });
+
+  it("uses a valid theme fallback if browser color resolution is unavailable", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    document.documentElement.style.setProperty("--accent-soft", "color-mix(in srgb, #123456 20%, #ffffff)");
+    await expect(renderMermaidSvg("sequenceDiagram\n A->>B: 확인")).resolves.toHaveProperty("svg");
+    const config = vi.mocked(mermaid.initialize).mock.calls.at(-1)?.[0];
+    expect(config?.themeVariables?.secondaryColor).toBe("#f4ebe6");
+  });
+
   it("renders mermaid code fences as charts in chat markdown", async () => {
     render(
       <MarkdownMessage

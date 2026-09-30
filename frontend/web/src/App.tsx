@@ -5,10 +5,12 @@ import { listLiveSessions, restartSession, startSession } from "./api/session";
 import { AppShell } from "./components/AppShell";
 import { useBackendSession } from "./hooks/useBackendSession";
 import { useFullscreenShortcut } from "./hooks/useFullscreenShortcut";
+import { useAsyncAction } from "./hooks/useAsyncAction";
 import { useWorkspaceData } from "./hooks/useWorkspaceData";
 import { AppStateProvider } from "./state/app-state";
 import { useAppState } from "./state/app-state";
 import { runtimePreferencesFromState } from "./utils/runtimePreferences";
+import { adoptRestartForCurrentView, discardUnclaimedSession } from "./utils/sessionHandoff";
 
 const isDevBuild = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
 
@@ -140,10 +142,20 @@ function scrollSharedMessageIntoView(messageId: string) {
   return true;
 }
 
-function AppContent() {
+export function AppContent() {
   const { state, dispatch } = useAppState();
+  const viewScope = JSON.stringify([state.sessionId, state.clientId, state.workspacePath, state.conversationViewRevision]);
+  const currentViewScope = useRef(viewScope);
+  const latestState = useRef(state);
+  currentViewScope.current = viewScope;
+  latestState.current = state;
+  const restartRequest = useRef<object | null>(null);
+  const restartAction = useAsyncAction(viewScope);
+  useEffect(() => () => { restartRequest.current = null; }, [viewScope]);
   const sharedChatRestoreStartedRef = useRef(false);
   const sharedChatScrolledRef = useRef(false);
+  const sharedChatRequest = useRef<object | null>(null);
+  useEffect(() => () => { sharedChatRequest.current = null; }, []);
   useBackendSession();
   useWorkspaceData();
   useEffect(() => {
@@ -158,23 +170,41 @@ function AppContent() {
         return;
       }
       event.preventDefault();
-      void restartSession({
-        sessionId: state.sessionId,
-        clientId: state.clientId,
-        cwd: state.workspacePath || undefined,
-        ...runtimePreferencesFromState(state),
-      }).then((session) => {
-        dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace });
-      }).catch((error: unknown) => {
-        dispatch({
-          type: "open_modal",
-          modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
-        });
+      if (latestState.current.sessionId && latestState.current.restartingSessionId === latestState.current.sessionId) return;
+      void restartAction.run(async () => {
+        const request = {};
+        restartRequest.current = request;
+        const isCurrent = () => restartRequest.current === request && currentViewScope.current === viewScope;
+        const source = latestState.current;
+        if (source.sessionId) dispatch({ type: "begin_runtime_restart", sessionId: source.sessionId });
+        try {
+          const session = await restartSession({
+            sessionId: source.sessionId,
+            clientId: source.clientId,
+            cwd: source.workspacePath || undefined,
+            ...runtimePreferencesFromState(source),
+          });
+          if (!isCurrent()) {
+            if (!adoptRestartForCurrentView(session.sessionId, source, latestState.current, dispatch)) {
+              discardUnclaimedSession(session.sessionId, source.clientId, latestState.current.sessionId);
+            }
+            return;
+          }
+          dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace });
+        } catch (error: unknown) {
+          if (!isCurrent()) return;
+          dispatch({
+            type: "open_modal",
+            modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
+          });
+        } finally {
+          if (source.sessionId) dispatch({ type: "finish_runtime_restart", sessionId: source.sessionId });
+        }
       });
     }
     window.addEventListener("keydown", handleGlobalShortcut);
     return () => window.removeEventListener("keydown", handleGlobalShortcut);
-  }, [dispatch, state.clientId, state.sessionId, state.workspacePath]);
+  }, [dispatch, viewScope]);
   useEffect(() => {
     const link = sharedChatLinkParams();
     if (!link || sharedChatRestoreStartedRef.current || !state.sessionId || !state.clientId) {
@@ -189,6 +219,18 @@ function AppContent() {
       || state.workspaces.find((workspace) => workspace.name === targetLink.workspaceName)?.path
       || state.workspacePath;
     sharedChatRestoreStartedRef.current = true;
+    const request = {};
+    sharedChatRequest.current = request;
+    const expectedViewRevision = state.conversationViewRevision + 1;
+    let expectedSessionId = state.sessionId;
+    let expectedWorkspacePath = state.workspacePath;
+    let createdSessionId = "";
+    const isCurrent = () => sharedChatRequest.current === request
+      && latestState.current.conversationViewRevision === expectedViewRevision
+      && latestState.current.sessionId === expectedSessionId
+      && latestState.current.clientId === state.clientId
+      && latestState.current.restoringHistory
+      && latestState.current.workspacePath === expectedWorkspacePath;
     window.dispatchEvent(new Event("myharness:saveMessageScroll"));
     dispatch({ type: "begin_history_restore", sessionId: link.chatId });
     async function restoreSharedChat() {
@@ -197,10 +239,12 @@ function AppContent() {
         clientId: state.clientId,
         workspacePath: linkedWorkspace || undefined,
       });
+      if (!isCurrent()) return;
       const liveSession = liveSessions.sessions.find((item) => (
         item.savedSessionId === targetLink.chatId || item.sessionId === targetLink.chatId
       ));
       if (liveSession) {
+        expectedSessionId = liveSession.sessionId;
         dispatch({
           type: "session_started",
           sessionId: liveSession.sessionId,
@@ -208,6 +252,7 @@ function AppContent() {
           busy: liveSession.busy,
         });
         if (liveSession.workspace) {
+          expectedWorkspacePath = liveSession.workspace.path;
           dispatch({ type: "set_workspace", workspace: liveSession.workspace });
         }
         if (liveSession.busy) {
@@ -215,16 +260,30 @@ function AppContent() {
           return;
         }
         targetSessionId = liveSession.sessionId;
-      } else if (state.busy) {
+      } else if (state.busy || (state.restartingSessionId === state.sessionId && !liveSessions.sessions.some((session) => session.sessionId === state.sessionId))
+        || Boolean(linkedWorkspace && linkedWorkspace !== state.workspacePath)) {
         const session = await startSession({
           clientId: state.clientId,
           cwd: linkedWorkspace || undefined,
           ...runtimePreferencesFromState(state),
         });
+        createdSessionId = session.sessionId;
+        if (!isCurrent()) {
+          discardUnclaimedSession(session.sessionId, state.clientId, latestState.current.sessionId);
+          return;
+        }
         targetSessionId = session.sessionId;
+        expectedSessionId = session.sessionId;
         dispatch({ type: "session_started", sessionId: session.sessionId, clientId: state.clientId });
         if (session.workspace) {
+          expectedWorkspacePath = session.workspace.path;
           dispatch({ type: "set_workspace", workspace: session.workspace });
+        } else if (linkedWorkspace) {
+          expectedWorkspacePath = linkedWorkspace;
+          dispatch({ type: "set_workspace", workspace: {
+            path: linkedWorkspace,
+            name: targetLink.workspaceName || state.workspaces.find((workspace) => workspace.path === linkedWorkspace)?.name || state.workspaceName,
+          } });
         }
       }
       await sendBackendRequest(targetSessionId, state.clientId, {
@@ -234,11 +293,16 @@ function AppContent() {
       });
     }
     void restoreSharedChat().catch((error: unknown) => {
+      if (!isCurrent()) return;
+      dispatch({ type: "session_started", sessionId: state.sessionId || "", clientId: state.clientId, replay: true, savedSessionId: state.activeHistoryId || undefined, busy: state.busy });
+      if (createdSessionId) discardUnclaimedSession(createdSessionId, state.clientId, state.sessionId);
+      if (state.workspacePath) {
+        dispatch({ type: "set_workspace", workspace: { path: state.workspacePath, name: state.workspaceName } });
+      }
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
-      dispatch({ type: "set_busy", value: false });
       dispatch({ type: "finish_history_restore" });
     });
   }, [

@@ -65,6 +65,7 @@ async def test_build_runtime_uses_responses_for_pgpt(monkeypatch):
 
     assert isinstance(bundle.api_client, OpenAIResponsesClient)
     assert bundle.api_client._url.endswith("/responses")
+    assert bundle.api_client._diagnostics_label == "P-GPT"
     assert not bundle.api_client.supports_server_compaction("gpt-5.6-sol")
 
 

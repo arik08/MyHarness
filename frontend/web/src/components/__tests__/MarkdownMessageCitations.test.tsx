@@ -18,7 +18,7 @@ it.each(["source:mcp/new-server/record-1", "https://new.example/doc"])("preserve
 
 it.each(["웹검색", "웹페이지"])("keeps the %s origin distinct from MCP", (origin) => {
   const { container } = render(<MarkdownMessage text={`설명 [출처: ${origin} · 사이트](https://new.example/doc)`} />);
-  expect(container.querySelector(".markdown-inline-source-chip")?.getAttribute("data-tooltip")).toBe(`${origin} · 사이트\n저장된 출처 내용이 없습니다.`);
+  expect(container.querySelector(".markdown-inline-source-chip")?.getAttribute("data-tooltip")).toBe(`${origin === "웹페이지" ? "사이트" : `${origin} · 사이트`}\n저장된 출처 내용이 없습니다.`);
 });
 
 it("does not guess MCP or web search origin from an unknown source", () => {

@@ -127,6 +127,67 @@ async def test_cancellation_clears_pending_question_and_emits_dismissal():
     assert not host._question_request_details
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queued_kind", ["question", "permission"])
+async def test_interactive_prompts_are_shown_one_at_a_time(queued_kind):
+    host = ReactBackendHost(BackendHostConfig())
+    shown = asyncio.Queue()
+
+    async def emit(event):
+        if event.modal and not event.modal.get("status"):
+            shown.put_nowait(event.modal)
+
+    host._emit = emit
+    first = asyncio.create_task(host._ask_question("First?"))
+    first_modal = await asyncio.wait_for(shown.get(), timeout=2)
+    queued = asyncio.create_task(
+        host._ask_question("Second?") if queued_kind == "question"
+        else host._ask_permission("new_tool", "Approval needed")
+    )
+    await asyncio.sleep(0)
+    assert shown.empty()
+    assert len(host._question_requests) == 1
+    assert not host._permission_requests
+
+    host._question_requests[first_modal["request_id"]].set_result("first answer")
+    assert await asyncio.wait_for(first, timeout=2) == "first answer"
+    queued_modal = await asyncio.wait_for(shown.get(), timeout=2)
+    assert queued_modal["kind"] == queued_kind
+    requests = host._question_requests if queued_kind == "question" else host._permission_requests
+    answer = "second answer" if queued_kind == "question" else True
+    requests[queued_modal["request_id"]].set_result(answer)
+    assert await asyncio.wait_for(queued, timeout=2) == answer
+    assert not host._question_requests
+    assert not host._permission_requests
+    assert not host._question_request_details
+
+
+@pytest.mark.asyncio
+async def test_cancelled_queued_question_does_not_dismiss_active_question():
+    host = ReactBackendHost(BackendHostConfig())
+    emitted = []
+    shown = asyncio.Event()
+
+    async def emit(event):
+        emitted.append(event)
+        shown.set()
+
+    host._emit = emit
+    first = asyncio.create_task(host._ask_question("First?"))
+    await asyncio.wait_for(shown.wait(), timeout=2)
+    queued = asyncio.create_task(host._ask_question("Second?"))
+    await asyncio.sleep(0)
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    assert len(emitted) == 1
+    assert len(host._question_requests) == 1
+    next(iter(host._question_requests.values())).set_result("answer")
+    assert await asyncio.wait_for(first, timeout=2) == "answer"
+    assert not host._question_requests
+    assert len(emitted) == 1
+
+
 @pytest.mark.parametrize("mode", [True, False])
 def test_selection_mode_enforces_cardinality_without_losing_values(mode):
     question = {"id": "new", "question": "Choose", "multi_select": mode,

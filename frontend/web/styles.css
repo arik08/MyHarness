@@ -2903,6 +2903,14 @@ a:focus-visible {
   padding-top: 0;
 }
 
+.artifact-panel .artifact-viewer:fullscreen {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: var(--panel);
+  animation: none;
+}
+
 .artifact-empty {
   margin: 0;
   padding: 12px;
@@ -3702,14 +3710,14 @@ a:focus-visible {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 48%, transparent);
 }
 
 .assistant-action-button:hover,
 .assistant-action-button:focus-visible {
-  background: color-mix(in srgb, var(--success) 11%, transparent);
+  background: transparent;
   border-color: transparent;
-  color: color-mix(in srgb, var(--success) 88%, var(--ink));
+  color: var(--muted);
 }
 
 .assistant-action-button:disabled {
@@ -3768,8 +3776,8 @@ a:focus-visible {
 
 .assistant-usage-button:hover,
 .assistant-usage-button:focus-visible {
-  background: color-mix(in srgb, var(--accent) 11%, transparent);
-  color: color-mix(in srgb, var(--accent) 86%, var(--ink));
+  background: transparent;
+  color: var(--muted);
 }
 
 .assistant-usage-popover {

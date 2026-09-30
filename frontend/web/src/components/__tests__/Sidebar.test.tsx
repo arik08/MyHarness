@@ -2543,7 +2543,10 @@ describe("Sidebar", () => {
     expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("새 대화");
   });
 
-  it("shows the initial active empty chat as a history row", async () => {
+  it.each(["report request", "새로운 도구를 사용해줘"])("adds startup history immediately on Enter before the send resolves: %s", async (prompt) => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    let resolveSend!: (value: { ok: boolean }) => void;
+    vi.mocked(sendMessage).mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
     const { container } = render(
       <AppStateProvider
         initialState={{
@@ -2553,27 +2556,32 @@ describe("Sidebar", () => {
           chatTitle: "새 대화",
           clientId: "client-1",
           busy: false,
+          ready: true,
           workspaceName: "Default",
           workspacePath: "C:/demo",
         }}
       >
         <Sidebar />
+        <Composer />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
         <ChatStateProbe />
       </AppStateProvider>,
     );
 
-    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("새 대화");
-    expect(screen.getByRole("button", { name: "새 대화 작업 더보기" })).toBeTruthy();
-
-    await userEvent.click(screen.getByRole("button", { name: "새 대화 작업 더보기" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "목록에서 숨기기" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "삭제 확인" }));
-
-    await waitFor(() => expect(hideHistory).toHaveBeenCalledWith("saved-initial", "C:/demo", "Default"));
-    expect(deleteHistory).not.toHaveBeenCalled();
-    expect(sendBackendRequest).not.toHaveBeenCalled();
-    expect(screen.getByTestId("active-history").textContent).toBe("");
-    expect(container.querySelector(".history-item.active .history-title")?.textContent || "").not.toBe("새 대화");
+    expect(container.querySelectorAll(".history-item")).toHaveLength(0);
+    act(() => dispatch({ type: "backend_event", event: { type: "session_title", message: "새 대화" } }));
+    expect(container.querySelectorAll(".history-item")).toHaveLength(0);
+    await userEvent.type(screen.getByPlaceholderText("메시지를 입력하세요..."), prompt);
+    expect(container.querySelectorAll(".history-item")).toHaveLength(0);
+    fireEvent.keyDown(screen.getByPlaceholderText("메시지를 입력하세요..."), { key: "Enter", code: "Enter" });
+    expect(sendMessage).toHaveBeenCalled();
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe(prompt);
+    expect(screen.getByTestId("message-texts").textContent).toBe(prompt);
+    act(() => dispatch({ type: "set_history", history: [] }));
+    act(() => dispatch({ type: "backend_event", event: { type: "session_title", message: "새 대화" } }));
+    expect(container.querySelectorAll(".history-item")).toHaveLength(1);
+    expect(container.querySelector(".history-title")?.textContent).toBe(prompt);
+    await act(async () => resolveSend({ ok: true }));
   });
 
   it("hides an immediately saved new chat without deleting it in normal mode", async () => {

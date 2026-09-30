@@ -1706,15 +1706,14 @@ describe("MessageList", () => {
         <MessageList />
       </AppStateProvider>,
     );
-    openExecutionDetails();
-
     expect(screen.getByText("작성 완료 - chart.html")).toBeTruthy();
     expect(screen.getByText(/\d+ 토큰 \(1줄\)/)).toBeTruthy();
     expect(document.querySelector(".workflow-output-preview")?.textContent || "").toContain("<canvas id=\"chart\">");
     expect(document.querySelector(".aside-activity > .workflow-output-preview")).toBeNull();
-    expect(document.querySelector(".aside-call-detail .workflow-output-preview")).toBeTruthy();
+    expect(document.querySelector(".aside-call-detail .workflow-output-preview")).toBeNull();
+    expect(document.querySelector(".workflow-output-preview")?.closest(".aside-disclosure")).toBeNull();
     expect(document.querySelector(".workflow-step .workflow-output-preview")).toBeFalsy();
-    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("labels errored write previews as failed and does not offer an artifact open button", () => {
@@ -5124,10 +5123,11 @@ describe("MessageList", () => {
       const settledFrom = samples.length;
       for (let now = 80; now <= 3200; now += 16) {
         const frame = animationFrames.shift();
-        expect(frame).toBeTruthy();
+        if (!frame) break;
         act(() => frame?.(now));
         samples.push(messages.scrollTop);
       }
+      expect(animationFrames).toHaveLength(0);
 
       const settleDeltas = samples.slice(1).map((value, index) => value - samples[index]).slice(settledFrom - 1);
       const hasPartialSlowdown = settleDeltas.some((delta, index) => index > 0 && delta > 0 && delta < settleDeltas[index - 1]);

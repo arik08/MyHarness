@@ -486,7 +486,7 @@ def test_openai_completion_params_place_static_tools_before_messages_for_cache_p
     assert params["prompt_cache_retention"] == "24h"
 
 
-def test_openai_completion_params_use_explicit_cache_policy_for_gpt56(monkeypatch):
+def test_openai_completion_params_cache_history_and_static_prefix_for_gpt56(monkeypatch):
     monkeypatch.delenv("MYHARNESS_PROMPT_CACHE_RETENTION", raising=False)
     client = OpenAICompatibleClient(
         api_key="test-key",
@@ -502,7 +502,7 @@ def test_openai_completion_params_use_explicit_cache_policy_for_gpt56(monkeypatc
         )
     )
 
-    assert params["prompt_cache_options"] == {"mode": "explicit", "ttl": "30m"}
+    assert params["prompt_cache_options"] == {"mode": "implicit", "ttl": "30m"}
     assert "prompt_cache_retention" not in params
     assert params["messages"][0] == {
         "role": "system",
@@ -517,7 +517,7 @@ def test_openai_completion_params_use_explicit_cache_policy_for_gpt56(monkeypatc
     sdk_params = client._sdk_completion_params(params)
     assert "prompt_cache_options" not in sdk_params
     assert sdk_params["extra_body"] == {
-        "prompt_cache_options": {"mode": "explicit", "ttl": "30m"}
+        "prompt_cache_options": {"mode": "implicit", "ttl": "30m"}
     }
 
 
@@ -836,7 +836,7 @@ async def test_openai_client_removes_gpt56_breakpoint_when_cache_options_are_uns
 
     assert events
     first, second = fake_sdk.chat.completions.calls
-    assert first["extra_body"]["prompt_cache_options"]["mode"] == "explicit"
+    assert first["extra_body"]["prompt_cache_options"]["mode"] == "implicit"
     assert first["messages"][0]["content"][0]["prompt_cache_breakpoint"] == {
         "mode": "explicit"
     }

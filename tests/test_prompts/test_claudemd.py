@@ -49,6 +49,10 @@ def test_execution_contract_survives_runtime_prompt_modes(tmp_path: Path, monkey
     assert "Respect execution permission gates" in contract
     assert "planning-only or explanation-only" in contract
     assert "state the concrete blocker and what is incomplete" in contract
+    assert "Do not emit contentless completion announcements after tool calls or as progress notes" in contract
+    assert "equivalent phrases in any language" in contract
+    assert "state the concrete finding, changed outcome, verification result, or blocker" in contract
+    assert "rather than a bare completion announcement" in contract
     if mode == "custom":
         assert "CUSTOM_PROMPT_SENTINEL" in prompt
 

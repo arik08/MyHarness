@@ -207,6 +207,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
                 base_url=settings.base_url,
                 timeout=settings.timeout,
                 prompt_cache_retention=os.environ.get("MYHARNESS_PROMPT_CACHE_RETENTION"),
+                diagnostics_label="P-GPT",
             )
     #     return OpenAICompatibleClient(
     #         api_key=api_key,
@@ -526,6 +527,7 @@ async def _prewarm_runtime_prefix_cache(bundle: RuntimeBundle) -> None:
         messages=[],
         system_prompt=bundle.engine.system_prompt,
         max_tokens=bundle.engine.max_tokens,
+        prompt_cache_scope=str(Path(bundle.cwd).resolve()),
         tools=sorted(
             bundle.tool_registry.to_api_schema(),
             key=lambda schema: str(schema.get("name") or ""),

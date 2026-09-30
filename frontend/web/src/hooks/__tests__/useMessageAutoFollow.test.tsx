@@ -113,3 +113,71 @@ it("shows a jump button away from the bottom and resumes streaming until the use
   expect(screen.queryByText("Jump")).toBeNull();
   act(() => vi.runOnlyPendingTimers());
 });
+
+it("stops settled animation frames and resumes on text or delayed layout growth without taking over user scrolling", () => {
+  vi.useFakeTimers();
+  const callbacks = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  let now = performance.now();
+  const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    callbacks.set(++nextFrame, callback);
+    return nextFrame;
+  });
+  const cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => { callbacks.delete(id); });
+  let resize: (() => void) | undefined;
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: () => void) { resize = callback; }
+    observe() {}
+    disconnect() {}
+  });
+  let height = 1400;
+  let top = 0;
+  function Harness({ text = "stream" }) {
+    const message = { id: "a", role: "assistant" as const, text, isComplete: false };
+    const follow = useMessageAutoFollow({ state: { ...initialAppState, busy: true, messages: [message],
+      appSettings: { ...initialAppState.appSettings, streamScrollDurationMs: 600 } },
+      dispatch: () => {}, lastMessage: message, activeWorkflowFollowSignature: "" });
+    return <section data-testid="settle-messages" ref={(element) => {
+      follow.messagesRef.current = element;
+      if (element) Object.defineProperties(element, {
+        scrollHeight: { configurable: true, get: () => height },
+        clientHeight: { configurable: true, get: () => 400 },
+        scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.min(height - 400, value); } },
+      });
+    }} onWheel={(event) => follow.handleWheel(event.currentTarget, event.deltaY)} />;
+  }
+  const advanceFrames = () => act(() => {
+    for (let count = 0; count < 600 && callbacks.size; count++) {
+      now += 16;
+      const pending = [...callbacks.values()];
+      callbacks.clear();
+      pending.forEach((callback) => callback(now));
+    }
+  });
+  try {
+    const view = render(<Harness />);
+    advanceFrames();
+    expect(top).toBeCloseTo(1000, 0);
+    expect(callbacks.size).toBe(0);
+    height += 300;
+    act(() => resize?.());
+    expect(callbacks.size).toBe(1);
+    advanceFrames();
+    expect(top).toBeCloseTo(1300, 0);
+    expect(callbacks.size).toBe(0);
+    height += 300;
+    view.rerender(<Harness text="more streamed text" />);
+    advanceFrames();
+    expect(top).toBeCloseTo(1600, 0);
+    expect(callbacks.size).toBe(0);
+    fireEvent.wheel(screen.getByTestId("settle-messages"), { deltaY: -200 });
+    top = 500;
+    height += 300;
+    act(() => resize?.());
+    view.rerender(<Harness text="next while reading above" />);
+    expect(callbacks.size).toBe(0);
+    expect(top).toBe(500);
+  } finally {
+    raf.mockRestore(); cancel.mockRestore(); vi.unstubAllGlobals();
+  }
+});

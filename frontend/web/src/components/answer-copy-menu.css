@@ -1,4 +1,4 @@
-.answer-copy-trigger[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.answer-copy-trigger[aria-expanded="true"] { background: transparent; color: var(--muted); }
 .answer-copy-trigger[aria-disabled="true"] { opacity: .55; cursor: wait; }
 .answer-copy-popover {
   position: fixed; z-index: 100; display: grid; gap: 2px;

@@ -3280,6 +3280,7 @@ async def test_backend_host_persists_user_edited_session_title(tmp_path, monkeyp
     assert snapshot is not None
     assert snapshot["summary"] == "내가 정한 제목"
     assert snapshot["tool_metadata"]["session_title_user_edited"] is True
+    assert snapshot["tool_metadata"]["session_title_updated_at"] > 0
     assert any(event.type == "session_title" and event.message == "내가 정한 제목" for event in events)
 
 
@@ -3350,6 +3351,7 @@ async def test_backend_host_starts_empty_saved_session_immediately(tmp_path, mon
         host._bundle.engine.load_usage(usage={"input_tokens": 120, "output_tokens": 30})
         host._bundle.engine.tool_metadata.update(
             session_title="이전 제목", session_title_user_edited=True,
+            session_title_updated_at=123,
             workflow_duration_seconds=99, branch_origin={"session_id": "parent"},
         )
         host._history_events = [{"type": "user", "text": "이전 대화"}]
@@ -3375,6 +3377,7 @@ async def test_backend_host_starts_empty_saved_session_immediately(tmp_path, mon
     assert snapshot["usage"]["output_tokens"] == 0
     assert "branch_origin" not in snapshot["tool_metadata"]
     assert "session_title_user_edited" not in snapshot["tool_metadata"]
+    assert "session_title_updated_at" not in snapshot["tool_metadata"]
     assert "workflow_duration_seconds" not in snapshot["tool_metadata"]
     assert host._bundle.engine.total_usage.total_tokens == 0
     assert host._bundle.engine.messages == []

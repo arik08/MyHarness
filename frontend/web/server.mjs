@@ -7,12 +7,16 @@ import { moveFileExclusive } from "./modules/moveFileExclusive.js";
 import { pythonEnvironmentCandidates } from "./modules/pythonEnvironment.js";
 import { applyModelAvailability, changeModelAvailability, reconcileSessionModel } from "./modules/modelAvailability.js";
 import { createModelCatalogCache } from "./modules/modelCatalogCache.js";
+import { mutateSessionStorage } from "./modules/sessionStorageMutation.js";
+import { createSessionReplaySpool, snapshotSessionReplay, replaySessionSnapshot } from "./modules/sessionReplaySpool.js";
+import { SSE_QUEUE_MAX_BYTES, encodeSseEvent, sseWriterFor, writeSseEvent, writeSseReplayEvent } from "./modules/sseWriter.js";
+import { createBufferedRuntimeLog } from "./modules/bufferedRuntimeLog.js";
 import { pythonCommandCandidates } from "./modules/pythonCommandCandidates.js";
 import { createServer } from "node:http";
 import { createActivityLog } from "./modules/activityLog.js";
 import { createResourceSampler, createServerMetrics } from "./modules/serverMetrics.js";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import crypto from "node:crypto";
 import { copyFile, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -36,7 +40,6 @@ import {
   createSessionReplayState,
   rawEventsAfterLastEventId,
   rememberSuppressedUserTranscript,
-  replayEventsForState,
   shouldReplayRawEvent,
   updateSessionReplayState,
   withEventTimestamp,
@@ -63,6 +66,7 @@ if (!String(process.env.MYHARNESS_HOME || "").trim()) {
   process.env.MYHARNESS_HOME = appConfigRoot;
 }
 const runtimeLogPath = join(process.env.MYHARNESS_LOGS_DIR, "myharness-web-runtime.log");
+const runtimeLog = createBufferedRuntimeLog(runtimeLogPath);
 const webUsageStatsPath = join(process.env.MYHARNESS_DATA_DIR || join(appConfigRoot, "data"), "web-usage-stats.json");
 configurePoscoCertificate();
 const sharedWorkspaceScopeName = "shared";
@@ -266,13 +270,12 @@ function errorPayload(error) {
 
 function writeRuntimeLog(event, details = {}) {
   try {
-    mkdirSync(process.env.MYHARNESS_LOGS_DIR, { recursive: true });
-    appendFileSync(runtimeLogPath, `${JSON.stringify({
+    runtimeLog.write(`${JSON.stringify({
       ts: new Date().toISOString(),
       event,
       pid: process.pid,
       ...details,
-    })}\n`, "utf8");
+    })}\n`);
   } catch {
     // Logging must never be the reason the web server exits.
   }
@@ -4212,10 +4215,6 @@ function sessionPointerId(payload) {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sessionId) ? sessionId : "";
 }
 
-function latestSessionPointer(sessionId) {
-  return { format: sessionPointerFormat, version: 1, session_id: sessionId };
-}
-
 function normalizedStoredSession(payload) {
   const compactHistory = payload?.history_replay_compacted === true
     || historyReplayShouldCompact(payload);
@@ -4235,39 +4234,6 @@ function normalizedStoredSession(payload) {
   return stored;
 }
 
-function hiddenWorkerSnapshot(payload) {
-  const metadata = payload?.tool_metadata;
-  return metadata?.session_visibility === "hidden" || metadata?.session_kind === "task_worker";
-}
-
-function sessionSummaryMetadata(payload, path, info) {
-  const fileName = basename(path);
-  return {
-    session_id: String(payload?.session_id || "").trim()
-      || fileName.replace(/^session-/, "").replace(/\.json$/i, ""),
-    summary: compactText(payload?.summary) || firstUserSummary(payload?.messages),
-    message_count: Number(payload?.message_count ?? (Array.isArray(payload?.messages) ? payload.messages.length : 0)),
-    model: String(payload?.model || ""),
-    created_at: Number(payload?.created_at || info.mtimeMs / 1000),
-    last_assistant_at: Number(payload?.last_assistant_at || 0),
-    pinned: payload?.pinned === true,
-    liked: payload?.liked === true,
-    hidden: hiddenWorkerSnapshot(payload),
-    storage_version: sessionStorageVersion,
-    history_events_saved_at: Number(payload?.history_events_saved_at || 0),
-    history_replay_compacted: payload?.history_replay_compacted === true,
-  };
-}
-
-async function writeSessionMetadata(path, payload, info = null) {
-  const snapshotInfo = info || await stat(path);
-  await writeJsonFileAtomic(
-    sessionMetaPath(path),
-    sessionSummaryMetadata(payload, path, snapshotInfo),
-    { compact: true },
-  );
-}
-
 async function readStoredSessionSnapshot(path) {
   const payload = JSON.parse(await readFile(path, "utf8"));
   const pointerId = sessionPointerId(payload);
@@ -4276,18 +4242,10 @@ async function readStoredSessionSnapshot(path) {
 }
 
 async function writeSessionJsonIfUnchanged(path, payload, expectedInfo) {
-  const tmpPath = `${path}.${process.pid}.${Date.now()}-${crypto.randomUUID()}.tmp`;
-  await writeFile(tmpPath, `${JSON.stringify(payload)}\n`, "utf8");
-  try {
-    const currentInfo = await stat(path);
-    if (historyFileFingerprint(currentInfo) !== historyFileFingerprint(expectedInfo)) {
-      return false;
-    }
-    await rename(tmpPath, path);
-    return true;
-  } finally {
-    await rm(tmpPath, { force: true }).catch(() => {});
-  }
+  return mutateSessionStorage(backendPythonCommand(), repoRoot, {
+    operation: "rewrite", cwd: dirname(dirname(dirname(path))), fileName: basename(path), payload,
+    expected: expectedInfo ? { size: expectedInfo.size, mtimeMs: expectedInfo.mtimeMs } : null,
+  });
 }
 
 async function hasCurrentSessionMetadata(path) {
@@ -4312,40 +4270,9 @@ async function migrateNamedSessionSnapshot(path) {
   const parsed = JSON.parse(original);
   if (!parsed || typeof parsed !== "object" || sessionPointerId(parsed)) return null;
   const payload = normalizedStoredSession(parsed);
-  const serialized = `${JSON.stringify(payload)}\n`;
-  if (serialized !== original) {
-    const rewritten = await writeSessionJsonIfUnchanged(path, payload, info);
-    if (!rewritten) return null;
-  }
-  const currentInfo = await stat(path);
-  await writeSessionMetadata(path, payload, currentInfo);
+  const rewritten = await writeSessionJsonIfUnchanged(path, payload, info);
+  if (!rewritten) return null;
   return payload;
-}
-
-async function migrateLatestSessionSnapshot(path) {
-  const [original, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
-  const parsed = JSON.parse(original);
-  let sessionId = sessionPointerId(parsed);
-  let payload = null;
-  if (sessionId) {
-    payload = await readStoredSessionSnapshot(path);
-  } else {
-    payload = normalizedStoredSession(parsed);
-    sessionId = String(payload.session_id || "").trim();
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sessionId)) return false;
-    const target = join(dirname(path), `session-${sessionId}.json`);
-    try {
-      payload = await migrateNamedSessionSnapshot(target) || await readStoredSessionSnapshot(target);
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-      await writeJsonFileAtomic(target, payload, { compact: true });
-      await writeSessionMetadata(target, payload);
-    }
-    const rewritten = await writeSessionJsonIfUnchanged(path, latestSessionPointer(sessionId), info);
-    if (!rewritten) return false;
-  }
-  await writeSessionMetadata(path, payload);
-  return true;
 }
 
 async function migrateWorkspaceSessionStorage(sessionDir) {
@@ -4358,30 +4285,20 @@ async function migrateWorkspaceSessionStorage(sessionDir) {
     if (error?.code === "ENOENT") return;
     throw error;
   }
-  let skipped = false;
-  const sessionPaths = entries
-    .filter((entry) => entry.isFile() && /^session-.+\.json$/i.test(entry.name))
+  const paths = entries
+    .filter((entry) => entry.isFile() && /^(?:session-.+|latest(?:-.+)?)\.json$/i.test(entry.name))
     .map((entry) => join(normalizedDir, entry.name));
-  await mapHistoryFiles(sessionPaths, async (path) => {
-    try {
-      if (!await hasCurrentSessionMetadata(path) && !await migrateNamedSessionSnapshot(path)) skipped = true;
-    } catch (error) {
-      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
-      skipped = true;
-    }
+  const current = await mapHistoryFiles(paths, hasCurrentSessionMetadata);
+  // Fresh metadata remains a Node-only fast path. Cold legacy history is
+  // migrated in one locked Python pass, rather than spawning per snapshot.
+  if (current.every(Boolean)) {
+    migratedSessionDirectories.add(normalizedDir);
+    return;
+  }
+  const result = await mutateSessionStorage(backendPythonCommand(), repoRoot, {
+    operation: "migrate", cwd: dirname(dirname(normalizedDir)),
   });
-  const latestPaths = entries
-    .filter((entry) => entry.isFile() && /^latest(?:-.+)?\.json$/i.test(entry.name))
-    .map((entry) => join(normalizedDir, entry.name));
-  await mapHistoryFiles(latestPaths, async (path) => {
-    try {
-      if (!await hasCurrentSessionMetadata(path) && !await migrateLatestSessionSnapshot(path)) skipped = true;
-    } catch (error) {
-      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
-      skipped = true;
-    }
-  });
-  if (!skipped) migratedSessionDirectories.add(normalizedDir);
+  if (!result.skipped) migratedSessionDirectories.add(normalizedDir);
 }
 
 function historyItemFromMetadata(data, info, fileName) {
@@ -4465,7 +4382,6 @@ async function readWorkspaceHistorySnapshot(workspace, sessionId) {
     if (rewritten) {
       info = await stat(path);
       fingerprint = historyFileFingerprint(info);
-      await writeSessionMetadata(path, data, info);
     }
   }
   const event = {
@@ -4840,69 +4756,11 @@ async function deleteWorkspaceHistoryItem(workspace, sessionId) {
   if (!cleanId) {
     throw new Error("Session id is required");
   }
-  const sessionDir = sessionDirectoryForWorkspace(workspace);
-  const target = join(sessionDir, `session-${cleanId}.json`);
-  let deleted = false;
-  try {
-    await rm(target);
-    await rm(sessionMetaPath(target), { force: true });
-    deleted = true;
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
-  for (const latestPath of await latestSnapshotPaths(sessionDir)) {
-    try {
-      const latest = JSON.parse(await readFile(latestPath, "utf8"));
-      const latestSessionId = sessionPointerId(latest) || String(latest.session_id || "latest");
-      if (latestSessionId === cleanId || cleanId === "latest") {
-        await rm(latestPath);
-        await rm(sessionMetaPath(latestPath), { force: true });
-        deleted = true;
-      }
-    } catch (error) {
-      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
-        throw error;
-      }
-    }
-  }
+  const deleted = await mutateSessionStorage(backendPythonCommand(), repoRoot, {
+    operation: "delete", cwd: workspace.path, sessionId: cleanId,
+  });
   await forgetHiddenWorkspaceHistoryItem(workspace, cleanId);
   return deleted;
-}
-
-async function latestSnapshotPaths(sessionDir) {
-  const paths = [join(sessionDir, "latest.json")];
-  try {
-    const entries = await readdir(sessionDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile() && /^latest-.+\.json$/i.test(entry.name)) {
-        paths.push(join(sessionDir, entry.name));
-      }
-    }
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
-  return paths;
-}
-
-async function updateMatchingLatestSnapshots(sessionDir, sessionId, payload) {
-  for (const latestPath of await latestSnapshotPaths(sessionDir)) {
-    try {
-      const latest = JSON.parse(await readFile(latestPath, "utf8"));
-      const latestSessionId = sessionPointerId(latest) || String(latest.session_id || "");
-      if (latestSessionId === sessionId) {
-        await writeJsonFileAtomic(latestPath, latestSessionPointer(sessionId), { compact: true });
-        await writeSessionMetadata(latestPath, payload);
-      }
-    } catch (error) {
-      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
-        throw error;
-      }
-    }
-  }
 }
 
 async function updateWorkspaceHistoryTitle(workspace, sessionId, title) {
@@ -4914,19 +4772,9 @@ async function updateWorkspaceHistoryTitle(workspace, sessionId, title) {
   if (!cleanTitle) {
     throw new Error("Session title is required");
   }
-  const sessionDir = sessionDirectoryForWorkspace(workspace);
-  const target = join(sessionDir, `session-${cleanId}.json`);
-  const payload = normalizedStoredSession(await readStoredSessionSnapshot(target));
-  payload.summary = cleanTitle;
-  payload.tool_metadata = {
-    ...(payload.tool_metadata && typeof payload.tool_metadata === "object" ? payload.tool_metadata : {}),
-    session_title: cleanTitle,
-    session_title_user_edited: true,
-  };
-  await writeJsonFileAtomic(target, payload, { compact: true });
-  await writeSessionMetadata(target, payload);
-  await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
-  return payload;
+  return mutateSessionStorage(backendPythonCommand(), repoRoot, {
+    operation: "metadata", cwd: workspace.path, sessionId: cleanId, patch: { title: cleanTitle },
+  });
 }
 
 async function updateWorkspaceHistoryPin(workspace, sessionId, pinned) {
@@ -4934,14 +4782,9 @@ async function updateWorkspaceHistoryPin(workspace, sessionId, pinned) {
   if (!cleanId) {
     throw new Error("Session id is required");
   }
-  const sessionDir = sessionDirectoryForWorkspace(workspace);
-  const target = join(sessionDir, `session-${cleanId}.json`);
-  const payload = normalizedStoredSession(await readStoredSessionSnapshot(target));
-  payload.pinned = pinned === true;
-  await writeJsonFileAtomic(target, payload, { compact: true });
-  await writeSessionMetadata(target, payload);
-  await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
-  return payload;
+  return mutateSessionStorage(backendPythonCommand(), repoRoot, {
+    operation: "metadata", cwd: workspace.path, sessionId: cleanId, patch: { pinned: pinned === true },
+  });
 }
 
 function normalizeHistorySearchText(value) {
@@ -4959,14 +4802,9 @@ async function updateWorkspaceHistoryLike(workspace, sessionId, liked) {
   if (!cleanId) {
     throw new Error("Session id is required");
   }
-  const sessionDir = sessionDirectoryForWorkspace(workspace);
-  const target = join(sessionDir, `session-${cleanId}.json`);
-  const payload = normalizedStoredSession(await readStoredSessionSnapshot(target));
-  payload.liked = liked === true;
-  await writeJsonFileAtomic(target, payload, { compact: true });
-  await writeSessionMetadata(target, payload);
-  await updateMatchingLatestSnapshots(sessionDir, cleanId, payload);
-  return payload;
+  return mutateSessionStorage(backendPythonCommand(), repoRoot, {
+    operation: "metadata", cwd: workspace.path, sessionId: cleanId, patch: { liked: liked === true },
+  });
 }
 
 async function moveWorkspaceHistoryItem(sourceWorkspace, targetWorkspace, sessionId) {
@@ -4984,38 +4822,9 @@ async function moveWorkspaceHistoryItem(sourceWorkspace, targetWorkspace, sessio
     throw new Error("실행 중인 세션은 워크스페이스를 변경할 수 없습니다.");
   }
 
-  const sourceDir = sessionDirectoryForWorkspace(sourceWorkspace);
-  const targetDir = sessionDirectoryForWorkspace(targetWorkspace);
-  const sourcePath = join(sourceDir, `session-${cleanId}.json`);
-  const targetPath = join(targetDir, `session-${cleanId}.json`);
-  const payload = normalizedStoredSession(await readStoredSessionSnapshot(sourcePath));
-  await mkdir(targetDir, { recursive: true });
-  try {
-    await stat(targetPath);
-    throw new Error("대상 워크스페이스에 같은 세션이 이미 있습니다.");
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
-
-  await rename(sourcePath, targetPath);
-  await rm(sessionMetaPath(sourcePath), { force: true });
-  await writeSessionMetadata(targetPath, payload);
-  for (const latestPath of await latestSnapshotPaths(sourceDir)) {
-    try {
-      const latest = JSON.parse(await readFile(latestPath, "utf8"));
-      const latestSessionId = sessionPointerId(latest) || String(latest.session_id || "");
-      if (latestSessionId === cleanId) {
-        await rm(latestPath);
-        await rm(sessionMetaPath(latestPath), { force: true });
-      }
-    } catch (error) {
-      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
-        throw error;
-      }
-    }
-  }
+  const payload = await mutateSessionStorage(backendPythonCommand(), repoRoot, {
+    operation: "move", cwd: sourceWorkspace.path, targetCwd: targetWorkspace.path, sessionId: cleanId,
+  });
   await forgetHiddenWorkspaceHistoryItem(sourceWorkspace, cleanId);
   return payload;
 }
@@ -5758,15 +5567,6 @@ function visibleSubmittedUserText(line, attachments = [], attachmentRefs = []) {
   return text ? `${text}${suffix}` : suffix.trim();
 }
 
-function writeSseEvent(client, event, id = null) {
-  client.socket?.setNoDelay?.(true);
-  if (id !== null && id !== undefined) {
-    client.write(`id: ${id}\n`);
-  }
-  client.write(`data: ${JSON.stringify(event)}\n\n`);
-  client.flush?.();
-}
-
 function emit(session, event) {
   event = withEventTimestamp(event);
   if (event.type === "prompt_enhanced") {
@@ -5778,8 +5578,22 @@ function emit(session, event) {
   const eventId = session.nextEventId;
   session.nextEventId += 1;
   appendRawSessionEvent(session.events, eventId, event);
+  const frame = encodeSseEvent(event, eventId);
   for (const client of session.clients) {
-    writeSseEvent(client, event, eventId);
+    if (client.replayPendingEvents) {
+      const bytes = Buffer.byteLength(frame);
+      if (client.replayPendingEvents.length >= 400 || client.replayPendingBytes + bytes > SSE_QUEUE_MAX_BYTES) {
+        // No checkpoint for a partial replay. EventSource will reconnect with
+        // its previous cursor and fetch a fresh, complete snapshot.
+        client.destroy();
+        session.clients.delete(client);
+      } else {
+        client.replayPendingEvents.push({ id: eventId, event });
+        client.replayPendingBytes += bytes;
+      }
+      continue;
+    }
+    sseWriterFor(client).write(frame);
   }
 }
 
@@ -5929,13 +5743,22 @@ async function createBackendSession(options = {}, { fromQueue = false } = {}) {
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
   });
+  const replaySpool = createSessionReplaySpool({
+    onBufferedBytes: (bytes) => {
+      // Backpressure the backend pipe when slow disk writes queue up; resume
+      // after the backlog drains without blocking the Node event loop.
+      if (bytes >= 4 * 1024 * 1024) session.stdoutReader?.pause();
+      else if (bytes <= 2 * 1024 * 1024) session.stdoutReader?.resume();
+    },
+  });
   const session = {
     id,
     process: child,
     clients: new Set(),
     events: [],
     nextEventId: 1,
-    replayState: createSessionReplayState(),
+    replayState: createSessionReplayState({ onEvict: (entry) => replaySpool.append(entry), onReset: () => replaySpool.reset() }),
+    replaySpool,
     createdAt: Date.now(),
     workspace,
     clientId,
@@ -6028,6 +5851,7 @@ async function createBackendSession(options = {}, { fromQueue = false } = {}) {
     });
     emit(session, { type: "shutdown", code, message: signal ? `Backend exited with signal ${signal}` : `Backend exited with code ${code ?? "unknown"}` });
     sessions.delete(id);
+    void session.replaySpool.dispose().catch((error) => writeRuntimeLog("session_replay_cleanup_failed", { session_id: id, error: errorPayload(error) }));
     scheduleCapacityQueueDrain();
   };
   child.on("exit", (code, signal) => {
@@ -6043,6 +5867,7 @@ async function createBackendSession(options = {}, { fromQueue = false } = {}) {
   // close follows drained output and also covers failed spawns without exit.
   child.on("close", finishSession);
 
+  scheduleIdleClientClose(session, "unclaimed session idle timeout");
   return session;
 }
 
@@ -6212,6 +6037,7 @@ function cancelQueuedSessionMessage(session) {
     message: "대기 중인 요청을 취소했습니다.",
   });
   emit(session, { type: "line_complete" });
+  scheduleIdleClientClose(session);
   emitResponseQueuePositions();
   return true;
 }
@@ -6881,8 +6707,7 @@ async function handleApi(request, response, pathname) {
         });
         result.cwd = workspace.path;
         const target = join(directory, `session-${result.session_id}.json`);
-        await writeJsonFileAtomic(target, result);
-        await writeSessionMetadata(target, result);
+        if (!await writeSessionJsonIfUnchanged(target, result, null)) throw conflictError("같은 분기 세션이 이미 있습니다. 다시 시도해 주세요.");
         return result;
       });
       json(response, 201, { sessionId: snapshot.session_id, title: snapshot.summary, workspace });
@@ -7094,31 +6919,21 @@ async function handleApi(request, response, pathname) {
     });
     response.socket?.setNoDelay?.(true);
     response.flushHeaders?.();
+    response.replayPendingEvents = [];
+    response.replayPendingBytes = 0;
     session.clients.add(response);
     const logClientDisconnect = activityLog.connected(session, clientAddress);
     cancelIdleClientClose(session);
     const heartbeat = setInterval(() => {
       if (!response.writableEnded && !response.destroyed) {
-        response.write(": heartbeat\n\n");
-        response.flush?.();
+        sseWriterFor(response).write(": heartbeat\n\n");
       }
     }, sseHeartbeatMs);
     heartbeat.unref?.();
-    const lastEventId = lastEventIdFromRequest(request, params);
-    if (lastEventId && canReplayFromLastEventId(session.events, lastEventId)) {
-      for (const entry of rawEventsAfterLastEventId(session.events, lastEventId)) {
-        writeSseEvent(response, entry.event, entry.id);
-      }
-    } else {
-      writeSseEvent(response, { type: "clear_transcript", live_replay: true });
-      for (const event of replayEventsForState(session.replayState).filter(shouldReplayEvent)) {
-        writeSseEvent(response, event.type === "history_snapshot" ? { ...event, live_replay: true } : event);
-      }
-    }
-    // A compact replay has no individual IDs. Commit its cursor only after the
-    // complete snapshot, so reconnects resume without redrawing the conversation.
-    writeSseEvent(response, { type: "stream_checkpoint" }, session.nextEventId - 1);
+    let clientCleaned = false;
     const cleanupClient = () => {
+      if (clientCleaned) return;
+      clientCleaned = true;
       clearInterval(heartbeat);
       session.clients.delete(response);
       logClientDisconnect();
@@ -7126,6 +6941,36 @@ async function handleApi(request, response, pathname) {
     };
     response.on("close", cleanupClient);
     response.on("error", cleanupClient);
+    const lastEventId = lastEventIdFromRequest(request, params);
+    let snapshot;
+    try {
+      if (lastEventId && canReplayFromLastEventId(session.events, lastEventId)) {
+        for (const entry of rawEventsAfterLastEventId(session.events, lastEventId)) {
+          if (!await writeSseReplayEvent(response, entry.event, entry.id)) return true;
+        }
+      } else {
+        snapshot = snapshotSessionReplay(session.replayState, session.replaySpool);
+        await session.replaySpool.ready(snapshot.spool);
+        if (!await writeSseReplayEvent(response, { type: "clear_transcript", live_replay: true })) return true;
+        for await (const event of replaySessionSnapshot(snapshot, session.replaySpool)) {
+          if (response.destroyed || response.writableEnded) return true;
+          if (shouldReplayEvent(event) && !await writeSseReplayEvent(response, event.type === "history_snapshot" ? { ...event, live_replay: true } : event)) return true;
+        }
+      }
+      for (const entry of response.replayPendingEvents) {
+        if (!await writeSseReplayEvent(response, entry.event, entry.id)) return true;
+      }
+      response.replayPendingEvents = null;
+      response.replayPendingBytes = 0;
+      // Commit only after the complete prefix, tail, and concurrently received
+      // events, so reconnects never acknowledge a partially restored screen.
+      writeSseEvent(response, { type: "stream_checkpoint" }, session.nextEventId - 1);
+    } catch (error) {
+      writeRuntimeLog("session_replay_failed", { session_id: session.id, error: errorPayload(error) });
+      response.destroy();
+    } finally {
+      if (snapshot) session.replaySpool.release(snapshot.spool);
+    }
     return true;
   }
 
@@ -7783,6 +7628,7 @@ process.once("exit", (code) => {
     active_sessions: sessions.size,
   });
   shutdownAllSessions("process exit");
+  runtimeLog.flush();
 });
 
 if (!String(process.env.MYHARNESS_WORKSPACE_SCOPE || "").trim()) {

@@ -8,6 +8,7 @@ import { useAppState } from "../state/app-state";
 import { deleteHistory, hideHistory, historyPageSize, listHistory, loadHistorySnapshot, moveHistory, restoreHistory, toggleHistoryLike, toggleHistoryPin, updateHistoryTitle } from "../api/history";
 import { isUnknownSessionError } from "../api/http";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
+import { adoptRestartForCurrentView, discardUnclaimedSession } from "../utils/sessionHandoff";
 import { sendBackendRequest, sendMessage } from "../api/messages";
 import { currentConversationHistoryTitle, isConversationResponseVisiblyBusy, isResponseVisiblyBusy } from "../state/selectors";
 import type { HistoryItem, Workspace } from "../types/backend";
@@ -93,6 +94,12 @@ export function Sidebar() {
   const [optimisticallyHiddenHistoryIds, setOptimisticallyHiddenHistoryIds] = useState<Set<string>>(new Set());
   const historyListRef = useRef<HTMLDivElement | null>(null);
   const historyRestoreRequestRef = useRef<object | null>(null);
+  useEffect(() => () => { historyRestoreRequestRef.current = null; }, []);
+  const currentViewScope = JSON.stringify([state.sessionId, state.clientId, state.workspacePath, state.conversationViewRevision]);
+  const currentViewScopeRef = useRef(currentViewScope);
+  currentViewScopeRef.current = currentViewScope;
+  const currentViewStateRef = useRef(state);
+  currentViewStateRef.current = state;
   const [visibleRestoreSpinnerId, setVisibleRestoreSpinnerId] = useState("");
   useEffect(() => {
     setVisibleRestoreSpinnerId("");
@@ -186,6 +193,7 @@ export function Sidebar() {
   }, [historyBulkMode]);
 
   const sessionAction = useAsyncAction();
+  const restartAction = useAsyncAction(currentViewScope);
 
   async function startFreshChat(workspace?: Workspace) {
     if (newChatInFlightRef.current) return;
@@ -305,8 +313,13 @@ export function Sidebar() {
   }
 
   async function restartActiveSession() {
-    historyRestoreRequestRef.current = null;
+    if (state.sessionId && currentViewStateRef.current.restartingSessionId === state.sessionId) return;
+    const restartRequest = {};
+    historyRestoreRequestRef.current = restartRequest;
+    const isCurrentRequest = () => historyRestoreRequestRef.current === restartRequest
+      && currentViewScopeRef.current === currentViewScope;
     const nextWorkspace = state.workspacePath ? { name: state.workspaceName, path: state.workspacePath } : undefined;
+    if (state.sessionId) dispatch({ type: "begin_runtime_restart", sessionId: state.sessionId });
     try {
       if (!state.sessionId) {
         const session = await startSession({
@@ -314,6 +327,10 @@ export function Sidebar() {
           cwd: nextWorkspace?.path || undefined,
           ...runtimePreferencesFromState(state),
         });
+        if (!isCurrentRequest()) {
+          discardUnclaimedSession(session.sessionId, state.clientId, currentViewStateRef.current.sessionId);
+          return;
+        }
         dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
         return;
       }
@@ -323,12 +340,21 @@ export function Sidebar() {
         cwd: nextWorkspace?.path || undefined,
         ...runtimePreferencesFromState(state),
       });
+      if (!isCurrentRequest()) {
+        if (!adoptRestartForCurrentView(session.sessionId, state, currentViewStateRef.current, dispatch)) {
+          discardUnclaimedSession(session.sessionId, state.clientId, currentViewStateRef.current.sessionId);
+        }
+        return;
+      }
       dispatch({ type: "session_replaced", sessionId: session.sessionId, workspace: session.workspace || nextWorkspace });
     } catch (error) {
+      if (!isCurrentRequest()) return;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
+    } finally {
+      if (state.sessionId) dispatch({ type: "finish_runtime_restart", sessionId: state.sessionId });
     }
   }
 
@@ -355,7 +381,13 @@ export function Sidebar() {
     window.dispatchEvent(new Event("myharness:saveMessageScroll"));
     const restoreRequest = {};
     historyRestoreRequestRef.current = restoreRequest;
-    const isCurrentRequest = () => historyRestoreRequestRef.current === restoreRequest;
+    let requestSessionId = state.sessionId;
+    let requestWorkspacePath = state.workspacePath;
+    const createdSessionIds = new Set<string>();
+    const isCurrentRequest = () => historyRestoreRequestRef.current === restoreRequest
+      && currentViewStateRef.current.conversationViewRevision === state.conversationViewRevision + 1
+      && currentViewStateRef.current.sessionId === requestSessionId
+      && currentViewStateRef.current.workspacePath === requestWorkspacePath;
     let acceptPreview = true;
     dispatch({ type: "begin_history_restore", sessionId: nextHistoryId });
     const previewRequest = loadHistorySnapshot({
@@ -365,7 +397,6 @@ export function Sidebar() {
     }).then((event) => {
       if (isCurrentRequest() && acceptPreview) {
         dispatch({ type: "backend_event", event });
-        dispatch({ type: "finish_history_restore" });
       }
       return true;
     }).catch(() => {
@@ -398,6 +429,8 @@ export function Sidebar() {
       }
       if (liveSession) {
         acceptPreview = false;
+        requestSessionId = liveSession.sessionId;
+        requestWorkspacePath = liveSession.workspace?.path || requestWorkspacePath;
         dispatch({
           type: "session_started",
           sessionId: liveSession.sessionId,
@@ -412,25 +445,34 @@ export function Sidebar() {
         dispatch({ type: "finish_history_restore" });
         return;
       }
-      if (previewLoaded) return;
-      acceptPreview = false;
-      if (state.busy || (targetWorkspacePath && targetWorkspacePath !== state.workspacePath)) {
+      const currentRuntimeBusy = liveSessions.sessions.some((session) => session.sessionId === state.sessionId && session.busy);
+      if (state.busy || currentRuntimeBusy || (state.restartingSessionId === state.sessionId && !liveSessions.sessions.some((session) => session.sessionId === state.sessionId))
+        || (targetWorkspacePath && targetWorkspacePath !== state.workspacePath)) {
         const session = await startSession({
           clientId: state.clientId,
           cwd: targetWorkspacePath || undefined,
           ...runtimePreferencesFromState(state),
         });
-        if (!isCurrentRequest()) return;
+        createdSessionIds.add(session.sessionId);
+        if (!isCurrentRequest()) {
+          discardUnclaimedSession(session.sessionId, state.clientId, currentViewStateRef.current.sessionId);
+          return;
+        }
         targetSessionId = session.sessionId;
+        requestSessionId = session.sessionId;
+        requestWorkspacePath = session.workspace?.path || targetWorkspacePath;
         dispatch({
           type: "session_started",
           sessionId: session.sessionId,
           clientId: state.clientId,
         });
-        if (session.workspace) {
-          dispatch({ type: "set_workspace", workspace: session.workspace });
-        }
+        dispatch({ type: "set_workspace", workspace: session.workspace || { name: item.workspace?.name || state.workspaceName, path: targetWorkspacePath } });
       }
+      if (previewLoaded) {
+        dispatch({ type: "finish_history_restore" });
+        return;
+      }
+      acceptPreview = false;
       await sendBackendRequest(targetSessionId, state.clientId, {
         type: "apply_select_command",
         command: "resume",
@@ -445,15 +487,20 @@ export function Sidebar() {
             cwd: targetWorkspacePath || undefined,
             ...runtimePreferencesFromState(state),
           });
-          if (!isCurrentRequest()) return;
+          createdSessionIds.add(session.sessionId);
+          if (!isCurrentRequest()) {
+            discardUnclaimedSession(session.sessionId, state.clientId, currentViewStateRef.current.sessionId);
+            return;
+          }
+          requestSessionId = session.sessionId;
+          requestWorkspacePath = session.workspace?.path || targetWorkspacePath;
           dispatch({
             type: "session_started",
             sessionId: session.sessionId,
             clientId: state.clientId,
           });
-          if (session.workspace) {
-            dispatch({ type: "set_workspace", workspace: session.workspace });
-          }
+          dispatch({ type: "set_workspace", workspace: session.workspace || { name: item.workspace?.name || state.workspaceName, path: targetWorkspacePath } });
+          for (const createdSessionId of createdSessionIds) discardUnclaimedSession(createdSessionId, state.clientId, session.sessionId);
           await sendBackendRequest(session.sessionId, state.clientId, {
             type: "apply_select_command",
             command: "resume",
@@ -464,11 +511,15 @@ export function Sidebar() {
           error = recoveryError;
         }
       }
+      if (!isCurrentRequest()) return;
+      dispatch({ type: "session_started", sessionId: state.sessionId, clientId: state.clientId,
+        savedSessionId: state.activeHistoryId || undefined, busy: state.busy, replay: true });
+      for (const createdSessionId of createdSessionIds) discardUnclaimedSession(createdSessionId, state.clientId, state.sessionId);
+      dispatch({ type: "set_workspace", workspace: { name: state.workspaceName, path: state.workspacePath } });
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
-      dispatch({ type: "set_busy", value: false });
       dispatch({ type: "finish_history_restore" });
     }
   }
@@ -1427,7 +1478,7 @@ export function Sidebar() {
                 type="button"
                 aria-label="재시작"
                 data-tooltip="재시작"
-                aria-busy={sessionAction.pending} disabled={sessionAction.pending} onClick={() => void sessionAction.run(restartActiveSession)}
+                aria-busy={restartAction.pending || Boolean(state.sessionId && state.restartingSessionId === state.sessionId)} disabled={restartAction.pending || Boolean(state.sessionId && state.restartingSessionId === state.sessionId)} onClick={() => void restartAction.run(restartActiveSession)}
               >
                 <svg aria-hidden="true" viewBox="0 0 24 24">
                   <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />

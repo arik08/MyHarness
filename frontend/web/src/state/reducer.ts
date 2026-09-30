@@ -1,5 +1,6 @@
 import { createClientId } from "../utils/ids";
 import { backendToolCallIndex, toolCallKey as workflowInputBufferKey } from "../../modules/toolIdentity.js";
+import { appendStreamedJsonInput, type StreamedJsonInput } from "./streamedJsonInput";
 import type { ToolIdentity } from "../../modules/toolIdentity.js";
 import { workflowElapsedSeconds } from "../utils/workflowTime";
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, UsageCostSummary, Workspace, WorkspaceScope } from "../types/backend";
@@ -30,6 +31,8 @@ export type AppAction =
   | { type: "append_message"; message: Omit<ChatMessage, "id" | "createdAt"> & Partial<Pick<ChatMessage, "id" | "createdAt">>; skipHistory?: boolean }
   | { type: "session_started"; sessionId: string; clientId?: string; busy?: boolean; replay?: boolean; savedSessionId?: string }
   | { type: "session_replaced"; sessionId: string; workspace?: Workspace; savedSessionId?: string }
+  | { type: "begin_runtime_restart"; sessionId: string }
+  | { type: "finish_runtime_restart"; sessionId: string }
   | { type: "add_new_chat_history"; sessionId: string; workspace?: Workspace }
   | { type: "set_theme"; themeId: ThemeId }
   | { type: "set_sidebar_collapsed"; value: boolean; source?: Exclude<SidebarCollapseReason, null> }
@@ -279,6 +282,7 @@ const initialSidebarCollapsedValue = initialSidebarCollapsed();
 
 export const initialAppState: AppState = {
   sessionId: null,
+  restartingSessionId: null,
   sessionReplayKey: 0,
   conversationViewRevision: 0,
   clientId: initialClientSessionId(),
@@ -487,7 +491,7 @@ function isDuplicateAssistantCompletion(
   text: string,
   artifacts: ArtifactSummary[],
 ) {
-  if (message?.role !== "assistant" || message.isComplete !== true) {
+  if (message?.role !== "assistant" || message.isComplete !== true || message.suppressActions || message.responsePhase === "commentary") {
     return false;
   }
   const previousText = normalizeVisibleText(message.text).trim();
@@ -579,7 +583,8 @@ function completePendingAssistantMessage(messages: ChatMessage[], completedText 
   const pending = messages[pendingIndex];
   if (pending) {
     const text = assistantCompletionText(pending.text, completedText);
-    if (!text.trim()) {
+    const mergedArtifacts = mergeAssistantArtifacts(pending.artifacts, artifacts);
+    if (!text.trim() && !mergedArtifacts?.length) {
       return messages.filter((_, index) => index !== pendingIndex);
     }
     return messages.map((message, index) => (
@@ -590,7 +595,7 @@ function completePendingAssistantMessage(messages: ChatMessage[], completedText 
             isComplete: true,
             suppressActions: suppressActions || pending.suppressActions,
             createdAt: Date.now(),
-            artifacts: mergeAssistantArtifacts(pending.artifacts, artifacts),
+            artifacts: mergedArtifacts,
           }
         : message
     ));
@@ -766,10 +771,10 @@ function isDeduplicatedUserTranscriptKind(kind: ChatMessage["kind"]) {
   return kind === "steering" || kind === "queued";
 }
 
-function isFinalRestoredAssistantAnswer(historyEvents: Array<Record<string, unknown>>, index: number) {
+function isFinalRestoredAssistantAnswer(historyEvents: Array<Record<string, unknown>>, index: number, hasInferredArtifacts = false) {
   const current = historyEvents[index];
   if (typeof current?.has_tool_uses === "boolean") return !current.has_tool_uses;
-  if (!String(current?.text || "").trim() && !normalizeAssistantArtifacts(current?.artifacts).length) {
+  if (!String(current?.text || "").trim() && !normalizeAssistantArtifacts(current?.artifacts).length && !hasInferredArtifacts) {
     return false;
   }
   for (const next of historyEvents.slice(index + 1)) {
@@ -1037,75 +1042,9 @@ function workflowToolDetail(
   return workflowDetailFromInput(input) || fallback;
 }
 
-function splitWorkflowPreviewLines(value: string) {
-  const normalized = String(value || "").replace(/\r\n/g, "\n");
-  return normalized ? normalized.split("\n") : [""];
-}
-
-function formatWorkflowEditBlock(oldValue: string, newValue: string) {
-  return [
-    ...splitWorkflowPreviewLines(oldValue).map((line) => `-- ${line}`),
-    ...splitWorkflowPreviewLines(newValue).map((line) => `++ ${line}`),
-  ].join("\n");
-}
-
-function decodeJsonStringFragment(value: string) {
-  let result = "";
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    if (char !== "\\") {
-      result += char;
-      continue;
-    }
-    const next = value[index + 1];
-    if (next === undefined) {
-      break;
-    }
-    index += 1;
-    if (next === "n") result += "\n";
-    else if (next === "r") result += "\r";
-    else if (next === "t") result += "\t";
-    else if (next === "b") result += "\b";
-    else if (next === "f") result += "\f";
-    else if (next === "u" && /^[0-9a-fA-F]{4}$/.test(value.slice(index + 1, index + 5))) {
-      result += String.fromCharCode(Number.parseInt(value.slice(index + 1, index + 5), 16));
-      index += 4;
-    } else {
-      result += next;
-    }
-  }
-  return result;
-}
-
-function extractPartialJsonStringField(source: string, key: string) {
-  const marker = `"${key}"`;
-  const keyIndex = source.indexOf(marker);
-  if (keyIndex < 0) return { found: false, value: "" };
-  const colonIndex = source.indexOf(":", keyIndex + marker.length);
-  if (colonIndex < 0) return { found: false, value: "" };
-  let quoteIndex = colonIndex + 1;
-  while (quoteIndex < source.length && /\s/.test(source[quoteIndex])) {
-    quoteIndex += 1;
-  }
-  if (source[quoteIndex] !== "\"") return { found: false, value: "" };
-  let cursor = quoteIndex + 1;
-  let escaped = false;
-  let raw = "";
-  while (cursor < source.length) {
-    const char = source[cursor];
-    if (!escaped && char === "\"") break;
-    raw += char;
-    escaped = !escaped && char === "\\";
-    if (char !== "\\") escaped = false;
-    cursor += 1;
-  }
-  return { found: true, value: decodeJsonStringFragment(raw) };
-}
-
-function firstPartialJsonStringField(source: string, keys: string[]) {
+function firstPartialJsonStringField(source: StreamedJsonInput, keys: string[]) {
   for (const key of keys) {
-    const field = extractPartialJsonStringField(source, key);
-    if (field.found) return field;
+    if (Object.hasOwn(source.fields, key)) return { found: true, value: source.fields[key] };
   }
   return { found: false, value: "" };
 }
@@ -1153,7 +1092,7 @@ function workflowPatchPath(patch: string) {
   return match?.[1]?.trim() || "";
 }
 
-function clearWorkflowInputBuffer(buffers: Record<string, string>, event: ToolIdentity) {
+function clearWorkflowInputBuffer(buffers: Record<string, StreamedJsonInput>, event: ToolIdentity) {
   const next = { ...buffers };
   delete next[workflowInputBufferKey(event)];
   const index = backendToolCallIndex(event);
@@ -1161,7 +1100,7 @@ function clearWorkflowInputBuffer(buffers: Record<string, string>, event: ToolId
   return next;
 }
 
-function workflowDraftFromBuffer(toolName: string, buffer: string): { toolName: string; toolInput: Record<string, unknown> } | null {
+function workflowDraftFromBuffer(toolName: string, buffer: StreamedJsonInput): { toolName: string; toolInput: Record<string, unknown> } | null {
   const oldField = firstPartialJsonStringField(buffer, ["old_str", "old_string"]);
   const newField = firstPartialJsonStringField(buffer, ["new_str", "new_string"]);
   const newSourceField = firstPartialJsonStringField(buffer, ["new_source"]);
@@ -1216,7 +1155,9 @@ function workflowDraftFromBuffer(toolName: string, buffer: string): { toolName: 
   if (inferredToolName.toLowerCase().includes("edit") && (oldField.found || newField.found)) {
     input.old_str = oldField.value;
     input.new_str = newField.value;
-    input.content = formatWorkflowEditBlock(oldField.value, newField.value);
+    const oldLines = buffer.editLines.old_str ?? buffer.editLines.old_string ?? "-- ";
+    const newLines = buffer.editLines.new_str ?? buffer.editLines.new_string ?? "++ ";
+    input.content = `${oldLines}\n${newLines}`;
     return { toolName: inferredToolName, toolInput: input };
   }
   if (newSourceField.found) {
@@ -1983,6 +1924,8 @@ function ensureLiveHistoryItem(state: AppState, userText: string) {
       value: sessionId,
       label: "진행 중인 채팅",
       description,
+      messageCount: 1,
+      pending: true,
       workspace: state.workspacePath || state.workspaceName
         ? { name: state.workspaceName, path: state.workspacePath, scope: state.workspaceScope }
         : null,
@@ -2314,13 +2257,14 @@ function reduceHistoryRestoreEvent(
   if (
     !liveReplay && historyId
     && state.historyReadOnly
-    && !state.pendingHistoryId
+    && (!state.pendingHistoryId || state.pendingHistoryId === historyId)
     && state.activeHistoryId === historyId
     && state.messages.length
     && state.preserveMessagesOnNextClearTranscript
   ) {
     return {
       ...state,
+      pendingHistoryId: previewOnly ? state.pendingHistoryId : null,
       restoringHistory: true,
       busy: false,
       status: "processing",
@@ -2335,7 +2279,7 @@ function reduceHistoryRestoreEvent(
   let restoredSwarmTeammates: AppState["swarmTeammates"] = [];
   let restoredSwarmNotifications: AppState["swarmNotifications"] = [];
   let restoredSessionUsage: AppState["sessionUsage"] = null;
-  let workflowInputBuffers: Record<string, string> = {};
+  let workflowInputBuffers: Record<string, StreamedJsonInput> = {};
   let currentTurnHasAssistant = false;
   const historyEvents = (Array.isArray(historyEvent.history_events) ? historyEvent.history_events : [])
     .map((item) => (item && typeof item === "object" ? item as Record<string, unknown> : {}));
@@ -2378,16 +2322,18 @@ function reduceHistoryRestoreEvent(
       continue;
     }
     if (type === "assistant") {
+      const inferredArtifacts = workflowEventArtifactCandidates(workflowEvents);
+      const isFinalAnswer = isFinalRestoredAssistantAnswer(historyEvents, index, !currentTurnHasAssistant && inferredArtifacts.length > 0);
       const artifacts = normalizeAssistantArtifacts([
-        ...workflowEventArtifactCandidates(workflowEvents),
+        ...(isFinalAnswer ? inferredArtifacts : []),
         ...normalizeAssistantArtifacts(record.artifacts),
       ]);
       const usage = normalizeUsageCostSummary(record.usage);
       const sessionUsage = normalizeUsageCostSummary(record.session_usage);
       restoredSessionUsage = sessionUsage || restoredSessionUsage;
-      const text = String(record.text || "").trim() || (artifacts.length ? "작성 완료했습니다." : "");
+      const text = String(record.text || "").trim();
       if (text.trim() || artifacts.length) {
-        if (isFinalRestoredAssistantAnswer(historyEvents, index)) {
+        if (isFinalAnswer) {
           messages.push(createMessage({
             role: "assistant",
             text,
@@ -2477,8 +2423,7 @@ function reduceHistoryRestoreEvent(
         arguments_delta: delta,
       } as Extract<BackendEvent, { type: "tool_input_delta" }>;
       const key = workflowInputBufferKey(deltaEvent);
-      const current = workflowInputBuffers[key] || "";
-      const nextBuffer = current && /^\s*\{/.test(delta) && /\}\s*$/.test(current) ? delta : `${current}${delta}`;
+      const nextBuffer = appendStreamedJsonInput(workflowInputBuffers[key], delta);
       workflowInputBuffers = { ...workflowInputBuffers, [key]: nextBuffer };
       const draft = workflowDraftFromBuffer(toolName, nextBuffer);
       if (!draft) {
@@ -2627,7 +2572,7 @@ function reduceHistoryRestoreEvent(
   return {
     ...state,
     activeHistoryId: historyId || null,
-    pendingHistoryId: null,
+    pendingHistoryId: previewOnly ? state.pendingHistoryId : null,
     chatTitle: normalizeChatTitle(restoredTitle),
     history: updateCurrentHistoryTitle(state.history, historyId, restoredTitle),
     ...restoredPresentation({ messages, workflowEvents: restoredWorkflowEvents, workflowEventsByMessageId }),
@@ -2706,8 +2651,7 @@ function reduceWorkflowToolEvent(state: AppState, event: WorkflowToolBackendEven
       return state;
     }
     const key = workflowInputBufferKey(deltaEvent);
-    const current = state.workflowInputBuffers[key] || "";
-    const nextBuffer = current && /^\s*\{/.test(delta) && /\}\s*$/.test(current) ? delta : `${current}${delta}`;
+    const nextBuffer = appendStreamedJsonInput(state.workflowInputBuffers[key], delta);
     const draft = workflowDraftFromBuffer(toolName, nextBuffer);
     const workflowInputBuffers = { ...state.workflowInputBuffers, [key]: nextBuffer };
     if (!draft) {
@@ -3052,9 +2996,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
       ...state,
       chatTitle: title,
       history: updateCurrentHistoryTitle(
-        title === "새 대화" && state.activeHistoryId && !state.historyReadOnly
-          ? ensureSavedNewChatHistoryItem(state, state.activeHistoryId)
-          : state.history,
+        state.history,
         activeHistoryValue,
         title,
       ),
@@ -3209,14 +3151,19 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
   }
 
   if (event.type === "assistant_complete") {
+    const isFinalAnswer = event.has_tool_uses !== true;
     const artifacts = normalizeAssistantArtifacts([
-      ...workflowEventArtifactCandidates(state.workflowEvents),
+      ...(isFinalAnswer ? workflowEventArtifactCandidates(state.workflowEvents) : []),
       ...normalizeAssistantArtifacts(event.artifacts),
     ]);
-    const rawValue = normalizeVisibleText(String(event.message || ""));
-    const value = rawValue || (artifacts.length ? "작성 완료했습니다." : "");
+    // An empty provider completion closes a tool batch; it is not public prose.
+    // Artifact-only final answers can render their cards without invented text.
+    const pendingAssistantIndex = pendingAssistantMessageIndex(state.messages);
+    const value = assistantCompletionText(
+      state.messages[pendingAssistantIndex]?.text || "",
+      normalizeVisibleText(String(event.message || "")),
+    );
     const last = state.messages[state.messages.length - 1];
-    const isFinalAnswer = event.has_tool_uses !== true;
     const usage = normalizeUsageCostSummary(event.usage);
     const sessionUsage = normalizeUsageCostSummary(event.session_usage);
     const nextSessionUsage = sessionUsage || state.sessionUsage;
@@ -3237,7 +3184,6 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     }
     const shouldCompleteTodo = isFinalAnswer && artifacts.length > 0 && Boolean(state.todoMarkdown.trim());
     const todoMarkdown = shouldCompleteTodo ? completeTodoMarkdown(state.todoMarkdown) : state.todoMarkdown;
-    const pendingAssistantIndex = pendingAssistantMessageIndex(state.messages);
     const messages = isFinalAnswer
       ? pendingAssistantIndex >= 0
         ? completePendingAssistantMessage(state.messages, value, false, artifacts).map((message, index) => (
@@ -3245,7 +3191,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
               ? { ...message, usage: usage || message.usage, sessionUsage: nextSessionUsage }
               : message
           ))
-        : value
+        : value.trim() || artifacts.length
           ? appendMessage(state.messages, { role: "assistant", text: value, isComplete: true, createdAt: Date.now(), artifacts, usage, sessionUsage: nextSessionUsage })
           : state.messages
       : completePendingAssistantMessage(state.messages, value, true, artifacts).map((message, index) => (
@@ -3334,7 +3280,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     const modal: BackendModalState = { kind: "backend", payload };
     return {
       ...state,
-      modal,
+      modal: state.modal && state.modal.kind !== "backend" ? state.modal : modal,
       backendModalsBySessionId: rememberBackendModalForActiveSession(state, modal),
     };
   }
@@ -3370,7 +3316,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     const nextModal: BackendModalState = { kind: "backend", payload };
     return {
       ...state,
-      modal: nextModal,
+      modal: state.modal && state.modal.kind !== "backend" ? state.modal : nextModal,
       backendModalsBySessionId: rememberBackendModalForActiveSession(state, nextModal),
     };
   }
@@ -3469,6 +3415,10 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
 
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case "begin_runtime_restart":
+      return { ...state, restartingSessionId: action.sessionId };
+    case "finish_runtime_restart":
+      return state.restartingSessionId === action.sessionId ? { ...state, restartingSessionId: null } : state;
     case "session_started":
       {
         const backendModalsBySessionId = rememberCurrentBackendModal(state);
@@ -4023,14 +3973,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         modal: action.modal,
         backendModalsBySessionId: action.modal.kind === "backend"
           ? rememberBackendModalForActiveSession(state, action.modal)
-          : state.backendModalsBySessionId,
+          : rememberCurrentBackendModal(state),
       };
 
     case "close_modal":
       return {
         ...state,
-        modal: null,
-        backendModalsBySessionId: forgetCurrentBackendModal(state),
+        modal: state.modal && state.modal.kind !== "backend"
+          ? backendModalForSession(state.backendModalsBySessionId, (state.historyReadOnly ? state.activeHistoryId : state.sessionId || state.activeHistoryId) || "")
+          : null,
+        backendModalsBySessionId: state.modal?.kind === "backend" ? forgetCurrentBackendModal(state) : state.backendModalsBySessionId,
       };
 
     case "open_runtime_picker": {

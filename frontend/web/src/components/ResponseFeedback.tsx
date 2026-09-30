@@ -21,6 +21,7 @@ export function ResponseFeedback({ message }: { message: ChatMessage }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const panelId = useId();
+  const iconMaskId = `${panelId}-icon-mask`;
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -95,7 +96,16 @@ export function ResponseFeedback({ message }: { message: ChatMessage }) {
     <button ref={trigger} className="assistant-action-button response-feedback-trigger" type="button"
       aria-label="응답 평가" data-tooltip="응답 평가" aria-expanded={open} aria-controls={panelId}
       aria-haspopup="dialog" data-rated={savedRating || undefined} onClick={() => setOpen(!open)}>
-      {savedRating ? (savedRating === "up" ? <ThumbsUp /> : <ThumbsDown />) : <span className="response-feedback-icon" aria-hidden="true"><ThumbsUp /><ThumbsDown /></span>}
+      {savedRating ? (savedRating === "up" ? <ThumbsUp /> : <ThumbsDown />) : <svg className="response-feedback-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <defs>
+          <mask id={iconMaskId} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24" style={{ maskType: "luminance" }}>
+            <rect width="24" height="24" fill="white" stroke="none" />
+            <ThumbsDown x="8" y="8" width="16" height="16" style={{ fill: "black", stroke: "black", strokeWidth: 3.5 }} />
+          </mask>
+        </defs>
+        <g mask={`url(#${iconMaskId})`}><ThumbsUp x="0" y="0" width="16" height="16" /></g>
+        <ThumbsDown x="8" y="8" width="16" height="16" />
+      </svg>}
     </button>
     {open && createPortal(<div ref={panel} style={position} id={panelId} role="dialog" aria-label="응답 평가" className={`response-feedback-popover${rating ? " editing" : ""}`}>
       <div className="response-feedback-choices">

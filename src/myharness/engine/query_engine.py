@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import aclosing
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -302,23 +303,25 @@ class QueryEngine:
         if coordinator_context is not None:
             query_messages.append(coordinator_context)
         try:
-            async for event, usage in run_query(context, query_messages):
-                if isinstance(event, AssistantTurnComplete):
-                    self._messages = sanitize_conversation_messages(
-                        [message for message in query_messages if message is not coordinator_context]
-                    )
-                if usage is not None:
-                    self._cost_tracker.add(
-                        usage,
-                        provider=str(self._tool_metadata.get("provider") or ""),
-                        model=context.model,
-                    )
-                yield event
-        except BaseException:
+            async with aclosing(run_query(context, query_messages)) as query:
+                async for event, usage in query:
+                    if isinstance(event, AssistantTurnComplete):
+                        self._messages = sanitize_conversation_messages(
+                            [message for message in query_messages if message is not coordinator_context]
+                        )
+                    if usage is not None:
+                        self._cost_tracker.add(
+                            usage,
+                            provider=str(self._tool_metadata.get("provider") or ""),
+                            model=context.model,
+                        )
+                    yield event
+        finally:
+            # Provider errors can be yielded and return normally. Close the
+            # query first so completed sibling tools survive cancellation too.
             self._messages = sanitize_conversation_messages(
                 [message for message in query_messages if message is not coordinator_context]
             )
-            raise
 
     async def continue_pending(
         self,
@@ -347,11 +350,15 @@ class QueryEngine:
             tool_metadata=self._tool_metadata,
             auto_skill_learning_enabled=self._auto_skill_learning_enabled,
         )
-        async for event, usage in run_query(context, self._messages):
-            if usage is not None:
-                self._cost_tracker.add(
-                    usage,
-                    provider=str(self._tool_metadata.get("provider") or ""),
-                    model=context.model,
-                )
-            yield event
+        try:
+            async with aclosing(run_query(context, self._messages)) as query:
+                async for event, usage in query:
+                    if usage is not None:
+                        self._cost_tracker.add(
+                            usage,
+                            provider=str(self._tool_metadata.get("provider") or ""),
+                            model=context.model,
+                        )
+                    yield event
+        finally:
+            self._messages = sanitize_conversation_messages(self._messages)

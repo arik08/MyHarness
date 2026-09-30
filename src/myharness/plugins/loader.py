@@ -26,7 +26,7 @@ from myharness.coordinator.agent_definitions import (
 )
 from myharness.plugins.schemas import PluginManifest
 from myharness.plugins.types import LoadedPlugin, PluginCommandDefinition
-from myharness.skills.loader import _parse_skill_markdown
+from myharness.skills.loader import load_skill_file
 from myharness.skills.types import SkillDefinition
 
 logger = logging.getLogger(__name__)
@@ -329,17 +329,7 @@ def _load_plugin_skills(path: Path, plugin_name: str) -> list[SkillDefinition]:
     for skill_path in sorted(path.rglob("SKILL.md")):
         if not skill_path.is_file():
             continue
-        content = skill_path.read_text(encoding="utf-8")
-        name, description = _parse_skill_markdown(skill_path.parent.name, content)
-        skills.append(
-            SkillDefinition(
-                name=name,
-                description=description,
-                content=content,
-                source=f"plugin:{plugin_name}",
-                path=str(skill_path),
-            )
-        )
+        skills.append(load_skill_file(skill_path, source=f"plugin:{plugin_name}", allow_source_override=False))
     return skills
 
 

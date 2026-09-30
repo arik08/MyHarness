@@ -8,6 +8,7 @@ import { ArtifactPanel, clampArtifactPanelWidth } from "../ArtifactPanel";
 import { ArtifactPreview, artifactAiCommentsMessage, artifactAiSelectionMessage, artifactCaptureHorizontalBounds, artifactFrameResizeMessage, artifactHtmlEditMessage, artifactHtmlEditModeMessage, selectArtifactCaptureScale, selectArtifactCaptureViewportWidth } from "../ArtifactPreview";
 import { ModalHost } from "../ModalHost";
 import { TooltipLayer } from "../TooltipLayer";
+import { artifactFullscreenScrollMessage, fullscreenMessage, useFullscreenShortcut } from "../../hooks/useFullscreenShortcut";
 import { AppStateProvider, useAppState } from "../../state/app-state";
 import { initialAppState } from "../../state/reducer";
 import { aiEditArtifact, deleteArtifact, listProjectFiles, organizeProjectFiles, overwriteArtifact, readArtifact, renameArtifact } from "../../api/artifacts";
@@ -20,6 +21,11 @@ function SwitchAiEditSession() {
   const { state, dispatch } = useAppState();
   return <><button onClick={() => dispatch({ type: "session_started", sessionId: "session-b", busy: false })}>Switch AI edit session</button>
     <output data-testid="ai-edit-session">{state.sessionId}:{String(state.busy)}:{state.artifacts.map((item) => item.path).join(",")}:{state.modal?.kind || "none"}</output></>;
+}
+
+function FullscreenArtifactPanel() {
+  useFullscreenShortcut();
+  return <ArtifactPanel />;
 }
 
 it.each([false, true])("isolates delayed AI edit results after changing sessions (failure=%s)", async (failure) => {
@@ -139,6 +145,24 @@ async function loadPreviewDom(srcdoc: string) {
   dom.window.postMessage({ type: artifactHtmlEditModeMessage, path: "outputs/report.html", edit: true, ai: true }, "*");
   await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
   return dom;
+}
+
+async function loadFullscreenScrollDom() {
+  const dom = await loadPreviewDom(renderHtmlPreviewSrcdoc("<html><body><h1>Report</h1></body></html>"));
+  const scroll = { x: 18, y: 640 };
+  Object.defineProperties(dom.window, {
+    scrollX: { configurable: true, get: () => scroll.x },
+    scrollY: { configurable: true, get: () => scroll.y },
+  });
+  const scrollTo = vi.spyOn(dom.window, "scrollTo").mockImplementation((x: number | ScrollToOptions, y?: number) => {
+    if (typeof x === "number") { scroll.x = x; scroll.y = y || 0; }
+  });
+  const send = (data: Record<string, unknown>, source: Window | null = dom.window.parent) => {
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", { source, data: {
+      type: artifactFullscreenScrollMessage, path: "outputs/report.html", ...data,
+    } }));
+  };
+  return { dom, scroll, scrollTo, send };
 }
 
 async function submitInlineAiSelection(
@@ -513,12 +537,12 @@ describe("ArtifactPanel", () => {
     expect(source).toBeInstanceOf(HTMLTextAreaElement);
     expect((source as HTMLTextAreaElement).value).toContain("# 분석 결과");
 
-    await userEvent.clear(source);
+    expect((source as HTMLTextAreaElement).readOnly).toBe(true);
     await userEvent.type(source, "# 수정된 문서\n\n본문입니다.");
     await userEvent.click(screen.getByRole("button", { name: "미리보기" }));
 
-    expect(await screen.findByRole("heading", { name: "수정된 문서" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "분석 결과" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "분석 결과" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "수정된 문서" })).toBeNull();
   });
 
   it("shows completed HTML source mode in the right preview and omits the redundant back action", async () => {
@@ -735,6 +759,190 @@ describe("ArtifactPanel", () => {
     expect(srcdoc).toContain(`<script>${inlineScript}</script>`);
     expect(srcdoc).not.toContain("toDataurl(/api/artifact/asset/outputs/type)");
     expect(srcdoc).not.toContain("url('/api/artifact/asset/outputs/images/fallback.png')");
+  });
+
+  it("disables document fullscreen while HTML body or source editing is selected", async () => {
+    render(<AppStateProvider initialState={{
+      ...initialAppState,
+      artifactPanelOpen: true,
+      activeArtifact: { path: "outputs/report.html", name: "report.html", kind: "html" },
+      activeArtifactPayload: { kind: "html", content: "<html><body><h1>Report</h1></body></html>" },
+    }}><FullscreenArtifactPanel /></AppStateProvider>);
+    const frame = await screen.findByTitle("report.html");
+    const viewer = frame.closest(".artifact-viewer") as HTMLElement;
+    const requestFullscreen = vi.fn(async () => {});
+    Object.defineProperty(viewer, "requestFullscreen", { value: requestFullscreen });
+    await act(async () => { fireEvent.contextMenu(viewer); });
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    requestFullscreen.mockClear();
+    const initialSrcdoc = (frame as HTMLIFrameElement).srcdoc;
+
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+    const editEvent = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    viewer.dispatchEvent(editEvent);
+    expect(editEvent.defaultPrevented).toBe(false);
+    expect(requestFullscreen).not.toHaveBeenCalled();
+    expect((frame as HTMLIFrameElement).srcdoc).toBe(initialSrcdoc);
+
+    await userEvent.click(screen.getByRole("button", { name: "소스코드 확인" }));
+    const source = document.querySelector(".artifact-source code") as HTMLElement;
+    expect(source).toBeTruthy();
+    const sourceEvent = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    source.dispatchEvent(sourceEvent);
+    expect(sourceEvent.defaultPrevented).toBe(false);
+    expect(requestFullscreen).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "미리보기" }));
+    await act(async () => { fireEvent.contextMenu(viewer); });
+    expect(requestFullscreen).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "본문 수정" }));
+    await act(async () => { fireEvent.contextMenu(viewer); });
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the native menu in read-only text and permits fullscreen outside the content", async () => {
+    render(<AppStateProvider initialState={{
+      ...initialAppState,
+      artifactPanelOpen: true,
+      activeArtifact: { path: "outputs/notes.txt", name: "notes.txt", kind: "text" },
+      activeArtifactPayload: { kind: "text", content: "Editable notes" },
+    }}><FullscreenArtifactPanel /></AppStateProvider>);
+    const editor = await screen.findByLabelText("notes.txt 내용");
+    expect((editor as HTMLTextAreaElement).readOnly).toBe(true);
+    const viewer = editor.closest(".artifact-viewer") as HTMLElement;
+    const header = document.querySelector(".artifact-panel-header") as HTMLElement;
+    const requestFullscreen = vi.fn(async () => {});
+    Object.defineProperty(viewer, "requestFullscreen", { value: requestFullscreen });
+    for (const target of [editor, viewer, header]) {
+      const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      await act(async () => { target.dispatchEvent(event); });
+      expect(event.defaultPrevented).toBe(target !== editor);
+    }
+    expect(requestFullscreen).toHaveBeenCalledTimes(2);
+  });
+
+  it("toggles document fullscreen from the HTML preview and includes its active path", async () => {
+    const dom = await loadPreviewDom(renderHtmlPreviewSrcdoc("<html><body><h1>Report</h1></body></html>"));
+    const messages: Array<{ type: string; path: string; scroll: { x: number; y: number } }> = [];
+    Object.defineProperties(dom.window, {
+      scrollX: { configurable: true, value: 23 },
+      scrollY: { configurable: true, value: 766 },
+    });
+    dom.window.addEventListener("message", (event: MessageEvent) => {
+      if (event.data?.type === fullscreenMessage) messages.push(event.data);
+    });
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", {
+      source: dom.window.parent,
+      data: { type: artifactHtmlEditModeMessage, path: "outputs/report.html", edit: false, ai: false },
+    }));
+    await tick();
+    const event = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    dom.window.document.body.dispatchEvent(event);
+    await tick();
+    expect(event.defaultPrevented).toBe(true);
+    expect(messages).toEqual([{ type: fullscreenMessage, path: "outputs/report.html", scroll: { x: 23, y: 766 } }]);
+  });
+
+  it.each([
+    { edit: true, ai: false },
+    { edit: false, ai: true },
+    { edit: true, ai: true },
+  ])("keeps HTML right-click editing active without requesting fullscreen (%j)", async (mode) => {
+    const dom = await loadPreviewDom(renderHtmlPreviewSrcdoc("<html><body><h1>Report</h1><p>Body</p></body></html>"));
+    const fullscreenRequests: unknown[] = [];
+    dom.window.addEventListener("message", (event: MessageEvent) => {
+      if (event.data?.type === fullscreenMessage) fullscreenRequests.push(event.data);
+    });
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", {
+      source: dom.window.parent,
+      data: { type: artifactHtmlEditModeMessage, path: "outputs/report.html", ...mode },
+    }));
+    await tick();
+    const event = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 24, clientY: 24 });
+    dom.window.document.body.dispatchEvent(event);
+    await tick();
+    expect(fullscreenRequests).toHaveLength(0);
+    if (mode.ai) {
+      expect(dom.window.document.querySelector(".myharness-ai-comment-popover textarea")).toBeTruthy();
+    } else {
+      expect(event.defaultPrevented).toBe(false);
+    }
+  });
+
+  it.each([{ x: 0, y: 0 }, { x: 23, y: 766 }])("restores the saved HTML scroll after fullscreen layout changes (%j)", async (saved) => {
+    const { dom, scroll, scrollTo, send } = await loadFullscreenScrollDom();
+    send({ action: "save", scroll: saved });
+    send({ action: "save", scroll: { x: 999, y: 999 } }, null);
+    send({ action: "save", path: "outputs/other.html", scroll: { x: 999, y: 999 } });
+    scroll.x = 0;
+    scroll.y = 1200;
+    dom.window.dispatchEvent(new dom.window.Event("scroll"));
+    send({ action: "restore" }, null);
+    send({ action: "restore", path: "outputs/other.html" });
+    send({ action: "restore", type: "unknown:scroll" });
+    send({ action: "unknown" });
+    await tick(70);
+    expect(scrollTo).not.toHaveBeenCalled();
+    send({ action: "restore" });
+    await tick(90);
+    expect(scroll).toEqual(saved);
+    expect(scrollTo).toHaveBeenLastCalledWith(saved.x, saved.y);
+    const count = scrollTo.mock.calls.length;
+    send({ action: "restore" });
+    await tick(70);
+    expect(scrollTo).toHaveBeenCalledTimes(count);
+  });
+
+  it.each([undefined, { x: -1, y: 8 }, { x: "2", y: 8 }, { x: Number.NaN, y: 8 }])("reads the current HTML scroll when no valid fullscreen coordinates are supplied (%j)", async (supplied) => {
+    const { scroll, send } = await loadFullscreenScrollDom();
+    send({ action: "save", scroll: supplied });
+    scroll.x = 0;
+    scroll.y = 1200;
+    send({ action: "restore" });
+    await tick(90);
+    expect(scroll).toEqual({ x: 18, y: 640 });
+  });
+
+  it.each(["wheel", "pointerdown", "touchstart", "keydown", "reentry"])("cancels delayed HTML scroll restoration after %s", async (interaction) => {
+    const { dom, scroll, scrollTo, send } = await loadFullscreenScrollDom();
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    vi.spyOn(dom.window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.set(++frameId, callback);
+      return frameId;
+    });
+    vi.spyOn(dom.window, "cancelAnimationFrame").mockImplementation((id) => { frames.delete(id); });
+    send({ action: "save" });
+    scroll.y = 1200;
+    send({ action: "restore" });
+    for (const callback of frames.values()) callback(0);
+    frames.clear();
+    expect(scroll.y).toBe(640);
+    scroll.y = 700;
+    if (interaction === "reentry") send({ action: "save" });
+    else dom.window.dispatchEvent(new dom.window.Event(interaction));
+    await tick(70);
+    expect(scroll.y).toBe(700);
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels an unrendered HTML scroll restoration when a new fullscreen entry starts", async () => {
+    const { dom, scroll, scrollTo, send } = await loadFullscreenScrollDom();
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    vi.spyOn(dom.window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.set(++frameId, callback);
+      return frameId;
+    });
+    vi.spyOn(dom.window, "cancelAnimationFrame").mockImplementation((id) => { frames.delete(id); });
+    send({ action: "save" });
+    scroll.y = 1200;
+    send({ action: "restore" });
+    scroll.y = 700;
+    send({ action: "save" });
+    for (const callback of frames.values()) callback(0);
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(scroll.y).toBe(700);
   });
 
   it("relays artifact frame size changes to responsive 3D scripts", async () => {

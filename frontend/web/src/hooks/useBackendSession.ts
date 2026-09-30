@@ -118,7 +118,7 @@ export function useBackendSession() {
     let cancelled = false;
 
     async function boot() {
-      if (state.sessionId) {
+      if (state.sessionId || state.restoringHistory || state.pendingHistoryId) {
         return;
       }
 
@@ -187,9 +187,13 @@ export function useBackendSession() {
         return;
       }
 
-      await sendBackendRequest(session.sessionId, state.clientId, lastConversation
-        ? { type: "apply_select_command", command: "resume", value: lastConversation.sessionId }
-        : { type: "start_new_session" });
+      // A fresh runtime is already empty. Save a conversation when the user
+      // submits input, rather than creating an empty history entry on access.
+      if (lastConversation) {
+        await sendBackendRequest(session.sessionId, state.clientId, {
+          type: "apply_select_command", command: "resume", value: lastConversation.sessionId,
+        });
+      }
       if (cancelled) return;
       if (lastConversation) {
         startupRestoreIdRef.current = lastConversation.sessionId;
@@ -228,7 +232,7 @@ export function useBackendSession() {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, state.clientId, state.sessionId]);
+  }, [dispatch, state.clientId, state.sessionId, state.restoringHistory, state.pendingHistoryId]);
 
   useEffect(() => {
     if (!state.sessionId || sourceRef.current) {

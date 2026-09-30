@@ -324,9 +324,9 @@ function enhanceRenderedInlineSourceHtml(
     const explicitOrigin = /^(?:MCP|웹검색|웹페이지)\s*·\s*\S/i.test(label);
     const sourceHeading = record?.origin === "mcp" ? `MCP · ${record.server || "이름 미확인"} · ${label.replace(/^MCP\s*·\s*[^·]+\s*·\s*/i, "")}`
       : record?.origin === "web_search" ? `웹검색 · ${domain || label}`
-      : record?.origin === "web_fetch" ? `웹페이지 · ${domain || label}`
+      : record?.origin === "web_fetch" ? domain || label.replace(/^웹페이지\s*·\s*/i, "")
       : explicitOrigin
-      ? label
+      ? label.replace(/^웹페이지\s*·\s*/i, "")
       : domain && extractedEvidence ? `웹 조회 · ${domain}` : domain || label || href;
     trimWhitespaceBeforeInlineSource(link);
     const destination = record?.url && isBrowserOpenableSourceHref(record.url) ? record.url : href;
@@ -1431,8 +1431,39 @@ function createHtmlPreview(source: string) {
   return preview;
 }
 
+const mermaidThemeColorCache = new Map<string, string>();
+const maxMermaidThemeColors = 64;
+
 function mermaidCssVariable(name: string, fallback: string) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  const style = getComputedStyle(document.documentElement);
+  const raw = style.getPropertyValue(name).trim();
+  const value = raw.toLowerCase() === "currentcolor" ? style.color : raw;
+  if (!value) return fallback;
+  if (/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(value)) return value;
+  const cached = mermaidThemeColorCache.get(value);
+  if (cached) return cached;
+
+  // Browser CSS colors (color-mix, oklch, etc.) exceed Mermaid's color parser.
+  // Resolve their actual sRGB channels without changing the app's theme.
+  try {
+    if (typeof CSS !== "undefined" && typeof CSS.supports === "function" && !CSS.supports("color", value)) return fallback;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return fallback;
+    context.fillStyle = fallback;
+    context.fillStyle = value;
+    context.fillRect(0, 0, 1, 1);
+    const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+    const color = alpha === 255
+      ? `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`
+      : `rgba(${red}, ${green}, ${blue}, ${Number((alpha / 255).toFixed(3))})`;
+    if (mermaidThemeColorCache.size >= maxMermaidThemeColors) mermaidThemeColorCache.clear();
+    mermaidThemeColorCache.set(value, color);
+    return color;
+  } catch {
+    return fallback;
+  }
 }
 
 function configureMermaid() {

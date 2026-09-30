@@ -6,6 +6,8 @@ import hashlib
 import json
 import re
 import shutil
+from functools import wraps
+from contextlib import ExitStack
 from difflib import SequenceMatcher
 import time
 from pathlib import Path
@@ -16,6 +18,7 @@ from myharness.api.usage import UsageSnapshot
 from myharness.config.paths import get_project_config_dir
 from myharness.engine.messages import ConversationMessage, ImageBlock, sanitize_conversation_messages, strip_internal_message_text
 from myharness.utils.fs import atomic_write_text
+from myharness.utils.file_lock import exclusive_file_lock
 from myharness.services.session_documents import session_document_dir_for_delete
 
 
@@ -37,6 +40,7 @@ _PERSISTED_TOOL_METADATA_KEYS = (
     "session_title",
     "session_title_source",
     "session_title_user_edited",
+    "session_title_updated_at",
     "workflow_duration_seconds",
     "web_client_id",
     "branch_origin",
@@ -420,6 +424,16 @@ def get_project_session_dir(cwd: str | Path) -> Path:
     return session_dir
 
 
+def _serialized_session_storage(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        cwd = kwargs.get("cwd", args[0] if args else None)
+        with exclusive_file_lock(get_project_session_dir(cwd) / "session-storage.lock"):
+            return function(*args, **kwargs)
+    return locked
+
+
+@_serialized_session_storage
 def save_session_snapshot(
     *,
     cwd: str | Path,
@@ -438,6 +452,7 @@ def save_session_snapshot(
     if not _SAFE_SESSION_ID_RE.fullmatch(sid):
         raise ValueError(f"Invalid session id: {sid!r}")
     session_path = session_dir / f"session-{sid}.json"
+    existing: dict[str, Any] = {}
     existing_pinned = False
     existing_liked = False
     existing_created_at: float | None = None
@@ -459,6 +474,15 @@ def save_session_snapshot(
             existing_liked = False
     now = time.time()
     messages = sanitize_conversation_messages(messages)
+    tool_metadata = dict(tool_metadata or {})
+    existing_metadata = existing.get("tool_metadata") or {}
+    if isinstance(existing_metadata, dict) and existing_metadata.get("session_title_user_edited"):
+        existing_edit = _timestamp_millis(existing_metadata.get("session_title_updated_at"))
+        incoming_edit = _timestamp_millis(tool_metadata.get("session_title_updated_at"))
+        if existing_edit >= incoming_edit:
+            for key in ("session_title", "session_title_source", "session_title_user_edited", "session_title_updated_at"):
+                if key in existing_metadata:
+                    tool_metadata[key] = existing_metadata[key]
     metadata_title = _session_title_from_metadata(tool_metadata)
     first_user_summary = ""
     for msg in messages:
@@ -520,6 +544,94 @@ def save_session_snapshot(
     _write_snapshot_summary(latest_path, payload)
 
     return latest_path
+
+
+@_serialized_session_storage
+def update_session_metadata(cwd: str | Path, session_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+    """Patch picker fields while sharing the autosave process lock."""
+    if not _SAFE_SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError("Invalid session id")
+    if not patch or set(patch) - {"title", "pinned", "liked"}:
+        raise ValueError("Invalid session metadata patch")
+    session_dir = get_project_session_dir(cwd)
+    target = session_dir / f"session-{session_id}.json"
+    payload = _read_json_object(target)
+    if payload is None:
+        raise FileNotFoundError(f"Session not found: {session_id}")
+    if "title" in patch:
+        title = " ".join(str(patch["title"]).split())[:80]
+        if not title:
+            raise ValueError("Session title is required")
+        payload["summary"] = title
+        payload["tool_metadata"] = {
+            **(payload.get("tool_metadata") or {}), "session_title": title,
+            "session_title_source": "user", "session_title_user_edited": True,
+            "session_title_updated_at": time.time(),
+        }
+    for field in ("pinned", "liked"):
+        if field in patch:
+            payload[field] = patch[field] is True
+    atomic_write_text(target, _serialize_snapshot(payload))
+    _write_snapshot_summary(target, payload)
+    for latest_path in [session_dir / "latest.json", *session_dir.glob("latest-*.json")]:
+        latest = _read_json_object(latest_path)
+        if latest is not None and (_pointer_session_id(latest) or latest.get("session_id")) == session_id:
+            atomic_write_text(latest_path, _serialize_latest_pointer(session_id))
+            _write_snapshot_summary(latest_path, payload)
+    return {key: payload.get(key) for key in ("session_id", "summary", "pinned", "liked")}
+
+
+@_serialized_session_storage
+def rewrite_session_snapshot_if_unchanged(
+    cwd: str | Path, file_name: str, payload: dict[str, Any], expected: dict[str, Any] | None,
+) -> bool:
+    """Web migrations/repairs use the same lock as autosave and picker edits."""
+    if Path(file_name).name != file_name or not re.fullmatch(r"(?:session-.+|latest(?:-.+)?)\.json", file_name):
+        raise ValueError("Invalid session file name")
+    target = get_project_session_dir(cwd) / file_name
+    try:
+        info = target.stat()
+    except FileNotFoundError:
+        if expected is not None:
+            return False
+    else:
+        if expected is None or info.st_size != expected["size"] or abs(info.st_mtime * 1000 - expected["mtimeMs"]) > 0.001:
+            return False
+    pointer_id = _pointer_session_id(payload)
+    metadata = _load_snapshot_file(target.parent / f"session-{pointer_id}.json") if pointer_id else payload
+    atomic_write_text(target, _serialize_snapshot(payload))
+    if metadata is not None:
+        _write_snapshot_summary(target, metadata)
+    return True
+
+
+def move_session_snapshot(cwd: str | Path, target_cwd: str | Path, session_id: str) -> dict[str, Any]:
+    """Move an inactive snapshot while locking both storage directories in order."""
+    if not _SAFE_SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError("Invalid session id")
+    source_dir = get_project_session_dir(cwd).resolve()
+    target_dir = get_project_session_dir(target_cwd).resolve()
+    if source_dir == target_dir:
+        raise ValueError("Source and target workspaces must be different")
+    with ExitStack() as locks:
+        for directory in sorted((source_dir, target_dir), key=lambda item: str(item).casefold()):
+            locks.enter_context(exclusive_file_lock(directory / "session-storage.lock"))
+        source = source_dir / f"session-{session_id}.json"
+        target = target_dir / source.name
+        payload = _read_json_object(source)
+        if payload is None:
+            raise FileNotFoundError(f"Session not found: {session_id}")
+        if target.exists():
+            raise ValueError("Target workspace already has this session")
+        source.rename(target)
+        _snapshot_summary_path(source).unlink(missing_ok=True)
+        _write_snapshot_summary(target, payload)
+        for latest in [source_dir / "latest.json", *source_dir.glob("latest-*.json")]:
+            pointer = _read_json_object(latest)
+            if pointer is not None and (_pointer_session_id(pointer) or pointer.get("session_id")) == session_id:
+                latest.unlink(missing_ok=True)
+                _snapshot_summary_path(latest).unlink(missing_ok=True)
+        return {key: payload.get(key) for key in ("session_id", "summary", "pinned", "liked")}
 
 
 def _serialize_snapshot(payload: dict[str, Any]) -> str:
@@ -818,11 +930,12 @@ def _sanitize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
     raw_messages = payload.get("messages", [])
     stored_messages = raw_messages if isinstance(raw_messages, list) else []
     if isinstance(raw_messages, list):
-        messages = sanitize_conversation_messages(
-            [ConversationMessage.model_validate(item) for item in raw_messages]
-        )
+        validated = [ConversationMessage.model_validate(item) for item in raw_messages]
+        messages = sanitize_conversation_messages(validated)
         payload = dict(payload)
-        stored_messages = [message.model_dump(mode="json") for message in messages]
+        # Preserve the existing valid storage shape (including provider fields)
+        # when sanitation did not change the conversation.
+        stored_messages = raw_messages if messages == validated else [message.model_dump(mode="json") for message in messages]
         payload["messages"] = stored_messages
         payload["message_count"] = len(messages)
     compact_history = (
@@ -926,6 +1039,7 @@ def _migrate_named_snapshot(path: Path) -> tuple[dict[str, Any] | None, bool, in
     return stored, rewritten, len(original.encode("utf-8")), len(serialized.encode("utf-8"))
 
 
+@_serialized_session_storage
 def migrate_session_snapshots(cwd: str | Path, *, force: bool = False) -> dict[str, int]:
     """Upgrade legacy session files without deleting conversations or model state."""
     session_dir = get_project_session_dir(cwd).resolve()
@@ -1050,6 +1164,9 @@ def _first_user_summary_from_snapshot(data: dict[str, Any]) -> str:
 
 def _snapshot_display_summary(data: dict[str, Any], *, default: str = "") -> str:
     summary = strip_internal_message_text(data.get("summary", ""))
+    metadata = data.get("tool_metadata") or {}
+    if isinstance(metadata, dict) and metadata.get("session_title_user_edited") and summary:
+        return summary
     first_user_summary = _first_user_summary_from_snapshot(data)
     summary = display_summary_for_first_user(summary, first_user_summary)
     if first_user_summary.endswith("[image]"):
@@ -1204,6 +1321,7 @@ def list_session_snapshots(cwd: str | Path, limit: int | None = None) -> list[di
     return sessions if limit is None else sessions[:limit]
 
 
+@_serialized_session_storage
 def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | None:
     """Load a specific session by ID."""
     if not _SAFE_SESSION_ID_RE.fullmatch(session_id):
@@ -1228,6 +1346,7 @@ def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | Non
     return None
 
 
+@_serialized_session_storage
 def delete_session_by_id(cwd: str | Path, session_id: str) -> bool:
     """Delete a saved session snapshot by ID."""
     if not _SAFE_SESSION_ID_RE.fullmatch(session_id):

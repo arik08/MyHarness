@@ -50,6 +50,7 @@ class ApiMessageRequest:
     reasoning_effort: str | None = None
     compact_threshold_tokens: int | None = None
     cache_event: str | None = None
+    prompt_cache_scope: str | None = None
 
 
 @dataclass(frozen=True)

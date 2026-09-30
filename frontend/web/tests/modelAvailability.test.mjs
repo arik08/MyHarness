@@ -37,3 +37,26 @@ test('repairs stale models and profiles without enabling disabled models', () =>
   assert.equal(reconcileSessionModel({ activeProfile: 'a', model: 'two' }, available).model, 'two');
   assert.throws(() => reconcileSessionModel({}, applyModelAvailability(catalog, { a: [], b: [] })), { status: 409 });
 });
+
+test('only GPT-6 models remain usable after disabling GPT-5.6 and other providers', () => {
+  const values = ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-6-sol', 'gpt-6-luna', 'future-model'];
+  const runtime = {
+    providers: [{ value: 'p-gpt', active: true }, { value: 'codex' }],
+    all_models_by_provider: Object.fromEntries(['p-gpt', 'codex'].map(profile => [profile,
+      values.map(value => ({ value, active: value === 'gpt-5.6-luna' })),
+    ])),
+  };
+  for (const profile of ['p-gpt', 'codex']) {
+    // An unregistered family must follow the same availability contract.
+    for (const model of ['gpt-6-sol', 'gpt-6-luna', 'future-model']) {
+      let saved = { 'p-gpt': [], codex: [] };
+      saved = changeModelAvailability(runtime, saved, { profile, model, enabled: true });
+      const available = applyModelAvailability(runtime, saved);
+      assert.deepEqual(reconcileSessionModel({ activeProfile: 'p-gpt', model: 'gpt-5.6-luna' }, available),
+        { activeProfile: profile, model });
+      assert.deepEqual(available.models_by_provider[profile].map(item => item.value), [model]);
+      saved = changeModelAvailability(runtime, saved, { profile, model, enabled: false });
+      assert.throws(() => reconcileSessionModel({}, applyModelAvailability(runtime, saved)), { status: 409 });
+    }
+  }
+});

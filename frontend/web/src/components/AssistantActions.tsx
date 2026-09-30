@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { saveArtifact } from "../api/artifacts";
 import { ResponseFeedback } from "./ResponseFeedback";
 import { AnswerCopyMenu } from "./AnswerCopyMenu";
@@ -10,6 +10,7 @@ import { branchHistory } from "../api/branch";
 import { startSession } from "../api/session";
 import { loadHistorySnapshot } from "../api/history";
 import { runtimePreferencesFromState } from "../utils/runtimePreferences";
+import { discardUnclaimedSession } from "../utils/sessionHandoff";
 import { artifactName } from "../utils/artifacts";
 import { chatShareUrl, shareBaseUrl } from "../utils/chatShare";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -498,12 +499,26 @@ function UsageCostPopover({ answerUsage, sessionUsage }: { answerUsage?: UsageCo
 
 export function AssistantActions({ message, children }: { message: ChatMessage; children?: ReactNode }) {
   const { state, dispatch } = useAppState();
+  const latestState = useRef(state);
+  latestState.current = state;
   const [status, setStatus] = useState("");
   const [copying, setCopying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [branching, setBranching] = useState(false);
   const branchPendingRef = useRef(false);
+  const branchScope = JSON.stringify([state.sessionId, state.clientId, state.workspacePath, state.activeHistoryId, state.conversationViewRevision, message.id]);
+  const currentBranchScope = useRef(branchScope);
+  currentBranchScope.current = branchScope;
+  const branchRequestRef = useRef<object | null>(null);
+  useEffect(() => {
+    setBranching(false);
+    setStatus((current) => current === "새 채팅으로 분기 중..." ? "" : current);
+    return () => {
+      branchPendingRef.current = false;
+      branchRequestRef.current = null;
+    };
+  }, [branchScope]);
   const text = message.text.trim();
   const messageTime = formatMessageTime(message.createdAt);
 
@@ -517,8 +532,20 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
     const answerIndex = answers.findIndex((item) => item.id === message.id);
     if (answerIndex < 0 || !(state.activeHistoryId || state.sessionId)) return;
     branchPendingRef.current = true;
+    const request = {};
+    branchRequestRef.current = request;
+    const isCurrent = () => branchRequestRef.current === request && currentBranchScope.current === branchScope;
     setBranching(true);
     setStatus("새 채팅으로 분기 중...");
+    let createdSessionId = "";
+    let abandoned = false;
+    let discarded = false;
+    const discardCreatedSession = () => {
+      if (createdSessionId && !discarded && createdSessionId !== latestState.current.sessionId) {
+        discarded = true;
+        discardUnclaimedSession(createdSessionId, state.clientId, latestState.current.sessionId);
+      }
+    };
     try {
       const branch = await branchHistory({
         sessionId: state.activeHistoryId || state.sessionId || "",
@@ -528,6 +555,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
         answerIndex,
         answerText: text,
       });
+      if (!isCurrent()) return;
       dispatch({ type: "prepend_history", history: [{ value: branch.sessionId, label: branch.title, description: branch.title, workspace: branch.workspace }] });
       const [snapshot, session] = await Promise.all([
         loadHistorySnapshot({
@@ -539,8 +567,13 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
           clientId: state.clientId,
           cwd: branch.workspace.path,
           ...runtimePreferencesFromState(state),
+        }).then((session) => {
+          createdSessionId = session.sessionId;
+          if (abandoned || !isCurrent()) discardCreatedSession();
+          return session;
         }),
       ]);
+      if (!isCurrent()) { abandoned = true; discardCreatedSession(); return; }
       dispatch({ type: "session_started", sessionId: session.sessionId, clientId: state.clientId });
       dispatch({ type: "set_workspace", workspace: branch.workspace });
       dispatch({ type: "clear_composer" });
@@ -550,12 +583,17 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
       dispatch({ type: "backend_event", event: snapshot });
       dispatch({ type: "finish_history_restore" });
     } catch (error) {
-      dispatch({ type: "finish_history_restore" });
+      abandoned = true;
+      discardCreatedSession();
+      if (!isCurrent()) return;
       dispatch({ type: "open_modal", modal: { kind: "error", message: `분기 실패: ${error instanceof Error ? error.message : String(error)}` } });
     } finally {
-      branchPendingRef.current = false;
-      setBranching(false);
-      setStatus("");
+      if (isCurrent()) {
+        branchPendingRef.current = false;
+        branchRequestRef.current = null;
+        setBranching(false);
+        setStatus("");
+      }
     }
   }
 
@@ -670,6 +708,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
         type="button"
         data-tooltip="여기서 분기"
         aria-label="이 답변까지 새 채팅으로 분기"
+        aria-busy={branching}
         disabled={branching || !(state.activeHistoryId || state.sessionId)}
         onClick={() => void branchAnswer()}
       >

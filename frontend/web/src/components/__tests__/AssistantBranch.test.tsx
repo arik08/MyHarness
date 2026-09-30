@@ -11,7 +11,7 @@ import { loadHistorySnapshot } from "../../api/history";
 import type { ChatMessage } from "../../types/ui";
 
 vi.mock("../../api/branch", () => ({ branchHistory: vi.fn() }));
-vi.mock("../../api/session", () => ({ startSession: vi.fn() }));
+vi.mock("../../api/session", () => ({ startSession: vi.fn(), shutdownSession: vi.fn().mockResolvedValue({ ok: true }) }));
 vi.mock("../../api/messages", () => ({ sendBackendRequest: vi.fn() }));
 vi.mock("../../api/history", () => ({ loadHistorySnapshot: vi.fn() }));
 

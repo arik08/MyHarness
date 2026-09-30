@@ -372,14 +372,14 @@ describe("useBackendSession", () => {
     }
   });
 
-  it("saves the first empty chat and falls back when the previous conversation is gone", async () => {
+  it("opens an unsaved empty runtime when the previous conversation is gone", async () => {
     localStorage.setItem("myharness:lastConversation", JSON.stringify({
       sessionId: "deleted", workspacePath: "C:/demo", workspaceName: "Default",
     }));
     vi.mocked(loadHistorySnapshot).mockRejectedValue(new Error("Not found"));
     render(<AppStateProvider initialState={{ ...initialAppState, clientId: "client-1" }}><Probe /></AppStateProvider>);
     await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("new-session"));
-    expect(sendBackendRequest).toHaveBeenCalledWith("new-session", "client-1", { type: "start_new_session" });
+    expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
   it("keeps a busy request active while EventSource reconnects after a transport error", async () => {
@@ -593,6 +593,7 @@ describe("useBackendSession", () => {
     await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("new-session"));
     expect(listLiveSessions).toHaveBeenCalledWith({ clientId: "client-1" });
     expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ clientId: "client-1" }));
+    expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
   it("passes client runtime preferences into a new backend session", async () => {

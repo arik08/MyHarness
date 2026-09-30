@@ -101,11 +101,15 @@ export function useMessageAutoFollow({
   useEffect(() => {
     const container = messagesRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(updateJumpVisibility);
+    const observer = new ResizeObserver(() => {
+      updateJumpVisibility();
+      if (autoFollowRef.current && shouldFollowGrowingTail && !animationFrameRef.current
+        && !state.restoringHistory && !state.historyReadOnly) resumeAutoFollow();
+    });
     observer.observe(container);
     for (const child of container.children) observer.observe(child);
     return () => observer.disconnect();
-  }, [state.messages.length, state.restoringHistory, activeWorkflowFollowSignature]);
+  }, [state.messages.length, state.restoringHistory, state.historyReadOnly, shouldFollowGrowingTail, activeWorkflowFollowSignature]);
 
   function jumpToLatest() {
     autoFollowRef.current = true;
@@ -227,7 +231,8 @@ export function useMessageAutoFollow({
           followVelocity = 0;
         }
         liveContainer.dataset.lastScrollTop = String(liveContainer.scrollTop);
-        if (autoFollowRef.current && tailFollowActiveRef.current) {
+        const settled = canSettle && Math.abs(rawTarget - liveContainer.scrollTop) <= 0.5;
+        if (!settled && autoFollowRef.current && tailFollowActiveRef.current) {
           animationFrameRef.current = window.requestAnimationFrame(step);
         } else {
           tailFollowActiveRef.current = false;
@@ -324,16 +329,19 @@ export function useMessageAutoFollow({
 
   useLayoutEffect(() => {
     const container = messagesRef.current;
-    if (!container || !state.restoringHistory || state.pendingHistoryId || !state.activeHistoryId) {
+    if (!container || !state.restoringHistory || !state.activeHistoryId
+      || (state.pendingHistoryId && state.pendingHistoryId !== state.activeHistoryId)) {
       return;
     }
     stopAutoFollow(container);
     const savedPosition = restoredScrollPosition(state.activeHistoryId);
     container.scrollTop = savedPosition ?? 0;
     container.dataset.lastScrollTop = String(container.scrollTop);
-    requestAnimationFrame(() => {
+    if (state.pendingHistoryId) return;
+    const frame = requestAnimationFrame(() => {
       dispatch({ type: "finish_history_restore" });
     });
+    return () => cancelAnimationFrame(frame);
   }, [dispatch, state.activeHistoryId, state.messages.length, state.pendingHistoryId, state.restoringHistory]);
 
   useEffect(() => {

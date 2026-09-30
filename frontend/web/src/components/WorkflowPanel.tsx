@@ -3,6 +3,7 @@ import { workflowElapsedSeconds } from "../utils/workflowTime";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readArtifact } from "../api/artifacts";
 import { useAppState } from "../state/app-state";
+import { useArtifactReadGuard } from "../hooks/useArtifactReadGuard";
 import { isResponseVisiblyBusy } from "../state/selectors";
 import type { ArtifactSummary } from "../types/backend";
 import type { WorkflowEvent } from "../types/ui";
@@ -809,6 +810,7 @@ function WorkflowOutputPreview({
 }) {
   const { state, dispatch } = useAppState();
   const [openingPath, setOpeningPath] = useState("");
+  const artifactReadGuard = useArtifactReadGuard();
   const bodyRef = useRef<HTMLPreElement | null>(null);
   const done = event.status !== "running";
   const succeeded = event.status === "done";
@@ -850,6 +852,7 @@ function WorkflowOutputPreview({
       return;
     }
     const displayArtifact = { ...artifact, name: artifactDisplayName(artifact) };
+    const isCurrentRequest = artifactReadGuard(displayArtifact);
     dispatch({ type: "open_artifact", artifact: displayArtifact });
     setOpeningPath(displayArtifact.path);
     try {
@@ -860,14 +863,16 @@ function WorkflowOutputPreview({
         workspaceName: displayArtifact.workspace?.name || state.workspaceName,
         path: displayArtifact.path,
       });
+      if (!isCurrentRequest()) return;
       dispatch({ type: "open_artifact", artifact: { ...displayArtifact, workspace: payload.workspace || displayArtifact.workspace }, payload });
     } catch (error) {
+      if (!isCurrentRequest()) return;
       dispatch({
         type: "open_modal",
         modal: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       });
     } finally {
-      setOpeningPath("");
+      setOpeningPath((current) => current === displayArtifact.path ? "" : current);
     }
   }
 

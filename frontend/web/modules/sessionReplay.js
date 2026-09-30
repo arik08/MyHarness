@@ -31,6 +31,7 @@ function resetActiveStreams(state) {
 
 function resetConversationReplay(state) {
   state.stableEvents = [];
+  state.onReset?.();
   state.latestEvents.delete("todo_update");
   state.latestEvents.delete("question_round");
   state.latestEvents.delete("permission_request");
@@ -40,7 +41,9 @@ function resetConversationReplay(state) {
 function pushStableEvent(state, event) {
   state.stableEvents.push({ order: nextOrder(state), event: cloneEvent(event) });
   if (state.stableEvents.length > defaultStableEventLimit) {
-    state.stableEvents.splice(0, state.stableEvents.length - defaultStableEventLimit);
+    for (const entry of state.stableEvents.splice(0, state.stableEvents.length - defaultStableEventLimit)) {
+      state.onEvict?.(entry);
+    }
   }
 }
 
@@ -130,7 +133,7 @@ function updateToolProgress(state, event) {
   });
 }
 
-export function createSessionReplayState() {
+export function createSessionReplayState({ onEvict, onReset } = {}) {
   return {
     nextOrder: 0,
     latestEvents: new Map(),
@@ -138,6 +141,8 @@ export function createSessionReplayState() {
     assistantDelta: null,
     toolInputDeltas: new Map(),
     toolProgress: new Map(),
+    onEvict,
+    onReset,
   };
 }
 
@@ -257,7 +262,7 @@ export function rememberSuppressedUserTranscript(state, text) {
   }));
 }
 
-export function replayEventsForState(state) {
+export function replayEntriesForState(state) {
   const entries = [
     ...state.latestEvents.values(),
     ...state.stableEvents,
@@ -273,5 +278,9 @@ export function replayEventsForState(state) {
   return entries
     .filter((entry) => shouldReplayRawEvent(entry.event))
     .sort((left, right) => left.order - right.order)
-    .map((entry) => cloneEvent(entry.event));
+    .map((entry) => ({ order: entry.order, event: cloneEvent(entry.event) }));
+}
+
+export function replayEventsForState(state) {
+  return replayEntriesForState(state).map((entry) => entry.event);
 }

@@ -54,6 +54,7 @@ async def test_start_runtime_prewarms_prefix_in_background(tmp_path: Path, monke
         assert client.request is not None
         assert client.request.model == bundle.engine.model
         assert client.request.system_prompt == bundle.engine.system_prompt
+        assert client.request.prompt_cache_scope == str(tmp_path.resolve())
         assert client.request.tools == sorted(
             bundle.tool_registry.to_api_schema(),
             key=lambda schema: str(schema.get("name") or ""),

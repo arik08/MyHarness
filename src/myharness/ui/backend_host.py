@@ -142,7 +142,7 @@ _SWARM_TASK_TYPES = {"local_agent", "remote_agent", "in_process_teammate"}
 _SAVED_SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _SESSION_SCOPED_METADATA_KEYS = (
     "session_title", "session_title_source", "session_title_user_edited",
-    "workflow_duration_seconds", "branch_origin",
+    "session_title_updated_at", "workflow_duration_seconds", "branch_origin",
 )
 _SESSION_TITLE_SOURCE_PROMPT = "prompt"
 _SESSION_TITLE_SOURCE_CONVERSATION = "conversation"
@@ -470,7 +470,7 @@ def _recover_history_artifact_links(
         None,
     )
     if assistant_index is None:
-        repaired.append({"type": "assistant", "text": "작성 완료했습니다.", "artifacts": recovered})
+        repaired.append({"type": "assistant", "text": "", "has_tool_uses": False, "artifacts": recovered})
         return repaired
     existing = repaired[assistant_index].get("artifacts")
     existing_artifacts = existing if isinstance(existing, list) else []
@@ -3872,6 +3872,7 @@ class ReactBackendHost:
         metadata["session_title"] = title
         metadata["session_title_source"] = _SESSION_TITLE_SOURCE_CONVERSATION
         metadata["session_title_user_edited"] = True
+        metadata["session_title_updated_at"] = time.time()
         if os.environ.get("MYHARNESS_WEB_CLIENT_ID"):
             metadata["web_client_id"] = os.environ["MYHARNESS_WEB_CLIENT_ID"]
         await asyncio.to_thread(
@@ -4144,6 +4145,15 @@ class ReactBackendHost:
         return self._question_wait_seconds + active
 
     async def _ask_question(
+        self, question: str, choices: list[dict[str, object]] | None = None,
+        *, questions: list[dict[str, object]] | None = None,
+    ) -> str:
+        # The frontend displays one interactive prompt. Share the permission
+        # lock so parallel questions/permissions cannot hide another waiter.
+        async with self._permission_lock:
+            return await self._ask_question_locked(question, choices, questions=questions)
+
+    async def _ask_question_locked(
         self, question: str, choices: list[dict[str, object]] | None = None,
         *, questions: list[dict[str, object]] | None = None,
     ) -> str:

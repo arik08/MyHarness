@@ -120,6 +120,75 @@ describe("Aside work history", () => {
     expect(document.querySelector(".workflow-output-body")?.textContent).toBe("first chunk second chunk");
   });
 
+  it.each(["write_file", "future_write_document", "edit_file", "apply_patch", "save_skill"])("keeps %s output visible through completion and restored collapsed history", (toolName) => {
+    const input = toolName === "save_skill"
+      ? { name: "report-skill", instructions: "generated output" }
+      : toolName === "edit_file"
+        ? { path: "report.txt", old_string: "original output", new_string: "generated output" }
+        : toolName === "apply_patch"
+          ? { patch: "*** Begin Patch\n*** Add File: report.txt\n+generated output\n*** End Patch" }
+          : { path: "report.txt", content: "generated output" };
+    const writing = call("writing", toolName, { status: "running", toolInput: input });
+    const timeline = (event: WorkflowEvent, busy: boolean) => <AppStateProvider initialState={{ ...initialAppState, sessionId: "output-session", workspacePath: "" }}>
+      <WorkflowPanel events={[call("search", "web_search"), event]} busy={busy} persistenceKey="output-turn" />
+    </AppStateProvider>;
+    const visibleOutput = () => {
+      expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
+      const body = document.querySelector(".workflow-output-body")!;
+      expect(body.textContent).toContain("generated output");
+      expect(body.closest(".aside-disclosure")).toBeNull();
+      return body;
+    };
+    const view = render(timeline(writing, true));
+    const body = visibleOutput();
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    const completed = { ...writing, status: "done" as const };
+    view.rerender(timeline(completed, true)); // Tool finishes before the final answer.
+    expect(visibleOutput()).toBe(body);
+    view.rerender(timeline(completed, false));
+    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("false");
+    expect(visibleOutput()).toBe(body);
+    view.unmount();
+    const restored = render(timeline({ ...completed, restored: true }, false));
+    visibleOutput();
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    openActivity();
+    for (const toggle of screen.getAllByRole("button", { name: /상세 실행 기록/ })) fireEvent.click(toggle);
+    visibleOutput(); // Opening details must not duplicate the output.
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    restored.rerender(timeline({ ...writing, status: "error" }, false));
+    visibleOutput();
+    expect(document.querySelector(".workflow-output-label")?.textContent).toMatch(/실패/);
+    expect(screen.queryByRole("button", { name: /결과물 열기/ })).toBeNull();
+  });
+
+  it("renders one output per call when timeline records repeat a call", () => {
+    const first = call("draft", "write_file", { toolCallId: "same-call", status: "running", toolInput: { path: "report.txt", content: "draft" } });
+    const completed = { ...first, id: "complete", status: "done" as const, toolInput: { path: "report.txt", content: "final output" } };
+    render(panel([first, completed]));
+    expect(document.querySelectorAll(".workflow-output-preview")).toHaveLength(1);
+    expect(document.querySelector(".workflow-output-body")?.textContent).toBe("final output");
+  });
+
+  it.each(["running", "done", "error"] as const)("keeps output spacing independent of calls without previews when %s", (status) => {
+    const events = [
+      ...Array.from({ length: 45 }, (_, index) => call(`lookup-${index}`, index % 2 ? "web_search" : "mcp__future__lookup")),
+      call("empty-output", "future_write_document", { toolInput: {} }),
+      note("progress", "결과를 정리합니다."),
+      call("write", "write_file", { status, toolInput: { path: "report.txt", content: "report content" } }),
+      call("edit", "edit_file", { status, toolInput: { path: "report.txt", old_string: "report", new_string: "verified report" } }),
+    ];
+    render(panel(events));
+    const timeline = screen.getByRole("article", { name: "도구 진행 상황" });
+    const previews = Array.from(timeline.querySelectorAll(".workflow-output-preview"));
+    expect(previews).toHaveLength(2);
+    // Invisible calls must not occupy flex items and accumulate inter-item gaps.
+    expect(Array.from(timeline.children)).toEqual([timeline.querySelector(".aside-work"), ...previews]);
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    expect(Array.from(timeline.children)).toEqual([timeline.querySelector(".aside-work"), ...previews]);
+    expect(previews.every((preview) => !preview.closest("[hidden]"))).toBe(true);
+  });
+
   it.each(["web_search", "write_file", "mcp__future__lookup"])("shows a running indicator for %s and removes it on completion", (toolName) => {
     const event = call("active", toolName, { status: "running" });
     const view = render(panel([event]));
@@ -289,13 +358,14 @@ describe("Aside work history", () => {
     expect(document.body.textContent).toContain("END");
   });
 
-  it("shows saved file content and real edit diffs only after opening details", () => {
+  it("shows saved file content and real edit diffs independently of details", () => {
     render(panel([call("write", "write_file", { toolInput: { path: "report.html", content: "<h1>Report</h1>" } }), call("edit", "edit_file", { toolInput: { path: "report.html", old_string: "Report", new_string: "Updated" } })]));
-    expect(document.querySelector(".workflow-output-body")).toBeNull();
-    openActivity();
-    for (const toggle of screen.getAllByRole("button", { name: /상세 실행 기록/ })) fireEvent.click(toggle);
+    expect(document.querySelectorAll(".workflow-output-body")).toHaveLength(2);
     expect(document.querySelector(".workflow-output-body")?.textContent).toContain("Report");
     expect(document.querySelector(".workflow-output-body.diff")?.textContent).toContain("Updated");
+    openActivity();
+    for (const toggle of screen.getAllByRole("button", { name: /상세 실행 기록/ })) fireEvent.click(toggle);
+    expect(document.querySelectorAll(".workflow-output-body")).toHaveLength(2);
   });
 
   it("shows agent work at its recorded position with separate details", () => {

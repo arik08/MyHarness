@@ -36,6 +36,7 @@ from myharness.api.errors import (
 )
 from myharness.api.usage import UsageSnapshot
 from myharness.api.retry import calculate_retry_delay
+from myharness.api.prompt_cache import supports_modern_prompt_cache
 from myharness.api.registry import normalize_pgpt_base_url
 from myharness.config.paths import get_logs_dir
 from myharness.engine.messages import (
@@ -125,7 +126,9 @@ def _prompt_cache_key_for_request(request: ApiMessageRequest) -> str:
     """Build a stable routing key without embedding raw prompt text."""
     payload = {
         "model": str(request.model or "").strip().lower(),
-        "system_prompt_hash": _stable_hash(request.system_prompt or ""),
+        "prompt_scope_hash": _stable_hash(
+            request.prompt_cache_scope if request.prompt_cache_scope is not None else request.system_prompt or ""
+        ),
         "tool_schema_hash": _stable_hash(_stable_tool_schema_payload(request.tools)),
     }
     return f"myharness:{_stable_hash(payload)}"
@@ -535,15 +538,15 @@ class OpenAICompatibleClient:
 
     def _completion_params(self, request: ApiMessageRequest) -> dict[str, Any]:
         safe_messages = sanitize_conversation_messages(request.messages)
-        uses_explicit_cache = (
+        uses_modern_cache = (
             self._enable_prompt_cache_options
-            and _uses_gpt56_prompt_cache_policy(request.model)
+            and supports_modern_prompt_cache(request.model)
             and "prompt_cache_options" not in self._unsupported_cache_option_names
         )
         openai_messages = _convert_messages_to_openai(
             safe_messages,
             request.system_prompt,
-            explicit_system_cache_breakpoint=uses_explicit_cache,
+            explicit_system_cache_breakpoint=uses_modern_cache,
         )
         openai_tools = _convert_tools_to_openai(request.tools) if request.tools else None
 
@@ -562,8 +565,10 @@ class OpenAICompatibleClient:
         if self._enable_prompt_cache_options:
             if "prompt_cache_key" not in self._unsupported_cache_option_names:
                 params["prompt_cache_key"] = _prompt_cache_key_for_request(request)
-            if uses_explicit_cache and "prompt_cache_key" in params:
-                params["prompt_cache_options"] = {"mode": "explicit", "ttl": "30m"}
+            if uses_modern_cache and "prompt_cache_key" in params:
+                # The static breakpoint remains available alongside implicit
+                # boundaries in the growing conversation and tool results.
+                params["prompt_cache_options"] = {"mode": "implicit", "ttl": "30m"}
             elif (
                 self._prompt_cache_retention
                 and "prompt_cache_retention" not in self._unsupported_cache_option_names

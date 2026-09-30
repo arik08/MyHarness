@@ -11,6 +11,99 @@ import test from "node:test";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function startLongReplayFixture(t, { readFailure = false } = {}) {
+  const fixtureDir = await mkdtemp(join(tmpdir(), "myharness-long-replay-"));
+  const backend = join(fixtureDir, "backend.mjs");
+  const preload = join(fixtureDir, "preload.mjs");
+  await writeFile(backend, `
+import readline from 'node:readline';
+const emit = (event) => console.log('OHJSON:' + JSON.stringify(event));
+emit({type:'ready',state:{model:'fixture'}});
+emit({type:'active_session',value:'fixture'});
+for(let turn=0; turn<91; turn++) {
+  emit({type:'transcript_item',item:{role:'user',text:'question ' + turn}});
+  for(let call=0; call<5; call++) {
+    emit({type:'tool_started',tool_call_id:turn+'-'+call,tool_name:'fixture_tool'});
+    emit({type:'tool_completed',tool_call_id:turn+'-'+call,tool_name:'fixture_tool',output:'done'});
+  }
+  emit({type:'assistant_complete',message:'answer ' + turn});
+  emit({type:'line_complete'});
+}
+readline.createInterface({input:process.stdin}).on('line', (line) => {
+  const request = JSON.parse(line);
+  if(request.type === 'shutdown') process.exit(0);
+  if(request.type === 'submit_line') {
+    emit({type:'clear_transcript'});
+    emit({type:'transcript_item',item:{role:'user',text:'new conversation'}});
+    emit({type:'assistant_complete',message:'new answer'});
+    emit({type:'line_complete'});
+  }
+});
+`, "utf8");
+  await writeFile(preload, `
+import childProcess from 'node:child_process';
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
+const spawn = childProcess.spawn;
+childProcess.spawn = function(file,args,options) {
+  if(args?.includes('--backend-only')) return spawn(process.execPath,[${JSON.stringify(backend)}],options);
+  return spawn(file,args,options);
+};
+${readFailure ? "const read = fs.createReadStream; fs.createReadStream = function(path,...args) { const stream = read(path,...args); if(String(path).endsWith('prefix.jsonl')) setImmediate(() => stream.destroy(new Error('fixture replay read failure'))); return stream; };" : ""}
+syncBuiltinESMExports();
+`, "utf8");
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" }, nodeArgs: ["--import", pathToFileURL(preload).href] });
+  let workspacePath;
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) await rmWithRetry(workspacePath, { recursive: true, force: true });
+    await rmWithRetry(fixtureDir, { recursive: true, force: true });
+  });
+  const workspaceResult = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: `ReplayFixture${Date.now().toString(36)}` }),
+  }).then((response) => response.json());
+  workspacePath = workspaceResult.workspace.path;
+  const created = await fetch(`${app.baseUrl}/api/session`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId: "long-replay-fixture", cwd: workspacePath }),
+  }).then((response) => response.json());
+  let live;
+  const deadline = Date.now() + 5000;
+  do {
+    live = await fetch(`${app.baseUrl}/api/live-sessions?clientId=long-replay-fixture`).then((response) => response.json());
+    if (live.sessions[0]?.latestEventId > 1180 && !live.sessions[0].busy) break;
+    await sleep(10);
+  } while (Date.now() < deadline);
+  assert.ok(live.sessions[0]?.latestEventId > 1180, app.output.join(""));
+  return { app, created };
+}
+
+test("full SSE replay and an old raw cursor restore long conversations without prefix loss", async (t) => {
+  const { app, created } = await startLongReplayFixture(t);
+  const base = `${app.baseUrl}/api/events?session=${created.sessionId}&clientId=long-replay-fixture`;
+  for (const suffix of ["", "&lastEventId=1"]) {
+    const events = [];
+    await waitForSseEvent(base + suffix, (event) => { events.push(event); return event.type === "stream_checkpoint"; });
+    assert.equal(events[0].type, "clear_transcript");
+    assert.equal(events.filter((event) => event.item?.role === "user").length, 91);
+    assert.equal(events.filter((event) => event.type === "assistant_complete").length, 91);
+    assert.equal(events.find((event) => event.item?.role === "user").item.text, "question 0");
+  }
+  await fetch(`${app.baseUrl}/api/message`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId: created.sessionId, clientId: "long-replay-fixture", line: "clear fixture" }),
+  });
+  await waitForSseEvent(base, (event) => event.type === "assistant_complete" && event.message === "new answer");
+  const reset = [];
+  await waitForSseEvent(base, (event) => { reset.push(event); return event.type === "stream_checkpoint"; });
+  assert.deepEqual(reset.filter((event) => event.item?.role === "user").map((event) => event.item.text), ["new conversation"]);
+});
+
+test("replay disk read errors close the stream while the web server stays available", async (t) => {
+  const { app, created } = await startLongReplayFixture(t, { readFailure: true });
+  await assert.rejects(waitForSseEvent(`${app.baseUrl}/api/events?session=${created.sessionId}&clientId=long-replay-fixture`, (event) => event.type === "stream_checkpoint"));
+  assert.equal((await fetch(`${app.baseUrl}/api/auth/status`)).status, 200, app.output.join(""));
+});
+
 async function waitForSseEvent(url, predicate, { timeoutMs = 5000 } = {}) {
   const controller = new AbortController();
   const response = await fetch(url, { signal: controller.signal });
@@ -2171,7 +2264,7 @@ test("persists history pins and likes while listing pinned chats first", async (
       session_id: "zeta",
       created_at: 200,
       summary: "zeta pinned session",
-      messages: [],
+      messages: [{ role: "user", content: [{ type: "text", text: "zeta pinned session" }] }],
       message_count: 1,
     }),
   );
@@ -2181,7 +2274,7 @@ test("persists history pins and likes while listing pinned chats first", async (
       session_id: "zeta",
       created_at: 200,
       summary: "zeta pinned session",
-      messages: [],
+      messages: [{ role: "user", content: [{ type: "text", text: "zeta pinned session" }] }],
       message_count: 1,
     }),
   );
@@ -2191,7 +2284,7 @@ test("persists history pins and likes while listing pinned chats first", async (
       session_id: "alpha",
       created_at: 100,
       summary: "alpha pinned session",
-      messages: [],
+      messages: [{ role: "user", content: [{ type: "text", text: "alpha pinned session" }] }],
       message_count: 1,
     }),
   );
@@ -2739,6 +2832,100 @@ test("keeps live sessions isolated for different clients on the same browser add
   });
 
   assert.equal(shutdownResponse.status, 403);
+});
+
+test("unclaimed runtime idle timers preserve connected, busy, and queued sessions", async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), "myharness-idle-lifecycle-"));
+  const backend = join(fixtureDir, "backend.mjs");
+  const preload = join(fixtureDir, "preload.mjs");
+  const idleMs = 400;
+  await writeFile(backend, `
+import readline from 'node:readline';
+const emit = (event) => console.log('OHJSON:' + JSON.stringify(event));
+emit({type:'ready',state:{model:'fixture'}});
+readline.createInterface({input:process.stdin}).on('line', (line) => {
+  const request = JSON.parse(line);
+  if(request.type === 'shutdown') process.exit(0);
+  if(request.type === 'submit_line') emit({type:'status',message:'fixture working'});
+  if(request.type === 'cancel_current') emit({type:'line_complete'});
+});
+`, "utf8");
+  await writeFile(preload, `
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+const spawn = childProcess.spawn;
+childProcess.spawn = function(file,args,options) {
+  if(args?.includes('--backend-only')) return spawn(process.execPath,[${JSON.stringify(backend)}],options);
+  return spawn(file,args,options);
+};
+syncBuiltinESMExports();
+`, "utf8");
+  const app = await startWebServer({
+    env: {
+      MYHARNESS_WORKSPACE_SCOPE: "ip", MYHARNESS_BACKEND_IDLE_CLIENT_CLOSE_MS: String(idleMs),
+      MYHARNESS_MAX_BUSY_SESSIONS_PER_CLIENT: "1", MYHARNESS_MAX_CPU_PERCENT: "100", MYHARNESS_MAX_MEMORY_PERCENT: "100",
+    },
+    nodeArgs: ["--import", pathToFileURL(preload).href],
+  });
+  t.after(async () => {
+    await app.stop();
+    await rmWithRetry(fixtureDir, { recursive: true, force: true });
+  });
+  const clientId = "idle-lifecycle";
+  const post = (path, body) => fetch(`${app.baseUrl}${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, ...body }),
+  });
+  const live = async () => (await fetch(`${app.baseUrl}/api/live-sessions?clientId=${clientId}`).then((response) => response.json())).sessions;
+  const create = async () => {
+    const response = await post("/api/session", {});
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const assertClosed = async (session) => {
+    await waitForSessionClosed(app.baseUrl, clientId, session.sessionId, 5000);
+    assert.equal((await live()).some((item) => item.sessionId === session.sessionId), false);
+  };
+
+  // A runtime whose delayed creation result was discarded never opens SSE.
+  const abandoned = await create();
+  assert.equal((await live()).some((item) => item.sessionId === abandoned.sessionId), true);
+  await assertClosed(abandoned);
+
+  const connected = await create();
+  const controller = new AbortController();
+  const stream = await fetch(`${app.baseUrl}/api/events?session=${connected.sessionId}&clientId=${clientId}`, { signal: controller.signal });
+  assert.equal(stream.status, 200);
+  await sleep(idleMs * 2);
+  assert.equal((await live()).some((item) => item.sessionId === connected.sessionId), true);
+  controller.abort();
+  await stream.body?.cancel().catch(() => {});
+  await assertClosed(connected);
+
+  const working = await create();
+  assert.equal((await post("/api/message", { sessionId: working.sessionId, line: "fixture work" })).status, 200);
+  const queued = await create();
+  assert.equal((await post("/api/message", { sessionId: queued.sessionId, line: "fixture queue" })).status, 202);
+  const cancelledQueue = await create();
+  assert.equal((await post("/api/message", { sessionId: cancelledQueue.sessionId, line: "fixture cancel queue" })).status, 202);
+  await sleep(idleMs * 2);
+  for (const session of [working, queued, cancelledQueue]) {
+    assert.equal((await live()).find((item) => item.sessionId === session.sessionId)?.busy, true);
+  }
+  assert.equal((await post("/api/cancel", { sessionId: cancelledQueue.sessionId })).status, 200);
+  await assertClosed(cancelledQueue);
+  assert.equal((await post("/api/cancel", { sessionId: working.sessionId })).status, 200);
+  const deadline = Date.now() + 5000;
+  let queuedResponses;
+  do {
+    queuedResponses = await fetch(`${app.baseUrl}/api/settings/concurrency?clientId=${clientId}`).then((response) => response.json()).then((data) => data.queuedResponses);
+    if (queuedResponses === 0) break;
+    await sleep(20);
+  } while (Date.now() < deadline);
+  assert.equal(queuedResponses, 0);
+  await sleep(idleMs * 2);
+  assert.equal((await live()).find((item) => item.sessionId === queued.sessionId)?.busy, true);
+  assert.equal((await post("/api/cancel", { sessionId: queued.sessionId })).status, 200);
+  await assertClosed(queued);
 });
 
 test("shuts down idle backend sessions after the event stream closes", async (t) => {

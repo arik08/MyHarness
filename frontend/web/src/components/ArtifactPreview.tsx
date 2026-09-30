@@ -7,23 +7,13 @@ import { artifactDisplayName, isSourceCodeArtifact, sourceLanguageForArtifact } 
 import { Icon } from "./ArtifactIcons";
 import { MarkdownMessage, renderMermaidSvg } from "./MarkdownMessage";
 import { PdfArtifactPreview } from "./PdfArtifactPreview";
+import { artifactFullscreenScrollMessage, fullscreenMessage } from "../hooks/useFullscreenShortcut";
 
-export const artifactFrameBackMessage = "myharness:artifact-panel-back";
-export const artifactHtmlEditMessage = "myharness:artifact-html-edit";
-export const artifactAiSelectionMessage = "myharness:artifact-ai-selection";
-export const artifactAiCommentsMessage = "myharness:artifact-ai-comments";
-export const artifactFrameScrollMessage = "myharness:artifact-frame-scroll";
-export const artifactFrameResizeMessage = "myharness:artifact-frame-resize";
-export const artifactHtmlEditModeMessage = "myharness:artifact-html-edit-mode";
-export const artifactCaptureRequestMessage = "myharness:artifact-capture-request";
-export const artifactCaptureSnapshotMessage = "myharness:artifact-capture-snapshot";
-
-export type ArtifactCaptureResult = {
-  requestId: string;
-  path: string;
-  blob?: Blob;
-  error?: string;
-};
+import { artifactFrameBackMessage, artifactHtmlEditMessage, artifactAiSelectionMessage,
+  artifactAiCommentsMessage, artifactFrameScrollMessage, artifactFrameResizeMessage,
+  artifactHtmlEditModeMessage, artifactCaptureRequestMessage, artifactCaptureSnapshotMessage,
+  type ArtifactCaptureResult } from "./artifactPreviewContract";
+export * from "./artifactPreviewContract";
 
 const htmlMermaidCodeSelector = "pre > code.language-mermaid, pre > code.lang-mermaid";
 const artifactCaptureDesktopWidths = [960, 1120, 1280, 1440, 1600, 1920];
@@ -622,13 +612,20 @@ function iframeSourceFootnotesBridge(content: string) {
   return `${assets}${content}`;
 }
 
-function iframeBackBridge(content: string) {
+function iframeBackBridge(content: string, artifactPath: string) {
   const bridge = `
 <script>
 (() => {
+  const artifactPath = ${JSON.stringify(artifactPath)};
+  let editing = false;
+  window.addEventListener("message", (event) => {
+    if (event.source !== parent || event.data?.type !== ${JSON.stringify(artifactHtmlEditModeMessage)} || event.data.path !== artifactPath) return;
+    editing = Boolean(event.data.edit || event.data.ai);
+  });
   window.addEventListener("contextmenu", (event) => {
+    if (editing) return;
     event.preventDefault();
-    parent.postMessage({ type: "myharness:toggle-fullscreen" }, "*");
+    parent.postMessage({ type: ${JSON.stringify(fullscreenMessage)}, path: artifactPath, scroll: { x: window.scrollX, y: window.scrollY } }, "*");
   }, true);
   let pending = false;
   const sendBack = (event) => {
@@ -979,6 +976,9 @@ function iframeScrollBridge(content: string, artifactPath: string, restoreScroll
   const artifactPath = ${JSON.stringify(artifactPath)};
   const restoreScroll = ${JSON.stringify(scroll)};
   let sendTimer = 0;
+  let fullscreenScroll = null;
+  let fullscreenRestoreFrame = 0;
+  let fullscreenRestoreTimer = 0;
 
   const readScroll = () => ({
     x: Math.max(0, Math.round(window.scrollX || document.documentElement?.scrollLeft || document.body?.scrollLeft || 0)),
@@ -994,6 +994,43 @@ function iframeScrollBridge(content: string, artifactPath: string, restoreScroll
     window.clearTimeout(sendTimer);
     sendTimer = window.setTimeout(sendScroll, 80);
   };
+
+  const cancelFullscreenRestore = () => {
+    window.cancelAnimationFrame(fullscreenRestoreFrame);
+    window.clearTimeout(fullscreenRestoreTimer);
+    fullscreenRestoreFrame = 0;
+    fullscreenRestoreTimer = 0;
+  };
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== parent || event.data?.type !== ${JSON.stringify(artifactFullscreenScrollMessage)} || event.data.path !== artifactPath) return;
+    if (event.data.action === "save") {
+      cancelFullscreenRestore();
+      const supplied = event.data.scroll;
+      fullscreenScroll = Number.isFinite(supplied?.x) && supplied.x >= 0 && Number.isFinite(supplied?.y) && supplied.y >= 0
+        ? { x: Math.round(supplied.x), y: Math.round(supplied.y) }
+        : readScroll();
+    } else if (event.data.action === "restore" && fullscreenScroll) {
+      cancelFullscreenRestore();
+      const position = fullscreenScroll;
+      fullscreenScroll = null;
+      const restorePosition = () => {
+        window.scrollTo(position.x, position.y);
+        scheduleScrollSend();
+      };
+      fullscreenRestoreFrame = requestAnimationFrame(() => {
+        fullscreenRestoreFrame = 0;
+        restorePosition();
+        fullscreenRestoreTimer = window.setTimeout(() => {
+          fullscreenRestoreTimer = 0;
+          restorePosition();
+        }, 40);
+      });
+    }
+  });
+  ["wheel", "pointerdown", "touchstart", "keydown"].forEach((type) => {
+    window.addEventListener(type, cancelFullscreenRestore, { passive: true, capture: true });
+  });
 
   const applyRestore = () => {
     if (restoreScroll.x <= 0 && restoreScroll.y <= 0) {
@@ -2230,11 +2267,6 @@ function iframeRelativeAssetUrls(content: string, assetBaseUrl: string) {
   );
 }
 
-export function isEditablePayload(artifact: ArtifactSummary, payload: ArtifactPayload) {
-  const kind = String(payload.kind || artifact.kind || "");
-  return kind === "html" || kind === "text" || kind === "markdown" || kind === "json";
-}
-
 function isMarkdownArtifact(artifact: ArtifactSummary, payload: ArtifactPayload) {
   const kind = String(payload.kind || artifact.kind || "").toLowerCase();
   const path = String(artifact.path || "").toLowerCase();
@@ -2454,7 +2486,9 @@ export function ArtifactPreview({
         className="artifact-text artifact-source-editor"
         value={sourceContent}
         aria-label={`${displayName} 원문`}
-        onChange={(event) => onDraftContentChange(event.currentTarget.value)}
+        readOnly
+        aria-readonly="true"
+        data-tooltip="읽기 전용 · 본문 편집은 HTML 파일에서 지원합니다."
       />
     );
   }
@@ -2485,7 +2519,7 @@ export function ArtifactPreview({
       const restoredScroll = htmlScrollPositionsRef.current.get(artifact.path);
       htmlEditFrameRef.current = {
         key: editFrameKey,
-        srcDoc: iframeCaptureBridge(iframeBackBridge(iframeResizeBridge(iframeScrollBridge(iframeMermaidZoomBridge(sourcedContent), artifact.path, restoredScroll), artifact.path)), artifact.path),
+        srcDoc: iframeCaptureBridge(iframeBackBridge(iframeResizeBridge(iframeScrollBridge(iframeMermaidZoomBridge(sourcedContent), artifact.path, restoredScroll), artifact.path), artifact.path), artifact.path),
       };
     }
     return (
@@ -2534,7 +2568,9 @@ export function ArtifactPreview({
       className="artifact-text artifact-source-editor"
       value={sourceContent}
       aria-label={`${displayName} 내용`}
-      onChange={(event) => onDraftContentChange(event.currentTarget.value)}
+      readOnly
+      aria-readonly="true"
+      data-tooltip="읽기 전용 · 본문 편집은 HTML 파일에서 지원합니다."
     />
   );
 }

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../state/app-state";
 import { isResponseVisiblyBusy } from "../state/selectors";
 import type { AppState, WorkflowEvent } from "../types/ui";
@@ -27,6 +27,38 @@ type TodoDockProps = {
 };
 
 const maxTodoActivityLines = 1;
+const todoActivityMinimumDisplayMs = 1000;
+
+function useTodoActivityLine(line: string, scope: string | null) {
+  const [visible, setVisible] = useState(() => ({ scope, line }));
+  const shownAt = useRef(0);
+
+  useLayoutEffect(() => { shownAt.current = Date.now(); }, [visible]);
+
+  useLayoutEffect(() => {
+    const now = Date.now();
+    if (scope !== visible.scope || !scope || !visible.line) {
+      if (scope !== visible.scope || line !== visible.line) {
+        setVisible({ scope, line });
+      }
+      return;
+    }
+    if (line === visible.line) return;
+
+    // New updates replace the pending text without extending the current text's dwell time.
+    const remaining = todoActivityMinimumDisplayMs - (now - shownAt.current);
+    if (remaining <= 0) {
+      setVisible({ scope, line });
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setVisible({ scope, line });
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [line, scope, visible]);
+
+  return scope === visible.scope ? visible.line : line;
+}
 
 const todoActivityGenericDetails = new Set([
   "준비됨",
@@ -221,6 +253,13 @@ export function TodoDock({ variant = "dock" }: TodoDockProps) {
   const activeTodoSessionId = state.activeHistoryId || state.sessionId || null;
   const items = useMemo(() => parseTodoMarkdown(state.todoMarkdown), [state.todoMarkdown]);
   const activityLines = useMemo(() => todoActivityLines(state, responseVisiblyBusy), [responseVisiblyBusy, state]);
+  const runningIndex = responseVisiblyBusy ? items.findIndex((item) => !item.done) : -1;
+  const activityVisible = variant === "dock" && !state.todoCollapsed && runningIndex >= 0
+    && (!state.todoSessionId || state.todoSessionId === activeTodoSessionId);
+  const activityScope = activityVisible
+    ? JSON.stringify([state.workspacePath, activeTodoSessionId, state.workflowStartedAtMs])
+    : null;
+  const activityLine = useTodoActivityLine(activityVisible ? activityLines[0] || "" : "", activityScope);
 
   if (state.todoSessionId && state.todoSessionId !== activeTodoSessionId) {
     return null;
@@ -231,7 +270,6 @@ export function TodoDock({ variant = "dock" }: TodoDockProps) {
   }
 
   const doneCount = items.filter((item) => item.done).length;
-  const runningIndex = responseVisiblyBusy ? items.findIndex((item) => !item.done) : -1;
   const listId = "todoChecklistItems";
   const toggleCollapsed = () => dispatch({ type: "toggle_todo_collapsed" });
 
@@ -303,13 +341,9 @@ export function TodoDock({ variant = "dock" }: TodoDockProps) {
               <span className="todo-spinner" aria-hidden="true" />
               <span className="todo-checkmark" aria-hidden="true" />
               <span className="todo-label">{item.done ? `(완료) ${item.label}` : item.label}</span>
-              {index === runningIndex && activityLines.length ? (
+              {index === runningIndex && activityLine ? (
                 <ul className="todo-activity-list" aria-label="현재 작업 진행">
-                  {activityLines.map((line) => (
-                    <li className="todo-activity-line" key={line}>
-                      {line}
-                    </li>
-                  ))}
+                  <li className="todo-activity-line">{activityLine}</li>
                 </ul>
               ) : null}
             </li>
