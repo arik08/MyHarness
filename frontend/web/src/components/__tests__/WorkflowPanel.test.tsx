@@ -9,7 +9,10 @@ import { AsideWorkflowTimeline, asideTimelineRows, workflowSafeText } from "../A
 const note = (id: string, detail: string): WorkflowEvent => ({ id, detail, toolName: "", title: "진행 메모", status: "done", role: "reasoning", noteSource: "progress" });
 const call = (id: string, toolName = "cmd", extra: Partial<WorkflowEvent> = {}): WorkflowEvent => ({ id, toolCallId: id, toolName, title: toolName, detail: "", status: "done", toolInput: { command: `echo ${id}` }, output: `output ${id}`, ...extra });
 function panel(events: WorkflowEvent[]) {
-  return <AppStateProvider><WorkflowPanel events={events} persistenceKey="test-turn" durationSeconds={83} /></AppStateProvider>;
+  // Detail tests explicitly open completed history; lifecycle defaults are tested separately.
+  const key = "myharness:aside::test-session:test-turn:all:complete";
+  if (sessionStorage.getItem(key) === null) sessionStorage.setItem(key, "1");
+  return <AppStateProvider initialState={{ ...initialAppState, sessionId: "test-session", workspacePath: "" }}><WorkflowPanel events={events} persistenceKey="test-turn" durationSeconds={83} /></AppStateProvider>;
 }
 function openActivity() {
   const toggle = document.querySelector<HTMLButtonElement>(".aside-activity > .aside-toggle")!;
@@ -20,6 +23,41 @@ beforeEach(() => sessionStorage.clear());
 afterEach(cleanup);
 
 describe("Aside work history", () => {
+  it("collapses completed work, permits reopening, and preserves that choice on updates", () => {
+    const events = [note("progress", "자료를 검산합니다.")];
+    const timeline = (busy: boolean) => <AsideWorkflowTimeline events={events} scope="completion" duration={5} busy={busy} />;
+    const view = render(timeline(true));
+    const toggle = () => screen.getByRole("button", { name: "작업 과정 펼침/접기" });
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(toggle());
+    fireEvent.click(toggle()); // Even an explicitly opened running panel closes on completion.
+    view.rerender(timeline(false));
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("자료를 검산합니다.")).toBeNull();
+    fireEvent.click(toggle());
+    view.rerender(timeline(false));
+    expect(screen.getByText("자료를 검산합니다.")).toBeTruthy();
+    view.unmount();
+    render(timeline(false));
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("starts restored completed work collapsed", () => {
+    render(<AsideWorkflowTimeline events={[{ ...note("past", "이전 과정"), restored: true }]} scope="restored-default" duration={5} busy={false} />);
+    expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("이전 과정")).toBeNull();
+  });
+  it("hides provider summaries throughout streaming and completion", () => {
+    const summary = { ...note("stream", "**누락값 확인**"), noteSource: "provider-summary" as const };
+    const view = render(<AsideWorkflowTimeline events={[summary]} scope="stream" duration={5} busy />);
+    expect(screen.queryByText("누락값 확인")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("답변 준비 중");
+    view.rerender(<AsideWorkflowTimeline events={[{ ...summary, detail: "합계를 검산합니다." }]} scope="stream" duration={6} busy />);
+    expect(screen.queryByText("합계를 검산합니다.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "추론 요약" })).toBeNull();
+    view.rerender(<AsideWorkflowTimeline events={[summary]} scope="stream" duration={6} busy={false} />);
+    expect(view.container.textContent).toBe("");
+  });
   it.each(["mcp__future__lookup", "read_file"])("keeps response activity visible after %s finishes", (toolName) => {
     const events = [call("one", toolName), call("two", toolName)];
     const timeline = (busy: boolean) => <AsideWorkflowTimeline events={events} scope="response-test" duration={56} busy={busy} />;
@@ -118,7 +156,7 @@ describe("Aside work history", () => {
     expect(screen.queryByRole("article")).toBeNull();
   });
 
-  it("shows one waiting indicator then replaces it with real progress and hides empty completion", () => {
+  it("shows waiting and real progress but hides completed work with no details", () => {
     const lifecycle: WorkflowEvent = { id: "start", toolName: "", title: "request", detail: "internal", status: "running", role: "planning" };
     const timeline = (events: WorkflowEvent[], busy = true) => <AsideWorkflowTimeline events={events} scope="waiting-test" duration={11} busy={busy} />;
     const view = render(timeline([]));
@@ -166,7 +204,7 @@ describe("Aside work history", () => {
     expect(screen.getByText(prose)).toBeTruthy();
   });
 
-  it("omits empty progress and heading-only summaries without an empty disclosure", () => {
+  it("omits empty progress and provider summaries", () => {
     const view = render(panel([note("empty", "  "), { ...note("heading", "**Thinking**"), noteSource: "provider-summary" }]));
     expect(view.container.textContent).toBe("");
   });
@@ -215,11 +253,10 @@ describe("Aside work history", () => {
     expect(screen.getByText("completed")).toBeTruthy();
   });
 
-  it("renders provider summaries separately and preserves their full original text", () => {
+  it("hides provider summaries while preserving public progress", () => {
     render(panel([note("n", "한국어 진행 설명입니다."), { ...note("r", "Checking sources.\nComparing evidence."), noteSource: "provider-summary" }]));
     expect(screen.queryByText(/Checking sources/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "추론 요약" }));
-    expect(screen.getByText("Checking sources. Comparing evidence.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "추론 요약" })).toBeNull();
     expect(screen.getByText("한국어 진행 설명입니다.")).toBeTruthy();
   });
 
@@ -283,6 +320,8 @@ describe("Aside work history", () => {
     expect(state.workflowEvents.filter((event) => event.toolName === "write_file").map((event) => event.output)).toEqual(["first", "second"]);
     expect(state.workflowEvents.find((event) => event.toolCallId === "a")?.executionMetadata?.returncode).toBe(0);
     render(<AppStateProvider initialState={state}><WorkflowPanel persistenceKey="restore" /></AppStateProvider>);
+    expect(screen.queryByText("병렬로 확인합니다.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
     expect(screen.getByText("병렬로 확인합니다.")).toBeTruthy();
   });
 
@@ -300,20 +339,19 @@ describe("Aside work history", () => {
     expect(calls.find((event) => event.toolCallId === "b")?.status).toBe("running");
   });
 
-  it("hides heading-only summaries and shows the complete detailed body on restore", () => {
-    const first = "여러 출처의 발표 시점과 근거를 비교했습니다. 서로 다른 조건의 수치를 구분했습니다.";
-    const last = "확인되지 않은 내용은 별도로 표시합니다. 최종 비교에는 확인된 자료를 사용합니다.";
-    render(panel([
-      { ...note("short", "**Planning segmented web fetching for full texts**"), noteSource: "provider-summary", restored: true },
-      { ...note("long", `## 자료 검토\n\n${first}\n\n**검토 결과**\n\n${last}`), noteSource: "provider-summary", restored: true },
-    ]));
-    expect(screen.getAllByRole("button", { name: "추론 요약" })).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "추론 요약" }));
-    expect(screen.getByText(first)).toBeTruthy();
-    expect(screen.getByText(last)).toBeTruthy();
-    expect(screen.queryByText("자료 검토")).toBeNull();
-    expect(screen.queryByText("검토 결과")).toBeNull();
-    expect(document.querySelectorAll(".aside-note-detail p")).toHaveLength(2);
+  it.each([false, true])("hides short and detailed summaries in restored history, expanded=%s", (expanded) => {
+    const events: WorkflowEvent[] = [
+      { ...note("short", "**Planning research**"), noteSource: "provider-summary", restored: true },
+      { ...note("long", "자료의 발표 시점을 확인했습니다. 서로 다른 조건의 수치를 구분했습니다."), noteSource: "provider-summary", restored: true },
+      note("progress", "결과를 정리합니다."),
+      call("lookup", "mcp__future__lookup"),
+    ];
+    render(<AsideWorkflowTimeline events={events} scope="restored" duration={5} busy={false} expanded={expanded} />);
+    if (!expanded) fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
+    expect(screen.queryByRole("button", { name: "추론 요약" })).toBeNull();
+    expect(screen.queryByText(/Planning research|자료의 발표 시점/)).toBeNull();
+    expect(screen.getByText("결과를 정리합니다.")).toBeTruthy();
+    expect(document.querySelector(".aside-activity")).toBeTruthy();
   });
 
   it("restores partial command output while the recorded call is still running", () => {

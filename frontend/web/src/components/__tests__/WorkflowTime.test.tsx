@@ -12,6 +12,11 @@ const wait = (start: number, end?: number, id = "question"): WorkflowEvent => ({
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); sessionStorage.clear(); });
 
+it.each([0, 2, 83, null, NaN, Infinity, -1])("hides completed workflows with no visible records regardless of duration: %s", (duration) => {
+  const view = render(<AppStateProvider initialState={initialAppState}><WorkflowPanel events={[]} durationSeconds={duration} /></AppStateProvider>);
+  expect(view.container.textContent).toBe("");
+});
+
 it("freezes while waiting, then resumes without adding the wait", () => {
   expect(workflowElapsedSeconds(1000, [wait(6000)], 11000)).toBe(5);
   expect(workflowElapsedSeconds(1000, [wait(6000)], 311000)).toBe(5);

@@ -7,6 +7,46 @@ import { createWorkflowEventCoalescer } from "../../hooks/workflowEventCoalescer
 vi.stubGlobal("crypto", { randomUUID: () => "message-1" });
 
 describe("appReducer", () => {
+  it("falls back to Light for a saved removed Claude theme", async () => {
+    const previous = localStorage.getItem("myharness:theme");
+    localStorage.setItem("myharness:theme", "claude");
+    vi.resetModules();
+    try {
+      expect((await import("../reducer")).initialAppState.themeId).toBe("light");
+    } finally {
+      if (previous === null) localStorage.removeItem("myharness:theme");
+      else localStorage.setItem("myharness:theme", previous);
+      vi.resetModules();
+    }
+  });
+  it.each(["line_complete", "error"] as const)("keeps a new response active after a delayed runtime %s", (type) => {
+    let state = appReducer(initialAppState, { type: "append_message", message: { role: "user", text: "비교 분석해줘" } });
+    state = appReducer(state, { type: "set_busy", value: true });
+    const next = appReducer(state, { type: "backend_event", event: { type, request_scope: "runtime", message: "설정 변경 실패" } });
+    expect(next.busy).toBe(true);
+    expect(next.workflowEvents).toEqual(state.workflowEvents);
+    expect(next.messages).toEqual(state.messages);
+    if (type === "error") expect(next.modal).toEqual({ kind: "error", message: "설정 변경 실패" });
+    const done = appReducer(next, { type: "backend_event", event: { type: "line_complete" } });
+    expect(done.busy).toBe(false);
+  });
+  it("updates a streamed summary in place and restores one complete note", () => {
+    const updates = ["**누락값", "**누락값 확인**", "**누락값 확인**\n\n합계를 검산합니다."];
+    let state = appReducer(initialAppState, { type: "append_message", message: { role: "user", text: "분석해줘" } });
+    for (const message of updates) {
+      state = appReducer(state, { type: "backend_event", event: { type: "reasoning_summary", summary_id: "response:rs_1", message } });
+      const notes = state.workflowEvents.filter((item) => item.noteSource === "provider-summary");
+      expect(notes).toHaveLength(1);
+      expect(notes[0].detail).toBe(message);
+    }
+    const restored = appReducer(initialAppState, { type: "backend_event", event: { type: "history_snapshot", value: "summary-history", history_events: [
+      { type: "user", text: "분석해줘" },
+      ...updates.map((message) => ({ type: "reasoning_summary", summary_id: "response:rs_1", message })),
+    ] } });
+    const notes = restored.workflowEvents.filter((item) => item.noteSource === "provider-summary");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].detail).toBe(updates.at(-1));
+  });
   it.each([[0, 0], ["0", 0], ["250", 250], [-10, 0], [6000, 5000], [Infinity, 2000], [NaN, 2000]])("normalizes numeric setting %s to %s", (value, expected) => {
     const next = appReducer(initialAppState, { type: "set_app_settings", value: { streamScrollDurationMs: value } as never });
     expect(next.appSettings.streamScrollDurationMs).toBe(expected);
@@ -1475,6 +1515,25 @@ describe("appReducer", () => {
     expect(cancelled.messages.map((message) => message.id)).toEqual(["request-1"]);
   });
 
+  it("keeps repeated text distinct by request and promotes only delivered entries at the current position", () => {
+    let state = initialAppState;
+    for (const id of ["first", "second"]) {
+      state = appReducer(state, { type: "backend_event", event: { type: "transcript_item",
+        item: { role: "user", text: "same instruction", kind: "steering", request_id: id } } });
+    }
+    expect(state.messages).toHaveLength(2);
+    state = appReducer(state, { type: "append_message", message: { id: "progress", role: "assistant", text: "Working", responsePhase: "commentary" } });
+    const unchanged = appReducer(state, { type: "backend_event", event: { type: "queued_message_status", request_id: "first", status: "not_found" } });
+    expect(unchanged).toBe(state);
+    state = appReducer(state, { type: "backend_event", event: { type: "queued_message_status", request_id: "first", status: "delivered" } });
+    expect(state.messages.map((message) => message.id)).toEqual(["second", "progress", "first"]);
+    expect(state.messages.at(-1)?.pendingRequestId).toBeUndefined();
+    state = appReducer(state, { type: "backend_event", event: { type: "transcript_item", item: { role: "user", text: "same instruction", kind: "steering", request_id: "first" } } });
+    expect(state.messages).toHaveLength(3);
+    state = appReducer(state, { type: "backend_event", event: { type: "queued_message_status", request_id: "second", status: "cancelled" } });
+    expect(state.messages.map((message) => message.id)).toEqual(["progress", "first"]);
+  });
+
   it("shows capacity queue position and keeps the response busy until it starts", () => {
     const waiting = appReducer({ ...initialAppState, busy: true }, {
       type: "backend_event",
@@ -2324,6 +2383,42 @@ describe("appReducer", () => {
     expect(next.chatTitle).toBe("React 제목 생성 수정");
     expect(next.history[0].description).toBe("React 제목 생성 수정");
     expect(next.history[1].description).toBe("다른 제목");
+  });
+
+  it.each(["새 대화", "MyHarness", ""])("preserves a known title before transcript replay for placeholder %s", (message) => {
+    const next = appReducer({ ...initialAppState, sessionId: "runtime", activeHistoryId: "saved",
+      history: [{ value: "saved", label: "saved", description: "첫 인사" }],
+    }, { type: "backend_event", event: { type: "session_title", message } });
+    expect(next.chatTitle).toBe("첫 인사");
+    expect(next.history[0].description).toBe("첫 인사");
+  });
+
+  it("keeps the prompt title when a stale saved row replaces its runtime alias", () => {
+    const next = appReducer({ ...initialAppState, sessionId: "runtime", history: [
+      { value: "runtime", label: "live", description: "월간 매출 분석", messageCount: 1 },
+      { value: "saved", label: "saved", description: "새 대화", messageCount: 0 },
+    ] }, { type: "backend_event", event: { type: "active_session", value: "saved" } });
+    expect(next.history).toHaveLength(1);
+    expect(next.history[0]).toMatchObject({ value: "saved", description: "월간 매출 분석", messageCount: 1 });
+  });
+
+  it("retains a runtime title when HTTP history first supplies its saved identity", () => {
+    const next = appReducer({ ...initialAppState, history: [
+      { value: "runtime", label: "live", description: "월간 매출 분석", messageCount: 1 },
+    ] }, { type: "set_history", history: [
+      { value: "saved", liveSessionId: "runtime", label: "saved", description: "새 대화", messageCount: 0 },
+    ] });
+    expect(next.history[0]).toMatchObject({ value: "saved", description: "월간 매출 분석", messageCount: 1 });
+  });
+
+  it("retains a first transcript title after clearing and switching away without a title event", () => {
+    let state = appReducer({ ...initialAppState, sessionId: "runtime", activeHistoryId: "saved", chatTitle: "새 대화",
+      history: [{ value: "saved", label: "saved", description: "새 대화", messageCount: 0 }],
+    }, { type: "backend_event", event: { type: "transcript_item", item: { role: "user", text: "신규 프로젝트 일정" } } });
+    state = appReducer(state, { type: "backend_event", event: { type: "clear_transcript", live_replay: true } });
+    state = appReducer(state, { type: "backend_event", event: { type: "session_title", message: "새 대화" } });
+    state = appReducer(state, { type: "begin_history_restore", sessionId: "other" });
+    expect(state.history[0].description).toBe("신규 프로젝트 일정");
   });
 
   it("tracks the backend saved session id as the active history item", () => {

@@ -92,6 +92,7 @@ class ApiReasoningSummaryEvent:
     """A provider's public reasoning summary, separate from answer text."""
 
     text: str
+    summary_id: str | None = None
 
 
 @dataclass(frozen=True)

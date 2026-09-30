@@ -44,9 +44,9 @@
 @media (prefers-reduced-motion: reduce) { .aside-workflow .aside-chevron { transition: none; } }
 
 .messages:has(.aside-workflow) { row-gap: 16px; }
-.messages > .aside-workflow + .message.assistant { border-top: 1px solid var(--line); padding-top: 18px; }
-.messages > .aside-workflow:has(.aside-work > .aside-toggle[aria-expanded="false"]) + .message.assistant { border-top: 0; padding-top: 0; margin-top: -8px; }
-.aside-workflow .aside-work > .aside-toggle[aria-expanded="false"] { margin-bottom: 0; }
+.messages > .aside-workflow + .message.assistant { border-top: 1px solid var(--line); margin-top: -8px; padding-top: 8px; }
+.messages > .aside-workflow:has(.aside-work > .aside-toggle[aria-expanded="false"]) + .message.assistant { margin-top: -14px; }
+.aside-workflow .aside-work > .aside-toggle[aria-expanded="false"] { margin-bottom: 0; padding-bottom: 1px; line-height: 1.5; }
 .aside-timeline > :last-child { margin-bottom: 0; }
 
 .aside-spinner-slot { width: 19px; height: 19px; flex: 0 0 19px; display: inline-flex; align-items: center; justify-content: center; }

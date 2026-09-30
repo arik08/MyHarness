@@ -166,6 +166,8 @@ class BackendEvent(BaseModel):
 
     timestamp_ms: int | None = None
     progress_source: str | None = None
+    summary_id: str | None = None
+    request_scope: Literal["runtime"] | None = None
 
     type: Literal[
         "ready",

@@ -2494,7 +2494,7 @@ class ReactBackendHost:
                 return
             if isinstance(event, ReasoningSummaryEvent):
                 await _flush_buffered_assistant_delta()
-                await self._emit(BackendEvent(type="reasoning_summary", message=event.text))
+                await self._emit(BackendEvent(type="reasoning_summary", message=event.text, summary_id=event.summary_id))
                 return
 
         async def _clear_output() -> None:
@@ -3283,9 +3283,12 @@ class ReactBackendHost:
         command = (request.command or "").strip().lstrip("/").lower()
         try:
             if self._busy:
-                await self._emit(BackendEvent(type="error", message="Session is busy"))
+                await self._emit(BackendEvent(type="error", request_scope="runtime", message="응답 생성 중에는 모델 설정을 변경할 수 없습니다."))
             else:
                 await self._apply_select_command(command, request.value or "")
+        except Exception:
+            log.exception("runtime selection failed: %s", command)
+            await self._emit(BackendEvent(type="error", request_scope="runtime", message="모델 설정을 변경하지 못했습니다. 현재 설정을 확인해 주세요."))
         finally:
             # HTTP only acknowledges delivery. Confirm the resulting runtime
             # after processing, including rejected choices, for optimistic UI.
@@ -3308,13 +3311,13 @@ class ReactBackendHost:
                 auto_compact_threshold_tokens=settings.auto_compact_threshold_tokens or settings.memory.auto_compact_threshold_tokens,
             )
             if self._busy or selected not in {"cost-saver", "full-context"} or threshold is None:
-                await self._emit(BackendEvent(type="error", message="현재 컨텍스트 모드를 변경할 수 없습니다."))
+                await self._emit(BackendEvent(type="error", request_scope="runtime", message="현재 컨텍스트 모드를 변경할 수 없습니다."))
                 return True
             self._bundle.engine.set_auto_compact_threshold(threshold)
             self._bundle.gpt56_context_mode = selected
             self._config = replace(self._config, gpt56_context_mode=selected)
             await self._emit(self._status_snapshot())
-            await self._emit(BackendEvent(type="line_complete", quiet=True))
+            await self._emit(BackendEvent(type="line_complete", request_scope="runtime", quiet=True))
             return True
         if command == "resume":
             await self._restore_history_snapshot(selected)
@@ -3359,13 +3362,13 @@ class ReactBackendHost:
 
     async def _apply_runtime_choice(self, command: str, selected: str) -> None:
         if command in {"subagent_model", "subagent_effort"}:
-            await self._emit(BackendEvent(type="error", message="Sub LLM 모델 선택 기능은 제거되었습니다."))
-            await self._emit(BackendEvent(type="line_complete"))
+            await self._emit(BackendEvent(type="error", request_scope="runtime", message="Sub LLM 모델 선택 기능은 제거되었습니다."))
+            await self._emit(BackendEvent(type="line_complete", request_scope="runtime"))
             return
         assert self._bundle is not None
         if not selected:
-            await self._emit(BackendEvent(type="error", message=f"Missing {command} value"))
-            await self._emit(BackendEvent(type="line_complete"))
+            await self._emit(BackendEvent(type="error", request_scope="runtime", message=f"Missing {command} value"))
+            await self._emit(BackendEvent(type="line_complete", request_scope="runtime"))
             return
 
         settings = self._bundle.current_settings()
@@ -3380,16 +3383,16 @@ class ReactBackendHost:
                 profile_name, profile = settings.resolve_profile(choice["profile"])
                 profile.require_model(choice["model"], profile_name=profile_name)
             except (ValueError, TypeError) as exc:
-                await self._emit(BackendEvent(type="error", message=str(exc)))
-                await self._emit(BackendEvent(type="line_complete"))
+                await self._emit(BackendEvent(type="error", request_scope="runtime", message=str(exc)))
+                await self._emit(BackendEvent(type="line_complete", request_scope="runtime"))
                 return
             self._bundle.settings_overrides.update(active_profile=profile_name, model=choice["model"])
             refresh_client = True
         elif command == "provider":
             profiles = AuthManager(settings).list_profiles()
             if selected not in profiles:
-                await self._emit(BackendEvent(type="error", message=f"알 수 없는 제공자 프로필입니다: {selected}"))
-                await self._emit(BackendEvent(type="line_complete"))
+                await self._emit(BackendEvent(type="error", request_scope="runtime", message=f"알 수 없는 제공자 프로필입니다: {selected}"))
+                await self._emit(BackendEvent(type="line_complete", request_scope="runtime"))
                 return
             self._bundle.settings_overrides["active_profile"] = selected
             self._bundle.settings_overrides.pop("model", None)
@@ -3400,11 +3403,11 @@ class ReactBackendHost:
             except ValueError as exc:
                 await self._emit(
                     BackendEvent(
-                        type="error",
+                        type="error", request_scope="runtime",
                         message=str(exc),
                     )
                 )
-                await self._emit(BackendEvent(type="line_complete"))
+                await self._emit(BackendEvent(type="line_complete", request_scope="runtime"))
                 return
             target_key = "model" if command == "model" else "subagent_model"
             if selected.lower() == "default":
@@ -3414,8 +3417,8 @@ class ReactBackendHost:
             refresh_client = command == "model"
         else:
             if selected not in {"auto", "none", "low", "medium", "high", "xhigh", "max"}:
-                await self._emit(BackendEvent(type="error", message="사용법: /effort [show|auto|low|medium|high|xhigh|max]"))
-                await self._emit(BackendEvent(type="line_complete"))
+                await self._emit(BackendEvent(type="error", request_scope="runtime", message="사용법: /effort [show|auto|low|medium|high|xhigh|max]"))
+                await self._emit(BackendEvent(type="line_complete", request_scope="runtime"))
                 return
             stored_value = "none" if selected == "auto" else selected
             target_key = "effort" if command == "effort" else "subagent_effort"
@@ -3447,7 +3450,7 @@ class ReactBackendHost:
                 subagent_effort=updated.subagent_effort,
             )
         await self._emit(self._status_snapshot())
-        await self._emit(BackendEvent(type="line_complete", quiet=True))
+        await self._emit(BackendEvent(type="line_complete", request_scope="runtime", quiet=True))
 
     async def _process_submit_request(self, request: FrontendRequest) -> bool:
         if request.resume_session_id:
@@ -4209,6 +4212,8 @@ class ReactBackendHost:
         ]
 
     def _record_history_event(self, event: BackendEvent) -> None:
+        if event.request_scope == "runtime":
+            return
         if event.type == "compact_progress":
             self._append_history_event({
                 "type": event.type,
@@ -4227,7 +4232,12 @@ class ReactBackendHost:
         if event.type == "reasoning_summary":
             text = (event.message or "").strip()
             if text:
-                self._append_history_event({"type": "reasoning_summary", "message": text})
+                if event.summary_id:
+                    for record in reversed(self._history_events):
+                        if record.get("type") == "reasoning_summary" and record.get("summary_id") == event.summary_id:
+                            record["message"] = text
+                            return
+                self._append_history_event({"type": "reasoning_summary", "message": text, "summary_id": event.summary_id})
             return
 
         if event.type == "transcript_item" and event.item is not None:

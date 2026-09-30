@@ -102,6 +102,38 @@ async def test_provider_summary_reaches_workflow_without_entering_answer(tmp_pat
     assert next(event.message for event in events if event.type == "assistant_complete") == "검토 완료했습니다."
 
 
+@pytest.mark.asyncio
+async def test_streamed_provider_summary_keeps_identity_and_one_saved_note(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    class SummaryClient(StaticApiClient):
+        async def stream_message(self, request):
+            yield ApiReasoningSummaryEvent(text="**자료", summary_id="response:rs1")
+            yield ApiReasoningSummaryEvent(text="**자료 확인**", summary_id="response:rs1")
+            async for event in super().stream_message(request):
+                yield event
+
+    client = SummaryClient("검토 완료했습니다.")
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+    async def capture(event):
+        host._record_history_event(event)
+        events.append(event)
+    host._emit = capture
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line("자료를 검토해주세요")
+    finally:
+        await close_runtime(host._bundle)
+    assert [e.summary_id for e in events if e.type == "reasoning_summary"] == ["response:rs1", "response:rs1"]
+    notes = [e for e in host._history_events if e.get("type") == "reasoning_summary"]
+    assert notes == [{"type": "reasoning_summary", "message": "**자료 확인**", "summary_id": "response:rs1"}]
+    assert [e.message for e in events if e.type == "assistant_complete"] == ["검토 완료했습니다."]
+
+
 class SequencedApiClient:
     """Fake streaming client that returns one complete message per call."""
 
@@ -4009,7 +4041,9 @@ async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
     event = next(item for item in events if item.type == "select_request")
     assert event.modal["command"] == "model"
     assert any(option["value"] == "gpt-5.6-terra" and option.get("active") for option in event.select_options)
-    assert {option["value"] for option in event.select_options} == {"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"}
+    assert {option["value"] for option in event.select_options} == {
+        "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna",
+    }
 
 
 @pytest.mark.asyncio
@@ -4116,6 +4150,8 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
         "gpt-5.6-luna",
         "gpt-5.6-terra",
         "gpt-5.6-sol",
+        "gpt-6-sol",
+        "gpt-6-luna",
     ]
     assert runtime_options["models_by_provider"]["p-gpt"][0]["description"] == "Fast and affordable GPT-5.6"
     assert [option["value"] for option in runtime_options["models_by_provider"]["codex"]][:3] == [
@@ -4127,6 +4163,9 @@ async def test_backend_host_emits_runtime_picker_bundle(tmp_path, monkeypatch):
         "gpt-5.6-luna",
         "gpt-5.6-terra",
         "gpt-5.6-sol",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-6.1-sol",
     ]
     assert {option["value"] for option in runtime_options["providers"]} == {"p-gpt", "codex"}
     assert runtime_options["subagent_model"] == "gpt-5.6-luna"
@@ -4665,10 +4704,15 @@ async def test_runtime_model_select_is_atomic_and_rejects_disabled_models(tmp_pa
         before = dict(host._bundle.settings_overrides)
         await host._apply_select_command("runtime_model", json.dumps({"profile": "codex", "model": "gpt-5.6-sol"}))
         assert any(event.type == "error" for event in events)
+        assert all(event.request_scope == "runtime" for event in events if event.type in {"error", "line_complete"})
         assert host._bundle.settings_overrides == before
         events.clear()
         await host._apply_select_command("runtime_model", json.dumps({"profile": "codex", "model": "gpt-5.6-terra"}))
         assert not any(event.type == "error" for event in events)
+        assert all(event.request_scope == "runtime" for event in events if event.type == "line_complete")
+        for event in events:
+            host._record_history_event(event)
+        assert not any(event.get("type") == "line_complete" for event in host._history_events)
         assert host._bundle.engine.model == "gpt-5.6-terra"
         assert host._bundle.current_settings().active_profile == "codex"
         # A policy edit during an existing session applies at the next prompt boundary.
@@ -4707,11 +4751,10 @@ async def test_runtime_selection_confirms_actual_state_with_request_id(outcome):
     host._status_snapshot = lambda: BackendEvent(type="state_snapshot", state=dict(state))
     host._busy = outcome == "busy"
     request = FrontendRequest(type="apply_select_command", command="model", value="future", request_id="choice-123")
-    if outcome == "exception":
-        with pytest.raises(RuntimeError, match="refresh failed"):
-            await host._apply_runtime_selection_request(request)
-    else:
-        await host._apply_runtime_selection_request(request)
+    await host._apply_runtime_selection_request(request)
+    if outcome in {"exception", "busy"}:
+        assert events[0].type == "error"
+        assert events[0].request_scope == "runtime"
     assert events[-1].type == "state_snapshot"
     assert events[-1].request_id == "choice-123"
     assert events[-1].state["model"] == ("future" if outcome == "success" else "old")

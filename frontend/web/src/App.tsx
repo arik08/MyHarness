@@ -4,6 +4,7 @@ import { sendBackendRequest } from "./api/messages";
 import { listLiveSessions, restartSession, startSession } from "./api/session";
 import { AppShell } from "./components/AppShell";
 import { useBackendSession } from "./hooks/useBackendSession";
+import { useFullscreenShortcut } from "./hooks/useFullscreenShortcut";
 import { useWorkspaceData } from "./hooks/useWorkspaceData";
 import { AppStateProvider } from "./state/app-state";
 import { useAppState } from "./state/app-state";
@@ -263,6 +264,7 @@ function AppContent() {
 }
 
 export default function App() {
+  useFullscreenShortcut();
   return (
     <AppStateProvider>
       <EntryGate>

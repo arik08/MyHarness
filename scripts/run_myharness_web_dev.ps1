@@ -299,7 +299,44 @@ function Start-BackendLauncher {
     }
 }
 
+function Wait-BackendReady {
+    param([int]$TimeoutSeconds = 60)
+
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        if ($script:BackendProcess.HasExited) {
+            throw "Backend launcher exited before it was ready (code $($script:BackendProcess.ExitCode))."
+        }
+        $response = $null
+        try {
+            # Probe an unauthenticated endpoint without following the dev UI redirect.
+            $request = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$backendPort/api/auth/status")
+            $request.Proxy = $null
+            $request.AllowAutoRedirect = $false
+            $request.Timeout = 1000
+            $response = $request.GetResponse()
+            if ([int]$response.StatusCode -eq 200) {
+                return
+            }
+        }
+        catch [System.Net.WebException] {
+            if ($_.Exception.Response) {
+                $_.Exception.Response.Close()
+            }
+            # Connection refusal while the backend starts is expected.
+        }
+        finally {
+            if ($response) {
+                $response.Close()
+            }
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    throw "Backend did not become ready on port $backendPort within $TimeoutSeconds seconds."
+}
+
 function Start-ViteServer {
+    Wait-BackendReady
     Stop-ListeningPort -Port $script:VitePort -Label "Vite dev"
     $previousCi = $env:CI
     try {
@@ -344,19 +381,17 @@ $env:MYHARNESS_DEV_PORT = [string]$script:VitePort
 $env:MYHARNESS_WEB_PORT = [string]$script:VitePort
 $env:VITE_PORT = [string]$script:VitePort
 
-$script:BackendProcess = Start-BackendLauncher
-
-Start-Sleep -Seconds 2
-
-$script:ViteProcess = Start-ViteServer
-
-Write-Host ""
-Write-Host "[접속] 개발 화면: " -NoNewline
-Write-Host "http://127.0.0.1:$script:VitePort" -ForegroundColor Cyan
-Write-Host "  R: 전체 재시작 | Q / Ctrl+C: 종료"
-Write-Host ""
-
 try {
+    $script:BackendProcess = Start-BackendLauncher
+
+    $script:ViteProcess = Start-ViteServer
+
+    Write-Host ""
+    Write-Host "[접속] 개발 화면: " -NoNewline
+    Write-Host "http://127.0.0.1:$script:VitePort" -ForegroundColor Cyan
+    Write-Host "  R: 전체 재시작 | Q / Ctrl+C: 종료"
+    Write-Host ""
+
     while (-not $script:StopRequested) {
         Start-Sleep -Milliseconds 200
 

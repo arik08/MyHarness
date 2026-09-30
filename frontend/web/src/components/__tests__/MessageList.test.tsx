@@ -1,3 +1,4 @@
+import { PendingMessages } from "../PendingMessages";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -218,6 +219,41 @@ function openExecutionDetails() {
 }
 
 describe("MessageList", () => {
+  it("shows only the answer when a simple live response completes without tools", () => {
+    let state = appReducer(initialAppState, { type: "append_message", message: { role: "user", text: "안녕" } });
+    state = { ...state, workflowStartedAtMs: 1000 };
+    state = appReducer(state, { type: "backend_event", event: { type: "assistant_complete", message: "안녕하세요!", has_tool_uses: false } });
+    state = appReducer(state, { type: "backend_event", event: { type: "line_complete", timestamp_ms: 3000 } });
+    render(<AppStateProvider initialState={state}><MessageList /></AppStateProvider>);
+    expect(document.querySelector(".aside-workflow")).toBeNull();
+    expect(screen.getByText("안녕하세요!")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "작업 과정 펼침/접기" })).toBeNull();
+  });
+
+  it("shows only the answer after restoring a simple response without exposing reasoning", () => {
+    const state = appReducer(initialAppState, { type: "backend_event", event: {
+      type: "history_snapshot", value: "simple-answer", history_events: [
+        { type: "user", text: "안녕" },
+        { type: "reasoning_summary", message: "**Planning greeting**" },
+        { type: "assistant", text: "안녕하세요! 무엇을 도와드릴까요?", has_tool_uses: false },
+        { type: "line_complete", workflow_duration_seconds: 2 },
+      ],
+    } });
+    render(<AppStateProvider initialState={state}><MessageList /></AppStateProvider>);
+    expect(document.querySelector(".aside-workflow")).toBeNull();
+    expect(screen.getByText("안녕하세요! 무엇을 도와드릴까요?")).toBeTruthy();
+    expect(screen.queryByText(/Planning greeting|추론 요약/)).toBeNull();
+  });
+
+  it("hides duration-only workflow areas while preserving the answer", () => {
+    render(<AppStateProvider initialState={{ ...initialAppState,
+      messages: [{ id: "question", role: "user", text: "안녕" }, { id: "answer", role: "assistant", text: "안녕하세요!", isComplete: true }],
+      workflowDurationSecondsByMessageId: { question: 3 },
+    }}><MessageList /></AppStateProvider>);
+    expect(document.querySelector(".aside-workflow")).toBeNull();
+    expect(screen.getByText("안녕하세요!")).toBeTruthy();
+  });
+
   beforeEach(() => {
     vi.useRealTimers();
     localStorage.clear();
@@ -983,7 +1019,7 @@ describe("MessageList", () => {
           ],
         }}
       >
-        <MessageList />
+        <MessageList /><PendingMessages />
       </AppStateProvider>,
     );
 
@@ -2703,6 +2739,7 @@ describe("MessageList", () => {
     expect(document.querySelector(".workflow-web-source-favicon")?.textContent).toBe("E");
     expect(document.querySelector(".workflow-web-source-favicon img")?.getAttribute("src")).toBe("https://example.com/favicon.ico");
     expect(screen.getAllByText("myharness docs")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
     expect(document.querySelector(".aside-activity-summary")?.textContent).toMatch(/2건/);
     await user.click(screen.getByText(/문서에는 1분기 실적/));
     expect((document.querySelector(".answer-web-sources") as HTMLDetailsElement | null)?.open).toBe(false);

@@ -5,7 +5,7 @@ import { workflowElapsedSeconds } from "../utils/workflowTime";
 import type { ArtifactSummary, BackendEvent, CommandItem, HistoryItem, PluginItem, SkillItem, SwarmNotificationSnapshot, SwarmTeammateSnapshot, UsageCostSummary, Workspace, WorkspaceScope } from "../types/backend";
 import type { AppSettings, AppState, ArtifactPayload, ChatMessage, LiveSessionView, ModalState, SidebarCollapseReason, ThemeId, WorkflowEvent, WorkflowEventStatus } from "../types/ui";
 import { artifactKind, artifactLabelForPath, artifactName, isKnownArtifactPath, normalizeArtifactPath } from "../utils/artifacts";
-import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem, uniqueHistoryItems } from "../utils/history";
+import { historyVisibilityKey, isHistoryItemHidden, isLiveOnlyHistoryItem, meaningfulHistoryTitle, uniqueHistoryItems } from "../utils/history";
 import { sidebarDefaultWidthPx } from "../layout/sidebarLayout";
 import { isKnownLookupTool, workflowGroupStatus } from "../utils/toolPresentation";
 
@@ -220,7 +220,7 @@ function normalizeThemeId(value: string): ThemeId {
   if (value === "nexus" || value === "posco") {
     return "light";
   }
-  return value === "claude" || value === "dark" || value === "mono" || value === "mono-orange" ? value : "light";
+  return value === "dark" || value === "mono" || value === "mono-orange" ? value : "light";
 }
 
 function initialThemeId(): ThemeId {
@@ -1290,6 +1290,15 @@ function appendWorkflowEvent(events: WorkflowEvent[], event: Omit<WorkflowEvent,
   return [...events, { id: nextId(), ...event }];
 }
 
+function applyProviderSummary(events: WorkflowEvent[], detail: string, summaryId?: string) {
+  const index = summaryId ? events.findIndex((event) => event.noteSource === "provider-summary" && event.summaryId === summaryId) : -1;
+  if (index >= 0) return events.map((event, i) => i === index ? { ...event, detail } : event);
+  return appendWorkflowEvent(completePlanning(events.length ? events : initialWorkflowEvents()), {
+    toolName: "", title: "진행 메모", detail, status: "done", level: "parent",
+    role: "reasoning", noteSource: "provider-summary", summaryId,
+  });
+}
+
 function applyWorkflowAgents(events: WorkflowEvent[], agents: SwarmTeammateSnapshot[]) {
   if (!agents.length) return events;
   const index = events.findIndex((event) => event.role === "agents");
@@ -1891,11 +1900,6 @@ function normalizeChatTitle(value: string) {
   return value.trim() || "MyHarness";
 }
 
-function meaningfulHistoryTitle(value: string | undefined) {
-  const title = value?.trim() || "";
-  return title === "새 대화" || title === "MyHarness" ? "" : title;
-}
-
 function updateCurrentHistoryTitle(history: HistoryItem[], sessionId: string | null, title: string) {
   if (!sessionId) return history;
   return history.map((item) => (
@@ -1938,7 +1942,8 @@ function visibleHistoryRows(state: AppState, history: HistoryItem[]) {
   // Both HTTP refreshes and backend resume lists can lag restored snapshots.
   const existingById = new Map(state.history.map((item) => [item.value, item]));
   const resolvedHistory = history.map((item) => {
-    const existing = existingById.get(item.value);
+    const existing = existingById.get(item.value)
+      || (item.liveSessionId ? existingById.get(item.liveSessionId) : undefined);
     return existing && !meaningfulHistoryTitle(item.description) && meaningfulHistoryTitle(existing.description)
       ? { ...item, description: existing.description,
           messageCount: Math.max(item.messageCount || 0, existing.messageCount || 0) }
@@ -1967,7 +1972,7 @@ function ensureLiveHistoryItem(state: AppState, userText: string) {
     return state.history.map((item) => item.value === sessionId
       ? {
           ...item,
-          description: item.description === "새 대화" || (!item.description && item.messageCount === 0)
+          description: item.description === "새 대화" || item.description === "MyHarness" || (!item.description && item.messageCount === 0)
             ? description : item.description,
           messageCount: Math.max(1, item.messageCount || 0),
         }
@@ -2405,18 +2410,7 @@ function reduceHistoryRestoreEvent(
     if (type === "reasoning_summary") {
       const detail = String(record.message || "").trim();
       if (detail) {
-        workflowEvents = appendWorkflowEvent(
-          completePlanning(workflowEvents.length ? workflowEvents : initialWorkflowEvents()),
-          {
-            toolName: "",
-            title: "진행 메모",
-            detail,
-            status: "done",
-            level: "parent",
-            role: "reasoning",
-            noteSource: "provider-summary",
-          },
-        );
+        workflowEvents = applyProviderSummary(workflowEvents, detail, typeof record.summary_id === "string" ? record.summary_id : undefined);
       }
       continue;
     }
@@ -2909,11 +2903,15 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     if (event.status === "cancelled") {
       return { ...state, messages: state.messages.filter((message) => message.pendingRequestId !== requestId) };
     }
+    if (event.status !== "delivered") return state;
+    const delivered = state.messages.find((message) => message.pendingRequestId === requestId);
+    if (!delivered) return state;
     return {
       ...state,
-      messages: state.messages.map((message) => (
-        message.pendingRequestId === requestId ? { ...message, pendingRequestId: undefined } : message
-      )),
+      messages: [
+        ...state.messages.filter((message) => message !== delivered),
+        { ...delivered, pendingRequestId: undefined },
+      ],
     };
   }
   // A saved transcript is read-only; the connected runtime's metadata is not.
@@ -3020,18 +3018,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
       busy: true,
       status: "processing",
       statusText: "진행 메모 확인 중",
-      workflowEvents: appendWorkflowEvent(
-        completePlanning(state.workflowEvents.length ? state.workflowEvents : initialWorkflowEvents()),
-        {
-          toolName: "",
-          title: "진행 메모",
-          detail,
-          status: "done",
-          level: "parent",
-          role: "reasoning",
-          noteSource: "provider-summary",
-        },
-      ),
+      workflowEvents: applyProviderSummary(state.workflowEvents, detail, typeof event.summary_id === "string" ? event.summary_id : undefined),
     };
   }
 
@@ -3055,11 +3042,12 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     const restoredUserTitle = state.messages.find((message) => (
       message.role === "user" && !message.kind && !/^\/\S*/.test(message.text.trim())
     ))?.text.replace(/\s+/g, " ").trim() || "";
-    const title = eventTitle === "새 대화" && (state.historyReadOnly || restoredUserTitle)
-      ? normalizeChatTitle(
-          (restoredHistoryTitle !== "새 대화" ? restoredHistoryTitle : "") || restoredUserTitle || eventTitle,
-        )
-      : eventTitle;
+    // Bootstrap titles may arrive after the saved title but before messages.
+    // Content replay is not a prerequisite for retaining a known row title.
+    const title = meaningfulHistoryTitle(eventTitle)
+      || meaningfulHistoryTitle(restoredHistoryTitle)
+      || restoredUserTitle
+      || eventTitle;
     return {
       ...state,
       chatTitle: title,
@@ -3086,7 +3074,12 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
       ? state.history.flatMap((item) => {
           if (item === optimisticRow && savedRow) return [];
           if (item !== optimisticRow && item !== savedRow) return [item];
-          return [{ ...optimisticRow, ...savedRow, value: activeHistoryId!, live: true, liveSessionId: state.sessionId!, busy: state.busy }];
+          return [{ ...optimisticRow, ...savedRow, value: activeHistoryId!,
+            ...(!meaningfulHistoryTitle(savedRow?.description) && meaningfulHistoryTitle(optimisticRow.description)
+              ? { description: optimisticRow.description,
+                  messageCount: Math.max(optimisticRow.messageCount || 0, savedRow?.messageCount || 0) }
+              : {}),
+            live: true, liveSessionId: state.sessionId!, busy: state.busy }];
         })
       : state.history;
     return {
@@ -3109,7 +3102,10 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     }
     const text = normalizeVisibleText(item.text);
     if (item.role === "user" && isDeduplicatedUserTranscriptKind(item.kind)) {
-      if (isDuplicateKindedUserTranscript(state, text, item.kind)) {
+      // Request identity survives delivery so late echoes cannot recreate the dock item.
+      if (item.request_id
+        ? state.messages.some((message) => message.id === item.request_id || message.pendingRequestId === item.request_id)
+        : isDuplicateKindedUserTranscript(state, text, item.kind)) {
         return state;
       }
     }
@@ -3160,6 +3156,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
       return {
         ...state,
         messages: [...state.messages, message],
+        history: ensureLiveHistoryItem(state, state.messages.find((entry) => entry.role === "user" && !entry.kind)?.text || text),
         workflowAnchorMessageId: message.id,
         workflowEventsByMessageId: workflowSnapshotMap(state),
         workflowDurationSecondsByMessageId: workflowDurationSnapshotMap(state),
@@ -3171,6 +3168,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
     return {
       ...state,
       messages: appendMessage(state.messages, {
+        id: item.request_id || undefined,
         role: item.role,
         text,
         kind: item.kind || undefined,
@@ -3378,6 +3376,7 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
   }
 
   if (event.type === "line_complete") {
+    if (event.request_scope === "runtime") return state;
     const messages = state.messages.map((message) => (
       message.role === "assistant" && message.isComplete !== true
         ? { ...message, isComplete: true }
@@ -3442,6 +3441,9 @@ function reduceBackendEventValue(state: AppState, action: Extract<AppAction, { t
 
   if (event.type === "error") {
     const message = normalizeVisibleText(String(event.message || "오류"));
+    if (event.request_scope === "runtime") {
+      return { ...state, modal: { kind: "error", message } };
+    }
     const workflowEvents = state.workflowEvents.length
       ? finishFinalAnswerStep(
           failRunningWorkflowEvents(state.workflowEvents, "오류로 작업을 중단했습니다."),

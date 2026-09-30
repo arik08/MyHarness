@@ -9,7 +9,7 @@ import { deleteHistory, hideHistory, historyPageSize, listHistory, loadHistorySn
 import { isUnknownSessionError } from "../api/http";
 import { listLiveSessions, restartSession, shutdownSession, startSession } from "../api/session";
 import { sendBackendRequest, sendMessage } from "../api/messages";
-import { currentConversationHistoryTitle, currentConversationTitle, isConversationResponseVisiblyBusy, isResponseVisiblyBusy } from "../state/selectors";
+import { currentConversationHistoryTitle, isConversationResponseVisiblyBusy, isResponseVisiblyBusy } from "../state/selectors";
 import type { HistoryItem, Workspace } from "../types/backend";
 import { ModelAvailabilityMenu } from "./ModelAvailabilityMenu";
 import type { ThemeId } from "../types/ui";
@@ -21,7 +21,6 @@ import { writeLocalStorage } from "../utils/storage";
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
   { id: "light", label: "Light" },
-  { id: "claude", label: "Claude" },
   { id: "dark", label: "Dark-Blue" },
   { id: "mono", label: "MonoChrome-Green" },
   { id: "mono-orange", label: "MonoChrome-Orange" },
@@ -976,7 +975,6 @@ export function Sidebar() {
     && !optimisticallyHiddenHistoryIds.has(item.value)
   ));
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
-  const conversationTitle = currentConversationTitle(state);
   const activeHistoryDescription = currentConversationHistoryTitle(state);
   const showRuntimePicker = state.adminMode && state.runtimePicker.open && !state.sidebarCollapsed;
   const responseVisiblyBusy = isResponseVisiblyBusy(state);
@@ -1034,9 +1032,12 @@ export function Sidebar() {
   const hasHistorySearch = Boolean(historySearch);
   const historyRequestSearch = likedHistoryOnly ? "" : historySearch;
   const hasHistoryFilter = hasHistorySearch || likedHistoryOnly;
+  // Row titles belong to the saved conversation. The displayed transcript can
+  // still belong to the previous session while the selected one is replaying.
   const titleForHistoryItem = (item: HistoryItem) => {
-    const isActive = isActiveHistoryItem(item, activeHistoryValue, state.sessionId);
-    return isActive && conversationTitle !== "MyHarness"
+    const placeholder = item.description === "새 대화" || item.description === "MyHarness";
+    return placeholder && state.busy && !state.restoringHistory && !state.pendingHistoryId
+      && isActiveHistoryItem(item, activeHistoryValue, state.sessionId) && activeHistoryDescription
       ? activeHistoryDescription
       : item.description || item.label;
   };

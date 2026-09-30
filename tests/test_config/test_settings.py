@@ -592,7 +592,7 @@ class TestPgptOpenAICompatibleProvider:
         ]
         assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
 
-    def test_codex_subscription_default_profile_includes_gpt56_family(self):
+    def test_codex_subscription_default_profile_includes_supported_gpt_families(self):
         from myharness.config.settings import default_provider_profiles
 
         profile = default_provider_profiles()["codex"]
@@ -604,6 +604,9 @@ class TestPgptOpenAICompatibleProvider:
             "gpt-5.6-luna",
             "gpt-5.6-terra",
             "gpt-5.6-sol",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "gpt-6.1-sol",
         ]
 
     def test_builtin_model_policy_prunes_removed_saved_models(self, monkeypatch):
@@ -675,8 +678,25 @@ class TestPgptOpenAICompatibleProvider:
             "gpt-5.6-luna",
             "gpt-5.6-terra",
             "gpt-5.6-sol",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "gpt-6.1-sol",
         ]
         assert profile.last_model is None
+
+    @pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"])
+    def test_codex_new_models_survive_selection_and_settings_reload(self, model, tmp_path):
+        settings = Settings(active_profile="codex").merge_cli_overrides(
+            model=model, subagent_model=model,
+        )
+        path = tmp_path / "settings.json"
+        path.write_text(settings.model_dump_json(), encoding="utf-8")
+        restored = Settings.model_validate_json(path.read_text(encoding="utf-8"))
+        materialized = restored.materialize_active_profile()
+
+        assert materialized.model == model
+        assert materialized.subagent_model == model
+        assert materialized.provider == "openai_codex"
 
     def test_pgpt_saved_builtin_profile_receives_new_allowed_models(self):
         from myharness.config.settings import ProviderProfile

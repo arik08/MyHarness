@@ -134,7 +134,7 @@ describe("AppShell sidebar auto collapse", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses Light as the unscoped root theme and keeps Claude as the claude data theme", () => {
+  it("uses Light as the unscoped root theme and persists Dark-Blue", () => {
     document.documentElement.dataset.theme = "dark";
 
     const { rerender } = render(
@@ -147,13 +147,13 @@ describe("AppShell sidebar auto collapse", () => {
     expect(localStorage.getItem("myharness:theme")).toBe("light");
 
     rerender(
-      <AppStateProvider key="claude" initialState={{ ...initialAppState, themeId: "claude" }}>
+      <AppStateProvider key="dark" initialState={{ ...initialAppState, themeId: "dark" }}>
         <AppShell />
       </AppStateProvider>,
     );
 
-    expect(document.documentElement.dataset.theme).toBe("claude");
-    expect(localStorage.getItem("myharness:theme")).toBe("claude");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("myharness:theme")).toBe("dark");
   });
 
   it("auto-collapses when the pure chat panel width reaches 400px", () => {

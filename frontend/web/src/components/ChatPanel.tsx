@@ -128,8 +128,9 @@ export function ChatPanel() {
             className="header-icon-button"
             type="button"
             aria-label="프로젝트 파일 보기"
+            aria-expanded={state.artifactPanelOpen}
             data-tooltip="프로젝트 파일"
-            onClick={() => dispatch({ type: "open_artifact_list" })}
+            onClick={() => dispatch({ type: state.artifactPanelOpen ? "close_artifact" : "open_artifact_list" })}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />

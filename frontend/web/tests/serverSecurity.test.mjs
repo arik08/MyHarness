@@ -123,9 +123,10 @@ async function openPort() {
   throw new Error("Could not find an open test port");
 }
 
-async function startWebServer({ host = "127.0.0.1", env = {}, nodeArgs = [] } = {}) {
+async function startWebServer({ host = "127.0.0.1", env = {}, nodeArgs = [], entryPasswordConfig } = {}) {
   const port = await openPort();
   const configDir = await mkdtemp(join(tmpdir(), "myharness-web-security-"));
+  if (entryPasswordConfig) await writeFile(join(configDir, "entry-password.json"), entryPasswordConfig);
   const childEnv = {
     ...process.env,
     PORT: String(port),
@@ -418,6 +419,46 @@ test("requires a server-issued entry cookie before protected API access", async 
     headers: { cookie },
   });
   assert.equal(allowed.status, 200);
+});
+
+test("admin rotates primary and guest entry passwords independently", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_ENTRY_PASSWORD: "core" } });
+  t.after(() => app.stop());
+  const post = (path, body, headers = {}) => fetch(`${app.baseUrl}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  const login = (password) => post("/api/auth/login", { password });
+  const cookieOf = (response) => response.headers.get("set-cookie").split(";")[0];
+  const authenticated = async (cookie) => (await (await fetch(`${app.baseUrl}/api/auth/status`, { headers: { cookie } })).json()).authenticated;
+  const body = { currentPassword: "core", newPassword: "visitor", confirmation: "visitor", kind: "guest" };
+  assert.equal((await post("/api/auth/password", body, { "x-myharness-admin-mode": "1" })).status, 401);
+  const coreCookie = cookieOf(await login("core"));
+  assert.equal((await post("/api/auth/password", body, { cookie: coreCookie })).status, 403);
+  const admin = { cookie: coreCookie, "x-myharness-admin-mode": "1" };
+  assert.equal((await post("/api/auth/password", { ...body, currentPassword: "wrong" }, admin)).status, 400);
+  assert.equal((await post("/api/auth/password", body, admin)).status, 200);
+  const guestCookie = cookieOf(await login("visitor"));
+  assert.equal(await authenticated(coreCookie), true);
+  assert.equal(await authenticated(guestCookie), true);
+  const changed = await post("/api/auth/password", { ...body, newPassword: "visitor2", confirmation: "visitor2" }, admin);
+  assert.equal(changed.status, 200);
+  assert.equal(await authenticated(cookieOf(changed)), true);
+  assert.equal(await authenticated(coreCookie), true);
+  assert.equal(await authenticated(guestCookie), false);
+  assert.equal((await login("visitor")).status, 401);
+  const guest2Cookie = cookieOf(await login("visitor2"));
+  assert.equal((await post("/api/auth/password", { ...body, kind: "primary", newPassword: "core2", confirmation: "core2" }, admin)).status, 200);
+  assert.equal(await authenticated(coreCookie), false);
+  assert.equal(await authenticated(guest2Cookie), true);
+  assert.equal((await login("core")).status, 401);
+  assert.equal((await login("core2")).status, 200);
+  const persisted = await readFile(join(app.configDir, "entry-password.json"), "utf8");
+  const restarted = await startWebServer({ env: { MYHARNESS_ENTRY_PASSWORD: "core" }, entryPasswordConfig: persisted });
+  t.after(() => restarted.stop());
+  for (const password of ["core2", "visitor2"]) {
+    const response = await fetch(`${restarted.baseUrl}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
+    assert.equal(response.status, 200);
+  }
+  const status = await fetch(`${restarted.baseUrl}/api/auth/status`, { headers: { cookie: guest2Cookie } });
+  assert.equal((await status.json()).authenticated, true);
 });
 
 test("keeps entry access after a same-day server restart", async () => {

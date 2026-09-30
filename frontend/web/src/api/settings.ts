@@ -1,5 +1,9 @@
 import { getJson, postJson } from "./http";
 
+export function changeEntryPassword(currentPassword: string, newPassword: string, confirmation: string, kind: "primary" | "guest") {
+  return postJson<{ ok: boolean }>("/api/auth/password", { currentPassword, newPassword, confirmation, kind });
+}
+
 export function readYoloModeSettings() {
   return getJson<{ enabled: boolean }>("/api/settings/yolo-mode");
 }

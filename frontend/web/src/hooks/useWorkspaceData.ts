@@ -6,6 +6,7 @@ import { listWorkspaces } from "../api/workspaces";
 import { useAppState } from "../state/app-state";
 import type { HistoryItem, LiveSessionItem } from "../types/backend";
 import { readRecentData, writeRecentData } from "../utils/recentData";
+import { meaningfulHistoryTitle } from "../utils/history";
 
 type WorkspaceData = Awaited<ReturnType<typeof listWorkspaces>>;
 type HistoryData = { history: HistoryItem[]; hasMore: boolean; nextOffset: number };
@@ -78,9 +79,13 @@ export function mergeLiveSessions(history: HistoryItem[], sessions: LiveSessionI
     ));
     if (matches.length) {
       const preferred = matches.find((item) => item.value === value) || matches[0];
+      const description = meaningfulHistoryTitle(preferred.description)
+        || matches.map((item) => meaningfulHistoryTitle(item.description)).find(Boolean)
+        || meaningfulHistoryTitle(session.title);
       const liveItemIndex = mergedHistory.indexOf(matches[0]);
       mergedHistory[liveItemIndex] = {
         ...preferred,
+        ...(description ? { description } : {}),
         value,
         workspace: preferred.workspace || session.workspace || null,
         live: true,

@@ -121,7 +121,7 @@ describe("ChatPanel", () => {
     expect(screen.getByLabelText("artifact panel state").textContent).toBe("closed");
   });
 
-  it("keeps the artifact panel open when chat controls are clicked", async () => {
+  it("toggles the project files panel closed and open on repeated clicks", async () => {
     render(
       <AppStateProvider
         initialState={{
@@ -137,7 +137,11 @@ describe("ChatPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "프로젝트 파일 보기" }));
 
+    expect(screen.getByLabelText("artifact panel state").textContent).toBe("closed");
+    expect(screen.getByRole("button", { name: "프로젝트 파일 보기" }).getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(screen.getByRole("button", { name: "프로젝트 파일 보기" }));
     expect(screen.getByLabelText("artifact panel state").textContent).toBe("open");
+    expect(screen.getByRole("button", { name: "프로젝트 파일 보기" }).getAttribute("aria-expanded")).toBe("true");
   });
 
   it("renders title editing with only the input as the interactive frame", async () => {

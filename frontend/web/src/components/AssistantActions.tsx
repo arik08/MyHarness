@@ -1,5 +1,8 @@
 import { type CSSProperties, type ReactNode, useCallback, useRef, useState } from "react";
 import { saveArtifact } from "../api/artifacts";
+import { ResponseFeedback } from "./ResponseFeedback";
+import { AnswerCopyMenu } from "./AnswerCopyMenu";
+import { conversationTextThrough } from "../utils/conversationCopy";
 import { useAppState } from "../state/app-state";
 import type { UsageCostSummary } from "../types/backend";
 import type { ChatMessage } from "../types/ui";
@@ -556,11 +559,12 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
     }
   }
 
-  async function copyAnswer() {
+  async function copyAnswer(scope: "answer" | "conversation") {
+    if (copying) return;
     setCopying(true);
     setStatus("복사 중...");
     try {
-      await copyTextToClipboard(text);
+      await copyTextToClipboard(scope === "answer" ? text : conversationTextThrough(state.messages, message.id));
       setStatus("복사했습니다.");
     } catch (error) {
       setStatus(`복사 실패: ${error instanceof Error ? error.message : String(error)}`);
@@ -629,19 +633,8 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
         </svg>
         <span>답변 완료</span>
       </span>
-      <button
-        className="assistant-action-button"
-        type="button"
-        data-tooltip="원문 복사"
-        aria-label="원문 복사"
-        disabled={copying}
-        onClick={() => void copyAnswer()}
-      >
-        <svg aria-hidden="true" viewBox="0 0 24 24">
-          <rect x="9" y="9" width="10" height="10" rx="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-      </button>
+      <AnswerCopyMenu key={`copy:${state.workspacePath}:${state.activeHistoryId || state.sessionId}:${message.id}`} copying={copying} onCopy={(scope) => void copyAnswer(scope)} />
+      <ResponseFeedback key={`${state.workspacePath}:${state.activeHistoryId || state.sessionId}:${message.id}`} message={message} />
       <button
         className="assistant-action-button"
         type="button"
@@ -690,7 +683,7 @@ export function AssistantActions({ message, children }: { message: ChatMessage; 
       </button>
       <UsageCostPopover answerUsage={message.usage} sessionUsage={message.sessionUsage} />
       {messageTime ? <span className="assistant-action-time">{messageTime}</span> : null}
-      <span className="assistant-action-status">{status}</span>
+      <span className="assistant-action-status" role="status">{status}</span>
       {children}
     </div>
   );

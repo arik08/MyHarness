@@ -626,6 +626,10 @@ function iframeBackBridge(content: string) {
   const bridge = `
 <script>
 (() => {
+  window.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    parent.postMessage({ type: "myharness:toggle-fullscreen" }, "*");
+  }, true);
   let pending = false;
   const sendBack = (event) => {
     if (event.button !== 3 && event.button !== 4) return;
@@ -2484,7 +2488,12 @@ export function ArtifactPreview({
         srcDoc: iframeCaptureBridge(iframeBackBridge(iframeResizeBridge(iframeScrollBridge(iframeMermaidZoomBridge(sourcedContent), artifact.path, restoredScroll), artifact.path)), artifact.path),
       };
     }
-    return <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts allow-popups" srcDoc={htmlEditFrameRef.current.srcDoc} />;
+    return (
+      // Keep display-only theme effects outside srcDoc, editing, downloads and captures.
+      <div className="artifact-html-surface">
+        <iframe ref={htmlFrameElementRef} className="artifact-frame artifact-html-frame" title={displayName} sandbox="allow-scripts allow-popups" srcDoc={htmlEditFrameRef.current.srcDoc} />
+      </div>
+    );
   }
   if (kind === "image") {
     return <img className="artifact-image" src={dataUrl} alt={displayName} />;

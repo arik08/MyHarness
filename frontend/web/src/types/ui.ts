@@ -75,6 +75,7 @@ export type WorkflowEvent = {
   role?: "planning" | "reasoning" | "purpose" | "activity" | "final" | "waiting" | "agents";
   agents?: SwarmTeammateSnapshot[];
   noteSource?: "provider-summary" | "progress";
+  summaryId?: string;
   purpose?: "info" | "action" | "verification";
   groupId?: string;
   toolCallId?: string | null;
@@ -84,7 +85,7 @@ export type WorkflowEvent = {
   output?: string;
 };
 
-export type ThemeId = "light" | "claude" | "dark" | "mono" | "mono-orange";
+export type ThemeId = "light" | "dark" | "mono" | "mono-orange";
 export type SidebarCollapseReason = "auto" | "manual" | null;
 
 export type ComposerState = {

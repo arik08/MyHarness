@@ -17,7 +17,7 @@ test("aligns workflow child rails to the parent step and keeps previews full wid
   assert.doesNotMatch(outputList, /margin:\s*10px 0 2px 30px;/);
 });
 
-test("keeps Claude theme activity status aligned with the neutral sidebar tone", async () => {
+test("keeps Light theme activity status aligned with the neutral sidebar tone", async () => {
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   const activityStatus = css.match(/:root:not\(\[data-theme\]\) \.workflow-activity-status\s*{[\s\S]*?^}/m)?.[0] ?? "";
   const activitySpinner = css.match(/:root:not\(\[data-theme\]\) \.workflow-activity-spinner\s*{[\s\S]*?^}/m)?.[0] ?? "";
@@ -29,18 +29,16 @@ test("keeps Claude theme activity status aligned with the neutral sidebar tone",
   assert.doesNotMatch(activitySpinner, /var\(--accent\)/);
 });
 
-test("uses softer tinted workflow output previews for light-family themes", async () => {
+test("uses softer tinted workflow output previews for Light", async () => {
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   const lightPreview = css.match(/:root:not\(\[data-theme\]\) \.workflow-output-preview\s*{[\s\S]*?^}/m)?.[0] ?? "";
-  const claudePreview = css.match(/:root\[data-theme="claude"\] \.workflow-output-preview\s*{[\s\S]*?^}/m)?.[0] ?? "";
 
   assert.match(lightPreview, /background:\s*#f4f8fb;/);
   assert.match(lightPreview, /border-color:\s*#dbe7f1;/);
-  assert.match(claudePreview, /background:\s*#f8f5f0;/);
   assert.doesNotMatch(css, /data-theme="posco"/);
   assert.match(css, /\.workflow-diff-line\.added\s*{[\s\S]*?background:\s*color-mix\(in srgb,\s*var\(--success-soft\) 44%,\s*transparent\);/);
   assert.match(css, /\.workflow-diff-line\.removed\s*{[\s\S]*?background:\s*color-mix\(in srgb,\s*var\(--danger-soft\) 44%,\s*transparent\);/);
-  assert.doesNotMatch(css, /:root\[data-theme="claude"\] \.workflow-output-body\s*{/);
+  assert.doesNotMatch(css, /data-theme="claude"/);
 });
 
 test("caps inline Mermaid chart height while preserving scroll access", async () => {

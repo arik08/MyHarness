@@ -1586,7 +1586,16 @@ describe("Composer", () => {
     }));
   });
 
-  it("shows a steering message immediately while send is still in flight", async () => {
+  it.each(["steer", "queue"])("docks %s until delivery and moves it into the transcript once", async (mode) => {
+    function Deliver() {
+      const { state, dispatch } = useAppState();
+      const pending = state.messages.find((message) => message.pendingRequestId);
+      return <button onClick={() => {
+        const id = pending!.pendingRequestId;
+        dispatch({ type: "backend_event", event: { type: "queued_message_status", request_id: id, status: "delivered" } });
+        dispatch({ type: "backend_event", event: { type: "transcript_item", item: { role: "user", text: pending!.text, kind: pending!.kind, request_id: id } } });
+      }}>Deliver</button>;
+    }
     const user = userEvent.setup();
     vi.mocked(sendMessage).mockReturnValueOnce(new Promise(() => {}));
     render(
@@ -1600,14 +1609,20 @@ describe("Composer", () => {
         }}
       >
         <MessageList />
-        <Composer />
+        <Composer /><Deliver />
       </AppStateProvider>,
     );
 
     await user.type(screen.getByPlaceholderText("메시지를 입력하세요..."), "이 조건 바로 반영");
-    await user.keyboard("{Enter}");
+    if (mode === "queue") fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", ctrlKey: true });
+    else await user.keyboard("{Enter}");
 
-    expect(document.querySelector(".message-kind-steering")?.textContent).toContain("이 조건 바로 반영");
+    expect(document.querySelector(".pending-messages")?.textContent).toContain("이 조건 바로 반영");
+    expect(document.querySelector(".messages")?.textContent).not.toContain("이 조건 바로 반영");
+    await user.click(screen.getByText("Deliver"));
+    expect(document.querySelector(".pending-messages")).toBeNull();
+    expect(document.querySelector(".messages")?.textContent).toContain("이 조건 바로 반영");
+    expect(screen.getAllByText("이 조건 바로 반영")).toHaveLength(1);
   });
 
   it("jumps the message list to the bottom when Enter sends a draft after scrolling upward", async () => {

@@ -1,3 +1,4 @@
+import { PendingMessages } from "./PendingMessages";
 import { useAsyncAction } from "../hooks/useAsyncAction";
 import { isImeKey } from "../utils/keyboard";
 import { createClientId } from "../utils/ids";
@@ -1236,6 +1237,7 @@ export function Composer() {
           ))}
         </div>
       <div className="composer-input-anchor">
+        <PendingMessages />
         <div className={`composer-box${isMultiline ? " multiline" : ""}`} ref={composerBoxRef} onMouseDown={handleComposerBoxMouseDown}>
           <textarea
             id="promptInput"

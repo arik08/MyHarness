@@ -3,6 +3,7 @@ import { useEffect, useState, type MouseEvent } from "react";
 import { sendBackendRequest } from "../api/messages";
 import { restartSession } from "../api/session";
 import {
+  changeEntryPassword,
   changeLearnedSkillsMode,
   changeShellPreference,
   changeWorkspaceScope,
@@ -44,7 +45,7 @@ function handleBackdropClick(event: MouseEvent<HTMLDivElement>, onDismiss: () =>
   }
 }
 
-type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "gpt56-context" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt" | "concurrency" | "admin";
+type SettingsView = "home" | "prompt" | "behavior" | "output-tokens" | "gpt56-context" | "download" | "shell" | "yolo" | "stats" | "restart" | "workspace" | "learned-skills" | "pgpt" | "concurrency" | "admin" | "entry-password";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [view, setView] = useState<SettingsView>("home");
@@ -85,6 +86,15 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
             {state.adminMode ? "관리자 모드 적용 중" : "기본 모드"}
           </span>
         </div>
+        <div className="settings-home-actions">
+        {state.adminMode ? (
+          <button type="button" className="settings-admin-shortcut" aria-label="접속 비밀번호 변경" data-tooltip="접속 비밀번호 변경" onClick={() => onSelect("entry-password")}>
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="8" cy="15" r="4" />
+              <path d="M11 12l9-9m-3 3 3 3m-6 0 3 3" />
+            </svg>
+          </button>
+        ) : null}
         <button
           type="button"
           className={`settings-admin-shortcut${state.adminMode ? " active" : ""}`}
@@ -97,6 +107,7 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
             <path d="M9.5 12l1.7 1.7 3.6-4.1" />
           </svg>
         </button>
+        </div>
       </div>
       <div className="settings-grid">
         <DesignModeToggle canEdit={state.adminMode} />
@@ -167,6 +178,7 @@ function SettingsHome({ onSelect }: { onSelect: (view: SettingsView) => void }) 
 
 function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack: () => void; onClose: () => void }) {
   const { state } = useAppState();
+  if (view === "entry-password") return state.adminMode ? <EntryPasswordSettings onBack={onBack} /> : <ServerHostOnlySettings onBack={onBack} />;
   if (!canUseServerHostSettings(isLocalBrowserHost(), state.adminMode) && isServerHostSettingsView(view)) return <ServerHostOnlySettings onBack={onBack} />;
   if (view === "prompt") return <PromptSettings onBack={onBack} />;
   if (view === "behavior") return <BehaviorSettings onBack={onBack} />;
@@ -182,6 +194,75 @@ function SettingsDetail({ view, onBack, onClose }: { view: SettingsView; onBack:
   if (view === "workspace") return <WorkspaceScopeSettings onBack={onBack} onClose={onClose} />;
   if (view === "learned-skills") return <LearnedSkillsSettings onBack={onBack} />;
   return <PgptSettingsForm onBack={onBack} />;
+}
+
+function EntryPasswordSettings({ onBack }: { onBack: () => void }) {
+  const [kind, setKind] = useState<"primary" | "guest">("primary");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const { pending, run } = useAsyncAction();
+
+  function save() {
+    setError("");
+    setSaved(false);
+    if (!newPassword.trim()) { setError("새 비밀번호를 입력해 주세요."); return; }
+    if (newPassword !== confirmation) { setError("새 비밀번호가 일치하지 않습니다."); return; }
+    void run(async () => {
+      try {
+        await changeEntryPassword(currentPassword, newPassword, confirmation, kind);
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmation("");
+        setSaved(true);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "비밀번호를 변경하지 못했습니다.");
+      }
+    });
+  }
+
+  return (
+    <>
+      <SettingsHeader title="접속 비밀번호 변경">기본 비밀번호 또는 Guest 비밀번호 중 하나가 맞으면 접속할 수 있습니다. 변경한 종류의 기존 접속 인증만 만료됩니다.</SettingsHeader>
+      <form className="admin-mode-form" onSubmit={(event) => { event.preventDefault(); save(); }}>
+        <div className="setting-field">
+          <span className="setting-field-label">변경할 비밀번호</span>
+          <div className="entry-password-toggle" role="group" aria-label="변경할 비밀번호">
+            {(["primary", "guest"] as const).map((value) => (
+              <button key={value} type="button" aria-pressed={kind === value} disabled={pending} onClick={() => {
+                if (kind === value) return;
+                setKind(value); setCurrentPassword(""); setNewPassword(""); setConfirmation(""); setError(""); setSaved(false);
+              }}>
+                {value === "primary" ? "기본 비밀번호" : "Guest 비밀번호"}
+              </button>
+            ))}
+          </div>
+          <small>{kind === "guest" ? "방문자에게 공유할 비밀번호를 설정하거나 변경합니다. 기본 비밀번호는 유지됩니다." : "핵심 멤버가 사용할 비밀번호입니다. Guest 비밀번호는 유지됩니다."}</small>
+        </div>
+        <label className="setting-field">
+          <span className="setting-field-label">현재 기본 비밀번호</span>
+          <input aria-label="현재 기본 비밀번호" type="password" autoComplete="current-password" autoFocus disabled={pending} value={currentPassword} onChange={(event) => { setCurrentPassword(event.currentTarget.value); setSaved(false); }} />
+          <small>변경 권한 확인을 위해 현재 기본 비밀번호를 입력해 주세요.</small>
+        </label>
+        <label className="setting-field">
+          <span className="setting-field-label">새 비밀번호</span>
+          <input type="password" autoComplete="new-password" required maxLength={256} disabled={pending} value={newPassword} onChange={(event) => { setNewPassword(event.currentTarget.value); setSaved(false); }} />
+        </label>
+        <label className="setting-field">
+          <span className="setting-field-label">새 비밀번호 확인</span>
+          <input type="password" autoComplete="new-password" required maxLength={256} disabled={pending} value={confirmation} onChange={(event) => { setConfirmation(event.currentTarget.value); setSaved(false); }} />
+        </label>
+        {error ? <p className="workspace-error" role="alert">{error}</p> : null}
+        {saved ? <p role="status">{kind === "guest" ? "Guest" : "기본"} 비밀번호를 변경했습니다.</p> : null}
+        <div className="modal-actions">
+          <button type="button" onClick={onBack}>뒤로</button>
+          <button type="submit" className="primary" disabled={pending}>{pending ? "변경 중…" : "비밀번호 변경"}</button>
+        </div>
+      </form>
+    </>
+  );
 }
 
 function AdminModeSettings({ onBack }: { onBack: () => void }) {

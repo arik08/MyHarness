@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { AsideWorkflowTimeline, asideCallTitle } from "../AsideWorkflowTimeline";
 import type { WorkflowEvent } from "../../types/ui";
@@ -26,6 +26,7 @@ it.each([
 it.each(["read_file", "write_file", "edit_file", "future_file_tool"])("renders a counted summary and shortened accessible title for %s", (toolName) => {
   render(<AsideWorkflowTimeline events={[event("C:/work/project/src/new.ts", toolName)]}
     workspacePath="C:/work/project" scope={`relative-${toolName}`} duration={1} busy={false} />);
+  fireEvent.click(screen.getByRole("button", { name: "작업 과정 펼침/접기" }));
   expect(document.querySelector(".aside-call-title")?.textContent).toContain("(1건)");
   expect(screen.getByRole("button", { name: /src\/new.ts 상세 실행 기록/ }).textContent).not.toContain("C:/");
 });

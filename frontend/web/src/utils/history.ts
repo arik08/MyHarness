@@ -1,5 +1,10 @@
 import type { HistoryItem } from "../types/backend";
 
+export function meaningfulHistoryTitle(value: string | undefined) {
+  const title = value?.trim() || "";
+  return title === "새 대화" || title === "MyHarness" ? "" : title;
+}
+
 export function uniqueHistoryItems(items: HistoryItem[]): HistoryItem[] {
   // Runtime IDs are temporary aliases, never a reason to merge two saved IDs:
   // one runtime can be reused for several conversations.

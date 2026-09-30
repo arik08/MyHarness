@@ -1,8 +1,7 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef } from "react";
 import { InlineQuestion } from "./InlineQuestion";
 import "./loading-skeleton.css";
 import { ConversationQuestionNavigator } from "./ConversationQuestionNavigator";
-import { sendBackendRequest } from "../api/messages";
 import { useMessageAutoFollow } from "../hooks/useMessageAutoFollow";
 import { useAppState } from "../state/app-state";
 import type { AppState, ChatMessage, WorkflowEvent } from "../types/ui";
@@ -248,8 +247,8 @@ function mergeAdjacentLogMessages(messages: ChatMessage[]): RenderMessageItem[] 
 
 export function MessageList() {
   const { state, dispatch } = useAppState();
-  const [cancellingRequestIds, setCancellingRequestIds] = useState<Set<string>>(() => new Set());
-  const lastMessage = state.messages.at(-1);
+  const visibleMessages = useMemo(() => state.messages.filter((message) => !message.pendingRequestId), [state.messages]);
+  const lastMessage = visibleMessages.at(-1);
   const renderMessages = useMemo(() => mergeAdjacentLogMessages(state.messages), [state.messages]);
   const promptTokenReferencesRef = useRef({
     skills: state.skills,
@@ -266,34 +265,6 @@ export function MessageList() {
     };
   }
   const promptTokenReferences = promptTokenReferencesRef.current;
-  useEffect(() => {
-    const pendingIds = new Set(state.messages.flatMap((message) => message.pendingRequestId ? [message.pendingRequestId] : []));
-    setCancellingRequestIds((current) => {
-      const next = new Set([...current].filter((id) => pendingIds.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [state.messages]);
-
-  async function cancelPendingMessage(requestId: string) {
-    if (!state.sessionId || cancellingRequestIds.has(requestId)) return;
-    setCancellingRequestIds((current) => new Set(current).add(requestId));
-    try {
-      await sendBackendRequest(state.sessionId, state.clientId, {
-        type: "cancel_queued_line",
-        request_id: requestId,
-      });
-    } catch (error) {
-      setCancellingRequestIds((current) => {
-        const next = new Set(current);
-        next.delete(requestId);
-        return next;
-      });
-      dispatch({
-        type: "backend_event",
-        event: { type: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-    }
-  }
   const questionRequestId = state.modal?.kind === "backend" && state.modal.payload?.kind === "question"
     ? String(state.modal.payload.request_id || "") : "";
   const activeWorkflowFollowSignature = useMemo(
@@ -317,7 +288,7 @@ export function MessageList() {
     handleVisibleWorkflowProgressChange,
     handleQuestionNavigation,
   } = useMessageAutoFollow({
-    state,
+    state: { ...state, messages: visibleMessages },
     dispatch,
     lastMessage,
     activeWorkflowFollowSignature: `${activeWorkflowFollowSignature}|question:${questionRequestId}`,
@@ -348,7 +319,7 @@ export function MessageList() {
   return (
     <>
     <ConversationQuestionNavigator key={state.activeHistoryId || state.sessionId || "new"}
-      messages={state.messages} scrollContainerRef={messagesRef} onNavigateStart={handleQuestionNavigation} />
+      messages={visibleMessages} scrollContainerRef={messagesRef} onNavigateStart={handleQuestionNavigation} />
     <section
       className={`messages${shouldFollowGrowingTail ? " streaming-follow" : ""}`}
       aria-live="polite"
@@ -383,13 +354,14 @@ export function MessageList() {
       {renderMessages.map(({ message, originalIndex }) => {
         // Intermediate assistant text lives at its recorded position in the workflow.
         // The final response stays outside the collapsible work history.
-        if (message.responsePhase === "commentary") return null;
+        if (message.responsePhase === "commentary" || message.pendingRequestId) return null;
         const commandCatalog = isCommandCatalog(message.text);
         const kindBadge = message.role === "user" ? messageKindBadge(message.kind) : null;
         const images = message.role === "user" ? message.images || [] : [];
         const userText = images.length ? message.displayText ?? message.text : message.text;
         const workflowEvents = workflowEventsForMessageId(state, message.id);
-        const showWorkflowHere = workflowEvents.length > 0 && !isQuietCommandTurn(message);
+        const workflowDuration = workflowDurationForMessageId(state, message.id);
+        const showWorkflowHere = (workflowEvents.length > 0 || workflowDuration !== null) && !isQuietCommandTurn(message);
         const answerWebSourceEvents = message.role === "assistant"
           ? webSourceEventsForAssistant(originalIndex)
           : [];
@@ -433,24 +405,12 @@ export function MessageList() {
                   <UserMessageText text={userText} promptTokenReferences={promptTokenReferences} />
                 )}
               </div>}
-              {message.pendingRequestId && (message.kind === "steering" || message.kind === "queued") ? (
-                <button
-                  type="button"
-                  className="pending-message-cancel"
-                  aria-label={`${kindBadge?.label || "대기"} 요청 취소`}
-                  data-tooltip="전달 전 요청 취소"
-                  disabled={cancellingRequestIds.has(message.pendingRequestId)}
-                  onClick={() => void cancelPendingMessage(message.pendingRequestId || "")}
-                >
-                  <span aria-hidden="true">×</span>
-                </button>
-              ) : null}
             </article>
             {showWorkflowHere ? (
               <WorkflowPanel
                 events={workflowEvents}
                 persistenceKey={`turn:${state.messages.slice(0, originalIndex + 1).filter((item) => item.role === "user").length}`}
-                durationSeconds={workflowDurationForMessageId(state, message.id)}
+                durationSeconds={workflowDuration}
                 onVisibleProgressChange={handleVisibleWorkflowProgressChange}
               />
             ) : null}

@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import os
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -89,6 +91,64 @@ $script:calls -join '|'
     result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "stop:202|wait:202|stop:101|wait:202,101"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows launcher")
+@pytest.mark.parametrize("scenario", ["delayed", "timeout", "exited", "refused"])
+def test_dev_proxy_starts_only_after_backend_http_ready(scenario: str) -> None:
+    probes = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            probes.append(self.path)
+            status = 200 if scenario == "delayed" and len(probes) >= 3 else 503
+            self.send_response(status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_port
+    if scenario == "refused":
+        server.server_close()
+    else:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    launcher = _read_launcher("run_myharness_web_dev.ps1")
+    wait_body = _function_body(launcher, "Wait-BackendReady")
+    vite_body = _function_body(launcher, "Start-ViteServer")
+    # Execute the production startup gate and Vite function, replacing only process launch.
+    script = (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$backendPort = {port}\n"
+        "$script:VitePort = 1\n"
+        "$script:FrontendWebDirectory = '.'\n"
+        f"$script:BackendProcess = @{{ HasExited = ${str(scenario == 'exited').lower()}; ExitCode = 9 }}\n"
+        "function Stop-ListeningPort { param($Port, $Label) }\n"
+        "function Start-Process { param($FilePath, $ArgumentList, $WorkingDirectory, [switch]$NoNewWindow, [switch]$PassThru) 'VITE_STARTED' }\n"
+        "function Wait-BackendReady {\n" + wait_body.replace("= 60", "= 2")
+        + "\nfunction Start-ViteServer {\n" + vite_body
+        + "\ntry { Start-ViteServer } catch { Write-Output $_.Exception.Message; exit 7 }\n"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True, text=True, timeout=15,
+        )
+    finally:
+        if scenario != "refused":
+            server.shutdown()
+            server.server_close()
+    if scenario == "delayed":
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "VITE_STARTED"
+        assert probes == ["/api/auth/status"] * 3
+    else:
+        assert result.returncode == 7, result.stderr
+        assert "VITE_STARTED" not in result.stdout
+        expected = "exited before it was ready" if scenario == "exited" else "did not become ready"
+        assert expected in result.stdout
 
 
 def test_dev_launcher_uses_port_scoped_lock_before_reclaiming_ports() -> None:

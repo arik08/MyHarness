@@ -81,6 +81,26 @@ function DispatchProbe({ onReady }: { onReady: (dispatch: ReturnType<typeof useA
 }
 
 describe("Sidebar", () => {
+  it.each(["새 대화", "이전 대화 제목"])("keeps saved row titles during a delayed replay with runtime title %s", (chatTitle) => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    const { container } = render(<AppStateProvider initialState={{ ...initialAppState,
+      sessionId: "runtime-old", activeHistoryId: "old", chatTitle,
+      history: [
+        { value: "old", label: "old", description: "저장된 첫 제목" },
+        { value: "target", label: "target", description: "저장된 두 번째 제목" },
+      ],
+    }}><Sidebar /><DispatchProbe onReady={(value) => { dispatch = value; }} /></AppStateProvider>);
+    const titles = () => Array.from(container.querySelectorAll(".history-title")).map((node) => node.textContent);
+    expect(titles()).toEqual(["저장된 첫 제목", "저장된 두 번째 제목"]);
+    act(() => dispatch({ type: "begin_history_restore", sessionId: "target" }));
+    act(() => dispatch({ type: "session_started", sessionId: "runtime-target", savedSessionId: "target", replay: true }));
+    expect(titles()).toEqual(["저장된 첫 제목", "저장된 두 번째 제목"]);
+    act(() => dispatch({ type: "backend_event", event: { type: "history_snapshot", value: "target",
+      message: "저장된 두 번째 제목", history_events: [{ type: "user", text: "안녕" }],
+    } }));
+    expect(titles()).toEqual(["저장된 첫 제목", "저장된 두 번째 제목"]);
+  });
+
   it("does not apply a delayed old-workspace write to a new workspace", async () => {
     let finish!: (value: Awaited<ReturnType<typeof toggleHistoryLike>>) => void;
     vi.mocked(toggleHistoryLike).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
@@ -641,7 +661,7 @@ describe("Sidebar", () => {
     expect(sendBackendRequest).not.toHaveBeenCalled();
   });
 
-  it("shows Light before Claude in the theme cycle", async () => {
+  it("cycles from Light directly to Dark-Blue", async () => {
     render(
       <AppStateProvider initialState={{ ...initialAppState, themeId: "light" }}>
         <Sidebar />
@@ -654,7 +674,7 @@ describe("Sidebar", () => {
 
     await userEvent.click(themeButton);
 
-    expect(screen.getByRole("button", { name: "테마 전환: Claude" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "테마 전환: Dark-Blue" })).toBeTruthy();
   });
 
   it("resizes the expanded sidebar without going below the current default width", () => {

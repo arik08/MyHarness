@@ -75,6 +75,7 @@ class ReasoningSummaryEvent:
     """Public provider summary for the workflow view."""
 
     text: str
+    summary_id: str | None = None
 
 
 @dataclass(frozen=True)

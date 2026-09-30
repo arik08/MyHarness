@@ -9,6 +9,7 @@ import os
 import platform
 import logging
 import time
+import uuid
 from contextlib import aclosing
 from dataclasses import replace
 from typing import Any, AsyncIterator
@@ -47,8 +48,10 @@ DEFAULT_CODEX_TIMEOUT_SECONDS = 180.0
 CODEX_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 _PROMPT_CACHE_RETENTION_VALUES = {"in_memory", "24h"}
 _CACHE_OPTION_KEYS = ("prompt_cache_key", "prompt_cache_retention")
+_OPTIONAL_RESPONSE_OPTIONS = (*_CACHE_OPTION_KEYS, "context_management", "include", "text", "prompt_cache_options", "reasoning.summary")
 _UNSUPPORTED_OPTION_TERMS = (
     "unsupported",
+    "not supported",
     "unrecognized",
     "unknown",
     "invalid",
@@ -286,7 +289,9 @@ def _stop_reason_from_response(response: dict[str, Any], *, has_tool_calls: bool
     if status == "completed":
         return "stop"
     if status == "incomplete":
-        return "length"
+        details = response.get("incomplete_details")
+        reason = details.get("reason") if isinstance(details, dict) else None
+        return "length" if reason in {None, "max_output_tokens"} else str(reason)
     if status in {"failed", "cancelled"}:
         return "error"
     return None
@@ -448,6 +453,8 @@ class CodexApiClient:
         if _is_gpt_56_model(request.model):
             reasoning["context"] = "all_turns"
         body["reasoning"] = reasoning
+        if "reasoning.summary" in self._unsupported_cache_option_names:
+            reasoning.pop("summary", None)
         if self.supports_server_compaction(request.model):
             from myharness.context_policy import get_long_context_policy_threshold
 
@@ -485,10 +492,35 @@ class CodexApiClient:
         compaction_started = False
         tool_names_by_item_id: dict[str, str] = {}
         current_tool_name: str | None = None
+        summary_scope = uuid.uuid4().hex
+        summary_parts: dict[str, dict[int, str]] = {}
+        emitted_summaries: dict[str, str] = {}
+
+        def summary_event(item_id: str, index: int, text: str, *, delta: bool = False):
+            parts = summary_parts.setdefault(item_id, {})
+            parts[index] = parts.get(index, "") + text if delta else text
+            summary = "\n\n".join(parts[key] for key in sorted(parts)).strip()
+            if not summary or emitted_summaries.get(item_id) == summary:
+                return None
+            emitted_summaries[item_id] = summary
+            return ApiReasoningSummaryEvent(text=summary, summary_id=f"{summary_scope}:{item_id}")
+
+        def completed_summary(item: dict[str, Any], fallback_id: str):
+            item_id = str(item.get("id") or fallback_id)
+            parts = {
+                index: part["text"] for index, part in enumerate(item.get("summary") or [])
+                if isinstance(part, dict) and part.get("type") == "summary_text"
+                and isinstance(part.get("text"), str)
+            }
+            if not parts:
+                return None
+            summary_parts[item_id] = parts
+            index = next(iter(parts))
+            return summary_event(item_id, index, parts[index])
 
         headers = self._build_headers(body)
         client = self._stream_client()
-        for option_attempt in range(6):
+        for option_attempt in range(len(_OPTIONAL_RESPONSE_OPTIONS) + 1):
             async with client.stream("POST", self._url, headers=headers, json=body) as response:
                 if response.status_code >= 400:
                     payload = await response.aread()
@@ -502,7 +534,15 @@ class CodexApiClient:
 
                 async for event in self._iter_sse_events(response):
                     event_type = event.get("type")
-                    if event_type == "response.output_text.delta":
+                    if event_type in {"response.reasoning_summary_text.delta", "response.reasoning_summary_text.done"}:
+                        item_id = str(event.get("item_id") or f"output:{event.get('output_index', 0)}")
+                        index = event.get("summary_index", 0)
+                        text = event.get("delta" if event_type.endswith(".delta") else "text")
+                        if isinstance(index, int) and isinstance(text, str):
+                            update = summary_event(item_id, index, text, delta=event_type.endswith(".delta"))
+                            if update:
+                                yield update
+                    elif event_type == "response.output_text.delta":
                         delta = event.get("delta")
                         if isinstance(delta, str) and delta:
                             current_text_parts.append(delta)
@@ -548,15 +588,9 @@ class CodexApiClient:
                                     compaction_started = True
                                     yield ApiCompactionEvent(phase="compact_start")
                             if item_type == "reasoning":
-                                summary = "\n\n".join(
-                                    part["text"] for part in (item.get("summary") or [])
-                                    if isinstance(part, dict)
-                                    and part.get("type") == "summary_text"
-                                    and isinstance(part.get("text"), str)
-                                    and part["text"].strip()
-                                )
-                                if summary:
-                                    yield ApiReasoningSummaryEvent(text=summary)
+                                update = completed_summary(item, f"output:{event.get('output_index', 0)}")
+                                if update:
+                                    yield update
                         elif item_type == "message":
                             text = ""
                             raw_content = item.get("content")
@@ -620,12 +654,16 @@ class CodexApiClient:
         output = completed_response.get("output")
         if isinstance(output, list) and output:
             content = []
-            for item in output:
+            for output_index, item in enumerate(output):
                 if not isinstance(item, dict):
                     continue
                 kind = item.get("type")
                 if kind in {"reasoning", "compaction"}:
                     content.append(ResponsesStateBlock(item=item))
+                    if kind == "reasoning":
+                        update = completed_summary(item, f"output:{output_index}")
+                        if update:
+                            yield update
                 elif kind == "message":
                     text = "".join(str(part.get("text", part.get("refusal", "")))
                                    for part in item.get("content", []) if isinstance(part, dict))
@@ -727,6 +765,7 @@ class CodexApiClient:
                 raise RequestFailure("Invalid Responses JSON body.")
             return
         data_lines: list[str] = []
+        event_name = ""
         async for line in response.aiter_lines():
             if line == "":
                 if data_lines:
@@ -736,10 +775,16 @@ class CodexApiClient:
                         try:
                             event = json.loads(payload)
                         except json.JSONDecodeError:
+                            event_name = ""
                             continue
                         if isinstance(event, dict):
+                            if event_name and not event.get("type"):
+                                event["type"] = event_name
                             yield event
+                event_name = ""
                 continue
+            if line.startswith("event:"):
+                event_name = line[6:].strip()
             if line.startswith("data:"):
                 data_lines.append(line[5:].strip())
         if data_lines:
@@ -750,6 +795,8 @@ class CodexApiClient:
                 except json.JSONDecodeError:
                     return
                 if isinstance(event, dict):
+                    if event_name and not event.get("type"):
+                        event["type"] = event_name
                     yield event
 
     def _disable_unsupported_cache_options(self, message: str, body: dict[str, Any]) -> bool:
@@ -757,9 +804,11 @@ class CodexApiClient:
         if not any(term in text for term in _UNSUPPORTED_OPTION_TERMS):
             return False
         disabled: set[str] = set()
+        if "reasoning.summary" in text and "summary" in body.get("reasoning", {}):
+            disabled.add("reasoning.summary")
         if "prompt_cache_breakpoint" in text and "prompt_cache_options" in body:
             disabled.add("prompt_cache_options")
-        for key in (*_CACHE_OPTION_KEYS, "context_management", "include", "text", "prompt_cache_options"):
+        for key in _OPTIONAL_RESPONSE_OPTIONS:
             if key in body and key.lower() in text:
                 disabled.add(key)
         if not disabled and "cache" in text and "prompt_cache_retention" in body:

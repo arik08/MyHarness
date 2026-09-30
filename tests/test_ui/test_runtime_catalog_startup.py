@@ -6,11 +6,14 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_cli_emits_runtime_choices_before_importing_engine(tmp_path):
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"])
+def test_cli_emits_runtime_choices_before_importing_engine(tmp_path, model):
     script = """
 import builtins, runpy, sys
 original_import = builtins.__import__
@@ -22,11 +25,11 @@ def guarded_import(name, *args, **kwargs):
     return original_import(name, *args, **kwargs)
 builtins.__import__ = guarded_import
 sys.argv = ['myharness', '--backend-only', '--cwd', sys.argv[1],
-            '--active-profile', 'codex', '--model', 'gpt-5.6-sol', '--effort', 'low']
+            '--active-profile', 'codex', '--model', sys.argv[2], '--effort', 'low']
 runpy.run_module('myharness', run_name='__main__')
 """
     result = subprocess.run(
-        [sys.executable, "-c", script, str(tmp_path)],
+        [sys.executable, "-c", script, str(tmp_path), model],
         cwd=tmp_path,
         env={
             **os.environ,
@@ -43,9 +46,10 @@ runpy.run_module('myharness', run_name='__main__')
     event = events[0]
     assert event["type"] == "state_snapshot"
     assert event["state"]["active_profile"] == "codex"
-    assert event["state"]["model"] == "gpt-5.6-sol"
+    assert event["state"]["model"] == model
     assert event["state"]["effort"] == "low"
-    assert event["state"]["runtime_options"]["models_by_provider"]["codex"]
+    choices = event["state"]["runtime_options"]["models_by_provider"]["codex"]
+    assert {"gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"} <= {item["value"] for item in choices}
     assert "ready" not in event["state"]
 
 

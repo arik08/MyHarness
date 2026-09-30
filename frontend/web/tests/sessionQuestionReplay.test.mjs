@@ -7,6 +7,27 @@ import { createSessionReplayState, rememberSuppressedUserTranscript, replayEvent
 const source = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
 const startMessageSource = source.slice(source.indexOf("function startSessionMessage("), source.indexOf("function enqueueSessionMessage("));
 
+test("late runtime acknowledgements and errors do not finish a new question", () => {
+  const updateSource = source.slice(source.indexOf("function updateSessionStateFromBackendEvent("), source.indexOf("function liveSessionPayload("));
+  let idleCloses = 0;
+  const update = vm.runInNewContext(`(${updateSource})`, {
+    activityLog: { event() {} },
+    cancelIdleClientClose() {},
+    scheduleIdleClientClose() { idleCloses += 1; },
+    scheduleCapacityQueueDrain() {},
+  });
+  const session = { busy: false };
+  update(session, { type: "status" });
+  for (const type of ["line_complete", "error"]) {
+    update(session, { type, request_scope: "runtime" });
+    assert.equal(session.busy, true);
+    assert.equal(idleCloses, 0);
+  }
+  update(session, { type: "line_complete", quiet: true });
+  assert.equal(session.busy, false);
+  assert.equal(idleCloses, 1);
+});
+
 function harness() {
   const session = { replayState: createSessionReplayState() };
   let payload;

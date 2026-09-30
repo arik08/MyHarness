@@ -1,4 +1,6 @@
 import { resourceAdmissionReason } from "./modules/resourceAdmission.js";
+import { createEntryPasswordStore } from "./modules/entryPassword.js";
+import { saveResponseFeedback } from "./modules/responseFeedback.js";
 import { writeTextFileAtomic } from "./modules/atomicFile.js";
 import { sendFileResponse } from "./modules/fileResponse.js";
 import { moveFileExclusive } from "./modules/moveFileExclusive.js";
@@ -94,8 +96,9 @@ const aiEditHeartbeatIntervalMs = 15_000;
 const clipboardImageMaxBytes = 64 * 1024 * 1024;
 const jsonRequestMaxBytes = 12 * 1024 * 1024;
 const entryPassword = process.env.MYHARNESS_ENTRY_PASSWORD === undefined
-  ? "1111"
+  ? "2222"
   : String(process.env.MYHARNESS_ENTRY_PASSWORD);
+const entryPasswordStore = await createEntryPasswordStore(join(process.env.MYHARNESS_CONFIG_DIR, "entry-password.json"), entryPassword);
 const entryCookieName = "myharness_entry";
 const entryAccessMaxAgeSeconds = 24 * 60 * 60;
 const reservedWorkspaceNames = new Set([
@@ -601,28 +604,55 @@ function requestCookies(request) {
   );
 }
 
-function entryAccessToken(issuedAt) {
+function entryAccessToken(issuedAt, kind = "primary") {
+  const key = entryPasswordStore.cookieKey(kind);
+  if (key === null) return "";
+  const prefix = kind === "guest" ? "guest." : "";
   const signature = crypto
-    .createHmac("sha256", entryPassword)
-    .update(`${entryCookieName}:${issuedAt}`)
+    .createHmac("sha256", key)
+    .update(`${entryCookieName}:${prefix}${issuedAt}`)
     .digest("base64url");
-  return `${issuedAt}.${signature}`;
+  return `${prefix}${issuedAt}.${signature}`;
 }
 
 function hasEntryAccess(request) {
-  if (!entryPassword) return true;
+  if (!entryPasswordStore.enabled) return true;
   const token = requestCookies(request)[entryCookieName] || "";
-  const separator = token.indexOf(".");
-  const issuedAt = Number(token.slice(0, separator));
+  const kind = token.startsWith("guest.") ? "guest" : "primary";
+  const tokenBody = kind === "guest" ? token.slice(6) : token;
+  const separator = tokenBody.indexOf(".");
+  const issuedAt = Number(tokenBody.slice(0, separator));
   const ageSeconds = Math.floor(Date.now() / 1000) - issuedAt;
   return separator > 0
     && Number.isInteger(issuedAt)
     && ageSeconds >= 0
     && ageSeconds <= entryAccessMaxAgeSeconds
-    && secureEqual(token, entryAccessToken(issuedAt));
+    && secureEqual(token, entryAccessToken(issuedAt, kind));
 }
 
 async function handleEntryAuth(request, response, pathname) {
+  if (request.method === "POST" && pathname === "/api/auth/password") {
+    if (!hasEntryAccess(request)) {
+      json(response, 401, { error: "접속 인증이 필요합니다." });
+      return true;
+    }
+    if (!hasAdminModeAccess(request)) {
+      json(response, 403, { error: "관리자 모드에서만 변경할 수 있습니다." });
+      return true;
+    }
+    try {
+      const body = await readJson(request, 4096);
+      await entryPasswordStore.change(body.currentPassword, body.newPassword, body.confirmation, body.kind);
+      const token = entryAccessToken(Math.floor(Date.now() / 1000));
+      response.setHeader("Set-Cookie", `${entryCookieName}=${encodeURIComponent(token)}; Max-Age=${entryAccessMaxAgeSeconds}; HttpOnly; SameSite=Strict; Path=/`);
+      json(response, 200, { ok: true });
+    } catch (error) {
+      json(response, error.status || (error instanceof SyntaxError ? 400 : 500), {
+        error: error.status ? error.message : "비밀번호를 저장하지 못했습니다. 다시 시도해 주세요.",
+      });
+    }
+    return true;
+  }
   if (request.method === "GET" && pathname === "/api/auth/status") {
     json(response, 200, { authenticated: hasEntryAccess(request) });
     return true;
@@ -630,8 +660,9 @@ async function handleEntryAuth(request, response, pathname) {
   if (request.method === "POST" && pathname === "/api/auth/login") {
     try {
       const body = await readJson(request);
-      if (!entryPassword || secureEqual(body.password || "", entryPassword)) {
-        const token = entryAccessToken(Math.floor(Date.now() / 1000));
+      const kind = entryPasswordStore.enabled ? await entryPasswordStore.authenticate(body.password) : "primary";
+      if (kind) {
+        const token = entryAccessToken(Math.floor(Date.now() / 1000), kind);
         response.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
@@ -6294,6 +6325,8 @@ function updateSessionStateFromBackendEvent(session, event) {
   if (!event || typeof event !== "object") {
     return;
   }
+  // A runtime setting acknowledgement must not finish a newer user question.
+  if (event.request_scope === "runtime") return;
   if (event.state?.runtime_options) session.runtimeOptions = event.state.runtime_options;
   activityLog.event(session, event.type);
   if (event.type === "ready") {
@@ -6789,6 +6822,32 @@ async function handleApi(request, response, pathname) {
       });
     } catch (error) {
       json(response, 400, { error: error.message || "Could not update history like" });
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/response-feedback") {
+    try {
+      const body = await readJson(request);
+      const workspace = workspaceFromHistoryRequest(body, workspaceScope);
+      let sourceId = String(body.sessionId || "").trim();
+      const live = sessions.get(sourceId);
+      if (live) {
+        if (live.clientId !== body.clientId || !sessionBelongsToWorkspace(live, workspace)) {
+          json(response, 404, { error: "Unknown session" });
+          return true;
+        }
+        sourceId = live.savedSessionId;
+      }
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sourceId || "")) {
+        throw new Error("대화 저장이 끝난 뒤 다시 시도해 주세요.");
+      }
+      const directory = sessionDirectoryForWorkspace(workspace);
+      await readStoredSessionSnapshot(join(directory, `session-${sourceId}.json`));
+      const result = await saveResponseFeedback(join(directory, "response-feedback"), body, sourceId);
+      json(response, 200, { ok: true, ...result });
+    } catch (error) {
+      json(response, 400, { error: error.message || "평가를 저장하지 못했습니다." });
     }
     return true;
   }

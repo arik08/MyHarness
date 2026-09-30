@@ -9,12 +9,6 @@ import { QuestionHistory, questionHistory } from "./QuestionHistory";
 
 type TimelineRow = { kind: "note"; event: WorkflowEvent } | { kind: "actions"; events: WorkflowEvent[]; index: number };
 
-// Provider summaries can contain a short Markdown heading before the body.
-// Hide those headings (including heading-only items), keeping the body intact.
-export function reasoningSummaryBody(text: string): string {
-  return text.split(/\r?\n/).filter((line) => !/^\s*(?:#{1,6}\s+.+|\*\*[^*]+\*\*|__[^_]+__)\s*$/.test(line)).join("\n").trim();
-}
-
 // Walk the recorded order. Purpose labels are mutable summaries, not call parents:
 // collecting all their children first would move later calls across a progress note.
 export function asideTimelineRows(events: WorkflowEvent[]): TimelineRow[] {
@@ -28,6 +22,8 @@ export function asideTimelineRows(events: WorkflowEvent[]): TimelineRow[] {
     else { const copy = { ...event }; calls.set(key, copy); canonical.push(copy); }
   }
   for (const event of canonical) {
+    // Hide provider summaries in both live work and restored history.
+    if (event.noteSource === "provider-summary") continue;
     // Purpose rows repeat public prose; actual calls already carry status.
     if (event.role === "purpose") continue;
     // Lifecycle bookkeeping stays in state, but is not useful reading material.
@@ -36,7 +32,6 @@ export function asideTimelineRows(events: WorkflowEvent[]): TimelineRow[] {
       rows.push({ kind: "note", event });
       continue;
     }
-    if (event.noteSource === "provider-summary" && !reasoningSummaryBody(event.detail)) continue;
     if (event.role === "agents" && !event.agents?.length) continue;
     if (!event.toolName && event.role !== "agents" && !event.detail.trim() && !(event.role === "waiting" && event.title.trim())) continue;
     if (event.role === "reasoning" || event.role === "waiting" || event.role === "agents" || event.toolName === "context_compaction" || questionHistory(event)) {
@@ -242,7 +237,7 @@ export function AsideWorkflowTimeline({ events, scope, duration, busy, agents = 
   const minutes = duration !== null ? Math.floor(duration / 60) : 0;
   const time = duration !== null ? `${minutes ? `${minutes}분 ` : ""}${Math.floor(duration % 60)}초 동안 작업${busy ? " 중" : "함"}` : busy ? "작업 중" : "작업 과정";
   return <article className="message assistant aside-workflow" aria-label="도구 진행 상황">
-    <Disclosure pendingWhenClosed={busy} pending={pendingResponse && rows.at(-1)?.kind !== "actions"} storageKey={`${scope}:all`} className="aside-work" defaultOpen ariaLabel="작업 과정 펼침/접기" label={<span>{time}</span>}>
+    <Disclosure key={busy ? "running" : "complete"} pendingWhenClosed={busy} pending={pendingResponse && rows.at(-1)?.kind !== "actions"} storageKey={`${scope}:all:${busy ? "running" : "complete"}`} className="aside-work" defaultOpen={busy || expanded} ariaLabel="작업 과정 펼침/접기" label={<span>{time}</span>}>
       <div className="aside-timeline">{rows.map((row, index) => {
         if (row.kind === "note") {
           const event = row.event;
@@ -259,10 +254,8 @@ export function AsideWorkflowTimeline({ events, scope, duration, busy, agents = 
           if (event.role === "agents") return <AgentTree key={event.id} agents={event.agents || []} scope={`${scope}:agents:${index}`} />;
           if (event.noteSource === "progress") return <p key={event.id} className="aside-progress-prose" data-workflow-role="progress"><InlineMarkdown text={event.detail} /></p>;
           if (event.toolName === "context_compaction") return <div className="aside-system-event" key={event.id}>{event.title} · {statusLabel(event.status)} · {compactionUsageLabel(event)}</div>;
-          return <Disclosure key={event.id} storageKey={`${scope}:note:${event.id}`} className="aside-reasoning" label={<><span className="aside-activity-icon"><Icon name="ai" /></span><span>{event.noteSource === "provider-summary" ? "추론 요약" : "진행 기록"}</span></>}>
-            <div className="aside-note-detail">{event.noteSource === "provider-summary"
-              ? reasoningSummaryBody(event.detail).split(/\n\s*\n/).map((paragraph, index) => <p key={index}><InlineMarkdown text={paragraph} /></p>)
-              : <InlineMarkdown text={(event.detail || event.title).split(/\r?\n/).filter(Boolean).join(" · ")} />}</div>
+          return <Disclosure key={event.id} defaultOpen={busy && !event.restored} storageKey={`${scope}:note:${event.id}`} className="aside-reasoning" label={<><span className="aside-activity-icon"><Icon name="ai" /></span><span>진행 기록</span></>}>
+            <div className="aside-note-detail"><InlineMarkdown text={(event.detail || event.title).split(/\r?\n/).filter(Boolean).join(" · ")} /></div>
           </Disclosure>;
         }
         const first = row.events[0];

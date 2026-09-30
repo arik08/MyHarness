@@ -1,0 +1,14 @@
+.answer-copy-trigger[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.answer-copy-trigger[aria-disabled="true"] { opacity: .55; cursor: wait; }
+.answer-copy-popover {
+  position: fixed; z-index: 100; display: grid; gap: 2px;
+  width: max-content; max-width: calc(100vw - 16px); box-sizing: border-box;
+  padding: 5px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--panel-raised); color: var(--ink); box-shadow: 0 6px 24px rgb(0 0 0 / 14%);
+}
+.answer-copy-popover button {
+  padding: 7px 10px; border: 0; border-radius: 4px; background: transparent;
+  color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.answer-copy-popover button:hover { background: var(--sidebar-hover); }
+.answer-copy-popover button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }

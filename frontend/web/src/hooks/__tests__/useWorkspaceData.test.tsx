@@ -46,6 +46,12 @@ function Probe() {
 }
 
 describe("useWorkspaceData", () => {
+  it.each(["", "새 대화", "MyHarness"])("fills a placeholder saved title from its own live session: %s", (description) => {
+    const sessions = [{ sessionId: "runtime", savedSessionId: "saved", title: "분기 실적 비교", busy: false, createdAt: 1 }];
+    const merged = mergeLiveSessions([{ value: "saved", label: "saved", description }], sessions, null);
+    expect(merged[0].description).toBe("분기 실적 비교");
+    expect(mergeLiveSessions([{ ...merged[0], description: "직접 정한 제목" }], sessions, "runtime")[0].description).toBe("직접 정한 제목");
+  });
   it("keeps all pages on partial refresh failure and later reflects deletions", async () => {
     vi.useFakeTimers();
     try {

@@ -1042,7 +1042,7 @@ async def run_query(
                     yield AssistantTextDelta(text=event.text), None
                     continue
                 if isinstance(event, ApiReasoningSummaryEvent):
-                    yield ReasoningSummaryEvent(text=event.text), None
+                    yield ReasoningSummaryEvent(text=event.text, summary_id=event.summary_id), None
                     continue
                 if isinstance(event, ApiCompactionEvent):
                     provider_compacting = event.phase == "compact_start"
