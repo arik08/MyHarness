@@ -44,6 +44,7 @@ from myharness.engine.messages import (
     ImageBlock,
     TextBlock,
     ToolResultBlock,
+    is_compact_context_text,
     sanitize_conversation_messages,
 )
 from myharness.engine.query import format_internal_steering_update
@@ -2714,6 +2715,10 @@ class ReactBackendHost:
         if current_title and title_source != _SESSION_TITLE_SOURCE_PROMPT:
             return
         messages = self._bundle.engine.messages
+        if any(is_compact_context_text(message.text) for message in messages):
+            # A reduced model context is not a new conversation. Keep the title
+            # established from the original prompt, including on the first turn.
+            return
         user_messages = [message for message in messages if message.role == "user" and message.text.strip()]
         assistant_messages = [message for message in messages if message.role == "assistant" and message.text.strip()]
         if not user_messages or not assistant_messages:

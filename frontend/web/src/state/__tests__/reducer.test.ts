@@ -707,7 +707,7 @@ describe("appReducer", () => {
   });
 
   it("shows compact progress as workflow UI without adding chat noise", () => {
-    const active = appReducer(initialAppState, {
+    const active = appReducer({ ...initialAppState, sessionId: "live-session", activeHistoryId: "saved-conversation" }, {
       type: "append_message",
       message: { role: "user", text: "큰 자료를 분석해줘" },
     });
@@ -727,6 +727,9 @@ describe("appReducer", () => {
     expect(compactEvent?.title).toBe("컨텍스트 자동 압축");
     expect(compactEvent?.status).toBe("done");
     expect(compactEvent?.detail).toContain("작업을 계속합니다");
+    expect(completed.sessionId).toBe("live-session");
+    expect(completed.activeHistoryId).toBe("saved-conversation");
+    expect(completed.messages).toEqual(active.messages);
   });
 
   it("labels reactive compaction as a context-limit retry", () => {

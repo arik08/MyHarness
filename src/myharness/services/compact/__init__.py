@@ -31,6 +31,7 @@ from myharness.engine.messages import (
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
+    is_compact_context_text,
     sanitize_conversation_messages,
 )
 from myharness.engine.stream_events import CompactProgressEvent
@@ -425,14 +426,7 @@ def _is_archivable_user_message(message: ConversationMessage) -> bool:
     text = message.text.strip()
     if not text:
         return False
-    synthetic_prefixes = (
-        "[Compact boundary marker]",
-        "[Compact attachment:",
-        "[conversation summary]",
-        "This session is being continued",
-        "Session memory summary from earlier",
-    )
-    return not text.startswith(synthetic_prefixes)
+    return not is_compact_context_text(text)
 
 
 def _archive_short_hint(text: str) -> str:

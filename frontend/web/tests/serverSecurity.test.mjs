@@ -230,6 +230,10 @@ async function startWebServer({ host = "127.0.0.1", env = {}, nodeArgs = [], ent
     MYHARNESS_HOME: configDir,
     MYHARNESS_ENTRY_PASSWORD: "",
     MYHARNESS_IGNORE_LOCAL_ENV: "1",
+    // Security/session tests must not queue requests because the test host is busy.
+    // Resource-admission tests override these limits explicitly.
+    MYHARNESS_MAX_CPU_PERCENT: "100",
+    MYHARNESS_MAX_MEMORY_PERCENT: "100",
     ...env,
   };
 
@@ -284,7 +288,7 @@ async function startWebServer({ host = "127.0.0.1", env = {}, nodeArgs = [], ent
         child.once("exit", resolve);
         setTimeout(resolve, 2_000);
       });
-      await rm(configDir, { recursive: true, force: true });
+      await rm(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     },
   };
 }
@@ -927,7 +931,7 @@ test("connected screens follow SSE connections without counting retained idle se
 });
 
 test("migrates count limits to resource settings, exposes queue population, and resumes", async (t) => {
-  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared", MYHARNESS_MAX_ACTIVE_SESSIONS: "1", MYHARNESS_MAX_BUSY_SESSIONS: "1" } });
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared", MYHARNESS_MAX_ACTIVE_SESSIONS: "1", MYHARNESS_MAX_BUSY_SESSIONS: "1", MYHARNESS_MAX_CPU_PERCENT: undefined, MYHARNESS_MAX_MEMORY_PERCENT: undefined } });
   t.after(() => app.stop());
   const headers = { "content-type": "application/json", "x-myharness-admin-mode": "1" };
   const save = (body) => fetch(`${app.baseUrl}/api/settings/concurrency`, { method: "POST", headers, body: JSON.stringify(body) });

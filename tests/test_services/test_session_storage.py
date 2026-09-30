@@ -76,6 +76,58 @@ def test_save_and_load_session_snapshot(tmp_path: Path, monkeypatch):
     assert snapshot["tool_metadata"]["user_input_archive"][0]["text"] == "중요한 과거 사용자 입력"
 
 
+@pytest.mark.parametrize("trigger", ["auto", "manual", "reactive"])
+@pytest.mark.parametrize("title", [None, "Orion research"])
+def test_compaction_preserves_saved_conversation_identity(tmp_path, trigger, title):
+    from myharness.services.compact import create_compact_boundary_message
+
+    original = "Research Orion revenue and compare the quarterly results"
+    metadata = {"session_title": title} if title else {}
+    events = [{"type": "user", "text": original}, {"type": "assistant", "text": "Working"}]
+    kwargs = dict(cwd=tmp_path, model="test", system_prompt="system", usage=UsageSnapshot(), session_id="same-chat")
+    save_session_snapshot(**kwargs, messages=[ConversationMessage.from_user_text(original)], tool_metadata=metadata, history_events=events)
+    before = load_session_by_id(tmp_path, "same-chat")
+    for index in range(2):
+        messages = [
+            create_compact_boundary_message({"trigger": trigger}),
+            ConversationMessage.from_user_text("[conversation summary]\nEarlier research"),
+            ConversationMessage.from_user_text("[Compact attachment: tools] available tools"),
+            ConversationMessage.from_user_text(f"Continue with another topic {index}"),
+            ConversationMessage(role="assistant", content=[TextBlock(text="Continued")]),
+        ]
+        save_session_snapshot(**kwargs, messages=messages, tool_metadata=metadata, history_events=events)
+        restored = load_session_by_id(tmp_path, "same-chat")
+        assert restored["session_id"] == before["session_id"]
+        assert restored["created_at"] == before["created_at"]
+        assert restored["summary"] == before["summary"]
+        assert restored["first_user_summary"] == original
+        assert restored["history_events"] == before["history_events"]
+        # Model continuity context must still be available after disk reload.
+        assert restored["messages"][0]["content"][0]["text"].startswith("[Compact boundary marker]")
+        listed = list_session_snapshots(tmp_path)
+        assert len(listed) == 1
+        assert listed[0]["summary"] == before["summary"]
+
+
+@pytest.mark.parametrize("source", ["history_events", "archive", "messages"])
+def test_legacy_compacted_title_recovers_from_authored_input(tmp_path, source):
+    from myharness.services.compact import create_compact_boundary_message
+
+    original = "Orion revenue comparison"
+    marker = create_compact_boundary_message({})
+    data = {"messages": [marker.model_dump()], "summary": marker.text[:80]}
+    if source == "history_events":
+        data[source] = [{"type": "user", "text": original}]
+    elif source == "archive":
+        data["tool_metadata"] = {"user_input_archive": [{"text": original}]}
+    else:
+        data["messages"].extend([
+            ConversationMessage.from_user_text("[Compact attachment: memory] internal").model_dump(),
+            ConversationMessage.from_user_text(original).model_dump(),
+        ])
+    assert session_storage._snapshot_display_summary(data) == original
+
+
 def test_new_session_storage_uses_compact_utf8_snapshot_and_latest_pointer(tmp_path: Path):
     project = tmp_path / "repo"
     project.mkdir()

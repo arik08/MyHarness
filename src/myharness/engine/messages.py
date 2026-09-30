@@ -45,6 +45,17 @@ def _compact_steering_prompt(text: str) -> str:
     return match.group("request").strip()
 
 
+def is_compact_context_text(text: str) -> bool:
+    """Identify synthetic continuity context, not a user-authored request."""
+    return text.lstrip().startswith((
+        "[Compact boundary marker]",
+        "[Compact attachment:",
+        "[conversation summary]",
+        "This session is being continued",
+        "Session memory summary from earlier",
+    ))
+
+
 def strip_internal_message_text(text: str) -> str:
     """Remove model-facing internal notes from user-visible transcript text."""
     clean = _INTERNAL_ATTACHMENT_NOTE_RE.sub("", text).strip()

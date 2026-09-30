@@ -17,7 +17,7 @@ from uuid import uuid4
 from myharness.api.usage import UsageSnapshot
 from myharness.services.token_estimation import estimate_tokens
 from myharness.config.paths import get_project_config_dir
-from myharness.engine.messages import ConversationMessage, ImageBlock, sanitize_conversation_messages, strip_internal_message_text
+from myharness.engine.messages import ConversationMessage, ImageBlock, is_compact_context_text, sanitize_conversation_messages, strip_internal_message_text
 from myharness.utils.fs import atomic_write_text
 from myharness.utils.file_lock import exclusive_file_lock
 from myharness.services.session_documents import session_document_dir_for_delete
@@ -345,6 +345,8 @@ def title_matches_first_user(title: str, first_user_text: str) -> bool:
 
 def display_summary_for_first_user(summary: str, first_user_text: str) -> str:
     clean = strip_internal_message_text(summary)
+    if is_compact_context_text(clean):
+        clean = ""
     if clean and title_matches_first_user(clean, first_user_text) and not title_echoes_first_user(clean, first_user_text):
         return clean
     fallback = fallback_session_title_from_user_text(first_user_text)
@@ -484,12 +486,15 @@ def save_session_snapshot(
             for key in ("session_title", "session_title_source", "session_title_user_edited", "session_title_updated_at"):
                 if key in existing_metadata:
                     tool_metadata[key] = existing_metadata[key]
-    metadata_title = _session_title_from_metadata(tool_metadata)
-    first_user_summary = ""
-    for msg in messages:
-        if msg.role == "user":
-            first_user_summary = _message_summary(msg)
-            break
+    metadata_title = _session_title_from_metadata(tool_metadata) or str(existing.get("summary") or "")
+    stored_messages = [message.model_dump(mode="json") for message in messages]
+    # The model context can lose its first request during compaction. The
+    # conversation identity must continue to use the original request instead.
+    first_user_summary = _first_user_summary_from_snapshot(existing) or _first_user_summary_from_snapshot({
+        "messages": stored_messages,
+        "history_events": history_events,
+        "tool_metadata": tool_metadata,
+    })
     user_edited_title = bool(
         isinstance(tool_metadata, dict) and tool_metadata.get("session_title_user_edited")
     )
@@ -506,7 +511,6 @@ def save_session_snapshot(
         existing_last_assistant_at=existing_last_assistant_at,
         fallback_now=now,
     )
-    stored_messages = [message.model_dump(mode="json") for message in messages]
     payload = {
         "storage_version": _SESSION_STORAGE_VERSION,
         "session_id": sid,
@@ -526,6 +530,7 @@ def save_session_snapshot(
         "created_at": existing_created_at or now,
         "last_assistant_at": last_assistant_at,
         "summary": summary,
+        "first_user_summary": first_user_summary,
         "message_count": len(messages),
         "pinned": existing_pinned,
         "liked": existing_liked,
@@ -1160,12 +1165,30 @@ def load_session_snapshot(cwd: str | Path) -> dict[str, Any] | None:
 
 
 def _first_user_summary_from_snapshot(data: dict[str, Any]) -> str:
+    original = str(data.get("first_user_summary") or "").strip()
+    if original and not is_compact_context_text(original):
+        return original
+    # Legacy snapshots have no stable anchor. Recover it from the authored
+    # transcript or input archive before considering the reduced model context.
+    for event in data.get("history_events") or []:
+        if isinstance(event, dict) and event.get("type") == "user":
+            text = strip_internal_message_text(str(event.get("text") or ""))
+            if text and not is_compact_context_text(text):
+                return _with_image_marker(text, bool(event.get("images")))
+    metadata = data.get("tool_metadata")
+    if isinstance(metadata, dict):
+        for entry in metadata.get("user_input_archive") or []:
+            text = str(entry.get("text") or "").strip() if isinstance(entry, dict) else ""
+            if text and not is_compact_context_text(text):
+                return strip_internal_message_text(text)
     messages = data.get("messages", [])
     if not isinstance(messages, list):
         return ""
     for msg in messages:
         if isinstance(msg, dict) and msg.get("role") == "user":
-            return _raw_message_summary(msg)
+            text = _raw_message_summary(msg)
+            if text and not is_compact_context_text(text):
+                return text
     return ""
 
 

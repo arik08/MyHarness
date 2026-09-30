@@ -3642,6 +3642,53 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("trigger", ["auto", "reactive", "manual"])
+async def test_compacted_backend_keeps_session_and_prompt_title(tmp_path, monkeypatch, trigger):
+    from myharness.services.compact import build_post_compact_messages, compact_conversation
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    await start_runtime(host._bundle)
+    try:
+        sid = host._bundle.session_id
+        await host._maybe_update_session_title_from_prompt("Orion revenue comparison")
+        title = host._bundle.engine.tool_metadata["session_title"]
+        await host._emit(BackendEvent(type="transcript_item", item={"role": "user", "text": "Orion revenue comparison"}))
+        source_messages = [ConversationMessage.from_user_text("Orion revenue comparison")]
+        source_messages.extend(
+            ConversationMessage(
+                role="assistant" if index % 2 == 0 else "user",
+                content=[TextBlock(text=(f"Research step {index} " * 1500) if index % 2 == 0 else f"Follow up {index}")],
+            )
+            for index in range(7)
+        )
+        compacted = await compact_conversation(
+            source_messages, api_client=StaticApiClient("<summary>Prior research retained</summary>"),
+            model=host._bundle.engine.model, trigger=trigger, preserve_recent=2,
+            carryover_metadata=host._bundle.engine.tool_metadata,
+        )
+        host._bundle.engine.load_messages(build_post_compact_messages(compacted))
+        assert host._bundle.engine.messages[0].text.startswith("[Compact boundary marker]")
+        async def unexpected_title_generation(messages):
+            pytest.fail("Compacted context must not regenerate the conversation title")
+        host._generate_session_title = unexpected_title_generation
+        await host._maybe_update_session_title()
+        await host._save_current_session_snapshot()
+        assert host._bundle.session_id == sid
+        saved = host._bundle.session_backend.load_by_id(tmp_path, sid)
+        assert saved["summary"] == title
+        assert saved["history_events"][0]["text"] == "Orion revenue comparison"
+        assert await host._restore_history_snapshot(sid)
+        assert host._bundle.session_id == sid
+        assert host._bundle.engine.tool_metadata["session_title"] == title
+    finally:
+        await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["auto", "reactive", "manual"])
 async def test_compaction_events_survive_real_emit_save_and_disk_reload(tmp_path, trigger):
     from myharness.services.session_backend import MyHarnessSessionBackend
 
