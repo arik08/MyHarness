@@ -520,6 +520,10 @@ def test_session_history_compacts_replay_only_tool_payloads(tmp_path: Path, monk
     assert "이전 세션 빠른 복원을 위해 원문 축약" not in started["tool_input"]["content"]
     assert len(started["tool_input"]["content"]) <= session_storage._HISTORY_TOOL_INPUT_FIELD_MAX_CHARS
     assert started["tool_input"]["_history_replay_truncated"] is True
+    assert started["tool_input"]["_history_replay_content_counts"]["content"] == {
+        "tokens": session_storage.estimate_tokens(large_content),
+        "lines": len(large_content.replace("\r\n", "\n").split("\n")),
+    }
     assert started["tool_input"]["_history_replay_original_chars"] == len(
         json.dumps(
             {"file_path": "outputs/report.html", "content": large_content},

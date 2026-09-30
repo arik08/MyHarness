@@ -15,6 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from myharness.api.usage import UsageSnapshot
+from myharness.services.token_estimation import estimate_tokens
 from myharness.config.paths import get_project_config_dir
 from myharness.engine.messages import ConversationMessage, ImageBlock, sanitize_conversation_messages, strip_internal_message_text
 from myharness.utils.fs import atomic_write_text
@@ -760,6 +761,13 @@ def _compact_history_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
         str(key): _compact_history_tool_input_value(value)
         for key, value in tool_input.items()
     }
+    content_counts = dict(tool_input.get("_history_replay_content_counts") or {})
+    for key, value in tool_input.items():
+        if isinstance(value, str) and len(value) > _HISTORY_TOOL_INPUT_FIELD_MAX_CHARS:
+            content_counts.setdefault(str(key), {
+                "tokens": estimate_tokens(value),
+                "lines": len(value.replace("\r\n", "\n").split("\n")),
+            })
     compacted_serialized = json.dumps(compacted, ensure_ascii=False, separators=(",", ":"))
     if compacted_serialized == serialized:
         return compacted
@@ -768,6 +776,7 @@ def _compact_history_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
         **compacted,
         "_history_replay_truncated": True,
         "_history_replay_original_chars": len(serialized),
+        "_history_replay_content_counts": content_counts,
     }
     marked_serialized = json.dumps(marked_compacted, ensure_ascii=False, separators=(",", ":"))
     if len(marked_serialized) <= _HISTORY_TOOL_INPUT_MAX_CHARS:
@@ -776,6 +785,7 @@ def _compact_history_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "_history_replay_truncated": True,
         "_history_replay_original_chars": len(serialized),
+        "_history_replay_content_counts": content_counts,
     }
     ordered_keys = dict.fromkeys((*_HISTORY_TOOL_INPUT_SUMMARY_KEYS, *compacted.keys()))
     for key in ordered_keys:
@@ -792,10 +802,7 @@ def _compact_history_tool_input_value(value: Any) -> Any:
     if isinstance(value, str):
         return _truncate_history_tool_input_text(value)
     if isinstance(value, dict):
-        return {
-            str(key): _compact_history_tool_input_value(item)
-            for key, item in value.items()
-        }
+        return _compact_history_tool_input(value)
     if isinstance(value, list):
         return [_compact_history_tool_input_value(item) for item in value]
     return value

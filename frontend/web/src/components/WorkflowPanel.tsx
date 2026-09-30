@@ -86,6 +86,22 @@ function workflowContentCount(text: string): WorkflowContentCount {
   };
 }
 
+function workflowRestoredContentCount(input: Record<string, unknown>, key: string, content: string) {
+  const counts = input._history_replay_content_counts as Record<string, WorkflowContentCount> | undefined;
+  if (counts?.[key]) return counts[key];
+  if (!input._history_replay_truncated) return undefined;
+  const marker = content.match(/원본 ([\d,]+)자/u);
+  const sample = content.replace(/\n\.\.\.\[이전 세션 빠른 복원을 위해 원문 축약[^\n]*\n/u, "").replace(/\.\.\.$/u, "");
+  const originalChars = marker
+    ? Number(marker[1].replace(/,/g, ""))
+    : Number(input._history_replay_original_chars) - JSON.stringify(Object.fromEntries(
+      Object.entries(input).filter(([field]) => field !== key && !field.startsWith("_history_replay_")),
+    )).length - key.length - 6;
+  const scale = Number.isFinite(originalChars) && sample.length > 0 ? Math.max(1, originalChars / sample.length) : 1;
+  const count = workflowContentCount(sample);
+  return { tokens: Math.round(count.tokens * scale), lines: Math.round(count.lines * scale) };
+}
+
 function formatWorkflowContentCountValue(count: WorkflowContentCount) {
   return `${formatWorkflowTokenCount(count.tokens)} (${Math.max(0, Math.round(count.lines || 0)).toLocaleString()}줄)`;
 }
@@ -314,6 +330,7 @@ function workflowSkillSupportingPreviews(input: Record<string, unknown>) {
       path: name ? `.skills/POSCO_Skill/${name}/${path}` : path,
       kind: "content" as const,
       content: content.value,
+      fullContentCount: workflowRestoredContentCount(record, "content", content.value),
     }];
   });
 }
@@ -350,7 +367,8 @@ function workflowPreviewSource(event: WorkflowEvent) {
   }
   const content = workflowInputValue(input, ["content", "new_string", "new_source"]);
   if (content.found) {
-    return { path, kind: "content" as const, content: content.value };
+    const key = ["content", "new_string", "new_source"].find((key) => typeof input[key] === "string");
+    return { path, kind: "content" as const, content: content.value, fullContentCount: key ? workflowRestoredContentCount(input, key, content.value) : undefined };
   }
   if (path && event.status === "running" && lower.includes("write")) {
     return { path, kind: "content" as const, content: "파일 내용을 읽는 중입니다..." };
@@ -826,7 +844,8 @@ function WorkflowOutputPreview({
     ? event.status === "error" ? "수정 실패" : done ? "수정 완료" : "수정 미리보기"
     : event.status === "error" ? "작성 실패" : done ? "작성 완료" : "작성 중인 결과물";
   const longReportTool = isLongReportWorkflowTool(event.toolName);
-  const contentCountTarget = useMemo(() => workflowContentCount(source.content), [source.content]);
+  const fullContentCount = "fullContentCount" in source ? source.fullContentCount : undefined;
+  const contentCountTarget = useMemo(() => fullContentCount || workflowContentCount(source.content), [source.content, fullContentCount]);
   const visibleContentCount = workflowContentCountForVisibleProgress(
     contentCountTarget,
     displayContent,

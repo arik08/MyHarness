@@ -125,7 +125,23 @@ describe("file output persistence through real conversation events", () => {
     ] });
     expect(screen.getByText("작성 완료 - compact.html")).toBeTruthy();
     expect(assertVisibleOutputs(1)[0].querySelector("pre")?.textContent).toBe(content);
+    expect(screen.queryByText("전체 분량 정보 없음")).toBeNull();
+    expect(assertVisibleOutputs(1)[0].textContent).toMatch(/[\d,]+ 토큰 \([\d,]+줄\)/);
     expect(screen.getByRole("button", { name: "작업 과정 펼침/접기" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("uses full source counts when restored source is shortened", () => {
+    const conversation = renderConversation(initialAppState);
+    conversation.event({ type: "history_snapshot", preview_only: true, history_events: [
+      { type: "user", text: "보고서" },
+      { type: "tool_started", tool_name: "mcp__future_files__write_document", tool_call_id: "full-count", tool_input: {
+        path: "outputs/report.html", content: "<!doctype html>...", _history_replay_truncated: true,
+        _history_replay_content_counts: { content: { tokens: 12000, lines: 450 } },
+      } },
+      { type: "tool_completed", tool_name: "mcp__future_files__write_document", tool_call_id: "full-count", output: "Saved." },
+    ] });
+    expect(screen.getByText("12,000 토큰 (450줄)")).toBeTruthy();
+    expect(assertVisibleOutputs(1)[0].querySelector("pre")?.textContent).toBe("<!doctype html>...");
   });
 
   it.each(["error", "shutdown"] as const)("retains received file content with a failure state after %s", (type) => {
