@@ -587,6 +587,8 @@ class TestPgptOpenAICompatibleProvider:
             "gpt-5.6-luna",
             "gpt-5.6-terra",
             "gpt-5.6-sol",
+            "gpt-6-sol",
+            "gpt-6-luna",
         ]
         assert profile.base_url == "http://pgpt.posco.com/s0la01-gpt/v1"
 
@@ -700,6 +702,8 @@ class TestPgptOpenAICompatibleProvider:
             "gpt-5.6-luna",
             "gpt-5.6-terra",
             "gpt-5.6-sol",
+            "gpt-6-sol",
+            "gpt-6-luna",
         ]
         assert profile.last_model is None
 
