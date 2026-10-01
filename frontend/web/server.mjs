@@ -5889,7 +5889,7 @@ function countActiveSessions() {
 }
 
 function sessionHasCapacity() {
-  return !resourceAdmissionReason(serverMetrics.snapshot(), currentConcurrencySettings());
+  return !resourceAdmissionReason(serverMetrics.snapshot(true), currentConcurrencySettings());
 }
 
 function responseHasCapacity(session) {
@@ -5913,7 +5913,7 @@ function capacityQueueStats(kind) {
 
 function capacityQueueMessage(kind, position) {
   const { waitingUsers, waitingRequests } = capacityQueueStats(kind);
-  const reason = resourceAdmissionReason(serverMetrics.snapshot(), currentConcurrencySettings())
+  const reason = resourceAdmissionReason(serverMetrics.snapshot(true), currentConcurrencySettings())
     || (kind === "session" ? "앞선 접속 요청을 기다리는 중" : "브라우저 응답 여유를 기다리는 중");
   return `${kind === "session" ? "접속" : "응답"} 대기열 · 대기 ${waitingUsers}명 · ${waitingRequests}건 · 내 순번 ${position}번째 · ${reason}`;
 }

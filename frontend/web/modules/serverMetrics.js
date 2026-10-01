@@ -96,7 +96,7 @@ export function createServerMetrics({ sampleResources, readLoad, onSample = () =
       resourceError = "서버 자원 수집 불가 · Python 환경의 psutil 설치 상태를 확인하세요.";
     } finally {
       const current = snapshot();
-      history.push({ at: now(), resources, load: current.load, apiP95Ms: current.api.p95Ms });
+      history.push({ at: resourceSampledAt ?? now(), resources, load: current.load, apiP95Ms: current.api.p95Ms });
       trim(history);
       // Bounded even if the clock moves backwards or sample() is invoked manually.
       if (history.length > 181) history.splice(0, history.length - 181);

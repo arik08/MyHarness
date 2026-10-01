@@ -7,10 +7,10 @@ import { createServerMetrics } from "../modules/serverMetrics.js";
 
 const limits = { maxCpuPercent: 95, maxMemoryPercent: 98 };
 const resources = (cpuPercent = 20, used = 50) => ({ cpuPercent, totalMemoryBytes: 1000, availableMemoryBytes: (100 - used) * 10 });
-test("CPU and memory thresholds include the boundary and reject missing, invalid or stale measurements", () => {
+test("CPU spikes pass while memory limits and invalid or stale measurements still block", () => {
   const snapshot = (value) => ({ resources: value, sampledAt: 1000 });
   assert.equal(resourceAdmissionReason(snapshot(resources(94.9, 97.9)), limits, 1000), "");
-  assert.match(resourceAdmissionReason(snapshot(resources(95)), limits, 1000), /CPU/);
+  assert.equal(resourceAdmissionReason(snapshot(resources(100)), limits, 1000), "");
   assert.match(resourceAdmissionReason(snapshot(resources(20, 98)), limits, 1000), /메모리/);
   for (const value of [null, resources(null), resources(NaN), resources(101), { ...resources(), totalMemoryBytes: 0 }]) {
     assert.match(resourceAdmissionReason(snapshot(value), limits, 1000), /측정/);
@@ -31,10 +31,12 @@ function sourceFunction(name) {
 }
 test("both queues automatically resume after sampling recovery without closing running work", async () => {
   let sample = resources(99);
+  let clock = 100_000;
   const started = [];
   const sessions = new Map([["waiting", { id: "waiting", clientId: "a" }], ["running", { id: "running", clientId: "b", busy: true }]]);
   const context = vm.createContext({
-    resourceAdmissionReason, currentConcurrencySettings: () => limits,
+    resourceAdmissionReason: (snapshot, limits) => resourceAdmissionReason(snapshot, limits, clock),
+    currentConcurrencySettings: () => limits,
     sessions, maxBusySessionsPerClient: 3,
     responseCapacityQueue: [{ sessionId: "waiting", type: "message", request: {}, queuedAt: 0 }],
     sessionCapacityQueue: [{ id: "new", options: {}, queuedAt: 0 }],
@@ -47,8 +49,16 @@ test("both queues automatically resume after sampling recovery without closing r
   let drain;
   context.serverMetrics = createServerMetrics({
     sampleResources: async () => { if (sample === null) throw new Error(); return sample; },
-    readLoad: () => ({}), onSample: () => { drain = context.drainCapacityQueues(); },
+    readLoad: () => ({}), now: () => clock,
+    onSample: () => { if (context.drainCapacityQueues) drain = context.drainCapacityQueues(); },
   });
+  vm.runInContext(["countBusySessionsForClient", "sessionHasCapacity", "responseHasCapacity"].map(sourceFunction).join("\n"), context);
+  for (let i = 0; i < 4; i++) {
+    await context.serverMetrics.sample();
+    assert.equal(context.sessionHasCapacity(), i < 3);
+    assert.equal(context.responseHasCapacity(sessions.get("waiting")), i < 3);
+    clock += 5000;
+  }
   vm.runInContext(["countBusySessionsForClient", "sessionHasCapacity", "responseHasCapacity", "pruneAbandonedSessionRequests", "drainCapacityQueues"].map(sourceFunction).join("\n"), context);
   for (const value of [resources(99), resources(20, 99), null]) {
     sample = value;
@@ -140,4 +150,46 @@ test("closed waiting tabs expire while clients that keep polling retain their pl
   vm.runInContext(sourceFunction("pruneAbandonedSessionRequests"), context);
   context.pruneAbandonedSessionRequests();
   assert.deepEqual(sessionCapacityQueue.map((entry) => entry.id), ["live"]);
+});
+
+
+test("CPU spikes pass, sustained load queues, and recovery resets the full grace period", async () => {
+  let clock = 0;
+  let value = resources(100);
+  const metrics = createServerMetrics({ now: () => clock, readLoad: () => ({}),
+    sampleResources: async () => { if (!value) throw new Error("collector down"); return value; },
+  });
+  const check = async (at, cpu, expected, currentLimits = limits) => {
+    clock = at;
+    value = cpu === null ? null : resources(cpu);
+    await metrics.sample();
+    const reason = resourceAdmissionReason(metrics.snapshot(true), currentLimits, clock);
+    if (expected) assert.match(reason, expected);
+    else assert.equal(reason, "");
+  };
+  await check(0, 100, "");
+  await check(5000, 100, "");
+  await check(10000, 100, "");
+  // Polling the same sample must not count as further CPU measurements.
+  assert.equal(resourceAdmissionReason(metrics.snapshot(true), limits, 15000), "");
+  await check(14999, 100, "");
+  await check(15000, 100, /15초/);
+  await check(20000, 94, "");
+  await check(25000, 95, "");
+  await check(30000, 95, "");
+  await check(35000, 95, "");
+  await check(40000, 95, /15초/);
+  assert.equal(resourceAdmissionReason(metrics.snapshot(true), { ...limits, maxCpuPercent: 100 }, clock), "");
+  await check(45000, null, /측정/);
+  await check(50000, 100, "");
+  await check(55000, 100, "");
+  await check(60000, 100, "");
+  await check(65000, 100, /15초/, { ...limits, maxCpuPercent: 100 });
+  await check(80000, 100, ""); // A missing sampling interval breaks continuity.
+  await check(75000, 100, ""); // A backwards clock cannot inherit future history.
+  assert.match(resourceAdmissionReason(metrics.snapshot(true), limits, 96000), /측정/);
+  clock = 80000;
+  value = resources(100, 99);
+  await metrics.sample();
+  assert.match(resourceAdmissionReason(metrics.snapshot(true), limits, clock), /메모리/);
 });
