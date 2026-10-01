@@ -45,6 +45,8 @@ import {
   withEventTimestamp,
 } from "./modules/sessionReplay.js";
 
+import { isCompactionTitle, storedSessionTitle } from "./modules/sessionTitle.js";
+
 const root = fileURLToPath(new URL(".", import.meta.url));
 const activityLog = createActivityLog();
 const repoRoot = normalize(join(root, "../.."));
@@ -3819,15 +3821,6 @@ function messageText(message) {
     .join(" ");
 }
 
-function firstUserSummary(messages) {
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (message?.role === "user") {
-      return compactText(messageText(message));
-    }
-  }
-  return "";
-}
-
 const historyListItemCache = new Map();
 const historySnapshotPreviewCache = new Map();
 const migratedSessionDirectories = new Set();
@@ -4304,7 +4297,7 @@ async function migrateWorkspaceSessionStorage(sessionDir) {
 function historyItemFromMetadata(data, info, fileName) {
   const sessionId = String(data.session_id || "").trim()
     || fileName.replace(/^session-/, "").replace(/\.json$/i, "");
-  const summary = compactText(data.summary) || firstUserSummary(data.messages) || "새 대화";
+  const summary = compactText(storedSessionTitle(data)) || "새 대화";
   const createdAt = historyOrderTimestamp(data, info);
   const lastAssistantAt = lastAssistantActivityTimestamp(data, info);
   const date = new Date(createdAt * (createdAt < 10_000_000_000 ? 1000 : 1));
@@ -4342,7 +4335,7 @@ async function readSessionListItem(path) {
     return { ...cached.item };
   }
   const fileName = basename(path);
-  const data = meta || await readStoredSessionSnapshot(path);
+  const data = meta && !isCompactionTitle(meta.summary) ? meta : await readStoredSessionSnapshot(path);
   const item = historyItemFromMetadata(data, info, fileName);
   historyListItemCache.set(path, { fingerprint, item });
   return { ...item };

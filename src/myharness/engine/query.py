@@ -23,7 +23,7 @@ from myharness.api.client import (
     SupportsStreamingMessages,
 )
 from myharness.api.usage import UsageSnapshot
-from myharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock, ResponsesStateBlock
+from myharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, ResponsesStateBlock
 from myharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
@@ -318,13 +318,14 @@ def _combine_continued_assistant_message(
     *,
     append_notice: bool = False,
 ) -> ConversationMessage:
-    text = "".join([*previous_text_parts, _raw_message_text(final_message)])
+    previous_text = "".join(previous_text_parts)
+    content = [TextBlock(text=previous_text)] if previous_text else []
+    # Keep native Responses state and item ordering: a compaction boundary must
+    # discard preceding replay text while remaining available on the next turn.
+    content.extend(final_message.content)
     if append_notice:
-        text = f"{text}{TRUNCATED_AFTER_CONTINUATIONS_NOTICE}"
-    non_text_blocks = [block for block in final_message.content if isinstance(block, ToolUseBlock)]
-    content = [TextBlock(text=text)] if text else []
-    content.extend(non_text_blocks)
-    return ConversationMessage(role="assistant", content=content)
+        content.append(TextBlock(text=TRUNCATED_AFTER_CONTINUATIONS_NOTICE))
+    return final_message.model_copy(update={"content": content})
 
 
 class MaxTurnsExceeded(RuntimeError):

@@ -110,12 +110,13 @@ def test_compaction_preserves_saved_conversation_identity(tmp_path, trigger, tit
 
 
 @pytest.mark.parametrize("source", ["history_events", "archive", "messages"])
-def test_legacy_compacted_title_recovers_from_authored_input(tmp_path, source):
+@pytest.mark.parametrize("stored_title", [None, "[compact boundary...", "[COMPACT BOUNDARY MARKER]"])
+def test_legacy_compacted_title_recovers_from_authored_input(tmp_path, source, stored_title):
     from myharness.services.compact import create_compact_boundary_message
 
     original = "Orion revenue comparison"
     marker = create_compact_boundary_message({})
-    data = {"messages": [marker.model_dump()], "summary": marker.text[:80]}
+    data = {"messages": [marker.model_dump()], "summary": stored_title or marker.text[:80]}
     if source == "history_events":
         data[source] = [{"type": "user", "text": original}]
     elif source == "archive":
@@ -126,6 +127,7 @@ def test_legacy_compacted_title_recovers_from_authored_input(tmp_path, source):
             ConversationMessage.from_user_text(original).model_dump(),
         ])
     assert session_storage._snapshot_display_summary(data) == original
+    assert fallback_session_title_from_user_text(data["summary"]) == ""
 
 
 def test_new_session_storage_uses_compact_utf8_snapshot_and_latest_pointer(tmp_path: Path):

@@ -274,7 +274,7 @@ def _korean_fallback_session_title(clean: str) -> str:
 def fallback_session_title_from_user_text(text: str) -> str:
     clean = strip_internal_message_text(text)
     clean = " ".join(clean.split()).strip("\"'`“”‘’ ")
-    if not clean or clean.startswith("The user explicitly selected the `"):
+    if not clean or is_compact_context_text(clean) or clean.startswith("The user explicitly selected the `"):
         return ""
 
     title_text = _text_without_title_urls(clean) or clean

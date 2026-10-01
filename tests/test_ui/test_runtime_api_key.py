@@ -10,7 +10,7 @@ import pytest
 from myharness.api.client import ApiMessageRequest
 from myharness.api.errors import AuthenticationFailure
 from myharness.api.codex_client import OpenAIResponsesClient
-from myharness.config.settings import Settings
+from myharness.config.settings import BUILTIN_MODEL_POLICIES, Settings
 from myharness.ui.runtime import (
     MissingAuthClient,
     _next_prompt_profile,
@@ -66,7 +66,8 @@ async def test_build_runtime_uses_responses_for_pgpt(monkeypatch):
     assert isinstance(bundle.api_client, OpenAIResponsesClient)
     assert bundle.api_client._url.endswith("/responses")
     assert bundle.api_client._diagnostics_label == "P-GPT"
-    assert not bundle.api_client.supports_server_compaction("gpt-5.6-sol")
+    for model in (*BUILTIN_MODEL_POLICIES["p-gpt"].allowed_models, "new-gateway-model"):
+        assert bundle.api_client.supports_server_compaction(model)
 
 
 @pytest.mark.asyncio

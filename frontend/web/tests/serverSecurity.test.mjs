@@ -979,6 +979,13 @@ test("message restoration failure prevents execution through the real backend", 
   const app = await startWebServer();
   t.after(() => app.stop());
   const clientId = "resume-failure-check";
+  // This exercises restoration, independently of load from parallel test suites.
+  const limits = await fetch(`${app.baseUrl}/api/settings/concurrency`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-myharness-admin-mode": "1" },
+    body: JSON.stringify({ maxCpuPercent: 100, maxMemoryPercent: 100 }),
+  });
+  assert.equal(limits.status, 200);
   const post = (path, body) => fetch(`${app.baseUrl}${path}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
@@ -3456,6 +3463,39 @@ test("allows global settings writes from forwarded admin-mode clients", async (t
   assert.equal(response.status, 200);
   assert.equal(payload.mode, "shared");
   assert.equal(settings.web_workspace_scope, "shared");
+});
+
+test("history list recovers a compact boundary title from a current metadata cache", async (t) => {
+  const app = await startWebServer({ env: { MYHARNESS_WORKSPACE_SCOPE: "shared" } });
+  let workspacePath;
+  t.after(async () => {
+    await app.stop();
+    if (workspacePath) await rmWithRetry(workspacePath, { recursive: true, force: true });
+  });
+  const response = await fetch(`${app.baseUrl}/api/workspaces`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `CompactTitle${Date.now().toString(36)}` }),
+  });
+  assert.equal(response.status, 200);
+  workspacePath = (await response.json()).workspace.path;
+  const dir = join(workspacePath, ".myharness", "sessions");
+  await mkdir(dir, { recursive: true });
+  const snapshot = {
+    storage_version: 2, session_id: "compact-title", summary: "[compact boundary...",
+    history_replay_compacted: true, created_at: Date.now() / 1000,
+    messages: [{ role: "user", content: [{ type: "text", text: "[Compact boundary marker]" }] }],
+    history_events: [{ type: "user", text: "Original research request" }],
+  };
+  await writeFile(join(dir, "session-compact-title.json"), JSON.stringify(snapshot));
+  await writeFile(join(dir, "session-compact-title.meta"), JSON.stringify({
+    ...snapshot, messages: undefined, history_events: undefined,
+  }));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const history = await fetch(`${app.baseUrl}/api/history?workspacePath=${encodeURIComponent(workspacePath)}`);
+    assert.equal(history.status, 200);
+    const item = (await history.json()).options.find((entry) => entry.value === "compact-title");
+    assert.equal(item?.description, "Original research request");
+  }
 });
 
 test("loads a compact saved-history preview without starting a backend session", async (t) => {

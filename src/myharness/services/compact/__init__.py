@@ -15,7 +15,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 from myharness.api.usage import UsageSnapshot
@@ -78,6 +78,7 @@ TOOL_OUTPUT_CCR_MARKER = "Recoverable tool output stored as a session document."
 AUTOCOMPACT_BUFFER_TOKENS = 13_000
 AUTOCOMPACT_CONTEXT_RATIO = 0.75
 MAX_OUTPUT_TOKENS_FOR_SUMMARY = 4_000
+MAX_RETRY_OUTPUT_TOKENS_FOR_SUMMARY = 16_000
 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
 COMPACT_TIMEOUT_SECONDS = 180
 MAX_COMPACT_STREAMING_RETRIES = 2
@@ -105,6 +106,11 @@ TOKEN_ESTIMATION_PADDING = 4 / 3
 
 PTL_RETRY_MARKER = "[earlier conversation truncated for compaction retry]"
 ERROR_MESSAGE_INCOMPLETE_RESPONSE = "Compaction interrupted before a complete summary was returned."
+
+
+class _SummaryOutputLimitError(RuntimeError):
+    """A summary exhausted its output budget, including provider reasoning."""
+
 
 CompactTrigger = Literal["auto", "manual", "reactive"]
 CompactProgressCallback = Callable[[CompactProgressEvent], Awaitable[None]]
@@ -363,6 +369,9 @@ def try_context_collapse(
 
 def truncate_head_for_ptl_retry(
     messages: list[ConversationMessage],
+    *,
+    max_input_tokens: int | None = None,
+    model: str | None = None,
 ) -> list[ConversationMessage] | None:
     """Drop the oldest prompt rounds when the compact request itself is too large."""
     groups = _group_messages_by_prompt_round(messages)
@@ -371,6 +380,15 @@ def truncate_head_for_ptl_retry(
 
     drop_count = max(1, len(groups) // 5)
     drop_count = min(drop_count, len(groups) - 1)
+    if max_input_tokens is not None:
+        # A fixed 20% reduction cannot recover a heavily overfilled request
+        # within the bounded retry count. Fit whole rounds to the available
+        # budget; originals remain in the pre-compaction checkpoint/archive.
+        group_tokens = [estimate_message_tokens(group, model=model) for group in groups]
+        retained_tokens = sum(group_tokens[drop_count:])
+        while retained_tokens > max_input_tokens and drop_count < len(groups) - 1:
+            retained_tokens -= group_tokens[drop_count]
+            drop_count += 1
     retained = [message for group in groups[drop_count:] for message in group]
     if not retained:
         return None
@@ -1576,6 +1594,7 @@ async def compact_conversation(
     carryover_metadata: dict[str, Any] | None = None,
     cwd: str | Path | None = None,
     usage_callback: Callable[[UsageSnapshot], Any] | None = None,
+    context_window_tokens: int | None = None,
 ) -> CompactionResult:
     """Compact messages by calling the LLM to produce a summary.
 
@@ -1722,6 +1741,8 @@ async def compact_conversation(
     messages_to_summarize = compact_messages
     retry_messages = messages_to_summarize
     ptl_retries = 0
+    streaming_failures = 0
+    summary_output_tokens = MAX_OUTPUT_TOKENS_FOR_SUMMARY
 
     async def _collect_summary(summary_request_messages: list[ConversationMessage]) -> str:
         collected = ""
@@ -1730,7 +1751,7 @@ async def compact_conversation(
                 model=model,
                 messages=summary_request_messages,
                 system_prompt=system_prompt or "You are a conversation summarizer.",
-                max_tokens=MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+                max_tokens=summary_output_tokens,
                 tools=[],  # no tools for compact call
             )
         )
@@ -1748,6 +1769,10 @@ async def compact_conversation(
                     notified = usage_callback(event.usage)
                     if inspect.isawaitable(notified):
                         await notified
+                if event.stop_reason in {"length", "max_tokens", "max_output_tokens"}:
+                    raise _SummaryOutputLimitError(
+                        f"Summary output limit reached ({summary_output_tokens} tokens)."
+                    )
                 if event.stop_reason not in {None, "stop", "end_turn"} or event.message.tool_uses:
                     raise RuntimeError(ERROR_MESSAGE_INCOMPLETE_RESPONSE)
                 collected = event.message.text
@@ -1755,7 +1780,9 @@ async def compact_conversation(
             return collected
         raise RuntimeError(ERROR_MESSAGE_INCOMPLETE_RESPONSE)
 
-    for attempt in range(1, MAX_COMPACT_STREAMING_RETRIES + 2):
+    # Input reduction and interrupted-response retries have independent budgets.
+    # Every accepted reduction must get a subsequent request, including the last.
+    for attempt in range(1, MAX_COMPACT_STREAMING_RETRIES + MAX_PTL_RETRIES + 2):
         try:
             summary_text = await asyncio.wait_for(
                 _collect_summary(retry_messages),
@@ -1763,8 +1790,28 @@ async def compact_conversation(
             )
             break
         except Exception as exc:
+            if isinstance(exc, asyncio.TimeoutError):
+                exc = RuntimeError(f"Compaction timed out after {COMPACT_TIMEOUT_SECONDS} seconds.")
+            if isinstance(exc, _SummaryOutputLimitError):
+                # Retrying with the same cap repeats truncation on reasoning
+                # models. Grow only within the model's remaining input budget.
+                available = get_context_window(model, context_window_tokens=context_window_tokens) - estimate_request_tokens(
+                    retry_messages, model=model,
+                    system_prompt=system_prompt or "You are a conversation summarizer.", tools=[],
+                ) - 1024
+                summary_output_tokens = max(summary_output_tokens, min(
+                    summary_output_tokens * 2, MAX_RETRY_OUTPUT_TOKENS_FOR_SUMMARY, available,
+                ))
             if _is_prompt_too_long_error(exc) and ptl_retries < MAX_PTL_RETRIES:
-                truncated = truncate_head_for_ptl_retry(retry_messages[:-1])
+                input_budget = get_context_window(model, context_window_tokens=context_window_tokens) - summary_output_tokens - 1024
+                prompt_overhead = estimate_request_tokens(
+                    [retry_messages[-1]], model=model,
+                    system_prompt=system_prompt or "You are a conversation summarizer.", tools=[],
+                )
+                truncated = truncate_head_for_ptl_retry(
+                    retry_messages[:-1], model=model,
+                    max_input_tokens=max(1, input_budget - prompt_overhead),
+                )
                 if truncated:
                     ptl_retries += 1
                     retry_messages = [*truncated, retry_messages[-1]]
@@ -1786,7 +1833,8 @@ async def compact_conversation(
                         ),
                     )
                     continue
-            if attempt > MAX_COMPACT_STREAMING_RETRIES:
+            streaming_failures += 1
+            if _is_prompt_too_long_error(exc) or streaming_failures > MAX_COMPACT_STREAMING_RETRIES:
                 await _emit_progress(
                     progress_callback,
                     phase="compact_failed",
@@ -1804,7 +1852,7 @@ async def compact_conversation(
                         details={"reason": str(exc)},
                     ),
                 )
-                raise
+                raise exc  # noqa: TRY201 - propagate the descriptive replacement for TimeoutError
             await _emit_progress(
                 progress_callback,
                 phase="compact_retry",
@@ -2087,6 +2135,18 @@ async def auto_compact_if_needed(
         details={"consecutive_failures": state.consecutive_failures},
     )
 
+    # The summarizer also reports terminal failures for manual callers. Forward
+    # one terminal event per attempt instead of reporting the same failure twice.
+    failure_reported = False
+
+    async def _compact_progress(event: CompactProgressEvent) -> None:
+        nonlocal failure_reported
+        if event.phase == "compact_failed":
+            failure_reported = True
+            event = replace(event, metadata={**(event.metadata or {}), "original_history_retained": True})
+        if progress_callback is not None:
+            await progress_callback(event)
+
     # Full compact needed
     try:
         result = await compact_conversation(
@@ -2097,11 +2157,12 @@ async def auto_compact_if_needed(
             preserve_recent=preserve_recent,
             suppress_follow_up=True,
             trigger=trigger,
-            progress_callback=progress_callback,
+            progress_callback=_compact_progress,
             hook_executor=hook_executor,
             carryover_metadata=carryover_metadata,
             cwd=cwd,
             usage_callback=usage_callback,
+            context_window_tokens=context_window_tokens,
         )
         candidate = build_post_compact_messages(result)
         if estimate_message_tokens(candidate) >= estimate_message_tokens(messages):
@@ -2113,8 +2174,9 @@ async def auto_compact_if_needed(
         return candidate, True
     except Exception as exc:
         state.consecutive_failures += 1
-        await _emit_progress(progress_callback, phase="compact_failed", trigger=trigger,
-                             message=str(exc), metadata={"original_history_retained": True})
+        if not failure_reported:
+            await _emit_progress(progress_callback, phase="compact_failed", trigger=trigger,
+                                 message=str(exc), metadata={"original_history_retained": True})
         _record_compact_checkpoint(
             carryover_metadata,
             checkpoint=f"query_{trigger}_failed",

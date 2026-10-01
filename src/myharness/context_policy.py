@@ -59,10 +59,13 @@ def get_context_window(model: str, *, context_window_tokens: int | None = None) 
     """Return the context window size for a model (conservative defaults)."""
     if context_window_tokens is not None and context_window_tokens > 0:
         return int(context_window_tokens)
-    m = model.lower()
+    m = model.strip().lower().rsplit("/", 1)[-1]
     for prefix, window in _OPENAI_CONTEXT_WINDOWS:
         if m == prefix or m.startswith(f"{prefix}-"):
             return window
+    profile = model_output_profile(model)
+    if profile.context_window_tokens:
+        return profile.context_window_tokens
     if "opus" in m:
         return 200_000
     if "sonnet" in m:

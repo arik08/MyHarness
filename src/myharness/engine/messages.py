@@ -47,12 +47,10 @@ def _compact_steering_prompt(text: str) -> str:
 
 def is_compact_context_text(text: str) -> bool:
     """Identify synthetic continuity context, not a user-authored request."""
-    return text.lstrip().startswith((
-        "[Compact boundary marker]",
-        "[Compact attachment:",
-        "[conversation summary]",
-        "This session is being continued",
-        "Session memory summary from earlier",
+    return bool(re.match(
+        r"^(?:\[compact (?:boundary|attachment)\b|\[conversation summary\]|"
+        r"this session is being continued\b|session memory summary from earlier\b)",
+        text.lstrip(), re.IGNORECASE,
     ))
 
 

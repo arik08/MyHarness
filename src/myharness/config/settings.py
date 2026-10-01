@@ -237,6 +237,15 @@ class ModelOutputProfile:
 
 
 _MODEL_OUTPUT_PROFILES: tuple[tuple[str, ModelOutputProfile], ...] = (
+    # Official GPT-6 Luna/Sol Responses limits (2026-10-01).
+    *((model, ModelOutputProfile(
+        context_window_tokens=1_050_000,
+        model_max_output_tokens=128_000,
+        interactive_max_tokens=42_000,
+        report_outline_max_tokens=8_000,
+        report_section_max_tokens=18_000,
+        report_review_max_tokens=8_000,
+    )) for model in ("gpt-6-luna", "gpt-6-sol")),
     (
         "gpt-5.6-luna",
         ModelOutputProfile(

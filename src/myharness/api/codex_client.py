@@ -5,9 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import platform
-import logging
+import re
 import time
 import uuid
 from contextlib import aclosing
@@ -20,20 +21,25 @@ from myharness.api.client import (
     ApiCompactionEvent,
     ApiMessageCompleteEvent,
     ApiMessageRequest,
-    ApiRetryEvent,
     ApiReasoningSummaryEvent,
+    ApiRetryEvent,
     ApiStreamEvent,
     ApiTextDeltaEvent,
     ApiToolCallDeltaEvent,
 )
-from myharness.api.errors import AuthenticationFailure, MyHarnessApiError, RateLimitFailure, RequestFailure
-from myharness.api.usage import UsageSnapshot
-from myharness.api.retry import calculate_retry_delay
+from myharness.api.errors import (
+    AuthenticationFailure,
+    MyHarnessApiError,
+    RateLimitFailure,
+    RequestFailure,
+)
 from myharness.api.prompt_cache import supports_modern_prompt_cache
+from myharness.api.retry import calculate_retry_delay
+from myharness.api.usage import UsageSnapshot
 from myharness.engine.messages import (
-    ResponsesStateBlock,
     ConversationMessage,
     ImageBlock,
+    ResponsesStateBlock,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
@@ -371,6 +377,7 @@ class CodexApiClient:
         retention = prompt_cache_retention if prompt_cache_retention is not None else _prompt_cache_retention_from_env()
         self._prompt_cache_retention = retention if retention in _PROMPT_CACHE_RETENTION_VALUES else None
         self._unsupported_cache_option_names: set[str] = set()
+        self._unsupported_compaction_models: set[str] = set()
         self._http_client: httpx.AsyncClient | None = None
         self._diagnostics_label = "codex"
 
@@ -460,10 +467,15 @@ class CodexApiClient:
         if "reasoning.summary" in self._unsupported_cache_option_names:
             reasoning.pop("summary", None)
         if self.supports_server_compaction(request.model):
-            from myharness.context_policy import get_long_context_policy_threshold
+            from myharness.context_policy import (
+                get_context_window,
+                get_long_context_policy_threshold,
+            )
 
             threshold = request.compact_threshold_tokens or get_long_context_policy_threshold(request.model, "cost-saver")
-            assert threshold is not None
+            if threshold is None:
+                window = get_context_window(request.model)
+                threshold = max(1, min(int(window * 0.75), window - request.max_tokens - 8000))
             body["context_management"] = [
                 {"type": "compaction", "compact_threshold": int(threshold)}
             ]
@@ -529,7 +541,7 @@ class CodexApiClient:
                 if response.status_code >= 400:
                     payload = await response.aread()
                     message = _format_error_message(response.status_code, payload.decode("utf-8", "replace"))
-                    if self._disable_unsupported_cache_options(message, body):
+                    if response.status_code in {400, 422} and self._disable_unsupported_cache_options(message, body, model=request.model):
                         body = self._request_body(request, safe_messages)
                         if max_output_tokens is not None:
                             body["max_output_tokens"] = max_output_tokens
@@ -538,7 +550,11 @@ class CodexApiClient:
 
                 async for event in self._iter_sse_events(response):
                     event_type = event.get("type")
-                    if event_type in {"response.reasoning_summary_text.delta", "response.reasoning_summary_text.done"}:
+                    if event_type == "response.compaction.compacting":
+                        if not compaction_started:
+                            compaction_started = True
+                            yield ApiCompactionEvent(phase="compact_start")
+                    elif event_type in {"response.reasoning_summary_text.delta", "response.reasoning_summary_text.done"}:
                         item_id = str(event.get("item_id") or f"output:{event.get('output_index', 0)}")
                         index = event.get("summary_index", 0)
                         text = event.get("delta" if event_type.endswith(".delta") else "text")
@@ -554,8 +570,9 @@ class CodexApiClient:
                     elif event_type == "response.output_item.added":
                         item = event.get("item")
                         if isinstance(item, dict) and item.get("type") == "compaction":
-                            compaction_started = True
-                            yield ApiCompactionEvent(phase="compact_start")
+                            if not compaction_started:
+                                compaction_started = True
+                                yield ApiCompactionEvent(phase="compact_start")
                             continue
                         if not isinstance(item, dict) or item.get("type") != "function_call":
                             continue
@@ -685,7 +702,10 @@ class CodexApiClient:
             content.insert(0, TextBlock(text="".join(current_text_parts)))
 
         compactions = [block for block in content if isinstance(block, ResponsesStateBlock) and block.item.get("type") == "compaction"]
-        if len(compactions) > 1 or (compactions and completed_response.get("status") != "completed"):
+        if compactions and (completed_response.get("status") != "completed" or any(
+            not isinstance(block.item.get("encrypted_content"), str) or not block.item["encrypted_content"].strip()
+            for block in compactions
+        )):
             raise RequestFailure("Invalid or incomplete Responses compaction result.")
         if compaction_started and not compactions:
             raise RequestFailure("Responses compaction ended without its replacement state.")
@@ -711,7 +731,8 @@ class CodexApiClient:
 
     def supports_server_compaction(self, model: str) -> bool:
         """Return whether this client can preserve GPT-5.6 server compaction state."""
-        return _is_gpt_56_model(model) and "context_management" not in self._unsupported_cache_option_names
+        return (_is_gpt_56_model(model) and "context_management" not in self._unsupported_cache_option_names
+                and model not in self._unsupported_compaction_models)
 
     def state_origin(self, model: str) -> str:
         return hashlib.sha256(f"{self._url}:{model}".encode()).hexdigest()[:24]
@@ -807,21 +828,35 @@ class CodexApiClient:
                         event["type"] = event_name
                     yield event
 
-    def _disable_unsupported_cache_options(self, message: str, body: dict[str, Any]) -> bool:
+    def _disable_unsupported_cache_options(self, message: str, body: dict[str, Any], *, model: str | None = None) -> bool:
         text = message.lower()
         if not any(term in text for term in _UNSUPPORTED_OPTION_TERMS):
             return False
         disabled: set[str] = set()
+        compaction_disabled = False
         if "reasoning.summary" in text and "summary" in body.get("reasoning", {}):
             disabled.add("reasoning.summary")
         if "prompt_cache_breakpoint" in text and "prompt_cache_options" in body:
             disabled.add("prompt_cache_options")
         for key in _OPTIONAL_RESPONSE_OPTIONS:
-            if key in body and key.lower() in text:
+            if key in body and re.search(r"(?<![a-z0-9_])" + re.escape(key.lower()) + r"(?![a-z0-9_])", text):
+                if key == "context_management":
+                    # Invalid thresholds/state and transient failures do not
+                    # establish that a gateway lacks the feature. Rejections
+                    # apply to this model, not every route on the same client.
+                    if not any(term in text for term in (
+                        "unsupported", "not supported", "unrecognized", "unknown parameter",
+                        "unknown field", "unexpected", "extra inputs", "not permitted",
+                    )):
+                        continue
+                    if model is not None:
+                        self._unsupported_compaction_models.add(model)
+                        compaction_disabled = True
+                        continue
                 disabled.add(key)
         if not disabled and "cache" in text and "prompt_cache_retention" in body:
             disabled.add("prompt_cache_retention")
-        if not disabled:
+        if not disabled and not compaction_disabled:
             return False
         self._unsupported_cache_option_names.update(disabled)
         return True
@@ -885,8 +920,10 @@ class OpenAIResponsesClient(CodexApiClient):
         }
 
     def supports_server_compaction(self, model: str) -> bool:
-        # Responses support does not establish gateway compaction support.
-        return False
+        # Negotiate the Responses capability with the gateway instead of
+        # permanently disabling it or maintaining a model-name allowlist.
+        return ("context_management" not in self._unsupported_cache_option_names
+                and model not in self._unsupported_compaction_models)
 
     def _request_body(self, request: ApiMessageRequest, safe_messages: list[ConversationMessage]) -> dict[str, Any]:
         body = super()._request_body(request, safe_messages)
