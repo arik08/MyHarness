@@ -93,6 +93,10 @@ step "Installing current checkout in editable mode"
 python -m pip install -e "$REPO_ROOT" --quiet
 success "Installed MyHarness from ${REPO_ROOT}"
 
+step "Preparing packaged MCP runtimes"
+python "$REPO_ROOT/.skills/mcp/korean-law/runtime/bootstrap.py" --prepare
+python "$REPO_ROOT/scripts/verify_mcp_packages.py" --require-runtime-deps
+
 step "Installing React terminal dependencies (optional)"
 if command -v node >/dev/null 2>&1; then
     NODE_MAJOR=$(node --version 2>&1 | grep -oE '[0-9]+' | head -1)

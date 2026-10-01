@@ -306,6 +306,30 @@ def test_transient_network_error_is_retried(monkeypatch) -> None:
     assert calls == 2
 
 
+@pytest.mark.parametrize("header,delay", [("3", 3), ("Thu, 01 Jan 1970 00:01:45 GMT", 5), ("120", None)])
+def test_comtrade_respects_retry_after_without_shortening_long_waits(monkeypatch, header, delay):
+    module = _load_comtrade_server()
+    request = httpx.Request("GET", "https://example.test")
+    responses = [httpx.Response(429, headers={"Retry-After": header}, request=request), httpx.Response(200, json={"data": []}, request=request)]
+    calls = []
+    sleeps = []
+    def get(*args, **kwargs):
+        calls.append(1)
+        return responses.pop(0)
+    monkeypatch.setattr(module.httpx, "get", get)
+    monkeypatch.setattr(module.time, "time", lambda: 100)
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    if delay is None:
+        with pytest.raises(RuntimeError, match="HTTP 429"):
+            module._request_json("test")
+        assert len(calls) == 1
+        assert sleeps == []
+    else:
+        assert module._request_json("test") == {"data": []}
+        assert len(calls) == 2
+        assert sleeps == [delay]
+
+
 def test_comtrade_config_is_loaded_as_stdio_server() -> None:
     mcp_dir = Path(__file__).resolve().parents[2] / ".skills" / "mcp"
 

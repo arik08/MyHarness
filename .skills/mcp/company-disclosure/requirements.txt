@@ -1,0 +1,5 @@
+httpx>=0.27,<1
+mcp>=1.29,<2
+PyYAML>=6,<7
+defusedxml>=0.7.1,<1
+pydantic>=2,<3

@@ -111,3 +111,32 @@ def test_ecos_config_is_loaded_as_stdio_server() -> None:
     assert server.args == ["runtime/server.py"]
     assert server.cwd == "."
     assert server.env == {"ECOS_API_KEY": "IAY2CU4G4W24KJC0UHRM"}
+
+
+@pytest.mark.parametrize("cycle,start,end,normalized", [
+    ("D", "2024-02-28", "2024-02-29", "20240228/20240229"),
+    ("M", "2024-01", "2024-12", "202401/202412"),
+    ("q", "2024q1", "2024q4", "2024Q1/2024Q4"),
+])
+def test_period_inputs_normalized_before_request(monkeypatch, cycle, start, end, normalized):
+    module = _load_ecos_server()
+    paths = []
+    monkeypatch.setattr(module, "_api_key", lambda: "fixture")
+    def request(path):
+        paths.append(path)
+        return {"StatisticSearch": {"row": [{"DATA_VALUE": "1"}]}}
+    monkeypatch.setattr(module, "_request_json", request)
+    assert json.loads(module.get_statistic_data("code", cycle, start, end))
+    assert normalized in paths[0]
+
+
+@pytest.mark.parametrize("cycle,start,end", [
+    ("D", "240102", "240103"),
+    ("D", "2023-02-29", "2023-03-01"), ("M", "2024-13", "2025-01"),
+    ("Q", "2024Q0", "2024Q4"), ("A", "2025", "2024"),
+])
+def test_invalid_period_fails_before_credentials_or_network(cycle, start, end, monkeypatch):
+    module = _load_ecos_server()
+    monkeypatch.setattr(module, "_api_key", lambda: pytest.fail("must validate before credentials"))
+    with pytest.raises(ValueError):
+        module.get_statistic_data("code", cycle, start, end)

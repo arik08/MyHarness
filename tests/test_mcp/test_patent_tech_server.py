@@ -59,6 +59,62 @@ def test_semantic_detail_errors_are_not_cached(monkeypatch):
     assert len(calls) == 2
 
 
+def test_semantic_search_supplies_complete_detail_without_duplicate_request(monkeypatch):
+    module = _load_server()
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "key-one")
+    now = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+    record = {field: None for field in module._SEMANTIC_FIELDS.split(",")}
+    record.update(paperId="new-paper", title="Steel", referenceCount=7)
+    calls = []
+    def fetch(source, url, **kwargs):
+        calls.append((url, kwargs))
+        return {"data": [record]} if url.endswith("/search") else record
+    monkeypatch.setattr(module, "request_json", fetch)
+    result = json.loads(module.search_records("semantic_scholar", "steel"))
+    detail = json.loads(module.get_record("semantic_scholar", result["data"][0]["paperId"]))
+    assert len(calls) == 1
+    assert detail["data"] == record
+    assert detail["metadata"]["cache_origin"] == "search"
+    assert detail["metadata"]["cache_hit"] is True
+    now[0] += 61
+    assert json.loads(module.get_record("semantic_scholar", "new-paper"))["metadata"]["cache_hit"] is False
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "key-two")
+    module.get_record("semantic_scholar", "new-paper")
+    assert len(calls) == 3
+
+
+def test_semantic_partial_search_is_not_used_as_complete_detail(monkeypatch):
+    module = _load_server()
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "key")
+    calls = []
+    def fetch(source, url, **kwargs):
+        calls.append(url)
+        return {"data": [{"paperId": "paper", "title": "Steel"}]} if url.endswith("/search") else {"paperId": "paper", "referenceCount": 9}
+    monkeypatch.setattr(module, "request_json", fetch)
+    module.search_records("semantic_scholar", "steel")
+    result = json.loads(module.get_record("semantic_scholar", "paper"))
+    assert len(calls) == 2
+    assert result["data"]["referenceCount"] == 9
+    assert result["metadata"]["cache_hit"] is False
+
+
+def test_semantic_cache_remains_bounded_and_preserves_alias_lookup(monkeypatch):
+    module = _load_server()
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "key")
+    calls = []
+    def fetch(*args, **kwargs):
+        calls.append(1)
+        return {"paperId": "canonical"}
+    monkeypatch.setattr(module, "request_json", fetch)
+    module._semantic_record("DOI:10.1000/example")
+    assert module._semantic_record("DOI:10.1000/example")[1]["cache_hit"] is True
+    assert len(calls) == 1
+    for i in range(130):
+        module._cache_semantic_record({"x-api-key": "key"}, {"paperId": str(i)}, "detail")
+    assert len(module._SEMANTIC_RECORDS) == 128
+
+
 def test_kipris_search_uses_key_without_returning_it(monkeypatch) -> None:
     module = _load_server()
     calls: list[dict[str, Any]] = []
@@ -332,6 +388,63 @@ def test_epo_empty_search_is_distinct_from_auth_rate_limit_and_detail_errors(mon
             module.search_records("epo_ops", "ti=absent")
     with pytest.raises(RuntimeError):
         module.get_record("epo_ops", "EP999999999")
+
+
+@pytest.mark.parametrize("patent_id", ["EP4813500", "KR20240000123A"])
+def test_epo_missing_family_confirms_seed_and_reports_coverage_gap(monkeypatch, patent_id):
+    import httpx
+    module = _load_server()
+    paths = []
+    def fetch(path):
+        paths.append(path)
+        if path.startswith("family/"):
+            response = httpx.Response(404, content=b'<fault><code>SERVER.EntityNotFound</code></fault>', request=httpx.Request("GET", "https://example.test"))
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError("EPO request failed") from exc
+        return EPO_SEARCH_XML
+    monkeypatch.setattr(module, "_epo_request", fetch)
+    result = json.loads(module.get_record("epo_ops", patent_id, "family"))
+    assert paths == [f"family/publication/epodoc/{patent_id}/biblio,legal", f"published-data/publication/epodoc/{patent_id}/biblio"]
+    assert result["data"] == []
+    assert result["completeness"] == "family_not_available"
+    assert result["metadata"]["empty_reason"] == "family_not_available"
+    assert result["metadata"]["seed_record_id"] == patent_id
+    assert result["metadata"]["upstream_status"] == 404
+    assert result["metadata"]["seed_publications"]
+
+
+@pytest.mark.parametrize("status,body", [(401,b'<fault><code>SERVER.EntityNotFound</code></fault>'), (429,b'<fault><code>SERVER.EntityNotFound</code></fault>'), (404,b'<fault><code>SERVER.Other</code></fault>'), (404,b'proxy error')])
+def test_epo_family_does_not_mask_auth_rate_limit_or_unrecognized_errors(monkeypatch, status, body):
+    import httpx
+    module = _load_server()
+    paths = []
+    def fetch(path):
+        paths.append(path)
+        response = httpx.Response(status, content=body, request=httpx.Request("GET", "https://example.test"))
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError("EPO request failed") from exc
+    monkeypatch.setattr(module, "_epo_request", fetch)
+    with pytest.raises(RuntimeError):
+        module.get_record("epo_ops", "EP1234567", "family")
+    assert len(paths) == 1
+
+
+def test_epo_missing_family_does_not_mask_missing_seed(monkeypatch):
+    import httpx
+    module = _load_server()
+    def fetch(path):
+        response = httpx.Response(404, content=b'<fault><code>SERVER.EntityNotFound</code></fault>', request=httpx.Request("GET", "https://example.test"))
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError("not found") from exc
+    monkeypatch.setattr(module, "_epo_request", fetch)
+    with pytest.raises(RuntimeError):
+        module.get_record("epo_ops", "EP999999999", "family")
 
 
 def test_crossref_search_and_semantic_scholar_partial_year(monkeypatch) -> None:

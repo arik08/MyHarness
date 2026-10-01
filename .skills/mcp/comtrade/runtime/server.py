@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _RuntimePath
+_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parent))
+
 import json
 import logging
 import os
@@ -13,7 +17,8 @@ from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-from myharness.mcp.skill_resources import attach_packaged_skill
+from _myharness_mcp_support.skill_resources import attach_packaged_skill
+from _myharness_mcp_support.official_data import retry_delay
 
 
 DEFAULT_API_HOST = "comtradeapi.un.org"
@@ -27,23 +32,8 @@ server = FastMCP("comtrade")
 attach_packaged_skill(server, __file__)
 
 
-def _httpx_verify_argument() -> bool | ssl.SSLContext:
-    """Return the SSL verification config for UN Comtrade requests."""
-    try:
-        from myharness.utils.certificates import httpx_verify_argument
-    except ImportError:
-        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        if not bundle:
-            return True
-        context = ssl.create_default_context()
-        try:
-            context.set_ciphers("DEFAULT@SECLEVEL=1")
-        except ssl.SSLError:
-            pass
-        if hasattr(ssl, "VERIFY_X509_STRICT"):
-            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cafile=bundle)
-        return context
+def _httpx_verify_argument():
+    from _myharness_mcp_support.official_data import httpx_verify_argument
     return httpx_verify_argument()
 
 
@@ -136,8 +126,10 @@ def _request_json(path: str, params: dict[str, Any] | None = None, *, api_key: s
                 getattr(response, "status_code", 200) in TRANSIENT_STATUS_CODES
                 and attempt < MAX_REQUEST_ATTEMPTS
             ):
-                _retry_sleep(attempt)
-                continue
+                delay = retry_delay(response, attempt)
+                if delay is not None:
+                    time.sleep(delay)
+                    continue
             response.raise_for_status()
             return _response_json(response)
         except (
@@ -159,10 +151,15 @@ def _request_json(path: str, params: dict[str, Any] | None = None, *, api_key: s
             last_error = exc
             status_code = exc.response.status_code if exc.response is not None else None
             if status_code in TRANSIENT_STATUS_CODES and attempt < MAX_REQUEST_ATTEMPTS:
-                _retry_sleep(attempt)
-                continue
+                delay = retry_delay(exc.response, attempt)
+                if delay is not None:
+                    time.sleep(delay)
+                    continue
             break
-    raise RuntimeError(_network_failure_message(_api_base_url())) from last_error
+    message = _network_failure_message(_api_base_url())
+    if isinstance(last_error, httpx.HTTPStatusError):
+        message = message.replace("request failed.", f"request failed (HTTP {last_error.response.status_code}).", 1)
+    raise RuntimeError(message) from last_error
 
 
 def _response_json(response: httpx.Response) -> object:

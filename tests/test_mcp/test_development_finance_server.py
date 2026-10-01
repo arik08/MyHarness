@@ -97,3 +97,26 @@ def test_adb_health_converts_probe_failure_to_health_json(monkeypatch) -> None:
 
     assert result["ok"] is False
     assert "RuntimeError" in result["detail"]
+
+
+@pytest.mark.parametrize("kind,tag,identifier", [("dataflows","Dataflow","DF_NEW"),("economies","Code","NEW")])
+def test_catalog_discovers_unregistered_ids(monkeypatch, kind, tag, identifier):
+    module = _load_server()
+    class Response:
+        content = f'<Root xmlns="urn:fixture"><{tag} id="{identifier}"><Name>New entry</Name></{tag}></Root>'.encode()
+    monkeypatch.setattr(module, "request", lambda *a, **k: Response())
+    result = json.loads(module.search_catalog("adb", catalog_type=kind, query="new"))
+    assert result["data"] == [{"id":identifier,"name":"New entry"}]
+
+
+def test_adb_invalid_dataflow_has_discovery_guidance(monkeypatch):
+    import httpx
+    module = _load_server()
+    def fail(*a, **k):
+        try:
+            httpx.Response(422, request=httpx.Request("GET","https://example.test")).raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError("HTTP 422") from exc
+    monkeypatch.setattr(module, "request_json", fail)
+    with pytest.raises(ValueError, match="discover current IDs"):
+        module.search_catalog("adb", "UNKNOWN")

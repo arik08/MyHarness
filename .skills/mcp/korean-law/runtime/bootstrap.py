@@ -6,6 +6,7 @@ import subprocess
 import hashlib
 import shutil
 import sys
+import os
 from pathlib import Path
 
 
@@ -126,7 +127,9 @@ def main() -> int:
             "python .skills/mcp/korean-law/runtime/bootstrap.py --prepare from the repository root."
         )
     apply_compatibility_patch()
-    return subprocess.call(["node", str(entrypoint)])
+    environment = dict(os.environ, MYHARNESS_MCP_PYTHON=sys.executable)
+    preload = RUNTIME / "_myharness_mcp_support" / "node_fetch.cjs"
+    return subprocess.call(["node", "--require", str(preload), str(entrypoint)], env=environment)
 
 
 if __name__ == "__main__":

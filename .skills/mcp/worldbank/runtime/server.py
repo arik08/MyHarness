@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _RuntimePath
+_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parent))
+
 import json
 import logging
 import os
@@ -12,7 +16,7 @@ from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-from myharness.mcp.skill_resources import attach_packaged_skill
+from _myharness_mcp_support.skill_resources import attach_packaged_skill
 
 
 DEFAULT_API_HOST = "api.worldbank.org/v2"
@@ -28,23 +32,8 @@ server = FastMCP("worldbank")
 attach_packaged_skill(server, __file__)
 
 
-def _httpx_verify_argument() -> bool | ssl.SSLContext:
-    """Return the SSL verification config for World Bank API requests."""
-    try:
-        from myharness.utils.certificates import httpx_verify_argument
-    except ImportError:
-        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        if not bundle:
-            return True
-        context = ssl.create_default_context()
-        try:
-            context.set_ciphers("DEFAULT@SECLEVEL=1")
-        except ssl.SSLError:
-            pass
-        if hasattr(ssl, "VERIFY_X509_STRICT"):
-            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cafile=bundle)
-        return context
+def _httpx_verify_argument():
+    from _myharness_mcp_support.official_data import httpx_verify_argument
     return httpx_verify_argument()
 
 

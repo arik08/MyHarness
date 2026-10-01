@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _RuntimePath
+_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parent))
+
 from typing import Annotated
 from pydantic import Field
 
@@ -9,11 +13,13 @@ import csv
 import io
 import json
 from datetime import UTC, datetime
+from defusedxml import ElementTree as ET
+import httpx
 
 from mcp.server.fastmcp import FastMCP
-from myharness.mcp.skill_resources import attach_packaged_skill
+from _myharness_mcp_support.skill_resources import attach_packaged_skill
 
-from myharness.mcp.official_data import (
+from _myharness_mcp_support.official_data import (
     checked_health_envelope,
     clean_limit,
     request,
@@ -53,16 +59,35 @@ def _dataflow(value: str) -> str:
 
 
 @server.tool()
-def search_catalog(source: Source, dataflow: str, query: str = "", limit: int = 100) -> str:
-    """List ADB KIDB indicators within an official dataflow."""
+def search_catalog(source: Source, dataflow: str = "", query: str = "", limit: int = 100, catalog_type: str = "indicators") -> str:
+    """Discover ADB codes. Omit dataflow to list official dataflows, then supply
+    its id to list indicators. catalog_type=economies lists valid economy codes.
+    Do not pass an indicator name (e.g. GDP) as dataflow; use query to filter names.
+    """
     selected = _source(source)
-    flow = _dataflow(dataflow)
-    payload = request_json(
-        "ADB KIDB",
-        f"{ADB_KIDB_BASE_URL}/dataflow/indicators/{flow}",
-        timeout=60,
-    )
-    rows = payload if isinstance(payload, list) else []
+    if catalog_type not in {"indicators", "dataflows", "economies"}:
+        raise ValueError("catalog_type must be indicators, dataflows or economies")
+    if catalog_type != "indicators" or not dataflow.strip():
+        economies = catalog_type == "economies"
+        source_id = "v5/sdmx/structure/codelist/ADB/CL_ECONOMY_CODES/+" if economies else "v5/sdmx/structure/dataflow/all/all/+"
+        response = request("ADB KIDB", f"{ADB_KIDB_BASE_URL}/{source_id}", timeout=60)
+        root = ET.fromstring(response.content)
+        rows = [{"id": element.get("id"), "name": element.findtext("./{*}Name", default="")}
+                for element in root.iterfind(".//{*}Code" if economies else ".//{*}Dataflow")]
+        if not rows:
+            raise ValueError("ADB SDMX catalogue returned no code definitions")
+    else:
+        flow = _dataflow(dataflow)
+        source_id = f"dataflow/indicators/{flow}"
+        try:
+            payload = request_json("ADB KIDB", f"{ADB_KIDB_BASE_URL}/{source_id}", timeout=60)
+        except RuntimeError as exc:
+            if isinstance(exc.__cause__, httpx.HTTPStatusError) and exc.__cause__.response.status_code == 422:
+                raise ValueError("ADB rejected this dataflow. Use search_catalog without dataflow to discover current IDs; put indicator names in query.") from exc
+            raise
+        if not isinstance(payload, list):
+            raise ValueError("ADB indicator catalogue returned an unexpected response")
+        rows = payload
     needle = query.casefold().strip()
     data = [
         row
@@ -72,7 +97,7 @@ def search_catalog(source: Source, dataflow: str, query: str = "", limit: int = 
     ][: clean_limit(limit, maximum=500)]
     return result_envelope(
         source=SOURCES[selected],
-        source_id=f"dataflow/indicators/{flow}",
+        source_id=source_id,
         data=data,
         completeness="dataflow_catalog_query_limited",
         license_name="ADB data terms",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import importlib.util
 from pathlib import Path
 from types import ModuleType
@@ -40,3 +42,21 @@ def test_get_passes_corporate_ssl_context_to_httpx(monkeypatch) -> None:
 
     assert calls
     assert calls[0]["kwargs"]["verify"] is verify_context
+
+
+@pytest.mark.parametrize("alias,expected", [("title","TBL"),("items","ITM"),("prd","PRD"),("unit","UNIT")])
+def test_metadata_aliases_and_upstream_errors(monkeypatch, alias, expected):
+    module = _load_kosis_server()
+    def get(path, params):
+        assert params["type"] == expected
+        raise ValueError("KOSIS API error 30: no data")
+    monkeypatch.setattr(module, "_get", get)
+    with pytest.raises(ValueError, match="error 30"):
+        module.get_table_meta("101", "any-new-table", alias)
+
+
+def test_unknown_metadata_type_does_not_make_request(monkeypatch):
+    module = _load_kosis_server()
+    monkeypatch.setattr(module, "_get", lambda *a: pytest.fail("unexpected network request"))
+    with pytest.raises(ValueError, match="meta_type"):
+        module.get_table_meta("101", "table", "unknown")

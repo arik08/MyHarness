@@ -141,6 +141,34 @@ def test_get_retries_transient_status_then_succeeds(monkeypatch) -> None:
     assert get.call_count == 3
 
 
+@pytest.mark.parametrize("method", ["get", "post"])
+@pytest.mark.parametrize("header,expected_calls,expected_sleep", [
+    ("Thu, 01 Jan 1970 00:01:45 GMT", 2, 5),
+    ("120", 1, None),
+    ("Thu, 01 Jan 1970 00:05:00 GMT", 1, None),
+    ("invalid", 2, 2),
+])
+def test_retry_after_dates_and_long_waits_never_retry_early(monkeypatch, header, expected_calls, expected_sleep, method):
+    response = httpx.Response(429, request=httpx.Request("GET", "https://example.test"))
+    response.headers["Retry-After"] = header
+    get = MagicMock(side_effect=[response, _response(200)])
+    sleeps = []
+    monkeypatch.setattr(official_data.httpx, method, get)
+    monkeypatch.setattr(official_data.time, "time", lambda: 100)
+    monkeypatch.setattr(official_data.time, "sleep", sleeps.append)
+    def call():
+        if method == "post":
+            return official_data.post_form_json("Source", "https://example.test", data={})
+        return official_data.request("Source", "https://example.test")
+    if expected_calls == 1:
+        with pytest.raises(RuntimeError, match="HTTP 429"):
+            call()
+    else:
+        call()
+    assert get.call_count == expected_calls
+    assert sleeps == ([] if expected_sleep is None else [expected_sleep])
+
+
 def test_get_retries_transient_network_error_then_succeeds(monkeypatch) -> None:
     response = _response(200)
     get = MagicMock(

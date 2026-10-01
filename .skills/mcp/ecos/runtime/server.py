@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _RuntimePath
+_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parent))
+
 import json
 import logging
 import os
 import ssl
 import time
+from datetime import datetime
 from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-from myharness.mcp.skill_resources import attach_packaged_skill
+from _myharness_mcp_support.skill_resources import attach_packaged_skill
 
 
 DEFAULT_API_HOST = "ecos.bok.or.kr/api"
@@ -32,23 +37,8 @@ server = FastMCP("ecos")
 attach_packaged_skill(server, __file__)
 
 
-def _httpx_verify_argument() -> bool | ssl.SSLContext:
-    """Return the SSL verification config for ECOS requests."""
-    try:
-        from myharness.utils.certificates import httpx_verify_argument
-    except ImportError:
-        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        if not bundle:
-            return True
-        context = ssl.create_default_context()
-        try:
-            context.set_ciphers("DEFAULT@SECLEVEL=1")
-        except ssl.SSLError:
-            pass
-        if hasattr(ssl, "VERIFY_X509_STRICT"):
-            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cafile=bundle)
-        return context
+def _httpx_verify_argument():
+    from _myharness_mcp_support.official_data import httpx_verify_argument
     return httpx_verify_argument()
 
 
@@ -171,7 +161,7 @@ def get_exchange_rate(
     end_date: str = "20241231",
     limit: int = 1000,
 ) -> str:
-    """Fetch ECOS daily KRW exchange rates for USD, JPY100, EUR, or CNY."""
+    """Fetch daily KRW exchange rates. Dates accept YYYYMMDD or YYYY-MM-DD."""
     item_code = EXCHANGE_RATE_ITEMS.get(currency.upper(), currency)
     return get_statistic_data(
         stat_code="731Y001",
@@ -195,7 +185,28 @@ def get_statistic_data(
     item_code4: str | None = None,
     limit: int = 1000,
 ) -> str:
-    """Fetch generic ECOS StatisticSearch rows by table code, cycle, date range, and optional item codes."""
+    """Fetch ECOS rows. cycle D: YYYYMMDD/ YYYY-MM-DD, M: YYYYMM/YYYY-MM,
+    Q: YYYYQ1..YYYYQ4, A: YYYY. Invalid dates/ranges fail before network access.
+    """
+    cycle = cycle.upper().strip()
+    formats = {"D": ("%Y%m%d", "%Y-%m-%d"), "M": ("%Y%m", "%Y-%m"), "A": ("%Y",)}
+    def normalize(value: str) -> str:
+        value = value.strip()
+        if cycle == "Q":
+            import re
+            if re.fullmatch(r"\d{4}Q[1-4]", value.upper()):
+                return value.upper()
+        for fmt in formats.get(cycle, ()):
+            try:
+                parsed = datetime.strptime(value, fmt)
+                if parsed.strftime(fmt) == value:
+                    return parsed.strftime(formats[cycle][0])
+            except ValueError:
+                pass
+        raise ValueError(f"Invalid {cycle} period {value!r}; use D YYYY-MM-DD, M YYYY-MM, Q YYYYQ1 or A YYYY.")
+    start, end = normalize(start), normalize(end)
+    if end < start:
+        raise ValueError("end must not be earlier than start")
     safe_limit = _clean_limit(limit)
     parts = [
         "StatisticSearch",

@@ -113,7 +113,8 @@ def main() -> None:
     if not node:
         raise RuntimeError("Node.js is required to run the national assembly MCP server.")
 
-    args = [node, str(_server_index()), *sys.argv[1:]]
+    preload = Path(__file__).with_name("_myharness_mcp_support") / "node_fetch.cjs"
+    args = [node, "--require", str(preload), str(_server_index()), *sys.argv[1:]]
     process = subprocess.Popen(
         args,
         stdin=sys.stdin,
@@ -122,6 +123,7 @@ def main() -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=dict(os.environ, MYHARNESS_MCP_PYTHON=sys.executable),
     )
     assert process.stderr is not None
     stderr_thread = threading.Thread(target=_forward_filtered_stderr, args=(process.stderr,), daemon=True)

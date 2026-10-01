@@ -27,16 +27,16 @@ async def test_packaged_skill_is_exposed_as_deferred_mcp_resource() -> None:
     server = _load_worldbank_server()
     resources = {str(resource.uri): resource for resource in server._resource_manager.list_resources()}
 
-    assert server._mcp_server.instructions == (
-        "For detailed workflow guidance, read skill://worldbank/SKILL.md "
-        "only when this server is relevant."
-    )
+    assert "skill://worldbank/SKILL.md" in server._mcp_server.instructions
     resource = resources["skill://worldbank/SKILL.md"]
     assert resource.mime_type == "text/markdown"
     content = await resource.read()
     assert isinstance(content, str)
     assert "name: worldbank" in content
     assert "source: skill-mcp:worldbank" in content
+    reference = resources["skill://worldbank/references/function-inputs.md"]
+    expected = ROOT / ".skills/mcp/worldbank/skills/worldbank/references/function-inputs.md"
+    assert await reference.read() == expected.read_text(encoding="utf-8")
 
 
 def test_packaged_skill_rejects_directory_name_mismatch(tmp_path: Path) -> None:

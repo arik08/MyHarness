@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _RuntimePath
+_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parent))
+
 from typing import Annotated
 from pydantic import Field
 
@@ -14,9 +18,9 @@ from urllib.parse import unquote
 from defusedxml import ElementTree
 
 from mcp.server.fastmcp import FastMCP
-from myharness.mcp.skill_resources import attach_packaged_skill
+from _myharness_mcp_support.skill_resources import attach_packaged_skill
 
-from myharness.mcp.official_data import (
+from _myharness_mcp_support.official_data import (
     checked_health_envelope,
     clean_limit,
     first_env,

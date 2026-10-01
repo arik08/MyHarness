@@ -17,3 +17,13 @@ explicitly want to run and rebuild a compatible upstream checkout.
 
 The upstream license is in `UPSTREAM_LICENSE.txt`; bundled dependency notices
 are in `licenses.txt`.
+
+The bootstrap preloads `_myharness_mcp_support/node_fetch.cjs`. Read-only HTTP
+requests use the launching Python interpreter and httpx, including proxy and
+custom CA environment settings; TLS verification remains enabled. The default
+request timeout is 30 seconds (`MCP_HTTP_TIMEOUT_MS`: 1000–120000 milliseconds).
+Copy the whole MCP directory, including the support directory, between hosts.
+Do not copy only `index.js` or substitute another application's helper module.
+
+Support files are generated from `src/myharness/mcp` using
+`python scripts/sync_mcp_support.py`; `--check` detects stale package copies.

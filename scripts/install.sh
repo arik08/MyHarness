@@ -237,6 +237,12 @@ fi
 
 success "MyHarness package installed"
 
+if [ "$FROM_SOURCE" = true ]; then
+    step "Preparing packaged MCP runtimes"
+    "$PYTHON_CMD" "$INSTALL_DIR/.skills/mcp/korean-law/runtime/bootstrap.py" --prepare
+    "$PYTHON_CMD" "$INSTALL_DIR/scripts/verify_mcp_packages.py" --require-runtime-deps
+fi
+
 # ---------------------------------------------------------------------------
 # Step 5: Channel dependencies
 # ---------------------------------------------------------------------------

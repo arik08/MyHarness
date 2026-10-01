@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _RuntimePath
+_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parent))
+
 from typing import Annotated
 from pydantic import Field
 
@@ -17,9 +21,9 @@ from typing import Any
 from urllib.parse import quote
 
 from mcp.server.fastmcp import FastMCP
-from myharness.mcp.skill_resources import attach_packaged_skill
+from _myharness_mcp_support.skill_resources import attach_packaged_skill
 
-from myharness.mcp.official_data import (
+from _myharness_mcp_support.official_data import (
     checked_health_envelope,
     clean_limit,
     first_env,
@@ -52,7 +56,8 @@ Source = Annotated[str, Field(description="Source served by patent-tech only", j
 server = FastMCP("patent-tech")
 attach_packaged_skill(server, __file__)
 _EPO_TOKEN: tuple[str, float] | None = None
-_SEMANTIC_RECORDS: OrderedDict[tuple[str, str], tuple[float, object]] = OrderedDict()
+_SEMANTIC_FIELDS = "paperId,title,abstract,year,authors,citationCount,referenceCount,externalIds,url"
+_SEMANTIC_RECORDS: OrderedDict[tuple[str, str], tuple[float, object, str]] = OrderedDict()
 
 
 def _source(source: str) -> str:
@@ -223,19 +228,25 @@ def _epo_request(path: str, *, params: dict[str, Any] | None = None) -> bytes:
     return response.content
 
 
+def _epo_entity_not_found(exc: RuntimeError) -> bool:
+    """Only the documented empty-entity fault is a missing-data result."""
+    cause = exc.__cause__
+    if not isinstance(cause, httpx.HTTPStatusError) or cause.response.status_code != 404:
+        return False
+    try:
+        fault = ET.fromstring(cause.response.content)
+    except (ET.ParseError, ValueError):
+        return False
+    return (_xml_local_name(fault.tag) == "fault"
+            and fault.findtext("./{*}code") == "SERVER.EntityNotFound")
+
+
 def _epo_search(cql: str, limit: int) -> list[dict[str, Any]]:
     try:
         content = _epo_request("published-data/search/biblio", params={"q": cql, "Range": f"1-{limit}"})
     except RuntimeError as exc:
-        cause = exc.__cause__
-        if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 404:
-            try:
-                fault = ET.fromstring(cause.response.content)
-            except ET.ParseError:
-                raise exc
-            if (_xml_local_name(fault.tag) == "fault"
-                    and fault.findtext("./{*}code") == "SERVER.EntityNotFound"):
-                return []
+        if _epo_entity_not_found(exc):
+            return []
         raise
     return _epo_rows(content, limit=limit)
 
@@ -259,23 +270,33 @@ def _semantic_headers() -> dict[str, str]:
     return {"x-api-key": key}
 
 
+def _cache_semantic_record(headers: dict[str, str], payload: object, origin: str, requested_id: str | None = None) -> None:
+    if not isinstance(payload, dict) or not payload.get("paperId"):
+        return
+    # Only an equivalent field set may satisfy a later detail request. Null is
+    # valid source data; an omitted field is not a complete cached response.
+    if origin == "search" and not set(_SEMANTIC_FIELDS.split(",")) <= payload.keys():
+        return
+    key = (headers["x-api-key"], requested_id or payload["paperId"])
+    _SEMANTIC_RECORDS[key] = (time.monotonic(), payload, origin)
+    _SEMANTIC_RECORDS.move_to_end(key)
+    while len(_SEMANTIC_RECORDS) > 128:
+        _SEMANTIC_RECORDS.popitem(last=False)
+
+
 def _semantic_record(paper_id: str) -> tuple[object, dict[str, Any]]:
     headers = _semantic_headers()
     key = (headers["x-api-key"], paper_id)
     cached = _SEMANTIC_RECORDS.get(key)
     if cached and time.monotonic() - cached[0] < 60:
         _SEMANTIC_RECORDS.move_to_end(key)
-        return cached[1], {"cache_hit": True, "cache_age_seconds": round(time.monotonic() - cached[0], 2)}
+        return cached[1], {"cache_hit": True, "cache_origin": cached[2], "cache_age_seconds": round(time.monotonic() - cached[0], 2)}
     payload = request_json(
         "Semantic Scholar", f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/{quote(paper_id, safe='')}",
-        params={"fields": "paperId,title,abstract,year,authors,citationCount,referenceCount,externalIds,url"},
+        params={"fields": _SEMANTIC_FIELDS},
         headers=headers, minimum_interval=5.0,
     )
-    if isinstance(payload, dict) and payload.get("paperId"):
-        _SEMANTIC_RECORDS[key] = (time.monotonic(), payload)
-        _SEMANTIC_RECORDS.move_to_end(key)
-        while len(_SEMANTIC_RECORDS) > 128:
-            _SEMANTIC_RECORDS.popitem(last=False)
+    _cache_semantic_record(headers, payload, "detail", paper_id)
     return payload, {"cache_hit": False}
 
 
@@ -410,19 +431,23 @@ def search_records(
         data = message.get("items", []) if isinstance(message, dict) else []
         source_id = "works"
     else:
+        headers = _semantic_headers()
         payload = request_json(
             "Semantic Scholar",
             f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search",
             params={
                 "query": query,
                 "limit": min(safe_limit, 100),
-                "fields": "paperId,title,abstract,year,authors,citationCount,externalIds,url",
+                "fields": _SEMANTIC_FIELDS,
                 "year": f"{start_year or ''}-{end_year or ''}" if start_year or end_year else None,
             },
-            headers=_semantic_headers(),
+            headers=headers,
             minimum_interval=5.0,
         )
         data = payload.get("data", []) if isinstance(payload, dict) else payload
+        if isinstance(data, list):
+            for row in data:
+                _cache_semantic_record(headers, row, "search")
         source_id = "paper/search"
     return result_envelope(
         source=SOURCES[selected],
@@ -439,7 +464,10 @@ def search_records(
 def get_record(source: Source, record_id: str, record_type: str = "detail") -> str:
     """Get metadata from a search result ID: KIPRIS applicationNumber (not registerNumber),
     OpenAlex id, Semantic Scholar paperId, Crossref DOI. record_type=detail works for all;
-    bibliography is patent-only, family is EPO-only. No PDF download or reference-list tool.
+    bibliography is patent-only, family is EPO-only. A confirmed publication may have
+    no family data: data=[] with metadata.empty_reason=family_not_available explicitly
+    reports that coverage gap; it does not establish that the patent has no family.
+    No PDF download or reference-list tool.
     """
     selected = _source(source)
     kind = record_type.strip().lower()
@@ -468,7 +496,27 @@ def get_record(source: Source, record_id: str, record_type: str = "detail") -> s
             path = f"family/publication/epodoc/{patent_id}/biblio,legal"
         else:
             path = f"published-data/publication/epodoc/{patent_id}/biblio"
-        payload = _epo_rows(_epo_request(path), limit=100)
+        try:
+            payload = _epo_rows(_epo_request(path), limit=100)
+        except RuntimeError as exc:
+            if kind != "family" or not _epo_entity_not_found(exc):
+                raise
+            # A searchable publication may still lack family data.
+            # Confirm the same seed exists; never disguise invalid IDs or auth errors.
+            seed = _epo_rows(_epo_request(
+                f"published-data/publication/epodoc/{patent_id}/biblio"
+            ), limit=100)
+            if not seed:
+                raise
+            payload = []
+            metadata = {
+                "empty_reason": "family_not_available",
+                "upstream_status": 404,
+                "upstream_code": "SERVER.EntityNotFound",
+                "seed_record_id": patent_id,
+                "seed_publications": [row["publication"] for row in seed],
+                "detail": "Publication exists, but EPO OPS returned no family data. This is not evidence of an empty patent family.",
+            }
         source_id = path
     elif selected == "openalex":
         if kind != "detail":
@@ -516,7 +564,7 @@ def get_record(source: Source, record_id: str, record_type: str = "detail") -> s
         source_id=source_id,
         data=payload,
         revision="latest_returned_by_api",
-        completeness="structured_metadata_no_pdf_or_ocr",
+        completeness="family_not_available" if metadata and metadata.get("empty_reason") == "family_not_available" else "structured_metadata_no_pdf_or_ocr",
         license_name="Official source reuse terms",
         metadata=metadata,
     )

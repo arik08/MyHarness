@@ -84,7 +84,21 @@ async def audit(root: Path, output: Path, sources: list[str]):
                     raise ValueError(str(data["errors"]))
                 rows = rows_of(data)
                 count = len(rows) if rows is not None else (len(data) if isinstance(data, dict) else int(bool(data)))
-                entry.update(status="PASS" if count else "EMPTY", count=count)
+                metadata = payload.get("metadata", {})
+                unavailable = (
+                    source == "epo_ops" and tool == "get_record"
+                    and args.get("record_type") == "family" and data == []
+                    and payload.get("completeness") == "family_not_available"
+                    and metadata.get("empty_reason") == "family_not_available"
+                    and metadata.get("seed_record_id") == args.get("record_id")
+                    and bool(metadata.get("seed_publications"))
+                    and metadata.get("upstream_status") == 404
+                    and metadata.get("upstream_code") == "SERVER.EntityNotFound"
+                )
+                entry.update(status="DATA_UNAVAILABLE" if unavailable else "PASS" if count else "EMPTY", count=count)
+                if unavailable:
+                    entry["detail"] = "Publication confirmed; EPO OPS family data unavailable (HTTP 404 / SERVER.EntityNotFound)."
+                    entry["metadata"] = metadata
                 if rows:
                     entry["fields"] = list(rows[0]) if isinstance(rows[0], dict) else []
                 if tool == "search_records" and source in {"kipris", "openalex", "semantic_scholar"} and rows:
@@ -93,7 +107,7 @@ async def audit(root: Path, output: Path, sources: list[str]):
                         raise AssertionError("Missing record identity: " + str(rows[0]))
                 if rows is not None and "limit" in args and count > args["limit"]:
                     raise AssertionError(f"row limit exceeded: {count} > {args['limit']}")
-                if not count and not allow_empty:
+                if not count and not allow_empty and not unavailable:
                     entry["status"] = "EMPTY_UNEXPECTED"
                 return data
             except Exception as exc:
@@ -192,7 +206,7 @@ async def audit(root: Path, output: Path, sources: list[str]):
         finally:
             await manager.close()
     print(json.dumps(report["summary"]), flush=True)
-    return int(any(c["status"] not in {"PASS", "EMPTY"} for c in report["checks"]))
+    return int(any(c["status"] not in {"PASS", "EMPTY", "DATA_UNAVAILABLE"} for c in report["checks"]))
 
 
 if __name__ == "__main__":

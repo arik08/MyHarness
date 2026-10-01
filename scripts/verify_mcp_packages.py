@@ -151,6 +151,10 @@ def main() -> int:
     parser.add_argument("--require-runtime-deps", action="store_true")
     parser.add_argument("--connect", action="store_true")
     args = parser.parse_args()
+    from sync_mcp_support import sync
+    stale = sync(check=True)
+    if stale:
+        raise RuntimeError("MCP support copies are stale; run python scripts/sync_mcp_support.py")
     servers = verify_packages(require_runtime_deps=args.require_runtime_deps)
     print(f"Verified {len(servers)} self-contained MCP packages.")
     if args.connect:
