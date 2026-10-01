@@ -100,8 +100,31 @@ class RuntimeBundle:
         slash command (e.g. ``/fast``) would refresh UI state from disk and
         "snap back" the model/provider to whatever is stored in the config file.
         """
-        settings = load_settings().merge_cli_overrides(**self.settings_overrides)
-        return apply_project_preferences_to_settings(settings, self.cwd)
+        settings = load_settings()
+        overrides = dict(self.settings_overrides)
+        profile_name = overrides.get("active_profile")
+        profile = settings.merged_profiles().get(profile_name)
+        enabled = settings.enabled_models_by_profile.get(profile_name)
+        if profile is not None and enabled is not None and not any(
+            profile.allows_model(model) for model in enabled
+        ):
+            # A policy edit can invalidate a previously valid session selection.
+            # Use the persisted settings' available profile without carrying the
+            # old profile's model, endpoint, or credentials into that provider.
+            for key in (
+                "active_profile", "model", "subagent_model", "provider",
+                "api_format", "base_url", "api_key", "context_window_tokens",
+                "auto_compact_threshold_tokens",
+            ):
+                overrides.pop(key, None)
+        settings = settings.merge_cli_overrides(**overrides)
+        settings = apply_project_preferences_to_settings(settings, self.cwd)
+        if overrides != self.settings_overrides:
+            # Commit recovery only after validation; subsequent model-only
+            # selections must apply to the recovered profile as well.
+            overrides["active_profile"] = settings.active_profile
+            self.settings_overrides = overrides
+        return settings
 
     def current_plugins(self):
         """Return currently visible plugins for the working tree."""
@@ -826,7 +849,10 @@ async def handle_line(
 
     settings = bundle.current_settings()
     profile_name, profile = settings.resolve_profile()
-    if profile_name in settings.enabled_models_by_profile and not profile.allows_model(bundle.engine.model):
+    if (
+        bundle.engine.tool_metadata.get("active_profile", profile_name) != profile_name
+        or (profile_name in settings.enabled_models_by_profile and not profile.allows_model(bundle.engine.model))
+    ):
         await refresh_runtime_client(bundle)
         bundle.engine.tool_metadata.update(active_profile=profile_name, provider=settings.provider, runtime_model=settings.model)
     parsed = None if has_attachments else bundle.commands.lookup(line_text)

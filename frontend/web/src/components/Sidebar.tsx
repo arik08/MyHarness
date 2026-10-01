@@ -1026,7 +1026,13 @@ export function Sidebar() {
     && !optimisticallyHiddenHistoryIds.has(item.value)
   ));
   const hasActiveHistoryItem = Boolean(activeHistoryValue && visibleHistory.some((item) => isActiveHistoryItem(item, activeHistoryValue, state.sessionId)));
-  const activeHistoryDescription = currentConversationHistoryTitle(state);
+  // Show the startup conversation as soon as composition begins, before a
+  // request (or a saved history row) exists. Keep this preview local so clearing
+  // an unsent draft does not leave an empty conversation in saved history.
+  const composerHistoryTitle = [state.composer.draft, ...state.composer.pastedTexts]
+    .join(" ").trim().replace(/\s+/g, " ").slice(0, 50)
+    || (state.composer.attachments.length ? "(파일 첨부)" : "");
+  const activeHistoryDescription = currentConversationHistoryTitle(state) || composerHistoryTitle;
   const showRuntimePicker = state.adminMode && state.runtimePicker.open && !state.sidebarCollapsed;
   const responseVisiblyBusy = isResponseVisiblyBusy(state);
   // Startup emits an unsaved bootstrap ID before the real conversation ID.

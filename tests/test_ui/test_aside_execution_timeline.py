@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
+import sys
 
 import pytest
 
@@ -43,7 +46,9 @@ async def test_shell_streams_actual_output_then_persists_complete_execution(tmp_
     monkeypatch.setenv("MYHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MYHARNESS_DATA_DIR", str(tmp_path / "data"))
     (tmp_path / "evidence.txt").write_text("확인된 로컬 자료입니다.", encoding="utf-8")
-    command = 'python -u -c "import time; print(\'FIRST\', flush=True); time.sleep(0.35); print(\'SECOND\', flush=True)"'
+    argv = [sys.executable, "-u", "-c", "import time; print('FIRST', flush=True); time.sleep(0.35); print('SECOND', flush=True)"]
+    command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+    shell_tool = "cmd" if os.name == "nt" else "bash"
     note = '<myharness-progress>{"message":"파일과 실제 명령 출력을 확인하겠습니다."}</myharness-progress>'
 
     class ScriptedProvider:
@@ -54,7 +59,7 @@ async def test_shell_streams_actual_output_then_persists_complete_execution(tmp_
             if self.turns == 1:
                 yield ApiTextDeltaEvent(text=note[:45])
                 yield ApiTextDeltaEvent(text=note[45:])
-                content = [TextBlock(text=note), ToolUseBlock(id="aside-shell", name="cmd", input={"command": command}), ToolUseBlock(id="aside-read", name="read_file", input={"path": str(tmp_path / "evidence.txt")})]
+                content = [TextBlock(text=note), ToolUseBlock(id="aside-shell", name=shell_tool, input={"command": command}), ToolUseBlock(id="aside-read", name="read_file", input={"path": str(tmp_path / "evidence.txt")})]
             else:
                 content = [TextBlock(text="로컬 파일 조회와 명령 실행을 검증했습니다.")]
             yield ApiMessageCompleteEvent(message=ConversationMessage(role="assistant", content=content), usage=UsageSnapshot(input_tokens=2, output_tokens=3), stop_reason=None)

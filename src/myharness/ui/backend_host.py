@@ -3394,9 +3394,10 @@ class ReactBackendHost:
             self._bundle.settings_overrides.update(active_profile=profile_name, model=choice["model"])
             refresh_client = True
         elif command == "provider":
-            profiles = AuthManager(settings).list_profiles()
-            if selected not in profiles:
-                await self._emit(BackendEvent(type="error", request_scope="runtime", message=f"알 수 없는 제공자 프로필입니다: {selected}"))
+            try:
+                settings.resolve_profile(selected)
+            except ValueError as exc:
+                await self._emit(BackendEvent(type="error", request_scope="runtime", message=str(exc)))
                 await self._emit(BackendEvent(type="line_complete", request_scope="runtime"))
                 return
             self._bundle.settings_overrides["active_profile"] = selected

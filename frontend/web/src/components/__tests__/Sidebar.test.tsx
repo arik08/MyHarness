@@ -2543,7 +2543,40 @@ describe("Sidebar", () => {
     expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("새 대화");
   });
 
-  it.each(["report request", "새로운 도구를 사용해줘"])("adds startup history immediately on Enter before the send resolves: %s", async (prompt) => {
+  it.each([null, "bootstrap-unsaved", "saved-initial"])("previews startup input and retains it on a failed send with history id %s", async (activeHistoryId) => {
+    let dispatch!: ReturnType<typeof useAppState>["dispatch"];
+    let rejectSend!: (reason: Error) => void;
+    vi.mocked(sendMessage).mockImplementation(() => new Promise((_resolve, reject) => { rejectSend = reject; }));
+    const { container } = render(
+      <AppStateProvider initialState={{
+        ...initialAppState, sessionId: "backend-process", activeHistoryId,
+        ready: true, workspaceName: "Default", workspacePath: "C:/demo",
+      }}>
+        <Sidebar /><Composer />
+        <DispatchProbe onReady={(value) => { dispatch = value; }} />
+      </AppStateProvider>,
+    );
+    const input = screen.getByPlaceholderText("메시지를 입력하세요...");
+    expect(container.querySelectorAll(".history-item")).toHaveLength(0);
+    fireEvent.change(input, { target: { value: "  " } });
+    expect(container.querySelectorAll(".history-item")).toHaveLength(0);
+    fireEvent.change(input, { target: { value: "첫 요청" } });
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("첫 요청");
+    expect(sendMessage).not.toHaveBeenCalled();
+    act(() => dispatch({ type: "set_history", history: [] }));
+    expect(container.querySelectorAll(".history-item")).toHaveLength(1);
+    fireEvent.change(input, { target: { value: "" } });
+    expect(container.querySelectorAll(".history-item")).toHaveLength(0);
+    fireEvent.change(input, { target: { value: "수정한 요청" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll(".history-item")).toHaveLength(1);
+    await act(async () => rejectSend(new Error("전송 실패")));
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe("수정한 요청");
+  });
+
+  it.each(["report request", "새로운 도구를 사용해줘"])("shows startup history while typing and before the send resolves: %s", async (prompt) => {
     let dispatch!: ReturnType<typeof useAppState>["dispatch"];
     let resolveSend!: (value: { ok: boolean }) => void;
     vi.mocked(sendMessage).mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
@@ -2572,7 +2605,7 @@ describe("Sidebar", () => {
     act(() => dispatch({ type: "backend_event", event: { type: "session_title", message: "새 대화" } }));
     expect(container.querySelectorAll(".history-item")).toHaveLength(0);
     await userEvent.type(screen.getByPlaceholderText("메시지를 입력하세요..."), prompt);
-    expect(container.querySelectorAll(".history-item")).toHaveLength(0);
+    expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe(prompt);
     fireEvent.keyDown(screen.getByPlaceholderText("메시지를 입력하세요..."), { key: "Enter", code: "Enter" });
     expect(sendMessage).toHaveBeenCalled();
     expect(container.querySelector(".history-item.active .history-title")?.textContent).toBe(prompt);
